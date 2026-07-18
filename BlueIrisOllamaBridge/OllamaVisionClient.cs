@@ -69,6 +69,7 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
                 var clean = StripCodeFence(raw);
                 var analysis = JsonSerializer.Deserialize<VisionAnalysis>(clean, JsonOptions)
                                ?? throw new JsonException("Ollama returned an empty analysis.");
+                ValidateAnalysis(analysis);
                 return (analysis, raw);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
@@ -104,24 +105,112 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         Camera: {{alert.Camera}}
         Event time: {{alert.OccurredAt:O}}
 
-        Analyze the attached image and answer these questions:
+        Analyze the attached image using the camera-layout rules from the system prompt.
+
+        Questions to consider:
         {{numbered}}
 
-        Return ONLY valid JSON with exactly this shape:
+        Return ONLY one valid JSON object with exactly this structure:
         {
-          "summary": "brief factual summary",
-          "person_visible": false,
-          "vehicle_visible": false,
-          "animal_visible": false,
-          "package_visible": false,
+          "event_type": "none",
+          "summary": "brief factual description of the important activity",
+          "person": {
+            "visible": false,
+            "location": "none",
+            "activity": "none",
+            "outside_vehicle": false,
+            "description": ""
+          },
+          "vehicle": {
+            "visible": false,
+            "location": "none",
+            "orientation": "unknown",
+            "activity": "none",
+            "type": "none",
+            "color": "unknown",
+            "description": "",
+            "delivery_company": "none",
+            "delivery_company_confidence": 0.0
+          },
+          "package": {
+            "visible": false,
+            "status": "none",
+            "location": "none"
+          },
+          "animal": {
+            "visible": false,
+            "description": ""
+          },
+          "confidence": 0.0,
           "notification_recommended": false,
-          "notification_reason": "brief reason",
-          "answers": [
-            { "question": "question text", "answer": "answer text" }
-          ]
+          "notification_reason": "brief reason"
         }
-        Include one answers entry for every question in the same order. Use false when an item is not clearly visible.
+
+        Allowed event_type values:
+        none, vehicle_on_road, vehicle_at_gate, vehicle_entering_property,
+        vehicle_inside_property, person_at_gate, person_outside_vehicle,
+        person_on_property, delivery_in_progress, package_delivered, animal, unknown
+
+        Allowed person.location values:
+        none, public_road, outside_gate, at_gate, inside_driveway,
+        inside_property, near_vehicle, unknown
+
+        Allowed person.activity values:
+        none, standing, walking, approaching_gate, leaving_gate,
+        entering_property, leaving_property, carrying_package,
+        placing_package, removing_package, unknown
+
+        Allowed vehicle.location values:
+        none, public_road, outside_gate_entrance, passing_gate,
+        inside_driveway, parked_inside_property, unknown
+
+        Allowed vehicle.orientation values:
+        unknown, facing_gate, facing_road, left, right
+
+        Allowed vehicle.activity values:
+        none, passing, stopped, entering, leaving, parked, unknown
+
+        Allowed vehicle.type values:
+        none, car, pickup, suv, van, delivery_van, delivery_truck,
+        box_truck, semi, motorcycle, other, unknown
+
+        Allowed vehicle.delivery_company values:
+        none, ups, fedex, usps, amazon, dhl, other, unknown
+
+        Allowed package.status values:
+        none, being_carried, being_delivered, delivered,
+        being_removed, already_present, unknown
+
+        Allowed package.location values:
+        none, with_person, at_gate, inside_property, near_vehicle, unknown
+
+        Rules:
+        - Ordinary traffic traveling along the public road is not notification-worthy.
+        - A vehicle stopped in the entrance immediately outside the gate is notification-worthy.
+        - A vehicle entering through the gate or unexpectedly present in the inside driveway is notification-worthy.
+        - A person standing or walking at or near the gate is notification-worthy.
+        - A person outside a vehicle in the gate entrance is notification-worthy.
+        - Delivery activity and a package newly left at the gate are notification-worthy.
+        - Do not identify a delivery company unless visible logos, markings, colors, or uniforms support it.
+        - Do not call an object a package unless it reasonably appears to be a delivered parcel.
+        - One still image normally cannot prove motion. Use unknown unless the visible evidence strongly supports the activity.
+        - Describe only the important foreground event. Do not treat distant houses, parked vehicles across the road, or ordinary background objects as the alert subject.
+        - Confidence values must be between 0.0 and 1.0.
+        - Use unknown instead of guessing.
+        - Do not include markdown, code fences, or any text outside the JSON object.
         """;
+    }
+
+    private static void ValidateAnalysis(VisionAnalysis analysis)
+    {
+        if (analysis.Confidence is < 0 or > 1)
+            throw new JsonException("Analysis confidence must be between 0 and 1.");
+        if (analysis.Vehicle.DeliveryCompanyConfidence is < 0 or > 1)
+            throw new JsonException("Delivery-company confidence must be between 0 and 1.");
+        if (string.IsNullOrWhiteSpace(analysis.EventType))
+            throw new JsonException("Analysis event_type is required.");
+        if (string.IsNullOrWhiteSpace(analysis.Summary))
+            throw new JsonException("Analysis summary is required.");
     }
 
     private static string StripCodeFence(string value)

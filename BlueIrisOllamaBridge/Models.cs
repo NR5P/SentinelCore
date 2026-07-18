@@ -17,34 +17,102 @@ public sealed record AcceptedAlertResponse(Guid Id, string Status, string Status
 
 public sealed class VisionAnalysis
 {
+    [JsonPropertyName("event_type")]
+    public string EventType { get; init; } = "unknown";
+
     [JsonPropertyName("summary")]
     public string Summary { get; init; } = string.Empty;
 
-    [JsonPropertyName("person_visible")]
-    public bool PersonVisible { get; init; }
+    [JsonPropertyName("person")]
+    public PersonAnalysis Person { get; init; } = new();
 
-    [JsonPropertyName("vehicle_visible")]
-    public bool VehicleVisible { get; init; }
+    [JsonPropertyName("vehicle")]
+    public VehicleAnalysis Vehicle { get; init; } = new();
 
-    [JsonPropertyName("animal_visible")]
-    public bool AnimalVisible { get; init; }
+    [JsonPropertyName("package")]
+    public PackageAnalysis Package { get; init; } = new();
 
-    [JsonPropertyName("package_visible")]
-    public bool PackageVisible { get; init; }
+    [JsonPropertyName("animal")]
+    public AnimalAnalysis Animal { get; init; } = new();
+
+    [JsonPropertyName("confidence")]
+    public double Confidence { get; init; }
 
     [JsonPropertyName("notification_recommended")]
     public bool NotificationRecommended { get; init; }
 
     [JsonPropertyName("notification_reason")]
     public string NotificationReason { get; init; } = string.Empty;
-
-    [JsonPropertyName("answers")]
-    public List<QuestionAnswer> Answers { get; init; } = [];
 }
 
-public sealed record QuestionAnswer(
-    [property: JsonPropertyName("question")] string Question,
-    [property: JsonPropertyName("answer")] string Answer);
+public sealed class PersonAnalysis
+{
+    [JsonPropertyName("visible")]
+    public bool Visible { get; init; }
+
+    [JsonPropertyName("location")]
+    public string Location { get; init; } = "none";
+
+    [JsonPropertyName("activity")]
+    public string Activity { get; init; } = "none";
+
+    [JsonPropertyName("outside_vehicle")]
+    public bool OutsideVehicle { get; init; }
+
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = string.Empty;
+}
+
+public sealed class VehicleAnalysis
+{
+    [JsonPropertyName("visible")]
+    public bool Visible { get; init; }
+
+    [JsonPropertyName("location")]
+    public string Location { get; init; } = "none";
+
+    [JsonPropertyName("orientation")]
+    public string Orientation { get; init; } = "unknown";
+
+    [JsonPropertyName("activity")]
+    public string Activity { get; init; } = "none";
+
+    [JsonPropertyName("type")]
+    public string Type { get; init; } = "none";
+
+    [JsonPropertyName("color")]
+    public string Color { get; init; } = "unknown";
+
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = string.Empty;
+
+    [JsonPropertyName("delivery_company")]
+    public string DeliveryCompany { get; init; } = "none";
+
+    [JsonPropertyName("delivery_company_confidence")]
+    public double DeliveryCompanyConfidence { get; init; }
+}
+
+public sealed class PackageAnalysis
+{
+    [JsonPropertyName("visible")]
+    public bool Visible { get; init; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "none";
+
+    [JsonPropertyName("location")]
+    public string Location { get; init; } = "none";
+}
+
+public sealed class AnimalAnalysis
+{
+    [JsonPropertyName("visible")]
+    public bool Visible { get; init; }
+
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = string.Empty;
+}
 
 public sealed class AlertResult
 {

@@ -73,3 +73,32 @@ public sealed class WebhookOptions
     public bool OnlyWhenNotificationRecommended { get; init; } = true;
     [Range(1, 300)] public int TimeoutSeconds { get; init; } = 20;
 }
+
+public sealed class EmailOptions
+{
+    public const string SectionName = "Email";
+
+    public bool Enabled { get; init; }
+
+    [Required]
+    public string SmtpHost { get; init; } = "smtp.gmail.com";
+
+    [Range(1, 65535)]
+    public int SmtpPort { get; init; } = 587;
+
+    public bool EnableSsl { get; init; } = true;
+
+    public string Username { get; init; } = string.Empty;
+    public string AppPassword { get; init; } = string.Empty;
+    public string FromAddress { get; init; } = string.Empty;
+    public string FromName { get; init; } = "Gate Camera";
+    public string ToAddress { get; init; } = string.Empty;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; init; } = 10;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; init; } = 0.60;
+
+    public bool AttachImage { get; init; } = true;
+}

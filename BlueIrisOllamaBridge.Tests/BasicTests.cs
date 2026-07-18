@@ -9,7 +9,9 @@ public sealed class BasicTests
     {
         var analysis = new VisionAnalysis();
         Assert.False(analysis.NotificationRecommended);
-        Assert.False(analysis.PersonVisible);
-        Assert.Empty(analysis.Answers);
+        Assert.False(analysis.Person.Visible);
+        Assert.False(analysis.Vehicle.Visible);
+        Assert.False(analysis.Package.Visible);
+        Assert.Equal("unknown", analysis.EventType);
     }
 }

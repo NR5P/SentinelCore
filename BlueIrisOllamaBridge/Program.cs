@@ -18,6 +18,15 @@ builder.Services.AddOptions<WebhookOptions>()
     .ValidateDataAnnotations()
     .Validate(o => !o.Enabled || Uri.TryCreate(o.Url, UriKind.Absolute, out _), "Webhook:Url must be valid when enabled.")
     .ValidateOnStart();
+builder.Services.AddOptions<EmailOptions>()
+    .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Username), "Email:Username is required when email is enabled.")
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.AppPassword), "Email:AppPassword is required when email is enabled.")
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ToAddress), "Email:ToAddress is required when email is enabled.")
+    .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.Username), "Email:Username must be a valid email address.")
+    .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.ToAddress), "Email:ToAddress must be a valid email address.")
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -27,6 +36,7 @@ builder.Services.Configure<FormOptions>(options =>
 
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
+builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 
@@ -36,6 +46,7 @@ builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =
     client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(ollamaSettings.RequestTimeoutSeconds);
 });
+
 var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionName).Get<WebhookOptions>() ?? new();
 builder.Services.AddHttpClient<IAlertAction, WebhookAlertAction>(client =>
 {
