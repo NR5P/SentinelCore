@@ -1,0 +1,24 @@
+[Unit]
+Description=Blue Iris Ollama Vision Bridge
+Wants=network-online.target
+After=network-online.target ollama.service
+Requires=ollama.service
+
+[Service]
+Type=exec
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=__DOTNET_PATH__ __INSTALL_DIR__/BlueIrisOllamaBridge.dll
+Restart=on-failure
+RestartSec=5
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_NOLOGO=true
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=__INSTALL_DIR__/data
+
+[Install]
+WantedBy=multi-user.target
