@@ -29,6 +29,24 @@ public sealed class BridgeOptions
     };
 }
 
+public sealed class ImageProcessingOptions
+{
+    public const string SectionName = "ImageProcessing";
+
+    public bool Enabled { get; init; } = true;
+
+    [Range(256, 4096)]
+    public int MaxWidth { get; init; } = 768;
+
+    [Range(256, 4096)]
+    public int MaxHeight { get; init; } = 768;
+
+    [Range(1, 100)]
+    public int JpegQuality { get; init; } = 80;
+
+    public bool AutoOrient { get; init; } = true;
+}
+
 public sealed class OllamaOptions
 {
     public const string SectionName = "Ollama";
@@ -42,10 +60,19 @@ public sealed class OllamaOptions
     [Range(5, 1800)]
     public int RequestTimeoutSeconds { get; init; } = 300;
 
-    public string KeepAlive { get; init; } = "10m";
+    public string KeepAlive { get; init; } = "1h";
 
     [Range(0, 2)]
-    public double Temperature { get; init; } = 0.1;
+    public double Temperature { get; init; } = 0;
+
+    [Range(32, 4096)]
+    public int MaximumOutputTokens { get; init; } = 512;
+
+    [Range(1, 100)]
+    public int TopK { get; init; } = 20;
+
+    [Range(0, 1)]
+    public double TopP { get; init; } = 0.9;
 
     [Range(0, 10)]
     public int MaximumRetries { get; init; } = 2;

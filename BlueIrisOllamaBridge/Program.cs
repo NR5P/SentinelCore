@@ -9,6 +9,10 @@ builder.Services.AddOptions<BridgeOptions>()
     .ValidateDataAnnotations()
     .Validate(o => !o.ApiKey.StartsWith("CHANGE-ME", StringComparison.OrdinalIgnoreCase), "Bridge:ApiKey must be changed.")
     .ValidateOnStart();
+builder.Services.AddOptions<ImageProcessingOptions>()
+    .Bind(builder.Configuration.GetSection(ImageProcessingOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<OllamaOptions>()
     .Bind(builder.Configuration.GetSection(OllamaOptions.SectionName))
     .ValidateDataAnnotations()
@@ -18,7 +22,7 @@ builder.Services.AddOptions<WebhookOptions>()
     .ValidateDataAnnotations()
     .Validate(o => !o.Enabled || Uri.TryCreate(o.Url, UriKind.Absolute, out _), "Webhook:Url must be valid when enabled.")
     .ValidateOnStart();
-builder.Services.AddOptions<EmailOptions>()
+    builder.Services.AddOptions<EmailOptions>()
     .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
     .ValidateDataAnnotations()
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Username), "Email:Username is required when email is enabled.")
@@ -35,6 +39,7 @@ builder.Services.Configure<FormOptions>(options =>
 });
 
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
+builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddHostedService<AlertProcessor>();
@@ -46,7 +51,6 @@ builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =
     client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(ollamaSettings.RequestTimeoutSeconds);
 });
-
 var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionName).Get<WebhookOptions>() ?? new();
 builder.Services.AddHttpClient<IAlertAction, WebhookAlertAction>(client =>
 {

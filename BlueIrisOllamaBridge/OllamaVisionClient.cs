@@ -19,12 +19,18 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
 
     private readonly HttpClient _httpClient;
     private readonly OllamaOptions _options;
+    private readonly IImageOptimizer _imageOptimizer;
     private readonly ILogger<OllamaVisionClient> _logger;
 
-    public OllamaVisionClient(HttpClient httpClient, IOptions<OllamaOptions> options, ILogger<OllamaVisionClient> logger)
+    public OllamaVisionClient(
+        HttpClient httpClient,
+        IOptions<OllamaOptions> options,
+        IImageOptimizer imageOptimizer,
+        ILogger<OllamaVisionClient> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;
+        _imageOptimizer = imageOptimizer;
         _logger = logger;
     }
 
@@ -33,6 +39,11 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         PromptProfile profile,
         CancellationToken cancellationToken)
     {
+        var startedAt = DateTimeOffset.UtcNow;
+        var optimizedImage = await _imageOptimizer.OptimizeForInferenceAsync(
+            alert.ImageBytes,
+            cancellationToken);
+
         var prompt = BuildPrompt(alert, profile);
         var request = new
         {
@@ -40,7 +51,13 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
             stream = false,
             keep_alive = _options.KeepAlive,
             format = "json",
-            options = new { temperature = _options.Temperature },
+            options = new
+            {
+                temperature = _options.Temperature,
+                num_predict = _options.MaximumOutputTokens,
+                top_k = _options.TopK,
+                top_p = _options.TopP
+            },
             messages = new object[]
             {
                 new { role = "system", content = profile.SystemPrompt },
@@ -48,7 +65,7 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
                 {
                     role = "user",
                     content = prompt,
-                    images = new[] { Convert.ToBase64String(alert.ImageBytes) }
+                    images = new[] { Convert.ToBase64String(optimizedImage.Bytes) }
                 }
             }
         };
@@ -58,38 +75,75 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         {
             try
             {
-                using var response = await _httpClient.PostAsJsonAsync("api/chat", request, JsonOptions, cancellationToken);
+                using var response = await _httpClient.PostAsJsonAsync(
+                    "api/chat",
+                    request,
+                    JsonOptions,
+                    cancellationToken);
+
                 var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
                 if (!response.IsSuccessStatusCode)
-                    throw new HttpRequestException($"Ollama returned {(int)response.StatusCode}: {responseText}");
+                    throw new HttpRequestException(
+                        $"Ollama returned {(int)response.StatusCode}: {responseText}");
 
                 using var document = JsonDocument.Parse(responseText);
-                var raw = document.RootElement.GetProperty("message").GetProperty("content").GetString()
-                          ?? throw new JsonException("Ollama response did not contain message.content.");
+                var raw = document.RootElement
+                              .GetProperty("message")
+                              .GetProperty("content")
+                              .GetString()
+                          ?? throw new JsonException(
+                              "Ollama response did not contain message.content.");
+
                 var clean = StripCodeFence(raw);
                 var analysis = JsonSerializer.Deserialize<VisionAnalysis>(clean, JsonOptions)
-                               ?? throw new JsonException("Ollama returned an empty analysis.");
+                               ?? throw new JsonException(
+                                   "Ollama returned an empty analysis.");
+
                 ValidateAnalysis(analysis);
+
+                _logger.LogInformation(
+                    "Ollama completed alert {AlertId} in {ElapsedSeconds:F1}s using {Width}x{Height} inference image",
+                    alert.Id,
+                    (DateTimeOffset.UtcNow - startedAt).TotalSeconds,
+                    optimizedImage.Width,
+                    optimizedImage.Height);
+
                 return (analysis, raw);
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            catch (Exception ex) when (
+                ex is HttpRequestException or TaskCanceledException or JsonException)
             {
                 lastException = ex;
-                if (attempt >= _options.MaximumRetries) break;
-                var delay = TimeSpan.FromSeconds(_options.RetryDelaySeconds * Math.Pow(2, attempt));
-                _logger.LogWarning(ex, "Ollama attempt {Attempt} failed; retrying in {Delay}", attempt + 1, delay);
+
+                if (attempt >= _options.MaximumRetries)
+                    break;
+
+                var delay = TimeSpan.FromSeconds(
+                    _options.RetryDelaySeconds * Math.Pow(2, attempt));
+
+                _logger.LogWarning(
+                    ex,
+                    "Ollama attempt {Attempt} failed; retrying in {Delay}",
+                    attempt + 1,
+                    delay);
+
                 await Task.Delay(delay, cancellationToken);
             }
         }
 
-        throw new InvalidOperationException("Ollama analysis failed after all retry attempts.", lastException);
+        throw new InvalidOperationException(
+            "Ollama analysis failed after all retry attempts.",
+            lastException);
     }
 
     public async Task<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
         try
         {
-            using var response = await _httpClient.GetAsync("api/tags", cancellationToken);
+            using var response = await _httpClient.GetAsync(
+                "api/tags",
+                cancellationToken);
+
             return response.IsSuccessStatusCode;
         }
         catch
@@ -100,7 +154,10 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
 
     private static string BuildPrompt(IncomingAlert alert, PromptProfile profile)
     {
-        var numbered = string.Join('\n', profile.Questions.Select((q, i) => $"{i + 1}. {q}"));
+        var numbered = string.Join(
+            '\n',
+            profile.Questions.Select((q, i) => $"{i + 1}. {q}"));
+
         return $$"""
         Camera: {{alert.Camera}}
         Event time: {{alert.OccurredAt:O}}
@@ -204,21 +261,32 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
     private static void ValidateAnalysis(VisionAnalysis analysis)
     {
         if (analysis.Confidence is < 0 or > 1)
-            throw new JsonException("Analysis confidence must be between 0 and 1.");
+            throw new JsonException(
+                "Analysis confidence must be between 0 and 1.");
+
         if (analysis.Vehicle.DeliveryCompanyConfidence is < 0 or > 1)
-            throw new JsonException("Delivery-company confidence must be between 0 and 1.");
+            throw new JsonException(
+                "Delivery-company confidence must be between 0 and 1.");
+
         if (string.IsNullOrWhiteSpace(analysis.EventType))
-            throw new JsonException("Analysis event_type is required.");
+            throw new JsonException(
+                "Analysis event_type is required.");
+
         if (string.IsNullOrWhiteSpace(analysis.Summary))
-            throw new JsonException("Analysis summary is required.");
+            throw new JsonException(
+                "Analysis summary is required.");
     }
 
     private static string StripCodeFence(string value)
     {
         var trimmed = value.Trim();
-        if (!trimmed.StartsWith("```", StringComparison.Ordinal)) return trimmed;
+
+        if (!trimmed.StartsWith("```", StringComparison.Ordinal))
+            return trimmed;
+
         var firstNewLine = trimmed.IndexOf('\n');
         var lastFence = trimmed.LastIndexOf("```", StringComparison.Ordinal);
+
         return firstNewLine >= 0 && lastFence > firstNewLine
             ? trimmed[(firstNewLine + 1)..lastFence].Trim()
             : trimmed;

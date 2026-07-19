@@ -8,4 +8,7 @@
     <AnalysisLevel>latest</AnalysisLevel>
     <PublishSingleFile>false</PublishSingleFile>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="4.0.0" />
+  </ItemGroup>
 </Project>
