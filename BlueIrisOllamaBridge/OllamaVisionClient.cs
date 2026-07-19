@@ -45,6 +45,12 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
             cancellationToken);
 
         var prompt = BuildPrompt(alert, profile);
+
+        _logger.LogInformation(
+            "Sending alert {AlertId} to Ollama with prompt length {PromptCharacters:N0} characters",
+            alert.Id,
+            prompt.Length);
+
         var request = new
         {
             model = _options.Model,
@@ -87,7 +93,33 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
                         $"Ollama returned {(int)response.StatusCode}: {responseText}");
 
                 using var document = JsonDocument.Parse(responseText);
-                var raw = document.RootElement
+                var root = document.RootElement;
+
+                var loadDuration = root.TryGetProperty("load_duration", out var load)
+                    ? load.GetInt64()
+                    : 0;
+
+                var promptEvalDuration = root.TryGetProperty("prompt_eval_duration", out var promptEval)
+                    ? promptEval.GetInt64()
+                    : 0;
+
+                var evalDuration = root.TryGetProperty("eval_duration", out var eval)
+                    ? eval.GetInt64()
+                    : 0;
+
+                var totalDuration = root.TryGetProperty("total_duration", out var total)
+                    ? total.GetInt64()
+                    : 0;
+
+                var promptEvalCount = root.TryGetProperty("prompt_eval_count", out var promptTokens)
+                    ? promptTokens.GetInt32()
+                    : 0;
+
+                var evalCount = root.TryGetProperty("eval_count", out var outputTokens)
+                    ? outputTokens.GetInt32()
+                    : 0;
+
+                var raw = root
                               .GetProperty("message")
                               .GetProperty("content")
                               .GetString()
@@ -101,12 +133,36 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
 
                 ValidateAnalysis(analysis);
 
+                var promptTokensPerSecond = promptEvalDuration > 0
+                    ? promptEvalCount / (promptEvalDuration / 1_000_000_000.0)
+                    : 0;
+
+                var outputTokensPerSecond = evalDuration > 0
+                    ? evalCount / (evalDuration / 1_000_000_000.0)
+                    : 0;
+
                 _logger.LogInformation(
-                    "Ollama completed alert {AlertId} in {ElapsedSeconds:F1}s using {Width}x{Height} inference image",
+                    """
+                    Ollama completed alert {AlertId}
+                      Application elapsed: {ElapsedSeconds:F1}s
+                      Ollama total: {OllamaTotalSeconds:F2}s
+                      Image: {Width}x{Height}
+                      Model load: {LoadSeconds:F2}s
+                      Prompt evaluation: {PromptEvalSeconds:F2}s ({PromptTokens} tokens, {PromptTokensPerSecond:F2} tokens/s)
+                      Response generation: {EvalSeconds:F2}s ({OutputTokens} tokens, {OutputTokensPerSecond:F2} tokens/s)
+                    """,
                     alert.Id,
                     (DateTimeOffset.UtcNow - startedAt).TotalSeconds,
+                    totalDuration / 1_000_000_000.0,
                     optimizedImage.Width,
-                    optimizedImage.Height);
+                    optimizedImage.Height,
+                    loadDuration / 1_000_000_000.0,
+                    promptEvalDuration / 1_000_000_000.0,
+                    promptEvalCount,
+                    promptTokensPerSecond,
+                    evalDuration / 1_000_000_000.0,
+                    evalCount,
+                    outputTokensPerSecond);
 
                 return (analysis, raw);
             }
