@@ -227,6 +227,9 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         {
           "event_type": "none",
           "summary": "brief factual description of the important activity",
+          "gate": {
+            "state": "unknown"
+          },
           "person": {
             "visible": false,
             "location": "none",
@@ -263,6 +266,9 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         none, vehicle_on_road, vehicle_at_gate, vehicle_entering_property,
         vehicle_inside_property, person_at_gate, person_outside_vehicle,
         person_on_property, delivery_in_progress, package_delivered, animal, unknown
+
+        Allowed gate.state values:
+        open, closed, unknown
 
         Allowed person.location values:
         none, public_road, outside_gate, at_gate, inside_driveway,
@@ -301,7 +307,10 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         - Ordinary traffic traveling along the public road is not notification-worthy.
         - A vehicle stopped in the entrance immediately outside the gate is notification-worthy.
         - A vehicle entering through the gate or unexpectedly present in the inside driveway is notification-worthy.
-        - A person standing or walking at or near the gate is notification-worthy.
+        - For this fixed gate camera, use the person's feet/contact point to determine which side of the gate they occupy. Below the gate, closer to the camera, is inside_driveway or inside_property. Above/behind the gate, in the narrow strip beside the road, is outside_gate. Do not decide from the person's torso or bounding-box center because the person may overlap the gate in the image.
+        - When the gate is closed, a person who is wholly on the camera/driveway side is not notification-worthy merely for standing or walking there. Set notification_recommended to false for that person-only event.
+        - A person on the road side of the gate (outside_gate), or interacting with the gate from that side (at_gate), is notification-worthy even when the gate is closed.
+        - Do not use at_gate for a person merely near the gate on the camera side; use inside_driveway or inside_property.
         - A person outside a vehicle in the gate entrance is notification-worthy.
         - Delivery activity and a package newly left at the gate are notification-worthy.
         - Do not identify a delivery company unless visible logos, markings, colors, or uniforms support it.

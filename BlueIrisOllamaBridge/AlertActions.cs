@@ -29,7 +29,7 @@ public sealed class WebhookAlertAction : IAlertAction
     public async Task ExecuteAsync(AlertResult result, CancellationToken cancellationToken)
     {
         if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.Url)) return;
-        if (_options.OnlyWhenNotificationRecommended && result.Analysis?.NotificationRecommended != true) return;
+        if (_options.OnlyWhenNotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result)) return;
 
         using var request = new HttpRequestMessage(HttpMethod.Post, _options.Url)
         {
@@ -64,7 +64,7 @@ public sealed class EmailAlertAction : IAlertAction
         if (!_options.Enabled || result.Analysis is null) return;
 
         var analysis = result.Analysis;
-        if (!analysis.NotificationRecommended || analysis.Confidence < _options.MinimumConfidence)
+        if (!AlertNotificationPolicy.ShouldNotify(result) || analysis.Confidence < _options.MinimumConfidence)
         {
             _logger.LogInformation(
                 "Email skipped for {AlertId}; recommended={Recommended}, confidence={Confidence}",
@@ -276,8 +276,7 @@ public sealed class EmailAlertAction : IAlertAction
     private static bool IsNearGate(string location) =>
         EqualsValue(location, "outside_gate") ||
         EqualsValue(location, "at_gate") ||
-        EqualsValue(location, "near_vehicle") ||
-        EqualsValue(location, "inside_driveway");
+        EqualsValue(location, "near_vehicle");
 
     private static bool EqualsValue(string value, string expected) =>
         string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);

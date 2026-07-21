@@ -23,6 +23,9 @@ public sealed class VisionAnalysis
     [JsonPropertyName("summary")]
     public string Summary { get; init; } = string.Empty;
 
+    [JsonPropertyName("gate")]
+    public GateAnalysis Gate { get; init; } = new();
+
     [JsonPropertyName("person")]
     public PersonAnalysis Person { get; init; } = new();
 
@@ -43,6 +46,12 @@ public sealed class VisionAnalysis
 
     [JsonPropertyName("notification_reason")]
     public string NotificationReason { get; init; } = string.Empty;
+}
+
+public sealed class GateAnalysis
+{
+    [JsonPropertyName("state")]
+    public string State { get; init; } = "unknown";
 }
 
 public sealed class PersonAnalysis
