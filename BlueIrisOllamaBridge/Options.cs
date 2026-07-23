@@ -88,6 +88,18 @@ public sealed class PromptProfile
 
     [MinLength(1)]
     public List<string> Questions { get; init; } = [];
+
+    // Optional region of interest, applied before resizing, expressed as fractions (0-1)
+    // of the auto-oriented source image so it stays correct regardless of camera resolution.
+    public CropRegion? Crop { get; init; }
+}
+
+public sealed class CropRegion
+{
+    public double Left { get; init; }
+    public double Top { get; init; }
+    public double Right { get; init; } = 1;
+    public double Bottom { get; init; } = 1;
 }
 
 public sealed class WebhookOptions

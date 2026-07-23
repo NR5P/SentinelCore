@@ -9,19 +9,26 @@ public static class AlertNotificationPolicy
             return false;
 
         if (!string.Equals(result.Profile, "gate", StringComparison.OrdinalIgnoreCase) ||
-            !EqualsValue(analysis.Gate.State, "closed") ||
-            !analysis.Person.Visible ||
-            !IsInside(analysis.Person.Location))
+            !EqualsValue(analysis.Gate.State, "closed"))
         {
             return true;
         }
 
-        // Suppress only a person-only event. An outside vehicle, active delivery,
-        // new package, or animal in the same frame remains independently alertable.
+        // With the gate closed, a person or vehicle already on the camera/inside side is
+        // expected and not alertable by itself. A person or vehicle arriving from outside,
+        // an active delivery, a new package, or an animal remains independently alertable.
+        var personOnlyInside = !analysis.Person.Visible || IsInside(analysis.Person.Location);
+
+        var vehicleArriving =
+            EqualsValue(analysis.Vehicle.Activity, "entering") ||
+            EqualsValue(analysis.EventType, "vehicle_entering_property");
+        var vehicleOnlyInside = !analysis.Vehicle.Visible ||
+            (!vehicleArriving && IsInside(analysis.Vehicle.Location));
+
+        if (!personOnlyInside || !vehicleOnlyInside)
+            return true;
+
         var otherAlertSubject =
-            (analysis.Vehicle.Visible &&
-             (EqualsValue(analysis.Vehicle.Location, "outside_gate_entrance") ||
-              EqualsValue(analysis.Vehicle.Activity, "entering"))) ||
             EqualsValue(analysis.Package.Status, "being_delivered") ||
             EqualsValue(analysis.Package.Status, "delivered") ||
             analysis.Animal.Visible;
@@ -31,7 +38,8 @@ public static class AlertNotificationPolicy
 
     private static bool IsInside(string location) =>
         EqualsValue(location, "inside_driveway") ||
-        EqualsValue(location, "inside_property");
+        EqualsValue(location, "inside_property") ||
+        EqualsValue(location, "parked_inside_property");
 
     private static bool EqualsValue(string value, string expected) =>
         string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);

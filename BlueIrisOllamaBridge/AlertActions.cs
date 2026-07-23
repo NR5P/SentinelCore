@@ -215,13 +215,6 @@ public sealed class EmailAlertAction : IAlertAction
             return new("vehicle-at-gate", $"Vehicle is here at your gate: {VehicleDescription(analysis.Vehicle)}");
         }
 
-        if (analysis.Vehicle.Visible &&
-            (EqualsValue(analysis.Vehicle.Location, "inside_driveway") ||
-             EqualsValue(analysis.EventType, "vehicle_inside_property")))
-        {
-            return new("vehicle-inside", $"Vehicle is inside your property: {VehicleDescription(analysis.Vehicle)}");
-        }
-
         if (analysis.Person.Visible && EqualsValue(analysis.Person.Location, "inside_property"))
             return new("person-on-property", "Person detected inside your property");
 

@@ -31,14 +31,44 @@ public sealed class BasicTests
         Assert.True(AlertNotificationPolicy.ShouldNotify(result));
     }
 
-    private static AlertResult GateResult(string personLocation) => new()
+    [Fact]
+    public void ClosedGate_VehicleParkedInside_NoPerson_IsSuppressed()
+    {
+        var result = GateResult(
+            vehicle: new VehicleAnalysis { Visible = true, Location = "inside_driveway", Activity = "parked" });
+
+        Assert.False(AlertNotificationPolicy.ShouldNotify(result));
+    }
+
+    [Fact]
+    public void ClosedGate_VehicleEntering_IsNotSuppressed()
+    {
+        var result = GateResult(
+            vehicle: new VehicleAnalysis { Visible = true, Location = "inside_driveway", Activity = "entering" });
+
+        Assert.True(AlertNotificationPolicy.ShouldNotify(result));
+    }
+
+    [Fact]
+    public void ClosedGate_VehicleAtOutsideEntrance_IsNotSuppressed()
+    {
+        var result = GateResult(
+            vehicle: new VehicleAnalysis { Visible = true, Location = "outside_gate_entrance", Activity = "stopped" });
+
+        Assert.True(AlertNotificationPolicy.ShouldNotify(result));
+    }
+
+    private static AlertResult GateResult(string? personLocation = null, VehicleAnalysis? vehicle = null) => new()
     {
         Profile = "gate",
         Analysis = new VisionAnalysis
         {
             NotificationRecommended = true,
             Gate = new GateAnalysis { State = "closed" },
-            Person = new PersonAnalysis { Visible = true, Location = personLocation }
+            Person = personLocation is null
+                ? new PersonAnalysis { Visible = false }
+                : new PersonAnalysis { Visible = true, Location = personLocation },
+            Vehicle = vehicle ?? new VehicleAnalysis()
         }
     };
 }
