@@ -141,3 +141,22 @@ public sealed class EmailOptions
 
     public bool AttachImage { get; init; } = true;
 }
+
+public sealed class DailySummaryOptions
+{
+    public const string SectionName = "DailySummary";
+
+    public bool Enabled { get; init; } = true;
+
+    // Local-time hour (0-23) each digest is sent. The evening digest covers
+    // [MorningHour, now) and the morning digest covers [previous day's EveningHour, now),
+    // so the two digests partition a full day with no overlap.
+    [Range(0, 23)]
+    public int MorningHour { get; init; } = 7;
+
+    [Range(0, 23)]
+    public int EveningHour { get; init; } = 20;
+
+    [Range(0, 50)]
+    public int MaxImagesAttached { get; init; } = 8;
+}

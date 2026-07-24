@@ -1,3 +1,10 @@
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace BlueIrisOllamaBridge.Tests;
@@ -75,4 +82,156 @@ public sealed class BasicTests
             Vehicle = vehicle ?? new VehicleAnalysis()
         }
     };
+
+    [Fact]
+    public void GetNextRun_BeforeMorningHour_FiresThisMorning()
+    {
+        var now = new DateTimeOffset(2026, 7, 24, 6, 0, 0, TimeSpan.FromHours(-5));
+
+        var (fireAt, kind) = DailySummaryWorker.GetNextRun(now, morningHour: 7, eveningHour: 20);
+
+        Assert.Equal(DigestKind.Morning, kind);
+        Assert.Equal(new DateTimeOffset(2026, 7, 24, 7, 0, 0, TimeSpan.FromHours(-5)), fireAt);
+    }
+
+    [Fact]
+    public void GetNextRun_BetweenMorningAndEvening_FiresThisEvening()
+    {
+        var now = new DateTimeOffset(2026, 7, 24, 7, 30, 0, TimeSpan.FromHours(-5));
+
+        var (fireAt, kind) = DailySummaryWorker.GetNextRun(now, morningHour: 7, eveningHour: 20);
+
+        Assert.Equal(DigestKind.Evening, kind);
+        Assert.Equal(new DateTimeOffset(2026, 7, 24, 20, 0, 0, TimeSpan.FromHours(-5)), fireAt);
+    }
+
+    [Fact]
+    public void GetNextRun_AfterEveningHour_FiresTomorrowMorning()
+    {
+        var now = new DateTimeOffset(2026, 7, 24, 20, 30, 0, TimeSpan.FromHours(-5));
+
+        var (fireAt, kind) = DailySummaryWorker.GetNextRun(now, morningHour: 7, eveningHour: 20);
+
+        Assert.Equal(DigestKind.Morning, kind);
+        Assert.Equal(new DateTimeOffset(2026, 7, 25, 7, 0, 0, TimeSpan.FromHours(-5)), fireAt);
+    }
+
+    [Fact]
+    public async Task SqliteEventStore_RecordAndQuery_RoundTripsWithinWindow()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteEventStore(options, new FakeHostEnvironment(tempDir));
+
+            var inWindow = MakeResult(new DateTimeOffset(2026, 7, 24, 10, 0, 0, TimeSpan.FromHours(-5)));
+            var outsideWindow = MakeResult(new DateTimeOffset(2026, 7, 23, 10, 0, 0, TimeSpan.FromHours(-5)));
+
+            await store.RecordAsync(inWindow, TestContext.Current.CancellationToken);
+            await store.RecordAsync(outsideWindow, TestContext.Current.CancellationToken);
+
+            var results = await store.GetEventsAsync(
+                new DateTimeOffset(2026, 7, 24, 0, 0, 0, TimeSpan.FromHours(-5)),
+                new DateTimeOffset(2026, 7, 25, 0, 0, 0, TimeSpan.FromHours(-5)),
+                TestContext.Current.CancellationToken);
+
+            var record = Assert.Single(results);
+            Assert.Equal(inWindow.Id, record.Id);
+            Assert.Equal("completed", record.Status);
+            Assert.Equal("vehicle_entering_property", record.EventType);
+            Assert.True(record.NotificationRecommended);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static AlertResult MakeResult(DateTimeOffset occurredAt) => new()
+    {
+        Id = Guid.NewGuid(),
+        Camera = "gateCamera",
+        OccurredAt = occurredAt,
+        ReceivedAt = occurredAt,
+        CompletedAt = occurredAt,
+        Profile = "gate",
+        Model = "gemma3:4b",
+        Status = "completed",
+        Analysis = new VisionAnalysis
+        {
+            EventType = "vehicle_entering_property",
+            Summary = "A car pulled into the driveway.",
+            NotificationRecommended = true,
+            Confidence = 0.8
+        }
+    };
+
+    [Fact]
+    public async Task DailySummaryWorker_BuildMessageAsync_EmbedsNotableImagesAndListsAllEvents()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var imagePath = Path.Combine(tempDir, "notable.jpg");
+            using (var image = new Image<Rgba32>(320, 240))
+                await image.SaveAsync(imagePath, new JpegEncoder(), TestContext.Current.CancellationToken);
+
+            var notableEvent = new AlertEventRecord(
+                Guid.NewGuid(), "gateCamera", DateTimeOffset.Now, "completed",
+                "vehicle_entering_property", "A car pulled into the driveway.",
+                true, "Vehicle entering", 0.8, imagePath);
+            var quietEvent = new AlertEventRecord(
+                Guid.NewGuid(), "gateCamera", DateTimeOffset.Now, "completed",
+                "none", "Nothing of note.", false, "No activity", 0.5, null);
+
+            var worker = new DailySummaryWorker(
+                eventStore: new StubEventStore(),
+                imageOptimizer: new ImageOptimizer(Options.Create(new ImageProcessingOptions()), NullLogger<ImageOptimizer>.Instance),
+                options: Options.Create(new DailySummaryOptions()),
+                emailOptions: Options.Create(new EmailOptions { Username = "a@b.com", ToAddress = "a@b.com", FromName = "Gate Camera" }),
+                logger: NullLogger<DailySummaryWorker>.Instance);
+
+            using var message = await worker.BuildMessageAsync(
+                "Today's activity summary",
+                DateTimeOffset.Now.AddHours(-13),
+                DateTimeOffset.Now,
+                [notableEvent, quietEvent],
+                TestContext.Current.CancellationToken);
+
+            Assert.Contains("2 events", message.Subject);
+            var view = Assert.Single(message.AlternateViews);
+            Assert.Single(view.LinkedResources);
+
+            var html = DailySummaryWorker.BuildHtml(
+                "Today's activity summary",
+                DateTimeOffset.Now.AddHours(-13),
+                DateTimeOffset.Now,
+                [notableEvent, quietEvent],
+                [notableEvent],
+                []);
+            Assert.Contains("A car pulled into the driveway.", html);
+            Assert.Contains("Nothing of note.", html);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private sealed class StubEventStore : IEventStore
+    {
+        public Task RecordAsync(AlertResult result, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
+    }
+
+    private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment
+    {
+        public string ApplicationName { get; set; } = "Tests";
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+        public string ContentRootPath { get; set; } = contentRootPath;
+        public string EnvironmentName { get; set; } = "Test";
+    }
 }

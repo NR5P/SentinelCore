@@ -6,7 +6,22 @@ namespace BlueIrisOllamaBridge;
 public interface IEventStore
 {
     Task RecordAsync(AlertResult result, CancellationToken cancellationToken);
+
+    // Returns completed/failed/queued rows with OccurredAt in [from, to), oldest first.
+    Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken);
 }
+
+public sealed record AlertEventRecord(
+    Guid Id,
+    string Camera,
+    DateTimeOffset OccurredAt,
+    string Status,
+    string? EventType,
+    string? Summary,
+    bool? NotificationRecommended,
+    string? NotificationReason,
+    double? Confidence,
+    string? ImagePath);
 
 // SQLite-backed history of every alert (queued/completed/failed), one row per alert id,
 // updated in place as the alert progresses. This is a queryable companion to the JSON
@@ -14,7 +29,7 @@ public interface IEventStore
 public sealed class SqliteEventStore : IEventStore, IDisposable
 {
     private readonly SqliteConnection _connection;
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly SemaphoreSlim _connectionLock = new(1, 1);
 
     public SqliteEventStore(IOptions<BridgeOptions> options, IHostEnvironment environment)
     {
@@ -54,7 +69,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
 
     public async Task RecordAsync(AlertResult result, CancellationToken cancellationToken)
     {
-        await _writeLock.WaitAsync(cancellationToken);
+        await _connectionLock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
@@ -80,9 +95,9 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.Parameters.AddWithValue("$id", result.Id.ToString("N"));
             command.Parameters.AddWithValue("$camera", result.Camera);
             command.Parameters.AddWithValue("$blueIrisAlertId", (object?)result.BlueIrisAlertId ?? DBNull.Value);
-            command.Parameters.AddWithValue("$occurredAt", result.OccurredAt.ToString("O"));
-            command.Parameters.AddWithValue("$receivedAt", result.ReceivedAt.ToString("O"));
-            command.Parameters.AddWithValue("$completedAt", (object?)result.CompletedAt?.ToString("O") ?? DBNull.Value);
+            command.Parameters.AddWithValue("$occurredAt", ToUtcSortable(result.OccurredAt));
+            command.Parameters.AddWithValue("$receivedAt", ToUtcSortable(result.ReceivedAt));
+            command.Parameters.AddWithValue("$completedAt", result.CompletedAt.HasValue ? ToUtcSortable(result.CompletedAt.Value) : (object)DBNull.Value);
             command.Parameters.AddWithValue("$profile", result.Profile);
             command.Parameters.AddWithValue("$model", result.Model);
             command.Parameters.AddWithValue("$status", result.Status);
@@ -100,13 +115,56 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         }
         finally
         {
-            _writeLock.Release();
+            _connectionLock.Release();
         }
     }
 
+    public async Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath
+                FROM AlertEvents
+                WHERE OccurredAt >= $from AND OccurredAt < $to
+                ORDER BY OccurredAt ASC;
+                """;
+            command.Parameters.AddWithValue("$from", ToUtcSortable(from));
+            command.Parameters.AddWithValue("$to", ToUtcSortable(to));
+
+            var results = new List<AlertEventRecord>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                results.Add(new AlertEventRecord(
+                    Guid.ParseExact(reader.GetString(0), "N"),
+                    reader.GetString(1),
+                    DateTimeOffset.Parse(reader.GetString(2)).ToLocalTime(),
+                    reader.GetString(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetInt64(6) != 0,
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    reader.IsDBNull(8) ? null : reader.GetDouble(8),
+                    reader.IsDBNull(9) ? null : reader.GetString(9)));
+            }
+
+            return results;
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
+    private static string ToUtcSortable(DateTimeOffset value) => value.UtcDateTime.ToString("O");
+
     public void Dispose()
     {
-        _writeLock.Dispose();
+        _connectionLock.Dispose();
         _connection.Dispose();
     }
 }

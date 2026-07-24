@@ -31,6 +31,11 @@ builder.Services.AddOptions<WebhookOptions>()
     .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.Username), "Email:Username must be a valid email address.")
     .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.ToAddress), "Email:ToAddress must be a valid email address.")
     .ValidateOnStart();
+builder.Services.AddOptions<DailySummaryOptions>()
+    .Bind(builder.Configuration.GetSection(DailySummaryOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => o.MorningHour != o.EveningHour, "DailySummary:MorningHour and DailySummary:EveningHour must differ.")
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -50,6 +55,7 @@ builder.Services.AddSingleton<IResultStore, FileResultStore>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
+builder.Services.AddHostedService<DailySummaryWorker>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =>
