@@ -9,6 +9,11 @@ public interface IEventStore
 
     // Returns completed/failed/queued rows with OccurredAt in [from, to), oldest first.
     Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken);
+
+    // Returns the most recent rows regardless of date, newest first.
+    Task<IReadOnlyList<AlertEventRecord>> GetRecentEventsAsync(int limit, CancellationToken cancellationToken);
+
+    Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken);
 }
 
 public sealed record AlertEventRecord(
@@ -138,19 +143,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             var results = new List<AlertEventRecord>();
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-            {
-                results.Add(new AlertEventRecord(
-                    Guid.ParseExact(reader.GetString(0), "N"),
-                    reader.GetString(1),
-                    DateTimeOffset.Parse(reader.GetString(2)).ToLocalTime(),
-                    reader.GetString(3),
-                    reader.IsDBNull(4) ? null : reader.GetString(4),
-                    reader.IsDBNull(5) ? null : reader.GetString(5),
-                    reader.IsDBNull(6) ? null : reader.GetInt64(6) != 0,
-                    reader.IsDBNull(7) ? null : reader.GetString(7),
-                    reader.IsDBNull(8) ? null : reader.GetDouble(8),
-                    reader.IsDBNull(9) ? null : reader.GetString(9)));
-            }
+                results.Add(ReadRecord(reader));
 
             return results;
         }
@@ -159,6 +152,69 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             _connectionLock.Release();
         }
     }
+
+    public async Task<IReadOnlyList<AlertEventRecord>> GetRecentEventsAsync(int limit, CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath
+                FROM AlertEvents
+                ORDER BY OccurredAt DESC
+                LIMIT $limit;
+                """;
+            command.Parameters.AddWithValue("$limit", limit);
+
+            var results = new List<AlertEventRecord>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(ReadRecord(reader));
+
+            return results;
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
+    public async Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath
+                FROM AlertEvents
+                WHERE Id = $id;
+                """;
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken) ? ReadRecord(reader) : null;
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
+    private static AlertEventRecord ReadRecord(SqliteDataReader reader) => new(
+        Guid.ParseExact(reader.GetString(0), "N"),
+        reader.GetString(1),
+        DateTimeOffset.Parse(reader.GetString(2)).ToLocalTime(),
+        reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetInt64(6) != 0,
+        reader.IsDBNull(7) ? null : reader.GetString(7),
+        reader.IsDBNull(8) ? null : reader.GetDouble(8),
+        reader.IsDBNull(9) ? null : reader.GetString(9));
 
     private static string ToUtcSortable(DateTimeOffset value) => value.UtcDateTime.ToString("O");
 

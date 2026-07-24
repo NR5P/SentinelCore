@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="BlueIrisOllamaBridge/BlueIrisOllamaBridge.csproj" />
+  <Project Path="BlueIrisOllamaBridge.Web/BlueIrisOllamaBridge.Web.csproj" />
   <Project Path="BlueIrisOllamaBridge.Tests/BlueIrisOllamaBridge.Tests.csproj" />
 </Solution>
