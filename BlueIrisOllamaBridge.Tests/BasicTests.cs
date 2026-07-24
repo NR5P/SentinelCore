@@ -104,6 +104,41 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void TelegramChatWorker_IsAuthorizedChat_OnlyMatchesConfiguredChatId()
+    {
+        Assert.True(TelegramChatWorker.IsAuthorizedChat("123456789", "123456789"));
+        Assert.False(TelegramChatWorker.IsAuthorizedChat("999999999", "123456789"));
+        Assert.False(TelegramChatWorker.IsAuthorizedChat("123456789", ""));
+    }
+
+    [Fact]
+    public void TelegramChatWorker_BuildEventLog_EmptyList_ReturnsPlaceholder()
+    {
+        var log = TelegramChatWorker.BuildEventLog([]);
+
+        Assert.Equal("No camera events have been recorded in this period.", log);
+    }
+
+    [Fact]
+    public void TelegramChatWorker_BuildEventLog_IncludesEachEventAndNotificationFlag()
+    {
+        var events = new List<AlertEventRecord>
+        {
+            new(Guid.NewGuid(), "gateCamera", DateTimeOffset.Now, "completed",
+                "vehicle_entering_property", "A car pulled into the driveway.", true, "Vehicle entering", 0.8, null),
+            new(Guid.NewGuid(), "gateCamera", DateTimeOffset.Now, "completed",
+                "none", "Nothing of note.", false, "No activity", 0.5, null)
+        };
+
+        var log = TelegramChatWorker.BuildEventLog(events);
+
+        Assert.Contains("A car pulled into the driveway.", log);
+        Assert.Contains("notified=yes", log);
+        Assert.Contains("Nothing of note.", log);
+        Assert.Contains("notified=no", log);
+    }
+
+    [Fact]
     public void GetNextRun_BeforeMorningHour_FiresThisMorning()
     {
         var now = new DateTimeOffset(2026, 7, 24, 6, 0, 0, TimeSpan.FromHours(-5));

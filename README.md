@@ -136,6 +136,25 @@ Sends the alert summary (and photo, if `AttachImage` is true) to a Telegram chat
 }
 ```
 
+### Chatting with the bot
+
+With `Telegram` configured as above, you can also text the bot questions - "what happened at the gate today?", "was anyone here last night?" - and get an answer built from `events.db` and a local Ollama model, from anywhere you have cell signal. This only ever answers messages from the `ChatId` configured above; anyone else who finds and messages the bot is silently ignored.
+
+It works by long-polling Telegram's `getUpdates` API (outbound only), so no inbound port or public exposure is needed - the same reason the notifications already work over cellular.
+
+```json
+"TelegramChat": {
+  "Enabled": true,
+  "LookbackDays": 3,
+  "MaxEventsInContext": 100,
+  "Model": "gemma3:4b",
+  "PollTimeoutSeconds": 25,
+  "TimeoutSeconds": 60
+}
+```
+
+`Model` can be any chat-capable model already pulled in Ollama (e.g. `qwen3:14b`) if you want better conversational answers than the vision model gives.
+
 ## The additional action
 
 The built-in generic-webhook action is separate from Telegram. Configure:
