@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GATE_WATCH</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-glyph">&gt;_</span>
+      <span class="brand-name">GATE_WATCH</span>
+      <span class="cursor">&#9608;</span>
+    </div>
+    <div class="status" id="status">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">connecting&hellip;</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <div class="toolbar-label">EVENT_FEED</div>
+      <div class="toolbar-actions">
+        <span id="event-count" class="event-count">0 events</span>
+        <button id="refresh-btn" class="btn">refresh</button>
+      </div>
+    </div>
+
+    <div id="feed" class="feed">
+      <div class="empty-state">loading feed&hellip;</div>
+    </div>
+  </main>
+
+  <div id="lightbox" class="lightbox hidden">
+    <img id="lightbox-img" src="" alt="Full-size event image" />
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

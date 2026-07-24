@@ -364,6 +364,12 @@ public sealed class BasicTests
 
         public Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
+
+        public Task<IReadOnlyList<AlertEventRecord>> GetRecentEventsAsync(int limit, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
+
+        public Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<AlertEventRecord?>(null);
     }
 
     private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment
