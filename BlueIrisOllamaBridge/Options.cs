@@ -142,6 +142,26 @@ public sealed class EmailOptions
     public bool AttachImage { get; init; } = true;
 }
 
+public sealed class TelegramOptions
+{
+    public const string SectionName = "Telegram";
+
+    public bool Enabled { get; init; }
+
+    public string BotToken { get; init; } = string.Empty;
+    public string ChatId { get; init; } = string.Empty;
+
+    public bool OnlyWhenNotificationRecommended { get; init; } = true;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; init; } = 0.60;
+
+    public bool AttachImage { get; init; } = true;
+
+    [Range(1, 300)]
+    public int TimeoutSeconds { get; init; } = 20;
+}
+
 public sealed class DailySummaryOptions
 {
     public const string SectionName = "DailySummary";

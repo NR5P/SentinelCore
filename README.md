@@ -115,9 +115,30 @@ Blue Iris macro names can differ by release/configuration. The important require
 
 For the front door, pass `-Profile "front-door"` to use that question set.
 
+## Telegram notifications
+
+Sends the alert summary (and photo, if `AttachImage` is true) to a Telegram chat, so you get a push notification anywhere you have cell signal.
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, run `/newbot`, and follow the prompts. It gives you a bot token like `123456789:AAExampleTokenTextGoesHere`.
+2. Send any message to your new bot from the Telegram account you want alerts on.
+3. Find your chat ID: visit `https://api.telegram.org/bot<your-token>/getUpdates` in a browser and look for `"chat":{"id":...}` in the response (or message [@userinfobot](https://t.me/userinfobot) to get your own numeric ID).
+4. Configure:
+
+```json
+"Telegram": {
+  "Enabled": true,
+  "BotToken": "123456789:AAExampleTokenTextGoesHere",
+  "ChatId": "123456789",
+  "OnlyWhenNotificationRecommended": true,
+  "MinimumConfidence": 0.6,
+  "AttachImage": true,
+  "TimeoutSeconds": 20
+}
+```
+
 ## The additional action
 
-The built-in second action is a generic webhook. Configure:
+The built-in generic-webhook action is separate from Telegram. Configure:
 
 ```json
 "Webhook": {
@@ -130,7 +151,7 @@ The built-in second action is a generic webhook. Configure:
 }
 ```
 
-To add a different action (MQTT, SMS, email, database, Home Assistant), implement `IAlertAction` and register it in `Program.cs`. It will run after a successful analysis without changing the receiver or Ollama client.
+To add a different action (MQTT, SMS, database, Home Assistant), implement `IAlertAction` and register it in `Program.cs`. It will run after a successful analysis without changing the receiver or Ollama client.
 
 ## Data
 

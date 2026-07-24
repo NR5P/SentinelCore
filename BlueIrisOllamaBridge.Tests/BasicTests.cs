@@ -84,6 +84,26 @@ public sealed class BasicTests
     };
 
     [Fact]
+    public void TelegramAlertAction_BuildCaption_EscapesHtmlAndIncludesReason()
+    {
+        var result = new AlertResult
+        {
+            Camera = "Gate <front>",
+            Analysis = new VisionAnalysis
+            {
+                Summary = "A car pulled into the driveway.",
+                NotificationReason = "Vehicle stopped at the gate entrance."
+            }
+        };
+
+        var caption = TelegramAlertAction.BuildCaption(result);
+
+        Assert.Contains("Gate &lt;front&gt;", caption);
+        Assert.Contains("A car pulled into the driveway.", caption);
+        Assert.Contains("Vehicle stopped at the gate entrance.", caption);
+    }
+
+    [Fact]
     public void GetNextRun_BeforeMorningHour_FiresThisMorning()
     {
         var now = new DateTimeOffset(2026, 7, 24, 6, 0, 0, TimeSpan.FromHours(-5));

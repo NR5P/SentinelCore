@@ -36,6 +36,12 @@ builder.Services.AddOptions<DailySummaryOptions>()
     .ValidateDataAnnotations()
     .Validate(o => o.MorningHour != o.EveningHour, "DailySummary:MorningHour and DailySummary:EveningHour must differ.")
     .ValidateOnStart();
+builder.Services.AddOptions<TelegramOptions>()
+    .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.BotToken), "Telegram:BotToken is required when Telegram is enabled.")
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ChatId), "Telegram:ChatId is required when Telegram is enabled.")
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -67,6 +73,11 @@ var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionNam
 builder.Services.AddHttpClient<IAlertAction, WebhookAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(webhookSettings.TimeoutSeconds);
+});
+var telegramSettings = builder.Configuration.GetSection(TelegramOptions.SectionName).Get<TelegramOptions>() ?? new();
+builder.Services.AddHttpClient<IAlertAction, TelegramAlertAction>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(telegramSettings.TimeoutSeconds);
 });
 
 var app = builder.Build();

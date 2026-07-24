@@ -47,6 +47,94 @@ public sealed class WebhookAlertAction : IAlertAction
     }
 }
 
+public sealed class TelegramAlertAction : IAlertAction
+{
+    private const string ApiBaseUrl = "https://api.telegram.org";
+
+    private readonly HttpClient _httpClient;
+    private readonly TelegramOptions _options;
+    private readonly ILogger<TelegramAlertAction> _logger;
+
+    public TelegramAlertAction(HttpClient httpClient, IOptions<TelegramOptions> options, ILogger<TelegramAlertAction> logger)
+    {
+        _httpClient = httpClient;
+        _options = options.Value;
+        _logger = logger;
+    }
+
+    public async Task ExecuteAsync(AlertResult result, CancellationToken cancellationToken)
+    {
+        if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.BotToken) || string.IsNullOrWhiteSpace(_options.ChatId))
+            return;
+        if (_options.OnlyWhenNotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result))
+            return;
+        if (result.Analysis is not null && result.Analysis.Confidence < _options.MinimumConfidence)
+            return;
+
+        var caption = BuildCaption(result);
+        var imageExists = _options.AttachImage && !string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath);
+
+        using var response = imageExists
+            ? await SendPhotoAsync(caption, result.ImagePath!, cancellationToken)
+            : await SendMessageAsync(caption, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("Telegram send failed for {AlertId}: {StatusCode} {Body}", result.Id, (int)response.StatusCode, body);
+        }
+        else
+        {
+            _logger.LogInformation("Telegram alert sent for {AlertId}", result.Id);
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendMessageAsync(string caption, CancellationToken cancellationToken)
+    {
+        var payload = new Dictionary<string, string>
+        {
+            ["chat_id"] = _options.ChatId,
+            ["text"] = caption,
+            ["parse_mode"] = "HTML"
+        };
+        return await _httpClient.PostAsync(
+            $"{ApiBaseUrl}/bot{_options.BotToken}/sendMessage",
+            new FormUrlEncodedContent(payload),
+            cancellationToken);
+    }
+
+    private async Task<HttpResponseMessage> SendPhotoAsync(string caption, string imagePath, CancellationToken cancellationToken)
+    {
+        using var content = new MultipartFormDataContent
+        {
+            { new StringContent(_options.ChatId), "chat_id" },
+            { new StringContent(caption), "caption" },
+            { new StringContent("HTML"), "parse_mode" }
+        };
+
+        var imageBytes = await File.ReadAllBytesAsync(imagePath, cancellationToken);
+        var imageContent = new ByteArrayContent(imageBytes);
+        imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+        content.Add(imageContent, "photo", Path.GetFileName(imagePath));
+
+        return await _httpClient.PostAsync($"{ApiBaseUrl}/bot{_options.BotToken}/sendPhoto", content, cancellationToken);
+    }
+
+    public static string BuildCaption(AlertResult result)
+    {
+        var analysis = result.Analysis;
+        if (analysis is null) return $"Alert from {WebUtility.HtmlEncode(result.Camera)}";
+
+        var caption = new StringBuilder();
+        caption.Append($"<b>{WebUtility.HtmlEncode(result.Camera)}</b>\n");
+        caption.Append(WebUtility.HtmlEncode(analysis.Summary));
+        if (!string.IsNullOrWhiteSpace(analysis.NotificationReason))
+            caption.Append($"\n{WebUtility.HtmlEncode(analysis.NotificationReason)}");
+
+        return caption.ToString();
+    }
+}
+
 public sealed class EmailAlertAction : IAlertAction
 {
     private readonly EmailOptions _options;
