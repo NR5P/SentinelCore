@@ -53,6 +53,10 @@ builder.Services.AddOptions<BlueIrisOptions>()
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Camera), "BlueIris:Camera is required when BlueIris is enabled.")
     .Validate(o => !o.Enabled || Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _), "BlueIris:BaseUrl must be a valid URL.")
     .ValidateOnStart();
+builder.Services.AddOptions<SelfMonitoringOptions>()
+    .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -74,6 +78,7 @@ builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddHostedService<DailySummaryWorker>();
 builder.Services.AddHostedService<TelegramChatWorker>();
+builder.Services.AddHostedService<SelfMonitoringWorker>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =>
@@ -107,6 +112,10 @@ var blueIrisSettings = builder.Configuration.GetSection(BlueIrisOptions.SectionN
 builder.Services.AddHttpClient<IBlueIrisSnapshotClient, BlueIrisSnapshotClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(blueIrisSettings.TimeoutSeconds);
+});
+builder.Services.AddHttpClient(nameof(SelfMonitoringWorker), client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 var app = builder.Build();

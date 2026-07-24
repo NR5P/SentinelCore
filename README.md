@@ -172,6 +172,21 @@ Text `/photo` or `/snapshot` to the bot to get a live image pulled straight from
 
 `Camera` is Blue Iris's internal short name for the camera - the same value already flowing through as `Camera=` on every alert. Leave `Username`/`Password` blank if Blue Iris's web server doesn't require login on your LAN.
 
+## Self-monitoring
+
+Watches for the two ways this service can silently stop protecting the camera: Ollama becoming unreachable, or the alert queue backing up faster than it's processed. Sends a Telegram message (using the same `Telegram:BotToken`/`ChatId` as above) only when the state actually *changes* - not on every check - and sends a follow-up when it recovers, so you're not paged on a momentary blip but you do find out about real degradation before you'd otherwise notice by just not getting alerts.
+
+```json
+"SelfMonitoring": {
+  "Enabled": true,
+  "CheckIntervalSeconds": 60,
+  "ConsecutiveFailuresBeforeAlert": 3,
+  "QueueBacklogThreshold": 5,
+  "ConsecutiveBacklogChecksBeforeAlert": 3,
+  "NotifyOnRecovery": true
+}
+```
+
 ## The additional action
 
 The built-in generic-webhook action is separate from Telegram. Configure:
