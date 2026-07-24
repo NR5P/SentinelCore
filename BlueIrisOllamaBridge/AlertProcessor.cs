@@ -16,7 +16,7 @@ public sealed class AlertProcessor : BackgroundService
         IAlertQueue queue,
         IOllamaVisionClient ollama,
         IResultStore store,
-        IConfiguration configuration,
+        IReadOnlyDictionary<string, PromptProfile> profiles,
         IEnumerable<IAlertAction> actions,
         IOptions<OllamaOptions> ollamaOptions,
         ILogger<AlertProcessor> logger)
@@ -27,8 +27,7 @@ public sealed class AlertProcessor : BackgroundService
         _actions = actions;
         _ollamaOptions = ollamaOptions.Value;
         _logger = logger;
-        _profiles = configuration.GetSection("PromptProfiles").Get<Dictionary<string, PromptProfile>>()
-                    ?? throw new InvalidOperationException("No PromptProfiles are configured.");
+        _profiles = profiles;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

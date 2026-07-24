@@ -31,6 +31,17 @@ builder.Services.AddOptions<WebhookOptions>()
     .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.Username), "Email:Username must be a valid email address.")
     .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.ToAddress), "Email:ToAddress must be a valid email address.")
     .ValidateOnStart();
+builder.Services.AddOptions<DailySummaryOptions>()
+    .Bind(builder.Configuration.GetSection(DailySummaryOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => o.MorningHour != o.EveningHour, "DailySummary:MorningHour and DailySummary:EveningHour must differ.")
+    .ValidateOnStart();
+builder.Services.AddOptions<TelegramOptions>()
+    .Bind(builder.Configuration.GetSection(TelegramOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.BotToken), "Telegram:BotToken is required when Telegram is enabled.")
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ChatId), "Telegram:ChatId is required when Telegram is enabled.")
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -38,12 +49,19 @@ builder.Services.Configure<FormOptions>(options =>
     options.MultipartBodyLengthLimit = bridgeSettings.MaximumImageBytes + 1024 * 1024;
 });
 
+var promptProfiles = builder.Configuration.GetSection("PromptProfiles").Get<Dictionary<string, PromptProfile>>()
+    ?? throw new InvalidOperationException("No PromptProfiles are configured.");
+builder.Services.AddSingleton<IReadOnlyDictionary<string, PromptProfile>>(promptProfiles);
+
+builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
 builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
+builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
+builder.Services.AddHostedService<DailySummaryWorker>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =>
@@ -55,6 +73,11 @@ var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionNam
 builder.Services.AddHttpClient<IAlertAction, WebhookAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(webhookSettings.TimeoutSeconds);
+});
+var telegramSettings = builder.Configuration.GetSection(TelegramOptions.SectionName).Get<TelegramOptions>() ?? new();
+builder.Services.AddHttpClient<IAlertAction, TelegramAlertAction>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(telegramSettings.TimeoutSeconds);
 });
 
 var app = builder.Build();

@@ -9,19 +9,31 @@ public static class AlertNotificationPolicy
             return false;
 
         if (!string.Equals(result.Profile, "gate", StringComparison.OrdinalIgnoreCase) ||
-            !EqualsValue(analysis.Gate.State, "closed") ||
-            !analysis.Person.Visible ||
-            !IsInside(analysis.Person.Location))
+            !EqualsValue(analysis.Gate.State, "closed"))
         {
             return true;
         }
 
-        // Suppress only a person-only event. An outside vehicle, active delivery,
-        // new package, or animal in the same frame remains independently alertable.
+        // With the gate closed, a person clearly on the camera/inside side is expected and
+        // not alertable by itself. A person outside, an active delivery, a new package, or
+        // an animal remains independently alertable.
+        //
+        // Vehicles are judged more leniently: a single still frame captured mid-arrival
+        // almost always looks the same as "already inside" (the prompt tells the model to
+        // default activity to "unknown" rather than guess "entering" from one frame), so
+        // requiring a confident "entering" label here caused real arrivals to be silently
+        // dropped. Only a vehicle in its clearly-settled resting spot (parked_inside_property)
+        // is suppressed; anything else - including plain inside_driveway, which is what a
+        // fresh arrival looks like in a single frame - still notifies.
+        var personOnlyInside = !analysis.Person.Visible || IsInside(analysis.Person.Location);
+        var vehicleSettled = analysis.Vehicle.Visible &&
+            EqualsValue(analysis.Vehicle.Location, "parked_inside_property");
+        var vehicleOnlyInside = !analysis.Vehicle.Visible || vehicleSettled;
+
+        if (!personOnlyInside || !vehicleOnlyInside)
+            return true;
+
         var otherAlertSubject =
-            (analysis.Vehicle.Visible &&
-             (EqualsValue(analysis.Vehicle.Location, "outside_gate_entrance") ||
-              EqualsValue(analysis.Vehicle.Activity, "entering"))) ||
             EqualsValue(analysis.Package.Status, "being_delivered") ||
             EqualsValue(analysis.Package.Status, "delivered") ||
             analysis.Animal.Visible;
