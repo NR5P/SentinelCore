@@ -155,6 +155,23 @@ It works by long-polling Telegram's `getUpdates` API (outbound only), so no inbo
 
 `Model` can be any chat-capable model already pulled in Ollama (e.g. `qwen3:14b`) if you want better conversational answers than the vision model gives.
 
+### Live photo on demand
+
+Text `/photo` or `/snapshot` to the bot to get a live image pulled straight from Blue Iris (not the camera directly - Blue Iris already holds the connection to it), separate from the history-based Q&A above.
+
+```json
+"BlueIris": {
+  "Enabled": true,
+  "BaseUrl": "http://192.168.50.7:777",
+  "Camera": "gateCamera",
+  "Username": "",
+  "Password": "",
+  "TimeoutSeconds": 15
+}
+```
+
+`Camera` is Blue Iris's internal short name for the camera - the same value already flowing through as `Camera=` on every alert. Leave `Username`/`Password` blank if Blue Iris's web server doesn't require login on your LAN.
+
 ## The additional action
 
 The built-in generic-webhook action is separate from Telegram. Configure:

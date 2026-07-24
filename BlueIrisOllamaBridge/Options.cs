@@ -142,6 +142,27 @@ public sealed class EmailOptions
     public bool AttachImage { get; init; } = true;
 }
 
+public sealed class BlueIrisOptions
+{
+    public const string SectionName = "BlueIris";
+
+    public bool Enabled { get; init; }
+
+    [Required]
+    public string BaseUrl { get; init; } = string.Empty;
+
+    [Required]
+    public string Camera { get; init; } = string.Empty;
+
+    // Blue Iris's direct image endpoint accepts these as query parameters. Leave both blank
+    // if the web server doesn't require login on your LAN.
+    public string Username { get; init; } = string.Empty;
+    public string Password { get; init; } = string.Empty;
+
+    [Range(1, 300)]
+    public int TimeoutSeconds { get; init; } = 15;
+}
+
 public sealed class TelegramOptions
 {
     public const string SectionName = "Telegram";

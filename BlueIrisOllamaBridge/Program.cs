@@ -46,6 +46,13 @@ builder.Services.AddOptions<TelegramChatOptions>()
     .Bind(builder.Configuration.GetSection(TelegramChatOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<BlueIrisOptions>()
+    .Bind(builder.Configuration.GetSection(BlueIrisOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.BaseUrl), "BlueIris:BaseUrl is required when BlueIris is enabled.")
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Camera), "BlueIris:Camera is required when BlueIris is enabled.")
+    .Validate(o => !o.Enabled || Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _), "BlueIris:BaseUrl must be a valid URL.")
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -95,6 +102,11 @@ builder.Services.AddHttpClient<IOllamaChatClient, OllamaChatClient>(client =>
 {
     client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(telegramChatSettings.TimeoutSeconds);
+});
+var blueIrisSettings = builder.Configuration.GetSection(BlueIrisOptions.SectionName).Get<BlueIrisOptions>() ?? new();
+builder.Services.AddHttpClient<IBlueIrisSnapshotClient, BlueIrisSnapshotClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(blueIrisSettings.TimeoutSeconds);
 });
 
 var app = builder.Build();
