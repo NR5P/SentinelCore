@@ -46,6 +46,10 @@ builder.Services.AddOptions<TelegramChatOptions>()
     .Bind(builder.Configuration.GetSection(TelegramChatOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<SelfMonitoringOptions>()
+    .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -67,6 +71,7 @@ builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddHostedService<DailySummaryWorker>();
 builder.Services.AddHostedService<TelegramChatWorker>();
+builder.Services.AddHostedService<SelfMonitoringWorker>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =>
@@ -95,6 +100,10 @@ builder.Services.AddHttpClient<IOllamaChatClient, OllamaChatClient>(client =>
 {
     client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(telegramChatSettings.TimeoutSeconds);
+});
+builder.Services.AddHttpClient(nameof(SelfMonitoringWorker), client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
 });
 
 var app = builder.Build();

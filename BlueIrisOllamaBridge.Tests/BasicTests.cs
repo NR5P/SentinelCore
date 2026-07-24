@@ -104,6 +104,52 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void DegradationTracker_AlertsOnlyAfterConsecutiveFailures_NotOnFirstBlip()
+    {
+        var tracker = new DegradationTracker(consecutiveBeforeAlert: 3);
+
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+        Assert.Equal(DegradationTransition.Alert, tracker.Observe(isHealthy: false));
+        Assert.True(tracker.IsDegraded);
+    }
+
+    [Fact]
+    public void DegradationTracker_DoesNotReAlertWhileAlreadyDegraded()
+    {
+        var tracker = new DegradationTracker(consecutiveBeforeAlert: 1);
+
+        Assert.Equal(DegradationTransition.Alert, tracker.Observe(isHealthy: false));
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+    }
+
+    [Fact]
+    public void DegradationTracker_RecoversOnFirstHealthyObservation()
+    {
+        var tracker = new DegradationTracker(consecutiveBeforeAlert: 1);
+
+        tracker.Observe(isHealthy: false);
+        Assert.True(tracker.IsDegraded);
+
+        Assert.Equal(DegradationTransition.Recovered, tracker.Observe(isHealthy: true));
+        Assert.False(tracker.IsDegraded);
+    }
+
+    [Fact]
+    public void DegradationTracker_BriefBlipBelowThreshold_NeverAlertsAndResetsCounter()
+    {
+        var tracker = new DegradationTracker(consecutiveBeforeAlert: 3);
+
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: true));
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+        Assert.Equal(DegradationTransition.NoChange, tracker.Observe(isHealthy: false));
+        Assert.False(tracker.IsDegraded);
+    }
+
+    [Fact]
     public void TelegramChatWorker_IsAuthorizedChat_OnlyMatchesConfiguredChatId()
     {
         Assert.True(TelegramChatWorker.IsAuthorizedChat("123456789", "123456789"));

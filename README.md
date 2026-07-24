@@ -155,6 +155,21 @@ It works by long-polling Telegram's `getUpdates` API (outbound only), so no inbo
 
 `Model` can be any chat-capable model already pulled in Ollama (e.g. `qwen3:14b`) if you want better conversational answers than the vision model gives.
 
+## Self-monitoring
+
+Watches for the two ways this service can silently stop protecting the camera: Ollama becoming unreachable, or the alert queue backing up faster than it's processed. Sends a Telegram message (using the same `Telegram:BotToken`/`ChatId` as above) only when the state actually *changes* - not on every check - and sends a follow-up when it recovers, so you're not paged on a momentary blip but you do find out about real degradation before you'd otherwise notice by just not getting alerts.
+
+```json
+"SelfMonitoring": {
+  "Enabled": true,
+  "CheckIntervalSeconds": 60,
+  "ConsecutiveFailuresBeforeAlert": 3,
+  "QueueBacklogThreshold": 5,
+  "ConsecutiveBacklogChecksBeforeAlert": 3,
+  "NotifyOnRecovery": true
+}
+```
+
 ## The additional action
 
 The built-in generic-webhook action is separate from Telegram. Configure:

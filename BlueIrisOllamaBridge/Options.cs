@@ -204,3 +204,26 @@ public sealed class DailySummaryOptions
     [Range(0, 50)]
     public int MaxImagesAttached { get; init; } = 8;
 }
+
+public sealed class SelfMonitoringOptions
+{
+    public const string SectionName = "SelfMonitoring";
+
+    // Uses Telegram:BotToken and Telegram:ChatId to send its alerts.
+    public bool Enabled { get; init; } = true;
+
+    [Range(10, 3600)]
+    public int CheckIntervalSeconds { get; init; } = 60;
+
+    // How many consecutive unhealthy checks before alerting, to avoid paging on a momentary blip.
+    [Range(1, 20)]
+    public int ConsecutiveFailuresBeforeAlert { get; init; } = 3;
+
+    [Range(1, 10_000)]
+    public int QueueBacklogThreshold { get; init; } = 5;
+
+    [Range(1, 20)]
+    public int ConsecutiveBacklogChecksBeforeAlert { get; init; } = 3;
+
+    public bool NotifyOnRecovery { get; init; } = true;
+}
