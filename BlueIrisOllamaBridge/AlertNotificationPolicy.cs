@@ -14,16 +14,21 @@ public static class AlertNotificationPolicy
             return true;
         }
 
-        // With the gate closed, a person or vehicle already on the camera/inside side is
-        // expected and not alertable by itself. A person or vehicle arriving from outside,
-        // an active delivery, a new package, or an animal remains independently alertable.
+        // With the gate closed, a person clearly on the camera/inside side is expected and
+        // not alertable by itself. A person outside, an active delivery, a new package, or
+        // an animal remains independently alertable.
+        //
+        // Vehicles are judged more leniently: a single still frame captured mid-arrival
+        // almost always looks the same as "already inside" (the prompt tells the model to
+        // default activity to "unknown" rather than guess "entering" from one frame), so
+        // requiring a confident "entering" label here caused real arrivals to be silently
+        // dropped. Only a vehicle in its clearly-settled resting spot (parked_inside_property)
+        // is suppressed; anything else - including plain inside_driveway, which is what a
+        // fresh arrival looks like in a single frame - still notifies.
         var personOnlyInside = !analysis.Person.Visible || IsInside(analysis.Person.Location);
-
-        var vehicleArriving =
-            EqualsValue(analysis.Vehicle.Activity, "entering") ||
-            EqualsValue(analysis.EventType, "vehicle_entering_property");
-        var vehicleOnlyInside = !analysis.Vehicle.Visible ||
-            (!vehicleArriving && IsInside(analysis.Vehicle.Location));
+        var vehicleSettled = analysis.Vehicle.Visible &&
+            EqualsValue(analysis.Vehicle.Location, "parked_inside_property");
+        var vehicleOnlyInside = !analysis.Vehicle.Visible || vehicleSettled;
 
         if (!personOnlyInside || !vehicleOnlyInside)
             return true;
@@ -38,8 +43,7 @@ public static class AlertNotificationPolicy
 
     private static bool IsInside(string location) =>
         EqualsValue(location, "inside_driveway") ||
-        EqualsValue(location, "inside_property") ||
-        EqualsValue(location, "parked_inside_property");
+        EqualsValue(location, "inside_property");
 
     private static bool EqualsValue(string value, string expected) =>
         string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);

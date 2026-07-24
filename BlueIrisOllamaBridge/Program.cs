@@ -38,6 +38,10 @@ builder.Services.Configure<FormOptions>(options =>
     options.MultipartBodyLengthLimit = bridgeSettings.MaximumImageBytes + 1024 * 1024;
 });
 
+var promptProfiles = builder.Configuration.GetSection("PromptProfiles").Get<Dictionary<string, PromptProfile>>()
+    ?? throw new InvalidOperationException("No PromptProfiles are configured.");
+builder.Services.AddSingleton<IReadOnlyDictionary<string, PromptProfile>>(promptProfiles);
+
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
 builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();

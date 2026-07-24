@@ -307,8 +307,13 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         Rules:
         - Ordinary traffic traveling along the public road is not notification-worthy.
         - A vehicle stopped in the entrance immediately outside the gate is notification-worthy.
-        - The moment a vehicle enters through the gate, crossing from outside to inside, is notification-worthy.
-        - A vehicle already parked or sitting inside the property is not notification-worthy merely for being there.
+        - A vehicle in the driveway (inside_driveway) is notification-worthy. A single still frame
+          normally cannot prove whether a vehicle is still moving, so use inside_driveway (not
+          parked_inside_property) whenever you cannot confirm from this one frame that it is long
+          settled - do not withhold notification just because motion cannot be confirmed.
+        - Use parked_inside_property, which is not notification-worthy merely for being there, only
+          when the vehicle is clearly in a long-term resting spot (e.g. under a carport, backed into
+          a usual parking spot, well away from the gate) with nothing suggesting recent arrival.
         - For this fixed gate camera, use the person's feet/contact point to determine which side of the gate they occupy. Below the gate, closer to the camera, is inside_driveway or inside_property. Above/behind the gate, in the narrow strip beside the road, is outside_gate. Do not decide from the person's torso or bounding-box center because the person may overlap the gate in the image.
         - When the gate is closed, a person who is wholly on the camera/driveway side is not notification-worthy merely for standing or walking there. Set notification_recommended to false for that person-only event.
         - A person on the road side of the gate (outside_gate), or interacting with the gate from that side (at_gate), is notification-worthy even when the gate is closed.

@@ -32,19 +32,23 @@ public sealed class BasicTests
     }
 
     [Fact]
-    public void ClosedGate_VehicleParkedInside_NoPerson_IsSuppressed()
+    public void ClosedGate_VehicleSettledInUsualSpot_NoPerson_IsSuppressed()
     {
         var result = GateResult(
-            vehicle: new VehicleAnalysis { Visible = true, Location = "inside_driveway", Activity = "parked" });
+            vehicle: new VehicleAnalysis { Visible = true, Location = "parked_inside_property", Activity = "parked" });
 
         Assert.False(AlertNotificationPolicy.ShouldNotify(result));
     }
 
     [Fact]
-    public void ClosedGate_VehicleEntering_IsNotSuppressed()
+    public void ClosedGate_VehicleFreshlyInDriveway_IsNotSuppressed()
     {
+        // A vehicle that just arrived looks the same, in a single still frame, as one that has
+        // been sitting there a while: the model can't confirm motion, so it reports "unknown"
+        // activity rather than "entering". Location alone (inside_driveway, not the more settled
+        // parked_inside_property) must be enough to avoid dropping real arrivals.
         var result = GateResult(
-            vehicle: new VehicleAnalysis { Visible = true, Location = "inside_driveway", Activity = "entering" });
+            vehicle: new VehicleAnalysis { Visible = true, Location = "inside_driveway", Activity = "unknown" });
 
         Assert.True(AlertNotificationPolicy.ShouldNotify(result));
     }

@@ -50,12 +50,20 @@ public sealed class WebhookAlertAction : IAlertAction
 public sealed class EmailAlertAction : IAlertAction
 {
     private readonly EmailOptions _options;
+    private readonly IReadOnlyDictionary<string, PromptProfile> _profiles;
+    private readonly IImageOptimizer _imageOptimizer;
     private readonly ILogger<EmailAlertAction> _logger;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastSent = new(StringComparer.OrdinalIgnoreCase);
 
-    public EmailAlertAction(IOptions<EmailOptions> options, ILogger<EmailAlertAction> logger)
+    public EmailAlertAction(
+        IOptions<EmailOptions> options,
+        IReadOnlyDictionary<string, PromptProfile> profiles,
+        IImageOptimizer imageOptimizer,
+        ILogger<EmailAlertAction> logger)
     {
         _options = options.Value;
+        _profiles = profiles;
+        _imageOptimizer = imageOptimizer;
         _logger = logger;
     }
 
@@ -87,7 +95,9 @@ public sealed class EmailAlertAction : IAlertAction
             return;
         }
 
-        using var message = BuildMessage(result, notification);
+        var cropOverlay = await TryBuildCropOverlayAsync(result, cancellationToken);
+
+        using var message = BuildMessage(result, notification, cropOverlay);
         using var client = new SmtpClient(_options.SmtpHost, _options.SmtpPort)
         {
             EnableSsl = _options.EnableSsl,
@@ -112,7 +122,26 @@ public sealed class EmailAlertAction : IAlertAction
         return DateTimeOffset.UtcNow - lastSent < TimeSpan.FromMinutes(_options.DuplicateCooldownMinutes);
     }
 
-    private MailMessage BuildMessage(AlertResult result, EmailNotification notification)
+    private async Task<byte[]?> TryBuildCropOverlayAsync(AlertResult result, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(result.ImagePath) || !File.Exists(result.ImagePath))
+            return null;
+        if (!_profiles.TryGetValue(result.Profile, out var profile) || profile.Crop is null)
+            return null;
+
+        try
+        {
+            var sourceBytes = await File.ReadAllBytesAsync(result.ImagePath, cancellationToken);
+            return await _imageOptimizer.DrawCropOverlayAsync(sourceBytes, profile.Crop, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to build the analyzed-region image for {AlertId}", result.Id);
+            return null;
+        }
+    }
+
+    private MailMessage BuildMessage(AlertResult result, EmailNotification notification, byte[]? cropOverlay)
     {
         var fromAddress = string.IsNullOrWhiteSpace(_options.FromAddress)
             ? _options.Username
@@ -131,6 +160,12 @@ public sealed class EmailAlertAction : IAlertAction
         var imageHtml = imageExists
             ? "<p><img src=\"cid:gate-alert-image\" alt=\"Gate camera alert\" style=\"max-width:100%;height:auto;border:1px solid #ccc;\" /></p>"
             : string.Empty;
+        var cropHtml = cropOverlay is not null
+            ? """
+              <p style="font-size:13px;color:#555;margin-bottom:2px;">Area the AI analyzed (outlined in red):</p>
+              <p><img src="cid:gate-alert-crop" alt="Analyzed region" style="max-width:100%;height:auto;border:1px solid #ccc;" /></p>
+              """
+            : string.Empty;
 
         var html = $$"""
         <!doctype html>
@@ -139,6 +174,7 @@ public sealed class EmailAlertAction : IAlertAction
           <h2>{{WebUtility.HtmlEncode(notification.Subject)}}</h2>
           <p style="font-size:16px;">{{WebUtility.HtmlEncode(analysis.Summary)}}</p>
           {{imageHtml}}
+          {{cropHtml}}
           <table style="border-collapse:collapse;">
             <tr><td style="padding:4px 12px 4px 0;"><strong>Camera</strong></td><td>{{WebUtility.HtmlEncode(result.Camera)}}</td></tr>
             <tr><td style="padding:4px 12px 4px 0;"><strong>Time</strong></td><td>{{WebUtility.HtmlEncode(result.OccurredAt.ToLocalTime().ToString("f"))}}</td></tr>
@@ -164,10 +200,22 @@ public sealed class EmailAlertAction : IAlertAction
             resource.ContentType.Name = Path.GetFileName(result.ImagePath);
             view.LinkedResources.Add(resource);
         }
+        if (cropOverlay is not null)
+        {
+            var cropResource = new LinkedResource(new MemoryStream(cropOverlay), MediaTypeNames.Image.Jpeg)
+            {
+                ContentId = "gate-alert-crop",
+                TransferEncoding = TransferEncoding.Base64
+            };
+            cropResource.ContentType.Name = "analyzed-region.jpg";
+            view.LinkedResources.Add(cropResource);
+        }
         message.AlternateViews.Add(view);
 
         if (_options.AttachImage && imageExists)
             message.Attachments.Add(new Attachment(result.ImagePath!));
+        if (_options.AttachImage && cropOverlay is not null)
+            message.Attachments.Add(new Attachment(new MemoryStream(cropOverlay), "analyzed-region.jpg", MediaTypeNames.Image.Jpeg));
 
         return message;
     }
@@ -213,6 +261,11 @@ public sealed class EmailAlertAction : IAlertAction
             (EqualsValue(analysis.Vehicle.Activity, "stopped") || EqualsValue(analysis.Vehicle.Activity, "unknown")))
         {
             return new("vehicle-at-gate", $"Vehicle is here at your gate: {VehicleDescription(analysis.Vehicle)}");
+        }
+
+        if (analysis.Vehicle.Visible && EqualsValue(analysis.Vehicle.Location, "inside_driveway"))
+        {
+            return new("vehicle-inside", $"Vehicle is in your driveway: {VehicleDescription(analysis.Vehicle)}");
         }
 
         if (analysis.Person.Visible && EqualsValue(analysis.Person.Location, "inside_property"))
