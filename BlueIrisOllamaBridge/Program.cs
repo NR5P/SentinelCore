@@ -45,6 +45,7 @@ builder.Services.AddSingleton<IReadOnlyDictionary<string, PromptProfile>>(prompt
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
 builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
+builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddHostedService<AlertProcessor>();

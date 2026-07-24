@@ -22,8 +22,9 @@ public sealed class FileResultStore : IResultStore
     private readonly string _imagesDirectory;
     private readonly bool _saveImages;
     private readonly IMemoryCache _cache;
+    private readonly IEventStore _eventStore;
 
-    public FileResultStore(IOptions<BridgeOptions> options, IHostEnvironment environment, IMemoryCache cache)
+    public FileResultStore(IOptions<BridgeOptions> options, IHostEnvironment environment, IMemoryCache cache, IEventStore eventStore)
     {
         var configured = options.Value.DataDirectory;
         var root = Path.IsPathRooted(configured) ? configured : Path.Combine(environment.ContentRootPath, configured);
@@ -31,6 +32,7 @@ public sealed class FileResultStore : IResultStore
         _imagesDirectory = Path.Combine(root, "images");
         _saveImages = options.Value.SaveImages;
         _cache = cache;
+        _eventStore = eventStore;
         Directory.CreateDirectory(_resultsDirectory);
         Directory.CreateDirectory(_imagesDirectory);
     }
@@ -43,6 +45,7 @@ public sealed class FileResultStore : IResultStore
         await using (var stream = File.Create(temporaryPath))
             await JsonSerializer.SerializeAsync(stream, result, JsonOptions, cancellationToken);
         File.Move(temporaryPath, finalPath, true);
+        await _eventStore.RecordAsync(result, cancellationToken);
     }
 
     public async Task<AlertResult?> GetAsync(Guid id, CancellationToken cancellationToken)

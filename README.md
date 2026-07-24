@@ -136,8 +136,15 @@ To add a different action (MQTT, SMS, email, database, Home Assistant), implemen
 
 - `data/images/YYYY-MM-DD/`: retained alert images, if enabled
 - `data/results/`: queued, completed, or failed JSON results
+- `data/events.db`: SQLite history of every alert (one row per alert, updated as it progresses from queued to completed/failed), with a link to its saved image file
 
-Retention cleanup runs every 12 hours according to `Bridge:RetentionDays`.
+Retention cleanup runs every 12 hours according to `Bridge:RetentionDays`. It does not remove old rows from `events.db`.
+
+Query the history with `sqlite3` or any SQLite client, for example:
+
+```bash
+sqlite3 data/events.db "SELECT OccurredAt, Camera, EventType, Summary, ImagePath FROM AlertEvents ORDER BY OccurredAt DESC LIMIT 20;"
+```
 
 ## API
 
