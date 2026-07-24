@@ -104,6 +104,44 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void BlueIrisSnapshotClient_BuildSnapshotUrl_WithoutCredentials_OmitsQueryString()
+    {
+        var options = new BlueIrisOptions { BaseUrl = "http://192.168.50.7:777", Camera = "gateCamera" };
+
+        var url = BlueIrisSnapshotClient.BuildSnapshotUrl(options);
+
+        Assert.Equal("http://192.168.50.7:777/image/gateCamera", url);
+    }
+
+    [Fact]
+    public void BlueIrisSnapshotClient_BuildSnapshotUrl_WithCredentials_IncludesUserAndPw()
+    {
+        var options = new BlueIrisOptions
+        {
+            BaseUrl = "http://192.168.50.7:777/",
+            Camera = "gateCamera",
+            Username = "admin",
+            Password = "p@ss w/ord"
+        };
+
+        var url = BlueIrisSnapshotClient.BuildSnapshotUrl(options);
+
+        Assert.Equal("http://192.168.50.7:777/image/gateCamera?user=admin&pw=p%40ss%20w%2Ford", url);
+    }
+
+    [Fact]
+    public void TelegramChatWorker_IsPhotoCommand_RecognizesCommandVariants()
+    {
+        Assert.True(TelegramChatWorker.IsPhotoCommand("/photo"));
+        Assert.True(TelegramChatWorker.IsPhotoCommand("/PHOTO"));
+        Assert.True(TelegramChatWorker.IsPhotoCommand("/snapshot"));
+        Assert.True(TelegramChatWorker.IsPhotoCommand("/photo@GateAlert332bot"));
+        Assert.True(TelegramChatWorker.IsPhotoCommand("/photo please"));
+        Assert.False(TelegramChatWorker.IsPhotoCommand("can I get a photo?"));
+        Assert.False(TelegramChatWorker.IsPhotoCommand("what happened today"));
+    }
+
+    [Fact]
     public void TelegramChatWorker_IsAuthorizedChat_OnlyMatchesConfiguredChatId()
     {
         Assert.True(TelegramChatWorker.IsAuthorizedChat("123456789", "123456789"));

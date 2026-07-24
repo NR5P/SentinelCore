@@ -16,6 +16,7 @@ public sealed class TelegramChatWorker : BackgroundService
     private readonly HttpClient _httpClient;
     private readonly IEventStore _eventStore;
     private readonly IOllamaChatClient _chatClient;
+    private readonly IBlueIrisSnapshotClient _snapshotClient;
     private readonly TelegramOptions _telegramOptions;
     private readonly TelegramChatOptions _chatOptions;
     private readonly ILogger<TelegramChatWorker> _logger;
@@ -24,6 +25,7 @@ public sealed class TelegramChatWorker : BackgroundService
         IHttpClientFactory httpClientFactory,
         IEventStore eventStore,
         IOllamaChatClient chatClient,
+        IBlueIrisSnapshotClient snapshotClient,
         IOptions<TelegramOptions> telegramOptions,
         IOptions<TelegramChatOptions> chatOptions,
         ILogger<TelegramChatWorker> logger)
@@ -31,6 +33,7 @@ public sealed class TelegramChatWorker : BackgroundService
         _httpClient = httpClientFactory.CreateClient(nameof(TelegramChatWorker));
         _eventStore = eventStore;
         _chatClient = chatClient;
+        _snapshotClient = snapshotClient;
         _telegramOptions = telegramOptions.Value;
         _chatOptions = chatOptions.Value;
         _logger = logger;
@@ -112,6 +115,12 @@ public sealed class TelegramChatWorker : BackgroundService
 
         try
         {
+            if (IsPhotoCommand(message.Text))
+            {
+                await HandlePhotoRequestAsync(cancellationToken);
+                return;
+            }
+
             var answer = await AnswerQuestionAsync(message.Text, cancellationToken);
             await SendMessageAsync(answer, cancellationToken);
         }
@@ -121,6 +130,18 @@ public sealed class TelegramChatWorker : BackgroundService
             try { await SendMessageAsync("Sorry, something went wrong answering that.", cancellationToken); }
             catch (Exception sendEx) { _logger.LogError(sendEx, "Failed to send the fallback error reply"); }
         }
+    }
+
+    private async Task HandlePhotoRequestAsync(CancellationToken cancellationToken)
+    {
+        var image = await _snapshotClient.GetSnapshotAsync(cancellationToken);
+        if (image is null)
+        {
+            await SendMessageAsync("Couldn't get a live photo from Blue Iris just now.", cancellationToken);
+            return;
+        }
+
+        await SendPhotoAsync(image, cancellationToken);
     }
 
     private async Task<string> AnswerQuestionAsync(string question, CancellationToken cancellationToken)
@@ -160,6 +181,38 @@ public sealed class TelegramChatWorker : BackgroundService
                 ["text"] = text
             }),
             cancellationToken);
+
+    private async Task SendPhotoAsync(byte[] imageBytes, CancellationToken cancellationToken)
+    {
+        using var content = new MultipartFormDataContent
+        {
+            { new StringContent(_telegramOptions.ChatId), "chat_id" }
+        };
+        using var imageContent = new ByteArrayContent(imageBytes);
+        imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+        content.Add(imageContent, "photo", "snapshot.jpg");
+
+        using var response = await _httpClient.PostAsync(
+            $"{ApiBaseUrl}/bot{_telegramOptions.BotToken}/sendPhoto", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("Failed to send the Blue Iris snapshot to Telegram: {StatusCode} {Body}", (int)response.StatusCode, body);
+        }
+    }
+
+    // Recognizes an explicit /photo or /snapshot command (optionally with a Telegram
+    // "@botname" suffix) rather than trying to infer intent from free text, so a request for
+    // a live image is never confused with a question about history.
+    public static bool IsPhotoCommand(string text)
+    {
+        var firstToken = text.Trim().Split([' ', '\n'], 2)[0];
+        var atIndex = firstToken.IndexOf('@');
+        if (atIndex >= 0) firstToken = firstToken[..atIndex];
+
+        return string.Equals(firstToken, "/photo", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(firstToken, "/snapshot", StringComparison.OrdinalIgnoreCase);
+    }
 
     public static bool IsAuthorizedChat(string incomingChatId, string configuredChatId) =>
         !string.IsNullOrWhiteSpace(configuredChatId) &&
