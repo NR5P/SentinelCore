@@ -162,6 +162,30 @@ public sealed class TelegramOptions
     public int TimeoutSeconds { get; init; } = 20;
 }
 
+public sealed class TelegramChatOptions
+{
+    public const string SectionName = "TelegramChat";
+
+    // Uses Telegram:BotToken and Telegram:ChatId for identity/authorization -
+    // only messages from that chat ID are ever answered.
+    public bool Enabled { get; init; } = true;
+
+    [Range(1, 30)]
+    public int LookbackDays { get; init; } = 3;
+
+    [Range(1, 500)]
+    public int MaxEventsInContext { get; init; } = 100;
+
+    [Required]
+    public string Model { get; init; } = "gemma3:4b";
+
+    [Range(1, 60)]
+    public int PollTimeoutSeconds { get; init; } = 25;
+
+    [Range(5, 600)]
+    public int TimeoutSeconds { get; init; } = 60;
+}
+
 public sealed class DailySummaryOptions
 {
     public const string SectionName = "DailySummary";

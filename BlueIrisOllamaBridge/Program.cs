@@ -42,6 +42,10 @@ builder.Services.AddOptions<TelegramOptions>()
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.BotToken), "Telegram:BotToken is required when Telegram is enabled.")
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ChatId), "Telegram:ChatId is required when Telegram is enabled.")
     .ValidateOnStart();
+builder.Services.AddOptions<TelegramChatOptions>()
+    .Bind(builder.Configuration.GetSection(TelegramChatOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -62,6 +66,7 @@ builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddHostedService<DailySummaryWorker>();
+builder.Services.AddHostedService<TelegramChatWorker>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =>
@@ -78,6 +83,18 @@ var telegramSettings = builder.Configuration.GetSection(TelegramOptions.SectionN
 builder.Services.AddHttpClient<IAlertAction, TelegramAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(telegramSettings.TimeoutSeconds);
+});
+var telegramChatSettings = builder.Configuration.GetSection(TelegramChatOptions.SectionName).Get<TelegramChatOptions>() ?? new();
+builder.Services.AddHttpClient(nameof(TelegramChatWorker), client =>
+{
+    // Longer than the long-poll's own "timeout" query parameter so the poll itself never
+    // gets cut off by the client before Telegram responds.
+    client.Timeout = TimeSpan.FromSeconds(telegramChatSettings.PollTimeoutSeconds + 15);
+});
+builder.Services.AddHttpClient<IOllamaChatClient, OllamaChatClient>(client =>
+{
+    client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(telegramChatSettings.TimeoutSeconds);
 });
 
 var app = builder.Build();
