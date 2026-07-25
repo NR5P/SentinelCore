@@ -127,6 +127,20 @@ public sealed class HlsStreamManager : IDisposable
         }
     }
 
+    // Same pipe-draining need as DrainAsync, but for short-lived single-frame captures with no
+    // session to log against.
+    private static async Task DiscardAsync(StreamReader reader)
+    {
+        try
+        {
+            while (await reader.ReadLineAsync() != null) { }
+        }
+        catch
+        {
+            // process exited; nothing to do
+        }
+    }
+
     public static List<string> BuildFfmpegArguments(string sourceUrl, bool includeAudio, string outputDir)
     {
         var args = new List<string>
@@ -163,6 +177,52 @@ public sealed class HlsStreamManager : IDisposable
             Password = camera.Password ?? string.Empty
         };
         return builder.Uri.ToString();
+    }
+
+    // Single-frame grab, independent of any running HLS session - used both for the trigger-zone
+    // editor's reference image and for saving a full-res snapshot when a trigger zone fires.
+    public async Task<byte[]?> CaptureSnapshotAsync(Camera camera, CancellationToken cancellationToken)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"snapshot-{Guid.NewGuid():N}.jpg");
+        var sourceUrl = BuildAuthenticatedUrl(camera);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = _ffmpegPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var arg in new[] { "-rtsp_transport", "tcp", "-i", sourceUrl, "-frames:v", "1", "-y", tempPath })
+            psi.ArgumentList.Add(arg);
+
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffmpeg.");
+        _ = DiscardAsync(process.StandardOutput);
+        _ = DiscardAsync(process.StandardError);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            return null;
+        }
+
+        try
+        {
+            if (!File.Exists(tempPath)) return null;
+            var bytes = await File.ReadAllBytesAsync(tempPath, cancellationToken);
+            return bytes;
+        }
+        finally
+        {
+            try { File.Delete(tempPath); } catch { /* best effort */ }
+        }
     }
 
     private void CleanupIdleSessions()

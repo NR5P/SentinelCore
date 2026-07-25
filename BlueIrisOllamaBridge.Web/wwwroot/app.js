@@ -120,6 +120,7 @@ const views = {
   feed: document.getElementById("view-feed"),
   live: document.getElementById("view-live"),
   cameras: document.getElementById("view-cameras"),
+  triggers: document.getElementById("view-triggers"),
   settings: document.getElementById("view-settings")
 };
 let settingsLoaded = false;
@@ -144,6 +145,7 @@ for (const tab of tabs) {
     }
     if (target === "cameras") window.GateWatchCameras.renderList();
     if (target === "live") window.GateWatchCameras.showLive();
+    if (target === "triggers") window.GateWatchTriggers.load();
 
     currentView = target;
   });

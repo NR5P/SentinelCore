@@ -52,11 +52,15 @@ window.GateWatchCameras = (function () {
     editBtn.className = "btn";
     editBtn.textContent = "edit";
     editBtn.addEventListener("click", () => openForm(camera));
+    const zoneBtn = document.createElement("button");
+    zoneBtn.className = "btn";
+    zoneBtn.textContent = "trigger zone";
+    zoneBtn.addEventListener("click", () => window.GateWatchTriggers.openZoneEditor(camera));
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btn";
     deleteBtn.textContent = "delete";
     deleteBtn.addEventListener("click", () => removeCamera(camera));
-    actions.append(editBtn, deleteBtn);
+    actions.append(editBtn, zoneBtn, deleteBtn);
 
     card.append(info, actions);
     return card;

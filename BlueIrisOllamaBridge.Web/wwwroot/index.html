@@ -19,6 +19,7 @@
       <button class="tab active" data-view="feed">feed</button>
       <button class="tab" data-view="live">live</button>
       <button class="tab" data-view="cameras">cameras</button>
+      <button class="tab" data-view="triggers">triggers</button>
       <button class="tab" data-view="settings">settings</button>
     </nav>
     <div class="status" id="status">
@@ -79,6 +80,20 @@
       </div>
     </section>
 
+    <section id="view-triggers" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">TRIGGERS</div>
+        <div class="toolbar-actions">
+          <span id="trigger-count" class="event-count">0 alerts</span>
+          <button id="triggers-refresh-btn" class="btn">refresh</button>
+        </div>
+      </div>
+
+      <div id="triggers-root" class="feed">
+        <div class="empty-state">loading triggers&hellip;</div>
+      </div>
+    </section>
+
     <section id="view-settings" class="view hidden">
       <div class="toolbar">
         <div class="toolbar-label">SETTINGS</div>
@@ -97,11 +112,59 @@
     <img id="lightbox-img" src="" alt="Full-size event image" />
   </div>
 
+  <div id="zone-editor" class="lightbox hidden">
+    <div class="zone-editor-panel">
+      <div class="zone-editor-header">
+        <span id="zone-editor-title">TRIGGER ZONE</span>
+        <button id="zone-editor-close" class="btn">close</button>
+      </div>
+      <div class="zone-editor-body">
+        <div class="zone-editor-draw">
+          <div class="zone-editor-hint">click to outline the trigger area</div>
+          <div class="zone-image-wrap" id="zone-image-wrap">
+            <img id="zone-reference-img" src="" alt="camera reference frame" />
+            <svg id="zone-svg" class="zone-svg"></svg>
+          </div>
+          <div class="zone-editor-draw-actions">
+            <button id="zone-undo-point" class="btn">undo point</button>
+            <button id="zone-clear-points" class="btn">clear zone</button>
+          </div>
+        </div>
+        <div class="zone-editor-side">
+          <div class="zone-editor-hint">drag the edge to size the smallest object that should trigger</div>
+          <div class="zone-image-wrap zone-size-wrap" id="zone-size-wrap">
+            <img id="zone-size-img" src="" alt="camera reference frame" />
+            <svg id="zone-size-svg" class="zone-svg"></svg>
+          </div>
+          <div class="field-grid">
+            <div class="field-row">
+              <label class="field-label" for="zone-cooldown">Seconds between triggers</label>
+              <input type="number" id="zone-cooldown" class="field-input" min="0" step="1" />
+            </div>
+            <div class="field-row">
+              <label class="field-label" for="zone-max-per-min">Max triggers per minute</label>
+              <input type="number" id="zone-max-per-min" class="field-input" min="1" step="1" />
+            </div>
+            <div class="field-row field-checkbox-row">
+              <label class="switch"><input type="checkbox" id="zone-enabled" /><span class="switch-track"></span></label>
+              <span class="field-label">Enabled</span>
+            </div>
+          </div>
+          <div class="zone-editor-footer">
+            <button id="zone-save-btn" class="btn">save</button>
+            <ul class="field-errors" id="zone-editor-errors"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/hls.min.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
   <script src="cameras.js"></script>
+  <script src="triggers.js"></script>
 </body>
 </html>
