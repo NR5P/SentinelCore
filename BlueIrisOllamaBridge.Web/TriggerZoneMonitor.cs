@@ -13,6 +13,7 @@ public sealed class TriggerZoneMonitor(
     ITriggerEventStore eventStore,
     HlsStreamManager streams,
     ClipRecorder clips,
+    AlertForwarder alertForwarder,
     IConfiguration configuration,
     IHostEnvironment environment,
     ILogger<TriggerZoneMonitor> logger) : BackgroundService
@@ -208,10 +209,32 @@ public sealed class TriggerZoneMonitor(
 
             if (session.Config.RecordClips)
                 _ = BuildClipAsync(camera, trigger, session.Config, now);
+
+            if (session.Config.SendToAlerts)
+                _ = ForwardToAlertPipelineAsync(camera, bytes, now);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to save trigger snapshot for camera {CameraId}", camera.Id);
+        }
+    }
+
+    // Fire-and-forget like BuildClipAsync, and for the same reason: not tied to the detection
+    // session's token, so a config change or the camera being disabled a moment later doesn't
+    // cancel an alert that's already in flight.
+    private async Task ForwardToAlertPipelineAsync(Camera camera, byte[] imageBytes, DateTimeOffset occurredAt)
+    {
+        try
+        {
+            await alertForwarder.ForwardAsync(imageBytes, camera.Name, occurredAt, _stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // shutting down
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to forward trigger to the alert pipeline for camera {CameraId}", camera.Id);
         }
     }
 
@@ -299,6 +322,7 @@ public sealed class TriggerZoneMonitor(
         if (a.RecordClips != b.RecordClips) return false;
         if (a.ClipPreSeconds != b.ClipPreSeconds) return false;
         if (a.ClipPostSeconds != b.ClipPostSeconds) return false;
+        if (a.SendToAlerts != b.SendToAlerts) return false;
         if (a.ZonePolygon.Count != b.ZonePolygon.Count) return false;
 
         for (var i = 0; i < a.ZonePolygon.Count; i++)

@@ -23,12 +23,15 @@ var camerasRoot = Path.IsPathRooted(camerasDataDirectory)
 builder.Services.AddSingleton<ICameraStore>(new SqliteCameraStore(camerasRoot));
 builder.Services.AddSingleton<HlsStreamManager>();
 
-// Trigger zones are their own isolated alert pipeline for these cameras - separate database,
-// separate image folder, no AI involvement yet. See TriggerZoneMonitor for the detection loop.
+// Trigger zones have their own detection database and image folder, separate from the main
+// app's. What happens after a trigger fires is opt-in per camera - see AlertForwarder for the
+// (off by default) bridge into the main app's own Ollama analysis + email/Telegram/webhook pipeline.
 var triggerStore = new SqliteTriggerStore(camerasRoot);
 builder.Services.AddSingleton<ITriggerConfigStore>(triggerStore);
 builder.Services.AddSingleton<ITriggerEventStore>(triggerStore);
 builder.Services.AddSingleton<ClipRecorder>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<AlertForwarder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
 var app = builder.Build();
