@@ -24,6 +24,26 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "cloudVision", title: "CLOUD VISION", endpoint: "/api/settings/cloud-vision",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow this OpenAI account to be used for alert analysis, either as the primary backend or as a fallback - see VISION ROUTING below to choose which." },
+        { name: "apiKey", label: "API Key", type: "password", tip: "An OpenAI API key with access to a vision-capable model, e.g. gpt-4o-mini." },
+        { name: "model", label: "Model", type: "text", tip: "Which OpenAI model analyses the snapshots, e.g. gpt-4o-mini or gpt-4o." },
+        { name: "maximumRetries", label: "Max Retries", type: "number", min: 0, max: 10, tip: "How many times to retry when OpenAI fails or returns something unparseable." },
+        { name: "retryDelaySeconds", label: "Retry Delay (s)", type: "number", min: 1, max: 300, tip: "How long to wait between those retries." }
+      ]
+    },
+    {
+      key: "visionRouting", title: "VISION ROUTING", endpoint: "/api/settings/vision-routing",
+      fields: [
+        { name: "primary", label: "Primary Backend", type: "select", options: [
+            { value: "ollama", label: "Ollama (local)" },
+            { value: "cloud", label: "Cloud Vision (OpenAI)" }
+          ], tip: "Which backend analyses alerts first. If it's Cloud Vision but CLOUD VISION above isn't enabled/configured, Ollama is used instead automatically." },
+        { name: "fallbackEnabled", label: "Fall Back To The Other Backend", type: "checkbox", tip: "If the primary backend fails after its own retries, automatically retry once against the other one before giving up - slower, but the alert still gets analyzed instead of being lost. Requires both backends to be usable (Ollama running, Cloud Vision enabled and configured)." }
+      ]
+    },
+    {
       key: "imageProcessing", title: "IMAGE PROCESSING", endpoint: "/api/settings/image-processing",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Shrink snapshots before sending them to the AI. Usually faster with no real loss in accuracy." },
@@ -149,6 +169,8 @@ window.GateWatchSettings = (function () {
   const SECTION_TIPS = {
     bridge: "How alerts arrive from Blue Iris, and how long they're kept.",
     ollama: "The local AI model that looks at each snapshot, and how it's tuned.",
+    cloudVision: "An offsite AI model (OpenAI) that can analyse alerts instead of, or as a backup for, the local Ollama model.",
+    visionRouting: "Which vision backend handles alerts first, and whether to fall back to the other one if it fails.",
     imageProcessing: "Resizing snapshots before the AI sees them, to speed up analysis.",
     email: "Email alerts when something notable happens.",
     dailySummary: "A twice-daily digest of everything that happened, separate from individual alerts.",
@@ -222,6 +244,21 @@ window.GateWatchSettings = (function () {
       input.value = Array.isArray(value) ? value.join(", ") : "";
       input.dataset.field = field.name;
       row.appendChild(input);
+      return row;
+    }
+
+    if (field.type === "select") {
+      const select = document.createElement("select");
+      select.className = "field-input";
+      select.dataset.field = field.name;
+      for (const option of field.options) {
+        const opt = document.createElement("option");
+        opt.value = option.value;
+        opt.textContent = option.label;
+        if (option.value === value) opt.selected = true;
+        select.appendChild(opt);
+      }
+      row.appendChild(select);
       return row;
     }
 

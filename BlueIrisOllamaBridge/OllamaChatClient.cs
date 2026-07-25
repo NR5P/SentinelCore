@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace BlueIrisOllamaBridge;
 
-// Free-text Q&A against Ollama, distinct from IOllamaVisionClient which always
+// Free-text Q&A against Ollama, distinct from IVisionAnalysisClient which always
 // sends an image and expects a fixed structured-JSON schema back.
 public interface IOllamaChatClient
 {

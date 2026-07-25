@@ -50,6 +50,30 @@ public sealed class OllamaSettingsDto
     public int RetryDelaySeconds { get; set; }
 }
 
+public sealed class CloudVisionSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    public string ApiKey { get; set; } = string.Empty;
+
+    [Required]
+    public string Model { get; set; } = string.Empty;
+
+    [Range(0, 10)]
+    public int MaximumRetries { get; set; }
+
+    [Range(1, 300)]
+    public int RetryDelaySeconds { get; set; }
+}
+
+public sealed class VisionRoutingSettingsDto
+{
+    [Required]
+    public string Primary { get; set; } = "ollama";
+
+    public bool FallbackEnabled { get; set; }
+}
+
 public sealed class ImageProcessingSettingsDto
 {
     public bool Enabled { get; set; } = true;

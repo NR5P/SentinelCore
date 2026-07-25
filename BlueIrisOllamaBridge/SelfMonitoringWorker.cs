@@ -43,14 +43,15 @@ public sealed class DegradationTracker(int consecutiveBeforeAlert)
     }
 }
 
-// Watches for the two ways this service can silently stop protecting the gate: Ollama
-// becoming unreachable, or the alert queue backing up faster than it's processed. Pushes a
-// Telegram alert only on state transitions, not on every check, so it doesn't spam.
+// Watches for the two ways this service can silently stop protecting the gate: the vision
+// analysis backend becoming unreachable, or the alert queue backing up faster than it's
+// processed. Pushes a Telegram alert only on state transitions, not on every check, so it
+// doesn't spam.
 public sealed class SelfMonitoringWorker : BackgroundService
 {
     private const string ApiBaseUrl = "https://api.telegram.org";
 
-    private readonly IOllamaVisionClient _ollama;
+    private readonly IVisionAnalysisClient _vision;
     private readonly IAlertQueue _queue;
     private readonly HttpClient _httpClient;
     private readonly IOptionsMonitor<TelegramOptions> _telegramOptionsMonitor;
@@ -65,14 +66,14 @@ public sealed class SelfMonitoringWorker : BackgroundService
     private int _queueTrackerThreshold;
 
     public SelfMonitoringWorker(
-        IOllamaVisionClient ollama,
+        IVisionAnalysisClient vision,
         IAlertQueue queue,
         IHttpClientFactory httpClientFactory,
         IOptionsMonitor<TelegramOptions> telegramOptions,
         IOptionsMonitor<SelfMonitoringOptions> options,
         ILogger<SelfMonitoringWorker> logger)
     {
-        _ollama = ollama;
+        _vision = vision;
         _queue = queue;
         _httpClient = httpClientFactory.CreateClient(nameof(SelfMonitoringWorker));
         _telegramOptionsMonitor = telegramOptions;
@@ -153,14 +154,14 @@ public sealed class SelfMonitoringWorker : BackgroundService
         bool canNotify,
         CancellationToken cancellationToken)
     {
-        var ollamaReady = await _ollama.IsReadyAsync(cancellationToken);
+        var visionReady = await _vision.IsReadyAsync(cancellationToken);
         await HandleTransitionAsync(
             _ollamaTracker,
-            ollamaReady,
+            visionReady,
             canNotify,
             telegramOptions,
-            alertText: "Ollama is unreachable. Camera alerts will queue up and go stale until it recovers.",
-            recoveryText: "Ollama is reachable again. Alert processing has resumed.",
+            alertText: "The vision analysis backend is unreachable. Camera alerts will queue up and go stale until it recovers.",
+            recoveryText: "The vision analysis backend is reachable again. Alert processing has resumed.",
             options.NotifyOnRecovery,
             cancellationToken);
 

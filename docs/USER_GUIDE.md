@@ -13,16 +13,17 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
 7. [The SETTINGS tab](#7-the-settings-tab)
-8. [Prompt profiles — what the AI is told to look for](#8-prompt-profiles--what-the-ai-is-told-to-look-for)
-9. [License plate recognition & known vehicles](#9-license-plate-recognition--known-vehicles)
-10. [The Telegram bot](#10-the-telegram-bot)
-11. [Email](#11-email)
-12. [MQTT & Home Assistant](#12-mqtt--home-assistant)
-13. [Why didn't I get an alert? (rate limiting & suppression, explained)](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
-14. [Self-monitoring](#14-self-monitoring)
-15. [Bug reports](#15-bug-reports)
-16. [Where your data lives](#16-where-your-data-lives)
-17. [Troubleshooting](#17-troubleshooting)
+8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
+9. [Prompt profiles — what the AI is told to look for](#9-prompt-profiles--what-the-ai-is-told-to-look-for)
+10. [License plate recognition & known vehicles](#10-license-plate-recognition--known-vehicles)
+11. [The Telegram bot](#11-the-telegram-bot)
+12. [Email](#12-email)
+13. [MQTT & Home Assistant](#13-mqtt--home-assistant)
+14. [Why didn't I get an alert? (rate limiting & suppression, explained)](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
+15. [Self-monitoring](#15-self-monitoring)
+16. [Bug reports](#16-bug-reports)
+17. [Where your data lives](#17-where-your-data-lives)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -31,9 +32,11 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 There are two independent pieces running on your home server:
 
 - **The bridge** (port 5080) — receives snapshot images from Blue Iris whenever it detects
-  motion, sends each one to a local AI vision model (Ollama) with a set of questions, decides
-  whether it's worth telling you about, and sends alerts (email, Telegram, etc.) when it is.
-  This never leaves your network — the image and the AI both stay local.
+  motion, sends each one to an AI vision model with a set of questions, decides whether it's
+  worth telling you about, and sends alerts (email, Telegram, etc.) when it is. By default this
+  uses a local model (Ollama) and never leaves your network. An offsite cloud model can be used
+  instead, or as an automatic backup if the local one is unavailable — see
+  [section 8](#8-vision-analysis-backend--local-cloud-or-both).
 - **The dashboard** (port 3320, "SENTINEL_CORE") — a web page for browsing what the bridge has
   seen, adding your own extra cameras (separate from Blue Iris), drawing motion-detection
   zones on them, and editing every setting above without touching a config file by hand.
@@ -119,7 +122,7 @@ Below that, the settings for this zone:
 | Save a video clip around each trigger | Turns on continuous background recording for this camera so footage from just before a trigger can be included in the clip. Uses disk space while on — the recording itself isn't tied to whether you have the LIVE tab open. |
 | Seconds before / after trigger | How much footage to keep on each side of the trigger moment. The clip only appears once the "after" portion has finished recording. |
 | **Send triggers to the AI and alert pipeline** | Off by default. When on, a trigger from this zone is sent through the *same* AI analysis and the *same* alert actions (email, Telegram, webhook) that Blue Iris alerts already use — see below. |
-| Alert prompt profile | Which prompt profile (see [section 8](#8-prompt-profiles--what-the-ai-is-told-to-look-for)) analyzes this camera's triggers. Only shown/used when the toggle above is on. |
+| Alert prompt profile | Which prompt profile (see [section 9](#9-prompt-profiles--what-the-ai-is-told-to-look-for)) analyzes this camera's triggers. Only shown/used when the toggle above is on. |
 | Enabled | Master switch for the whole zone. Off means nothing is watched or recorded, but your shape and settings are kept. |
 
 **About "send to alert pipeline":** Blue Iris images and your own trigger-zone cameras can
@@ -146,6 +149,9 @@ this guide mostly mirrors:
 - **Ollama** — which local vision model analyzes snapshots (must already be pulled in
   Ollama), how long it's kept loaded in memory between alerts, and inference tuning
   (temperature, top-K/top-P, output token limit, retries).
+- **Cloud Vision** and **Vision Routing** — an offsite AI model (OpenAI) that can analyze
+  alerts instead of, or as an automatic backup for, the local Ollama model. Its own section
+  below. See [section 8](#8-vision-analysis-backend--local-cloud-or-both).
 - **Image Processing** — whether/how snapshots are resized before the AI sees them (usually
   faster with no real accuracy loss), and JPEG quality.
 - **Email** — SMTP server details, sender/recipient addresses, a duplicate-cooldown so one
@@ -158,20 +164,20 @@ this guide mostly mirrors:
   back it looks, how many events it considers, and which Ollama model answers.
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
-- **Self-Monitoring** — watches the bridge's own health; see [section 14](#14-self-monitoring).
+- **Self-Monitoring** — watches the bridge's own health; see [section 15](#15-self-monitoring).
 - **Bug Reports** — emails the developer when something breaks internally. See
-  [section 15](#15-bug-reports).
+  [section 16](#16-bug-reports).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must
   be before Email or Telegram will still ping you. It never fully mutes either channel — a
   confident detection still alerts you at 3am — and it has no effect on the Feed, the daily
   digest, or self-monitoring, which all keep working exactly as normal. See
-  [section 13](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
+  [section 14](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
   fits with the other rate-limiting layers.
 - **Known Vehicles** — the list a transcribed license plate is checked against. Its own
-  section below. See [section 9](#9-license-plate-recognition--known-vehicles).
+  section below. See [section 10](#10-license-plate-recognition--known-vehicles).
 - **MQTT / Home Assistant** — publishes events over MQTT with Home Assistant auto-discovery,
   optionally using this app as its own broker. Its own section below. See
-  [section 12](#12-mqtt--home-assistant).
+  [section 13](#13-mqtt--home-assistant).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
 - **Prompt Profiles** — the actual instructions given to the AI, per camera. Its own section
   below, since there's a lot here.
@@ -182,7 +188,35 @@ in-memory queue and opens a database connection once), and a few `*BaseUrl`/`*Ti
 fields that size an HTTP client. Changing those needs a restart regardless — see
 [DEPLOYMENT.md](DEPLOYMENT.md).
 
-## 8. Prompt profiles — what the AI is told to look for
+## 8. Vision analysis backend — local, cloud, or both
+
+Every alert (Blue Iris or your own trigger zones) gets analyzed by one of two kinds of AI
+vision backend:
+
+- **Ollama** — a model running on your own hardware. Free to run, keeps every image on your
+  own network, but needs a machine capable of it (ideally a GPU) and can be slow on modest
+  hardware.
+- **Cloud Vision** — currently OpenAI (e.g. `gpt-4o-mini`). Needs an OpenAI API key and sends
+  each snapshot to OpenAI's servers, but works well on any machine regardless of local hardware,
+  and is usually faster.
+
+**Vision Routing** decides which one actually gets used:
+
+- **Primary Backend** — which one analyzes alerts first. If it's set to Cloud Vision but the
+  Cloud Vision section above isn't enabled with a valid API key, Ollama is used instead
+  automatically rather than every alert failing outright.
+- **Fall Back To The Other Backend** — if the primary fails (after its own retries), instead of
+  giving up on the alert, retry once against whichever backend isn't primary. This is what lets
+  you run Cloud Vision as your everyday backend with Ollama as a safety net if the internet or
+  OpenAI itself is briefly unavailable — or the reverse, Ollama as primary with Cloud Vision as
+  backup if your local machine occasionally struggles to keep up.
+
+Whichever backend actually analyzed a given alert is recorded with it as `model`, visible in
+the raw result at `/api/results/{id}` (not currently shown in the FEED tab itself). A `model`
+of `pending` means analysis hasn't finished yet; `unavailable` means both the primary and (if
+configured) the fallback failed and the alert was never analyzed.
+
+## 9. Prompt profiles — what the AI is told to look for
 
 A **prompt profile** is the actual instructions given to the AI for a particular camera or
 situation: what the scene normally looks like, what counts as worth telling you about, and a
@@ -217,7 +251,7 @@ Each profile has:
 | System Prompt | The instructions given to the AI before it ever sees an image. |
 | Questions | The specific things the AI must answer about each image — these become the structured fields you see on the Feed tab. |
 | Use crop region | Optionally send only part of the image to the AI, e.g. to cut a road or sky out of frame so the model focuses on what matters. |
-| License plate recognition | Off by default. See [section 9](#9-license-plate-recognition--known-vehicles). |
+| License plate recognition | Off by default. See [section 10](#10-license-plate-recognition--known-vehicles). |
 
 Your original gate prompt is untouched and still keyed as `gate` — it's just labeled
 **"Nathan's Default Gate Prompt"** in the list now so it's easy to tell apart from the generic
@@ -225,21 +259,21 @@ starter profiles. That `gate` name specifically also gets one extra behavior: wh
 reports the gate as closed, a person or vehicle that's clearly still on the inside/camera side
 won't trigger a notification just for being there — but someone on the outside/road side, an
 active delivery, a newly-left package, or an animal still will. See
-[section 13](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
+[section 14](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
 explanation.
 
 **Adding your own profile:** click **+ add profile**, fill in a Name and at least one
 question, and save. **Deleting** works the same way as any other profile card — the `default`
 profile is required and can't be removed, since it's the fallback for anything unmatched.
 
-## 9. License plate recognition & known vehicles
+## 10. License plate recognition & known vehicles
 
 Off by default, and worth turning on only once a camera actually has the resolution and angle
 to make a plate legible — on a low-res or heavily-angled camera this mostly won't read
 anything, which is harmless but not useful either.
 
 **Turning it on:** each prompt profile has its own **License plate recognition** switch (see
-[section 8](#8-prompt-profiles--what-the-ai-is-told-to-look-for)). It's per-profile rather than
+[section 9](#9-prompt-profiles--what-the-ai-is-told-to-look-for)). It's per-profile rather than
 a single global switch because profiles are effectively already "per camera" in how this
 system works — the same way a profile's crop region only makes sense for one physical camera,
 plate recognition only makes sense to turn on for the specific camera(s) that can actually
@@ -263,7 +297,7 @@ miss, especially at lower resolutions, so it isn't trustworthy enough to gate re
 decisions on. Treat it as a helpful hint on top of an alert you'd already be getting, not as
 its own detection layer.
 
-## 10. The Telegram bot
+## 11. The Telegram bot
 
 Once **Telegram Alerts** is configured (bot token from [@BotFather](https://t.me/BotFather),
 your chat ID), the bot pushes a message — and the photo, if enabled — for every alert-worthy
@@ -281,14 +315,14 @@ Two special commands:
 
 Everything else you type is treated as a free-text question.
 
-## 11. Email
+## 12. Email
 
 **Email** sends individual alerts the same way Telegram does, with its own duplicate-cooldown
 and confidence threshold. **Daily Summary** is a separate, additional digest email — sent
 twice a day (configurable hours) regardless of whether individual alerts fired — covering
 everything that happened, with a capped number of attached images so it doesn't get huge.
 
-## 12. MQTT & Home Assistant
+## 13. MQTT & Home Assistant
 
 Off by default. When enabled, every processed event — Blue Iris or a trigger zone routed
 through the AI pipeline — is published over MQTT, with Home Assistant auto-discovery so
@@ -327,9 +361,9 @@ alert-worthy ones) — turn on **Only When Notification Recommended** if you'd r
 Assistant only hear about the same events Email/Telegram would alert on. Either way, MQTT
 publishing never affects whether Email/Telegram/the Feed treat an event as alert-worthy — it's
 purely an additional output, not another suppression layer. See
-[section 13](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained).
+[section 14](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained).
 
-## 13. Why didn't I get an alert? (rate limiting & suppression, explained)
+## 14. Why didn't I get an alert? (rate limiting & suppression, explained)
 
 There are several independent layers that can each suppress a notification. If something
 didn't alert when you expected it to, it's almost always one of these:
@@ -368,11 +402,11 @@ didn't alert when you expected it to, it's almost always one of these:
    the chicken-coop profile), you may get an analysis that never flags anything as
    alert-worthy simply because it's asking the wrong questions.
 
-Note that license plate recognition ([section 9](#9-license-plate-recognition--known-vehicles))
+Note that license plate recognition ([section 10](#10-license-plate-recognition--known-vehicles))
 is *not* in this list on purpose — a known or unknown plate never suppresses or forces an
 alert, it only annotates one that was already going to fire.
 
-## 14. Self-monitoring
+## 15. Self-monitoring
 
 Watches for the two ways the bridge can silently stop protecting you: Ollama becoming
 unreachable, or the alert queue backing up faster than it's processed. It only messages you
@@ -381,7 +415,7 @@ momentary blip doesn't page you, but real degradation gets caught before you'd o
 notice by just... not getting alerts. It also tells you when things recover, if
 **Notify On Recovery** is on.
 
-## 15. Bug reports
+## 16. Bug reports
 
 Off by default. When enabled, both the bridge and the dashboard automatically email a
 developer address (fixed, not something you set) whenever something in the code hits an
@@ -395,7 +429,7 @@ mail setup for this, and if Email isn't configured, bug reports simply can't sen
 else breaks). A repeating error only emails once per hour rather than once per occurrence, so a
 persistent issue doesn't flood the inbox.
 
-## 16. Where your data lives
+## 17. Where your data lives
 
 - `BlueIrisOllamaBridge/data/images/YYYY-MM-DD/` — saved Blue Iris alert snapshots (if
   **Save Images** is on)
@@ -407,7 +441,7 @@ persistent issue doesn't flood the inbox.
 Retention cleanup runs automatically according to **Retention Days** in Bridge settings; it
 removes old images but not the `events.db` history rows themselves.
 
-## 17. Troubleshooting
+## 18. Troubleshooting
 
 **A setting I just changed doesn't seem to be doing anything (Cameras/Triggers).** Zone and
 camera config changes are picked up within about ten seconds of saving — give it a moment,

@@ -67,7 +67,12 @@ by one `dotnet build` at the repo root.
 - **Linux** (this guide assumes Ubuntu/Debian-family; adjust package manager commands for
   others)
 - **.NET 10 SDK**
-- **Ollama**, running locally, with a vision-capable model pulled (default `gemma3:4b`)
+- **Ollama**, running locally, with a vision-capable model pulled (default `gemma3:4b`) -
+  required for the default configuration. An offsite Cloud Vision backend (OpenAI) can be used
+  instead, or as an automatic fallback, with no local install of its own - just an API key in
+  Settings. See the User Guide's
+  [Vision analysis backend](USER_GUIDE.md#8-vision-analysis-backend--local-cloud-or-both)
+  section.
 - **ffmpeg**, installed and on `PATH` — required by the Web project for the Cameras/Live/
   Triggers tabs (it shells out to ffmpeg for HLS streaming, snapshot capture, and clip
   extraction)
@@ -152,9 +157,12 @@ This is fast (well under a second of actual test time) and worth running before 
    ```
    Put the result in `Bridge:ApiKey`. Anything Blue Iris sends without a matching
    `X-Api-Key` header is rejected.
-2. Confirm `Ollama:Model` matches whatever you pulled in Ollama.
+2. Confirm `Ollama:Model` matches whatever you pulled in Ollama. Optionally set
+   `CloudVision:ApiKey` and flip `CloudVision:Enabled`/`VisionRouting:Primary` to use an
+   offsite model instead of, or as a fallback for, local Ollama - see
+   [USER_GUIDE.md § Vision analysis backend](USER_GUIDE.md#8-vision-analysis-backend--local-cloud-or-both).
 3. Review `PromptProfiles` — 103 profiles ship built-in (see
-   [USER_GUIDE.md § Prompt profiles](USER_GUIDE.md#8-prompt-profiles--what-the-ai-is-told-to-look-for)
+   [USER_GUIDE.md § Prompt profiles](USER_GUIDE.md#9-prompt-profiles--what-the-ai-is-told-to-look-for)
    for what's in there and how to add your own by hand-editing this section directly, if
    you're not going through the Settings UI).
 4. Configure whichever alert channels you want under `Email`, `Telegram`, `Webhook` —

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -245,6 +246,189 @@ public sealed class BasicTests
         // every existing profile already gets - no accidental prompt drift from adding this field.
         var otherDefaultProfile = OllamaVisionClient.BuildPrompt(alert, new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] });
         Assert.Equal(withoutPlate, otherDefaultProfile);
+    }
+
+    [Fact]
+    public void OpenAiVisionClient_BuildJsonSchema_OnlyIncludesLicensePlateWhenProfileOptsIn()
+    {
+        var disabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
+        var enabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"], LicensePlateRecognitionEnabled = true };
+
+        var withoutPlate = OpenAiVisionClient.BuildJsonSchema(disabledProfile);
+        var vehicleWithout = withoutPlate["properties"]!["vehicle"]!;
+        Assert.Null(vehicleWithout["properties"]!["license_plate"]);
+        Assert.DoesNotContain("license_plate", vehicleWithout["required"]!.AsArray().Select(n => n!.GetValue<string>()));
+
+        var withPlate = OpenAiVisionClient.BuildJsonSchema(enabledProfile);
+        var vehicleWith = withPlate["properties"]!["vehicle"]!;
+        Assert.NotNull(vehicleWith["properties"]!["license_plate"]);
+        Assert.Contains("license_plate", vehicleWith["required"]!.AsArray().Select(n => n!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void OpenAiVisionClient_BuildJsonSchema_MarksEveryPropertyRequiredAndForbidsExtras()
+    {
+        var schema = OpenAiVisionClient.BuildJsonSchema(new PromptProfile { SystemPrompt = "Test.", Questions = ["Q"] });
+
+        void AssertStrict(JsonObject obj)
+        {
+            Assert.Equal("object", obj["type"]!.GetValue<string>());
+            Assert.False(obj["additionalProperties"]!.GetValue<bool>());
+            var propertyNames = obj["properties"]!.AsObject().Select(p => p.Key).ToList();
+            var requiredNames = obj["required"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+            Assert.Equal(propertyNames.OrderBy(n => n), requiredNames.OrderBy(n => n));
+        }
+
+        AssertStrict(schema);
+        AssertStrict(schema["properties"]!["gate"]!.AsObject());
+        AssertStrict(schema["properties"]!["person"]!.AsObject());
+        AssertStrict(schema["properties"]!["vehicle"]!.AsObject());
+        AssertStrict(schema["properties"]!["package"]!.AsObject());
+        AssertStrict(schema["properties"]!["animal"]!.AsObject());
+    }
+
+    [Fact]
+    public void OpenAiVisionClient_ParseResponse_ExtractsAnalysisFromChoicesMessageContent()
+    {
+        const string analysisJson = """
+            {"event_type":"vehicle_at_gate","summary":"A car is at the gate.",
+             "gate":{"state":"closed"},
+             "person":{"visible":false,"location":"none","activity":"none","outside_vehicle":false,"description":""},
+             "vehicle":{"visible":true,"location":"outside_gate_entrance","orientation":"facing_gate","activity":"stopped","type":"car","color":"blue","description":"","delivery_company":"none","delivery_company_confidence":0.0},
+             "package":{"visible":false,"status":"none","location":"none"},
+             "animal":{"visible":false,"description":""},
+             "confidence":0.9,"notification_recommended":true,"notification_reason":"Vehicle waiting at gate."}
+            """;
+        var responseText = JsonSerializer.Serialize(new
+        {
+            choices = new[] { new { message = new { content = analysisJson } } }
+        });
+
+        var (analysis, raw) = OpenAiVisionClient.ParseResponse(responseText);
+
+        Assert.Equal("vehicle_at_gate", analysis.EventType);
+        Assert.True(analysis.Vehicle.Visible);
+        Assert.Equal(0.9, analysis.Confidence);
+        Assert.Equal(analysisJson, raw);
+    }
+
+    [Fact]
+    public void OpenAiVisionClient_ParseResponse_ThrowsWhenContentIsMissing()
+    {
+        var responseText = JsonSerializer.Serialize(new { choices = Array.Empty<object>() });
+        Assert.Throws<IndexOutOfRangeException>(() => OpenAiVisionClient.ParseResponse(responseText));
+    }
+
+    [Fact]
+    public async Task FailoverVisionClient_UsesPrimaryOnly_WhenItSucceeds()
+    {
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = new FailoverVisionClient(
+            ollama, cloud,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama", FallbackEnabled = true }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
+            NullLogger<FailoverVisionClient>.Instance);
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gemma3:4b", model);
+        Assert.Equal(0, cloud.CallCount);
+    }
+
+    [Fact]
+    public async Task FailoverVisionClient_FallsBackToOtherBackend_WhenPrimaryFailsAndFallbackEnabled()
+    {
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini") { ThrowOnAnalyze = true };
+        // Primary is cloud, which fails - fallback should land on Ollama.
+        var client = new FailoverVisionClient(
+            ollama, cloud,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = true }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
+            NullLogger<FailoverVisionClient>.Instance);
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gemma3:4b", model);
+        Assert.Equal(1, cloud.CallCount);
+        Assert.Equal(1, ollama.CallCount);
+    }
+
+    [Fact]
+    public async Task FailoverVisionClient_PropagatesFailure_WhenFallbackDisabled()
+    {
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini") { ThrowOnAnalyze = true };
+        var client = new FailoverVisionClient(
+            ollama, cloud,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = false }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
+            NullLogger<FailoverVisionClient>.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken));
+        Assert.Equal(0, ollama.CallCount);
+    }
+
+    [Fact]
+    public async Task FailoverVisionClient_UsesOllama_WhenCloudPrimaryButNotConfigured()
+    {
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        // Primary says cloud, but no API key - a settings mistake shouldn't fail every alert.
+        var client = new FailoverVisionClient(
+            ollama, cloud,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = false }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = false, ApiKey = "" }),
+            NullLogger<FailoverVisionClient>.Instance);
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gemma3:4b", model);
+        Assert.Equal(0, cloud.CallCount);
+    }
+
+    [Fact]
+    public async Task FailoverVisionClient_IsReadyAsync_TrueIfEitherBackendIsReady()
+    {
+        var ollama = new FakeVisionClient("gemma3:4b") { Ready = false };
+        var cloud = new FakeVisionClient("gpt-4o-mini") { Ready = true };
+        var client = new FailoverVisionClient(
+            ollama, cloud,
+            new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama", FallbackEnabled = true }),
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
+            NullLogger<FailoverVisionClient>.Instance);
+
+        Assert.True(await client.IsReadyAsync(TestContext.Current.CancellationToken));
+
+        ollama.Ready = false;
+        cloud.Ready = false;
+        Assert.False(await client.IsReadyAsync(TestContext.Current.CancellationToken));
+    }
+
+    private static IncomingAlert MakeAlert() => new(
+        Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+        "gate", "image/jpeg", "alert.jpg", []);
+
+    private static PromptProfile MakeProfile() => new() { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
+
+    private sealed class FakeVisionClient(string model) : IVisionAnalysisClient
+    {
+        public int CallCount { get; private set; }
+        public bool ThrowOnAnalyze { get; init; }
+        public bool Ready { get; set; } = true;
+
+        public Task<(VisionAnalysis Analysis, string Raw, string Model)> AnalyzeAsync(
+            IncomingAlert alert, PromptProfile profile, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            if (ThrowOnAnalyze)
+                throw new InvalidOperationException($"{model} is unavailable.");
+            return Task.FromResult((new VisionAnalysis(), "{}", model));
+        }
+
+        public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(Ready);
     }
 
     [Fact]
