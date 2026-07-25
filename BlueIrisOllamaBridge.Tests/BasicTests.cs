@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using SixLabors.ImageSharp;
@@ -316,74 +315,6 @@ public sealed class BasicTests
         Assert.Equal("ABC1234", root.GetProperty("vehicle_license_plate").GetString());
         Assert.Equal("Nathan's Truck", root.GetProperty("vehicle_known_label").GetString());
         Assert.False(root.TryGetProperty("nonexistent_field", out _));
-    }
-
-    [Fact]
-    public void BugReportEmail_Build_ProducesExpectedSubjectRecipientAndBody()
-    {
-        var options = new EmailOptions { Username = "a@b.com", FromAddress = "", ToAddress = "a@b.com" };
-        var report = new BugReport(
-            "BlueIrisOllamaBridge.Web", "BlueIrisOllamaBridge.Web.TriggerZoneMonitor", "Error",
-            "Failed to save trigger snapshot", "System.IO.IOException: disk full",
-            new DateTimeOffset(2026, 7, 25, 10, 0, 0, TimeSpan.FromHours(-5)));
-
-        using var message = BugReportEmail.Build(options, report);
-
-        Assert.Equal("nathan@nr5p.com", Assert.Single(message.To).Address);
-        Assert.Equal("a@b.com", message.From!.Address);
-        Assert.Contains("BlueIrisOllamaBridge.Web", message.Subject);
-        Assert.Contains("TriggerZoneMonitor", message.Subject);
-        Assert.Contains("Failed to save trigger snapshot", message.Body);
-        Assert.Contains("System.IO.IOException: disk full", message.Body);
-        Assert.False(message.IsBodyHtml);
-    }
-
-    [Fact]
-    public void BugReportEmail_ExceptionTypeName_ExtractsTypeOrFallsBackToNoException()
-    {
-        var withException = new BugReport("p", "c", "Error", "m", "System.InvalidOperationException: bad state", DateTimeOffset.UtcNow);
-        var withoutException = new BugReport("p", "c", "Error", "m", null, DateTimeOffset.UtcNow);
-
-        Assert.Equal("System.InvalidOperationException", BugReportEmail.ExceptionTypeName(withException));
-        Assert.Equal("NoException", BugReportEmail.ExceptionTypeName(withoutException));
-    }
-
-    [Fact]
-    public async Task BugReportLoggerProvider_OnlyForwardsErrorLevelFromOurOwnNamespaces()
-    {
-        var sender = new RecordingBugReportSender();
-        var provider = new BugReportLoggerProvider("TestProcess", sender);
-
-        var ourLogger = provider.CreateLogger("BlueIrisOllamaBridge.Web.TriggerZoneMonitor");
-        var frameworkLogger = provider.CreateLogger("Microsoft.AspNetCore.Server.Kestrel");
-
-        ourLogger.LogInformation("routine info, should not report");
-        ourLogger.LogWarning("a warning, should not report");
-        frameworkLogger.LogError(new InvalidOperationException("framework noise"), "framework error, should not report");
-        ourLogger.LogError(new InvalidOperationException("boom"), "our real error, should report");
-
-        await sender.WaitForCallAsync(TestContext.Current.CancellationToken);
-
-        var report = Assert.Single(sender.Reports);
-        Assert.Equal("TestProcess", report.Process);
-        Assert.Equal("BlueIrisOllamaBridge.Web.TriggerZoneMonitor", report.Category);
-        Assert.Contains("boom", report.ExceptionDetails);
-    }
-
-    private sealed class RecordingBugReportSender : IBugReportSender
-    {
-        public List<BugReport> Reports { get; } = [];
-        private readonly TaskCompletionSource _received = new();
-
-        public Task SendAsync(BugReport report, CancellationToken cancellationToken)
-        {
-            Reports.Add(report);
-            _received.TrySetResult();
-            return Task.CompletedTask;
-        }
-
-        public Task WaitForCallAsync(CancellationToken cancellationToken) =>
-            _received.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
     }
 
     [Fact]

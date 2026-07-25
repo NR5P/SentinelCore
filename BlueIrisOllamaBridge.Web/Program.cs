@@ -34,12 +34,6 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<AlertForwarder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
-// Reads BugReports/Email straight from the main app's appsettings.json (this project has no
-// SMTP config of its own) - see WebBugReportSender.
-builder.Services.AddSingleton<IBugReportSender, WebBugReportSender>();
-builder.Services.AddSingleton<ILoggerProvider>(sp =>
-    new BugReportLoggerProvider("BlueIrisOllamaBridge.Web", sp.GetRequiredService<IBugReportSender>()));
-
 var app = builder.Build();
 
 app.UseDefaultFiles();

@@ -177,11 +177,6 @@ public sealed class QuietHoursSettingsDto
     public double MinimumConfidence { get; set; } = 0.85;
 }
 
-public sealed class BugReportSettingsDto
-{
-    public bool Enabled { get; set; }
-}
-
 public sealed class MqttSettingsDto
 {
     public bool Enabled { get; set; }

@@ -135,12 +135,6 @@ window.GateWatchSettings = (function () {
         { name: "homeAssistantDiscoveryPrefix", label: "Discovery Prefix", type: "text", tip: "Must match the discovery prefix configured in Home Assistant's own MQTT integration. 'homeassistant' is Home Assistant's default - only change this if you changed it there too." },
         { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox", tip: "Only publish events the AI flagged as notable. Leave off if you want every event in Home Assistant to build your own history or automations from." }
       ]
-    },
-    {
-      key: "bugReports", title: "BUG REPORTS", endpoint: "/api/settings/bug-reports",
-      fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Email the developer when something in the bridge or dashboard hits an internal error, using the same account configured under Email above. Goes to a fixed developer address, not one you set - there's nothing else to configure here." }
-      ]
     }
   ];
 
@@ -158,8 +152,7 @@ window.GateWatchSettings = (function () {
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
     quietHours: "Raise the bar for Email/Telegram alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",
-    mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker.",
-    bugReports: "Email the developer when something breaks internally, using the Email account above."
+    mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker."
   };
 
   function buildField(field, value) {
