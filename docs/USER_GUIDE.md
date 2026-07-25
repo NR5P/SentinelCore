@@ -20,8 +20,9 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 12. [MQTT & Home Assistant](#12-mqtt--home-assistant)
 13. [Why didn't I get an alert? (rate limiting & suppression, explained)](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
 14. [Self-monitoring](#14-self-monitoring)
-15. [Where your data lives](#15-where-your-data-lives)
-16. [Troubleshooting](#16-troubleshooting)
+15. [Bug reports](#15-bug-reports)
+16. [Where your data lives](#16-where-your-data-lives)
+17. [Troubleshooting](#17-troubleshooting)
 
 ---
 
@@ -158,6 +159,8 @@ this guide mostly mirrors:
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
 - **Self-Monitoring** — watches the bridge's own health; see [section 14](#14-self-monitoring).
+- **Bug Reports** — emails the developer when something breaks internally. See
+  [section 15](#15-bug-reports).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must
   be before Email or Telegram will still ping you. It never fully mutes either channel — a
   confident detection still alerts you at 3am — and it has no effect on the Feed, the daily
@@ -378,7 +381,21 @@ momentary blip doesn't page you, but real degradation gets caught before you'd o
 notice by just... not getting alerts. It also tells you when things recover, if
 **Notify On Recovery** is on.
 
-## 15. Where your data lives
+## 15. Bug reports
+
+Off by default. When enabled, both the bridge and the dashboard automatically email a
+developer address (fixed, not something you set) whenever something in the code hits an
+internal error — not routine stuff like a camera being temporarily unreachable, but genuine
+bugs: unhandled exceptions caught in the bridge's processing loop, the dashboard's trigger-zone
+detection, and similar. Each report includes which process and part of the code it came from,
+the error message, and the technical details (stack trace) needed to actually fix it.
+
+It reuses whichever SMTP account is already configured under **Email** — there's no separate
+mail setup for this, and if Email isn't configured, bug reports simply can't send (nothing
+else breaks). A repeating error only emails once per hour rather than once per occurrence, so a
+persistent issue doesn't flood the inbox.
+
+## 16. Where your data lives
 
 - `BlueIrisOllamaBridge/data/images/YYYY-MM-DD/` — saved Blue Iris alert snapshots (if
   **Save Images** is on)
@@ -390,7 +407,7 @@ notice by just... not getting alerts. It also tells you when things recover, if
 Retention cleanup runs automatically according to **Retention Days** in Bridge settings; it
 removes old images but not the `events.db` history rows themselves.
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 **A setting I just changed doesn't seem to be doing anything (Cameras/Triggers).** Zone and
 camera config changes are picked up within about ten seconds of saving — give it a moment,

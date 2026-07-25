@@ -120,6 +120,16 @@ public sealed class CropRegion
     public double Bottom { get; init; } = 1;
 }
 
+public sealed class BugReportOptions
+{
+    public const string SectionName = "BugReports";
+
+    // Off by default - nothing here is sent anywhere until explicitly turned on. The recipient
+    // is fixed (see IBugReportSender.Recipient) and isn't exposed as a setting; sending reuses
+    // whatever SMTP account is already configured under Email above.
+    public bool Enabled { get; init; }
+}
+
 public sealed class MqttOptions
 {
     public const string SectionName = "Mqtt";
