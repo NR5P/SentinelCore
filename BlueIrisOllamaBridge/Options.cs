@@ -120,6 +120,49 @@ public sealed class CropRegion
     public double Bottom { get; init; } = 1;
 }
 
+public sealed class MqttOptions
+{
+    public const string SectionName = "Mqtt";
+
+    public bool Enabled { get; init; }
+
+    // If true, this process hosts its own MQTT broker instead of requiring an external one
+    // (e.g. Mosquitto/Home Assistant's own broker add-on). Either way, this app's own client
+    // still connects out to a broker to publish - when this is true it connects to its own
+    // embedded one on 127.0.0.1; when false it connects to Host/Port below.
+    // Like Bridge:DataDirectory and other options that bind a socket at startup, this - and
+    // EmbeddedBrokerPort - need a restart to take effect if changed.
+    public bool RunEmbeddedBroker { get; init; }
+
+    [Range(1, 65535)]
+    public int EmbeddedBrokerPort { get; init; } = 1883;
+
+    // Only used when RunEmbeddedBroker is false.
+    public string BrokerHost { get; init; } = "127.0.0.1";
+
+    [Range(1, 65535)]
+    public int BrokerPort { get; init; } = 1883;
+
+    public string Username { get; init; } = string.Empty;
+    public string Password { get; init; } = string.Empty;
+    public bool UseTls { get; init; }
+
+    // Root of every topic this app publishes, e.g. "sentinelcore/gateCamera/event/state".
+    [Required]
+    public string TopicPrefix { get; init; } = "sentinelcore";
+
+    // Publishes Home Assistant MQTT discovery config so cameras show up automatically as
+    // devices/entities, with no manual entity configuration needed on the Home Assistant side.
+    public bool HomeAssistantDiscovery { get; init; } = true;
+
+    [Required]
+    public string HomeAssistantDiscoveryPrefix { get; init; } = "homeassistant";
+
+    // Off by default (unlike the Webhook action) - most people wiring this up want every event
+    // in Home Assistant to build their own history/automations from, not just alert-worthy ones.
+    public bool OnlyWhenNotificationRecommended { get; init; }
+}
+
 public sealed class WebhookOptions
 {
     public const string SectionName = "Webhook";

@@ -118,6 +118,23 @@ window.GateWatchSettings = (function () {
         { name: "apiKey", label: "API Key", type: "password", tip: "Secret sent in that header so the receiving end knows it's you." },
         { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox", tip: "Only post events the AI flagged as notable, rather than every one." }
       ]
+    },
+    {
+      key: "mqtt", title: "MQTT / HOME ASSISTANT", endpoint: "/api/settings/mqtt",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Publish every analysed event over MQTT, with Home Assistant auto-discovery so cameras show up as devices with no manual setup on the Home Assistant side." },
+        { name: "runEmbeddedBroker", label: "Run Built-In Broker", type: "checkbox", tip: "Have this app act as its own MQTT broker on the port below, so you don't need a separate one (like Mosquitto) running anywhere. Leave off to connect to a broker you already have - e.g. Home Assistant's own Mosquitto add-on. Needs a restart to take effect if changed." },
+        { name: "embeddedBrokerPort", label: "Built-In Broker Port", type: "number", min: 1, max: 65535, tip: "Port the built-in broker listens on, if enabled above. Point other MQTT clients (including this app's own publisher) at this host on this port." },
+        { name: "brokerHost", label: "Broker Host", type: "text", tip: "Address of the MQTT broker to connect to. Ignored if Run Built-In Broker is on - this app connects to its own broker instead." },
+        { name: "brokerPort", label: "Broker Port", type: "number", min: 1, max: 65535, tip: "Port of the external broker. 1883 is the standard unencrypted MQTT port." },
+        { name: "username", label: "Username", type: "text", tip: "Leave blank if the broker allows anonymous connections (Mosquitto's default is often anonymous on a LAN)." },
+        { name: "password", label: "Password", type: "password", tip: "Only needed if the broker requires a username above." },
+        { name: "useTls", label: "Use TLS", type: "checkbox", tip: "Encrypt the connection to an external broker. Leave off for a local/LAN broker without TLS configured." },
+        { name: "topicPrefix", label: "Topic Prefix", type: "text", tip: "Root of every topic this app publishes, e.g. 'sentinelcore' produces sentinelcore/gateCamera/event/state." },
+        { name: "homeAssistantDiscovery", label: "Home Assistant Discovery", type: "checkbox", tip: "Automatically publish Home Assistant's MQTT discovery config so each camera appears as a device with its own entities - no manual YAML or UI entity setup needed." },
+        { name: "homeAssistantDiscoveryPrefix", label: "Discovery Prefix", type: "text", tip: "Must match the discovery prefix configured in Home Assistant's own MQTT integration. 'homeassistant' is Home Assistant's default - only change this if you changed it there too." },
+        { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox", tip: "Only publish events the AI flagged as notable. Leave off if you want every event in Home Assistant to build your own history or automations from." }
+      ]
     }
   ];
 
@@ -134,7 +151,8 @@ window.GateWatchSettings = (function () {
     blueIris: "Pulling a fresh snapshot from Blue Iris on demand via the /photo command.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
     quietHours: "Raise the bar for Email/Telegram alerts during a window (e.g. overnight) without ever fully muting them.",
-    webhook: "Forward each analysed event to another system."
+    webhook: "Forward each analysed event to another system.",
+    mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker."
   };
 
   function buildField(field, value) {

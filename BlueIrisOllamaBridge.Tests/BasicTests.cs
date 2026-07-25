@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -242,6 +243,78 @@ public sealed class BasicTests
         // every existing profile already gets - no accidental prompt drift from adding this field.
         var otherDefaultProfile = OllamaVisionClient.BuildPrompt(alert, new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] });
         Assert.Equal(withoutPlate, otherDefaultProfile);
+    }
+
+    [Fact]
+    public void MqttTopics_Slug_HandlesSpacesPunctuationAndCase()
+    {
+        Assert.Equal("gatecamera", MqttTopics.Slug("gateCamera"));
+        Assert.Equal("front_door_cam", MqttTopics.Slug("Front Door Cam"));
+        Assert.Equal("cam__1", MqttTopics.Slug("Cam #1"));
+        Assert.Equal("unknown", MqttTopics.Slug(""));
+    }
+
+    [Fact]
+    public void MqttTopics_BuildsExpectedTopicStrings()
+    {
+        Assert.Equal("sentinelcore/status", MqttTopics.Availability("sentinelcore"));
+        Assert.Equal("sentinelcore/gatecamera/event/state", MqttTopics.EventState("sentinelcore", "gateCamera"));
+        Assert.Equal("sentinelcore/gatecamera/event/attributes", MqttTopics.EventAttributes("sentinelcore", "gateCamera"));
+        Assert.Equal("sentinelcore/gatecamera/notified/state", MqttTopics.NotifiedState("sentinelcore", "gateCamera"));
+        Assert.Equal(
+            "homeassistant/binary_sensor/sentinelcore_gatecamera/notified/config",
+            MqttTopics.DiscoveryConfigTopic("homeassistant", "binary_sensor", "sentinelcore", "gateCamera", "notified"));
+    }
+
+    [Fact]
+    public void MqttTopics_DiscoveryPayloads_IncludeHomeAssistantRequiredFields()
+    {
+        var options = new MqttOptions { TopicPrefix = "sentinelcore", HomeAssistantDiscoveryPrefix = "homeassistant" };
+
+        var notifiedJson = MqttTopics.BuildNotifiedDiscoveryPayload(options, "gateCamera");
+        using (var doc = JsonDocument.Parse(notifiedJson))
+        {
+            var root = doc.RootElement;
+            Assert.Equal("sentinelcore_gatecamera_notified", root.GetProperty("unique_id").GetString());
+            Assert.Equal("sentinelcore/gatecamera/notified/state", root.GetProperty("state_topic").GetString());
+            Assert.Equal(30, root.GetProperty("off_delay").GetInt32());
+            Assert.Equal("sentinelcore/status", root.GetProperty("availability_topic").GetString());
+            Assert.Equal("sentinelcore_gatecamera", root.GetProperty("device").GetProperty("identifiers")[0].GetString());
+        }
+
+        var eventJson = MqttTopics.BuildLastEventDiscoveryPayload(options, "gateCamera");
+        using (var doc = JsonDocument.Parse(eventJson))
+        {
+            var root = doc.RootElement;
+            Assert.Equal("sentinelcore/gatecamera/event/state", root.GetProperty("state_topic").GetString());
+            Assert.Equal("sentinelcore/gatecamera/event/attributes", root.GetProperty("json_attributes_topic").GetString());
+        }
+    }
+
+    [Fact]
+    public void MqttTopics_BuildEventAttributesPayload_IncludesPlateAndOmitsNulls()
+    {
+        var result = new AlertResult
+        {
+            Camera = "gateCamera",
+            OccurredAt = new DateTimeOffset(2026, 7, 25, 10, 0, 0, TimeSpan.FromHours(-5)),
+            Profile = "gate",
+            Analysis = new VisionAnalysis
+            {
+                Summary = "A car pulled into the driveway.",
+                Confidence = 0.8,
+                Vehicle = new VehicleAnalysis { Visible = true, LicensePlateText = "ABC1234", KnownVehicleLabel = "Nathan's Truck" }
+            }
+        };
+
+        var json = MqttTopics.BuildEventAttributesPayload(result);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        Assert.Equal("gateCamera", root.GetProperty("camera").GetString());
+        Assert.Equal("ABC1234", root.GetProperty("vehicle_license_plate").GetString());
+        Assert.Equal("Nathan's Truck", root.GetProperty("vehicle_known_label").GetString());
+        Assert.False(root.TryGetProperty("nonexistent_field", out _));
     }
 
     [Fact]

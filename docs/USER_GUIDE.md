@@ -17,10 +17,11 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 9. [License plate recognition & known vehicles](#9-license-plate-recognition--known-vehicles)
 10. [The Telegram bot](#10-the-telegram-bot)
 11. [Email](#11-email)
-12. [Why didn't I get an alert? (rate limiting & suppression, explained)](#12-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
-13. [Self-monitoring](#13-self-monitoring)
-14. [Where your data lives](#14-where-your-data-lives)
-15. [Troubleshooting](#15-troubleshooting)
+12. [MQTT & Home Assistant](#12-mqtt--home-assistant)
+13. [Why didn't I get an alert? (rate limiting & suppression, explained)](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
+14. [Self-monitoring](#14-self-monitoring)
+15. [Where your data lives](#15-where-your-data-lives)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
@@ -156,15 +157,18 @@ this guide mostly mirrors:
   back it looks, how many events it considers, and which Ollama model answers.
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
-- **Self-Monitoring** — watches the bridge's own health; see [section 13](#13-self-monitoring).
+- **Self-Monitoring** — watches the bridge's own health; see [section 14](#14-self-monitoring).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must
   be before Email or Telegram will still ping you. It never fully mutes either channel — a
   confident detection still alerts you at 3am — and it has no effect on the Feed, the daily
   digest, or self-monitoring, which all keep working exactly as normal. See
-  [section 12](#12-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
+  [section 13](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
   fits with the other rate-limiting layers.
 - **Known Vehicles** — the list a transcribed license plate is checked against. Its own
   section below. See [section 9](#9-license-plate-recognition--known-vehicles).
+- **MQTT / Home Assistant** — publishes events over MQTT with Home Assistant auto-discovery,
+  optionally using this app as its own broker. Its own section below. See
+  [section 12](#12-mqtt--home-assistant).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
 - **Prompt Profiles** — the actual instructions given to the AI, per camera. Its own section
   below, since there's a lot here.
@@ -218,7 +222,7 @@ starter profiles. That `gate` name specifically also gets one extra behavior: wh
 reports the gate as closed, a person or vehicle that's clearly still on the inside/camera side
 won't trigger a notification just for being there — but someone on the outside/road side, an
 active delivery, a newly-left package, or an animal still will. See
-[section 12](#12-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
+[section 13](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
 explanation.
 
 **Adding your own profile:** click **+ add profile**, fill in a Name and at least one
@@ -281,7 +285,48 @@ and confidence threshold. **Daily Summary** is a separate, additional digest ema
 twice a day (configurable hours) regardless of whether individual alerts fired — covering
 everything that happened, with a capped number of attached images so it doesn't get huge.
 
-## 12. Why didn't I get an alert? (rate limiting & suppression, explained)
+## 12. MQTT & Home Assistant
+
+Off by default. When enabled, every processed event — Blue Iris or a trigger zone routed
+through the AI pipeline — is published over MQTT, with Home Assistant auto-discovery so
+cameras show up as devices with their own entities automatically, no manual YAML or UI setup
+required on the Home Assistant side.
+
+**Broker options.** You need an MQTT broker for this to talk to. Two ways to get one:
+
+- **Run your own broker separately** (e.g. Mosquitto, or Home Assistant's own Mosquitto
+  add-on if you're using Home Assistant OS/Supervised) and point **Broker Host** / **Broker
+  Port** / **Username** / **Password** at it.
+- **Let this app be the broker.** Turn on **Run Built-In Broker** and it hosts its own MQTT
+  broker on **Built-In Broker Port** — nothing else to install. Point Home Assistant's MQTT
+  integration (or any other MQTT client) at this host on that port instead. This setting and
+  its port need a restart to take effect if changed, the same as other settings that bind a
+  network socket at startup.
+
+Either way, this app's own publisher connects to whichever broker is active and stays
+connected, reconnecting automatically if the connection drops.
+
+**What shows up in Home Assistant.** Each camera that has sent at least one event becomes a
+device named `<camera> (Sentinel Core)` with two entities:
+
+- **Notified** (`binary_sensor`) — turns on briefly whenever an event fires that would have
+  alerted Email/Telegram, then automatically resets after 30 seconds. Good for triggering
+  automations (lights, announcements, etc.) off a notable event.
+- **Last Event** (`sensor`) — the event type as its state, with the full analysis (summary,
+  confidence, camera, occurred-at time, and license plate info if that's enabled for the
+  camera) available as entity attributes for building your own dashboards or automations.
+
+An availability topic tracks whether the bridge itself is reachable, so Home Assistant shows
+these entities as "unavailable" rather than silently stale if the app stops running.
+
+**What gets published, and when.** By default, *every* processed event is published (not just
+alert-worthy ones) — turn on **Only When Notification Recommended** if you'd rather Home
+Assistant only hear about the same events Email/Telegram would alert on. Either way, MQTT
+publishing never affects whether Email/Telegram/the Feed treat an event as alert-worthy — it's
+purely an additional output, not another suppression layer. See
+[section 13](#13-why-didnt-i-get-an-alert-rate-limiting--suppression-explained).
+
+## 13. Why didn't I get an alert? (rate limiting & suppression, explained)
 
 There are several independent layers that can each suppress a notification. If something
 didn't alert when you expected it to, it's almost always one of these:
@@ -324,7 +369,7 @@ Note that license plate recognition ([section 9](#9-license-plate-recognition--k
 is *not* in this list on purpose — a known or unknown plate never suppresses or forces an
 alert, it only annotates one that was already going to fire.
 
-## 13. Self-monitoring
+## 14. Self-monitoring
 
 Watches for the two ways the bridge can silently stop protecting you: Ollama becoming
 unreachable, or the alert queue backing up faster than it's processed. It only messages you
@@ -333,7 +378,7 @@ momentary blip doesn't page you, but real degradation gets caught before you'd o
 notice by just... not getting alerts. It also tells you when things recover, if
 **Notify On Recovery** is on.
 
-## 14. Where your data lives
+## 15. Where your data lives
 
 - `BlueIrisOllamaBridge/data/images/YYYY-MM-DD/` — saved Blue Iris alert snapshots (if
   **Save Images** is on)
@@ -345,7 +390,7 @@ notice by just... not getting alerts. It also tells you when things recover, if
 Retention cleanup runs automatically according to **Retention Days** in Bridge settings; it
 removes old images but not the `events.db` history rows themselves.
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 **A setting I just changed doesn't seem to be doing anything (Cameras/Triggers).** Zone and
 camera config changes are picked up within about ten seconds of saving — give it a moment,
@@ -372,6 +417,13 @@ Telegram settings — confirm that's actually your chat, not a different one.
 a general vision model needs the plate to be sharp and roughly frontal to read it at all. Also
 confirm the toggle is actually on for the specific profile that camera uses, not just that
 Known Vehicles has entries.
+
+**No devices show up in Home Assistant.** Confirm Home Assistant's own MQTT integration is
+configured and pointed at the same broker this app is publishing to, and that its discovery
+prefix matches **Discovery Prefix** in Settings (both default to `homeassistant`, so this
+usually only matters if either side was customized). Discovery messages are only published the
+first time each camera sends an event after startup, so a camera needs at least one processed
+event before it appears.
 
 For anything that looks like the software itself is unhealthy (not starting, crashing,
 unreachable), see the Troubleshooting section of [DEPLOYMENT.md](DEPLOYMENT.md).

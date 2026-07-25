@@ -177,6 +177,34 @@ public sealed class QuietHoursSettingsDto
     public double MinimumConfidence { get; set; } = 0.85;
 }
 
+public sealed class MqttSettingsDto
+{
+    public bool Enabled { get; set; }
+    public bool RunEmbeddedBroker { get; set; }
+
+    [Range(1, 65535)]
+    public int EmbeddedBrokerPort { get; set; } = 1883;
+
+    public string BrokerHost { get; set; } = "127.0.0.1";
+
+    [Range(1, 65535)]
+    public int BrokerPort { get; set; } = 1883;
+
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    public bool UseTls { get; set; }
+
+    [Required]
+    public string TopicPrefix { get; set; } = "sentinelcore";
+
+    public bool HomeAssistantDiscovery { get; set; } = true;
+
+    [Required]
+    public string HomeAssistantDiscoveryPrefix { get; set; } = "homeassistant";
+
+    public bool OnlyWhenNotificationRecommended { get; set; }
+}
+
 public sealed class WebhookSettingsDto
 {
     public bool Enabled { get; set; }
