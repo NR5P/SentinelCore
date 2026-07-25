@@ -46,6 +46,9 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-max-per-min").value = config.maxTriggersPerMinute ?? 6;
         document.getElementById("zone-enabled").checked = !!config.enabled;
         setShadowSensitivity(config.shadowSensitivity ?? 50);
+        document.getElementById("zone-record-clips").checked = !!config.recordClips;
+        document.getElementById("zone-clip-pre").value = config.clipPreSeconds ?? 5;
+        document.getElementById("zone-clip-post").value = config.clipPostSeconds ?? 10;
       }
     } catch (err) {
       console.error("Failed to load trigger zone editor", err);
@@ -205,7 +208,10 @@ window.GateWatchTriggers = (function () {
       minTriggerArea,
       cooldownSeconds: parseInt(document.getElementById("zone-cooldown").value, 10) || 0,
       maxTriggersPerMinute: parseInt(document.getElementById("zone-max-per-min").value, 10) || 1,
-      shadowSensitivity: parseInt(document.getElementById("zone-shadow-sensitivity").value, 10) || 0
+      shadowSensitivity: parseInt(document.getElementById("zone-shadow-sensitivity").value, 10) || 0,
+      recordClips: document.getElementById("zone-record-clips").checked,
+      clipPreSeconds: parseInt(document.getElementById("zone-clip-pre").value, 10) || 0,
+      clipPostSeconds: parseInt(document.getElementById("zone-clip-post").value, 10) || 0
     };
 
     try {
@@ -255,6 +261,7 @@ window.GateWatchTriggers = (function () {
     card.innerHTML = `
       <div class="card-image">
         <img src="/api/triggers/${event.id}/image" alt="trigger snapshot" />
+        ${event.hasClip ? `<span class="clip-badge">&#9654; clip</span>` : ""}
       </div>
       <div class="card-body">
         <div class="card-meta">
@@ -268,7 +275,10 @@ window.GateWatchTriggers = (function () {
       </div>
     `;
     const img = card.querySelector(".card-image img");
-    img.addEventListener("click", () => openLightbox(img.src));
+    img.addEventListener("click", () => {
+      if (event.hasClip) openLightboxVideo(`/api/triggers/${event.id}/clip`);
+      else openLightbox(img.src);
+    });
     return card;
   }
 

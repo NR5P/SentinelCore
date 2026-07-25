@@ -311,11 +311,36 @@ main {
   display: none;
 }
 
-.lightbox img {
+.lightbox img,
+.lightbox video {
   max-width: 100%;
   max-height: 100%;
   box-shadow: 0 0 40px rgba(57, 255, 156, 0.25);
   border: 1px solid var(--border-bright);
+}
+
+.lightbox video {
+  cursor: default;
+  background: #000;
+}
+
+.lightbox img.hidden,
+.lightbox video.hidden {
+  display: none;
+}
+
+.clip-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: rgba(5, 7, 10, 0.85);
+  color: var(--cyan);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border-bright);
+  pointer-events: none;
 }
 
 /* Tabs */

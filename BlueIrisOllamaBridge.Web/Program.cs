@@ -28,6 +28,7 @@ builder.Services.AddSingleton<HlsStreamManager>();
 var triggerStore = new SqliteTriggerStore(camerasRoot);
 builder.Services.AddSingleton<ITriggerConfigStore>(triggerStore);
 builder.Services.AddSingleton<ITriggerEventStore>(triggerStore);
+builder.Services.AddSingleton<ClipRecorder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
 var app = builder.Build();

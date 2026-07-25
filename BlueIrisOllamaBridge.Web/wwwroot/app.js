@@ -74,14 +74,32 @@ function escapeHtml(value) {
   return div.innerHTML;
 }
 
+const lightboxVideo = document.getElementById("lightbox-video");
+
 function openLightbox(src) {
   lightboxImg.src = src;
+  lightboxImg.classList.remove("hidden");
+  lightboxVideo.classList.add("hidden");
   lightbox.classList.remove("hidden");
 }
+
+function openLightboxVideo(src) {
+  lightboxVideo.src = src;
+  lightboxVideo.classList.remove("hidden");
+  lightboxImg.classList.add("hidden");
+  lightbox.classList.remove("hidden");
+}
+
+// The backdrop closes the lightbox, but clicks that land on the player itself are the user
+// working the scrubber/controls - those must not count as "clicked outside".
+lightboxVideo.addEventListener("click", e => e.stopPropagation());
 
 lightbox.addEventListener("click", () => {
   lightbox.classList.add("hidden");
   lightboxImg.src = "";
+  lightboxVideo.pause();
+  lightboxVideo.removeAttribute("src");
+  lightboxVideo.load();
 });
 
 async function loadEvents() {

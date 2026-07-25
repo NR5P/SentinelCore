@@ -15,10 +15,13 @@ public sealed record TriggerConfig(
     double MinTriggerArea,
     int CooldownSeconds,
     int MaxTriggersPerMinute,
-    int ShadowSensitivity)
+    int ShadowSensitivity,
+    bool RecordClips,
+    int ClipPreSeconds,
+    int ClipPostSeconds)
 {
     public static TriggerConfig Disabled(Guid cameraId) =>
-        new(cameraId, false, [], 0.02, 5, 6, 50);
+        new(cameraId, false, [], 0.02, 5, 6, 50, false, 5, 10);
 }
 
 public sealed record TriggerEvent(
@@ -26,7 +29,8 @@ public sealed record TriggerEvent(
     Guid CameraId,
     DateTimeOffset OccurredAt,
     string ImagePath,
-    double TriggerAreaFraction);
+    double TriggerAreaFraction,
+    string? ClipPath);
 
 public interface ITriggerConfigStore
 {
@@ -40,6 +44,10 @@ public interface ITriggerEventStore
     Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, CancellationToken cancellationToken);
     Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, CancellationToken cancellationToken);
     Task<TriggerEvent?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    // Clips can only be cut once the post-roll has actually elapsed, so the event row is written
+    // immediately (image first) and the clip path is patched in afterwards.
+    Task SetClipPathAsync(Guid id, string clipPath, CancellationToken cancellationToken);
 }
 
 public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore, IDisposable
@@ -78,13 +86,21 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             """;
         command.ExecuteNonQuery();
 
-        // Added after the initial release - older databases won't have this column yet.
-        if (!ColumnExists("TriggerConfigs", "ShadowSensitivity"))
-        {
-            using var migrate = _connection.CreateCommand();
-            migrate.CommandText = "ALTER TABLE TriggerConfigs ADD COLUMN ShadowSensitivity INTEGER NOT NULL DEFAULT 50;";
-            migrate.ExecuteNonQuery();
-        }
+        // Added after the initial release - older databases won't have these columns yet.
+        AddColumnIfMissing("TriggerConfigs", "ShadowSensitivity", "INTEGER NOT NULL DEFAULT 50");
+        AddColumnIfMissing("TriggerConfigs", "RecordClips", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing("TriggerConfigs", "ClipPreSeconds", "INTEGER NOT NULL DEFAULT 5");
+        AddColumnIfMissing("TriggerConfigs", "ClipPostSeconds", "INTEGER NOT NULL DEFAULT 10");
+        AddColumnIfMissing("TriggerEvents", "ClipPath", "TEXT");
+    }
+
+    private void AddColumnIfMissing(string table, string column, string definition)
+    {
+        if (ColumnExists(table, column)) return;
+
+        using var migrate = _connection.CreateCommand();
+        migrate.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
+        migrate.ExecuteNonQuery();
     }
 
     private bool ColumnExists(string table, string column)
@@ -102,7 +118,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity
+                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
+                       RecordClips, ClipPreSeconds, ClipPostSeconds
                 FROM TriggerConfigs WHERE CameraId = $cameraId;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -123,7 +140,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity
+                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
+                       RecordClips, ClipPreSeconds, ClipPostSeconds
                 FROM TriggerConfigs WHERE Enabled = 1;
                 """;
 
@@ -147,15 +165,20 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity)
-                VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity)
+                INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
+                                            RecordClips, ClipPreSeconds, ClipPostSeconds)
+                VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity,
+                        $recordClips, $clipPreSeconds, $clipPostSeconds)
                 ON CONFLICT(CameraId) DO UPDATE SET
                     Enabled = excluded.Enabled,
                     ZonePolygon = excluded.ZonePolygon,
                     MinTriggerArea = excluded.MinTriggerArea,
                     CooldownSeconds = excluded.CooldownSeconds,
                     MaxTriggersPerMinute = excluded.MaxTriggersPerMinute,
-                    ShadowSensitivity = excluded.ShadowSensitivity;
+                    ShadowSensitivity = excluded.ShadowSensitivity,
+                    RecordClips = excluded.RecordClips,
+                    ClipPreSeconds = excluded.ClipPreSeconds,
+                    ClipPostSeconds = excluded.ClipPostSeconds;
                 """;
             command.Parameters.AddWithValue("$cameraId", config.CameraId.ToString("N"));
             command.Parameters.AddWithValue("$enabled", config.Enabled ? 1 : 0);
@@ -164,6 +187,9 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$cooldownSeconds", config.CooldownSeconds);
             command.Parameters.AddWithValue("$maxTriggersPerMinute", config.MaxTriggersPerMinute);
             command.Parameters.AddWithValue("$shadowSensitivity", config.ShadowSensitivity);
+            command.Parameters.AddWithValue("$recordClips", config.RecordClips ? 1 : 0);
+            command.Parameters.AddWithValue("$clipPreSeconds", config.ClipPreSeconds);
+            command.Parameters.AddWithValue("$clipPostSeconds", config.ClipPostSeconds);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -174,7 +200,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
     public async Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, CancellationToken cancellationToken)
     {
-        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction);
+        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null);
 
         await _lock.WaitAsync(cancellationToken);
         try
@@ -206,8 +232,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = cameraId is null
-                ? "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction FROM TriggerEvents ORDER BY OccurredAt DESC LIMIT $limit;"
-                : "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction FROM TriggerEvents WHERE CameraId = $cameraId ORDER BY OccurredAt DESC LIMIT $limit;";
+                ? "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath FROM TriggerEvents ORDER BY OccurredAt DESC LIMIT $limit;"
+                : "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath FROM TriggerEvents WHERE CameraId = $cameraId ORDER BY OccurredAt DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$limit", limit);
             if (cameraId is not null) command.Parameters.AddWithValue("$cameraId", cameraId.Value.ToString("N"));
 
@@ -224,13 +250,30 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         }
     }
 
+    public async Task SetClipPathAsync(Guid id, string clipPath, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE TriggerEvents SET ClipPath = $clipPath WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            command.Parameters.AddWithValue("$clipPath", clipPath);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     async Task<TriggerEvent?> ITriggerEventStore.GetAsync(Guid id, CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction FROM TriggerEvents WHERE Id = $id;";
+            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath FROM TriggerEvents WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -249,14 +292,18 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         reader.GetDouble(3),
         (int)reader.GetInt64(4),
         (int)reader.GetInt64(5),
-        (int)reader.GetInt64(6));
+        (int)reader.GetInt64(6),
+        reader.GetInt64(7) != 0,
+        (int)reader.GetInt64(8),
+        (int)reader.GetInt64(9));
 
     private static TriggerEvent ReadEvent(SqliteDataReader reader) => new(
         Guid.ParseExact(reader.GetString(0), "N"),
         Guid.ParseExact(reader.GetString(1), "N"),
         DateTimeOffset.Parse(reader.GetString(2)),
         reader.GetString(3),
-        reader.GetDouble(4));
+        reader.GetDouble(4),
+        reader.IsDBNull(5) ? null : reader.GetString(5));
 
     public void Dispose()
     {
