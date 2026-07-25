@@ -83,6 +83,12 @@ public sealed class OllamaOptions
 
 public sealed class PromptProfile
 {
+    // Friendly name shown in the UI. The dictionary key stays the stable identifier that
+    // other config (AlertNotificationPolicy's gate logic, a camera's saved AlertProfile,
+    // Blue Iris's own alert-action arguments) matches against, so renaming a profile here
+    // never breaks anything that already points at its key.
+    public string? DisplayName { get; init; }
+
     [Required]
     public string SystemPrompt { get; init; } = "Analyze this security-camera image accurately.";
 

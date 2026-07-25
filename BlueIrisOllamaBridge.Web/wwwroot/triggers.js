@@ -95,10 +95,14 @@ window.GateWatchTriggers = (function () {
 
   // Includes the saved value as an option even if it's missing from the fetched list (e.g. a
   // profile that was since renamed or deleted), so it's still visible rather than silently lost.
-  function populateProfileOptions(names, selected) {
+  function populateProfileOptions(profiles, selected) {
     const select = document.getElementById("zone-alert-profile");
-    const all = selected && !names.includes(selected) ? [...names, selected] : names;
-    select.innerHTML = all.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
+    const all = selected && !profiles.some(p => p.key === selected)
+      ? [...profiles, { key: selected, displayName: selected }]
+      : profiles;
+    select.innerHTML = all
+      .map(p => `<option value="${escapeHtml(p.key)}">${escapeHtml(p.displayName)}</option>`)
+      .join("");
     select.value = selected || "default";
   }
 

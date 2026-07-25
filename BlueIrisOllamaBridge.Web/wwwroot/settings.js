@@ -276,27 +276,83 @@ window.GateWatchSettings = (function () {
     return row;
   }
 
-  function buildProfileCard(name, profile) {
-    profile = profile || { systemPrompt: "", questions: [], crop: null };
+  function buildProfileCard(name, profile, options) {
+    profile = profile || { displayName: "", systemPrompt: "", questions: [], crop: null };
+    const startExpanded = !!(options && options.startExpanded);
     const card = document.createElement("div");
-    card.className = "profile-card";
+    card.className = "profile-card" + (startExpanded ? " open" : "");
+    card.dataset.searchText = `${profile.displayName || ""} ${name}`.toLowerCase();
 
     const header = document.createElement("div");
     header.className = "profile-card-header";
-    header.dataset.tip = "Profile name. Blue Iris picks a profile by this name, and 'default' is used for anything that doesn't match.";
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.className = "field-input profile-name-input";
-    nameInput.value = name;
-    nameInput.placeholder = "profile name";
+    header.dataset.tip = "Click to expand and edit this profile.";
+
+    const caret = document.createElement("span");
+    caret.className = "profile-card-caret";
+    caret.textContent = "▸";
+
+    const summary = document.createElement("span");
+    summary.className = "profile-card-summary";
+    summary.textContent = profile.displayName || name || "(untitled profile)";
+
+    const summaryKey = document.createElement("span");
+    summaryKey.className = "profile-card-summary-key";
+    summaryKey.textContent = name;
+
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.className = "icon-btn";
     deleteBtn.textContent = "✕";
     deleteBtn.setAttribute("data-tip-right", "");
     deleteBtn.dataset.tip = "Delete this whole profile. The 'default' profile is required and can't be removed.";
-    deleteBtn.addEventListener("click", () => card.remove());
-    header.append(nameInput, deleteBtn);
+    deleteBtn.addEventListener("click", e => {
+      e.stopPropagation();
+      card.remove();
+    });
+
+    header.append(caret, summary, summaryKey, deleteBtn);
+    header.addEventListener("click", () => {
+      card.classList.toggle("open");
+      caret.textContent = card.classList.contains("open") ? "▾" : "▸";
+    });
+
+    const body = document.createElement("div");
+    body.className = "profile-card-body";
+
+    const displayNameRow = document.createElement("div");
+    displayNameRow.className = "field-row";
+    displayNameRow.dataset.tip = "Friendly label shown in this list and in the trigger-zone profile picker. Optional - falls back to the technical name below.";
+    const displayNameLabel = document.createElement("label");
+    displayNameLabel.className = "field-label";
+    displayNameLabel.textContent = "Display Name";
+    const displayNameInput = document.createElement("input");
+    displayNameInput.type = "text";
+    displayNameInput.className = "field-input";
+    displayNameInput.value = profile.displayName || "";
+    displayNameInput.placeholder = "e.g. Chicken Coop Predator Watch";
+    displayNameInput.addEventListener("input", () => {
+      summary.textContent = displayNameInput.value.trim() || nameInput.value.trim() || "(untitled profile)";
+      card.dataset.searchText = `${displayNameInput.value} ${nameInput.value}`.toLowerCase();
+    });
+    displayNameRow.append(displayNameLabel, displayNameInput);
+
+    const nameRow = document.createElement("div");
+    nameRow.className = "field-row";
+    nameRow.dataset.tip = "Technical name. Blue Iris and camera profile pickers select a profile by this name, and 'default' is used for anything that doesn't match.";
+    const nameLabel = document.createElement("label");
+    nameLabel.className = "field-label";
+    nameLabel.textContent = "Name (technical)";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "field-input profile-name-input";
+    nameInput.value = name;
+    nameInput.placeholder = "profile-name";
+    nameInput.addEventListener("input", () => {
+      summaryKey.textContent = nameInput.value.trim();
+      if (!displayNameInput.value.trim()) summary.textContent = nameInput.value.trim() || "(untitled profile)";
+      card.dataset.searchText = `${displayNameInput.value} ${nameInput.value}`.toLowerCase();
+    });
+    nameRow.append(nameLabel, nameInput);
 
     const promptRow = document.createElement("div");
     promptRow.className = "field-row";
@@ -371,14 +427,16 @@ window.GateWatchSettings = (function () {
     });
     cropWrap.append(cropToggleRow, cropGrid);
 
-    card.append(header, promptRow, questionsWrap, cropWrap);
-    card._fields = { nameInput, promptArea, qList, cropInput, cropGrid };
+    body.append(displayNameRow, nameRow, promptRow, questionsWrap, cropWrap);
+    card.append(header, body);
+    card._fields = { displayNameInput, nameInput, promptArea, qList, cropInput, cropGrid };
     return card;
   }
 
   function collectProfile(card) {
     const f = card._fields;
     const name = f.nameInput.value.trim();
+    const displayName = f.displayNameInput.value.trim();
     const systemPrompt = f.promptArea.value.trim();
     const questions = Array.from(f.qList.querySelectorAll(".question-row input"))
       .map(i => i.value.trim())
@@ -392,7 +450,7 @@ window.GateWatchSettings = (function () {
       }
     }
 
-    return { name, profile: { systemPrompt, questions, crop } };
+    return { name, profile: { displayName, systemPrompt, questions, crop } };
   }
 
   function renderPromptProfilesSection(profiles) {
@@ -410,10 +468,20 @@ window.GateWatchSettings = (function () {
     const body = document.createElement("div");
     body.className = "settings-section-body";
 
+    const count = Object.keys(profiles || {}).length;
     const hint = document.createElement("div");
     hint.className = "settings-hint";
-    hint.textContent = "The AI prompts sent to Ollama per camera profile. A 'default' profile is required as a fallback for unrecognized profile names.";
+    hint.textContent = `The AI prompts sent to Ollama per camera profile (${count} available). A 'default' profile is required as a fallback for unrecognized profile names. Click a profile to expand it.`;
     body.appendChild(hint);
+
+    const searchRow = document.createElement("div");
+    searchRow.className = "field-row profiles-search-row";
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.className = "field-input";
+    searchInput.placeholder = "search profiles by name (e.g. \"chicken\", \"gate\", \"garage\")…";
+    searchRow.appendChild(searchInput);
+    body.appendChild(searchRow);
 
     const cardsWrap = document.createElement("div");
     cardsWrap.className = "settings-root";
@@ -421,13 +489,25 @@ window.GateWatchSettings = (function () {
       cardsWrap.appendChild(buildProfileCard(name, profile));
     }
 
+    searchInput.addEventListener("input", () => {
+      const term = searchInput.value.trim().toLowerCase();
+      for (const card of cardsWrap.querySelectorAll(".profile-card")) {
+        const matches = !term || card.dataset.searchText.includes(term);
+        card.classList.toggle("filtered-out", !matches);
+      }
+    });
+
     const toolbar = document.createElement("div");
     toolbar.className = "profiles-toolbar";
     const addBtn = document.createElement("button");
     addBtn.className = "btn";
     addBtn.textContent = "+ add profile";
     addBtn.dataset.tip = "Create another prompt profile. Blue Iris picks one per camera by name.";
-    addBtn.addEventListener("click", () => cardsWrap.appendChild(buildProfileCard("", null)));
+    addBtn.addEventListener("click", () => {
+      const card = buildProfileCard("", null, { startExpanded: true });
+      cardsWrap.appendChild(card);
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
     toolbar.appendChild(addBtn);
 
     const footer = document.createElement("div");
