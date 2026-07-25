@@ -181,6 +181,9 @@ public sealed class TelegramOptions
 
     [Range(1, 300)]
     public int TimeoutSeconds { get; init; } = 20;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; init; } = 10;
 }
 
 public sealed class TelegramChatOptions

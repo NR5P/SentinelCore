@@ -67,7 +67,8 @@ window.GateWatchSettings = (function () {
         { name: "chatId", label: "Chat ID", type: "text", tip: "Which Telegram conversation to send to. This is the only chat the bot will talk to." },
         { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox", tip: "Only message when the AI judges the event worth your attention, rather than for every single one." },
         { name: "minimumConfidence", label: "Minimum Confidence", type: "number", min: 0, max: 1, step: 0.05, tip: "How sure the AI must be before messaging you." },
-        { name: "attachImage", label: "Attach Image", type: "checkbox", tip: "Send the snapshot with the message rather than text only." }
+        { name: "attachImage", label: "Attach Image", type: "checkbox", tip: "Send the snapshot with the message rather than text only." },
+        { name: "duplicateCooldownMinutes", label: "Duplicate Cooldown (min)", type: "number", min: 0, max: 1440, tip: "Suppress repeat Telegram messages about the same kind of event for this long, so one vehicle sitting at the gate doesn't message you over and over. 0 disables this." }
       ]
     },
     {
