@@ -14,11 +14,21 @@ var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
     ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
 builder.Services.AddSingleton(new AppSettingsFile(mainAppSettingsPath));
 
+// Cameras added through the UI are stored separately from the main app's data entirely -
+// they're for live viewing only and the alert pipeline never sees them.
+var camerasDataDirectory = builder.Configuration["CamerasDataDirectory"] ?? "data";
+var camerasRoot = Path.IsPathRooted(camerasDataDirectory)
+    ? camerasDataDirectory
+    : Path.Combine(builder.Environment.ContentRootPath, camerasDataDirectory);
+builder.Services.AddSingleton<ICameraStore>(new SqliteCameraStore(camerasRoot));
+builder.Services.AddSingleton<HlsStreamManager>();
+
 var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapSettingsEndpoints();
+app.MapCameraEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 

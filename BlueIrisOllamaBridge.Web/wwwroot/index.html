@@ -17,6 +17,8 @@
     </div>
     <nav class="tabs" id="tabs">
       <button class="tab active" data-view="feed">feed</button>
+      <button class="tab" data-view="live">live</button>
+      <button class="tab" data-view="cameras">cameras</button>
       <button class="tab" data-view="settings">settings</button>
     </nav>
     <div class="status" id="status">
@@ -40,6 +42,43 @@
       </div>
     </section>
 
+    <section id="view-live" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">LIVE</div>
+        <div class="toolbar-actions">
+          <span class="event-count">not connected to Blue Iris or alerts - viewing only</span>
+        </div>
+      </div>
+
+      <div id="live-root" class="live-grid">
+        <div class="empty-state">loading cameras&hellip;</div>
+      </div>
+    </section>
+
+    <section id="view-cameras" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">CAMERAS</div>
+        <div class="toolbar-actions">
+          <button id="add-camera-btn" class="btn">+ add camera</button>
+        </div>
+      </div>
+
+      <div id="camera-form-wrap" class="settings-section hidden">
+        <div class="settings-section-body" style="display:flex;">
+          <div class="field-grid" id="camera-form-fields"></div>
+          <div class="settings-section-footer">
+            <button id="camera-save-btn" class="btn">save</button>
+            <button id="camera-cancel-btn" class="btn">cancel</button>
+            <ul class="field-errors" id="camera-form-errors"></ul>
+          </div>
+        </div>
+      </div>
+
+      <div id="cameras-root" class="settings-root">
+        <div class="empty-state">loading cameras&hellip;</div>
+      </div>
+    </section>
+
     <section id="view-settings" class="view hidden">
       <div class="toolbar">
         <div class="toolbar-label">SETTINGS</div>
@@ -60,7 +99,9 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script src="vendor/hls.min.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
+  <script src="cameras.js"></script>
 </body>
 </html>

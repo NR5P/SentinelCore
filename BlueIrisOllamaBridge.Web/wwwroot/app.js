@@ -113,20 +113,38 @@ refreshBtn.addEventListener("click", loadEvents);
 loadEvents();
 setInterval(loadEvents, REFRESH_INTERVAL_MS);
 
-// Tab switching between the feed and settings views. Settings are lazy-loaded on first visit.
+// Tab switching. Settings/cameras are lazy-loaded on first visit; the live view starts/stops
+// video playback as it's shown/hidden so streams nobody is looking at don't keep running.
 const tabs = document.querySelectorAll(".tab");
-const views = { feed: document.getElementById("view-feed"), settings: document.getElementById("view-settings") };
+const views = {
+  feed: document.getElementById("view-feed"),
+  live: document.getElementById("view-live"),
+  cameras: document.getElementById("view-cameras"),
+  settings: document.getElementById("view-settings")
+};
 let settingsLoaded = false;
+let camerasLoaded = false;
+let currentView = "feed";
 
 for (const tab of tabs) {
-  tab.addEventListener("click", () => {
+  tab.addEventListener("click", async () => {
     const target = tab.dataset.view;
     for (const t of tabs) t.classList.toggle("active", t === tab);
     for (const [name, el] of Object.entries(views)) el.classList.toggle("hidden", name !== target);
+
+    if (currentView === "live" && target !== "live") window.GateWatchCameras.hideLive();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
       window.GateWatchSettings.load();
     }
+    if ((target === "cameras" || target === "live") && !camerasLoaded) {
+      camerasLoaded = true;
+      await window.GateWatchCameras.load();
+    }
+    if (target === "cameras") window.GateWatchCameras.renderList();
+    if (target === "live") window.GateWatchCameras.showLive();
+
+    currentView = target;
   });
 }
