@@ -97,6 +97,9 @@ public sealed class TriggerZoneMonitor(
     private DetectionSession StartSession(Camera camera, TriggerConfig config)
     {
         var sourceUrl = HlsStreamManager.BuildAuthenticatedUrl(camera);
+        var cameraDir = Path.Combine(_imagesRoot, camera.Id.ToString("N"));
+        Directory.CreateDirectory(cameraDir);
+
         var psi = new ProcessStartInfo
         {
             FileName = _ffmpegPath,
@@ -105,9 +108,13 @@ public sealed class TriggerZoneMonitor(
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        // Output 1 is the downscaled raw feed the detector reads. When clips are enabled, output 2
-        // rides the same RTSP pull and copies the original stream into a rolling segment buffer -
-        // no second connection to the camera and no re-encode.
+        // Output 1 is the downscaled raw feed the detector reads. Output 2 continuously
+        // overwrites a single full-resolution JPEG from the same already-open connection, so a
+        // trigger can grab an up-to-date frame instantly (see MaybeTriggerAsync) instead of
+        // paying for a brand-new RTSP connection per trigger - which can take several seconds to
+        // negotiate and land on a frame taken well after the moment that caused the trigger.
+        // When clips are enabled, output 3 rides the same RTSP pull too and copies the original
+        // stream into a rolling segment buffer - no second connection to the camera either way.
         var args = new List<string>
         {
             "-rtsp_transport", "tcp",
@@ -116,7 +123,11 @@ public sealed class TriggerZoneMonitor(
             "-an",
             "-filter:v", $"fps=2,scale={MotionDetector.GridWidth}:{MotionDetector.GridHeight},format=rgb24",
             "-f", "rawvideo",
-            "-"
+            "-",
+            "-map", "0:v:0",
+            "-vf", "fps=1",
+            "-update", "1",
+            "-y", LatestSnapshotPath(camera.Id)
         };
 
         if (config.RecordClips)
@@ -196,7 +207,8 @@ public sealed class TriggerZoneMonitor(
 
         try
         {
-            var bytes = await streams.CaptureSnapshotAsync(camera, cancellationToken);
+            var bytes = await TryReadLatestSnapshotAsync(camera.Id, cancellationToken)
+                ?? await streams.CaptureSnapshotAsync(camera, cancellationToken);
             if (bytes is null) return;
 
             var cameraDir = Path.Combine(_imagesRoot, camera.Id.ToString("N"));
@@ -334,6 +346,43 @@ public sealed class TriggerZoneMonitor(
 
         return true;
     }
+
+    private string LatestSnapshotPath(Guid cameraId) =>
+        Path.Combine(_imagesRoot, cameraId.ToString("N"), "_latest.jpg");
+
+    // Reads the continuously-updated full-resolution frame ffmpeg is already writing for this
+    // camera (see StartSession), rather than opening a brand-new RTSP connection per trigger.
+    // A couple of retries cover the rare case where a read lands mid-write; null (falling back
+    // to CaptureSnapshotAsync) covers the file not existing yet - e.g. a trigger in the first
+    // second after a session starts, before the first frame has been written.
+    private async Task<byte[]?> TryReadLatestSnapshotAsync(Guid cameraId, CancellationToken cancellationToken)
+    {
+        var path = LatestSnapshotPath(cameraId);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+                    if (IsCompleteJpeg(bytes)) return bytes;
+                }
+            }
+            catch (IOException)
+            {
+                // ffmpeg may have the file open for writing at this exact instant; retry.
+            }
+
+            await Task.Delay(50, cancellationToken);
+        }
+
+        return null;
+    }
+
+    private static bool IsCompleteJpeg(byte[] bytes) =>
+        bytes.Length > 4 &&
+        bytes[0] == 0xFF && bytes[1] == 0xD8 &&
+        bytes[^2] == 0xFF && bytes[^1] == 0xD9;
 
     private static string ResolveImagesRoot(IConfiguration configuration, IHostEnvironment environment)
     {
