@@ -1,4 +1,4 @@
-# Gate Watch — Build & Deployment Guide
+# Sentinel Core — Build & Deployment Guide
 
 This is a from-scratch, no-assistant-required guide to building, configuring, and running
 this system on a fresh Linux box, and to updating an existing install. For how to actually

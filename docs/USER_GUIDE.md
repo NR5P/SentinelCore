@@ -1,4 +1,4 @@
-# Gate Watch — User Guide
+# Sentinel Core — User Guide
 
 This is the guide to actually *using* the system day to day: the dashboard, the AI alerts,
 the trigger zones, the Telegram bot, and every setting you can tune. For installing or
@@ -31,7 +31,7 @@ There are two independent pieces running on your home server:
   motion, sends each one to a local AI vision model (Ollama) with a set of questions, decides
   whether it's worth telling you about, and sends alerts (email, Telegram, etc.) when it is.
   This never leaves your network — the image and the AI both stay local.
-- **The dashboard** (port 3320, "GATE_WATCH") — a web page for browsing what the bridge has
+- **The dashboard** (port 3320, "SENTINEL_CORE") — a web page for browsing what the bridge has
   seen, adding your own extra cameras (separate from Blue Iris), drawing motion-detection
   zones on them, and editing every setting above without touching a config file by hand.
 

@@ -43,7 +43,7 @@ window.GateWatchSettings = (function () {
         { name: "username", label: "Username", type: "text", tip: "Account used to log in to the mail server, usually the full email address." },
         { name: "appPassword", label: "App Password", type: "password", tip: "For Gmail this is an app password, not your normal one. Regular passwords are refused." },
         { name: "fromAddress", label: "From Address", type: "text", tip: "Address the alert appears to come from." },
-        { name: "fromName", label: "From Name", type: "text", tip: "Display name shown as the sender, e.g. Gate Watch." },
+        { name: "fromName", label: "From Name", type: "text", tip: "Display name shown as the sender, e.g. Sentinel Core." },
         { name: "toAddress", label: "To Address", type: "text", tip: "Where alerts are sent." },
         { name: "duplicateCooldownMinutes", label: "Duplicate Cooldown (min)", type: "number", min: 0, max: 1440, tip: "Suppress repeat emails about the same kind of event for this long, so one visitor doesn't fill your inbox." },
         { name: "minimumConfidence", label: "Minimum Confidence", type: "number", min: 0, max: 1, step: 0.05, tip: "How sure the AI must be before emailing. Raise it if you get false alarms, lower it if real events slip through." },
