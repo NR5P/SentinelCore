@@ -10,6 +10,7 @@ public sealed class AlertProcessor : BackgroundService
     private readonly IPromptProfileProvider _profileProvider;
     private readonly IEnumerable<IAlertAction> _actions;
     private readonly IOptionsMonitor<OllamaOptions> _ollamaOptions;
+    private readonly IOptionsMonitor<List<KnownVehicle>> _knownVehicles;
     private readonly ILogger<AlertProcessor> _logger;
 
     public AlertProcessor(
@@ -19,6 +20,7 @@ public sealed class AlertProcessor : BackgroundService
         IPromptProfileProvider profileProvider,
         IEnumerable<IAlertAction> actions,
         IOptionsMonitor<OllamaOptions> ollamaOptions,
+        IOptionsMonitor<List<KnownVehicle>> knownVehicles,
         ILogger<AlertProcessor> logger)
     {
         _queue = queue;
@@ -26,6 +28,7 @@ public sealed class AlertProcessor : BackgroundService
         _store = store;
         _actions = actions;
         _ollamaOptions = ollamaOptions;
+        _knownVehicles = knownVehicles;
         _logger = logger;
         _profileProvider = profileProvider;
     }
@@ -62,6 +65,10 @@ public sealed class AlertProcessor : BackgroundService
         try
         {
             var (analysis, raw) = await _ollama.AnalyzeAsync(alert, profile, cancellationToken);
+            if (profile.LicensePlateRecognitionEnabled)
+            {
+                analysis.Vehicle.KnownVehicleLabel = KnownVehicleMatcher.Match(_knownVehicles.CurrentValue, analysis.Vehicle.LicensePlateText);
+            }
             var result = new AlertResult
             {
                 Id = alert.Id,

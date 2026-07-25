@@ -73,6 +73,9 @@ _ = builder.Configuration.GetSection("PromptProfiles").Get<Dictionary<string, Pr
 builder.Services.Configure<Dictionary<string, PromptProfile>>(builder.Configuration.GetSection("PromptProfiles"));
 builder.Services.AddSingleton<IPromptProfileProvider, PromptProfileProvider>();
 
+// Empty by default - only consulted for profiles with LicensePlateRecognitionEnabled turned on.
+builder.Services.Configure<List<KnownVehicle>>(builder.Configuration.GetSection("KnownVehicles"));
+
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
 builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();

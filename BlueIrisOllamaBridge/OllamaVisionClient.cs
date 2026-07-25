@@ -210,11 +210,21 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         }
     }
 
-    private static string BuildPrompt(IncomingAlert alert, PromptProfile profile)
+    // Public so tests can confirm the license-plate schema/rule only appear when a profile
+    // opts in, and are otherwise byte-identical to the prompt every existing profile already gets.
+    public static string BuildPrompt(IncomingAlert alert, PromptProfile profile)
     {
         var numbered = string.Join(
             '\n',
             profile.Questions.Select((q, i) => $"{i + 1}. {q}"));
+
+        var licensePlateField = profile.LicensePlateRecognitionEnabled
+            ? ",\n            \"license_plate\": \"\""
+            : "";
+
+        var licensePlateRule = profile.LicensePlateRecognitionEnabled
+            ? "\n- If a vehicle's license plate is clearly legible, transcribe it into vehicle.license_plate exactly as shown (letters and numbers only, uppercase, no state name or slogan text). If it is not clearly legible, leave vehicle.license_plate as an empty string - do not guess."
+            : "";
 
         return $$"""
         Camera: {{alert.Camera}}
@@ -248,7 +258,7 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
             "color": "unknown",
             "description": "",
             "delivery_company": "none",
-            "delivery_company_confidence": 0.0
+            "delivery_company_confidence": 0.0{{licensePlateField}}
           },
           "package": {
             "visible": false,
@@ -321,7 +331,7 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         - Do not use at_gate for a person merely near the gate on the camera side; use inside_driveway or inside_property.
         - A person outside a vehicle in the gate entrance is notification-worthy.
         - Delivery activity and a package newly left at the gate are notification-worthy.
-        - Do not identify a delivery company unless visible logos, markings, colors, or uniforms support it.
+        - Do not identify a delivery company unless visible logos, markings, colors, or uniforms support it.{{licensePlateRule}}
         - Do not call an object a package unless it reasonably appears to be a delivered parcel.
         - One still image normally cannot prove motion. Use unknown unless the visible evidence strongly supports the activity.
         - Describe only the important foreground event. Do not treat distant houses, parked vehicles across the road, or ordinary background objects as the alert subject.

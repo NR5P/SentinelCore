@@ -102,6 +102,17 @@ public static class AlertCategorizer
 
     private static bool EqualsValue(string value, string expected) =>
         string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);
+
+    // Null when plate recognition wasn't enabled for this profile or nothing was read - most
+    // events, since it's opt-in per profile and depends on the plate actually being legible.
+    public static string? DescribeVehiclePlate(VehicleAnalysis vehicle)
+    {
+        if (string.IsNullOrWhiteSpace(vehicle.LicensePlateText)) return null;
+
+        return vehicle.KnownVehicleLabel is { } label
+            ? $"Plate: {vehicle.LicensePlateText} (known: {label})"
+            : $"Plate: {vehicle.LicensePlateText} (unrecognized)";
+    }
 }
 
 public sealed class TelegramAlertAction : IAlertAction
@@ -212,6 +223,8 @@ public sealed class TelegramAlertAction : IAlertAction
         caption.Append(WebUtility.HtmlEncode(analysis.Summary));
         if (!string.IsNullOrWhiteSpace(analysis.NotificationReason))
             caption.Append($"\n{WebUtility.HtmlEncode(analysis.NotificationReason)}");
+        if (AlertCategorizer.DescribeVehiclePlate(analysis.Vehicle) is { } plateLine)
+            caption.Append($"\n{WebUtility.HtmlEncode(plateLine)}");
 
         return caption.ToString();
     }
@@ -486,10 +499,13 @@ public sealed class EmailAlertAction : IAlertAction
         return parts.Count > 0 ? string.Join(' ', parts) : "unknown vehicle";
     }
 
-    private static string BuildVehicleText(VehicleAnalysis vehicle) =>
-        vehicle.Visible
-            ? $"{VehicleDescription(vehicle)}; location={vehicle.Location}; activity={vehicle.Activity}"
-            : "Not visible";
+    private static string BuildVehicleText(VehicleAnalysis vehicle)
+    {
+        if (!vehicle.Visible) return "Not visible";
+
+        var text = $"{VehicleDescription(vehicle)}; location={vehicle.Location}; activity={vehicle.Activity}";
+        return AlertCategorizer.DescribeVehiclePlate(vehicle) is { } plateLine ? $"{text}; {plateLine}" : text;
+    }
 
     private static string BuildPersonText(PersonAnalysis person) =>
         person.Visible

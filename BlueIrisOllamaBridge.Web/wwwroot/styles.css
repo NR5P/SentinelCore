@@ -693,6 +693,23 @@ main {
   margin-bottom: 6px;
 }
 
+.known-vehicles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.known-vehicle-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.known-vehicle-row .field-input {
+  flex: 1;
+}
+
 .settings-section-footer {
   display: flex;
   align-items: center;

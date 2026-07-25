@@ -185,6 +185,66 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void KnownVehicleMatcher_Match_IsCaseAndFormatInsensitive()
+    {
+        var known = new List<KnownVehicle>
+        {
+            new() { Plate = "ABC-1234", Label = "Nathan's Truck" },
+            new() { Plate = "XYZ 9999", Label = "Delivery Van" }
+        };
+
+        Assert.Equal("Nathan's Truck", KnownVehicleMatcher.Match(known, "abc1234"));
+        Assert.Equal("Nathan's Truck", KnownVehicleMatcher.Match(known, "ABC 1234"));
+        Assert.Equal("Delivery Van", KnownVehicleMatcher.Match(known, "xyz-9999"));
+    }
+
+    [Fact]
+    public void KnownVehicleMatcher_Match_ReturnsNullForUnknownOrEmptyPlate()
+    {
+        var known = new List<KnownVehicle> { new() { Plate = "ABC1234", Label = "Nathan's Truck" } };
+
+        Assert.Null(KnownVehicleMatcher.Match(known, "ZZZ9999"));
+        Assert.Null(KnownVehicleMatcher.Match(known, ""));
+        Assert.Null(KnownVehicleMatcher.Match(known, null));
+        Assert.Null(KnownVehicleMatcher.Match([], "ABC1234"));
+    }
+
+    [Fact]
+    public void AlertCategorizer_DescribeVehiclePlate_ReflectsKnownVsUnrecognized()
+    {
+        Assert.Null(AlertCategorizer.DescribeVehiclePlate(new VehicleAnalysis { LicensePlateText = "" }));
+
+        var unknown = AlertCategorizer.DescribeVehiclePlate(new VehicleAnalysis { LicensePlateText = "ZZZ9999" });
+        Assert.Equal("Plate: ZZZ9999 (unrecognized)", unknown);
+
+        var known = AlertCategorizer.DescribeVehiclePlate(
+            new VehicleAnalysis { LicensePlateText = "ABC1234", KnownVehicleLabel = "Nathan's Truck" });
+        Assert.Equal("Plate: ABC1234 (known: Nathan's Truck)", known);
+    }
+
+    [Fact]
+    public void OllamaVisionClient_BuildPrompt_OnlyIncludesLicensePlateWhenProfileOptsIn()
+    {
+        var alert = new IncomingAlert(
+            Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            "gate", "image/jpeg", "alert.jpg", []);
+        var disabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
+        var enabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"], LicensePlateRecognitionEnabled = true };
+
+        var withoutPlate = OllamaVisionClient.BuildPrompt(alert, disabledProfile);
+        Assert.DoesNotContain("license_plate", withoutPlate);
+
+        var withPlate = OllamaVisionClient.BuildPrompt(alert, enabledProfile);
+        Assert.Contains("\"license_plate\": \"\"", withPlate);
+        Assert.Contains("transcribe it into vehicle.license_plate", withPlate);
+
+        // Disabled (the default for all 103 shipped profiles) must be byte-identical to what
+        // every existing profile already gets - no accidental prompt drift from adding this field.
+        var otherDefaultProfile = OllamaVisionClient.BuildPrompt(alert, new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] });
+        Assert.Equal(withoutPlate, otherDefaultProfile);
+    }
+
+    [Fact]
     public void TelegramChatWorker_IsPhotoCommand_RecognizesCommandVariants()
     {
         Assert.True(TelegramChatWorker.IsPhotoCommand("/photo"));

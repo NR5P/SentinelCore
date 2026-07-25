@@ -437,9 +437,25 @@ window.GateWatchSettings = (function () {
     });
     cropWrap.append(cropToggleRow, cropGrid);
 
-    body.append(displayNameRow, nameRow, promptRow, questionsWrap, cropWrap);
+    const plateWrap = document.createElement("div");
+    plateWrap.className = "field-row field-checkbox-row";
+    plateWrap.dataset.tip = "Also ask the AI to transcribe a vehicle's license plate when clearly legible, and check it against the Known Vehicles list below. Off by default - needs a camera with enough resolution and angle to actually read plates, and never affects whether an alert fires.";
+    const plateSwitch = document.createElement("label");
+    plateSwitch.className = "switch";
+    const plateInput = document.createElement("input");
+    plateInput.type = "checkbox";
+    plateInput.checked = !!profile.licensePlateRecognitionEnabled;
+    const plateTrack = document.createElement("span");
+    plateTrack.className = "switch-track";
+    plateSwitch.append(plateInput, plateTrack);
+    const plateText = document.createElement("span");
+    plateText.className = "field-label";
+    plateText.textContent = "License plate recognition";
+    plateWrap.append(plateSwitch, plateText);
+
+    body.append(displayNameRow, nameRow, promptRow, questionsWrap, cropWrap, plateWrap);
     card.append(header, body);
-    card._fields = { displayNameInput, nameInput, promptArea, qList, cropInput, cropGrid };
+    card._fields = { displayNameInput, nameInput, promptArea, qList, cropInput, cropGrid, plateInput };
     return card;
   }
 
@@ -460,7 +476,98 @@ window.GateWatchSettings = (function () {
       }
     }
 
-    return { name, profile: { displayName, systemPrompt, questions, crop } };
+    const licensePlateRecognitionEnabled = f.plateInput.checked;
+
+    return { name, profile: { displayName, systemPrompt, questions, crop, licensePlateRecognitionEnabled } };
+  }
+
+  function buildKnownVehicleRow(vehicle) {
+    vehicle = vehicle || { plate: "", label: "" };
+    const row = document.createElement("div");
+    row.className = "field-row-wide known-vehicle-row";
+
+    const plateInput = document.createElement("input");
+    plateInput.type = "text";
+    plateInput.className = "field-input";
+    plateInput.placeholder = "plate, e.g. ABC1234";
+    plateInput.value = vehicle.plate || "";
+
+    const labelInput = document.createElement("input");
+    labelInput.type = "text";
+    labelInput.className = "field-input";
+    labelInput.placeholder = "label, e.g. Nathan's Truck";
+    labelInput.value = vehicle.label || "";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "icon-btn";
+    removeBtn.textContent = "✕";
+    removeBtn.setAttribute("data-tip-right", "");
+    removeBtn.dataset.tip = "Remove this vehicle.";
+    removeBtn.addEventListener("click", () => row.remove());
+
+    row.append(plateInput, labelInput, removeBtn);
+    row._fields = { plateInput, labelInput };
+    return row;
+  }
+
+  function renderKnownVehiclesSection(vehicles) {
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">KNOWN VEHICLES</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "Vehicles checked against a transcribed plate, for cameras/profiles with license plate recognition turned on. Informational only - a match or non-match never changes whether an alert fires.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+
+    const hint = document.createElement("div");
+    hint.className = "settings-hint";
+    hint.textContent = "Shared across every camera/profile that has license plate recognition enabled.";
+    body.appendChild(hint);
+
+    const rowsWrap = document.createElement("div");
+    rowsWrap.className = "known-vehicles-list";
+    for (const vehicle of vehicles || []) {
+      rowsWrap.appendChild(buildKnownVehicleRow(vehicle));
+    }
+    body.appendChild(rowsWrap);
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "profiles-toolbar";
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn";
+    addBtn.textContent = "+ add vehicle";
+    addBtn.dataset.tip = "Add another known vehicle by plate and label.";
+    addBtn.addEventListener("click", () => rowsWrap.appendChild(buildKnownVehicleRow(null)));
+    toolbar.appendChild(addBtn);
+
+    const footer = document.createElement("div");
+    footer.className = "settings-section-footer";
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn";
+    saveBtn.textContent = "save";
+    saveBtn.dataset.tip = "Save the known vehicle list.";
+    const errors = document.createElement("ul");
+    errors.className = "field-errors";
+    footer.append(saveBtn, errors);
+
+    saveBtn.addEventListener("click", async () => {
+      const list = Array.from(rowsWrap.querySelectorAll(".known-vehicle-row"))
+        .map(row => ({ plate: row._fields.plateInput.value.trim(), label: row._fields.labelInput.value.trim() }))
+        .filter(v => v.plate.length > 0);
+      await submit("/api/settings/known-vehicles", list, "Known vehicles", errors, saveBtn);
+    });
+
+    body.append(toolbar, footer);
+    section.append(header, body);
+    return section;
   }
 
   function renderPromptProfilesSection(profiles) {
@@ -601,6 +708,7 @@ window.GateWatchSettings = (function () {
       for (const schema of SECTIONS) {
         root.appendChild(renderSection(schema, data[schema.key]));
       }
+      root.appendChild(renderKnownVehiclesSection(data.knownVehicles));
       root.appendChild(renderPromptProfilesSection(data.promptProfiles));
 
       const first = root.querySelector(".settings-section");
