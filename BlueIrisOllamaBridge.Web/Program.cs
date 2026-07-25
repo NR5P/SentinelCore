@@ -44,10 +44,13 @@ app.MapTriggerEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 
-app.MapGet("/api/events", async (IEventStore store, CancellationToken ct, int limit = 50) =>
+app.MapGet("/api/events", async (
+    IEventStore store, CancellationToken ct, int limit = 50,
+    string? camera = null, string? eventType = null, bool? notifiedOnly = null,
+    string? search = null, DateTimeOffset? from = null, DateTimeOffset? to = null) =>
 {
-    var capped = Math.Clamp(limit, 1, 500);
-    var events = await store.GetRecentEventsAsync(capped, ct);
+    var filter = new EventFilter(camera, eventType, notifiedOnly, search, from, to, Math.Clamp(limit, 1, 500));
+    var events = await store.SearchEventsAsync(filter, ct);
     return Results.Ok(events.Select(e => new
     {
         e.Id,
@@ -61,6 +64,14 @@ app.MapGet("/api/events", async (IEventStore store, CancellationToken ct, int li
         confidence = e.Confidence ?? 0,
         hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath)
     }));
+});
+
+// Independent of any currently-applied filter, so the dropdowns always show every camera/
+// event type that has ever appeared, not just what's in the current filtered result set.
+app.MapGet("/api/events/filter-options", async (IEventStore store, CancellationToken ct) =>
+{
+    var options = await store.GetFilterOptionsAsync(ct);
+    return Results.Ok(new { cameras = options.Cameras, eventTypes = options.EventTypes });
 });
 
 app.MapGet("/api/events/{id:guid}/image", async (Guid id, IEventStore store, CancellationToken ct) =>

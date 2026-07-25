@@ -172,6 +172,30 @@ main {
   box-shadow: 0 0 10px rgba(57, 255, 156, 0.35);
 }
 
+.feed-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.feed-filters .field-input {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.feed-filters #filter-search {
+  flex: 2 1 240px;
+}
+
+.feed-filters .field-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .feed {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));

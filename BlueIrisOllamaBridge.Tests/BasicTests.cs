@@ -287,10 +287,15 @@ public sealed class BasicTests
         }
     }
 
-    private static AlertResult MakeResult(DateTimeOffset occurredAt) => new()
+    private static AlertResult MakeResult(
+        DateTimeOffset occurredAt,
+        string camera = "gateCamera",
+        string eventType = "vehicle_entering_property",
+        string summary = "A car pulled into the driveway.",
+        bool notified = true) => new()
     {
         Id = Guid.NewGuid(),
-        Camera = "gateCamera",
+        Camera = camera,
         OccurredAt = occurredAt,
         ReceivedAt = occurredAt,
         CompletedAt = occurredAt,
@@ -299,12 +304,55 @@ public sealed class BasicTests
         Status = "completed",
         Analysis = new VisionAnalysis
         {
-            EventType = "vehicle_entering_property",
-            Summary = "A car pulled into the driveway.",
-            NotificationRecommended = true,
+            EventType = eventType,
+            Summary = summary,
+            NotificationRecommended = notified,
             Confidence = 0.8
         }
     };
+
+    [Fact]
+    public async Task SqliteEventStore_SearchEvents_FiltersByCameraEventTypeNotifiedAndSearchText()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteEventStore(options, new FakeHostEnvironment(tempDir));
+
+            var now = new DateTimeOffset(2026, 7, 24, 10, 0, 0, TimeSpan.FromHours(-5));
+            var gateVehicle = MakeResult(now, camera: "gateCamera", eventType: "vehicle_entering_property", summary: "A car pulled into the driveway.", notified: true);
+            var gateQuiet = MakeResult(now, camera: "gateCamera", eventType: "none", summary: "Nothing of note.", notified: false);
+            var coopPredator = MakeResult(now, camera: "coopCamera", eventType: "predator_present", summary: "A fox was seen near the coop.", notified: true);
+
+            await store.RecordAsync(gateVehicle, TestContext.Current.CancellationToken);
+            await store.RecordAsync(gateQuiet, TestContext.Current.CancellationToken);
+            await store.RecordAsync(coopPredator, TestContext.Current.CancellationToken);
+
+            var byCamera = await store.SearchEventsAsync(new EventFilter(Camera: "coopCamera"), TestContext.Current.CancellationToken);
+            Assert.Equal(coopPredator.Id, Assert.Single(byCamera).Id);
+
+            var byEventType = await store.SearchEventsAsync(new EventFilter(EventType: "vehicle_entering_property"), TestContext.Current.CancellationToken);
+            Assert.Equal(gateVehicle.Id, Assert.Single(byEventType).Id);
+
+            var notifiedOnly = await store.SearchEventsAsync(new EventFilter(Camera: "gateCamera", NotifiedOnly: true), TestContext.Current.CancellationToken);
+            Assert.Equal(gateVehicle.Id, Assert.Single(notifiedOnly).Id);
+
+            var bySearchText = await store.SearchEventsAsync(new EventFilter(SearchText: "fox"), TestContext.Current.CancellationToken);
+            Assert.Equal(coopPredator.Id, Assert.Single(bySearchText).Id);
+
+            var everything = await store.SearchEventsAsync(new EventFilter(), TestContext.Current.CancellationToken);
+            Assert.Equal(3, everything.Count);
+
+            var options2 = await store.GetFilterOptionsAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(["coopCamera", "gateCamera"], options2.Cameras);
+            Assert.Equal(["none", "predator_present", "vehicle_entering_property"], options2.EventTypes);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
 
     [Fact]
     public async Task DailySummaryWorker_BuildMessageAsync_EmbedsNotableImagesAndListsAllEvents()
@@ -365,11 +413,14 @@ public sealed class BasicTests
         public Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
 
-        public Task<IReadOnlyList<AlertEventRecord>> GetRecentEventsAsync(int limit, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
-
         public Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult<AlertEventRecord?>(null);
+
+        public Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
+
+        public Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new EventFilterOptions([], []));
     }
 
     private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment
