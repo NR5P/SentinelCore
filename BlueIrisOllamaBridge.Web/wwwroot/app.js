@@ -40,21 +40,23 @@ function renderCard(event) {
     ? `<img src="/api/events/${event.id}/image" alt="${escapeHtml(event.summary)}" />`
     : `<div class="no-image">no image</div>`;
 
-  const badgeHtml = event.notified ? `<span class="badge">notified</span>` : "";
+  const badgeHtml = event.notified
+    ? `<span class="badge" data-tip="${escapeHtml(event.notificationReason) || "The AI judged this worth telling you about, so an alert was sent."}">notified</span>`
+    : "";
 
   card.innerHTML = `
-    <div class="card-image">
+    <div class="card-image"${event.hasImage ? ` data-tip="Click to view the full-size snapshot."` : ""}>
       ${imageHtml}
       ${badgeHtml}
     </div>
     <div class="card-body">
       <div class="card-meta">
-        <span class="card-camera">${escapeHtml(event.camera)}</span>
+        <span class="card-camera" data-tip="Which Blue Iris camera this came from.">${escapeHtml(event.camera)}</span>
         <span title="${escapeHtml(event.occurredAt)}">${timeAgo(event.occurredAt)}</span>
       </div>
-      <div class="card-summary">${escapeHtml(event.summary) || "&mdash;"}</div>
+      <div class="card-summary" data-tip="The AI's description of what it saw in this snapshot.">${escapeHtml(event.summary) || "&mdash;"}</div>
       <div class="card-footer">
-        <span class="card-event-type">${escapeHtml(event.eventType)}</span>
+        <span class="card-event-type" data-tip="What kind of event the AI classified this as.">${escapeHtml(event.eventType)}</span>
         <span>${formatClock(event.occurredAt)}</span>
       </div>
     </div>
@@ -73,6 +75,37 @@ function escapeHtml(value) {
   div.textContent = value ?? "";
   return div.innerHTML;
 }
+
+// Tooltips render to the right of their element by default, which runs off-screen for anything
+// near the right edge. Rather than hand-tagging each one - and missing the dynamically rendered
+// ones - measure and flip them to right-aligned as needed.
+const TIP_WIDTH = 300; // max-width plus padding and border
+
+function anchorTooltips() {
+  const viewportWidth = document.documentElement.clientWidth;
+  for (const el of document.querySelectorAll("[data-tip]")) {
+    const box = el.getBoundingClientRect();
+    if (!box.width) continue;
+    const runsOffRight = box.left + TIP_WIDTH > viewportWidth;
+    const flippingFits = box.right - TIP_WIDTH >= 0;
+    el.toggleAttribute("data-tip-right", runsOffRight && flippingFits);
+  }
+}
+
+let tipAnchorTimer;
+function scheduleTooltipAnchoring() {
+  clearTimeout(tipAnchorTimer);
+  tipAnchorTimer = setTimeout(anchorTooltips, 60);
+}
+window.GateWatchTooltips = { schedule: scheduleTooltipAnchoring };
+
+// childList covers elements being added (the zone editor's fields, camera/trigger cards, etc.).
+// It does NOT cover a class toggle like switching the active tab or opening a settings section -
+// those don't add or remove nodes, so the spots that do them call scheduleTooltipAnchoring()
+// directly (see the tab-click handler below and settings.js/triggers.js).
+new MutationObserver(scheduleTooltipAnchoring).observe(document.body, { childList: true, subtree: true });
+window.addEventListener("resize", scheduleTooltipAnchoring);
+anchorTooltips();
 
 const lightboxVideo = document.getElementById("lightbox-video");
 
@@ -166,5 +199,9 @@ for (const tab of tabs) {
     if (target === "triggers") window.GateWatchTriggers.load();
 
     currentView = target;
+    // Switching tabs only toggles the "active"/"hidden" classes above - no nodes are added or
+    // removed, so the MutationObserver in anchorTooltips() never sees it. Nudge it directly so
+    // a tooltip that was fine on the old tab doesn't run off-screen on the new one.
+    scheduleTooltipAnchoring();
   });
 }

@@ -3,119 +3,134 @@ window.GateWatchSettings = (function () {
     {
       key: "bridge", title: "BRIDGE", endpoint: "/api/settings/bridge",
       fields: [
-        { name: "apiKey", label: "API Key", type: "password" },
-        { name: "maximumImageBytes", label: "Max Image Bytes", type: "number", min: 1024, max: 104857600 },
-        { name: "retentionDays", label: "Retention Days", type: "number", min: 1, max: 3650 },
-        { name: "saveImages", label: "Save Images", type: "checkbox" },
-        { name: "allowedImageContentTypes", label: "Allowed Content Types (comma separated)", type: "csv" }
+        { name: "apiKey", label: "API Key", type: "password", tip: "The secret Blue Iris must send with each alert. If this doesn't match what Blue Iris is configured with, alerts are rejected." },
+        { name: "maximumImageBytes", label: "Max Image Bytes", type: "number", min: 1024, max: 104857600, tip: "Largest snapshot accepted from Blue Iris. Anything bigger is refused instead of eating memory." },
+        { name: "retentionDays", label: "Retention Days", type: "number", min: 1, max: 3650, tip: "How long events and their images are kept before being cleaned up automatically." },
+        { name: "saveImages", label: "Save Images", type: "checkbox", tip: "Keep a copy of each snapshot on disk. Turn off to record only the AI's text analysis." },
+        { name: "allowedImageContentTypes", label: "Allowed Content Types (comma separated)", type: "csv", tip: "Image formats accepted from Blue Iris, e.g. image/jpeg. Anything else is rejected." }
       ]
     },
     {
       key: "ollama", title: "OLLAMA", endpoint: "/api/settings/ollama",
       fields: [
-        { name: "model", label: "Model", type: "text" },
-        { name: "keepAlive", label: "Keep Alive", type: "text" },
-        { name: "temperature", label: "Temperature", type: "number", min: 0, max: 2, step: 0.1 },
-        { name: "maximumOutputTokens", label: "Max Output Tokens", type: "number", min: 32, max: 4096 },
-        { name: "topK", label: "Top K", type: "number", min: 1, max: 100 },
-        { name: "topP", label: "Top P", type: "number", min: 0, max: 1, step: 0.05 },
-        { name: "maximumRetries", label: "Max Retries", type: "number", min: 0, max: 10 },
-        { name: "retryDelaySeconds", label: "Retry Delay (s)", type: "number", min: 1, max: 300 }
+        { name: "model", label: "Model", type: "text", tip: "Which local vision model analyses the snapshots, e.g. gemma3:4b. It must already be pulled in Ollama." },
+        { name: "keepAlive", label: "Keep Alive", type: "text", tip: "How long Ollama keeps the model loaded in memory between alerts, e.g. 5m. Longer means faster replies but more RAM held." },
+        { name: "temperature", label: "Temperature", type: "number", min: 0, max: 2, step: 0.1, tip: "How much the model is allowed to improvise. Low values keep descriptions consistent and literal, which is what you want here." },
+        { name: "maximumOutputTokens", label: "Max Output Tokens", type: "number", min: 32, max: 4096, tip: "Ceiling on the length of the model's reply. Too low and the analysis gets cut off mid-sentence." },
+        { name: "topK", label: "Top K", type: "number", min: 1, max: 100, tip: "Limits the model to the K most likely next words. Lower is more predictable." },
+        { name: "topP", label: "Top P", type: "number", min: 0, max: 1, step: 0.05, tip: "Another way to limit word choice, by probability mass rather than count. Lower is more predictable." },
+        { name: "maximumRetries", label: "Max Retries", type: "number", min: 0, max: 10, tip: "How many times to retry when Ollama fails or returns something unparseable." },
+        { name: "retryDelaySeconds", label: "Retry Delay (s)", type: "number", min: 1, max: 300, tip: "How long to wait between those retries." }
       ]
     },
     {
       key: "imageProcessing", title: "IMAGE PROCESSING", endpoint: "/api/settings/image-processing",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "maxWidth", label: "Max Width", type: "number", min: 256, max: 4096 },
-        { name: "maxHeight", label: "Max Height", type: "number", min: 256, max: 4096 },
-        { name: "jpegQuality", label: "JPEG Quality", type: "number", min: 1, max: 100 },
-        { name: "autoOrient", label: "Auto Orient", type: "checkbox" }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Shrink snapshots before sending them to the AI. Usually faster with no real loss in accuracy." },
+        { name: "maxWidth", label: "Max Width", type: "number", min: 256, max: 4096, tip: "Images wider than this are scaled down before analysis." },
+        { name: "maxHeight", label: "Max Height", type: "number", min: 256, max: 4096, tip: "Images taller than this are scaled down before analysis." },
+        { name: "jpegQuality", label: "JPEG Quality", type: "number", min: 1, max: 100, tip: "Quality of the resized image. Lower means smaller and faster but blurrier for the model to read." },
+        { name: "autoOrient", label: "Auto Orient", type: "checkbox", tip: "Rotate images upright based on their orientation tag, so the model isn't looking at a sideways scene." }
       ]
     },
     {
       key: "email", title: "EMAIL", endpoint: "/api/settings/email",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "smtpHost", label: "SMTP Host", type: "text" },
-        { name: "smtpPort", label: "SMTP Port", type: "number", min: 1, max: 65535 },
-        { name: "enableSsl", label: "Enable SSL", type: "checkbox" },
-        { name: "username", label: "Username", type: "text" },
-        { name: "appPassword", label: "App Password", type: "password" },
-        { name: "fromAddress", label: "From Address", type: "text" },
-        { name: "fromName", label: "From Name", type: "text" },
-        { name: "toAddress", label: "To Address", type: "text" },
-        { name: "duplicateCooldownMinutes", label: "Duplicate Cooldown (min)", type: "number", min: 0, max: 1440 },
-        { name: "minimumConfidence", label: "Minimum Confidence", type: "number", min: 0, max: 1, step: 0.05 },
-        { name: "attachImage", label: "Attach Image", type: "checkbox" }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Send email when an alert is worth telling you about." },
+        { name: "smtpHost", label: "SMTP Host", type: "text", tip: "Outgoing mail server, e.g. smtp.gmail.com." },
+        { name: "smtpPort", label: "SMTP Port", type: "number", min: 1, max: 65535, tip: "Port for the mail server. Usually 587 with SSL on." },
+        { name: "enableSsl", label: "Enable SSL", type: "checkbox", tip: "Encrypt the connection to the mail server. Leave on unless your server can't do it." },
+        { name: "username", label: "Username", type: "text", tip: "Account used to log in to the mail server, usually the full email address." },
+        { name: "appPassword", label: "App Password", type: "password", tip: "For Gmail this is an app password, not your normal one. Regular passwords are refused." },
+        { name: "fromAddress", label: "From Address", type: "text", tip: "Address the alert appears to come from." },
+        { name: "fromName", label: "From Name", type: "text", tip: "Display name shown as the sender, e.g. Gate Watch." },
+        { name: "toAddress", label: "To Address", type: "text", tip: "Where alerts are sent." },
+        { name: "duplicateCooldownMinutes", label: "Duplicate Cooldown (min)", type: "number", min: 0, max: 1440, tip: "Suppress repeat emails about the same kind of event for this long, so one visitor doesn't fill your inbox." },
+        { name: "minimumConfidence", label: "Minimum Confidence", type: "number", min: 0, max: 1, step: 0.05, tip: "How sure the AI must be before emailing. Raise it if you get false alarms, lower it if real events slip through." },
+        { name: "attachImage", label: "Attach Image", type: "checkbox", tip: "Include the snapshot in the email rather than text only." }
       ]
     },
     {
       key: "dailySummary", title: "DAILY SUMMARY", endpoint: "/api/settings/daily-summary",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "morningHour", label: "Morning Hour (0-23)", type: "number", min: 0, max: 23 },
-        { name: "eveningHour", label: "Evening Hour (0-23)", type: "number", min: 0, max: 23 },
-        { name: "maxImagesAttached", label: "Max Images Attached", type: "number", min: 0, max: 50 }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Email a digest of everything that happened, instead of only alerting on notable events." },
+        { name: "morningHour", label: "Morning Hour (0-23)", type: "number", min: 0, max: 23, tip: "Hour of day the morning digest is sent, in 24-hour time. 7 means 7am." },
+        { name: "eveningHour", label: "Evening Hour (0-23)", type: "number", min: 0, max: 23, tip: "Hour of day the evening digest is sent, in 24-hour time. 19 means 7pm." },
+        { name: "maxImagesAttached", label: "Max Images Attached", type: "number", min: 0, max: 50, tip: "Cap on how many snapshots ride along in the digest, to keep the email a sane size." }
       ]
     },
     {
       key: "telegram", title: "TELEGRAM ALERTS", endpoint: "/api/settings/telegram",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "botToken", label: "Bot Token", type: "password" },
-        { name: "chatId", label: "Chat ID", type: "text" },
-        { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox" },
-        { name: "minimumConfidence", label: "Minimum Confidence", type: "number", min: 0, max: 1, step: 0.05 },
-        { name: "attachImage", label: "Attach Image", type: "checkbox" }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Push alerts to your phone through a Telegram bot." },
+        { name: "botToken", label: "Bot Token", type: "password", tip: "The token BotFather gave you when you created the bot." },
+        { name: "chatId", label: "Chat ID", type: "text", tip: "Which Telegram conversation to send to. This is the only chat the bot will talk to." },
+        { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox", tip: "Only message when the AI judges the event worth your attention, rather than for every single one." },
+        { name: "minimumConfidence", label: "Minimum Confidence", type: "number", min: 0, max: 1, step: 0.05, tip: "How sure the AI must be before messaging you." },
+        { name: "attachImage", label: "Attach Image", type: "checkbox", tip: "Send the snapshot with the message rather than text only." }
       ]
     },
     {
       key: "telegramChat", title: "TELEGRAM CHAT", endpoint: "/api/settings/telegram-chat",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "lookbackDays", label: "Lookback Days", type: "number", min: 1, max: 30 },
-        { name: "maxEventsInContext", label: "Max Events In Context", type: "number", min: 1, max: 500 },
-        { name: "model", label: "Model", type: "text" }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Let you message the bot and ask questions about recent gate activity." },
+        { name: "lookbackDays", label: "Lookback Days", type: "number", min: 1, max: 30, tip: "How far back the bot looks when answering a question." },
+        { name: "maxEventsInContext", label: "Max Events In Context", type: "number", min: 1, max: 500, tip: "How many events the bot can consider at once. Higher gives fuller answers but is slower." },
+        { name: "model", label: "Model", type: "text", tip: "Which Ollama model answers your questions. Can differ from the vision model used for images." }
       ]
     },
     {
       key: "blueIris", title: "BLUE IRIS SNAPSHOT", endpoint: "/api/settings/blue-iris",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "camera", label: "Camera Short Name", type: "text" },
-        { name: "username", label: "Username", type: "text" },
-        { name: "password", label: "Password", type: "password" }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow the /photo command to pull a fresh snapshot from Blue Iris on demand." },
+        { name: "camera", label: "Camera Short Name", type: "text", tip: "The camera's short name in Blue Iris, e.g. gateCamera. Must match exactly." },
+        { name: "username", label: "Username", type: "text", tip: "Blue Iris login used to request the snapshot." },
+        { name: "password", label: "Password", type: "password", tip: "Password for that Blue Iris account." }
       ]
     },
     {
       key: "selfMonitoring", title: "SELF-MONITORING", endpoint: "/api/settings/self-monitoring",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "checkIntervalSeconds", label: "Check Interval (s)", type: "number", min: 10, max: 3600 },
-        { name: "consecutiveFailuresBeforeAlert", label: "Consecutive Failures Before Alert", type: "number", min: 1, max: 20 },
-        { name: "queueBacklogThreshold", label: "Queue Backlog Threshold", type: "number", min: 1, max: 10000 },
-        { name: "consecutiveBacklogChecksBeforeAlert", label: "Consecutive Backlog Checks Before Alert", type: "number", min: 1, max: 20 },
-        { name: "notifyOnRecovery", label: "Notify On Recovery", type: "checkbox" }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Watch the bridge's own health and tell you if it stops working properly." },
+        { name: "checkIntervalSeconds", label: "Check Interval (s)", type: "number", min: 10, max: 3600, tip: "How often to run the health check." },
+        { name: "consecutiveFailuresBeforeAlert", label: "Consecutive Failures Before Alert", type: "number", min: 1, max: 20, tip: "How many checks must fail in a row before you're told, so one hiccup doesn't wake you." },
+        { name: "queueBacklogThreshold", label: "Queue Backlog Threshold", type: "number", min: 1, max: 10000, tip: "How many unprocessed alerts count as falling behind. Usually means the AI can't keep up." },
+        { name: "consecutiveBacklogChecksBeforeAlert", label: "Consecutive Backlog Checks Before Alert", type: "number", min: 1, max: 20, tip: "How many checks in a row must show a backlog before alerting, ignoring brief bursts." },
+        { name: "notifyOnRecovery", label: "Notify On Recovery", type: "checkbox", tip: "Also tell you when things go back to normal, not just when they break." }
       ]
     },
     {
       key: "webhook", title: "WEBHOOK", endpoint: "/api/settings/webhook",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox" },
-        { name: "url", label: "URL", type: "text" },
-        { name: "apiKeyHeaderName", label: "API Key Header Name", type: "text" },
-        { name: "apiKey", label: "API Key", type: "password" },
-        { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox" }
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "POST each analysed event to another system, for home automation or logging." },
+        { name: "url", label: "URL", type: "text", tip: "Address the event data is posted to." },
+        { name: "apiKeyHeaderName", label: "API Key Header Name", type: "text", tip: "Name of the header the key is sent in, e.g. X-API-Key. Whatever the receiving end expects." },
+        { name: "apiKey", label: "API Key", type: "password", tip: "Secret sent in that header so the receiving end knows it's you." },
+        { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox", tip: "Only post events the AI flagged as notable, rather than every one." }
       ]
     }
   ];
 
   const WIDE_TYPES = new Set(["checkbox", "password", "csv"]);
 
+  const SECTION_TIPS = {
+    bridge: "How alerts arrive from Blue Iris, and how long they're kept.",
+    ollama: "The local AI model that looks at each snapshot, and how it's tuned.",
+    imageProcessing: "Resizing snapshots before the AI sees them, to speed up analysis.",
+    email: "Email alerts when something notable happens.",
+    dailySummary: "A twice-daily digest of everything that happened, separate from individual alerts.",
+    telegram: "Push alerts to your phone through a Telegram bot.",
+    telegramChat: "Lets you message the bot to ask questions about recent activity.",
+    blueIris: "Pulling a fresh snapshot from Blue Iris on demand via the /photo command.",
+    selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
+    webhook: "Forward each analysed event to another system."
+  };
+
   function buildField(field, value) {
     const row = document.createElement("div");
     row.className = "field-row" + (WIDE_TYPES.has(field.type) ? " field-row-wide" : "");
+    // The tip lives on the row because <input> can't render the ::after pseudo-element.
+    if (field.tip) row.dataset.tip = field.tip;
 
     if (field.type === "checkbox") {
       row.classList.add("field-checkbox-row");
@@ -153,6 +168,8 @@ window.GateWatchSettings = (function () {
       toggle.type = "button";
       toggle.className = "field-toggle-btn";
       toggle.textContent = "show";
+      toggle.setAttribute("data-tip-right", "");
+      toggle.dataset.tip = "Reveal this secret so you can check it.";
       toggle.addEventListener("click", () => {
         input.type = input.type === "password" ? "text" : "password";
         toggle.textContent = input.type === "password" ? "show" : "hide";
@@ -193,7 +210,11 @@ window.GateWatchSettings = (function () {
     const header = document.createElement("div");
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">${schema.title}</span><span class="settings-section-caret">&#9656;</span>`;
-    header.addEventListener("click", () => section.classList.toggle("open"));
+    if (SECTION_TIPS[schema.key]) header.dataset.tip = SECTION_TIPS[schema.key];
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
@@ -210,6 +231,7 @@ window.GateWatchSettings = (function () {
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn";
     saveBtn.textContent = "save";
+    saveBtn.dataset.tip = "Save this section. Changes take effect immediately - no restart needed.";
     const errors = document.createElement("ul");
     errors.className = "field-errors";
     footer.append(saveBtn, errors);
@@ -246,7 +268,8 @@ window.GateWatchSettings = (function () {
     removeBtn.type = "button";
     removeBtn.className = "icon-btn";
     removeBtn.textContent = "✕";
-    removeBtn.title = "Remove question";
+    removeBtn.setAttribute("data-tip-right", "");
+    removeBtn.dataset.tip = "Remove this question from the profile.";
     removeBtn.addEventListener("click", () => row.remove());
     row.append(input, removeBtn);
     return row;
@@ -259,6 +282,7 @@ window.GateWatchSettings = (function () {
 
     const header = document.createElement("div");
     header.className = "profile-card-header";
+    header.dataset.tip = "Profile name. Blue Iris picks a profile by this name, and 'default' is used for anything that doesn't match.";
     const nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.className = "field-input profile-name-input";
@@ -268,12 +292,14 @@ window.GateWatchSettings = (function () {
     deleteBtn.type = "button";
     deleteBtn.className = "icon-btn";
     deleteBtn.textContent = "✕";
-    deleteBtn.title = "Delete profile";
+    deleteBtn.setAttribute("data-tip-right", "");
+    deleteBtn.dataset.tip = "Delete this whole profile. The 'default' profile is required and can't be removed.";
     deleteBtn.addEventListener("click", () => card.remove());
     header.append(nameInput, deleteBtn);
 
     const promptRow = document.createElement("div");
     promptRow.className = "field-row";
+    promptRow.dataset.tip = "Instructions sent to the AI with every image from this camera. Sets what it looks for and how it should reply.";
     const promptLabel = document.createElement("label");
     promptLabel.className = "field-label";
     promptLabel.textContent = "System Prompt";
@@ -285,6 +311,7 @@ window.GateWatchSettings = (function () {
 
     const questionsWrap = document.createElement("div");
     questionsWrap.className = "field-row";
+    questionsWrap.dataset.tip = "Specific things to ask about each image. The answers become the structured fields you see on the Feed tab.";
     const qLabel = document.createElement("label");
     qLabel.className = "field-label";
     qLabel.textContent = "Questions";
@@ -295,12 +322,13 @@ window.GateWatchSettings = (function () {
     addQBtn.type = "button";
     addQBtn.className = "icon-btn add";
     addQBtn.textContent = "+";
-    addQBtn.title = "Add question";
+    addQBtn.dataset.tip = "Add another question for the AI to answer about each image.";
     addQBtn.addEventListener("click", () => qList.appendChild(buildQuestionRow("")));
     questionsWrap.append(qLabel, qList, addQBtn);
 
     const cropWrap = document.createElement("div");
     cropWrap.className = "field-row";
+    cropWrap.dataset.tip = "Send only part of the image to the AI. Useful for cutting out a road or sky so the model focuses on the area you care about.";
     const cropToggleRow = document.createElement("div");
     cropToggleRow.className = "field-checkbox-row";
     const cropSwitch = document.createElement("label");
@@ -373,7 +401,10 @@ window.GateWatchSettings = (function () {
     const header = document.createElement("div");
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">PROMPT PROFILES</span><span class="settings-section-caret">&#9656;</span>`;
-    header.addEventListener("click", () => section.classList.toggle("open"));
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
@@ -394,6 +425,7 @@ window.GateWatchSettings = (function () {
     const addBtn = document.createElement("button");
     addBtn.className = "btn";
     addBtn.textContent = "+ add profile";
+    addBtn.dataset.tip = "Create another prompt profile. Blue Iris picks one per camera by name.";
     addBtn.addEventListener("click", () => cardsWrap.appendChild(buildProfileCard("", null)));
     toolbar.appendChild(addBtn);
 
@@ -402,6 +434,7 @@ window.GateWatchSettings = (function () {
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn";
     saveBtn.textContent = "save";
+    saveBtn.dataset.tip = "Save every profile. New prompts apply to the next alert that comes in.";
     const errors = document.createElement("ul");
     errors.className = "field-errors";
     footer.append(saveBtn, errors);

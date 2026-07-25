@@ -259,7 +259,7 @@ window.GateWatchTriggers = (function () {
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
-      <div class="card-image">
+      <div class="card-image" data-tip="${event.hasClip ? "Click to play the video clip saved around this trigger." : "Click to view the full-size snapshot. No clip was saved for this one."}">
         <img src="/api/triggers/${event.id}/image" alt="trigger snapshot" />
         ${event.hasClip ? `<span class="clip-badge">&#9654; clip</span>` : ""}
       </div>
