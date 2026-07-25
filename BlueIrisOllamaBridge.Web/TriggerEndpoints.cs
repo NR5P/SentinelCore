@@ -8,6 +8,9 @@ public sealed class TriggerConfigDto
     public int CooldownSeconds { get; set; }
     public int MaxTriggersPerMinute { get; set; }
     public int ShadowSensitivity { get; set; } = 50;
+    public bool RecordClips { get; set; }
+    public int ClipPreSeconds { get; set; } = 5;
+    public int ClipPostSeconds { get; set; } = 10;
 }
 
 public static class TriggerEndpoints
@@ -25,7 +28,8 @@ public static class TriggerEndpoints
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
-            var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute, dto.ShadowSensitivity);
+            var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
+                dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         });
@@ -54,7 +58,8 @@ public static class TriggerEndpoints
                 e.CameraId,
                 cameraName = names.GetValueOrDefault(e.CameraId, "deleted camera"),
                 occurredAt = e.OccurredAt,
-                triggerAreaFraction = e.TriggerAreaFraction
+                triggerAreaFraction = e.TriggerAreaFraction,
+                hasClip = !string.IsNullOrWhiteSpace(e.ClipPath) && File.Exists(e.ClipPath)
             }));
         });
 
@@ -65,6 +70,16 @@ public static class TriggerEndpoints
 
             var bytes = await File.ReadAllBytesAsync(trigger.ImagePath, ct);
             return Results.File(bytes, "image/jpeg");
+        });
+
+        // Streamed from disk with range support so the browser can seek without pulling the
+        // whole clip first.
+        app.MapGet("/api/triggers/{id:guid}/clip", async (Guid id, ITriggerEventStore store, CancellationToken ct) =>
+        {
+            var trigger = await store.GetAsync(id, ct);
+            if (trigger?.ClipPath is null || !File.Exists(trigger.ClipPath)) return Results.NotFound();
+
+            return Results.File(trigger.ClipPath, "video/mp4", enableRangeProcessing: true);
         });
     }
 
@@ -89,6 +104,16 @@ public static class TriggerEndpoints
 
         if (dto.ShadowSensitivity < 0 || dto.ShadowSensitivity > 100)
             errors.Add("Shadow sensitivity must be between 0 and 100.");
+
+        // Pre-roll is served out of a rolling on-disk buffer, so a long one costs real disk space.
+        if (dto.ClipPreSeconds < 0 || dto.ClipPreSeconds > 60)
+            errors.Add("Seconds before the trigger must be between 0 and 60.");
+
+        if (dto.ClipPostSeconds < 0 || dto.ClipPostSeconds > 120)
+            errors.Add("Seconds after the trigger must be between 0 and 120.");
+
+        if (dto.RecordClips && dto.ClipPreSeconds + dto.ClipPostSeconds == 0)
+            errors.Add("A clip needs at least one second before or after the trigger.");
 
         return errors;
     }
