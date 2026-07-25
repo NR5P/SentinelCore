@@ -1,3 +1,5 @@
+using BlueIrisOllamaBridge;
+
 namespace BlueIrisOllamaBridge.Web;
 
 public sealed class TriggerConfigDto
@@ -12,6 +14,7 @@ public sealed class TriggerConfigDto
     public int ClipPreSeconds { get; set; } = 5;
     public int ClipPostSeconds { get; set; } = 10;
     public bool SendToAlerts { get; set; }
+    public string AlertProfile { get; set; } = "default";
 }
 
 public static class TriggerEndpoints
@@ -29,10 +32,20 @@ public static class TriggerEndpoints
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
+            var profile = string.IsNullOrWhiteSpace(dto.AlertProfile) ? "default" : dto.AlertProfile.Trim();
             var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
-                dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts);
+                dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
+        });
+
+        // Just the names, not the full /api/settings payload - the zone editor's profile picker
+        // has no business seeing API keys/bot tokens/passwords along with it.
+        app.MapGet("/api/prompt-profile-names", async (AppSettingsFile mainAppSettings, CancellationToken ct) =>
+        {
+            var profiles = await mainAppSettings.GetSectionAsync<Dictionary<string, PromptProfile>>("PromptProfiles", ct);
+            var names = profiles?.Keys.OrderBy(name => name, StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<string>();
+            return Results.Ok(names);
         });
 
         app.MapGet("/api/cameras/{id:guid}/reference-frame", async (Guid id, ICameraStore cameraStore, HlsStreamManager streams, CancellationToken ct) =>
@@ -115,6 +128,9 @@ public static class TriggerEndpoints
 
         if (dto.RecordClips && dto.ClipPreSeconds + dto.ClipPostSeconds == 0)
             errors.Add("A clip needs at least one second before or after the trigger.");
+
+        if (dto.AlertProfile.Length > 100)
+            errors.Add("Profile name is too long.");
 
         return errors;
     }

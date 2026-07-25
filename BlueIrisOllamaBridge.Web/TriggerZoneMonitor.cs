@@ -211,7 +211,7 @@ public sealed class TriggerZoneMonitor(
                 _ = BuildClipAsync(camera, trigger, session.Config, now);
 
             if (session.Config.SendToAlerts)
-                _ = ForwardToAlertPipelineAsync(camera, bytes, now);
+                _ = ForwardToAlertPipelineAsync(camera, bytes, session.Config.AlertProfile, now);
         }
         catch (Exception ex)
         {
@@ -222,11 +222,11 @@ public sealed class TriggerZoneMonitor(
     // Fire-and-forget like BuildClipAsync, and for the same reason: not tied to the detection
     // session's token, so a config change or the camera being disabled a moment later doesn't
     // cancel an alert that's already in flight.
-    private async Task ForwardToAlertPipelineAsync(Camera camera, byte[] imageBytes, DateTimeOffset occurredAt)
+    private async Task ForwardToAlertPipelineAsync(Camera camera, byte[] imageBytes, string profile, DateTimeOffset occurredAt)
     {
         try
         {
-            await alertForwarder.ForwardAsync(imageBytes, camera.Name, occurredAt, _stoppingToken);
+            await alertForwarder.ForwardAsync(imageBytes, camera.Name, profile, occurredAt, _stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -323,6 +323,7 @@ public sealed class TriggerZoneMonitor(
         if (a.ClipPreSeconds != b.ClipPreSeconds) return false;
         if (a.ClipPostSeconds != b.ClipPostSeconds) return false;
         if (a.SendToAlerts != b.SendToAlerts) return false;
+        if (a.AlertProfile != b.AlertProfile) return false;
         if (a.ZonePolygon.Count != b.ZonePolygon.Count) return false;
 
         for (var i = 0; i < a.ZonePolygon.Count; i++)
