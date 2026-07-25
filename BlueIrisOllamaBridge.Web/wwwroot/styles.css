@@ -386,6 +386,10 @@ main {
   overflow: hidden;
 }
 
+.settings-section.hidden {
+  display: none;
+}
+
 .settings-section-header {
   display: flex;
   justify-content: space-between;
