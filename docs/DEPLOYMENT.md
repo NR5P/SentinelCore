@@ -68,7 +68,8 @@ by one `dotnet build` at the repo root.
   others)
 - **.NET 10 SDK**
 - **Ollama**, running locally, with a vision-capable model pulled (default `gemma3:4b`) -
-  required for the default configuration. An offsite Cloud Vision backend (OpenAI) can be used
+  required for the default configuration. An offsite Cloud Vision backend (OpenAI, Anthropic, or
+  Google) can be used
   instead, or as an automatic fallback, with no local install of its own - just an API key in
   Settings. See the User Guide's
   [Vision analysis backend](USER_GUIDE.md#8-vision-analysis-backend--local-cloud-or-both)

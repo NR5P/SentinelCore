@@ -5,9 +5,9 @@ namespace BlueIrisOllamaBridge;
 // Routes each alert to whichever backend VisionRoutingOptions:Primary names, and - if
 // FallbackEnabled - retries against the other backend when the primary's own retries are
 // exhausted. This is what AlertProcessor and everything else actually depends on; nothing else
-// talks to Ollama or OpenAI directly.
+// talks to Ollama or a cloud provider directly.
 // Takes both backends as IVisionAnalysisClient (not the concrete OllamaVisionClient/
-// OpenAiVisionClient types) purely so tests can substitute fakes - the DI registration in
+// CloudVisionClient types) purely so tests can substitute fakes - the DI registration in
 // Program.cs resolves the two concrete singletons explicitly and passes them in, since this is
 // the only thing in the container registered as IVisionAnalysisClient itself.
 public sealed class FailoverVisionClient(
@@ -51,6 +51,7 @@ public sealed class FailoverVisionClient(
         var cloudSettings = cloudOptions.CurrentValue;
         var cloudConfigured = cloudSettings.Enabled && !string.IsNullOrWhiteSpace(cloudSettings.ApiKey);
         var primaryIsCloud = string.Equals(routing.Primary, "cloud", StringComparison.OrdinalIgnoreCase);
+        var cloudName = CloudProviderName(cloudSettings.Provider);
 
         if (primaryIsCloud && !cloudConfigured)
         {
@@ -63,11 +64,18 @@ public sealed class FailoverVisionClient(
 
         if (primaryIsCloud)
             return routing.FallbackEnabled
-                ? (cloud, ollama, "OpenAI", "Ollama")
-                : (cloud, null, "OpenAI", null);
+                ? (cloud, ollama, cloudName, "Ollama")
+                : (cloud, null, cloudName, null);
 
         return routing.FallbackEnabled && cloudConfigured
-            ? (ollama, cloud, "Ollama", "OpenAI")
+            ? (ollama, cloud, "Ollama", cloudName)
             : (ollama, null, "Ollama", null);
     }
+
+    private static string CloudProviderName(string provider) => provider switch
+    {
+        "anthropic" => "Anthropic",
+        "google" => "Google",
+        _ => "OpenAI"
+    };
 }

@@ -320,6 +320,146 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void AnthropicVisionClient_ParseResponse_ExtractsAnalysisFromContentBlock()
+    {
+        const string analysisJson = """
+            {"event_type":"vehicle_at_gate","summary":"A car is at the gate.",
+             "gate":{"state":"closed"},
+             "person":{"visible":false,"location":"none","activity":"none","outside_vehicle":false,"description":""},
+             "vehicle":{"visible":true,"location":"outside_gate_entrance","orientation":"facing_gate","activity":"stopped","type":"car","color":"blue","description":"","delivery_company":"none","delivery_company_confidence":0.0},
+             "package":{"visible":false,"status":"none","location":"none"},
+             "animal":{"visible":false,"description":""},
+             "confidence":0.9,"notification_recommended":true,"notification_reason":"Vehicle waiting at gate."}
+            """;
+        var responseText = JsonSerializer.Serialize(new
+        {
+            content = new[] { new { type = "text", text = analysisJson } }
+        });
+
+        var (analysis, raw) = AnthropicVisionClient.ParseResponse(responseText);
+
+        Assert.Equal("vehicle_at_gate", analysis.EventType);
+        Assert.True(analysis.Vehicle.Visible);
+        Assert.Equal(analysisJson, raw);
+    }
+
+    [Fact]
+    public void AnthropicVisionClient_ParseResponse_StripsCodeFenceIfPresent()
+    {
+        // Anthropic isn't given a strict JSON-schema mode like OpenAI's, so - like Ollama - it
+        // occasionally wraps its answer in a markdown code fence despite being asked not to.
+        const string analysisJson = """{"event_type":"none","summary":"Nothing notable.","gate":{"state":"unknown"},"person":{"visible":false,"location":"none","activity":"none","outside_vehicle":false,"description":""},"vehicle":{"visible":false,"location":"none","orientation":"unknown","activity":"none","type":"none","color":"unknown","description":"","delivery_company":"none","delivery_company_confidence":0.0},"package":{"visible":false,"status":"none","location":"none"},"animal":{"visible":false,"description":""},"confidence":0.1,"notification_recommended":false,"notification_reason":"Nothing happening."}""";
+        var fenced = $"```json\n{analysisJson}\n```";
+        var responseText = JsonSerializer.Serialize(new
+        {
+            content = new[] { new { type = "text", text = fenced } }
+        });
+
+        var (analysis, _) = AnthropicVisionClient.ParseResponse(responseText);
+
+        Assert.Equal("none", analysis.EventType);
+    }
+
+    [Fact]
+    public void AnthropicVisionClient_BuildRequest_UsesXApiKeyStyleFieldsNotBearerShape()
+    {
+        var profile = MakeProfile();
+        var request = AnthropicVisionClient.BuildRequest("claude-3-5-sonnet-latest", profile, "prompt text", [1, 2, 3]);
+        var json = JsonSerializer.Serialize(request);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        // Distinguishing shape from OpenAI's request: "system" is a top-level string, not a
+        // message with role "system", and max_tokens is required.
+        Assert.Equal("claude-3-5-sonnet-latest", root.GetProperty("model").GetString());
+        Assert.Equal(profile.SystemPrompt, root.GetProperty("system").GetString());
+        Assert.True(root.GetProperty("max_tokens").GetInt32() > 0);
+        var content = root.GetProperty("messages")[0].GetProperty("content");
+        Assert.Equal("image", content[1].GetProperty("type").GetString());
+        Assert.Equal("base64", content[1].GetProperty("source").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void GoogleVisionClient_ParseResponse_ExtractsAnalysisFromCandidateParts()
+    {
+        const string analysisJson = """
+            {"event_type":"none","summary":"Empty driveway.",
+             "gate":{"state":"unknown"},
+             "person":{"visible":false,"location":"none","activity":"none","outside_vehicle":false,"description":""},
+             "vehicle":{"visible":false,"location":"none","orientation":"unknown","activity":"none","type":"none","color":"unknown","description":"","delivery_company":"none","delivery_company_confidence":0.0},
+             "package":{"visible":false,"status":"none","location":"none"},
+             "animal":{"visible":false,"description":""},
+             "confidence":0.2,"notification_recommended":false,"notification_reason":"Nothing happening."}
+            """;
+        var responseText = JsonSerializer.Serialize(new
+        {
+            candidates = new[] { new { content = new { parts = new[] { new { text = analysisJson } } } } }
+        });
+
+        var (analysis, raw) = GoogleVisionClient.ParseResponse(responseText);
+
+        Assert.Equal("none", analysis.EventType);
+        Assert.Equal(analysisJson, raw);
+    }
+
+    [Fact]
+    public void GoogleVisionClient_BuildJsonSchema_UsesUppercaseTypesAndNoAdditionalProperties()
+    {
+        var schema = GoogleVisionClient.BuildJsonSchema(MakeProfile());
+
+        Assert.Equal("OBJECT", schema["type"]!.GetValue<string>());
+        Assert.Null(schema["additionalProperties"]);
+        Assert.Equal("STRING", schema["properties"]!["event_type"]!["type"]!.GetValue<string>());
+        Assert.Equal("BOOLEAN", schema["properties"]!["vehicle"]!["properties"]!["visible"]!["type"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void GoogleVisionClient_BuildJsonSchema_OnlyIncludesLicensePlateWhenProfileOptsIn()
+    {
+        var withoutPlate = GoogleVisionClient.BuildJsonSchema(MakeProfile());
+        Assert.Null(withoutPlate["properties"]!["vehicle"]!["properties"]!["license_plate"]);
+
+        var enabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Q"], LicensePlateRecognitionEnabled = true };
+        var withPlate = GoogleVisionClient.BuildJsonSchema(enabledProfile);
+        Assert.NotNull(withPlate["properties"]!["vehicle"]!["properties"]!["license_plate"]);
+    }
+
+    [Fact]
+    public async Task CloudVisionClient_Resolve_DispatchesToConfiguredProvider()
+    {
+        var openAi = new FakeVisionClient("gpt-4o-mini");
+        var anthropic = new FakeVisionClient("claude-3-5-sonnet-latest");
+        var google = new FakeVisionClient("gemini-1.5-flash");
+        var client = new CloudVisionClient(
+            openAi, anthropic, google,
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Provider = "anthropic" }),
+            NullLogger<CloudVisionClient>.Instance);
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("claude-3-5-sonnet-latest", model);
+        Assert.Equal(1, anthropic.CallCount);
+        Assert.Equal(0, openAi.CallCount);
+        Assert.Equal(0, google.CallCount);
+    }
+
+    [Fact]
+    public async Task CloudVisionClient_Resolve_DefaultsToOpenAiForUnrecognizedProvider()
+    {
+        var openAi = new FakeVisionClient("gpt-4o-mini");
+        var anthropic = new FakeVisionClient("claude-3-5-sonnet-latest");
+        var google = new FakeVisionClient("gemini-1.5-flash");
+        var client = new CloudVisionClient(
+            openAi, anthropic, google,
+            new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Provider = "not-a-real-provider" }),
+            NullLogger<CloudVisionClient>.Instance);
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gpt-4o-mini", model);
+    }
+
+    [Fact]
     public async Task FailoverVisionClient_UsesPrimaryOnly_WhenItSucceeds()
     {
         var ollama = new FakeVisionClient("gemma3:4b");
