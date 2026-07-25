@@ -61,6 +61,10 @@ builder.Services.AddOptions<QuietHoursOptions>()
     .Bind(builder.Configuration.GetSection(QuietHoursOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<MqttOptions>()
+    .Bind(builder.Configuration.GetSection(MqttOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>
@@ -82,6 +86,15 @@ builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
+
+// Registered before MqttPublisher so the embedded broker (if enabled) is listening before the
+// publisher's own client tries to connect to it.
+builder.Services.AddHostedService<EmbeddedMqttBrokerService>();
+builder.Services.AddSingleton<MqttPublisher>();
+builder.Services.AddSingleton<IMqttPublisher>(sp => sp.GetRequiredService<MqttPublisher>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttPublisher>());
+builder.Services.AddSingleton<IAlertAction, MqttAlertAction>();
+
 builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddHostedService<DailySummaryWorker>();

@@ -389,6 +389,18 @@ sudo ufw allow from 192.168.50.0/24 to any port 3320 proto tcp
 
 (Adjust the subnet to match your actual network.)
 
+If you turn on the built-in MQTT broker (`Mqtt:RunEmbeddedBroker`), also open its port (1883
+by default) to your LAN so Home Assistant or other MQTT clients elsewhere on the network can
+reach it:
+
+```bash
+sudo ufw allow from 192.168.50.0/24 to any port 1883 proto tcp
+```
+
+Not needed if you're pointing this app at a broker that already exists elsewhere (e.g. Home
+Assistant's own Mosquitto add-on) - only the outbound connection from this app to that broker
+matters then, and outbound connections aren't affected by `ufw`'s default incoming-only rules.
+
 ## 15. Troubleshooting
 
 **Build fails with `Fatal error. Internal CLR error. (0x80131506)`.** Known MSBuild
