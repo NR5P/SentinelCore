@@ -13,18 +13,19 @@ public interface IBlueIrisSnapshotClient
 public sealed class BlueIrisSnapshotClient : IBlueIrisSnapshotClient
 {
     private readonly HttpClient _httpClient;
-    private readonly BlueIrisOptions _options;
+    private readonly IOptionsMonitor<BlueIrisOptions> _optionsMonitor;
     private readonly ILogger<BlueIrisSnapshotClient> _logger;
 
-    public BlueIrisSnapshotClient(HttpClient httpClient, IOptions<BlueIrisOptions> options, ILogger<BlueIrisSnapshotClient> logger)
+    public BlueIrisSnapshotClient(HttpClient httpClient, IOptionsMonitor<BlueIrisOptions> options, ILogger<BlueIrisSnapshotClient> logger)
     {
         _httpClient = httpClient;
-        _options = options.Value;
+        _optionsMonitor = options;
         _logger = logger;
     }
 
     public async Task<byte[]?> GetSnapshotAsync(CancellationToken cancellationToken)
     {
+        var _options = _optionsMonitor.CurrentValue;
         if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.BaseUrl) || string.IsNullOrWhiteSpace(_options.Camera))
             return null;
 

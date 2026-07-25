@@ -18,18 +18,18 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
     };
 
     private readonly HttpClient _httpClient;
-    private readonly OllamaOptions _options;
+    private readonly IOptionsMonitor<OllamaOptions> _optionsMonitor;
     private readonly IImageOptimizer _imageOptimizer;
     private readonly ILogger<OllamaVisionClient> _logger;
 
     public OllamaVisionClient(
         HttpClient httpClient,
-        IOptions<OllamaOptions> options,
+        IOptionsMonitor<OllamaOptions> options,
         IImageOptimizer imageOptimizer,
         ILogger<OllamaVisionClient> logger)
     {
         _httpClient = httpClient;
-        _options = options.Value;
+        _optionsMonitor = options;
         _imageOptimizer = imageOptimizer;
         _logger = logger;
     }
@@ -39,6 +39,7 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         PromptProfile profile,
         CancellationToken cancellationToken)
     {
+        var _options = _optionsMonitor.CurrentValue;
         var startedAt = DateTimeOffset.UtcNow;
         var optimizedImage = await _imageOptimizer.OptimizeForInferenceAsync(
             alert.ImageBytes,

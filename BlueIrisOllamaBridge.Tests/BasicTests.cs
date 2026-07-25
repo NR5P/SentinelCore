@@ -326,9 +326,9 @@ public sealed class BasicTests
 
             var worker = new DailySummaryWorker(
                 eventStore: new StubEventStore(),
-                imageOptimizer: new ImageOptimizer(Options.Create(new ImageProcessingOptions()), NullLogger<ImageOptimizer>.Instance),
-                options: Options.Create(new DailySummaryOptions()),
-                emailOptions: Options.Create(new EmailOptions { Username = "a@b.com", ToAddress = "a@b.com", FromName = "Gate Camera" }),
+                imageOptimizer: new ImageOptimizer(new StaticOptionsMonitor<ImageProcessingOptions>(new()), NullLogger<ImageOptimizer>.Instance),
+                options: new StaticOptionsMonitor<DailySummaryOptions>(new()),
+                emailOptions: new StaticOptionsMonitor<EmailOptions>(new EmailOptions { Username = "a@b.com", ToAddress = "a@b.com", FromName = "Gate Camera" }),
                 logger: NullLogger<DailySummaryWorker>.Instance);
 
             using var message = await worker.BuildMessageAsync(
@@ -378,5 +378,14 @@ public sealed class BasicTests
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
         public string ContentRootPath { get; set; } = contentRootPath;
         public string EnvironmentName { get; set; } = "Test";
+    }
+
+    // A fixed-value IOptionsMonitor<T> for tests that construct a class directly rather than
+    // through DI. OnChange is never invoked since the value never changes in a test.
+    private sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+    {
+        public T CurrentValue { get; } = value;
+        public T Get(string? name) => CurrentValue;
+        public IDisposable? OnChange(Action<T, string?> listener) => null;
     }
 }

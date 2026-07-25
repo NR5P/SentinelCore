@@ -64,9 +64,10 @@ builder.Services.Configure<FormOptions>(options =>
     options.MultipartBodyLengthLimit = bridgeSettings.MaximumImageBytes + 1024 * 1024;
 });
 
-var promptProfiles = builder.Configuration.GetSection("PromptProfiles").Get<Dictionary<string, PromptProfile>>()
+_ = builder.Configuration.GetSection("PromptProfiles").Get<Dictionary<string, PromptProfile>>()
     ?? throw new InvalidOperationException("No PromptProfiles are configured.");
-builder.Services.AddSingleton<IReadOnlyDictionary<string, PromptProfile>>(promptProfiles);
+builder.Services.Configure<Dictionary<string, PromptProfile>>(builder.Configuration.GetSection("PromptProfiles"));
+builder.Services.AddSingleton<IPromptProfileProvider, PromptProfileProvider>();
 
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
@@ -144,7 +145,8 @@ app.MapPost("/api/blueiris/alert", async (
     HttpRequest request,
     IAlertQueue queue,
     IResultStore store,
-    IOptions<BridgeOptions> bridgeOptions,
+    IOptionsMonitor<BridgeOptions> bridgeOptions,
+    IOptionsMonitor<OllamaOptions> ollamaOptions,
     CancellationToken ct) =>
 {
     if (!request.HasFormContentType)
@@ -155,7 +157,7 @@ app.MapPost("/api/blueiris/alert", async (
     if (image is null || image.Length == 0)
         return Results.BadRequest(new { error = "No image was supplied." });
 
-    var settings = bridgeOptions.Value;
+    var settings = bridgeOptions.CurrentValue;
     if (image.Length > settings.MaximumImageBytes)
         return Results.Json(new { error = $"Image exceeds {settings.MaximumImageBytes} bytes." }, statusCode: 413);
     if (!settings.AllowedImageContentTypes.Contains(image.ContentType))
@@ -185,7 +187,7 @@ app.MapPost("/api/blueiris/alert", async (
     {
         Id = alert.Id, Camera = alert.Camera, BlueIrisAlertId = alert.BlueIrisAlertId,
         OccurredAt = alert.OccurredAt, ReceivedAt = alert.ReceivedAt,
-        Profile = alert.Profile, Model = ollamaSettings.Model, Status = "queued"
+        Profile = alert.Profile, Model = ollamaOptions.CurrentValue.Model, Status = "queued"
     }, ct);
 
     return Results.Accepted($"/api/results/{alert.Id}", new AcceptedAlertResponse(alert.Id, "queued", $"/api/results/{alert.Id}"));

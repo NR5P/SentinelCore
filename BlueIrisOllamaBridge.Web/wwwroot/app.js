@@ -112,3 +112,21 @@ refreshBtn.addEventListener("click", loadEvents);
 
 loadEvents();
 setInterval(loadEvents, REFRESH_INTERVAL_MS);
+
+// Tab switching between the feed and settings views. Settings are lazy-loaded on first visit.
+const tabs = document.querySelectorAll(".tab");
+const views = { feed: document.getElementById("view-feed"), settings: document.getElementById("view-settings") };
+let settingsLoaded = false;
+
+for (const tab of tabs) {
+  tab.addEventListener("click", () => {
+    const target = tab.dataset.view;
+    for (const t of tabs) t.classList.toggle("active", t === tab);
+    for (const [name, el] of Object.entries(views)) el.classList.toggle("hidden", name !== target);
+
+    if (target === "settings" && !settingsLoaded) {
+      settingsLoaded = true;
+      window.GateWatchSettings.load();
+    }
+  });
+}

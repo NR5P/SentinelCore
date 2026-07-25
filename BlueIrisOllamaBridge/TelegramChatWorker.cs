@@ -17,8 +17,8 @@ public sealed class TelegramChatWorker : BackgroundService
     private readonly IEventStore _eventStore;
     private readonly IOllamaChatClient _chatClient;
     private readonly IBlueIrisSnapshotClient _snapshotClient;
-    private readonly TelegramOptions _telegramOptions;
-    private readonly TelegramChatOptions _chatOptions;
+    private readonly IOptionsMonitor<TelegramOptions> _telegramOptionsMonitor;
+    private readonly IOptionsMonitor<TelegramChatOptions> _chatOptionsMonitor;
     private readonly ILogger<TelegramChatWorker> _logger;
 
     public TelegramChatWorker(
@@ -26,36 +26,47 @@ public sealed class TelegramChatWorker : BackgroundService
         IEventStore eventStore,
         IOllamaChatClient chatClient,
         IBlueIrisSnapshotClient snapshotClient,
-        IOptions<TelegramOptions> telegramOptions,
-        IOptions<TelegramChatOptions> chatOptions,
+        IOptionsMonitor<TelegramOptions> telegramOptions,
+        IOptionsMonitor<TelegramChatOptions> chatOptions,
         ILogger<TelegramChatWorker> logger)
     {
         _httpClient = httpClientFactory.CreateClient(nameof(TelegramChatWorker));
         _eventStore = eventStore;
         _chatClient = chatClient;
         _snapshotClient = snapshotClient;
-        _telegramOptions = telegramOptions.Value;
-        _chatOptions = chatOptions.Value;
+        _telegramOptionsMonitor = telegramOptions;
+        _chatOptionsMonitor = chatOptions;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_chatOptions.Enabled || !_telegramOptions.Enabled ||
-            string.IsNullOrWhiteSpace(_telegramOptions.BotToken) || string.IsNullOrWhiteSpace(_telegramOptions.ChatId))
-        {
-            _logger.LogInformation("TelegramChat is disabled or Telegram is not configured; the chat listener will not start.");
-            return;
-        }
-
-        var offset = await SkipBacklogAsync(stoppingToken);
+        long offset = 0;
+        var backlogCleared = false;
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var telegramOptions = _telegramOptionsMonitor.CurrentValue;
+            var chatOptions = _chatOptionsMonitor.CurrentValue;
+
+            if (!chatOptions.Enabled || !telegramOptions.Enabled ||
+                string.IsNullOrWhiteSpace(telegramOptions.BotToken) || string.IsNullOrWhiteSpace(telegramOptions.ChatId))
+            {
+                backlogCleared = false;
+                if (!await WaitAsync(TimeSpan.FromSeconds(30), stoppingToken)) break;
+                continue;
+            }
+
+            if (!backlogCleared)
+            {
+                offset = await SkipBacklogAsync(telegramOptions.BotToken, stoppingToken);
+                backlogCleared = true;
+            }
+
             List<TelegramUpdate> updates;
             try
             {
-                updates = await GetUpdatesAsync(offset, _chatOptions.PollTimeoutSeconds, stoppingToken);
+                updates = await GetUpdatesAsync(telegramOptions.BotToken, offset, chatOptions.PollTimeoutSeconds, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -64,8 +75,7 @@ public sealed class TelegramChatWorker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to poll Telegram for updates; retrying shortly.");
-                try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
-                catch (OperationCanceledException) { break; }
+                if (!await WaitAsync(TimeSpan.FromSeconds(5), stoppingToken)) break;
                 continue;
             }
 
@@ -77,11 +87,24 @@ public sealed class TelegramChatWorker : BackgroundService
         }
     }
 
-    private async Task<long> SkipBacklogAsync(CancellationToken cancellationToken)
+    private static async Task<bool> WaitAsync(TimeSpan delay, CancellationToken stoppingToken)
     {
         try
         {
-            var pending = await GetUpdatesAsync(offset: 0, timeoutSeconds: 0, cancellationToken);
+            await Task.Delay(delay, stoppingToken);
+            return true;
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    private async Task<long> SkipBacklogAsync(string botToken, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var pending = await GetUpdatesAsync(botToken, offset: 0, timeoutSeconds: 0, cancellationToken);
             if (pending.Count == 0) return 0;
 
             _logger.LogInformation("Skipping {Count} pending Telegram update(s) from before startup.", pending.Count);
@@ -94,9 +117,9 @@ public sealed class TelegramChatWorker : BackgroundService
         }
     }
 
-    private async Task<List<TelegramUpdate>> GetUpdatesAsync(long offset, int timeoutSeconds, CancellationToken cancellationToken)
+    private async Task<List<TelegramUpdate>> GetUpdatesAsync(string botToken, long offset, int timeoutSeconds, CancellationToken cancellationToken)
     {
-        var url = $"{ApiBaseUrl}/bot{_telegramOptions.BotToken}/getUpdates?timeout={timeoutSeconds}&offset={offset}";
+        var url = $"{ApiBaseUrl}/bot{botToken}/getUpdates?timeout={timeoutSeconds}&offset={offset}";
         var payload = await _httpClient.GetFromJsonAsync<TelegramUpdatesResponse>(url, cancellationToken);
         return payload?.Result ?? [];
     }
@@ -107,7 +130,7 @@ public sealed class TelegramChatWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(message?.Text)) return;
 
         var incomingChatId = message.Chat.Id.ToString();
-        if (!IsAuthorizedChat(incomingChatId, _telegramOptions.ChatId))
+        if (!IsAuthorizedChat(incomingChatId, _telegramOptionsMonitor.CurrentValue.ChatId))
         {
             _logger.LogWarning("Ignoring Telegram message from unauthorized chat {ChatId}", incomingChatId);
             return;
@@ -146,20 +169,21 @@ public sealed class TelegramChatWorker : BackgroundService
 
     private async Task<string> AnswerQuestionAsync(string question, CancellationToken cancellationToken)
     {
+        var chatOptions = _chatOptionsMonitor.CurrentValue;
         var now = DateTimeOffset.Now;
-        var events = await _eventStore.GetEventsAsync(now.AddDays(-_chatOptions.LookbackDays), now, cancellationToken);
+        var events = await _eventStore.GetEventsAsync(now.AddDays(-chatOptions.LookbackDays), now, cancellationToken);
 
         var recent = events
             .Where(e => string.Equals(e.Status, "completed", StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(e => e.OccurredAt)
-            .Take(_chatOptions.MaxEventsInContext)
+            .Take(chatOptions.MaxEventsInContext)
             .OrderBy(e => e.OccurredAt)
             .ToList();
 
         var systemPrompt = $"""
             You are an assistant for a home security gate-camera system. The current date and time is
             {now:dddd, MMMM d, yyyy h:mm tt} ({now:zzz} offset). Answer the user's question using ONLY
-            the event log below, which covers the last {_chatOptions.LookbackDays} day(s) up to now.
+            the event log below, which covers the last {chatOptions.LookbackDays} day(s) up to now.
             Mention every relevant event in the log, not just the first one. Reply like a short text
             message: concise and conversational, no markdown. If the log doesn't contain the answer,
             say so plainly instead of guessing.
@@ -172,28 +196,32 @@ public sealed class TelegramChatWorker : BackgroundService
         return answer.Length > 4000 ? answer[..4000] : answer;
     }
 
-    private Task SendMessageAsync(string text, CancellationToken cancellationToken) =>
-        _httpClient.PostAsync(
-            $"{ApiBaseUrl}/bot{_telegramOptions.BotToken}/sendMessage",
+    private Task SendMessageAsync(string text, CancellationToken cancellationToken)
+    {
+        var telegramOptions = _telegramOptionsMonitor.CurrentValue;
+        return _httpClient.PostAsync(
+            $"{ApiBaseUrl}/bot{telegramOptions.BotToken}/sendMessage",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["chat_id"] = _telegramOptions.ChatId,
+                ["chat_id"] = telegramOptions.ChatId,
                 ["text"] = text
             }),
             cancellationToken);
+    }
 
     private async Task SendPhotoAsync(byte[] imageBytes, CancellationToken cancellationToken)
     {
+        var telegramOptions = _telegramOptionsMonitor.CurrentValue;
         using var content = new MultipartFormDataContent
         {
-            { new StringContent(_telegramOptions.ChatId), "chat_id" }
+            { new StringContent(telegramOptions.ChatId), "chat_id" }
         };
         using var imageContent = new ByteArrayContent(imageBytes);
         imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
         content.Add(imageContent, "photo", "snapshot.jpg");
 
         using var response = await _httpClient.PostAsync(
-            $"{ApiBaseUrl}/bot{_telegramOptions.BotToken}/sendPhoto", content, cancellationToken);
+            $"{ApiBaseUrl}/bot{telegramOptions.BotToken}/sendPhoto", content, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);

@@ -1,4 +1,5 @@
 using BlueIrisOllamaBridge;
+using BlueIrisOllamaBridge.Web;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,10 +10,15 @@ builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection(Bridg
 
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 
+var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
+    ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
+builder.Services.AddSingleton(new AppSettingsFile(mainAppSettingsPath));
+
 var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapSettingsEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 
