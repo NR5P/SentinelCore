@@ -44,7 +44,9 @@ public static class TriggerEndpoints
         app.MapGet("/api/prompt-profile-names", async (AppSettingsFile mainAppSettings, CancellationToken ct) =>
         {
             var profiles = await mainAppSettings.GetSectionAsync<Dictionary<string, PromptProfile>>("PromptProfiles", ct);
-            var names = profiles?.Keys.OrderBy(name => name, StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<string>();
+            var names = (profiles ?? [])
+                .Select(kvp => new { key = kvp.Key, displayName = string.IsNullOrWhiteSpace(kvp.Value.DisplayName) ? kvp.Key : kvp.Value.DisplayName })
+                .OrderBy(p => p.displayName, StringComparer.OrdinalIgnoreCase);
             return Results.Ok(names);
         });
 
