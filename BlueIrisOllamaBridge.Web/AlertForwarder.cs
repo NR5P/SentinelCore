@@ -1,17 +1,17 @@
 namespace BlueIrisOllamaBridge.Web;
 
 // Opt-in bridge from a trigger zone into the main app's own alert pipeline: same Ollama
-// analysis, same prompt, same email/Telegram/webhook dispatch Blue Iris alerts already use.
-// Reuses the main app's existing /api/blueiris/alert endpoint rather than duplicating any AI
-// or notification logic here - the trigger's snapshot just becomes another incoming alert,
-// authenticated with the same API key already configured for Blue Iris.
+// analysis, the zone's chosen prompt profile, same email/Telegram/webhook dispatch Blue Iris
+// alerts already use. Reuses the main app's existing /api/blueiris/alert endpoint rather than
+// duplicating any AI or notification logic here - the trigger's snapshot just becomes another
+// incoming alert, authenticated with the same API key already configured for Blue Iris.
 public sealed class AlertForwarder(
     IHttpClientFactory httpClientFactory,
     AppSettingsFile mainAppSettings,
     IConfiguration configuration,
     ILogger<AlertForwarder> logger)
 {
-    public async Task<bool> ForwardAsync(byte[] imageBytes, string cameraName, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    public async Task<bool> ForwardAsync(byte[] imageBytes, string cameraName, string profile, DateTimeOffset occurredAt, CancellationToken cancellationToken)
     {
         var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", cancellationToken);
         if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
@@ -27,7 +27,7 @@ public sealed class AlertForwarder(
         imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
         content.Add(imageContent, "image", "trigger.jpg");
         content.Add(new StringContent(cameraName), "camera");
-        content.Add(new StringContent("default"), "profile");
+        content.Add(new StringContent(string.IsNullOrWhiteSpace(profile) ? "default" : profile), "profile");
         content.Add(new StringContent(occurredAt.ToString("O")), "occurredAt");
 
         var client = httpClientFactory.CreateClient(nameof(AlertForwarder));
