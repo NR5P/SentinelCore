@@ -63,6 +63,19 @@ every 30 seconds (or click **refresh** to force it). Each card shows:
 If a card has no image, either `Bridge:SaveImages` is off or the image failed to save; the
 AI's text analysis is still recorded either way.
 
+**Searching and filtering.** Above the feed is a filter bar:
+
+- A text box that searches the AI's description (e.g. searching "package" finds every event
+  whose summary mentions one), debounced so it doesn't refetch on every keystroke
+- A **camera** dropdown and an **event type** dropdown, both populated from everything that's
+  ever appeared in history — not just what's currently shown
+- **From** / **to** date fields to bound the search to a range
+- A **notified only** toggle to hide everything that didn't actually alert
+
+Every filter combines with the others (all must match), and the count at the top of the tab
+reflects the current filter, not the total history. **clear** resets everything back to the
+unfiltered, most-recent-50 view.
+
 ## 4. The LIVE tab — viewing your own cameras
 
 Shows live video from cameras you've added yourself (see the next section) — **not** your

@@ -210,7 +210,7 @@ Runs on port 3320 (port 332 itself is a privileged port on Linux and would need 
 
 ### Settings
 
-The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `BlueIrisOllamaBridge.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Blue Iris, self-monitoring, and the webhook. Each section validates and saves independently.
+The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `BlueIrisOllamaBridge.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Blue Iris, self-monitoring, quiet hours, and the webhook. Each section validates and saves independently.
 
 Everything shown is picked up live via `IOptionsMonitor<T>` - .NET's built-in file-watch reload on `appsettings.json` - so saving a change takes effect within a couple seconds, no restart. Two things are deliberately left out of the UI because they can't be: `Bridge:QueueCapacity` and `Bridge:DataDirectory` size an in-memory queue and open a SQLite connection once at startup, so changing them always needs a restart regardless of how the value is stored. A few `*BaseUrl`/`*TimeoutSeconds` fields are similarly baked into an HTTP client at startup and are also left out rather than half-supported.
 
