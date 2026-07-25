@@ -57,6 +57,10 @@ builder.Services.AddOptions<SelfMonitoringOptions>()
     .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<QuietHoursOptions>()
+    .Bind(builder.Configuration.GetSection(QuietHoursOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>

@@ -143,6 +143,12 @@ this guide mostly mirrors:
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
 - **Self-Monitoring** — watches the bridge's own health; see [section 12](#12-self-monitoring).
+- **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must
+  be before Email or Telegram will still ping you. It never fully mutes either channel — a
+  confident detection still alerts you at 3am — and it has no effect on the Feed, the daily
+  digest, or self-monitoring, which all keep working exactly as normal. See
+  [section 11](#11-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
+  fits with the other rate-limiting layers.
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
 - **Prompt Profiles** — the actual instructions given to the AI, per camera. Its own section
   below, since there's a lot here.
@@ -237,26 +243,31 @@ didn't alert when you expected it to, it's almost always one of these:
 2. **Minimum Confidence** (Email/Telegram settings) — even when the AI does recommend a
    notification, if it isn't confident enough, that channel skips it. Different channels can
    have different thresholds.
-3. **Duplicate Cooldown** (Email/Telegram settings, per-camera-per-category) — once a
+3. **Quiet Hours** (Settings, if enabled) — during the window you configure, the effective
+   Minimum Confidence for Email/Telegram is raised to whichever is higher: the channel's own
+   setting, or Quiet Hours' own Minimum Confidence. It's a floor, never a ceiling — it can only
+   make the bar harder to clear during that window, never easier, and it never fully mutes a
+   channel the way a phone's do-not-disturb would.
+4. **Duplicate Cooldown** (Email/Telegram settings, per-camera-per-category) — once a
    given kind of event (e.g. "vehicle at gate") has alerted for a camera, the same kind of
    event won't alert again on that camera until the cooldown expires. This is what stops one
    car sitting at the gate from spamming you repeatedly. A different kind of event (e.g. a
    person showing up while that vehicle is still there) still alerts normally.
-4. **Gate-closed suppression** (only applies to the `gate` profile specifically) — when the
+5. **Gate-closed suppression** (only applies to the `gate` profile specifically) — when the
    gate is reported closed, a person or vehicle that's clearly settled on the inside/camera
    side is expected and doesn't alert by itself. Anyone on the outside/road side, an active
    delivery, a newly-left package, or an animal is still independently alert-worthy even with
    the gate closed. A single still image usually can't prove a vehicle is "arriving" vs.
    "already parked," so this logic is deliberately lenient toward vehicles — only a vehicle in
    a clearly settled resting spot is suppressed.
-5. **Trigger zone rate limiting** (Triggers tab, per zone — separate from the two above,
+6. **Trigger zone rate limiting** (Triggers tab, per zone — separate from the two above,
    and it applies before the AI is even involved) — "Seconds between triggers" and "Max
    triggers per minute" limit how often *the zone itself* fires at all, regardless of what the
    AI would have said about any particular frame.
-6. **Zone coverage** — a trigger zone only watches inside the polygon you drew. If someone
+7. **Zone coverage** — a trigger zone only watches inside the polygon you drew. If someone
    stood just outside the drawn shape, nothing fires — check the zone shape in the TRIGGERS
    tab if a spot never seems to trigger.
-7. **Wrong prompt profile assigned** — if a trigger zone or Blue Iris alert is pointed at a
+8. **Wrong prompt profile assigned** — if a trigger zone or Blue Iris alert is pointed at a
    profile whose questions don't match what's actually in frame (e.g. a driveway camera using
    the chicken-coop profile), you may get an analysis that never flags anything as
    alert-worthy simply because it's asking the wrong questions.
