@@ -2,6 +2,12 @@
 
 A .NET 10 ASP.NET Core service that receives Blue Iris alert images over HTTP, queues them, asks a local Ollama vision model configurable questions, stores structured JSON results, and optionally posts completed analyses to a webhook.
 
+**Full documentation:**
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — using the dashboard, trigger zones, prompt profiles, Telegram bot, and understanding why an alert did or didn't fire
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — building, configuring, and running this from scratch on a new box, or updating an existing install, without any assistant's help
+
+The rest of this file is a shorter, more code-oriented overview of the main app specifically.
+
 ## Architecture
 
 Blue Iris (Windows) -> multipart HTTP POST -> bridge on port 5080 -> background queue -> Ollama at localhost:11434 -> JSON result/webhook.
