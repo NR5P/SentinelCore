@@ -12,6 +12,10 @@ public interface IEventStore
 
     Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken);
 
+    // Alerts still marked "queued" - meaning the process went down before analysis finished.
+    // Read at startup so they can be resumed rather than lingering forever. See AlertRecoveryService.
+    Task<IReadOnlyList<PendingAlertRecord>> GetPendingAlertsAsync(CancellationToken cancellationToken);
+
     // Newest first, with every filter field optional (null/empty means "don't filter on this").
     Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken);
 
@@ -30,6 +34,19 @@ public sealed record EventFilter(
     int Limit = 50);
 
 public sealed record EventFilterOptions(IReadOnlyList<string> Cameras, IReadOnlyList<string> EventTypes);
+
+// Everything needed to rebuild an IncomingAlert from history, minus the image itself, which is
+// read back off disk. ContentType and OriginalFileName aren't stored - the former is inferred
+// from the file extension, and nothing downstream reads the latter.
+public sealed record PendingAlertRecord(
+    Guid Id,
+    string Camera,
+    string? BlueIrisAlertId,
+    DateTimeOffset OccurredAt,
+    DateTimeOffset ReceivedAt,
+    string Profile,
+    string Model,
+    string? ImagePath);
 
 public sealed record AlertEventRecord(
     Guid Id,
@@ -159,6 +176,42 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
                 results.Add(ReadRecord(reader));
+
+            return results;
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<PendingAlertRecord>> GetPendingAlertsAsync(CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT Id, Camera, BlueIrisAlertId, OccurredAt, ReceivedAt, Profile, Model, ImagePath
+                FROM AlertEvents
+                WHERE Status = 'queued'
+                ORDER BY ReceivedAt ASC;
+                """;
+
+            var results = new List<PendingAlertRecord>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                results.Add(new PendingAlertRecord(
+                    Guid.ParseExact(reader.GetString(0), "N"),
+                    reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    DateTimeOffset.Parse(reader.GetString(3)).ToLocalTime(),
+                    DateTimeOffset.Parse(reader.GetString(4)).ToLocalTime(),
+                    reader.GetString(5),
+                    reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
+                    reader.IsDBNull(7) ? null : reader.GetString(7)));
+            }
 
             return results;
         }

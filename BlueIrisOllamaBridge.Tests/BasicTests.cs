@@ -548,6 +548,129 @@ public sealed class BasicTests
         }
     }
 
+    [Fact]
+    public async Task SqliteEventStore_GetPendingAlerts_ReturnsOnlyQueuedRowsWithResumeDetails()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteEventStore(options, new FakeHostEnvironment(tempDir));
+            var occurredAt = new DateTimeOffset(2026, 7, 25, 10, 0, 0, TimeSpan.FromHours(-5));
+
+            var queued = MakeResult(occurredAt);
+            var stillQueued = new AlertResult
+            {
+                Id = queued.Id, Camera = "gateCamera", BlueIrisAlertId = "bi-42",
+                OccurredAt = occurredAt, ReceivedAt = occurredAt,
+                Profile = "gate", Model = "gemma3:4b", Status = "queued",
+                ImagePath = "/images/2026-07-25/shot.jpg"
+            };
+
+            await store.RecordAsync(stillQueued, TestContext.Current.CancellationToken);
+            await store.RecordAsync(MakeResult(occurredAt), TestContext.Current.CancellationToken);
+
+            var pending = await store.GetPendingAlertsAsync(TestContext.Current.CancellationToken);
+
+            var record = Assert.Single(pending);
+            Assert.Equal(stillQueued.Id, record.Id);
+            Assert.Equal("gateCamera", record.Camera);
+            Assert.Equal("bi-42", record.BlueIrisAlertId);
+            Assert.Equal("gate", record.Profile);
+            Assert.Equal("gemma3:4b", record.Model);
+            Assert.Equal("/images/2026-07-25/shot.jpg", record.ImagePath);
+            Assert.Equal(occurredAt, record.OccurredAt);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AlertRecoveryService_ResumesAlertsWithAnImageAndAbandonsOnesWithout()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var imagePath = Path.Combine(tempDir, "shot.jpg");
+            await File.WriteAllBytesAsync(imagePath, [1, 2, 3, 4], TestContext.Current.CancellationToken);
+            var occurredAt = DateTimeOffset.UtcNow;
+
+            var resumable = new PendingAlertRecord(
+                Guid.NewGuid(), "gateCamera", "bi-1", occurredAt, occurredAt, "gate", "gemma3:4b", imagePath);
+            // Image saving was off, so there's nothing on disk to retry with.
+            var noImage = new PendingAlertRecord(
+                Guid.NewGuid(), "sideCamera", null, occurredAt, occurredAt, "default", "gemma3:4b", null);
+            // Row points at a file retention has since deleted.
+            var missingImage = new PendingAlertRecord(
+                Guid.NewGuid(), "backCamera", null, occurredAt, occurredAt, "default", "gemma3:4b",
+                Path.Combine(tempDir, "deleted.jpg"));
+
+            var eventStore = new PendingStubEventStore([resumable, noImage, missingImage]);
+            var resultStore = new RecordingResultStore();
+            var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 10 }));
+            var service = new AlertRecoveryService(eventStore, resultStore, queue, NullLogger<AlertRecoveryService>.Instance);
+
+            await service.StartAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, queue.ApproximateCount);
+            Assert.Equal(2, resultStore.Saved.Count);
+            Assert.All(resultStore.Saved, r => Assert.Equal("failed", r.Status));
+            Assert.All(resultStore.Saved, r => Assert.Contains("Interrupted by a restart", r.Error));
+            Assert.DoesNotContain(resultStore.Saved, r => r.Id == resumable.Id);
+
+            // The resumed alert carries the bytes back off disk, so analysis can actually retry.
+            IncomingAlert? requeued = null;
+            await foreach (var item in queue.ReadAllAsync(TestContext.Current.CancellationToken))
+            {
+                requeued = item;
+                break;
+            }
+
+            Assert.NotNull(requeued);
+            Assert.Equal(resumable.Id, requeued.Id);
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, requeued.ImageBytes);
+            Assert.Equal(imagePath, requeued.ImagePath);
+            Assert.Equal("image/jpeg", requeued.ContentType);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("shot.png", "image/png")]
+    [InlineData("shot.webp", "image/webp")]
+    [InlineData("shot.jpg", "image/jpeg")]
+    [InlineData("shot.JPEG", "image/jpeg")]
+    public void AlertRecoveryService_ContentTypeFor_MapsExtensionBackToContentType(string fileName, string expected) =>
+        Assert.Equal(expected, AlertRecoveryService.ContentTypeFor(fileName));
+
+    private sealed class PendingStubEventStore(IReadOnlyList<PendingAlertRecord> pending) : StubEventStore
+    {
+        public override Task<IReadOnlyList<PendingAlertRecord>> GetPendingAlertsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(pending);
+    }
+
+    private sealed class RecordingResultStore : IResultStore
+    {
+        public List<AlertResult> Saved { get; } = [];
+
+        public Task SaveAsync(AlertResult result, CancellationToken cancellationToken)
+        {
+            Saved.Add(result);
+            return Task.CompletedTask;
+        }
+
+        public Task<AlertResult?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<AlertResult?>(null);
+
+        public Task<string?> SaveImageAsync(IncomingAlert alert, CancellationToken cancellationToken) =>
+            Task.FromResult<string?>(null);
+    }
+
     private static AlertResult MakeResult(
         DateTimeOffset occurredAt,
         string camera = "gateCamera",
@@ -667,7 +790,7 @@ public sealed class BasicTests
         }
     }
 
-    private sealed class StubEventStore : IEventStore
+    private class StubEventStore : IEventStore
     {
         public Task RecordAsync(AlertResult result, CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -676,6 +799,9 @@ public sealed class BasicTests
 
         public Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult<AlertEventRecord?>(null);
+
+        public virtual Task<IReadOnlyList<PendingAlertRecord>> GetPendingAlertsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<PendingAlertRecord>>([]);
 
         public Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);

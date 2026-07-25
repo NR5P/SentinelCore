@@ -103,6 +103,8 @@ builder.Services.AddSingleton<IMqttPublisher>(sp => sp.GetRequiredService<MqttPu
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttPublisher>());
 builder.Services.AddSingleton<IAlertAction, MqttAlertAction>();
 
+// Before AlertProcessor so interrupted alerts are already waiting when it starts draining.
+builder.Services.AddHostedService<AlertRecoveryService>();
 builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddHostedService<DailySummaryWorker>();
@@ -207,16 +209,33 @@ app.MapPost("/api/blueiris/alert", async (
         Guid.NewGuid(), camera, form["alertId"].ToString(), occurredAt,
         DateTimeOffset.UtcNow, profile, image.ContentType, Path.GetFileName(image.FileName), memory.ToArray());
 
-    var queued = await queue.TryEnqueueAsync(alert, ct);
-    if (!queued)
-        return Results.Json(new { error = "The analysis queue is full. Retry later." }, statusCode: 503);
+    // Write the image and the queued row before handing the alert to the in-memory queue. The
+    // queue doesn't survive a restart, so anything enqueued without a durable copy first is lost
+    // outright - it used to leave a permanently "queued" row with no image behind it.
+    alert = alert with { ImagePath = await store.SaveImageAsync(alert, ct) };
 
-    await store.SaveAsync(new AlertResult
+    var queuedResult = new AlertResult
     {
         Id = alert.Id, Camera = alert.Camera, BlueIrisAlertId = alert.BlueIrisAlertId,
         OccurredAt = alert.OccurredAt, ReceivedAt = alert.ReceivedAt,
-        Profile = alert.Profile, Model = ollamaOptions.CurrentValue.Model, Status = "queued"
-    }, ct);
+        Profile = alert.Profile, Model = ollamaOptions.CurrentValue.Model, Status = "queued",
+        ImagePath = alert.ImagePath
+    };
+    await store.SaveAsync(queuedResult, ct);
+
+    if (!await queue.TryEnqueueAsync(alert, ct))
+    {
+        // Don't leave the row claiming to be queued when nothing is going to pick it up.
+        await store.SaveAsync(new AlertResult
+        {
+            Id = alert.Id, Camera = alert.Camera, BlueIrisAlertId = alert.BlueIrisAlertId,
+            OccurredAt = alert.OccurredAt, ReceivedAt = alert.ReceivedAt,
+            Profile = alert.Profile, Model = ollamaOptions.CurrentValue.Model,
+            Status = "failed", CompletedAt = DateTimeOffset.UtcNow, ImagePath = alert.ImagePath,
+            Error = "The analysis queue was full when this alert arrived, so it was never analyzed."
+        }, ct);
+        return Results.Json(new { error = "The analysis queue is full. Retry later." }, statusCode: 503);
+    }
 
     return Results.Accepted($"/api/results/{alert.Id}", new AcceptedAlertResponse(alert.Id, "queued", $"/api/results/{alert.Id}"));
 }).DisableAntiforgery();

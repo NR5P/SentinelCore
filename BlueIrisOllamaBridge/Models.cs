@@ -11,7 +11,11 @@ public sealed record IncomingAlert(
     string Profile,
     string ContentType,
     string OriginalFileName,
-    byte[] ImageBytes);
+    byte[] ImageBytes,
+    // Where the image was written at ingest, before the alert ever reached the queue. This is
+    // what makes an in-flight alert recoverable after a restart - see AlertRecoveryService.
+    // Null only when Bridge:SaveImages is off, in which case there's nothing to recover from.
+    string? ImagePath = null);
 
 public sealed record AcceptedAlertResponse(Guid Id, string Status, string StatusUrl);
 
