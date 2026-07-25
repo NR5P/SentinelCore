@@ -17,6 +17,16 @@ builder.Services.AddOptions<OllamaOptions>()
     .Bind(builder.Configuration.GetSection(OllamaOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<CloudVisionOptions>()
+    .Bind(builder.Configuration.GetSection(CloudVisionOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ApiKey), "CloudVision:ApiKey is required when cloud vision is enabled.")
+    .ValidateOnStart();
+builder.Services.AddOptions<VisionRoutingOptions>()
+    .Bind(builder.Configuration.GetSection(VisionRoutingOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => o.Primary is "ollama" or "cloud", "VisionRouting:Primary must be 'ollama' or 'cloud'.")
+    .ValidateOnStart();
 builder.Services.AddOptions<WebhookOptions>()
     .Bind(builder.Configuration.GetSection(WebhookOptions.SectionName))
     .ValidateDataAnnotations()
@@ -112,11 +122,23 @@ builder.Services.AddHostedService<TelegramChatWorker>();
 builder.Services.AddHostedService<SelfMonitoringWorker>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
-builder.Services.AddHttpClient<IOllamaVisionClient, OllamaVisionClient>(client =>
+builder.Services.AddHttpClient<OllamaVisionClient>(client =>
 {
     client.BaseAddress = new Uri(ollamaSettings.BaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(ollamaSettings.RequestTimeoutSeconds);
 });
+var cloudVisionSettings = builder.Configuration.GetSection(CloudVisionOptions.SectionName).Get<CloudVisionOptions>() ?? new();
+builder.Services.AddHttpClient<OpenAiVisionClient>(client =>
+{
+    client.BaseAddress = new Uri(cloudVisionSettings.BaseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(cloudVisionSettings.TimeoutSeconds);
+});
+builder.Services.AddSingleton<IVisionAnalysisClient>(sp => new FailoverVisionClient(
+    sp.GetRequiredService<OllamaVisionClient>(),
+    sp.GetRequiredService<OpenAiVisionClient>(),
+    sp.GetRequiredService<IOptionsMonitor<VisionRoutingOptions>>(),
+    sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
+    sp.GetRequiredService<ILogger<FailoverVisionClient>>()));
 var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionName).Get<WebhookOptions>() ?? new();
 builder.Services.AddHttpClient<IAlertAction, WebhookAlertAction>(client =>
 {
@@ -166,17 +188,16 @@ app.MapGet("/health/live", (IAlertQueue queue) => Results.Ok(new
     timestamp = DateTimeOffset.UtcNow
 }));
 
-app.MapGet("/health/ready", async (IOllamaVisionClient ollama, CancellationToken ct) =>
-    await ollama.IsReadyAsync(ct)
-        ? Results.Ok(new { status = "ready", ollama = "reachable" })
-        : Results.Json(new { status = "not-ready", ollama = "unreachable" }, statusCode: 503));
+app.MapGet("/health/ready", async (IVisionAnalysisClient vision, CancellationToken ct) =>
+    await vision.IsReadyAsync(ct)
+        ? Results.Ok(new { status = "ready", vision = "reachable" })
+        : Results.Json(new { status = "not-ready", vision = "unreachable" }, statusCode: 503));
 
 app.MapPost("/api/blueiris/alert", async (
     HttpRequest request,
     IAlertQueue queue,
     IResultStore store,
     IOptionsMonitor<BridgeOptions> bridgeOptions,
-    IOptionsMonitor<OllamaOptions> ollamaOptions,
     CancellationToken ct) =>
 {
     if (!request.HasFormContentType)
@@ -214,11 +235,14 @@ app.MapPost("/api/blueiris/alert", async (
     // outright - it used to leave a permanently "queued" row with no image behind it.
     alert = alert with { ImagePath = await store.SaveImageAsync(alert, ct) };
 
+    // Which backend actually handles this isn't decided until AlertProcessor picks it up (could
+    // be the primary or a fallback) - "pending" here gets overwritten with the real model once
+    // analysis completes.
     var queuedResult = new AlertResult
     {
         Id = alert.Id, Camera = alert.Camera, BlueIrisAlertId = alert.BlueIrisAlertId,
         OccurredAt = alert.OccurredAt, ReceivedAt = alert.ReceivedAt,
-        Profile = alert.Profile, Model = ollamaOptions.CurrentValue.Model, Status = "queued",
+        Profile = alert.Profile, Model = "pending", Status = "queued",
         ImagePath = alert.ImagePath
     };
     await store.SaveAsync(queuedResult, ct);
@@ -230,7 +254,7 @@ app.MapPost("/api/blueiris/alert", async (
         {
             Id = alert.Id, Camera = alert.Camera, BlueIrisAlertId = alert.BlueIrisAlertId,
             OccurredAt = alert.OccurredAt, ReceivedAt = alert.ReceivedAt,
-            Profile = alert.Profile, Model = ollamaOptions.CurrentValue.Model,
+            Profile = alert.Profile, Model = "unavailable",
             Status = "failed", CompletedAt = DateTimeOffset.UtcNow, ImagePath = alert.ImagePath,
             Error = "The analysis queue was full when this alert arrived, so it was never analyzed."
         }, ct);

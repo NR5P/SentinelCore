@@ -119,6 +119,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                      $imagePath, $eventType, $summary, $notificationRecommended, $notificationReason, $confidence, $error)
                 ON CONFLICT(Id) DO UPDATE SET
                     CompletedAt = excluded.CompletedAt,
+                    Model = excluded.Model,
                     Status = excluded.Status,
                     ImagePath = excluded.ImagePath,
                     EventType = excluded.EventType,

@@ -4,13 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace BlueIrisOllamaBridge;
 
-public interface IOllamaVisionClient
-{
-    Task<(VisionAnalysis Analysis, string Raw)> AnalyzeAsync(IncomingAlert alert, PromptProfile profile, CancellationToken cancellationToken);
-    Task<bool> IsReadyAsync(CancellationToken cancellationToken);
-}
-
-public sealed class OllamaVisionClient : IOllamaVisionClient
+public sealed class OllamaVisionClient : IVisionAnalysisClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -34,7 +28,7 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
         _logger = logger;
     }
 
-    public async Task<(VisionAnalysis Analysis, string Raw)> AnalyzeAsync(
+    public async Task<(VisionAnalysis Analysis, string Raw, string Model)> AnalyzeAsync(
         IncomingAlert alert,
         PromptProfile profile,
         CancellationToken cancellationToken)
@@ -166,7 +160,7 @@ public sealed class OllamaVisionClient : IOllamaVisionClient
                     evalCount,
                     outputTokensPerSecond);
 
-                return (analysis, raw);
+                return (analysis, raw, _options.Model);
             }
             catch (Exception ex) when (
                 ex is HttpRequestException or TaskCanceledException or JsonException)

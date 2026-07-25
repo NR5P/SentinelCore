@@ -5,29 +5,26 @@ namespace BlueIrisOllamaBridge;
 public sealed class AlertProcessor : BackgroundService
 {
     private readonly IAlertQueue _queue;
-    private readonly IOllamaVisionClient _ollama;
+    private readonly IVisionAnalysisClient _vision;
     private readonly IResultStore _store;
     private readonly IPromptProfileProvider _profileProvider;
     private readonly IEnumerable<IAlertAction> _actions;
-    private readonly IOptionsMonitor<OllamaOptions> _ollamaOptions;
     private readonly IOptionsMonitor<List<KnownVehicle>> _knownVehicles;
     private readonly ILogger<AlertProcessor> _logger;
 
     public AlertProcessor(
         IAlertQueue queue,
-        IOllamaVisionClient ollama,
+        IVisionAnalysisClient vision,
         IResultStore store,
         IPromptProfileProvider profileProvider,
         IEnumerable<IAlertAction> actions,
-        IOptionsMonitor<OllamaOptions> ollamaOptions,
         IOptionsMonitor<List<KnownVehicle>> knownVehicles,
         ILogger<AlertProcessor> logger)
     {
         _queue = queue;
-        _ollama = ollama;
+        _vision = vision;
         _store = store;
         _actions = actions;
-        _ollamaOptions = ollamaOptions;
         _knownVehicles = knownVehicles;
         _logger = logger;
         _profileProvider = profileProvider;
@@ -66,7 +63,7 @@ public sealed class AlertProcessor : BackgroundService
 
         try
         {
-            var (analysis, raw) = await _ollama.AnalyzeAsync(alert, profile, cancellationToken);
+            var (analysis, raw, model) = await _vision.AnalyzeAsync(alert, profile, cancellationToken);
             if (profile.LicensePlateRecognitionEnabled)
             {
                 analysis.Vehicle.KnownVehicleLabel = KnownVehicleMatcher.Match(_knownVehicles.CurrentValue, analysis.Vehicle.LicensePlateText);
@@ -80,7 +77,7 @@ public sealed class AlertProcessor : BackgroundService
                 ReceivedAt = alert.ReceivedAt,
                 CompletedAt = DateTimeOffset.UtcNow,
                 Profile = alert.Profile,
-                Model = _ollamaOptions.CurrentValue.Model,
+                Model = model,
                 Status = "completed",
                 ImagePath = imagePath,
                 Analysis = analysis,
@@ -106,7 +103,9 @@ public sealed class AlertProcessor : BackgroundService
                 ReceivedAt = alert.ReceivedAt,
                 CompletedAt = DateTimeOffset.UtcNow,
                 Profile = alert.Profile,
-                Model = _ollamaOptions.CurrentValue.Model,
+                // Analysis never completed, so there's no single backend to attribute this to -
+                // it may have been attempted against both if a fallback was configured.
+                Model = "unavailable",
                 Status = "failed",
                 ImagePath = imagePath,
                 Error = ex.ToString()

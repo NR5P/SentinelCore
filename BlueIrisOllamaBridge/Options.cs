@@ -81,6 +81,50 @@ public sealed class OllamaOptions
     public int RetryDelaySeconds { get; init; } = 3;
 }
 
+public sealed class CloudVisionOptions
+{
+    public const string SectionName = "CloudVision";
+
+    public bool Enabled { get; init; }
+
+    // Sent as a Bearer token, read fresh on every request (not baked into the HttpClient at
+    // startup) so a key changed in settings takes effect without a restart.
+    public string ApiKey { get; init; } = string.Empty;
+
+    [Required]
+    public string Model { get; init; } = "gpt-4o-mini";
+
+    // OpenAI-compatible Chat Completions endpoint. Overridable so an Azure OpenAI deployment or
+    // a local proxy in front of a different provider can stand in without a code change.
+    [Required, Url]
+    public string BaseUrl { get; init; } = "https://api.openai.com/v1/";
+
+    [Range(5, 300)]
+    public int TimeoutSeconds { get; init; } = 60;
+
+    [Range(0, 10)]
+    public int MaximumRetries { get; init; } = 2;
+
+    [Range(1, 300)]
+    public int RetryDelaySeconds { get; init; } = 3;
+}
+
+public sealed class VisionRoutingOptions
+{
+    public const string SectionName = "VisionRouting";
+
+    // "ollama" or "cloud". Defaults to "ollama" so every existing install keeps behaving exactly
+    // as it always has with zero config changes - this is the only backend that has ever existed
+    // until now.
+    [Required]
+    public string Primary { get; init; } = "ollama";
+
+    // If the primary backend's own retries are exhausted, automatically retry once against
+    // whichever backend isn't primary before giving up on the alert entirely - e.g. cloud
+    // unreachable -> fall back to local Ollama, slower but still analyzed.
+    public bool FallbackEnabled { get; init; }
+}
+
 public sealed class PromptProfile
 {
     // Friendly name shown in the UI. The dictionary key stays the stable identifier that

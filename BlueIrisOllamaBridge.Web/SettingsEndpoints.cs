@@ -11,6 +11,8 @@ public static class SettingsEndpoints
         {
             bridge = await settings.GetSectionAsync<BridgeSettingsDto>("Bridge", ct),
             ollama = await settings.GetSectionAsync<OllamaSettingsDto>("Ollama", ct),
+            cloudVision = await settings.GetSectionAsync<CloudVisionSettingsDto>("CloudVision", ct),
+            visionRouting = await settings.GetSectionAsync<VisionRoutingSettingsDto>("VisionRouting", ct),
             imageProcessing = await settings.GetSectionAsync<ImageProcessingSettingsDto>("ImageProcessing", ct),
             promptProfiles = await settings.GetSectionAsync<Dictionary<string, PromptProfile>>("PromptProfiles", ct),
             email = await settings.GetSectionAsync<EmailSettingsDto>("Email", ct),
@@ -35,6 +37,20 @@ public static class SettingsEndpoints
 
         app.MapPut("/api/settings/ollama", async (OllamaSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "Ollama", ct));
+
+        app.MapPut("/api/settings/cloud-vision", async (CloudVisionSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, settings, "CloudVision", ct, extra =>
+            {
+                if (dto.Enabled && string.IsNullOrWhiteSpace(dto.ApiKey))
+                    extra.Add("ApiKey is required when cloud vision is enabled.");
+            }));
+
+        app.MapPut("/api/settings/vision-routing", async (VisionRoutingSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, settings, "VisionRouting", ct, extra =>
+            {
+                if (dto.Primary is not ("ollama" or "cloud"))
+                    extra.Add("Primary must be 'ollama' or 'cloud'.");
+            }));
 
         app.MapPut("/api/settings/image-processing", async (ImageProcessingSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "ImageProcessing", ct));
