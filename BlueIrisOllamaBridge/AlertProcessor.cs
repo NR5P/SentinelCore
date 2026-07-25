@@ -55,7 +55,9 @@ public sealed class AlertProcessor : BackgroundService
     private async Task ProcessAsync(IncomingAlert alert, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Analyzing alert {AlertId} from {Camera}", alert.Id, alert.Camera);
-        var imagePath = await _store.SaveImageAsync(alert, cancellationToken);
+        // Normally already written at ingest; only save here for alerts that arrived some other
+        // way (or were queued by an older build that didn't persist first).
+        var imagePath = alert.ImagePath ?? await _store.SaveImageAsync(alert, cancellationToken);
         var profiles = _profileProvider.Current;
         var profile = profiles.TryGetValue(alert.Profile, out var selected)
             ? selected
