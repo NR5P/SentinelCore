@@ -25,9 +25,10 @@ window.GateWatchTriggers = (function () {
     revokeUrls();
 
     try {
-      const [frameResp, configResp] = await Promise.all([
+      const [frameResp, configResp, profilesResp] = await Promise.all([
         fetch(`/api/cameras/${camera.id}/reference-frame`),
-        fetch(`/api/cameras/${camera.id}/trigger-config`)
+        fetch(`/api/cameras/${camera.id}/trigger-config`),
+        fetch(`/api/prompt-profile-names`)
       ]);
 
       if (frameResp.ok) {
@@ -38,6 +39,7 @@ window.GateWatchTriggers = (function () {
         showEditorError("Could not grab a reference frame from this camera - check its stream URL/credentials.");
       }
 
+      let alertProfile = "default";
       if (configResp.ok) {
         const config = await configResp.json();
         polygonPoints = (config.zonePolygon || []).map(p => ({ x: p.x, y: p.y }));
@@ -50,7 +52,11 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-clip-pre").value = config.clipPreSeconds ?? 5;
         document.getElementById("zone-clip-post").value = config.clipPostSeconds ?? 10;
         document.getElementById("zone-send-to-alerts").checked = !!config.sendToAlerts;
+        alertProfile = config.alertProfile || "default";
       }
+
+      const profileNames = profilesResp.ok ? await profilesResp.json() : [];
+      populateProfileOptions(profileNames, alertProfile);
     } catch (err) {
       console.error("Failed to load trigger zone editor", err);
       showEditorError("Network error while loading.");
@@ -85,6 +91,15 @@ window.GateWatchTriggers = (function () {
     const li = document.createElement("li");
     li.textContent = message;
     document.getElementById("zone-editor-errors").appendChild(li);
+  }
+
+  // Includes the saved value as an option even if it's missing from the fetched list (e.g. a
+  // profile that was since renamed or deleted), so it's still visible rather than silently lost.
+  function populateProfileOptions(names, selected) {
+    const select = document.getElementById("zone-alert-profile");
+    const all = selected && !names.includes(selected) ? [...names, selected] : names;
+    select.innerHTML = all.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
+    select.value = selected || "default";
   }
 
   function svgNs(tag) {
@@ -213,7 +228,8 @@ window.GateWatchTriggers = (function () {
       recordClips: document.getElementById("zone-record-clips").checked,
       clipPreSeconds: parseInt(document.getElementById("zone-clip-pre").value, 10) || 0,
       clipPostSeconds: parseInt(document.getElementById("zone-clip-post").value, 10) || 0,
-      sendToAlerts: document.getElementById("zone-send-to-alerts").checked
+      sendToAlerts: document.getElementById("zone-send-to-alerts").checked,
+      alertProfile: document.getElementById("zone-alert-profile").value || "default"
     };
 
     try {

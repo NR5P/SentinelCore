@@ -168,6 +168,10 @@
               <label class="switch"><input type="checkbox" id="zone-send-to-alerts" /><span class="switch-track"></span></label>
               <span class="field-label">Send triggers to the AI and alert pipeline</span>
             </div>
+            <div class="field-row field-row-wide" data-tip="Which prompt profile analyses this camera's triggers. Pick the same profile a physically-overlapping Blue Iris camera uses (e.g. 'gate') for an apples-to-apples comparison, or a different one to test something else.">
+              <label class="field-label" for="zone-alert-profile">Alert prompt profile</label>
+              <select id="zone-alert-profile" class="field-input"></select>
+            </div>
             <div class="field-row field-checkbox-row" data-tip="Master switch for this zone. Off means nothing is watched or recorded, but your shape and settings are kept.">
               <label class="switch"><input type="checkbox" id="zone-enabled" /><span class="switch-track"></span></label>
               <span class="field-label">Enabled</span>
