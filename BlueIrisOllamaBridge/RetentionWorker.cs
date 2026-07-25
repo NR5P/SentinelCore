@@ -4,13 +4,13 @@ namespace BlueIrisOllamaBridge;
 
 public sealed class RetentionWorker : BackgroundService
 {
-    private readonly BridgeOptions _options;
+    private readonly IOptionsMonitor<BridgeOptions> _options;
     private readonly IHostEnvironment _environment;
     private readonly ILogger<RetentionWorker> _logger;
 
-    public RetentionWorker(IOptions<BridgeOptions> options, IHostEnvironment environment, ILogger<RetentionWorker> logger)
+    public RetentionWorker(IOptionsMonitor<BridgeOptions> options, IHostEnvironment environment, ILogger<RetentionWorker> logger)
     {
-        _options = options.Value;
+        _options = options;
         _environment = environment;
         _logger = logger;
     }
@@ -27,10 +27,11 @@ public sealed class RetentionWorker : BackgroundService
 
     private void DeleteExpiredFiles()
     {
-        var configured = _options.DataDirectory;
+        var options = _options.CurrentValue;
+        var configured = options.DataDirectory;
         var root = Path.IsPathRooted(configured) ? configured : Path.Combine(_environment.ContentRootPath, configured);
         if (!Directory.Exists(root)) return;
-        var cutoff = DateTime.UtcNow.AddDays(-_options.RetentionDays);
+        var cutoff = DateTime.UtcNow.AddDays(-options.RetentionDays);
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
             try { if (File.GetLastWriteTimeUtc(file) < cutoff) File.Delete(file); }

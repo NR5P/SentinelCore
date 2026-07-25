@@ -19,19 +19,21 @@ public sealed record OptimizedImage(byte[] Bytes, int OriginalWidth, int Origina
 
 public sealed class ImageOptimizer : IImageOptimizer
 {
-    private readonly ImageProcessingOptions _options;
+    private readonly IOptionsMonitor<ImageProcessingOptions> _options;
     private readonly ILogger<ImageOptimizer> _logger;
 
-    public ImageOptimizer(IOptions<ImageProcessingOptions> options, ILogger<ImageOptimizer> logger)
+    public ImageOptimizer(IOptionsMonitor<ImageProcessingOptions> options, ILogger<ImageOptimizer> logger)
     {
-        _options = options.Value;
+        _options = options;
         _logger = logger;
     }
 
     public async Task<OptimizedImage> OptimizeForInferenceAsync(byte[] sourceBytes, CropRegion? crop, CancellationToken cancellationToken)
     {
+        var options = _options.CurrentValue;
+
         // If optimization is disabled, return the original image unchanged.
-        if (!_options.Enabled)
+        if (!options.Enabled)
         {
             var info = Image.Identify(sourceBytes)
                        ?? throw new InvalidOperationException("Unable to identify image.");
@@ -52,7 +54,7 @@ public sealed class ImageOptimizer : IImageOptimizer
 
         image.Mutate(context =>
         {
-            if (_options.AutoOrient)
+            if (options.AutoOrient)
                 context.AutoOrient();
 
             if (crop is not null)
@@ -62,12 +64,12 @@ public sealed class ImageOptimizer : IImageOptimizer
                     context.Crop(region);
             }
 
-            if (image.Width > _options.MaxWidth || image.Height > _options.MaxHeight)
+            if (image.Width > options.MaxWidth || image.Height > options.MaxHeight)
             {
                 context.Resize(new ResizeOptions
                 {
                     Mode = ResizeMode.Max,
-                    Size = new Size(_options.MaxWidth, _options.MaxHeight)
+                    Size = new Size(options.MaxWidth, options.MaxHeight)
                 });
             }
         });
@@ -78,7 +80,7 @@ public sealed class ImageOptimizer : IImageOptimizer
             output,
             new JpegEncoder
             {
-                Quality = _options.JpegQuality
+                Quality = options.JpegQuality
             },
             cancellationToken);
 
@@ -103,10 +105,12 @@ public sealed class ImageOptimizer : IImageOptimizer
 
     public async Task<byte[]> DrawCropOverlayAsync(byte[] sourceBytes, CropRegion crop, CancellationToken cancellationToken)
     {
+        var options = _options.CurrentValue;
+
         await using var input = new MemoryStream(sourceBytes, writable: false);
         using var image = await Image.LoadAsync<Rgba32>(input, cancellationToken);
 
-        if (_options.AutoOrient)
+        if (options.AutoOrient)
             image.Mutate(context => context.AutoOrient());
 
         var region = ToPixelRectangle(crop, image.Width, image.Height);
@@ -117,7 +121,7 @@ public sealed class ImageOptimizer : IImageOptimizer
         }
 
         await using var output = new MemoryStream();
-        await image.SaveAsJpegAsync(output, new JpegEncoder { Quality = _options.JpegQuality }, cancellationToken);
+        await image.SaveAsJpegAsync(output, new JpegEncoder { Quality = options.JpegQuality }, cancellationToken);
         return output.ToArray();
     }
 

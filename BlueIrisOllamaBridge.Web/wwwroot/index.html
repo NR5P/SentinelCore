@@ -15,6 +15,10 @@
       <span class="brand-name">GATE_WATCH</span>
       <span class="cursor">&#9608;</span>
     </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-view="feed">feed</button>
+      <button class="tab" data-view="settings">settings</button>
+    </nav>
     <div class="status" id="status">
       <span class="status-dot" id="status-dot"></span>
       <span id="status-text">connecting&hellip;</span>
@@ -22,23 +26,41 @@
   </header>
 
   <main>
-    <div class="toolbar">
-      <div class="toolbar-label">EVENT_FEED</div>
-      <div class="toolbar-actions">
-        <span id="event-count" class="event-count">0 events</span>
-        <button id="refresh-btn" class="btn">refresh</button>
+    <section id="view-feed" class="view">
+      <div class="toolbar">
+        <div class="toolbar-label">EVENT_FEED</div>
+        <div class="toolbar-actions">
+          <span id="event-count" class="event-count">0 events</span>
+          <button id="refresh-btn" class="btn">refresh</button>
+        </div>
       </div>
-    </div>
 
-    <div id="feed" class="feed">
-      <div class="empty-state">loading feed&hellip;</div>
-    </div>
+      <div id="feed" class="feed">
+        <div class="empty-state">loading feed&hellip;</div>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">SETTINGS</div>
+        <div class="toolbar-actions">
+          <span class="event-count">changes apply live, no restart</span>
+        </div>
+      </div>
+
+      <div id="settings-root" class="settings-root">
+        <div class="empty-state">loading settings&hellip;</div>
+      </div>
+    </section>
   </main>
 
   <div id="lightbox" class="lightbox hidden">
     <img id="lightbox-img" src="" alt="Full-size event image" />
   </div>
 
+  <div id="toast" class="toast hidden"></div>
+
   <script src="app.js"></script>
+  <script src="settings.js"></script>
 </body>
 </html>

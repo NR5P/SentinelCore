@@ -7,27 +7,27 @@ public sealed class AlertProcessor : BackgroundService
     private readonly IAlertQueue _queue;
     private readonly IOllamaVisionClient _ollama;
     private readonly IResultStore _store;
-    private readonly IReadOnlyDictionary<string, PromptProfile> _profiles;
+    private readonly IPromptProfileProvider _profileProvider;
     private readonly IEnumerable<IAlertAction> _actions;
-    private readonly OllamaOptions _ollamaOptions;
+    private readonly IOptionsMonitor<OllamaOptions> _ollamaOptions;
     private readonly ILogger<AlertProcessor> _logger;
 
     public AlertProcessor(
         IAlertQueue queue,
         IOllamaVisionClient ollama,
         IResultStore store,
-        IReadOnlyDictionary<string, PromptProfile> profiles,
+        IPromptProfileProvider profileProvider,
         IEnumerable<IAlertAction> actions,
-        IOptions<OllamaOptions> ollamaOptions,
+        IOptionsMonitor<OllamaOptions> ollamaOptions,
         ILogger<AlertProcessor> logger)
     {
         _queue = queue;
         _ollama = ollama;
         _store = store;
         _actions = actions;
-        _ollamaOptions = ollamaOptions.Value;
+        _ollamaOptions = ollamaOptions;
         _logger = logger;
-        _profiles = profiles;
+        _profileProvider = profileProvider;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -53,9 +53,10 @@ public sealed class AlertProcessor : BackgroundService
     {
         _logger.LogInformation("Analyzing alert {AlertId} from {Camera}", alert.Id, alert.Camera);
         var imagePath = await _store.SaveImageAsync(alert, cancellationToken);
-        var profile = _profiles.TryGetValue(alert.Profile, out var selected)
+        var profiles = _profileProvider.Current;
+        var profile = profiles.TryGetValue(alert.Profile, out var selected)
             ? selected
-            : _profiles.GetValueOrDefault("default")
+            : profiles.GetValueOrDefault("default")
               ?? throw new InvalidOperationException("The requested profile and default profile do not exist.");
 
         try
@@ -70,7 +71,7 @@ public sealed class AlertProcessor : BackgroundService
                 ReceivedAt = alert.ReceivedAt,
                 CompletedAt = DateTimeOffset.UtcNow,
                 Profile = alert.Profile,
-                Model = _ollamaOptions.Model,
+                Model = _ollamaOptions.CurrentValue.Model,
                 Status = "completed",
                 ImagePath = imagePath,
                 Analysis = analysis,
@@ -96,7 +97,7 @@ public sealed class AlertProcessor : BackgroundService
                 ReceivedAt = alert.ReceivedAt,
                 CompletedAt = DateTimeOffset.UtcNow,
                 Profile = alert.Profile,
-                Model = _ollamaOptions.Model,
+                Model = _ollamaOptions.CurrentValue.Model,
                 Status = "failed",
                 ImagePath = imagePath,
                 Error = ex.ToString()

@@ -19,52 +19,48 @@ public sealed class DailySummaryWorker : BackgroundService
 {
     private readonly IEventStore _eventStore;
     private readonly IImageOptimizer _imageOptimizer;
-    private readonly DailySummaryOptions _options;
-    private readonly EmailOptions _emailOptions;
+    private readonly IOptionsMonitor<DailySummaryOptions> _optionsMonitor;
+    private readonly IOptionsMonitor<EmailOptions> _emailOptionsMonitor;
     private readonly ILogger<DailySummaryWorker> _logger;
 
     public DailySummaryWorker(
         IEventStore eventStore,
         IImageOptimizer imageOptimizer,
-        IOptions<DailySummaryOptions> options,
-        IOptions<EmailOptions> emailOptions,
+        IOptionsMonitor<DailySummaryOptions> options,
+        IOptionsMonitor<EmailOptions> emailOptions,
         ILogger<DailySummaryWorker> logger)
     {
         _eventStore = eventStore;
         _imageOptimizer = imageOptimizer;
-        _options = options.Value;
-        _emailOptions = emailOptions.Value;
+        _optionsMonitor = options;
+        _emailOptionsMonitor = emailOptions;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_options.Enabled) return;
-
-        if (string.IsNullOrWhiteSpace(_emailOptions.Username) ||
-            string.IsNullOrWhiteSpace(_emailOptions.AppPassword) ||
-            string.IsNullOrWhiteSpace(_emailOptions.ToAddress))
-        {
-            _logger.LogWarning("DailySummary is enabled but Email settings are incomplete; scheduled digests will not be sent.");
-            return;
-        }
-
         while (!stoppingToken.IsCancellationRequested)
         {
-            var (fireAt, kind) = GetNextRun(DateTimeOffset.Now, _options.MorningHour, _options.EveningHour);
-            var delay = fireAt - DateTimeOffset.Now;
-            if (delay > TimeSpan.Zero)
+            var options = _optionsMonitor.CurrentValue;
+            if (!options.Enabled)
             {
-                try
-                {
-                    await Task.Delay(delay, stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
+                if (!await WaitAsync(TimeSpan.FromSeconds(60), stoppingToken)) break;
+                continue;
             }
 
+            var emailOptions = _emailOptionsMonitor.CurrentValue;
+            if (string.IsNullOrWhiteSpace(emailOptions.Username) ||
+                string.IsNullOrWhiteSpace(emailOptions.AppPassword) ||
+                string.IsNullOrWhiteSpace(emailOptions.ToAddress))
+            {
+                _logger.LogWarning("DailySummary is enabled but Email settings are incomplete; scheduled digests will not be sent.");
+                if (!await WaitAsync(TimeSpan.FromSeconds(60), stoppingToken)) break;
+                continue;
+            }
+
+            var (fireAt, kind) = GetNextRun(DateTimeOffset.Now, options.MorningHour, options.EveningHour);
+            var delay = fireAt - DateTimeOffset.Now;
+            if (delay > TimeSpan.Zero && !await WaitAsync(delay, stoppingToken)) break;
             if (stoppingToken.IsCancellationRequested) break;
 
             try
@@ -77,8 +73,20 @@ public sealed class DailySummaryWorker : BackgroundService
             }
 
             // Guards against re-firing immediately in the same minute the delay was computed in.
-            try { await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken); }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            if (!await WaitAsync(TimeSpan.FromMinutes(1), stoppingToken)) break;
+        }
+    }
+
+    private static async Task<bool> WaitAsync(TimeSpan delay, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await Task.Delay(delay, stoppingToken);
+            return true;
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return false;
         }
     }
 
@@ -100,22 +108,24 @@ public sealed class DailySummaryWorker : BackgroundService
 
     private async Task SendDigestAsync(DigestKind kind, CancellationToken cancellationToken)
     {
+        var options = _optionsMonitor.CurrentValue;
+        var emailOptions = _emailOptionsMonitor.CurrentValue;
         var now = DateTimeOffset.Now;
         var today = new DateTimeOffset(now.Date, now.Offset);
 
         var (from, to, title) = kind == DigestKind.Evening
-            ? (today.AddHours(_options.MorningHour), now, "Today's activity summary")
-            : (today.AddHours(_options.EveningHour).AddDays(-1), now, "Overnight activity summary");
+            ? (today.AddHours(options.MorningHour), now, "Today's activity summary")
+            : (today.AddHours(options.EveningHour).AddDays(-1), now, "Overnight activity summary");
 
         var events = await _eventStore.GetEventsAsync(from, to, cancellationToken);
         var analyzed = events.Where(e => string.Equals(e.Status, "completed", StringComparison.OrdinalIgnoreCase)).ToList();
 
         using var message = await BuildMessageAsync(title, from, to, analyzed, cancellationToken);
-        using var client = new SmtpClient(_emailOptions.SmtpHost, _emailOptions.SmtpPort)
+        using var client = new SmtpClient(emailOptions.SmtpHost, emailOptions.SmtpPort)
         {
-            EnableSsl = _emailOptions.EnableSsl,
+            EnableSsl = emailOptions.EnableSsl,
             UseDefaultCredentials = false,
-            Credentials = new NetworkCredential(_emailOptions.Username, _emailOptions.AppPassword),
+            Credentials = new NetworkCredential(emailOptions.Username, emailOptions.AppPassword),
             DeliveryMethod = SmtpDeliveryMethod.Network
         };
 
@@ -133,14 +143,15 @@ public sealed class DailySummaryWorker : BackgroundService
         IReadOnlyList<AlertEventRecord> events,
         CancellationToken cancellationToken)
     {
-        var fromAddress = string.IsNullOrWhiteSpace(_emailOptions.FromAddress) ? _emailOptions.Username : _emailOptions.FromAddress;
+        var emailOptions = _emailOptionsMonitor.CurrentValue;
+        var fromAddress = string.IsNullOrWhiteSpace(emailOptions.FromAddress) ? emailOptions.Username : emailOptions.FromAddress;
         var message = new MailMessage
         {
-            From = new MailAddress(fromAddress, _emailOptions.FromName),
+            From = new MailAddress(fromAddress, emailOptions.FromName),
             Subject = $"{title}: {events.Count} event{(events.Count == 1 ? "" : "s")}",
             IsBodyHtml = true
         };
-        message.To.Add(_emailOptions.ToAddress);
+        message.To.Add(emailOptions.ToAddress);
 
         var notable = events.Where(e => e.NotificationRecommended == true).ToList();
         var thumbnails = await LoadThumbnailsAsync(notable, cancellationToken);
@@ -167,7 +178,7 @@ public sealed class DailySummaryWorker : BackgroundService
     {
         var thumbnails = new List<(string, byte[], AlertEventRecord)>();
         var index = 0;
-        foreach (var evt in notable.Take(_options.MaxImagesAttached))
+        foreach (var evt in notable.Take(_optionsMonitor.CurrentValue.MaxImagesAttached))
         {
             if (string.IsNullOrWhiteSpace(evt.ImagePath) || !File.Exists(evt.ImagePath)) continue;
 

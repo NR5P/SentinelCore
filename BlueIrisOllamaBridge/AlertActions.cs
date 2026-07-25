@@ -16,18 +16,19 @@ public interface IAlertAction
 public sealed class WebhookAlertAction : IAlertAction
 {
     private readonly HttpClient _httpClient;
-    private readonly WebhookOptions _options;
+    private readonly IOptionsMonitor<WebhookOptions> _optionsMonitor;
     private readonly ILogger<WebhookAlertAction> _logger;
 
-    public WebhookAlertAction(HttpClient httpClient, IOptions<WebhookOptions> options, ILogger<WebhookAlertAction> logger)
+    public WebhookAlertAction(HttpClient httpClient, IOptionsMonitor<WebhookOptions> options, ILogger<WebhookAlertAction> logger)
     {
         _httpClient = httpClient;
-        _options = options.Value;
+        _optionsMonitor = options;
         _logger = logger;
     }
 
     public async Task ExecuteAsync(AlertResult result, CancellationToken cancellationToken)
     {
+        var _options = _optionsMonitor.CurrentValue;
         if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.Url)) return;
         if (_options.OnlyWhenNotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result)) return;
 
@@ -52,31 +53,32 @@ public sealed class TelegramAlertAction : IAlertAction
     private const string ApiBaseUrl = "https://api.telegram.org";
 
     private readonly HttpClient _httpClient;
-    private readonly TelegramOptions _options;
+    private readonly IOptionsMonitor<TelegramOptions> _optionsMonitor;
     private readonly ILogger<TelegramAlertAction> _logger;
 
-    public TelegramAlertAction(HttpClient httpClient, IOptions<TelegramOptions> options, ILogger<TelegramAlertAction> logger)
+    public TelegramAlertAction(HttpClient httpClient, IOptionsMonitor<TelegramOptions> options, ILogger<TelegramAlertAction> logger)
     {
         _httpClient = httpClient;
-        _options = options.Value;
+        _optionsMonitor = options;
         _logger = logger;
     }
 
     public async Task ExecuteAsync(AlertResult result, CancellationToken cancellationToken)
     {
-        if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.BotToken) || string.IsNullOrWhiteSpace(_options.ChatId))
+        var options = _optionsMonitor.CurrentValue;
+        if (!options.Enabled || string.IsNullOrWhiteSpace(options.BotToken) || string.IsNullOrWhiteSpace(options.ChatId))
             return;
-        if (_options.OnlyWhenNotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result))
+        if (options.OnlyWhenNotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result))
             return;
-        if (result.Analysis is not null && result.Analysis.Confidence < _options.MinimumConfidence)
+        if (result.Analysis is not null && result.Analysis.Confidence < options.MinimumConfidence)
             return;
 
         var caption = BuildCaption(result);
-        var imageExists = _options.AttachImage && !string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath);
+        var imageExists = options.AttachImage && !string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath);
 
         using var response = imageExists
-            ? await SendPhotoAsync(caption, result.ImagePath!, cancellationToken)
-            : await SendMessageAsync(caption, cancellationToken);
+            ? await SendPhotoAsync(options, caption, result.ImagePath!, cancellationToken)
+            : await SendMessageAsync(options, caption, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -89,25 +91,25 @@ public sealed class TelegramAlertAction : IAlertAction
         }
     }
 
-    private async Task<HttpResponseMessage> SendMessageAsync(string caption, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendMessageAsync(TelegramOptions options, string caption, CancellationToken cancellationToken)
     {
         var payload = new Dictionary<string, string>
         {
-            ["chat_id"] = _options.ChatId,
+            ["chat_id"] = options.ChatId,
             ["text"] = caption,
             ["parse_mode"] = "HTML"
         };
         return await _httpClient.PostAsync(
-            $"{ApiBaseUrl}/bot{_options.BotToken}/sendMessage",
+            $"{ApiBaseUrl}/bot{options.BotToken}/sendMessage",
             new FormUrlEncodedContent(payload),
             cancellationToken);
     }
 
-    private async Task<HttpResponseMessage> SendPhotoAsync(string caption, string imagePath, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendPhotoAsync(TelegramOptions options, string caption, string imagePath, CancellationToken cancellationToken)
     {
         using var content = new MultipartFormDataContent
         {
-            { new StringContent(_options.ChatId), "chat_id" },
+            { new StringContent(options.ChatId), "chat_id" },
             { new StringContent(caption), "caption" },
             { new StringContent("HTML"), "parse_mode" }
         };
@@ -117,7 +119,7 @@ public sealed class TelegramAlertAction : IAlertAction
         imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
         content.Add(imageContent, "photo", Path.GetFileName(imagePath));
 
-        return await _httpClient.PostAsync($"{ApiBaseUrl}/bot{_options.BotToken}/sendPhoto", content, cancellationToken);
+        return await _httpClient.PostAsync($"{ApiBaseUrl}/bot{options.BotToken}/sendPhoto", content, cancellationToken);
     }
 
     public static string BuildCaption(AlertResult result)
@@ -137,30 +139,31 @@ public sealed class TelegramAlertAction : IAlertAction
 
 public sealed class EmailAlertAction : IAlertAction
 {
-    private readonly EmailOptions _options;
-    private readonly IReadOnlyDictionary<string, PromptProfile> _profiles;
+    private readonly IOptionsMonitor<EmailOptions> _optionsMonitor;
+    private readonly IPromptProfileProvider _profileProvider;
     private readonly IImageOptimizer _imageOptimizer;
     private readonly ILogger<EmailAlertAction> _logger;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastSent = new(StringComparer.OrdinalIgnoreCase);
 
     public EmailAlertAction(
-        IOptions<EmailOptions> options,
-        IReadOnlyDictionary<string, PromptProfile> profiles,
+        IOptionsMonitor<EmailOptions> options,
+        IPromptProfileProvider profileProvider,
         IImageOptimizer imageOptimizer,
         ILogger<EmailAlertAction> logger)
     {
-        _options = options.Value;
-        _profiles = profiles;
+        _optionsMonitor = options;
+        _profileProvider = profileProvider;
         _imageOptimizer = imageOptimizer;
         _logger = logger;
     }
 
     public async Task ExecuteAsync(AlertResult result, CancellationToken cancellationToken)
     {
-        if (!_options.Enabled || result.Analysis is null) return;
+        var options = _optionsMonitor.CurrentValue;
+        if (!options.Enabled || result.Analysis is null) return;
 
         var analysis = result.Analysis;
-        if (!AlertNotificationPolicy.ShouldNotify(result) || analysis.Confidence < _options.MinimumConfidence)
+        if (!AlertNotificationPolicy.ShouldNotify(result) || analysis.Confidence < options.MinimumConfidence)
         {
             _logger.LogInformation(
                 "Email skipped for {AlertId}; recommended={Recommended}, confidence={Confidence}",
@@ -174,7 +177,7 @@ public sealed class EmailAlertAction : IAlertAction
         if (notification is null) return;
 
         var cooldownKey = $"{result.Camera}|{notification.Category}";
-        if (IsInCooldown(cooldownKey))
+        if (IsInCooldown(options, cooldownKey))
         {
             _logger.LogInformation(
                 "Duplicate email category {Category} suppressed for camera {Camera}",
@@ -185,12 +188,12 @@ public sealed class EmailAlertAction : IAlertAction
 
         var cropOverlay = await TryBuildCropOverlayAsync(result, cancellationToken);
 
-        using var message = BuildMessage(result, notification, cropOverlay);
-        using var client = new SmtpClient(_options.SmtpHost, _options.SmtpPort)
+        using var message = BuildMessage(options, result, notification, cropOverlay);
+        using var client = new SmtpClient(options.SmtpHost, options.SmtpPort)
         {
-            EnableSsl = _options.EnableSsl,
+            EnableSsl = options.EnableSsl,
             UseDefaultCredentials = false,
-            Credentials = new NetworkCredential(_options.Username, _options.AppPassword),
+            Credentials = new NetworkCredential(options.Username, options.AppPassword),
             DeliveryMethod = SmtpDeliveryMethod.Network
         };
 
@@ -203,18 +206,18 @@ public sealed class EmailAlertAction : IAlertAction
             notification.Subject);
     }
 
-    private bool IsInCooldown(string key)
+    private bool IsInCooldown(EmailOptions options, string key)
     {
-        if (_options.DuplicateCooldownMinutes <= 0) return false;
+        if (options.DuplicateCooldownMinutes <= 0) return false;
         if (!_lastSent.TryGetValue(key, out var lastSent)) return false;
-        return DateTimeOffset.UtcNow - lastSent < TimeSpan.FromMinutes(_options.DuplicateCooldownMinutes);
+        return DateTimeOffset.UtcNow - lastSent < TimeSpan.FromMinutes(options.DuplicateCooldownMinutes);
     }
 
     private async Task<byte[]?> TryBuildCropOverlayAsync(AlertResult result, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(result.ImagePath) || !File.Exists(result.ImagePath))
             return null;
-        if (!_profiles.TryGetValue(result.Profile, out var profile) || profile.Crop is null)
+        if (!_profileProvider.Current.TryGetValue(result.Profile, out var profile) || profile.Crop is null)
             return null;
 
         try
@@ -229,19 +232,19 @@ public sealed class EmailAlertAction : IAlertAction
         }
     }
 
-    private MailMessage BuildMessage(AlertResult result, EmailNotification notification, byte[]? cropOverlay)
+    private MailMessage BuildMessage(EmailOptions options, AlertResult result, EmailNotification notification, byte[]? cropOverlay)
     {
-        var fromAddress = string.IsNullOrWhiteSpace(_options.FromAddress)
-            ? _options.Username
-            : _options.FromAddress;
+        var fromAddress = string.IsNullOrWhiteSpace(options.FromAddress)
+            ? options.Username
+            : options.FromAddress;
 
         var message = new MailMessage
         {
-            From = new MailAddress(fromAddress, _options.FromName),
+            From = new MailAddress(fromAddress, options.FromName),
             Subject = notification.Subject,
             IsBodyHtml = true
         };
-        message.To.Add(_options.ToAddress);
+        message.To.Add(options.ToAddress);
 
         var analysis = result.Analysis!;
         var imageExists = !string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath);
@@ -300,9 +303,9 @@ public sealed class EmailAlertAction : IAlertAction
         }
         message.AlternateViews.Add(view);
 
-        if (_options.AttachImage && imageExists)
+        if (options.AttachImage && imageExists)
             message.Attachments.Add(new Attachment(result.ImagePath!));
-        if (_options.AttachImage && cropOverlay is not null)
+        if (options.AttachImage && cropOverlay is not null)
             message.Attachments.Add(new Attachment(new MemoryStream(cropOverlay), "analyzed-region.jpg", MediaTypeNames.Image.Jpeg));
 
         return message;

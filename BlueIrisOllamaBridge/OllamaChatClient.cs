@@ -14,13 +14,13 @@ public interface IOllamaChatClient
 public sealed class OllamaChatClient : IOllamaChatClient
 {
     private readonly HttpClient _httpClient;
-    private readonly TelegramChatOptions _options;
+    private readonly IOptionsMonitor<TelegramChatOptions> _optionsMonitor;
     private readonly ILogger<OllamaChatClient> _logger;
 
-    public OllamaChatClient(HttpClient httpClient, IOptions<TelegramChatOptions> options, ILogger<OllamaChatClient> logger)
+    public OllamaChatClient(HttpClient httpClient, IOptionsMonitor<TelegramChatOptions> options, ILogger<OllamaChatClient> logger)
     {
         _httpClient = httpClient;
-        _options = options.Value;
+        _optionsMonitor = options;
         _logger = logger;
     }
 
@@ -28,7 +28,7 @@ public sealed class OllamaChatClient : IOllamaChatClient
     {
         var request = new
         {
-            model = _options.Model,
+            model = _optionsMonitor.CurrentValue.Model,
             stream = false,
             messages = new object[]
             {

@@ -20,17 +20,17 @@ public sealed class FileResultStore : IResultStore
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly string _resultsDirectory;
     private readonly string _imagesDirectory;
-    private readonly bool _saveImages;
+    private readonly IOptionsMonitor<BridgeOptions> _options;
     private readonly IMemoryCache _cache;
     private readonly IEventStore _eventStore;
 
-    public FileResultStore(IOptions<BridgeOptions> options, IHostEnvironment environment, IMemoryCache cache, IEventStore eventStore)
+    public FileResultStore(IOptionsMonitor<BridgeOptions> options, IHostEnvironment environment, IMemoryCache cache, IEventStore eventStore)
     {
-        var configured = options.Value.DataDirectory;
+        var configured = options.CurrentValue.DataDirectory;
         var root = Path.IsPathRooted(configured) ? configured : Path.Combine(environment.ContentRootPath, configured);
         _resultsDirectory = Path.Combine(root, "results");
         _imagesDirectory = Path.Combine(root, "images");
-        _saveImages = options.Value.SaveImages;
+        _options = options;
         _cache = cache;
         _eventStore = eventStore;
         Directory.CreateDirectory(_resultsDirectory);
@@ -65,7 +65,7 @@ public sealed class FileResultStore : IResultStore
 
     public async Task<string?> SaveImageAsync(IncomingAlert alert, CancellationToken cancellationToken)
     {
-        if (!_saveImages) return null;
+        if (!_options.CurrentValue.SaveImages) return null;
         var extension = alert.ContentType.ToLowerInvariant() switch
         {
             "image/png" => ".png",

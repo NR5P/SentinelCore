@@ -53,76 +53,127 @@ public sealed class SelfMonitoringWorker : BackgroundService
     private readonly IOllamaVisionClient _ollama;
     private readonly IAlertQueue _queue;
     private readonly HttpClient _httpClient;
-    private readonly TelegramOptions _telegramOptions;
-    private readonly SelfMonitoringOptions _options;
+    private readonly IOptionsMonitor<TelegramOptions> _telegramOptionsMonitor;
+    private readonly IOptionsMonitor<SelfMonitoringOptions> _optionsMonitor;
     private readonly ILogger<SelfMonitoringWorker> _logger;
 
-    private readonly DegradationTracker _ollamaTracker;
-    private readonly DegradationTracker _queueTracker;
+    // Rebuilt whenever ConsecutiveFailuresBeforeAlert/ConsecutiveBacklogChecksBeforeAlert
+    // change, since a tracker's threshold is fixed at construction.
+    private DegradationTracker _ollamaTracker;
+    private DegradationTracker _queueTracker;
+    private int _ollamaTrackerThreshold;
+    private int _queueTrackerThreshold;
 
     public SelfMonitoringWorker(
         IOllamaVisionClient ollama,
         IAlertQueue queue,
         IHttpClientFactory httpClientFactory,
-        IOptions<TelegramOptions> telegramOptions,
-        IOptions<SelfMonitoringOptions> options,
+        IOptionsMonitor<TelegramOptions> telegramOptions,
+        IOptionsMonitor<SelfMonitoringOptions> options,
         ILogger<SelfMonitoringWorker> logger)
     {
         _ollama = ollama;
         _queue = queue;
         _httpClient = httpClientFactory.CreateClient(nameof(SelfMonitoringWorker));
-        _telegramOptions = telegramOptions.Value;
-        _options = options.Value;
+        _telegramOptionsMonitor = telegramOptions;
+        _optionsMonitor = options;
         _logger = logger;
-        _ollamaTracker = new DegradationTracker(_options.ConsecutiveFailuresBeforeAlert);
-        _queueTracker = new DegradationTracker(_options.ConsecutiveBacklogChecksBeforeAlert);
+
+        var initial = options.CurrentValue;
+        _ollamaTrackerThreshold = initial.ConsecutiveFailuresBeforeAlert;
+        _queueTrackerThreshold = initial.ConsecutiveBacklogChecksBeforeAlert;
+        _ollamaTracker = new DegradationTracker(_ollamaTrackerThreshold);
+        _queueTracker = new DegradationTracker(_queueTrackerThreshold);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_options.Enabled) return;
-
-        var canNotify = _telegramOptions.Enabled &&
-            !string.IsNullOrWhiteSpace(_telegramOptions.BotToken) &&
-            !string.IsNullOrWhiteSpace(_telegramOptions.ChatId);
-        if (!canNotify)
-            _logger.LogWarning("SelfMonitoring is enabled but Telegram is not configured; degradations will only be logged.");
-
         while (!stoppingToken.IsCancellationRequested)
         {
+            var options = _optionsMonitor.CurrentValue;
+            if (!options.Enabled)
+            {
+                if (!await WaitAsync(TimeSpan.FromSeconds(60), stoppingToken)) break;
+                continue;
+            }
+
+            RebuildTrackersIfThresholdsChanged(options);
+
+            var telegramOptions = _telegramOptionsMonitor.CurrentValue;
+            var canNotify = telegramOptions.Enabled &&
+                !string.IsNullOrWhiteSpace(telegramOptions.BotToken) &&
+                !string.IsNullOrWhiteSpace(telegramOptions.ChatId);
+            if (!canNotify)
+                _logger.LogWarning("SelfMonitoring is enabled but Telegram is not configured; degradations will only be logged.");
+
             try
             {
-                await RunChecksAsync(canNotify, stoppingToken);
+                await RunChecksAsync(options, telegramOptions, canNotify, stoppingToken);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "A self-monitoring check cycle failed unexpectedly");
             }
 
-            try { await Task.Delay(TimeSpan.FromSeconds(_options.CheckIntervalSeconds), stoppingToken); }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            if (!await WaitAsync(TimeSpan.FromSeconds(options.CheckIntervalSeconds), stoppingToken)) break;
         }
     }
 
-    private async Task RunChecksAsync(bool canNotify, CancellationToken cancellationToken)
+    private void RebuildTrackersIfThresholdsChanged(SelfMonitoringOptions options)
+    {
+        if (options.ConsecutiveFailuresBeforeAlert != _ollamaTrackerThreshold)
+        {
+            _ollamaTrackerThreshold = options.ConsecutiveFailuresBeforeAlert;
+            _ollamaTracker = new DegradationTracker(_ollamaTrackerThreshold);
+        }
+
+        if (options.ConsecutiveBacklogChecksBeforeAlert != _queueTrackerThreshold)
+        {
+            _queueTrackerThreshold = options.ConsecutiveBacklogChecksBeforeAlert;
+            _queueTracker = new DegradationTracker(_queueTrackerThreshold);
+        }
+    }
+
+    private static async Task<bool> WaitAsync(TimeSpan delay, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await Task.Delay(delay, stoppingToken);
+            return true;
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    private async Task RunChecksAsync(
+        SelfMonitoringOptions options,
+        TelegramOptions telegramOptions,
+        bool canNotify,
+        CancellationToken cancellationToken)
     {
         var ollamaReady = await _ollama.IsReadyAsync(cancellationToken);
         await HandleTransitionAsync(
             _ollamaTracker,
             ollamaReady,
             canNotify,
+            telegramOptions,
             alertText: "Ollama is unreachable. Camera alerts will queue up and go stale until it recovers.",
             recoveryText: "Ollama is reachable again. Alert processing has resumed.",
+            options.NotifyOnRecovery,
             cancellationToken);
 
         var queueCount = _queue.ApproximateCount;
-        var queueHealthy = queueCount < _options.QueueBacklogThreshold;
+        var queueHealthy = queueCount < options.QueueBacklogThreshold;
         await HandleTransitionAsync(
             _queueTracker,
             queueHealthy,
             canNotify,
+            telegramOptions,
             alertText: $"The alert queue has backed up to {queueCount} pending item(s); analysis may be falling behind.",
             recoveryText: $"The alert queue has caught back up ({queueCount} pending).",
+            options.NotifyOnRecovery,
             cancellationToken);
     }
 
@@ -130,19 +181,21 @@ public sealed class SelfMonitoringWorker : BackgroundService
         DegradationTracker tracker,
         bool isHealthy,
         bool canNotify,
+        TelegramOptions telegramOptions,
         string alertText,
         string recoveryText,
+        bool notifyOnRecovery,
         CancellationToken cancellationToken)
     {
         switch (tracker.Observe(isHealthy))
         {
             case DegradationTransition.Alert:
                 _logger.LogWarning("{Text}", alertText);
-                if (canNotify) await SendAlertAsync(alertText, cancellationToken);
+                if (canNotify) await SendAlertAsync(telegramOptions, alertText, cancellationToken);
                 break;
             case DegradationTransition.Recovered:
                 _logger.LogInformation("{Text}", recoveryText);
-                if (canNotify && _options.NotifyOnRecovery) await SendAlertAsync(recoveryText, cancellationToken);
+                if (canNotify && notifyOnRecovery) await SendAlertAsync(telegramOptions, recoveryText, cancellationToken);
                 break;
             case DegradationTransition.NoChange:
             default:
@@ -150,12 +203,12 @@ public sealed class SelfMonitoringWorker : BackgroundService
         }
     }
 
-    private Task SendAlertAsync(string text, CancellationToken cancellationToken) =>
+    private Task SendAlertAsync(TelegramOptions telegramOptions, string text, CancellationToken cancellationToken) =>
         _httpClient.PostAsync(
-            $"{ApiBaseUrl}/bot{_telegramOptions.BotToken}/sendMessage",
+            $"{ApiBaseUrl}/bot{telegramOptions.BotToken}/sendMessage",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["chat_id"] = _telegramOptions.ChatId,
+                ["chat_id"] = telegramOptions.ChatId,
                 ["text"] = text
             }),
             cancellationToken);
