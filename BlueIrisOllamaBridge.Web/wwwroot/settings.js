@@ -101,6 +101,15 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "quietHours", title: "QUIET HOURS", endpoint: "/api/settings/quiet-hours",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "During the window below, raise the confidence bar for Email and Telegram alerts so only confident detections still ping you. Nothing is ever fully muted, and the Feed and daily digest are unaffected." },
+        { name: "startHour", label: "Start Hour (0-23)", type: "number", min: 0, max: 23, tip: "Hour the quiet window begins, in 24-hour time. 22 means 10pm." },
+        { name: "endHour", label: "End Hour (0-23)", type: "number", min: 0, max: 23, tip: "Hour the quiet window ends, in 24-hour time. 6 means 6am. Can be earlier than Start Hour to span midnight, e.g. 22 to 6." },
+        { name: "minimumConfidence", label: "Minimum Confidence During Window", type: "number", min: 0, max: 1, step: 0.05, tip: "How sure the AI must be to still alert during quiet hours. Only used if it's higher than the channel's own Minimum Confidence in Email/Telegram settings - it can raise the bar, never lower it." }
+      ]
+    },
+    {
       key: "webhook", title: "WEBHOOK", endpoint: "/api/settings/webhook",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "POST each analysed event to another system, for home automation or logging." },
@@ -124,6 +133,7 @@ window.GateWatchSettings = (function () {
     telegramChat: "Lets you message the bot to ask questions about recent activity.",
     blueIris: "Pulling a fresh snapshot from Blue Iris on demand via the /photo command.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
+    quietHours: "Raise the bar for Email/Telegram alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system."
   };
 

@@ -163,6 +163,20 @@ public sealed class SelfMonitoringSettingsDto
     public bool NotifyOnRecovery { get; set; } = true;
 }
 
+public sealed class QuietHoursSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(0, 23)]
+    public int StartHour { get; set; } = 22;
+
+    [Range(0, 23)]
+    public int EndHour { get; set; } = 6;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; set; } = 0.85;
+}
+
 public sealed class WebhookSettingsDto
 {
     public bool Enabled { get; set; }

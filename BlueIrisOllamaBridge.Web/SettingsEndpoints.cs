@@ -19,6 +19,7 @@ public static class SettingsEndpoints
             telegramChat = await settings.GetSectionAsync<TelegramChatSettingsDto>("TelegramChat", ct),
             blueIris = await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", ct),
             selfMonitoring = await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", ct),
+            quietHours = await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", ct),
             webhook = await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", ct)
         }));
 
@@ -75,6 +76,9 @@ public static class SettingsEndpoints
 
         app.MapPut("/api/settings/self-monitoring", async (SelfMonitoringSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "SelfMonitoring", ct));
+
+        app.MapPut("/api/settings/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, settings, "QuietHours", ct));
 
         app.MapPut("/api/settings/webhook", async (WebhookSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "Webhook", ct, extra =>

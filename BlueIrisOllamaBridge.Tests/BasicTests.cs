@@ -84,6 +84,61 @@ public sealed class BasicTests
     };
 
     [Fact]
+    public void QuietHoursPolicy_IsActive_HandlesOvernightWraparound()
+    {
+        var options = new QuietHoursOptions { Enabled = true, StartHour = 22, EndHour = 6 };
+
+        Assert.True(QuietHoursPolicy.IsActive(options, AtHour(23)));
+        Assert.True(QuietHoursPolicy.IsActive(options, AtHour(2)));
+        Assert.True(QuietHoursPolicy.IsActive(options, AtHour(22)));
+        Assert.False(QuietHoursPolicy.IsActive(options, AtHour(6)));
+        Assert.False(QuietHoursPolicy.IsActive(options, AtHour(12)));
+    }
+
+    [Fact]
+    public void QuietHoursPolicy_IsActive_HandlesSameDayWindow()
+    {
+        var options = new QuietHoursOptions { Enabled = true, StartHour = 9, EndHour = 17 };
+
+        Assert.True(QuietHoursPolicy.IsActive(options, AtHour(9)));
+        Assert.True(QuietHoursPolicy.IsActive(options, AtHour(12)));
+        Assert.False(QuietHoursPolicy.IsActive(options, AtHour(17)));
+        Assert.False(QuietHoursPolicy.IsActive(options, AtHour(3)));
+    }
+
+    [Fact]
+    public void QuietHoursPolicy_IsActive_FalseWhenDisabledOrZeroWidth()
+    {
+        Assert.False(QuietHoursPolicy.IsActive(new QuietHoursOptions { Enabled = false, StartHour = 22, EndHour = 6 }, AtHour(23)));
+        Assert.False(QuietHoursPolicy.IsActive(new QuietHoursOptions { Enabled = true, StartHour = 5, EndHour = 5 }, AtHour(5)));
+    }
+
+    [Fact]
+    public void QuietHoursPolicy_EffectiveMinimumConfidence_OnlyRaisesNeverLowers()
+    {
+        var options = new QuietHoursOptions { Enabled = true, StartHour = 22, EndHour = 6, MinimumConfidence = 0.85 };
+
+        // Outside the window: untouched.
+        Assert.Equal(0.6, QuietHoursPolicy.EffectiveMinimumConfidence(options, 0.6, AtHour(12)));
+
+        // Inside the window: raised because the channel's own floor (0.6) is lower.
+        Assert.Equal(0.85, QuietHoursPolicy.EffectiveMinimumConfidence(options, 0.6, AtHour(2)));
+
+        // Inside the window, but the channel already requires more than quiet hours do: unchanged.
+        Assert.Equal(0.95, QuietHoursPolicy.EffectiveMinimumConfidence(options, 0.95, AtHour(2)));
+    }
+
+    // QuietHoursPolicy compares against the local wall-clock hour (via ToLocalTime()), so this
+    // builds the DateTimeOffset using the test machine's own local offset - not a fixed one -
+    // so the resulting .ToLocalTime().Hour is always exactly the requested hour regardless of
+    // which timezone the tests happen to run in.
+    private static DateTimeOffset AtHour(int hour)
+    {
+        var local = new DateTime(2026, 7, 24, hour, 0, 0, DateTimeKind.Local);
+        return new DateTimeOffset(local);
+    }
+
+    [Fact]
     public void TelegramAlertAction_BuildCaption_EscapesHtmlAndIncludesReason()
     {
         var result = new AlertResult

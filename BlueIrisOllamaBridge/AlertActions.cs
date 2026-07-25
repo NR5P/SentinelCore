@@ -110,13 +110,19 @@ public sealed class TelegramAlertAction : IAlertAction
 
     private readonly HttpClient _httpClient;
     private readonly IOptionsMonitor<TelegramOptions> _optionsMonitor;
+    private readonly IOptionsMonitor<QuietHoursOptions> _quietHoursMonitor;
     private readonly ILogger<TelegramAlertAction> _logger;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastSent = new(StringComparer.OrdinalIgnoreCase);
 
-    public TelegramAlertAction(HttpClient httpClient, IOptionsMonitor<TelegramOptions> options, ILogger<TelegramAlertAction> logger)
+    public TelegramAlertAction(
+        HttpClient httpClient,
+        IOptionsMonitor<TelegramOptions> options,
+        IOptionsMonitor<QuietHoursOptions> quietHoursOptions,
+        ILogger<TelegramAlertAction> logger)
     {
         _httpClient = httpClient;
         _optionsMonitor = options;
+        _quietHoursMonitor = quietHoursOptions;
         _logger = logger;
     }
 
@@ -127,7 +133,8 @@ public sealed class TelegramAlertAction : IAlertAction
             return;
         if (options.OnlyWhenNotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result))
             return;
-        if (result.Analysis is not null && result.Analysis.Confidence < options.MinimumConfidence)
+        var minimumConfidence = QuietHoursPolicy.EffectiveMinimumConfidence(_quietHoursMonitor.CurrentValue, options.MinimumConfidence, result.OccurredAt);
+        if (result.Analysis is not null && result.Analysis.Confidence < minimumConfidence)
             return;
 
         // Only gate on category when one can be determined - anything that doesn't map to a
@@ -220,6 +227,7 @@ public sealed class TelegramAlertAction : IAlertAction
 public sealed class EmailAlertAction : IAlertAction
 {
     private readonly IOptionsMonitor<EmailOptions> _optionsMonitor;
+    private readonly IOptionsMonitor<QuietHoursOptions> _quietHoursMonitor;
     private readonly IPromptProfileProvider _profileProvider;
     private readonly IImageOptimizer _imageOptimizer;
     private readonly ILogger<EmailAlertAction> _logger;
@@ -227,11 +235,13 @@ public sealed class EmailAlertAction : IAlertAction
 
     public EmailAlertAction(
         IOptionsMonitor<EmailOptions> options,
+        IOptionsMonitor<QuietHoursOptions> quietHoursOptions,
         IPromptProfileProvider profileProvider,
         IImageOptimizer imageOptimizer,
         ILogger<EmailAlertAction> logger)
     {
         _optionsMonitor = options;
+        _quietHoursMonitor = quietHoursOptions;
         _profileProvider = profileProvider;
         _imageOptimizer = imageOptimizer;
         _logger = logger;
@@ -243,7 +253,8 @@ public sealed class EmailAlertAction : IAlertAction
         if (!options.Enabled || result.Analysis is null) return;
 
         var analysis = result.Analysis;
-        if (!AlertNotificationPolicy.ShouldNotify(result) || analysis.Confidence < options.MinimumConfidence)
+        var minimumConfidence = QuietHoursPolicy.EffectiveMinimumConfidence(_quietHoursMonitor.CurrentValue, options.MinimumConfidence, result.OccurredAt);
+        if (!AlertNotificationPolicy.ShouldNotify(result) || analysis.Confidence < minimumConfidence)
         {
             _logger.LogInformation(
                 "Email skipped for {AlertId}; recommended={Recommended}, confidence={Confidence}",

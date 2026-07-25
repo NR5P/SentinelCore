@@ -148,6 +148,26 @@ public sealed class EmailOptions
     public bool AttachImage { get; init; } = true;
 }
 
+public sealed class QuietHoursOptions
+{
+    public const string SectionName = "QuietHours";
+
+    public bool Enabled { get; init; }
+
+    // StartHour == EndHour is treated as a zero-width window (never active) rather than a
+    // full day, so an untouched default of 0/0 can't accidentally raise the bar around the clock.
+    [Range(0, 23)]
+    public int StartHour { get; init; } = 22;
+
+    [Range(0, 23)]
+    public int EndHour { get; init; } = 6;
+
+    // Applied as a floor, not a replacement: a channel's own MinimumConfidence still wins if
+    // it's already higher than this, so quiet hours can only ever raise the bar, never lower it.
+    [Range(0, 1)]
+    public double MinimumConfidence { get; init; } = 0.85;
+}
+
 public sealed class BlueIrisOptions
 {
     public const string SectionName = "BlueIris";
