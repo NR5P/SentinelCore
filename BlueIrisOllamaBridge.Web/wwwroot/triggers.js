@@ -45,6 +45,7 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-cooldown").value = config.cooldownSeconds ?? 5;
         document.getElementById("zone-max-per-min").value = config.maxTriggersPerMinute ?? 6;
         document.getElementById("zone-enabled").checked = !!config.enabled;
+        setShadowSensitivity(config.shadowSensitivity ?? 50);
       }
     } catch (err) {
       console.error("Failed to load trigger zone editor", err);
@@ -168,6 +169,15 @@ window.GateWatchTriggers = (function () {
     draggingCircle = false;
   });
 
+  function setShadowSensitivity(value) {
+    document.getElementById("zone-shadow-sensitivity").value = value;
+    document.getElementById("zone-shadow-sensitivity-value").textContent = value;
+  }
+
+  document.getElementById("zone-shadow-sensitivity").addEventListener("input", e => {
+    document.getElementById("zone-shadow-sensitivity-value").textContent = e.target.value;
+  });
+
   document.getElementById("zone-undo-point").addEventListener("click", () => {
     polygonPoints.pop();
     renderPolygon();
@@ -194,7 +204,8 @@ window.GateWatchTriggers = (function () {
       zonePolygon: polygonPoints,
       minTriggerArea,
       cooldownSeconds: parseInt(document.getElementById("zone-cooldown").value, 10) || 0,
-      maxTriggersPerMinute: parseInt(document.getElementById("zone-max-per-min").value, 10) || 1
+      maxTriggersPerMinute: parseInt(document.getElementById("zone-max-per-min").value, 10) || 1,
+      shadowSensitivity: parseInt(document.getElementById("zone-shadow-sensitivity").value, 10) || 0
     };
 
     try {

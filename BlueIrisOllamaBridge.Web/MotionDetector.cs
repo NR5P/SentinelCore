@@ -21,18 +21,29 @@ public sealed class MotionDetector
     // while every channel dimmed by roughly the same proportion.
     private const double ShadowAlphaMin = 0.20;
     private const double ShadowAlphaMax = 0.95;
-    private const double ShadowChromaticityThreshold = 0.10;
     private const double DarkChannelFloor = 8.0;
 
+    // ShadowSensitivity (0-100, user-facing) controls how forgiving the "same proportion across
+    // channels" check is. 0 disables shadow filtering entirely (matches pre-shadow-suppression
+    // behavior); higher values tolerate more chromaticity drift before ruling a pixel "not a
+    // shadow", i.e. filter more aggressively - useful for cameras with harsher/noisier shadows,
+    // at the cost of occasionally excluding a real object that happens to keep the background hue.
+    private const double MinChromaticityThreshold = 0.04;
+    private const double MaxChromaticityThreshold = 0.24;
+
     private readonly bool[] _zoneMask;
+    private readonly double _shadowChromaticityThreshold;
     private byte[]? _previousFrame;
     private readonly bool[] _changedScratch = new bool[PixelCount];
     private readonly bool[] _visitedScratch = new bool[PixelCount];
     private readonly int[] _stackScratch = new int[PixelCount];
 
-    public MotionDetector(IReadOnlyList<TriggerPoint> zonePolygon)
+    public MotionDetector(IReadOnlyList<TriggerPoint> zonePolygon, int shadowSensitivity = 50)
     {
         _zoneMask = RasterizeZone(zonePolygon);
+        _shadowChromaticityThreshold = shadowSensitivity <= 0
+            ? -1 // sentinel: never matches, so no pixel is ever excluded as shadow
+            : MinChromaticityThreshold + Math.Clamp(shadowSensitivity, 1, 100) / 100.0 * (MaxChromaticityThreshold - MinChromaticityThreshold);
     }
 
     // Feeds one RGB24 GridWidth*GridHeight frame. Returns the largest connected motion blob's
@@ -72,7 +83,7 @@ public sealed class MotionDetector
 
     private static double Luma(byte r, byte g, byte b) => 0.299 * r + 0.587 * g + 0.114 * b;
 
-    private static bool IsLikelyShadow(byte r, byte g, byte b, byte r0, byte g0, byte b0)
+    private bool IsLikelyShadow(byte r, byte g, byte b, byte r0, byte g0, byte b0)
     {
         // Can't judge a color ratio against a near-black background pixel - treat as a real change.
         if (r0 < DarkChannelFloor || g0 < DarkChannelFloor || b0 < DarkChannelFloor) return false;
@@ -85,7 +96,7 @@ public sealed class MotionDetector
         var db = b / (double)b0 - alpha;
         var chromaticityDistortion = Math.Sqrt((dr * dr + dg * dg + db * db) / 3.0);
 
-        return chromaticityDistortion < ShadowChromaticityThreshold;
+        return chromaticityDistortion < _shadowChromaticityThreshold;
     }
 
     private int LargestConnectedComponent(bool[] changed)
