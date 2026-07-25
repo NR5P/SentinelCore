@@ -65,6 +65,14 @@ builder.Services.AddOptions<MqttOptions>()
     .Bind(builder.Configuration.GetSection(MqttOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<BugReportOptions>()
+    .Bind(builder.Configuration.GetSection(BugReportOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<IBugReportSender, SmtpBugReportSender>();
+builder.Services.AddSingleton<ILoggerProvider>(sp =>
+    new BugReportLoggerProvider("BlueIrisOllamaBridge", sp.GetRequiredService<IBugReportSender>()));
 
 var bridgeSettings = builder.Configuration.GetSection(BridgeOptions.SectionName).Get<BridgeOptions>() ?? new();
 builder.Services.Configure<FormOptions>(options =>

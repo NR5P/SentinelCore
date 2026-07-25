@@ -22,6 +22,7 @@ public static class SettingsEndpoints
             quietHours = await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", ct),
             knownVehicles = await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", ct) ?? [],
             mqtt = await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", ct),
+            bugReports = await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", ct),
             webhook = await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", ct)
         }));
 
@@ -89,6 +90,9 @@ public static class SettingsEndpoints
                 if (!dto.RunEmbeddedBroker && string.IsNullOrWhiteSpace(dto.BrokerHost))
                     extra.Add("Broker Host is required when not running the embedded broker.");
             }));
+
+        app.MapPut("/api/settings/bug-reports", async (BugReportSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, settings, "BugReports", ct));
 
         app.MapPut("/api/settings/webhook", async (WebhookSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "Webhook", ct, extra =>
