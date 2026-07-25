@@ -10,11 +10,26 @@ public interface IEventStore
     // Returns completed/failed/queued rows with OccurredAt in [from, to), oldest first.
     Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken);
 
-    // Returns the most recent rows regardless of date, newest first.
-    Task<IReadOnlyList<AlertEventRecord>> GetRecentEventsAsync(int limit, CancellationToken cancellationToken);
-
     Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken);
+
+    // Newest first, with every filter field optional (null/empty means "don't filter on this").
+    Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken);
+
+    // Distinct camera names and event types actually present in history, for populating
+    // filter dropdowns - independent of whatever filter is currently applied.
+    Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken);
 }
+
+public sealed record EventFilter(
+    string? Camera = null,
+    string? EventType = null,
+    bool? NotifiedOnly = null,
+    string? SearchText = null,
+    DateTimeOffset? From = null,
+    DateTimeOffset? To = null,
+    int Limit = 50);
+
+public sealed record EventFilterOptions(IReadOnlyList<string> Cameras, IReadOnlyList<string> EventTypes);
 
 public sealed record AlertEventRecord(
     Guid Id,
@@ -153,34 +168,6 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         }
     }
 
-    public async Task<IReadOnlyList<AlertEventRecord>> GetRecentEventsAsync(int limit, CancellationToken cancellationToken)
-    {
-        await _connectionLock.WaitAsync(cancellationToken);
-        try
-        {
-            using var command = _connection.CreateCommand();
-            command.CommandText = """
-                SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
-                       NotificationRecommended, NotificationReason, Confidence, ImagePath
-                FROM AlertEvents
-                ORDER BY OccurredAt DESC
-                LIMIT $limit;
-                """;
-            command.Parameters.AddWithValue("$limit", limit);
-
-            var results = new List<AlertEventRecord>();
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-                results.Add(ReadRecord(reader));
-
-            return results;
-        }
-        finally
-        {
-            _connectionLock.Release();
-        }
-    }
-
     public async Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken)
     {
         await _connectionLock.WaitAsync(cancellationToken);
@@ -197,6 +184,103 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             return await reader.ReadAsync(cancellationToken) ? ReadRecord(reader) : null;
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            var conditions = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(filter.Camera))
+            {
+                conditions.Add("Camera = $camera");
+                command.Parameters.AddWithValue("$camera", filter.Camera);
+            }
+            if (!string.IsNullOrWhiteSpace(filter.EventType))
+            {
+                conditions.Add("EventType = $eventType");
+                command.Parameters.AddWithValue("$eventType", filter.EventType);
+            }
+            if (filter.NotifiedOnly == true)
+            {
+                conditions.Add("NotificationRecommended = 1");
+            }
+            if (!string.IsNullOrWhiteSpace(filter.SearchText))
+            {
+                conditions.Add("Summary LIKE $search");
+                command.Parameters.AddWithValue("$search", $"%{filter.SearchText}%");
+            }
+            if (filter.From.HasValue)
+            {
+                conditions.Add("OccurredAt >= $from");
+                command.Parameters.AddWithValue("$from", ToUtcSortable(filter.From.Value));
+            }
+            if (filter.To.HasValue)
+            {
+                conditions.Add("OccurredAt < $to");
+                command.Parameters.AddWithValue("$to", ToUtcSortable(filter.To.Value));
+            }
+
+            var whereClause = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
+            command.CommandText = $"""
+                SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath
+                FROM AlertEvents
+                {whereClause}
+                ORDER BY OccurredAt DESC
+                LIMIT $limit;
+                """;
+            command.Parameters.AddWithValue("$limit", Math.Clamp(filter.Limit, 1, 500));
+
+            var results = new List<AlertEventRecord>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(ReadRecord(reader));
+
+            return results;
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
+    public async Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            var cameras = new List<string>();
+            using (var command = _connection.CreateCommand())
+            {
+                command.CommandText = "SELECT DISTINCT Camera FROM AlertEvents ORDER BY Camera COLLATE NOCASE;";
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    cameras.Add(reader.GetString(0));
+            }
+
+            var eventTypes = new List<string>();
+            using (var command = _connection.CreateCommand())
+            {
+                command.CommandText = """
+                    SELECT DISTINCT EventType FROM AlertEvents
+                    WHERE EventType IS NOT NULL AND EventType <> ''
+                    ORDER BY EventType COLLATE NOCASE;
+                    """;
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    eventTypes.Add(reader.GetString(0));
+            }
+
+            return new EventFilterOptions(cameras, eventTypes);
         }
         finally
         {

@@ -135,9 +135,95 @@ lightbox.addEventListener("click", () => {
   lightboxVideo.load();
 });
 
+// ---------------- Feed filters ----------------
+
+const filterSearchEl = document.getElementById("filter-search");
+const filterCameraEl = document.getElementById("filter-camera");
+const filterEventTypeEl = document.getElementById("filter-event-type");
+const filterFromEl = document.getElementById("filter-from");
+const filterToEl = document.getElementById("filter-to");
+const filterNotifiedOnlyEl = document.getElementById("filter-notified-only");
+const filterClearBtn = document.getElementById("filter-clear-btn");
+
+function prettifyEventType(value) {
+  return value.replace(/_/g, " ");
+}
+
+async function loadFilterOptions() {
+  try {
+    const response = await fetch("/api/events/filter-options");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { cameras, eventTypes } = await response.json();
+
+    for (const camera of cameras) {
+      const opt = document.createElement("option");
+      opt.value = camera;
+      opt.textContent = camera;
+      filterCameraEl.appendChild(opt);
+    }
+    for (const eventType of eventTypes) {
+      const opt = document.createElement("option");
+      opt.value = eventType;
+      opt.textContent = prettifyEventType(eventType);
+      filterEventTypeEl.appendChild(opt);
+    }
+  } catch (err) {
+    console.error("Failed to load filter options", err);
+  }
+}
+
+// A local-date <input type="date"> value ("YYYY-MM-DD") is turned into a local-midnight ISO
+// timestamp rather than passed through Date's UTC-parsing constructor, so the filter lines up
+// with the browser's own timezone rather than shifting a day depending on where the server is.
+// endOfDay bumps to the start of the next day so the "to" filter includes the whole selected day
+// (the backend treats "to" as an exclusive upper bound).
+function dateInputToIso(value, endOfDay) {
+  if (!value) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d + (endOfDay ? 1 : 0)).toISOString();
+}
+
+function buildFilterQuery() {
+  const params = new URLSearchParams({ limit: "50" });
+  if (filterSearchEl.value.trim()) params.set("search", filterSearchEl.value.trim());
+  if (filterCameraEl.value) params.set("camera", filterCameraEl.value);
+  if (filterEventTypeEl.value) params.set("eventType", filterEventTypeEl.value);
+  if (filterNotifiedOnlyEl.checked) params.set("notifiedOnly", "true");
+  const fromIso = dateInputToIso(filterFromEl.value, false);
+  const toIso = dateInputToIso(filterToEl.value, true);
+  if (fromIso) params.set("from", fromIso);
+  if (toIso) params.set("to", toIso);
+  return params;
+}
+
+function hasActiveFilters() {
+  return !!(filterSearchEl.value.trim() || filterCameraEl.value || filterEventTypeEl.value ||
+    filterFromEl.value || filterToEl.value || filterNotifiedOnlyEl.checked);
+}
+
+let searchDebounceTimer;
+filterSearchEl.addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(loadEvents, 300);
+});
+for (const el of [filterCameraEl, filterEventTypeEl, filterFromEl, filterToEl, filterNotifiedOnlyEl]) {
+  el.addEventListener("change", loadEvents);
+}
+filterClearBtn.addEventListener("click", () => {
+  filterSearchEl.value = "";
+  filterCameraEl.value = "";
+  filterEventTypeEl.value = "";
+  filterFromEl.value = "";
+  filterToEl.value = "";
+  filterNotifiedOnlyEl.checked = false;
+  loadEvents();
+});
+
+// ---------------- Feed loading ----------------
+
 async function loadEvents() {
   try {
-    const response = await fetch("/api/events?limit=50");
+    const response = await fetch(`/api/events?${buildFilterQuery()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const events = await response.json();
 
@@ -146,7 +232,9 @@ async function loadEvents() {
 
     feedEl.innerHTML = "";
     if (events.length === 0) {
-      feedEl.innerHTML = `<div class="empty-state">no events recorded yet</div>`;
+      feedEl.innerHTML = hasActiveFilters()
+        ? `<div class="empty-state">no events match these filters</div>`
+        : `<div class="empty-state">no events recorded yet</div>`;
       return;
     }
 
@@ -161,6 +249,7 @@ async function loadEvents() {
 
 refreshBtn.addEventListener("click", loadEvents);
 
+loadFilterOptions();
 loadEvents();
 setInterval(loadEvents, REFRESH_INTERVAL_MS);
 
