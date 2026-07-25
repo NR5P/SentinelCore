@@ -54,6 +54,9 @@ public sealed class CloudVisionSettingsDto
 {
     public bool Enabled { get; set; }
 
+    [Required]
+    public string Provider { get; set; } = "openai";
+
     public string ApiKey { get; set; } = string.Empty;
 
     [Required]

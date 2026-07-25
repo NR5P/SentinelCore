@@ -26,10 +26,15 @@ window.GateWatchSettings = (function () {
     {
       key: "cloudVision", title: "CLOUD VISION", endpoint: "/api/settings/cloud-vision",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow this OpenAI account to be used for alert analysis, either as the primary backend or as a fallback - see VISION ROUTING below to choose which." },
-        { name: "apiKey", label: "API Key", type: "password", tip: "An OpenAI API key with access to a vision-capable model, e.g. gpt-4o-mini." },
-        { name: "model", label: "Model", type: "text", tip: "Which OpenAI model analyses the snapshots, e.g. gpt-4o-mini or gpt-4o." },
-        { name: "maximumRetries", label: "Max Retries", type: "number", min: 0, max: 10, tip: "How many times to retry when OpenAI fails or returns something unparseable." },
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow this cloud account to be used for alert analysis, either as the primary backend or as a fallback - see VISION ROUTING below to choose which." },
+        { name: "provider", label: "Provider", type: "select", options: [
+            { value: "openai", label: "OpenAI (or compatible)" },
+            { value: "anthropic", label: "Anthropic" },
+            { value: "google", label: "Google" }
+          ], tip: "Which cloud AI account the API key and model below belong to. 'OpenAI (or compatible)' also covers any other endpoint that speaks the same request format - Azure OpenAI, OpenRouter, Together.ai, Groq, or a self-hosted vLLM/LM Studio/LocalAI server - by changing CloudVision:BaseUrl in appsettings.json (needs a restart, same as Ollama's own address)." },
+        { name: "apiKey", label: "API Key", type: "password", tip: "An API key for the provider selected above, with access to a vision-capable model." },
+        { name: "model", label: "Model", type: "text", tip: "Which model analyses the snapshots - must match the provider above, e.g. gpt-4o-mini (OpenAI), claude-3-5-sonnet-latest (Anthropic), or gemini-1.5-flash (Google)." },
+        { name: "maximumRetries", label: "Max Retries", type: "number", min: 0, max: 10, tip: "How many times to retry when the provider fails or returns something unparseable." },
         { name: "retryDelaySeconds", label: "Retry Delay (s)", type: "number", min: 1, max: 300, tip: "How long to wait between those retries." }
       ]
     },
@@ -169,7 +174,7 @@ window.GateWatchSettings = (function () {
   const SECTION_TIPS = {
     bridge: "How alerts arrive from Blue Iris, and how long they're kept.",
     ollama: "The local AI model that looks at each snapshot, and how it's tuned.",
-    cloudVision: "An offsite AI model (OpenAI) that can analyse alerts instead of, or as a backup for, the local Ollama model.",
+    cloudVision: "An offsite AI model (OpenAI, Anthropic, or Google) that can analyse alerts instead of, or as a backup for, the local Ollama model.",
     visionRouting: "Which vision backend handles alerts first, and whether to fall back to the other one if it fails.",
     imageProcessing: "Resizing snapshots before the AI sees them, to speed up analysis.",
     email: "Email alerts when something notable happens.",

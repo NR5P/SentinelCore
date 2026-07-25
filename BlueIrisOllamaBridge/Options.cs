@@ -87,15 +87,24 @@ public sealed class CloudVisionOptions
 
     public bool Enabled { get; init; }
 
-    // Sent as a Bearer token, read fresh on every request (not baked into the HttpClient at
-    // startup) so a key changed in settings takes effect without a restart.
+    // Which cloud backend these settings apply to. "openai" is also the slot to use for any
+    // other OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, Together.ai, Groq, a local
+    // vLLM/LM Studio/LocalAI server, etc.) - just point BaseUrl and Model at it. Anthropic and
+    // Google use their own fixed API endpoints, since neither has a comparable "everyone speaks
+    // this dialect" ecosystem the way OpenAI's Chat Completions format does.
+    [Required, RegularExpression("^(openai|anthropic|google)$")]
+    public string Provider { get; init; } = "openai";
+
+    // Sent as this provider's API key, read fresh on every request (not baked into the
+    // HttpClient at startup) so a key changed in settings takes effect without a restart.
     public string ApiKey { get; init; } = string.Empty;
 
     [Required]
     public string Model { get; init; } = "gpt-4o-mini";
 
-    // OpenAI-compatible Chat Completions endpoint. Overridable so an Azure OpenAI deployment or
-    // a local proxy in front of a different provider can stand in without a code change.
+    // Only consulted when Provider is "openai" - Anthropic and Google always use their own
+    // fixed endpoint. Overridable so an Azure OpenAI deployment or any other OpenAI-compatible
+    // endpoint can stand in without a code change.
     [Required, Url]
     public string BaseUrl { get; init; } = "https://api.openai.com/v1/";
 

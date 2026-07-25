@@ -149,9 +149,10 @@ this guide mostly mirrors:
 - **Ollama** — which local vision model analyzes snapshots (must already be pulled in
   Ollama), how long it's kept loaded in memory between alerts, and inference tuning
   (temperature, top-K/top-P, output token limit, retries).
-- **Cloud Vision** and **Vision Routing** — an offsite AI model (OpenAI) that can analyze
-  alerts instead of, or as an automatic backup for, the local Ollama model. Its own section
-  below. See [section 8](#8-vision-analysis-backend--local-cloud-or-both).
+- **Cloud Vision** and **Vision Routing** — an offsite AI model (OpenAI, Anthropic, or Google)
+  that can analyze alerts instead of, or as an automatic backup for, the local Ollama model.
+  Its own section below. See
+  [section 8](#8-vision-analysis-backend--local-cloud-or-both).
 - **Image Processing** — whether/how snapshots are resized before the AI sees them (usually
   faster with no real accuracy loss), and JPEG quality.
 - **Email** — SMTP server details, sender/recipient addresses, a duplicate-cooldown so one
@@ -196,9 +197,22 @@ vision backend:
 - **Ollama** — a model running on your own hardware. Free to run, keeps every image on your
   own network, but needs a machine capable of it (ideally a GPU) and can be slow on modest
   hardware.
-- **Cloud Vision** — currently OpenAI (e.g. `gpt-4o-mini`). Needs an OpenAI API key and sends
-  each snapshot to OpenAI's servers, but works well on any machine regardless of local hardware,
-  and is usually faster.
+- **Cloud Vision** — an offsite model, one of:
+  - **OpenAI** (e.g. `gpt-4o-mini`)
+  - **Anthropic** (e.g. `claude-3-5-sonnet-latest`)
+  - **Google** (e.g. `gemini-1.5-flash`)
+
+  Pick which via the **Provider** field, with an API key for that provider. Needs internet
+  access and sends each snapshot to that provider's servers, but works well on any machine
+  regardless of local hardware, and is usually faster than a slow local GPU (or none at all) -
+  this is the point of using it if your computer is on the slower side.
+
+If you run something else that speaks OpenAI's request format - Azure OpenAI, OpenRouter,
+Together.ai, Groq, or a self-hosted server like vLLM/LM Studio/LocalAI - set **Provider** to
+OpenAI and point `CloudVision:BaseUrl` in `appsettings.json` at it instead of the default
+`https://api.openai.com/v1/`. This needs a restart to take effect, the same as Ollama's own
+address - see [DEPLOYMENT.md](DEPLOYMENT.md). Anthropic and Google each only have the one real
+endpoint, so there's no equivalent override for those.
 
 **Vision Routing** decides which one actually gets used:
 

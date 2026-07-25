@@ -43,6 +43,8 @@ public static class SettingsEndpoints
             {
                 if (dto.Enabled && string.IsNullOrWhiteSpace(dto.ApiKey))
                     extra.Add("ApiKey is required when cloud vision is enabled.");
+                if (dto.Provider is not ("openai" or "anthropic" or "google"))
+                    extra.Add("Provider must be 'openai', 'anthropic', or 'google'.");
             }));
 
         app.MapPut("/api/settings/vision-routing", async (VisionRoutingSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>

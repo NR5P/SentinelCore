@@ -128,14 +128,35 @@ builder.Services.AddHttpClient<OllamaVisionClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(ollamaSettings.RequestTimeoutSeconds);
 });
 var cloudVisionSettings = builder.Configuration.GetSection(CloudVisionOptions.SectionName).Get<CloudVisionOptions>() ?? new();
+// Only actually used when CloudVision:Provider is "openai" - that's also the slot for any other
+// OpenAI-compatible endpoint (Azure OpenAI, OpenRouter, a local vLLM/LM Studio server, etc.).
 builder.Services.AddHttpClient<OpenAiVisionClient>(client =>
 {
     client.BaseAddress = new Uri(cloudVisionSettings.BaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(cloudVisionSettings.TimeoutSeconds);
 });
+// Anthropic and Google each have one real endpoint - unlike OpenAI's format, nothing else in
+// common use imitates their request shape, so there's no equivalent reason to make these
+// overridable.
+builder.Services.AddHttpClient<AnthropicVisionClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.anthropic.com/v1/");
+    client.Timeout = TimeSpan.FromSeconds(cloudVisionSettings.TimeoutSeconds);
+});
+builder.Services.AddHttpClient<GoogleVisionClient>(client =>
+{
+    client.BaseAddress = new Uri("https://generativelanguage.googleapis.com/v1beta/");
+    client.Timeout = TimeSpan.FromSeconds(cloudVisionSettings.TimeoutSeconds);
+});
+builder.Services.AddSingleton(sp => new CloudVisionClient(
+    sp.GetRequiredService<OpenAiVisionClient>(),
+    sp.GetRequiredService<AnthropicVisionClient>(),
+    sp.GetRequiredService<GoogleVisionClient>(),
+    sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
+    sp.GetRequiredService<ILogger<CloudVisionClient>>()));
 builder.Services.AddSingleton<IVisionAnalysisClient>(sp => new FailoverVisionClient(
     sp.GetRequiredService<OllamaVisionClient>(),
-    sp.GetRequiredService<OpenAiVisionClient>(),
+    sp.GetRequiredService<CloudVisionClient>(),
     sp.GetRequiredService<IOptionsMonitor<VisionRoutingOptions>>(),
     sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
     sp.GetRequiredService<ILogger<FailoverVisionClient>>()));
