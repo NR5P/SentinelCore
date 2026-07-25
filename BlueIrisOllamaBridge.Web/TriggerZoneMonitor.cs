@@ -96,7 +96,7 @@ public sealed class TriggerZoneMonitor(
         {
             "-rtsp_transport", "tcp",
             "-i", sourceUrl,
-            "-vf", $"fps=2,scale={MotionDetector.GridWidth}:{MotionDetector.GridHeight},format=gray",
+            "-vf", $"fps=2,scale={MotionDetector.GridWidth}:{MotionDetector.GridHeight},format=rgb24",
             "-f", "rawvideo",
             "-"
         }) psi.ArgumentList.Add(arg);

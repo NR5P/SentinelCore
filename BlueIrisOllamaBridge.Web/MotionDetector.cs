@@ -1,33 +1,46 @@
 namespace BlueIrisOllamaBridge.Web;
 
-// Plain frame-diff motion detection, restricted to a zone polygon, sized by connected-component
-// analysis - no OpenCV/AI, just byte-array math over a small grayscale grid. Good enough to catch
-// "something object-sized moved inside this area"; not trying to classify what it was.
+// Frame-diff motion detection, restricted to a zone polygon, sized by connected-component
+// analysis - no OpenCV/AI, just byte-array math over a small RGB grid. A changed pixel is
+// excluded from the diff if it looks like a shadow rather than a real object: shadows darken
+// a pixel while keeping its color ratios close to the background (grass in shadow still reads
+// as green, just dimmer), while a real object's color isn't a scaled-down version of what was
+// there before. This is the standard classical-CV shadow suppression technique (the same idea
+// behind OpenCV's MOG2 shadow detector), adapted to a simple two-frame diff instead of a
+// learned background model.
 public sealed class MotionDetector
 {
     public const int GridWidth = 320;
     public const int GridHeight = 180;
-    public const int FrameSizeBytes = GridWidth * GridHeight;
-    private const int FrameSize = FrameSizeBytes;
-    private const int PixelDiffThreshold = 25;
+    public const int PixelCount = GridWidth * GridHeight;
+    public const int FrameSizeBytes = PixelCount * 3; // RGB24
+
+    private const int LumaDiffThreshold = 25;
+
+    // A pixel counts as "shadow" only if it got moderately darker (not near-black, not brighter)
+    // while every channel dimmed by roughly the same proportion.
+    private const double ShadowAlphaMin = 0.20;
+    private const double ShadowAlphaMax = 0.95;
+    private const double ShadowChromaticityThreshold = 0.10;
+    private const double DarkChannelFloor = 8.0;
 
     private readonly bool[] _zoneMask;
     private byte[]? _previousFrame;
-    private readonly bool[] _changedScratch = new bool[FrameSize];
-    private readonly bool[] _visitedScratch = new bool[FrameSize];
-    private readonly int[] _stackScratch = new int[FrameSize];
+    private readonly bool[] _changedScratch = new bool[PixelCount];
+    private readonly bool[] _visitedScratch = new bool[PixelCount];
+    private readonly int[] _stackScratch = new int[PixelCount];
 
     public MotionDetector(IReadOnlyList<TriggerPoint> zonePolygon)
     {
         _zoneMask = RasterizeZone(zonePolygon);
     }
 
-    // Feeds one grayscale GridWidth*GridHeight frame. Returns the largest connected motion blob's
+    // Feeds one RGB24 GridWidth*GridHeight frame. Returns the largest connected motion blob's
     // area (as a fraction of the frame) found inside the zone, or null if there's no prior frame yet.
     public double? ProcessFrame(byte[] frame)
     {
-        if (frame.Length != FrameSize)
-            throw new ArgumentException($"Expected a {FrameSize}-byte grayscale frame.", nameof(frame));
+        if (frame.Length != FrameSizeBytes)
+            throw new ArgumentException($"Expected a {FrameSizeBytes}-byte RGB24 frame.", nameof(frame));
 
         if (_previousFrame is null)
         {
@@ -36,17 +49,43 @@ public sealed class MotionDetector
         }
 
         Array.Clear(_changedScratch);
-        for (var i = 0; i < FrameSize; i++)
+        for (var i = 0; i < PixelCount; i++)
         {
             if (!_zoneMask[i]) continue;
-            var diff = Math.Abs(frame[i] - _previousFrame[i]);
-            if (diff > PixelDiffThreshold) _changedScratch[i] = true;
+
+            var o = i * 3;
+            byte r = frame[o], g = frame[o + 1], b = frame[o + 2];
+            byte r0 = _previousFrame[o], g0 = _previousFrame[o + 1], b0 = _previousFrame[o + 2];
+
+            var lumaDiff = Math.Abs(Luma(r, g, b) - Luma(r0, g0, b0));
+            if (lumaDiff <= LumaDiffThreshold) continue;
+            if (IsLikelyShadow(r, g, b, r0, g0, b0)) continue;
+
+            _changedScratch[i] = true;
         }
 
         _previousFrame = frame;
 
         var largestBlob = LargestConnectedComponent(_changedScratch);
-        return (double)largestBlob / FrameSize;
+        return (double)largestBlob / PixelCount;
+    }
+
+    private static double Luma(byte r, byte g, byte b) => 0.299 * r + 0.587 * g + 0.114 * b;
+
+    private static bool IsLikelyShadow(byte r, byte g, byte b, byte r0, byte g0, byte b0)
+    {
+        // Can't judge a color ratio against a near-black background pixel - treat as a real change.
+        if (r0 < DarkChannelFloor || g0 < DarkChannelFloor || b0 < DarkChannelFloor) return false;
+
+        var alpha = Luma(r, g, b) / Math.Max(1.0, Luma(r0, g0, b0));
+        if (alpha < ShadowAlphaMin || alpha > ShadowAlphaMax) return false;
+
+        var dr = r / (double)r0 - alpha;
+        var dg = g / (double)g0 - alpha;
+        var db = b / (double)b0 - alpha;
+        var chromaticityDistortion = Math.Sqrt((dr * dr + dg * dg + db * db) / 3.0);
+
+        return chromaticityDistortion < ShadowChromaticityThreshold;
     }
 
     private int LargestConnectedComponent(bool[] changed)
@@ -54,7 +93,7 @@ public sealed class MotionDetector
         Array.Clear(_visitedScratch);
         var largest = 0;
 
-        for (var start = 0; start < FrameSize; start++)
+        for (var start = 0; start < PixelCount; start++)
         {
             if (!changed[start] || _visitedScratch[start]) continue;
 
@@ -94,7 +133,7 @@ public sealed class MotionDetector
 
     private static bool[] RasterizeZone(IReadOnlyList<TriggerPoint> polygon)
     {
-        var mask = new bool[FrameSize];
+        var mask = new bool[PixelCount];
         if (polygon.Count < 3) return mask;
 
         for (var y = 0; y < GridHeight; y++)
