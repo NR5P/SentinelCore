@@ -105,7 +105,7 @@ public sealed class TriggerZoneMonitor(
         logger.LogInformation("Started trigger zone detection for camera {CameraId} ({Name}), pid {Pid}", camera.Id, camera.Name, process.Id);
 
         var cts = new CancellationTokenSource();
-        var session = new DetectionSession(process, config, cts, new MotionDetector(config.ZonePolygon));
+        var session = new DetectionSession(process, config, cts, new MotionDetector(config.ZonePolygon, config.ShadowSensitivity));
         _ = RunDetectionLoopAsync(camera, session, cts.Token);
         _ = DrainAsync(process.StandardError);
 
@@ -230,6 +230,7 @@ public sealed class TriggerZoneMonitor(
         if (Math.Abs(a.MinTriggerArea - b.MinTriggerArea) > 0.0001) return false;
         if (a.CooldownSeconds != b.CooldownSeconds) return false;
         if (a.MaxTriggersPerMinute != b.MaxTriggersPerMinute) return false;
+        if (a.ShadowSensitivity != b.ShadowSensitivity) return false;
         if (a.ZonePolygon.Count != b.ZonePolygon.Count) return false;
 
         for (var i = 0; i < a.ZonePolygon.Count; i++)

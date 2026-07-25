@@ -474,6 +474,13 @@ main {
   box-shadow: 0 0 0 2px rgba(57, 255, 156, 0.12);
 }
 
+.field-range {
+  width: 100%;
+  accent-color: var(--green);
+  background: transparent;
+  height: 20px;
+}
+
 .field-password-row {
   display: flex;
   gap: 6px;

@@ -14,10 +14,11 @@ public sealed record TriggerConfig(
     IReadOnlyList<TriggerPoint> ZonePolygon,
     double MinTriggerArea,
     int CooldownSeconds,
-    int MaxTriggersPerMinute)
+    int MaxTriggersPerMinute,
+    int ShadowSensitivity)
 {
     public static TriggerConfig Disabled(Guid cameraId) =>
-        new(cameraId, false, [], 0.02, 5, 6);
+        new(cameraId, false, [], 0.02, 5, 6, 50);
 }
 
 public sealed record TriggerEvent(
@@ -76,6 +77,22 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             CREATE INDEX IF NOT EXISTS IX_TriggerEvents_OccurredAt ON TriggerEvents (OccurredAt DESC);
             """;
         command.ExecuteNonQuery();
+
+        // Added after the initial release - older databases won't have this column yet.
+        if (!ColumnExists("TriggerConfigs", "ShadowSensitivity"))
+        {
+            using var migrate = _connection.CreateCommand();
+            migrate.CommandText = "ALTER TABLE TriggerConfigs ADD COLUMN ShadowSensitivity INTEGER NOT NULL DEFAULT 50;";
+            migrate.ExecuteNonQuery();
+        }
+    }
+
+    private bool ColumnExists(string table, string column)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $column;";
+        command.Parameters.AddWithValue("$column", column);
+        return Convert.ToInt64(command.ExecuteScalar()) > 0;
     }
 
     public async Task<TriggerConfig?> GetAsync(Guid cameraId, CancellationToken cancellationToken)
@@ -85,7 +102,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute
+                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity
                 FROM TriggerConfigs WHERE CameraId = $cameraId;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -106,7 +123,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute
+                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity
                 FROM TriggerConfigs WHERE Enabled = 1;
                 """;
 
@@ -130,14 +147,15 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute)
-                VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute)
+                INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity)
+                VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity)
                 ON CONFLICT(CameraId) DO UPDATE SET
                     Enabled = excluded.Enabled,
                     ZonePolygon = excluded.ZonePolygon,
                     MinTriggerArea = excluded.MinTriggerArea,
                     CooldownSeconds = excluded.CooldownSeconds,
-                    MaxTriggersPerMinute = excluded.MaxTriggersPerMinute;
+                    MaxTriggersPerMinute = excluded.MaxTriggersPerMinute,
+                    ShadowSensitivity = excluded.ShadowSensitivity;
                 """;
             command.Parameters.AddWithValue("$cameraId", config.CameraId.ToString("N"));
             command.Parameters.AddWithValue("$enabled", config.Enabled ? 1 : 0);
@@ -145,6 +163,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$minTriggerArea", config.MinTriggerArea);
             command.Parameters.AddWithValue("$cooldownSeconds", config.CooldownSeconds);
             command.Parameters.AddWithValue("$maxTriggersPerMinute", config.MaxTriggersPerMinute);
+            command.Parameters.AddWithValue("$shadowSensitivity", config.ShadowSensitivity);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -229,7 +248,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         JsonSerializer.Deserialize<IReadOnlyList<TriggerPoint>>(reader.GetString(2)) ?? [],
         reader.GetDouble(3),
         (int)reader.GetInt64(4),
-        (int)reader.GetInt64(5));
+        (int)reader.GetInt64(5),
+        (int)reader.GetInt64(6));
 
     private static TriggerEvent ReadEvent(SqliteDataReader reader) => new(
         Guid.ParseExact(reader.GetString(0), "N"),

@@ -7,6 +7,7 @@ public sealed class TriggerConfigDto
     public double MinTriggerArea { get; set; }
     public int CooldownSeconds { get; set; }
     public int MaxTriggersPerMinute { get; set; }
+    public int ShadowSensitivity { get; set; } = 50;
 }
 
 public static class TriggerEndpoints
@@ -24,7 +25,7 @@ public static class TriggerEndpoints
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
-            var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute);
+            var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute, dto.ShadowSensitivity);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         });
@@ -85,6 +86,9 @@ public static class TriggerEndpoints
 
         if (dto.MaxTriggersPerMinute < 1)
             errors.Add("Max triggers per minute must be at least 1.");
+
+        if (dto.ShadowSensitivity < 0 || dto.ShadowSensitivity > 100)
+            errors.Add("Shadow sensitivity must be between 0 and 100.");
 
         return errors;
     }

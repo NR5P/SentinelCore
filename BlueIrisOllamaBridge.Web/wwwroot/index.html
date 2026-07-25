@@ -145,6 +145,12 @@
               <label class="field-label" for="zone-max-per-min">Max triggers per minute</label>
               <input type="number" id="zone-max-per-min" class="field-input" min="1" step="1" />
             </div>
+            <div class="field-row field-row-wide">
+              <label class="field-label" for="zone-shadow-sensitivity">
+                Shadow sensitivity - <span id="zone-shadow-sensitivity-value">50</span> (0 = off, filters shadows out of triggers)
+              </label>
+              <input type="range" id="zone-shadow-sensitivity" class="field-range" min="0" max="100" step="1" />
+            </div>
             <div class="field-row field-checkbox-row">
               <label class="switch"><input type="checkbox" id="zone-enabled" /><span class="switch-track"></span></label>
               <span class="field-label">Enabled</span>
