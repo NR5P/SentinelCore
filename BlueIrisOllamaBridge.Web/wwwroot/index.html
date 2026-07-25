@@ -16,13 +16,13 @@
       <span class="cursor">&#9608;</span>
     </div>
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-view="feed">feed</button>
-      <button class="tab" data-view="live">live</button>
-      <button class="tab" data-view="cameras">cameras</button>
-      <button class="tab" data-view="triggers">triggers</button>
-      <button class="tab" data-view="settings">settings</button>
+      <button class="tab active" data-view="feed" data-tip-below data-tip="Alerts from Blue Iris that the AI has analysed, newest first." >feed</button>
+      <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
+      <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones. Separate from Blue Iris.">cameras</button>
+      <button class="tab" data-view="triggers" data-tip-below data-tip-right data-tip="Motion caught inside a trigger zone. Click a thumbnail to view the snapshot or play its clip.">triggers</button>
+      <button class="tab" data-view="settings" data-tip-below data-tip-right data-tip="Configuration for the Blue Iris bridge, AI model, and alerts. Changes apply live.">settings</button>
     </nav>
-    <div class="status" id="status">
+    <div class="status" id="status" data-tip-below data-tip-right data-tip="Whether this dashboard can currently reach the server.">
       <span class="status-dot" id="status-dot"></span>
       <span id="status-text">connecting&hellip;</span>
     </div>
@@ -33,8 +33,8 @@
       <div class="toolbar">
         <div class="toolbar-label">EVENT_FEED</div>
         <div class="toolbar-actions">
-          <span id="event-count" class="event-count">0 events</span>
-          <button id="refresh-btn" class="btn">refresh</button>
+          <span id="event-count" class="event-count" data-tip-below data-tip-right data-tip="How many recent events are shown. The feed reloads on its own every 30 seconds.">0 events</span>
+          <button id="refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload the feed now instead of waiting for the next automatic refresh.">refresh</button>
         </div>
       </div>
 
@@ -47,7 +47,7 @@
       <div class="toolbar">
         <div class="toolbar-label">LIVE</div>
         <div class="toolbar-actions">
-          <span class="event-count">not connected to Blue Iris or alerts - viewing only</span>
+          <span class="event-count" data-tip-below data-tip-right data-tip="These cameras are for viewing only. They never trigger Blue Iris alerts or AI analysis.">not connected to Blue Iris or alerts - viewing only</span>
         </div>
       </div>
 
@@ -60,7 +60,7 @@
       <div class="toolbar">
         <div class="toolbar-label">CAMERAS</div>
         <div class="toolbar-actions">
-          <button id="add-camera-btn" class="btn">+ add camera</button>
+          <button id="add-camera-btn" class="btn" data-tip-below data-tip-right data-tip="Add a camera by its stream URL. Most IP cameras expose an rtsp:// address.">+ add camera</button>
         </div>
       </div>
 
@@ -68,8 +68,8 @@
         <div class="settings-section-body" style="display:flex;">
           <div class="field-grid" id="camera-form-fields"></div>
           <div class="settings-section-footer">
-            <button id="camera-save-btn" class="btn">save</button>
-            <button id="camera-cancel-btn" class="btn">cancel</button>
+            <button id="camera-save-btn" class="btn" data-tip="Save this camera. It appears on the Live tab straight away.">save</button>
+            <button id="camera-cancel-btn" class="btn" data-tip="Close this form and discard any changes you have made.">cancel</button>
             <ul class="field-errors" id="camera-form-errors"></ul>
           </div>
         </div>
@@ -84,8 +84,8 @@
       <div class="toolbar">
         <div class="toolbar-label">TRIGGERS</div>
         <div class="toolbar-actions">
-          <span id="trigger-count" class="event-count">0 alerts</span>
-          <button id="triggers-refresh-btn" class="btn">refresh</button>
+          <span id="trigger-count" class="event-count" data-tip-below data-tip-right data-tip="How many trigger zone alerts are shown. These are motion only - no AI is involved.">0 alerts</span>
+          <button id="triggers-refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload the list. Clips appear a few seconds after their trigger, once the post-roll finishes recording.">refresh</button>
         </div>
       </div>
 
@@ -117,60 +117,60 @@
     <div class="zone-editor-panel">
       <div class="zone-editor-header">
         <span id="zone-editor-title">TRIGGER ZONE</span>
-        <button id="zone-editor-close" class="btn">close</button>
+        <button id="zone-editor-close" class="btn" data-tip-below data-tip-right data-tip="Close without saving. Unsaved zone changes are discarded.">close</button>
       </div>
       <div class="zone-editor-body">
         <div class="zone-editor-draw">
-          <div class="zone-editor-hint">click to outline the trigger area</div>
-          <div class="zone-image-wrap" id="zone-image-wrap">
+          <div class="zone-editor-hint" data-tip-below data-tip="Only motion inside this shape can fire a trigger. Anything outside it is ignored, so you can leave out a road or a neighbour's yard.">click to outline the trigger area</div>
+          <div class="zone-image-wrap" id="zone-image-wrap" data-tip-below data-tip="Click to drop a point. Points join up in order to form the zone - three or more makes a shape.">
             <img id="zone-reference-img" src="" alt="camera reference frame" />
             <svg id="zone-svg" class="zone-svg"></svg>
           </div>
           <div class="zone-editor-draw-actions">
-            <button id="zone-undo-point" class="btn">undo point</button>
-            <button id="zone-clear-points" class="btn">clear zone</button>
+            <button id="zone-undo-point" class="btn" data-tip="Remove the last point you placed.">undo point</button>
+            <button id="zone-clear-points" class="btn" data-tip="Delete every point and start the shape over.">clear zone</button>
           </div>
         </div>
         <div class="zone-editor-side">
-          <div class="zone-editor-hint">drag the edge to size the smallest object that should trigger</div>
-          <div class="zone-image-wrap zone-size-wrap" id="zone-size-wrap">
+          <div class="zone-editor-hint" data-tip-below data-tip="Anything smaller than this circle is ignored, which filters out birds and swaying branches. Size it to roughly match a person or car at that spot.">drag the edge to size the smallest object that should trigger</div>
+          <div class="zone-image-wrap zone-size-wrap" id="zone-size-wrap" data-tip-below data-tip="Drag the small dot on the circle's edge to resize it.">
             <img id="zone-size-img" src="" alt="camera reference frame" />
             <svg id="zone-size-svg" class="zone-svg"></svg>
           </div>
           <div class="field-grid">
-            <div class="field-row">
+            <div class="field-row" data-tip="Quiet period after a trigger. One car pulling in fires once instead of over and over while it moves through the zone.">
               <label class="field-label" for="zone-cooldown">Seconds between triggers</label>
               <input type="number" id="zone-cooldown" class="field-input" min="0" step="1" />
             </div>
-            <div class="field-row">
+            <div class="field-row" data-tip-right data-tip="Hard ceiling on alerts per minute. A safety net for windy days so you don't get flooded.">
               <label class="field-label" for="zone-max-per-min">Max triggers per minute</label>
               <input type="number" id="zone-max-per-min" class="field-input" min="1" step="1" />
             </div>
-            <div class="field-row field-row-wide">
+            <div class="field-row field-row-wide" data-tip="Shadows dim a surface without changing its colour, which is how they get told apart from real objects. Raise this if shadows still trigger, lower it if real motion gets missed, 0 turns the filter off.">
               <label class="field-label" for="zone-shadow-sensitivity">
                 Shadow sensitivity - <span id="zone-shadow-sensitivity-value">50</span> (0 = off, filters shadows out of triggers)
               </label>
               <input type="range" id="zone-shadow-sensitivity" class="field-range" min="0" max="100" step="1" />
             </div>
-            <div class="field-row field-row-wide field-checkbox-row">
+            <div class="field-row field-row-wide field-checkbox-row" data-tip="Records this camera continuously in the background so footage from before a trigger can be kept. Uses disk while on.">
               <label class="switch"><input type="checkbox" id="zone-record-clips" /><span class="switch-track"></span></label>
               <span class="field-label">Save a video clip around each trigger</span>
             </div>
-            <div class="field-row">
+            <div class="field-row" data-tip="How much footage from before the trigger to keep, so you see what led up to it. Longer means more disk held in the buffer.">
               <label class="field-label" for="zone-clip-pre">Seconds before trigger</label>
               <input type="number" id="zone-clip-pre" class="field-input" min="0" max="60" step="1" />
             </div>
-            <div class="field-row">
+            <div class="field-row" data-tip-right data-tip="How much footage to keep after the trigger. The clip only appears once this much time has passed.">
               <label class="field-label" for="zone-clip-post">Seconds after trigger</label>
               <input type="number" id="zone-clip-post" class="field-input" min="0" max="120" step="1" />
             </div>
-            <div class="field-row field-checkbox-row">
+            <div class="field-row field-checkbox-row" data-tip="Master switch for this zone. Off means nothing is watched or recorded, but your shape and settings are kept.">
               <label class="switch"><input type="checkbox" id="zone-enabled" /><span class="switch-track"></span></label>
               <span class="field-label">Enabled</span>
             </div>
           </div>
           <div class="zone-editor-footer">
-            <button id="zone-save-btn" class="btn">save</button>
+            <button id="zone-save-btn" class="btn" data-tip="Save the zone and settings. Detection picks up the change within about ten seconds.">save</button>
             <ul class="field-errors" id="zone-editor-errors"></ul>
           </div>
         </div>

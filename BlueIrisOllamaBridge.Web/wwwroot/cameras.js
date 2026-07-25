@@ -51,14 +51,20 @@ window.GateWatchCameras = (function () {
     const editBtn = document.createElement("button");
     editBtn.className = "btn";
     editBtn.textContent = "edit";
+    editBtn.setAttribute("data-tip-right", "");
+    editBtn.dataset.tip = "Change this camera's name, stream URL, or login details.";
     editBtn.addEventListener("click", () => openForm(camera));
     const zoneBtn = document.createElement("button");
     zoneBtn.className = "btn";
     zoneBtn.textContent = "trigger zone";
+    zoneBtn.setAttribute("data-tip-right", "");
+    zoneBtn.dataset.tip = "Draw an area to watch for motion, and choose whether to save a video clip when something moves in it.";
     zoneBtn.addEventListener("click", () => window.GateWatchTriggers.openZoneEditor(camera));
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btn";
     deleteBtn.textContent = "delete";
+    deleteBtn.setAttribute("data-tip-right", "");
+    deleteBtn.dataset.tip = "Remove this camera from the dashboard. Does not touch Blue Iris or the camera itself.";
     deleteBtn.addEventListener("click", () => removeCamera(camera));
     actions.append(editBtn, zoneBtn, deleteBtn);
 
@@ -74,11 +80,16 @@ window.GateWatchCameras = (function () {
     errors.innerHTML = "";
     fields.innerHTML = "";
 
-    fields.appendChild(buildTextField("cam-name", "Name", camera?.name ?? ""));
-    fields.appendChild(buildTextField("cam-url", "Stream URL (rtsp:// or http://)", camera?.streamUrl ?? ""));
-    fields.appendChild(buildTextField("cam-username", "Username (optional)", camera?.username ?? ""));
-    fields.appendChild(buildPasswordField("cam-password", "Password (optional)", camera?.password ?? ""));
-    fields.appendChild(buildCheckboxField("cam-audio", "Include audio", camera?.includeAudio ?? false));
+    fields.appendChild(buildTextField("cam-name", "Name", camera?.name ?? "",
+      "Whatever you want to call this camera, e.g. 'front gate'. Shown on the Live and Triggers tabs."));
+    fields.appendChild(buildTextField("cam-url", "Stream URL (rtsp:// or http://)", camera?.streamUrl ?? "",
+      "The camera's video stream address, not its web page. Look for an RTSP or streaming section in the camera's own settings."));
+    fields.appendChild(buildTextField("cam-username", "Username (optional)", camera?.username ?? "",
+      "Only needed if the camera requires a login to view its stream."));
+    fields.appendChild(buildPasswordField("cam-password", "Password (optional)", camera?.password ?? "",
+      "Password that goes with the username above. Stored on this machine so the stream can be opened."));
+    fields.appendChild(buildCheckboxField("cam-audio", "Include audio", camera?.includeAudio ?? false,
+      "Include the camera's microphone in the live view and saved clips, if it has one."));
 
     wrap.classList.remove("hidden");
     wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -89,9 +100,10 @@ window.GateWatchCameras = (function () {
     document.getElementById("camera-form-wrap").classList.add("hidden");
   }
 
-  function buildTextField(id, label, value) {
+  function buildTextField(id, label, value, tip) {
     const row = document.createElement("div");
     row.className = "field-row field-row-wide";
+    if (tip) row.dataset.tip = tip;
     row.innerHTML = `<label class="field-label" for="${id}">${label}</label>`;
     const input = document.createElement("input");
     input.type = "text";
@@ -102,9 +114,10 @@ window.GateWatchCameras = (function () {
     return row;
   }
 
-  function buildPasswordField(id, label, value) {
+  function buildPasswordField(id, label, value, tip) {
     const row = document.createElement("div");
     row.className = "field-row field-row-wide";
+    if (tip) row.dataset.tip = tip;
     row.innerHTML = `<label class="field-label" for="${id}">${label}</label>`;
     const wrap = document.createElement("div");
     wrap.className = "field-password-row";
@@ -118,6 +131,8 @@ window.GateWatchCameras = (function () {
     toggle.type = "button";
     toggle.className = "field-toggle-btn";
     toggle.textContent = "show";
+    toggle.setAttribute("data-tip-right", "");
+    toggle.dataset.tip = "Reveal the password so you can check it.";
     toggle.addEventListener("click", () => {
       input.type = input.type === "password" ? "text" : "password";
       toggle.textContent = input.type === "password" ? "show" : "hide";
@@ -127,9 +142,10 @@ window.GateWatchCameras = (function () {
     return row;
   }
 
-  function buildCheckboxField(id, label, checked) {
+  function buildCheckboxField(id, label, checked, tip) {
     const row = document.createElement("div");
     row.className = "field-row field-row-wide field-checkbox-row";
+    if (tip) row.dataset.tip = tip;
     const switchLabel = document.createElement("label");
     switchLabel.className = "switch";
     const input = document.createElement("input");
@@ -223,6 +239,7 @@ window.GateWatchCameras = (function () {
       const label = document.createElement("div");
       label.className = "live-tile-label";
       label.textContent = camera.name;
+      label.dataset.tip = "Live view, a few seconds behind real time. Use the player controls for fullscreen and volume.";
 
       const status = document.createElement("div");
       status.className = "live-tile-status";
