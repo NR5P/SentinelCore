@@ -98,6 +98,18 @@ public sealed class PromptProfile
     // Optional region of interest, applied before resizing, expressed as fractions (0-1)
     // of the auto-oriented source image so it stays correct regardless of camera resolution.
     public CropRegion? Crop { get; init; }
+
+    // Off by default. When on, the AI is additionally asked to transcribe a vehicle's license
+    // plate if clearly legible, and the result is matched against the configured KnownVehicles
+    // list. Every profile this ships with defaults to off - camera resolution and angle matter
+    // a lot for this to work at all, so it's opt-in per camera/profile rather than global.
+    public bool LicensePlateRecognitionEnabled { get; init; }
+}
+
+public sealed class KnownVehicle
+{
+    public string Plate { get; init; } = string.Empty;
+    public string Label { get; init; } = string.Empty;
 }
 
 public sealed class CropRegion

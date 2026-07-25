@@ -14,12 +14,13 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
 7. [The SETTINGS tab](#7-the-settings-tab)
 8. [Prompt profiles — what the AI is told to look for](#8-prompt-profiles--what-the-ai-is-told-to-look-for)
-9. [The Telegram bot](#9-the-telegram-bot)
-10. [Email](#10-email)
-11. [Why didn't I get an alert? (rate limiting & suppression, explained)](#11-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
-12. [Self-monitoring](#12-self-monitoring)
-13. [Where your data lives](#13-where-your-data-lives)
-14. [Troubleshooting](#14-troubleshooting)
+9. [License plate recognition & known vehicles](#9-license-plate-recognition--known-vehicles)
+10. [The Telegram bot](#10-the-telegram-bot)
+11. [Email](#11-email)
+12. [Why didn't I get an alert? (rate limiting & suppression, explained)](#12-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
+13. [Self-monitoring](#13-self-monitoring)
+14. [Where your data lives](#14-where-your-data-lives)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -155,13 +156,15 @@ this guide mostly mirrors:
   back it looks, how many events it considers, and which Ollama model answers.
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
-- **Self-Monitoring** — watches the bridge's own health; see [section 12](#12-self-monitoring).
+- **Self-Monitoring** — watches the bridge's own health; see [section 13](#13-self-monitoring).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must
   be before Email or Telegram will still ping you. It never fully mutes either channel — a
   confident detection still alerts you at 3am — and it has no effect on the Feed, the daily
   digest, or self-monitoring, which all keep working exactly as normal. See
-  [section 11](#11-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
+  [section 12](#12-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
   fits with the other rate-limiting layers.
+- **Known Vehicles** — the list a transcribed license plate is checked against. Its own
+  section below. See [section 9](#9-license-plate-recognition--known-vehicles).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
 - **Prompt Profiles** — the actual instructions given to the AI, per camera. Its own section
   below, since there's a lot here.
@@ -207,6 +210,7 @@ Each profile has:
 | System Prompt | The instructions given to the AI before it ever sees an image. |
 | Questions | The specific things the AI must answer about each image — these become the structured fields you see on the Feed tab. |
 | Use crop region | Optionally send only part of the image to the AI, e.g. to cut a road or sky out of frame so the model focuses on what matters. |
+| License plate recognition | Off by default. See [section 9](#9-license-plate-recognition--known-vehicles). |
 
 Your original gate prompt is untouched and still keyed as `gate` — it's just labeled
 **"Nathan's Default Gate Prompt"** in the list now so it's easy to tell apart from the generic
@@ -214,14 +218,45 @@ starter profiles. That `gate` name specifically also gets one extra behavior: wh
 reports the gate as closed, a person or vehicle that's clearly still on the inside/camera side
 won't trigger a notification just for being there — but someone on the outside/road side, an
 active delivery, a newly-left package, or an animal still will. See
-[section 11](#11-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
+[section 12](#12-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
 explanation.
 
 **Adding your own profile:** click **+ add profile**, fill in a Name and at least one
 question, and save. **Deleting** works the same way as any other profile card — the `default`
 profile is required and can't be removed, since it's the fallback for anything unmatched.
 
-## 9. The Telegram bot
+## 9. License plate recognition & known vehicles
+
+Off by default, and worth turning on only once a camera actually has the resolution and angle
+to make a plate legible — on a low-res or heavily-angled camera this mostly won't read
+anything, which is harmless but not useful either.
+
+**Turning it on:** each prompt profile has its own **License plate recognition** switch (see
+[section 8](#8-prompt-profiles--what-the-ai-is-told-to-look-for)). It's per-profile rather than
+a single global switch because profiles are effectively already "per camera" in how this
+system works — the same way a profile's crop region only makes sense for one physical camera,
+plate recognition only makes sense to turn on for the specific camera(s) that can actually
+resolve a plate. Turning it on for one profile has no effect on any other.
+
+**What happens when it's on:** the AI is additionally asked to transcribe a vehicle's plate
+if — and only if — it's clearly legible in that frame; it's told explicitly not to guess. That
+reading is then checked against the **Known Vehicles** list in Settings: a shared, global list
+of plate/label pairs (e.g. `ABC1234` → "Nathan's Truck") that every plate-recognition-enabled
+profile checks against. Add, edit, or remove entries there like any other settings list.
+
+**Where you'll see it:** when a plate was read, it's appended to the Email and Telegram
+notification for that event — `Plate: ABC1234 (known: Nathan's Truck)` if it matched
+something in your list, or `Plate: XYZ9999 (unrecognized)` if it didn't. Nothing is shown when
+recognition is off for that profile or no plate was legible in the frame, which is most events.
+
+**What it does *not* do:** a known or unknown plate never changes whether an alert fires or
+gets suppressed — it's informational only, appended after the fact. This is deliberate: OCR
+from a general-purpose local vision model on a security-camera frame is inherently hit or
+miss, especially at lower resolutions, so it isn't trustworthy enough to gate real security
+decisions on. Treat it as a helpful hint on top of an alert you'd already be getting, not as
+its own detection layer.
+
+## 10. The Telegram bot
 
 Once **Telegram Alerts** is configured (bot token from [@BotFather](https://t.me/BotFather),
 your chat ID), the bot pushes a message — and the photo, if enabled — for every alert-worthy
@@ -239,14 +274,14 @@ Two special commands:
 
 Everything else you type is treated as a free-text question.
 
-## 10. Email
+## 11. Email
 
 **Email** sends individual alerts the same way Telegram does, with its own duplicate-cooldown
 and confidence threshold. **Daily Summary** is a separate, additional digest email — sent
 twice a day (configurable hours) regardless of whether individual alerts fired — covering
 everything that happened, with a capped number of attached images so it doesn't get huge.
 
-## 11. Why didn't I get an alert? (rate limiting & suppression, explained)
+## 12. Why didn't I get an alert? (rate limiting & suppression, explained)
 
 There are several independent layers that can each suppress a notification. If something
 didn't alert when you expected it to, it's almost always one of these:
@@ -285,7 +320,11 @@ didn't alert when you expected it to, it's almost always one of these:
    the chicken-coop profile), you may get an analysis that never flags anything as
    alert-worthy simply because it's asking the wrong questions.
 
-## 12. Self-monitoring
+Note that license plate recognition ([section 9](#9-license-plate-recognition--known-vehicles))
+is *not* in this list on purpose — a known or unknown plate never suppresses or forces an
+alert, it only annotates one that was already going to fire.
+
+## 13. Self-monitoring
 
 Watches for the two ways the bridge can silently stop protecting you: Ollama becoming
 unreachable, or the alert queue backing up faster than it's processed. It only messages you
@@ -294,7 +333,7 @@ momentary blip doesn't page you, but real degradation gets caught before you'd o
 notice by just... not getting alerts. It also tells you when things recover, if
 **Notify On Recovery** is on.
 
-## 13. Where your data lives
+## 14. Where your data lives
 
 - `BlueIrisOllamaBridge/data/images/YYYY-MM-DD/` — saved Blue Iris alert snapshots (if
   **Save Images** is on)
@@ -306,7 +345,7 @@ notice by just... not getting alerts. It also tells you when things recover, if
 Retention cleanup runs automatically according to **Retention Days** in Bridge settings; it
 removes old images but not the `events.db` history rows themselves.
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 **A setting I just changed doesn't seem to be doing anything (Cameras/Triggers).** Zone and
 camera config changes are picked up within about ten seconds of saving — give it a moment,
@@ -328,6 +367,11 @@ retroactively record footage that wasn't being captured yet.
 
 **The bot won't answer me on Telegram.** It only responds to the exact Chat ID configured in
 Telegram settings — confirm that's actually your chat, not a different one.
+
+**License plate recognition never shows a plate.** Check camera resolution and angle first —
+a general vision model needs the plate to be sharp and roughly frontal to read it at all. Also
+confirm the toggle is actually on for the specific profile that camera uses, not just that
+Known Vehicles has entries.
 
 For anything that looks like the software itself is unhealthy (not starting, crashing,
 unreachable), see the Troubleshooting section of [DEPLOYMENT.md](DEPLOYMENT.md).

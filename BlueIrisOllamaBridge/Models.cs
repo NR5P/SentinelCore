@@ -100,6 +100,18 @@ public sealed class VehicleAnalysis
 
     [JsonPropertyName("delivery_company_confidence")]
     public double DeliveryCompanyConfidence { get; init; }
+
+    // Only requested from the model when the profile has license-plate recognition enabled;
+    // empty otherwise. Best-effort OCR from a general vision model - accuracy depends heavily
+    // on camera resolution and plate angle, so this is never used to gate notifications.
+    [JsonPropertyName("license_plate")]
+    public string LicensePlateText { get; init; } = string.Empty;
+
+    // Not part of the model's JSON output - filled in afterward by AlertProcessor comparing
+    // LicensePlateText against the configured KnownVehicles list. Null means either plate
+    // recognition wasn't enabled, no plate was read, or it didn't match a known vehicle.
+    [JsonPropertyName("known_vehicle_label")]
+    public string? KnownVehicleLabel { get; set; }
 }
 
 public sealed class PackageAnalysis

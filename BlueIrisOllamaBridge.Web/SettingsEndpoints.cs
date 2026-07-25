@@ -20,6 +20,7 @@ public static class SettingsEndpoints
             blueIris = await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", ct),
             selfMonitoring = await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", ct),
             quietHours = await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", ct),
+            knownVehicles = await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", ct) ?? [],
             webhook = await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", ct)
         }));
 
@@ -86,6 +87,21 @@ public static class SettingsEndpoints
                 if (dto.Enabled && !Uri.TryCreate(dto.Url, UriKind.Absolute, out _))
                     extra.Add("Url must be a valid absolute URL when the webhook is enabled.");
             }));
+
+        app.MapPut("/api/settings/known-vehicles", async (List<KnownVehicle> vehicles, AppSettingsFile settings, CancellationToken ct) =>
+        {
+            var errors = new List<string>();
+            foreach (var vehicle in vehicles)
+            {
+                if (string.IsNullOrWhiteSpace(vehicle.Plate))
+                    errors.Add("Every known vehicle needs a plate.");
+            }
+
+            if (errors.Count > 0) return Results.BadRequest(new { errors });
+
+            await settings.ReplaceSectionAsync("KnownVehicles", vehicles, ct);
+            return Results.Ok(new { saved = true });
+        });
 
         app.MapPut("/api/settings/prompt-profiles", async (Dictionary<string, PromptProfile> profiles, AppSettingsFile settings, CancellationToken ct) =>
         {
