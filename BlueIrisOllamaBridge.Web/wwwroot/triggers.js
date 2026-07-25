@@ -49,6 +49,7 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-record-clips").checked = !!config.recordClips;
         document.getElementById("zone-clip-pre").value = config.clipPreSeconds ?? 5;
         document.getElementById("zone-clip-post").value = config.clipPostSeconds ?? 10;
+        document.getElementById("zone-send-to-alerts").checked = !!config.sendToAlerts;
       }
     } catch (err) {
       console.error("Failed to load trigger zone editor", err);
@@ -211,7 +212,8 @@ window.GateWatchTriggers = (function () {
       shadowSensitivity: parseInt(document.getElementById("zone-shadow-sensitivity").value, 10) || 0,
       recordClips: document.getElementById("zone-record-clips").checked,
       clipPreSeconds: parseInt(document.getElementById("zone-clip-pre").value, 10) || 0,
-      clipPostSeconds: parseInt(document.getElementById("zone-clip-post").value, 10) || 0
+      clipPostSeconds: parseInt(document.getElementById("zone-clip-post").value, 10) || 0,
+      sendToAlerts: document.getElementById("zone-send-to-alerts").checked
     };
 
     try {

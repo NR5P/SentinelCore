@@ -3,9 +3,13 @@ using Microsoft.Data.Sqlite;
 
 namespace BlueIrisOllamaBridge.Web;
 
-// Trigger zones are a separate, isolated alert pipeline for the standalone cameras added in this
-// dashboard - own database, own image folder, no relation to Blue Iris's events.db or the main
-// alert pipeline. Detection is a plain frame-diff (see MotionDetector) with no AI involvement.
+// Trigger zones are their own detection pipeline for the standalone cameras added in this
+// dashboard - own database, own image folder, and motion detection here has nothing to do
+// with Blue Iris (see MotionDetector - plain frame-diff, no AI). What happens *after* a
+// trigger fires is opt-in per camera: with SendToAlerts on, the snapshot is forwarded to the
+// main app's own alert pipeline (same Ollama analysis, same prompt, same email/Telegram/webhook
+// dispatch Blue Iris alerts already use) instead of just sitting in the Triggers tab - see
+// TriggerZoneMonitor.ForwardToAlertPipelineAsync.
 public sealed record TriggerPoint(double X, double Y);
 
 public sealed record TriggerConfig(
@@ -18,10 +22,11 @@ public sealed record TriggerConfig(
     int ShadowSensitivity,
     bool RecordClips,
     int ClipPreSeconds,
-    int ClipPostSeconds)
+    int ClipPostSeconds,
+    bool SendToAlerts)
 {
     public static TriggerConfig Disabled(Guid cameraId) =>
-        new(cameraId, false, [], 0.02, 5, 6, 50, false, 5, 10);
+        new(cameraId, false, [], 0.02, 5, 6, 50, false, 5, 10, false);
 }
 
 public sealed record TriggerEvent(
@@ -92,6 +97,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         AddColumnIfMissing("TriggerConfigs", "ClipPreSeconds", "INTEGER NOT NULL DEFAULT 5");
         AddColumnIfMissing("TriggerConfigs", "ClipPostSeconds", "INTEGER NOT NULL DEFAULT 10");
         AddColumnIfMissing("TriggerEvents", "ClipPath", "TEXT");
+        AddColumnIfMissing("TriggerConfigs", "SendToAlerts", "INTEGER NOT NULL DEFAULT 0");
     }
 
     private void AddColumnIfMissing(string table, string column, string definition)
@@ -119,7 +125,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
-                       RecordClips, ClipPreSeconds, ClipPostSeconds
+                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts
                 FROM TriggerConfigs WHERE CameraId = $cameraId;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -141,7 +147,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
-                       RecordClips, ClipPreSeconds, ClipPostSeconds
+                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts
                 FROM TriggerConfigs WHERE Enabled = 1;
                 """;
 
@@ -166,9 +172,9 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
-                                            RecordClips, ClipPreSeconds, ClipPostSeconds)
+                                            RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts)
                 VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity,
-                        $recordClips, $clipPreSeconds, $clipPostSeconds)
+                        $recordClips, $clipPreSeconds, $clipPostSeconds, $sendToAlerts)
                 ON CONFLICT(CameraId) DO UPDATE SET
                     Enabled = excluded.Enabled,
                     ZonePolygon = excluded.ZonePolygon,
@@ -178,7 +184,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                     ShadowSensitivity = excluded.ShadowSensitivity,
                     RecordClips = excluded.RecordClips,
                     ClipPreSeconds = excluded.ClipPreSeconds,
-                    ClipPostSeconds = excluded.ClipPostSeconds;
+                    ClipPostSeconds = excluded.ClipPostSeconds,
+                    SendToAlerts = excluded.SendToAlerts;
                 """;
             command.Parameters.AddWithValue("$cameraId", config.CameraId.ToString("N"));
             command.Parameters.AddWithValue("$enabled", config.Enabled ? 1 : 0);
@@ -190,6 +197,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$recordClips", config.RecordClips ? 1 : 0);
             command.Parameters.AddWithValue("$clipPreSeconds", config.ClipPreSeconds);
             command.Parameters.AddWithValue("$clipPostSeconds", config.ClipPostSeconds);
+            command.Parameters.AddWithValue("$sendToAlerts", config.SendToAlerts ? 1 : 0);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -295,7 +303,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         (int)reader.GetInt64(6),
         reader.GetInt64(7) != 0,
         (int)reader.GetInt64(8),
-        (int)reader.GetInt64(9));
+        (int)reader.GetInt64(9),
+        reader.GetInt64(10) != 0);
 
     private static TriggerEvent ReadEvent(SqliteDataReader reader) => new(
         Guid.ParseExact(reader.GetString(0), "N"),

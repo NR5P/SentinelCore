@@ -164,6 +164,10 @@
               <label class="field-label" for="zone-clip-post">Seconds after trigger</label>
               <input type="number" id="zone-clip-post" class="field-input" min="0" max="120" step="1" />
             </div>
+            <div class="field-row field-row-wide field-checkbox-row" data-tip="Sends the trigger snapshot to the same AI analysis and alert pipeline (email/Telegram/webhook) that Blue Iris alerts use. Off by default - with this off, triggers only show up in the Triggers tab.">
+              <label class="switch"><input type="checkbox" id="zone-send-to-alerts" /><span class="switch-track"></span></label>
+              <span class="field-label">Send triggers to the AI and alert pipeline</span>
+            </div>
             <div class="field-row field-checkbox-row" data-tip="Master switch for this zone. Off means nothing is watched or recorded, but your shape and settings are kept.">
               <label class="switch"><input type="checkbox" id="zone-enabled" /><span class="switch-track"></span></label>
               <span class="field-label">Enabled</span>

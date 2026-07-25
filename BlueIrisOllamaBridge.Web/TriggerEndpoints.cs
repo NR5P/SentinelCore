@@ -11,6 +11,7 @@ public sealed class TriggerConfigDto
     public bool RecordClips { get; set; }
     public int ClipPreSeconds { get; set; } = 5;
     public int ClipPostSeconds { get; set; } = 10;
+    public bool SendToAlerts { get; set; }
 }
 
 public static class TriggerEndpoints
@@ -29,7 +30,7 @@ public static class TriggerEndpoints
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
             var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
-                dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds);
+                dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         });

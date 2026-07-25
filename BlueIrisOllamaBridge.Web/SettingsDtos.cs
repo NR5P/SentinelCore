@@ -117,6 +117,9 @@ public sealed class TelegramSettingsDto
     public double MinimumConfidence { get; set; }
 
     public bool AttachImage { get; set; } = true;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; set; } = 10;
 }
 
 public sealed class TelegramChatSettingsDto

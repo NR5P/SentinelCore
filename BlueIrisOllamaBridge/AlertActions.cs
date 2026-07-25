@@ -48,6 +48,62 @@ public sealed class WebhookAlertAction : IAlertAction
     }
 }
 
+// What kind of thing an alert is about, shared by email and Telegram so a stationary vehicle
+// or a person lingering by the gate maps to the same category in both places - that's what
+// each channel's duplicate-cooldown keys off of, so "the same vehicle is still there" gets
+// suppressed instead of re-sent every time a new frame happens to trigger analysis.
+public static class AlertCategorizer
+{
+    public static string? Categorize(VisionAnalysis analysis)
+    {
+        if (EqualsValue(analysis.Package.Status, "delivered"))
+            return "package-delivered";
+
+        if (EqualsValue(analysis.EventType, "delivery_in_progress") ||
+            EqualsValue(analysis.Package.Status, "being_delivered") ||
+            EqualsValue(analysis.Person.Activity, "placing_package"))
+            return "delivery-in-progress";
+
+        if (analysis.Person.OutsideVehicle &&
+            (EqualsValue(analysis.Vehicle.Location, "outside_gate_entrance") ||
+             EqualsValue(analysis.Person.Location, "at_gate") ||
+             EqualsValue(analysis.Person.Location, "near_vehicle")))
+            return "person-outside-vehicle";
+
+        if (analysis.Person.Visible && EqualsValue(analysis.Person.Activity, "walking") && IsNearGate(analysis.Person.Location))
+            return "person-walking";
+
+        if (analysis.Person.Visible && IsNearGate(analysis.Person.Location))
+            return "person-at-gate";
+
+        if (EqualsValue(analysis.Vehicle.Activity, "entering") || EqualsValue(analysis.EventType, "vehicle_entering_property"))
+            return "vehicle-entering";
+
+        if (analysis.Vehicle.Visible && EqualsValue(analysis.Vehicle.Location, "outside_gate_entrance") &&
+            (EqualsValue(analysis.Vehicle.Activity, "stopped") || EqualsValue(analysis.Vehicle.Activity, "unknown")))
+            return "vehicle-at-gate";
+
+        if (analysis.Vehicle.Visible && EqualsValue(analysis.Vehicle.Location, "inside_driveway"))
+            return "vehicle-inside";
+
+        if (analysis.Person.Visible && EqualsValue(analysis.Person.Location, "inside_property"))
+            return "person-on-property";
+
+        if (analysis.Animal.Visible)
+            return "animal";
+
+        return null;
+    }
+
+    private static bool IsNearGate(string location) =>
+        EqualsValue(location, "outside_gate") ||
+        EqualsValue(location, "at_gate") ||
+        EqualsValue(location, "near_vehicle");
+
+    private static bool EqualsValue(string value, string expected) =>
+        string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);
+}
+
 public sealed class TelegramAlertAction : IAlertAction
 {
     private const string ApiBaseUrl = "https://api.telegram.org";
@@ -55,6 +111,7 @@ public sealed class TelegramAlertAction : IAlertAction
     private readonly HttpClient _httpClient;
     private readonly IOptionsMonitor<TelegramOptions> _optionsMonitor;
     private readonly ILogger<TelegramAlertAction> _logger;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastSent = new(StringComparer.OrdinalIgnoreCase);
 
     public TelegramAlertAction(HttpClient httpClient, IOptionsMonitor<TelegramOptions> options, ILogger<TelegramAlertAction> logger)
     {
@@ -73,6 +130,21 @@ public sealed class TelegramAlertAction : IAlertAction
         if (result.Analysis is not null && result.Analysis.Confidence < options.MinimumConfidence)
             return;
 
+        // Only gate on category when one can be determined - anything that doesn't map to a
+        // known category still sends every time, same as before this cooldown existed.
+        string? cooldownKey = null;
+        if (result.Analysis is not null && AlertCategorizer.Categorize(result.Analysis) is { } category)
+        {
+            cooldownKey = $"{result.Camera}|{category}";
+            if (IsInCooldown(options, cooldownKey))
+            {
+                _logger.LogInformation(
+                    "Duplicate Telegram category {Category} suppressed for camera {Camera}",
+                    category, result.Camera);
+                return;
+            }
+        }
+
         var caption = BuildCaption(result);
         var imageExists = options.AttachImage && !string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath);
 
@@ -87,6 +159,7 @@ public sealed class TelegramAlertAction : IAlertAction
         }
         else
         {
+            if (cooldownKey is not null) _lastSent[cooldownKey] = DateTimeOffset.UtcNow;
             _logger.LogInformation("Telegram alert sent for {AlertId}", result.Id);
         }
     }
@@ -134,6 +207,13 @@ public sealed class TelegramAlertAction : IAlertAction
             caption.Append($"\n{WebUtility.HtmlEncode(analysis.NotificationReason)}");
 
         return caption.ToString();
+    }
+
+    private bool IsInCooldown(TelegramOptions options, string key)
+    {
+        if (options.DuplicateCooldownMinutes <= 0) return false;
+        if (!_lastSent.TryGetValue(key, out var lastSent)) return false;
+        return DateTimeOffset.UtcNow - lastSent < TimeSpan.FromMinutes(options.DuplicateCooldownMinutes);
     }
 }
 
