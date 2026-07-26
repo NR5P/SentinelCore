@@ -72,6 +72,40 @@ body {
   display: none;
 }
 
+/* Unlicensed watermark - toggled by license.js adding/removing body.unlicensed based on
+   /api/license/status. Purely cosmetic (pointer-events: none) - never blocks viewing or
+   interacting with anything underneath, matching the "nag, never gate" rule everywhere else
+   licensing touches. #lightbox is targeted by id, not the shared .lightbox class, since that
+   class is reused by the zone editor and setup wizard modals, which aren't camera footage. */
+body.unlicensed .card-image::after,
+body.unlicensed #lightbox::after,
+body.unlicensed .live-tile::after {
+  content: "UNLICENSED";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--amber);
+  opacity: 0.4;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-align: center;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.7);
+  transform: rotate(-16deg);
+  white-space: nowrap;
+}
+
+body.unlicensed .card-image::after {
+  font-size: 13px;
+}
+
+body.unlicensed #lightbox::after,
+body.unlicensed .live-tile::after {
+  font-size: clamp(20px, 5vw, 48px);
+}
+
 .brand {
   display: flex;
   align-items: baseline;
