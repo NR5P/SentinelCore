@@ -595,6 +595,86 @@ window.GateWatchSettings = (function () {
     return row;
   }
 
+  function renderLicenseSection() {
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">LICENSE</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "Install the .lic file you received after purchase. Missing or invalid only shows a notice - every feature keeps working either way.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+
+    const status = document.createElement("div");
+    status.className = "settings-hint";
+    status.textContent = "checking license…";
+    body.appendChild(status);
+
+    const row = document.createElement("div");
+    row.className = "field-row-wide";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".lic";
+    fileInput.id = "license-file-input";
+    row.appendChild(fileInput);
+    body.appendChild(row);
+
+    const errors = document.createElement("ul");
+    errors.className = "field-errors";
+    body.appendChild(errors);
+
+    async function refreshStatus() {
+      try {
+        const response = await fetch("/api/license/status");
+        const payload = await response.json();
+        status.textContent = payload.valid
+          ? `licensed to ${payload.customerName}`
+          : "no valid license installed - running unlicensed.";
+      } catch {
+        status.textContent = "could not check license status.";
+      }
+    }
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      errors.innerHTML = "";
+      status.textContent = "installing…";
+      try {
+        const contents = await file.text();
+        const response = await fetch("/api/license/install", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: contents
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          showFieldErrors(errors, [payload.error || "Could not install that file."]);
+          showToast("License not installed", false);
+        } else {
+          showToast(`Licensed to ${payload.customerName}`, true);
+          window.GateWatchLicense.check();
+        }
+      } catch {
+        showFieldErrors(errors, ["Network error while uploading."]);
+      } finally {
+        fileInput.value = "";
+        await refreshStatus();
+      }
+    });
+
+    refreshStatus();
+
+    section.append(header, body);
+    return section;
+  }
+
   function renderKnownVehiclesSection(vehicles) {
     const section = document.createElement("div");
     section.className = "settings-section";
@@ -792,6 +872,7 @@ window.GateWatchSettings = (function () {
       for (const schema of SECTIONS) {
         root.appendChild(renderSection(schema, data[schema.key]));
       }
+      root.appendChild(renderLicenseSection());
       root.appendChild(renderKnownVehiclesSection(data.knownVehicles));
       root.appendChild(renderPromptProfilesSection(data.promptProfiles));
 

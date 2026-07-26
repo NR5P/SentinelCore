@@ -63,8 +63,8 @@ one-way or final.
 
 If a purchased install is missing its `license.lic` file (or it's been altered), a thin amber
 notice appears under the top bar. It's informational only - every feature keeps working exactly
-as normal either way. Drop the `.lic` file you were emailed next to `appsettings.json` and
-refresh the page to clear it.
+as normal either way. To clear it, open SETTINGS → LICENSE and upload the `.lic` file you were
+emailed - it's verified and written to disk immediately, no restart needed.
 
 ## 3. The FEED tab — Blue Iris alerts
 
