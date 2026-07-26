@@ -5,3 +5,7 @@ obj/
 data/
 *.user
 *.suo
+
+# License signing key material and issued licenses - never belong in the repo.
+*.lic
+*.pem

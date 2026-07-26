@@ -48,6 +48,7 @@ app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
 app.MapTriggerEndpoints();
 app.MapSetupEndpoints();
+app.MapLicenseEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 

@@ -253,6 +253,7 @@ loadFilterOptions();
 loadEvents();
 setInterval(loadEvents, REFRESH_INTERVAL_MS);
 window.GateWatchWizard.checkAndMaybeShow();
+window.GateWatchLicense.check();
 
 // Tab switching. Settings/cameras are lazy-loaded on first visit; the live view starts/stops
 // video playback as it's shown/hidden so streams nobody is looking at don't keep running.

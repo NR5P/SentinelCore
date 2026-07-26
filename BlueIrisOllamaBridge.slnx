@@ -2,4 +2,6 @@
   <Project Path="BlueIrisOllamaBridge/BlueIrisOllamaBridge.csproj" />
   <Project Path="BlueIrisOllamaBridge.Web/BlueIrisOllamaBridge.Web.csproj" />
   <Project Path="BlueIrisOllamaBridge.Tests/BlueIrisOllamaBridge.Tests.csproj" />
+  <Project Path="BlueIrisOllamaBridge.Licensing/BlueIrisOllamaBridge.Licensing.csproj" />
+  <Project Path="LicenseGenerator/LicenseGenerator.csproj" />
 </Solution>

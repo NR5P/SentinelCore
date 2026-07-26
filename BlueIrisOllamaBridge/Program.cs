@@ -193,6 +193,18 @@ builder.Services.AddHttpClient(nameof(SelfMonitoringWorker), client =>
 });
 
 var app = builder.Build();
+
+// Visibility only - never a functional gate. See LicenseStatus.cs.
+var configuredLicensePath = builder.Configuration["License:FilePath"] ?? "license.lic";
+var licenseFilePath = Path.IsPathRooted(configuredLicensePath)
+    ? configuredLicensePath
+    : Path.Combine(app.Environment.ContentRootPath, configuredLicensePath);
+var license = LicenseStatus.Check(licenseFilePath);
+if (license is null)
+    app.Logger.LogWarning("No valid license found at {LicenseFilePath} - running unlicensed. See LicenseGenerator/README.md.", licenseFilePath);
+else
+    app.Logger.LogInformation("Licensed to {CustomerName} ({LicenseId})", license.CustomerName, license.LicenseId);
+
 app.UseMiddleware<ApiKeyMiddleware>();
 
 app.MapGet("/", () => Results.Ok(new
