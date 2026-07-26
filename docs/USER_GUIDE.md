@@ -62,9 +62,11 @@ skipped, and everything it touches can also be changed later in SETTINGS - nothi
 one-way or final.
 
 If a purchased install is missing its `license.lic` file (or it's been altered), a thin amber
-notice appears under the top bar. It's informational only - every feature keeps working exactly
-as normal either way. To clear it, open SETTINGS → LICENSE and upload the `.lic` file you were
-emailed - it's verified and written to disk immediately, no restart needed.
+notice appears under the top bar, and an "UNLICENSED" watermark appears across snapshot images,
+live video, and trigger clips. Both are informational only - every feature, including viewing
+those images and video, keeps working exactly as normal either way, nothing is blocked. To clear
+it, open SETTINGS → LICENSE and upload the `.lic` file you were emailed - it's verified and
+written to disk immediately, no restart needed.
 
 ## 3. The FEED tab — Blue Iris alerts
 
