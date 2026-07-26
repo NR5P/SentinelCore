@@ -61,6 +61,11 @@ least one camera, and optional notifications. Every step past the welcome screen
 skipped, and everything it touches can also be changed later in SETTINGS - nothing about it is
 one-way or final.
 
+If a purchased install is missing its `license.lic` file (or it's been altered), a thin amber
+notice appears under the top bar. It's informational only - every feature keeps working exactly
+as normal either way. Drop the `.lic` file you were emailed next to `appsettings.json` and
+refresh the page to clear it.
+
 ## 3. The FEED tab — Blue Iris alerts
 
 This is the history of everything Blue Iris has sent over, newest first, refreshing itself

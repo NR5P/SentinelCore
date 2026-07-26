@@ -58,6 +58,20 @@ body {
   background: linear-gradient(180deg, rgba(57, 255, 156, 0.04), transparent);
 }
 
+.license-banner {
+  padding: 8px 28px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-align: center;
+  color: var(--amber);
+  background: rgba(255, 181, 69, 0.08);
+  border-bottom: 1px solid var(--amber);
+}
+
+.license-banner.hidden {
+  display: none;
+}
+
 .brand {
   display: flex;
   align-items: baseline;

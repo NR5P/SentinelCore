@@ -1,5 +1,7 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using BlueIrisOllamaBridge.Licensing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -1132,6 +1134,87 @@ public sealed class BasicTests
 
         public Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new EventFilterOptions([], []));
+    }
+
+    [Fact]
+    public void LicenseVerifier_RoundTrips_ASignedLicense()
+    {
+        using var rsa = RSA.Create(2048);
+        var info = new LicenseInfo("Jane Doe", "jane@example.com", "SentinelCore", Guid.NewGuid(), DateTimeOffset.UtcNow);
+
+        var licenseText = LicenseSigner.Sign(info, rsa);
+        var verified = LicenseVerifier.Verify(licenseText, rsa);
+
+        Assert.NotNull(verified);
+        Assert.Equal(info, verified);
+    }
+
+    [Fact]
+    public void LicenseVerifier_RejectsATamperedPayload()
+    {
+        using var rsa = RSA.Create(2048);
+        var info = new LicenseInfo("Jane Doe", "jane@example.com", "SentinelCore", Guid.NewGuid(), DateTimeOffset.UtcNow);
+        var licenseText = LicenseSigner.Sign(info, rsa);
+
+        // Swap in a different (validly base64, validly JSON) payload without re-signing -
+        // simulates hand-editing the file to change who it's licensed to. Mutated via JsonNode
+        // rather than string-replace, since the signed payload's exact formatting (indentation,
+        // property order) is an implementation detail this test shouldn't depend on.
+        var envelope = JsonNode.Parse(licenseText)!.AsObject();
+        var forgedInfo = info with { CustomerName = "Someone Else" };
+        envelope["payload"] = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(forgedInfo));
+        var tampered = envelope.ToJsonString();
+
+        Assert.Null(LicenseVerifier.Verify(tampered, rsa));
+    }
+
+    [Fact]
+    public void LicenseVerifier_RejectsATamperedSignature()
+    {
+        using var rsa = RSA.Create(2048);
+        var info = new LicenseInfo("Jane Doe", "jane@example.com", "SentinelCore", Guid.NewGuid(), DateTimeOffset.UtcNow);
+        var licenseText = LicenseSigner.Sign(info, rsa);
+
+        // Flip the signature's own bytes (re-encode as different-but-still-valid base64) rather
+        // than touch the payload - this is specifically testing that a corrupted signature fails
+        // cryptographic verification, distinct from the malformed-envelope cases below.
+        var envelope = JsonNode.Parse(licenseText)!.AsObject();
+        var signatureBytes = Convert.FromBase64String(envelope["signature"]!.GetValue<string>());
+        signatureBytes[0] ^= 0xFF;
+        envelope["signature"] = Convert.ToBase64String(signatureBytes);
+        var tampered = envelope.ToJsonString();
+
+        Assert.Null(LicenseVerifier.Verify(tampered, rsa));
+    }
+
+    [Fact]
+    public void LicenseVerifier_RejectsALicenseSignedByADifferentKey()
+    {
+        using var issuerKey = RSA.Create(2048);
+        using var wrongKey = RSA.Create(2048);
+        var info = new LicenseInfo("Jane Doe", "jane@example.com", "SentinelCore", Guid.NewGuid(), DateTimeOffset.UtcNow);
+
+        var licenseText = LicenseSigner.Sign(info, issuerKey);
+
+        Assert.Null(LicenseVerifier.Verify(licenseText, wrongKey));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not json at all")]
+    [InlineData("{}")]
+    [InlineData("""{"payload": "not-valid-base64!!!", "signature": "also-not-base64!!!"}""")]
+    public void LicenseVerifier_ReturnsNullRatherThanThrowing_ForMalformedInput(string malformed)
+    {
+        using var rsa = RSA.Create(2048);
+        Assert.Null(LicenseVerifier.Verify(malformed, rsa));
+    }
+
+    [Fact]
+    public void LicenseStatus_Check_ReturnsNullWhenTheFileDoesNotExist()
+    {
+        var missingPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.lic");
+        Assert.Null(LicenseStatus.Check(missingPath));
     }
 
     private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment

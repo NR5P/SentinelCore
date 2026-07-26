@@ -177,6 +177,12 @@ the wizard doesn't cover or if you'd rather edit the file directly.
    all optional, all off by default except what's already been turned on.
 5. Set `Bridge:DataDirectory` (default `data`, relative to the project's working directory)
    if you want images/database stored somewhere else.
+6. If this install was purchased, drop the `license.lic` file you were emailed next to
+   `appsettings.json` (path configurable via `License:FilePath`). It's a one-time-purchase,
+   perpetual license - no expiry, nothing to renew. Missing or invalid, the dashboard shows a
+   small notice but every feature keeps working regardless - this is visibility, not a
+   functional lock. See `LicenseGenerator/README.md` if you're the one issuing licenses rather
+   than installing a purchased copy.
 
 Do not expose port 5080 to the internet. The API key is LAN authentication, not a substitute
 for TLS on an untrusted network.
