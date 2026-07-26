@@ -118,6 +118,7 @@ builder.Services.AddHostedService<AlertRecoveryService>();
 builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddHostedService<DailySummaryWorker>();
+builder.Services.AddSingleton<ChatAnswerService>();
 builder.Services.AddHostedService<TelegramChatWorker>();
 builder.Services.AddHostedService<SelfMonitoringWorker>();
 
@@ -303,6 +304,20 @@ app.MapGet("/api/results/{id:guid}", async (Guid id, IResultStore store, Cancell
     return result is null ? Results.NotFound(new { error = "Alert result not found." }) : Results.Ok(result);
 });
 
+// Same Q&A logic the Telegram bot already uses (ChatAnswerService) - reachable here so the
+// dashboard's own ask box (see BlueIrisOllamaBridge.Web/ChatEndpoints.cs) doesn't need a
+// Telegram account. Already covered by ApiKeyMiddleware above like every other /api route.
+app.MapPost("/api/chat/ask", async (ChatQuestionRequest request, ChatAnswerService chatAnswers, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Question))
+        return Results.BadRequest(new { error = "A question is required." });
+
+    var answer = await chatAnswers.AnswerAsync(request.Question, ct);
+    return Results.Ok(new { answer });
+});
+
 app.Run();
+
+public sealed record ChatQuestionRequest(string Question);
 
 public partial class Program;

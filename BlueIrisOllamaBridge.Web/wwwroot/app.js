@@ -7,6 +7,9 @@ const statusTextEl = document.getElementById("status-text");
 const refreshBtn = document.getElementById("refresh-btn");
 const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
+const askInput = document.getElementById("ask-input");
+const askBtn = document.getElementById("ask-btn");
+const askAnswerEl = document.getElementById("ask-answer");
 
 function setStatus(online) {
   statusDotEl.classList.toggle("online", online);
@@ -246,6 +249,39 @@ async function loadEvents() {
     console.error("Failed to load events", err);
   }
 }
+
+// Stateless like the backend already is - each question replaces whatever answer is showing,
+// no running conversation history to manage.
+async function askQuestion() {
+  const question = askInput.value.trim();
+  if (!question) return;
+
+  askBtn.disabled = true;
+  askAnswerEl.classList.remove("hidden");
+  askAnswerEl.classList.add("thinking");
+  askAnswerEl.textContent = "thinking…";
+
+  try {
+    const response = await fetch("/api/chat/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    });
+    const payload = await response.json().catch(() => ({}));
+    askAnswerEl.classList.remove("thinking");
+    askAnswerEl.textContent = response.ok
+      ? payload.answer
+      : (payload.error || "Could not get an answer just now.");
+  } catch {
+    askAnswerEl.classList.remove("thinking");
+    askAnswerEl.textContent = "Network error while asking.";
+  } finally {
+    askBtn.disabled = false;
+  }
+}
+
+askBtn.addEventListener("click", askQuestion);
+askInput.addEventListener("keydown", (e) => { if (e.key === "Enter") askQuestion(); });
 
 refreshBtn.addEventListener("click", loadEvents);
 

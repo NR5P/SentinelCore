@@ -30,6 +30,12 @@ public sealed class OllamaChatClient : IOllamaChatClient
         {
             model = _optionsMonitor.CurrentValue.Model,
             stream = false,
+            // Ollama defaults to a small context window (often 2-4k tokens) unless told
+            // otherwise, silently truncating whatever doesn't fit - confirmed the hard way once
+            // the system prompt started including the full app documentation alongside the
+            // event log: the model answered from the docs alone, having quietly lost the event
+            // log entirely. This gives real headroom for both at once.
+            options = new { num_ctx = 16384 },
             messages = new object[]
             {
                 new { role = "system", content = systemPrompt },

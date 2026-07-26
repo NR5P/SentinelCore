@@ -31,6 +31,10 @@ builder.Services.AddSingleton<ITriggerConfigStore>(triggerStore);
 builder.Services.AddSingleton<ITriggerEventStore>(triggerStore);
 builder.Services.AddSingleton<ClipRecorder>();
 builder.Services.AddHttpClient();
+// Longer than the default 100s - the main app's own chat timeout is 180s (a full event log
+// plus the app documentation is a lot for a small local model to chew through), so this needs
+// headroom above that or the proxy would cut the request off before the main app itself gives up.
+builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout = TimeSpan.FromSeconds(200));
 builder.Services.AddSingleton<AlertForwarder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
@@ -56,6 +60,7 @@ app.MapSetupEndpoints();
 app.MapLicenseEndpoints();
 app.MapAuthEndpoints();
 app.MapBackupEndpoints();
+app.MapChatEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 

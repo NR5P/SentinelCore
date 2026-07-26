@@ -224,6 +224,37 @@ main {
   box-shadow: 0 0 10px rgba(57, 255, 156, 0.35);
 }
 
+.feed-ask {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.feed-ask .field-input {
+  flex: 1;
+}
+
+.ask-answer {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--cyan);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.ask-answer.hidden {
+  display: none;
+}
+
+.ask-answer.thinking {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .feed-filters {
   display: flex;
   flex-wrap: wrap;

@@ -1303,6 +1303,125 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public async Task ChatAnswerService_AnswerAsync_BuildsAPromptFromRecentEventsAndReturnsTheModelsAnswer()
+    {
+        var events = new List<AlertEventRecord>
+        {
+            new(Guid.NewGuid(), "Gate Camera", DateTimeOffset.UtcNow.AddHours(-1), "completed",
+                "vehicle_at_gate", "A car arrived.", true, "Vehicle at gate.", 0.9, null)
+        };
+        var eventStore = new FakeEventStore(events);
+        var chatClient = new FakeOllamaChatClient { ResponseToReturn = "A car arrived an hour ago." };
+        var options = new StaticOptionsMonitor<TelegramChatOptions>(
+            new TelegramChatOptions { Enabled = true, LookbackDays = 3, MaxEventsInContext = 100 });
+        var service = new ChatAnswerService(
+            eventStore, chatClient, options, new FakeHostEnvironment(Path.GetTempPath()), NullLogger<ChatAnswerService>.Instance);
+
+        var answer = await service.AnswerAsync("What happened recently?", CancellationToken.None);
+
+        Assert.Equal("A car arrived an hour ago.", answer);
+        Assert.True(chatClient.WasCalled);
+        Assert.Contains("Gate Camera", chatClient.LastSystemPrompt);
+        Assert.Equal("What happened recently?", chatClient.LastUserMessage);
+    }
+
+    [Fact]
+    public async Task ChatAnswerService_AnswerAsync_ReturnsTurnedOffMessage_WithoutCallingOllama_WhenDisabled()
+    {
+        var eventStore = new FakeEventStore([]);
+        var chatClient = new FakeOllamaChatClient();
+        var options = new StaticOptionsMonitor<TelegramChatOptions>(new TelegramChatOptions { Enabled = false });
+        var service = new ChatAnswerService(
+            eventStore, chatClient, options, new FakeHostEnvironment(Path.GetTempPath()), NullLogger<ChatAnswerService>.Instance);
+
+        var answer = await service.AnswerAsync("Anything?", CancellationToken.None);
+
+        Assert.False(chatClient.WasCalled);
+        Assert.Contains("turned off", answer, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Stuffing the full app documentation into every single question - even ones purely about
+    // camera history - proved slow enough on a small local model to blow past the request
+    // timeout, and sometimes made the model lose track of the event log entirely. These two
+    // tests guard the fix: a question routes to exactly one context source, never both.
+    [Theory]
+    [InlineData("what happened at the gate last night?")]
+    [InlineData("did anyone come to the door today?")]
+    public async Task ChatAnswerService_AnswerAsync_RoutesEventQuestions_ToTheEventLogOnly(string question)
+    {
+        var eventStore = new FakeEventStore([]);
+        var chatClient = new FakeOllamaChatClient();
+        var options = new StaticOptionsMonitor<TelegramChatOptions>(new TelegramChatOptions { Enabled = true });
+        var service = new ChatAnswerService(
+            eventStore, chatClient, options, new FakeHostEnvironment(Path.GetTempPath()), NullLogger<ChatAnswerService>.Instance);
+
+        await service.AnswerAsync(question, CancellationToken.None);
+
+        Assert.True(eventStore.GetEventsAsyncWasCalled);
+        Assert.Contains("Event log:", chatClient.LastSystemPrompt);
+        Assert.DoesNotContain("App documentation", chatClient.LastSystemPrompt);
+    }
+
+    [Theory]
+    [InlineData("how do I turn on quiet hours?")]
+    [InlineData("what is the known vehicles feature?")]
+    public async Task ChatAnswerService_AnswerAsync_RoutesHowToQuestions_ToTheDocsOnly(string question)
+    {
+        var eventStore = new FakeEventStore([]);
+        var chatClient = new FakeOllamaChatClient();
+        var options = new StaticOptionsMonitor<TelegramChatOptions>(new TelegramChatOptions { Enabled = true });
+        var service = new ChatAnswerService(
+            eventStore, chatClient, options, new FakeHostEnvironment(Path.GetTempPath()), NullLogger<ChatAnswerService>.Instance);
+
+        await service.AnswerAsync(question, CancellationToken.None);
+
+        Assert.False(eventStore.GetEventsAsyncWasCalled);
+        Assert.Contains("App documentation", chatClient.LastSystemPrompt);
+        Assert.DoesNotContain("Event log:", chatClient.LastSystemPrompt);
+    }
+
+    private sealed class FakeEventStore(IReadOnlyList<AlertEventRecord> events) : IEventStore
+    {
+        public bool GetEventsAsyncWasCalled { get; private set; }
+
+        public Task RecordAsync(AlertResult result, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<IReadOnlyList<AlertEventRecord>> GetEventsAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken)
+        {
+            GetEventsAsyncWasCalled = true;
+            return Task.FromResult(events);
+        }
+
+        public Task<AlertEventRecord?> GetEventAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<AlertEventRecord?>(null);
+
+        public Task<IReadOnlyList<PendingAlertRecord>> GetPendingAlertsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<PendingAlertRecord>>([]);
+
+        public Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
+
+        public Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new EventFilterOptions([], []));
+    }
+
+    private sealed class FakeOllamaChatClient : IOllamaChatClient
+    {
+        public string? LastSystemPrompt { get; private set; }
+        public string? LastUserMessage { get; private set; }
+        public string ResponseToReturn { get; set; } = "a canned answer";
+        public bool WasCalled { get; private set; }
+
+        public Task<string> AskAsync(string systemPrompt, string userMessage, CancellationToken cancellationToken)
+        {
+            WasCalled = true;
+            LastSystemPrompt = systemPrompt;
+            LastUserMessage = userMessage;
+            return Task.FromResult(ResponseToReturn);
+        }
+    }
+
+    [Fact]
     public async Task SqliteCameraStore_RestoreAsync_UpsertsByExplicitId()
     {
         using var store = new SqliteCameraStore(Path.Combine(Path.GetTempPath(), $"cam-{Guid.NewGuid():N}"));
