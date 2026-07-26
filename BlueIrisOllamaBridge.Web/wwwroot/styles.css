@@ -1089,6 +1089,46 @@ main {
   margin-top: 4px;
 }
 
+.wizard-panel {
+  max-width: 560px;
+}
+
+.wizard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.wizard-body p {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#setup-wizard .hidden {
+  display: none;
+}
+
+.wizard-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wizard-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.wizard-status-ok {
+  color: var(--green);
+}
+
+.wizard-status-bad {
+  color: var(--red);
+}
+
 @media (max-width: 480px) {
   .topbar {
     padding: 14px 16px;

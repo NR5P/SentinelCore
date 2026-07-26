@@ -8,7 +8,15 @@ window.GateWatchSettings = (function () {
         { name: "retentionDays", label: "Retention Days", type: "number", min: 1, max: 3650, tip: "How long events and their images are kept before being cleaned up automatically." },
         { name: "saveImages", label: "Save Images", type: "checkbox", tip: "Keep a copy of each snapshot on disk. Turn off to record only the AI's text analysis." },
         { name: "allowedImageContentTypes", label: "Allowed Content Types (comma separated)", type: "csv", tip: "Image formats accepted from Blue Iris, e.g. image/jpeg. Anything else is rejected." }
-      ]
+      ],
+      extraAction: {
+        label: "re-run setup wizard",
+        tip: "Bring back the first-run setup wizard (vision backend, a camera, notifications) without losing anything already configured.",
+        async onClick() {
+          await fetch("/api/setup/reset", { method: "POST" });
+          window.location.reload();
+        }
+      }
     },
     {
       key: "ollama", title: "OLLAMA", endpoint: "/api/settings/ollama",
@@ -312,7 +320,16 @@ window.GateWatchSettings = (function () {
     saveBtn.dataset.tip = "Save this section. Changes take effect immediately - no restart needed.";
     const errors = document.createElement("ul");
     errors.className = "field-errors";
-    footer.append(saveBtn, errors);
+    footer.append(saveBtn);
+    if (schema.extraAction) {
+      const actionBtn = document.createElement("button");
+      actionBtn.className = "btn";
+      actionBtn.textContent = schema.extraAction.label;
+      if (schema.extraAction.tip) actionBtn.dataset.tip = schema.extraAction.tip;
+      actionBtn.addEventListener("click", () => schema.extraAction.onClick());
+      footer.append(actionBtn);
+    }
+    footer.append(errors);
     body.appendChild(footer);
 
     saveBtn.addEventListener("click", () => saveSection(schema, section, errors, saveBtn));
