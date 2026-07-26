@@ -13,6 +13,10 @@
 // lazily - the first time we hear a camera's name - so there's no camera list to keep in sync
 // with the .NET side. Accessory UUIDs are derived from the camera name, so identity survives
 // restarts and a re-created accessory is recognised as the same one it was before.
+//
+// This service is installed for everyone, but stays off the network until HomeKit:Enabled is
+// turned on in the dashboard. Installing the product shouldn't put an unpaired accessory on
+// someone's network uninvited.
 
 const http = require("node:http");
 const path = require("node:path");
@@ -34,6 +38,11 @@ const QRCode = require("qrcode");
 const PERSIST_DIR = path.join(__dirname, "persist");
 const IDENTITY_FILE = path.join(PERSIST_DIR, "identity.json");
 
+// The main app's config is the single source of truth for whether HomeKit is on - the dashboard
+// writes it there, same as every other setting.
+const MAIN_SETTINGS_PATH = process.env.HOMEKIT_MAIN_SETTINGS
+  || path.join(__dirname, "..", "BlueIrisOllamaBridge", "appsettings.json");
+
 const BRIDGE_NAME = "Sentinel Core";
 const CONTROL_PORT = Number(process.env.HOMEKIT_CONTROL_PORT || 3321);
 const HAP_PORT = Number(process.env.HOMEKIT_HAP_PORT || 51826);
@@ -41,6 +50,10 @@ const HAP_PORT = Number(process.env.HOMEKIT_HAP_PORT || 51826);
 // How long a motion sensor stays "detected" before resetting. The true -> false transition is
 // what Apple Home turns into a push notification, so this has to actually flip back.
 const MOTION_RESET_MS = 10_000;
+
+// How often to re-read the enabled flag. Matches the dashboard's other "takes effect within a
+// few seconds, no restart needed" settings.
+const SETTINGS_POLL_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // Stable identity
@@ -113,8 +126,20 @@ HAPStorage.setCustomStoragePath(PERSIST_DIR);
 
 const bridge = new Bridge(BRIDGE_NAME, uuid.generate("sentinelcore:bridge"));
 
-// normalized camera name -> { accessory, service, resetTimer }
+const publishInfo = {
+  username: identity.username,
+  pincode: identity.pincode,
+  setupID: identity.setupId,
+  port: HAP_PORT,
+  category: Categories.BRIDGE,
+  // This box runs avahi-daemon, which owns UDP 5353. Talking to it over D-Bus rather than
+  // binding our own responder avoids fighting it for the port.
+  advertiser: MDNSAdvertiser.AVAHI,
+};
+
+// normalized camera name -> { accessory, service, resetTimer, name }
 const motionAccessories = new Map();
+let published = false;
 
 function normalize(cameraName) {
   return cameraName.trim().toLowerCase();
@@ -131,7 +156,8 @@ function getOrCreateMotionAccessory(cameraName) {
   const accessory = new Accessory(cameraName, uuid.generate(`sentinelcore:camera:${key}`));
   const service = accessory.addService(Service.MotionSensor, cameraName);
 
-  // Supported at runtime, after publish() - the Bridge pushes the addition to paired controllers.
+  // Safe whether or not the bridge is currently published - additions to a live bridge are
+  // pushed to paired controllers, and unpublish() leaves already-added accessories in place.
   bridge.addBridgedAccessory(accessory);
 
   const entry = { accessory, service, resetTimer: null, name: cameraName };
@@ -165,28 +191,59 @@ function isPaired() {
   }
 }
 
-bridge.publish({
-  username: identity.username,
-  pincode: identity.pincode,
-  setupID: identity.setupId,
-  port: HAP_PORT,
-  category: Categories.BRIDGE,
-  // This box runs avahi-daemon, which owns UDP 5353. Talking to it over D-Bus rather than
-  // binding our own responder avoids fighting it for the port.
-  advertiser: MDNSAdvertiser.AVAHI,
-});
+// ---------------------------------------------------------------------------
+// Enabled flag - polled from the main app's config
+// ---------------------------------------------------------------------------
 
-console.log(`HomeKit bridge "${BRIDGE_NAME}" published on port ${HAP_PORT}`);
-console.log(`Pairing code: ${identity.pincode}`);
+let enabled = false;
+
+function readEnabledFlag() {
+  try {
+    const raw = fs.readFileSync(MAIN_SETTINGS_PATH, "utf8");
+    return JSON.parse(raw)?.HomeKit?.Enabled === true;
+  } catch (error) {
+    // A missing or briefly half-written config (the dashboard writes atomically, but a race is
+    // still conceivable) must not flap the bridge off. Keep the current state and try again.
+    if (error.code !== "ENOENT") {
+      console.warn(`Could not read ${MAIN_SETTINGS_PATH}: ${error.message}`);
+    }
+    return enabled;
+  }
+}
+
+async function applyEnabledState(next) {
+  if (next === enabled) return;
+  enabled = next;
+
+  if (enabled && !published) {
+    await bridge.publish(publishInfo);
+    published = true;
+    console.log(`HomeKit enabled - bridge "${BRIDGE_NAME}" published on port ${HAP_PORT}`);
+    console.log(`Pairing code: ${identity.pincode}`);
+  } else if (!enabled && published) {
+    await bridge.unpublish();
+    published = false;
+    // Pairings are kept - this only stops advertising and serving. Turning it back on picks up
+    // exactly where it left off, with no re-pairing needed.
+    console.log("HomeKit disabled - bridge unpublished (existing pairings kept).");
+  }
+}
+
+async function pollSettings() {
+  try {
+    await applyEnabledState(readEnabledFlag());
+  } catch (error) {
+    console.error("Failed to apply HomeKit enabled state:", error.message);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Control API (loopback only - never exposed to the LAN)
 // ---------------------------------------------------------------------------
 
 function sendJson(res, statusCode, payload) {
-  const body = JSON.stringify(payload);
   res.writeHead(statusCode, { "content-type": "application/json" });
-  res.end(body);
+  res.end(JSON.stringify(payload));
 }
 
 const server = http.createServer((req, res) => {
@@ -206,6 +263,11 @@ const server = http.createServer((req, res) => {
         if (typeof camera !== "string" || camera.trim() === "") {
           return sendJson(res, 400, { error: "A camera name is required." });
         }
+        // The main app checks its own HomeKit:Enabled before calling, so this is belt and
+        // braces for a stale caller - and it stops accessories accumulating for a feature
+        // nobody turned on.
+        if (!enabled) return sendJson(res, 409, { error: "HomeKit is turned off." });
+
         triggerMotion(camera);
         res.writeHead(204).end();
       } catch {
@@ -217,14 +279,20 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && req.url === "/api/status") {
     return sendJson(res, 200, {
+      enabled,
+      published,
       paired: isPaired(),
       accessories: [...motionAccessories.values()].map((entry) => entry.name),
       // Only useful until they've paired; after that it's just noise on the settings page.
-      pairingCode: isPaired() ? null : identity.pincode,
+      pairingCode: published && !isPaired() ? identity.pincode : null,
     });
   }
 
   if (req.method === "GET" && req.url === "/api/qr") {
+    // setupURI() is only meaningful once published - there's no pairing to offer before that.
+    if (!published) {
+      return sendJson(res, 409, { error: "HomeKit is turned off." });
+    }
     QRCode.toBuffer(bridge.setupURI(), { errorCorrectionLevel: "M", margin: 2, width: 320 })
       .then((png) => {
         res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
@@ -242,15 +310,20 @@ const server = http.createServer((req, res) => {
 
 server.listen(CONTROL_PORT, "127.0.0.1", () => {
   console.log(`Control API listening on http://127.0.0.1:${CONTROL_PORT}`);
+  console.log(`Watching ${MAIN_SETTINGS_PATH} for HomeKit:Enabled`);
 });
+
+pollSettings();
+const pollTimer = setInterval(pollSettings, SETTINGS_POLL_MS);
 
 // systemd sends SIGTERM on stop/restart; unpublishing cleanly means paired iPhones see the
 // bridge go away rather than treating it as unresponsive.
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     console.log(`Received ${signal}, shutting down.`);
+    clearInterval(pollTimer);
     server.close();
-    bridge.unpublish();
+    if (published) bridge.unpublish();
     process.exit(0);
   });
 }

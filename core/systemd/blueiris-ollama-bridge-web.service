@@ -5,13 +5,13 @@ After=network-online.target blueiris-ollama-bridge.service
 
 [Service]
 Type=simple
-User=media
-Group=media
-WorkingDirectory=/opt/sentinelcore/core/BlueIrisOllamaBridge.Web
-ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/BlueIrisOllamaBridge.Web/bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__INSTALL_DIR__/BlueIrisOllamaBridge.Web
+ExecStart=__DOTNET_PATH__ __INSTALL_DIR__/BlueIrisOllamaBridge.Web/bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
-Environment=ASPNETCORE_URLS=http://0.0.0.0:3320
+Environment=ASPNETCORE_URLS=http://0.0.0.0:__WEB_PORT__
 
 Restart=always
 RestartSec=5
