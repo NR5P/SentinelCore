@@ -39,7 +39,13 @@ builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout =
 // The HomeKit sidecar is on loopback and only ever asked for a status blob or a small PNG, so a
 // short timeout is right here - if it's not answering promptly it's not running, and the settings
 // UI should say so immediately rather than hanging.
-builder.Services.AddHttpClient(nameof(HomeKitEndpoints), client => client.Timeout = TimeSpan.FromSeconds(5));
+//
+// RemoveAllLoggers because "the sidecar isn't running" is the normal state for anyone not using
+// HomeKit, and it's a condition HomeKitEndpoints already handles and reports in the UI. Without
+// this, the factory's own logging writes a connection-refused stack trace on every settings page
+// load - four log lines apiece - for something that isn't an error.
+builder.Services.AddHttpClient(nameof(HomeKitEndpoints), client => client.Timeout = TimeSpan.FromSeconds(5))
+    .RemoveAllLoggers();
 builder.Services.AddSingleton<AlertForwarder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
