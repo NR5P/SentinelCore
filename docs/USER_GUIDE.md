@@ -204,6 +204,12 @@ this guide mostly mirrors:
   optionally using this app as its own broker. Its own section below. See
   [section 13](#13-mqtt--home-assistant).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
+- **Backup** — exports everything on this list (plus cameras and trigger zones) as one JSON
+  file, and restores from a previous export. Includes secrets, so treat the downloaded file
+  like a password. Restoring overlays onto your current setup — it never deletes a camera or
+  setting the file doesn't mention.
+- **Login** — an optional username/password gate for this dashboard, off by default. See
+  [section 2](#2-opening-the-dashboard).
 - **Prompt Profiles** — the actual instructions given to the AI, per camera. Its own section
   below, since there's a lot here.
 

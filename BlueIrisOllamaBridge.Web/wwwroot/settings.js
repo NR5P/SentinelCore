@@ -595,6 +595,108 @@ window.GateWatchSettings = (function () {
     return row;
   }
 
+  function renderBackupSection() {
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">BACKUP</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "Export everything configurable here - settings, cameras, trigger zones, known vehicles, prompt profiles - as one file, or restore from a previous export.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+
+    const warning = document.createElement("div");
+    warning.className = "settings-hint";
+    warning.textContent = "Includes secrets (passwords, API keys, tokens) for a complete restore - store the downloaded file like a password. Restoring overlays onto your current setup; it never deletes a camera or setting the backup doesn't mention.";
+    body.appendChild(warning);
+
+    const exportRow = document.createElement("div");
+    exportRow.className = "profiles-toolbar";
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "btn";
+    exportBtn.textContent = "export backup";
+    exportBtn.dataset.tip = "Download everything configurable here as one JSON file.";
+    exportRow.appendChild(exportBtn);
+    body.appendChild(exportRow);
+
+    const importRow = document.createElement("div");
+    importRow.className = "field-row field-row-wide";
+    const importLabel = document.createElement("label");
+    importLabel.className = "field-label";
+    importLabel.textContent = "Restore from backup";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".json";
+    fileInput.id = "backup-file-input";
+    importRow.append(importLabel, fileInput);
+    body.appendChild(importRow);
+
+    const errors = document.createElement("ul");
+    errors.className = "field-errors";
+    body.appendChild(errors);
+
+    exportBtn.addEventListener("click", async () => {
+      exportBtn.disabled = true;
+      try {
+        const response = await fetch("/api/backup/export");
+        if (!response.ok) {
+          showToast("Export failed", false);
+          return;
+        }
+        const data = await response.json();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `sentinelcore-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showToast("Backup downloaded", true);
+      } catch {
+        showToast("Export failed", false);
+      } finally {
+        exportBtn.disabled = false;
+      }
+    });
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      errors.innerHTML = "";
+      try {
+        const contents = await file.text();
+        const response = await fetch("/api/backup/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: contents
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          showFieldErrors(errors, payload.errors || ["Could not restore that file."]);
+          showToast("Restore failed", false);
+          return;
+        }
+        showToast(`Restored ${payload.camerasRestored} camera(s), ${payload.triggerZonesRestored} trigger zone(s)`, true);
+        window.location.reload();
+      } catch {
+        showFieldErrors(errors, ["Network error while restoring."]);
+      } finally {
+        fileInput.value = "";
+      }
+    });
+
+    section.append(header, body);
+    return section;
+  }
+
   function renderLicenseSection() {
     const section = document.createElement("div");
     section.className = "settings-section";
@@ -1038,6 +1140,7 @@ window.GateWatchSettings = (function () {
       for (const schema of SECTIONS) {
         root.appendChild(renderSection(schema, data[schema.key]));
       }
+      root.appendChild(renderBackupSection());
       root.appendChild(renderAuthSection());
       root.appendChild(renderLicenseSection());
       root.appendChild(renderKnownVehiclesSection(data.knownVehicles));

@@ -21,6 +21,11 @@ public interface ICameraStore
     Task<Camera> AddAsync(string name, string streamUrl, string? username, string? password, bool includeAudio, CancellationToken cancellationToken);
     Task<bool> UpdateAsync(Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio, CancellationToken cancellationToken);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken);
+
+    // Unlike AddAsync, preserves the camera's own Id rather than minting a new one - used only
+    // by config restore, so a backed-up trigger zone's CameraId still points at something real
+    // once its camera comes back.
+    Task RestoreAsync(Camera camera, CancellationToken cancellationToken);
 }
 
 public sealed class SqliteCameraStore : ICameraStore, IDisposable
@@ -111,6 +116,28 @@ public sealed class SqliteCameraStore : ICameraStore, IDisposable
         }
 
         return camera;
+    }
+
+    public async Task RestoreAsync(Camera camera, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO Cameras (Id, Name, StreamUrl, Username, Password, IncludeAudio, CreatedAt)
+                VALUES ($id, $name, $streamUrl, $username, $password, $includeAudio, $createdAt)
+                ON CONFLICT(Id) DO UPDATE SET
+                    Name = excluded.Name, StreamUrl = excluded.StreamUrl, Username = excluded.Username,
+                    Password = excluded.Password, IncludeAudio = excluded.IncludeAudio, CreatedAt = excluded.CreatedAt;
+                """;
+            AddParameters(command, camera);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
     }
 
     public async Task<bool> UpdateAsync(Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio, CancellationToken cancellationToken)
