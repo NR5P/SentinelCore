@@ -115,13 +115,16 @@ cd BlueIrisOllamaBridge
 ```
 
 (If you're reading this on the box where it's already deployed, the working copy already
-lives at `/opt/sentinelcore` — just `cd` there and `git pull` for
-updates, covered in [section 11](#11-updating-to-a-new-version).)
+lives at `/opt/sentinelcore` — the repo root holds `.git` plus a
+`core/` folder with all the .NET projects (and a sibling iOS app folder, if present).
+`cd` into `core/` and `git pull` for updates, covered in
+[section 11](#11-updating-to-a-new-version).)
 
 ## 4. Building
 
-From the repository root (not inside either project folder) — this builds all three projects
-(main app, Web, and the test project) in one pass:
+From `core/` (not inside either project folder, and not the repo root - that's shared with
+the iOS app now) — this builds all three .NET projects (main app, Web, and the test
+project) in one pass:
 
 ```bash
 dotnet build -c Release
@@ -238,7 +241,7 @@ Run each in its own terminal. Stop with Ctrl+C.
 
 These are the **exact, working unit files** for this deployment — copy them verbatim, only
 adjusting the user, paths, and `dotnet` location if yours differ from `media` /
-`/opt/sentinelcore`.
+`/opt/sentinelcore/core`.
 
 **`/etc/systemd/system/blueiris-ollama-bridge.service`:**
 
@@ -252,8 +255,8 @@ After=network-online.target ollama.service
 Type=simple
 User=media
 Group=media
-WorkingDirectory=/opt/sentinelcore/BlueIrisOllamaBridge
-ExecStart=/usr/bin/dotnet /opt/sentinelcore/BlueIrisOllamaBridge/bin/Release/net10.0/BlueIrisOllamaBridge.dll
+WorkingDirectory=/opt/sentinelcore/core/BlueIrisOllamaBridge
+ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/BlueIrisOllamaBridge/bin/Release/net10.0/BlueIrisOllamaBridge.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://0.0.0.0:5080
@@ -279,8 +282,8 @@ After=network-online.target blueiris-ollama-bridge.service
 Type=simple
 User=media
 Group=media
-WorkingDirectory=/opt/sentinelcore/BlueIrisOllamaBridge.Web
-ExecStart=/usr/bin/dotnet /opt/sentinelcore/BlueIrisOllamaBridge.Web/bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll
+WorkingDirectory=/opt/sentinelcore/core/BlueIrisOllamaBridge.Web
+ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/BlueIrisOllamaBridge.Web/bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://0.0.0.0:3320
@@ -358,7 +361,7 @@ allowlisted command lines regardless of whether you run `./deploy.sh`, `./deploy
 ## 11. Updating to a new version
 
 ```bash
-cd /opt/sentinelcore
+cd /opt/sentinelcore/core
 git pull
 ./scripts/deploy.sh
 ```

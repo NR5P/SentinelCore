@@ -7,8 +7,8 @@ After=network-online.target blueiris-ollama-bridge.service
 Type=simple
 User=media
 Group=media
-WorkingDirectory=/opt/sentinelcore/BlueIrisOllamaBridge.Web
-ExecStart=/usr/bin/dotnet /opt/sentinelcore/BlueIrisOllamaBridge.Web/bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll
+WorkingDirectory=/opt/sentinelcore/core/BlueIrisOllamaBridge.Web
+ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/BlueIrisOllamaBridge.Web/bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://0.0.0.0:3320
