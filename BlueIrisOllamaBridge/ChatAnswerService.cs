@@ -77,11 +77,20 @@ public sealed class ChatAnswerService
             .OrderBy(e => e.OccurredAt)
             .ToList();
 
+        // Same day-of-week + ISO-date + 24h-time format BuildEventLog uses for each event line -
+        // a small local model asked "did this happen today" has to compare this date against
+        // each log line's date, and it's much more reliable at getting that right when both
+        // sides are the exact same string shape than when it has to parse two different date
+        // formats (confirmed the hard way: with mismatched formats, it once answered about
+        // yesterday's events as if they were today's).
         return $"""
-            You are an assistant for a home security AI camera system called Sentinel Core. The current
-            date and time is {now:dddd, MMMM d, yyyy h:mm tt} ({now:zzz} offset). Answer the user's question
-            using ONLY the event log below, which covers the last {chatOptions.LookbackDays} day(s) up to
-            now. Mention every relevant event in the log, not just the first one. Reply concisely and
+            You are an assistant for a home security AI camera system called Sentinel Core. Today's date
+            and time is {now:dddd yyyy-MM-dd HH:mm} ({now:zzz} offset). Answer the user's question using
+            ONLY the event log below, which covers the last {chatOptions.LookbackDays} day(s) up to now -
+            each line starts with its own date in the same format as today's date above. When the
+            question refers to "today", "yesterday", or a specific day, compare the log line's date
+            against today's date above exactly - don't assume every line in the log happened today.
+            Mention every relevant event in the log, not just the first one. Reply concisely and
             conversationally, no markdown. If the log doesn't contain the answer, say so plainly instead
             of guessing.
 
