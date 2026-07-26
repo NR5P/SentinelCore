@@ -350,8 +350,12 @@ public sealed class TelegramChatOptions
     [Range(1, 60)]
     public int PollTimeoutSeconds { get; init; } = 25;
 
+    // Long enough for a small local model to chew through a full event log plus the app
+    // documentation (now included for every question - see ChatAnswerService) on modest CPU
+    // hardware. A "how do I..." question isn't time-critical the way an alert is, so a longer
+    // wait here is the right tradeoff over cutting the request off early.
     [Range(5, 600)]
-    public int TimeoutSeconds { get; init; } = 60;
+    public int TimeoutSeconds { get; init; } = 180;
 }
 
 public sealed class DailySummaryOptions

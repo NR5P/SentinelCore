@@ -93,6 +93,16 @@ every 30 seconds (or click **refresh** to force it). Each card shows:
 If a card has no image, either `Bridge:SaveImages` is off or the image failed to save; the
 AI's text analysis is still recorded either way.
 
+**Ask a question.** The box above the filters lets you ask in plain English - "what happened
+last night?", "did anyone come to the gate today?", or a how-to/configuration question like
+"how do I turn on quiet hours?". The same local AI that analyzes your alerts answers using
+either your recent event history or this User Guide, whichever the question is actually about -
+never both at once, which keeps answers fast and on-topic. It's the same underlying feature as
+the Telegram bot's chat (Settings → Telegram Chat controls it either way - off there means off
+here too), just usable without a Telegram account. Questions about your cameras answer in
+seconds; how-to/configuration questions read through part of this guide first and can take
+closer to a minute on a modest local machine - both are normal.
+
 **Searching and filtering.** Above the feed is a filter bar:
 
 - A text box that searches the AI's description (e.g. searching "package" finds every event

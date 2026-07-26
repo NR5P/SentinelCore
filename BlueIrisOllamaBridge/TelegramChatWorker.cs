@@ -14,8 +14,7 @@ public sealed class TelegramChatWorker : BackgroundService
     private const string ApiBaseUrl = "https://api.telegram.org";
 
     private readonly HttpClient _httpClient;
-    private readonly IEventStore _eventStore;
-    private readonly IOllamaChatClient _chatClient;
+    private readonly ChatAnswerService _chatAnswerService;
     private readonly IBlueIrisSnapshotClient _snapshotClient;
     private readonly IOptionsMonitor<TelegramOptions> _telegramOptionsMonitor;
     private readonly IOptionsMonitor<TelegramChatOptions> _chatOptionsMonitor;
@@ -23,16 +22,14 @@ public sealed class TelegramChatWorker : BackgroundService
 
     public TelegramChatWorker(
         IHttpClientFactory httpClientFactory,
-        IEventStore eventStore,
-        IOllamaChatClient chatClient,
+        ChatAnswerService chatAnswerService,
         IBlueIrisSnapshotClient snapshotClient,
         IOptionsMonitor<TelegramOptions> telegramOptions,
         IOptionsMonitor<TelegramChatOptions> chatOptions,
         ILogger<TelegramChatWorker> logger)
     {
         _httpClient = httpClientFactory.CreateClient(nameof(TelegramChatWorker));
-        _eventStore = eventStore;
-        _chatClient = chatClient;
+        _chatAnswerService = chatAnswerService;
         _snapshotClient = snapshotClient;
         _telegramOptionsMonitor = telegramOptions;
         _chatOptionsMonitor = chatOptions;
@@ -144,7 +141,7 @@ public sealed class TelegramChatWorker : BackgroundService
                 return;
             }
 
-            var answer = await AnswerQuestionAsync(message.Text, cancellationToken);
+            var answer = await _chatAnswerService.AnswerAsync(message.Text, cancellationToken);
             await SendMessageAsync(answer, cancellationToken);
         }
         catch (Exception ex)
@@ -165,35 +162,6 @@ public sealed class TelegramChatWorker : BackgroundService
         }
 
         await SendPhotoAsync(image, cancellationToken);
-    }
-
-    private async Task<string> AnswerQuestionAsync(string question, CancellationToken cancellationToken)
-    {
-        var chatOptions = _chatOptionsMonitor.CurrentValue;
-        var now = DateTimeOffset.Now;
-        var events = await _eventStore.GetEventsAsync(now.AddDays(-chatOptions.LookbackDays), now, cancellationToken);
-
-        var recent = events
-            .Where(e => string.Equals(e.Status, "completed", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(e => e.OccurredAt)
-            .Take(chatOptions.MaxEventsInContext)
-            .OrderBy(e => e.OccurredAt)
-            .ToList();
-
-        var systemPrompt = $"""
-            You are an assistant for a home security gate-camera system. The current date and time is
-            {now:dddd, MMMM d, yyyy h:mm tt} ({now:zzz} offset). Answer the user's question using ONLY
-            the event log below, which covers the last {chatOptions.LookbackDays} day(s) up to now.
-            Mention every relevant event in the log, not just the first one. Reply like a short text
-            message: concise and conversational, no markdown. If the log doesn't contain the answer,
-            say so plainly instead of guessing.
-
-            Event log:
-            {BuildEventLog(recent)}
-            """;
-
-        var answer = await _chatClient.AskAsync(systemPrompt, question, cancellationToken);
-        return answer.Length > 4000 ? answer[..4000] : answer;
     }
 
     private Task SendMessageAsync(string text, CancellationToken cancellationToken)
