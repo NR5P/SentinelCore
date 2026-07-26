@@ -226,6 +226,23 @@ public sealed class MqttOptions
     public bool OnlyWhenNotificationRecommended { get; init; }
 }
 
+public sealed class HomeKitOptions
+{
+    public const string SectionName = "HomeKit";
+
+    public bool Enabled { get; init; }
+
+    // The HomeKit accessory protocol (pairing crypto, mDNS advertisement) is handled by a small
+    // Node sidecar - see core/homekit-bridge. There's no maintained .NET implementation of HAP,
+    // so this app just pings the sidecar's loopback-only control API and lets it own everything
+    // Apple-specific. If the sidecar isn't running, alerts carry on unaffected.
+    [Required]
+    public string SidecarBaseUrl { get; init; } = "http://127.0.0.1:3321";
+
+    [Range(1, 120)]
+    public int TimeoutSeconds { get; init; } = 10;
+}
+
 public sealed class WebhookOptions
 {
     public const string SectionName = "Webhook";

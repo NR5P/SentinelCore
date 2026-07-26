@@ -697,6 +697,132 @@ window.GateWatchSettings = (function () {
     return section;
   }
 
+  // Custom rather than a generic SECTIONS entry because the useful half of this section isn't
+  // config at all - it's the pairing QR, which comes from the sidecar rather than appsettings.
+  // The config fields themselves still go through buildField/submit like everywhere else.
+  function renderHomeKitSection(data) {
+    data = data || {};
+
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">APPLE HOMEKIT</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "Show your cameras in the Apple Home app and get iPhone notifications when an alert fires. Scan the pairing code below with your iPhone. Live video isn't included - HomeKit only gets motion alerts.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+
+    const fields = [
+      {
+        name: "enabled", label: "enabled", type: "checkbox",
+        tip: "Send a motion alert to Apple Home whenever an alert is worth notifying you about. Needs the HomeKit sidecar service running."
+      },
+      {
+        name: "sidecarBaseUrl", label: "sidecar url", type: "text",
+        tip: "Where the HomeKit sidecar's control API is listening. The default is right unless you changed its port."
+      }
+    ];
+
+    const grid = document.createElement("div");
+    grid.className = "field-grid";
+    for (const field of fields) grid.appendChild(buildField(field, data[field.name]));
+    body.appendChild(grid);
+
+    // --- pairing panel ---
+    const pairing = document.createElement("div");
+    pairing.className = "field-row-wide";
+
+    const status = document.createElement("div");
+    status.className = "settings-hint";
+    status.textContent = "checking HomeKit sidecar…";
+    pairing.appendChild(status);
+
+    const qrWrap = document.createElement("div");
+    qrWrap.className = "homekit-qr";
+    pairing.appendChild(qrWrap);
+
+    body.appendChild(pairing);
+
+    async function refreshStatus() {
+      qrWrap.innerHTML = "";
+      try {
+        const response = await fetch("/api/homekit/status");
+        const payload = await response.json();
+
+        if (!payload.running) {
+          status.textContent = payload.error || "The HomeKit sidecar isn't running.";
+          return;
+        }
+        if (payload.paired) {
+          const names = (payload.accessories || []).join(", ");
+          status.textContent = names
+            ? `paired - sending motion for: ${names}`
+            : "paired - cameras appear here after their first alert.";
+          return;
+        }
+
+        status.textContent = "not paired yet - open the Home app on your iPhone, tap +, then Add Accessory, and scan this code:";
+
+        const img = document.createElement("img");
+        // Cache-busted so re-pairing after a sidecar reset never shows a stale code.
+        img.src = `/api/homekit/qr?t=${Date.now()}`;
+        img.alt = "HomeKit pairing QR code";
+        img.className = "homekit-qr-image";
+        qrWrap.appendChild(img);
+
+        if (payload.pairingCode) {
+          const code = document.createElement("div");
+          code.className = "homekit-pairing-code";
+          // Some people type the code in rather than scanning, and the Home app asks for it
+          // by hand if the camera can't focus on the screen.
+          code.textContent = payload.pairingCode;
+          qrWrap.appendChild(code);
+        }
+      } catch {
+        status.textContent = "could not check the HomeKit sidecar.";
+      }
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "settings-section-footer";
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn";
+    saveBtn.textContent = "save";
+    saveBtn.dataset.tip = "Save this section. Changes take effect immediately - no restart needed.";
+    const errors = document.createElement("ul");
+    errors.className = "field-errors";
+
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "btn";
+    refreshBtn.textContent = "refresh";
+    refreshBtn.dataset.tip = "Re-check the sidecar's pairing status.";
+    refreshBtn.addEventListener("click", () => refreshStatus());
+
+    footer.append(saveBtn, refreshBtn, errors);
+    body.appendChild(footer);
+
+    saveBtn.addEventListener("click", async () => {
+      const payload = {
+        enabled: section.querySelector('[data-field="enabled"]').checked,
+        sidecarBaseUrl: section.querySelector('[data-field="sidecarBaseUrl"]').value,
+        timeoutSeconds: data.timeoutSeconds || 10
+      };
+      await submit("/api/settings/homekit", payload, "Apple HomeKit", errors, saveBtn);
+      await refreshStatus();
+    });
+
+    refreshStatus();
+
+    section.append(header, body);
+    return section;
+  }
+
   function renderLicenseSection() {
     const section = document.createElement("div");
     section.className = "settings-section";
@@ -1140,6 +1266,7 @@ window.GateWatchSettings = (function () {
       for (const schema of SECTIONS) {
         root.appendChild(renderSection(schema, data[schema.key]));
       }
+      root.appendChild(renderHomeKitSection(data.homeKit));
       root.appendChild(renderBackupSection());
       root.appendChild(renderAuthSection());
       root.appendChild(renderLicenseSection());

@@ -9,3 +9,10 @@ data/
 # License signing key material and issued licenses - never belong in the repo.
 *.lic
 *.pem
+
+node_modules/
+
+# HomeKit pairing keys and this bridge's stable identity (its virtual MAC + pincode).
+# Committing these would hand anyone who cloned the repo the ability to impersonate the
+# bridge, and would break every existing iPhone pairing if restored onto another machine.
+homekit-bridge/persist/

@@ -311,15 +311,64 @@ service instead of a test instance and get silently restarted, masking the mista
 testing manually alongside a live install, always track the exact PID you started and kill
 only that PID.
 
+### 8a. The HomeKit sidecar (optional)
+
+Only needed if you want your cameras in Apple's Home app — see
+[USER_GUIDE section 14](USER_GUIDE.md#14-apple-homekit). Skip this entirely otherwise; nothing
+else depends on it.
+
+This one is a small Node.js service rather than .NET. HomeKit speaks HAP (its own pairing
+crypto and mDNS advertisement), and `@homebridge/hap-nodejs` — the library Homebridge itself
+runs on — is the only maintained implementation. It's ~150 lines of glue around that library.
+
+Install Node.js (v22 or newer) and the sidecar's two dependencies:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs
+```
+
+```bash
+cd core/homekit-bridge && npm install
+```
+
+Then install its unit file the same way as the other two:
+
+```bash
+sudo cp core/systemd/blueiris-ollama-bridge-homekit.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now blueiris-ollama-bridge-homekit
+```
+
+Two ports are involved, and they're deliberately different in kind:
+
+- **3321** — the sidecar's control API, which the main app pings when an alert fires. Bound to
+  `127.0.0.1` only. Never open this in the firewall; nothing outside this host should reach it.
+- **51826** — the HomeKit accessory port. This one *must* be reachable from your LAN, because
+  iPhones connect to it directly (mDNS only advertises where to find it). See
+  [section 14](#14-firewall).
+
+mDNS advertisement goes through the system `avahi-daemon` over D-Bus rather than the sidecar
+binding UDP 5353 itself, which avoids fighting avahi for the port. That's why the unit file has
+`After=avahi-daemon.service`. If avahi isn't running on your system, change `MDNSAdvertiser.AVAHI`
+to `MDNSAdvertiser.CIAO` in `index.js` to use the sidecar's own built-in responder instead.
+
+Pairing state and this bridge's stable identity (its virtual MAC and pairing code) live in
+`core/homekit-bridge/persist/`, which is gitignored. **Don't delete it** — doing so unpairs
+every iPhone and generates a new pairing code.
+
 ## 9. The deploy script
 
 `scripts/deploy.sh` automates build → test → restart for whichever service(s) changed:
 
 ```bash
-./scripts/deploy.sh          # build + restart both services
+./scripts/deploy.sh          # build + restart all services
 ./scripts/deploy.sh main     # build + restart only blueiris-ollama-bridge
 ./scripts/deploy.sh web      # build + restart only blueiris-ollama-bridge-web
+./scripts/deploy.sh homekit  # restart only the HomeKit sidecar (Node, nothing to build)
 ```
+
+The HomeKit sidecar is skipped automatically if its unit isn't installed, so `./deploy.sh` works
+unchanged whether or not you're using HomeKit.
 
 It runs (in order): `dotnet build-server shutdown` (safety, see section 4), `dotnet build -c
 Release`, `dotnet test` (set `SKIP_TESTS=1` to skip — not recommended), then the systemd
@@ -344,7 +393,10 @@ Add (replace `media` with your actual deploy user if different):
 ```
 media ALL=(root) NOPASSWD: /usr/bin/systemctl restart blueiris-ollama-bridge
 media ALL=(root) NOPASSWD: /usr/bin/systemctl restart blueiris-ollama-bridge-web
+media ALL=(root) NOPASSWD: /usr/bin/systemctl restart blueiris-ollama-bridge-homekit
 ```
+
+(The third line is only needed if you installed the optional HomeKit sidecar — see section 8a.)
 
 `visudo` validates the syntax before saving, so a typo can't lock out `sudo` entirely. Verify
 it took effect:
@@ -431,6 +483,16 @@ sudo ufw allow from 192.168.50.0/24 to any port 1883 proto tcp
 Not needed if you're pointing this app at a broker that already exists elsewhere (e.g. Home
 Assistant's own Mosquitto add-on) - only the outbound connection from this app to that broker
 matters then, and outbound connections aren't affected by `ufw`'s default incoming-only rules.
+
+If you installed the HomeKit sidecar (section 8a), open its accessory port so iPhones on your
+LAN can reach it — they connect to it directly, mDNS only tells them where to look:
+
+```bash
+sudo ufw allow from 192.168.50.0/24 to any port 51826 proto tcp
+```
+
+Do **not** open 3321. That's the sidecar's control API, bound to `127.0.0.1` and meant only for
+the main app on this same host.
 
 ## 15. Troubleshooting
 

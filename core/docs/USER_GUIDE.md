@@ -19,11 +19,12 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 11. [The Telegram bot](#11-the-telegram-bot)
 12. [Email](#12-email)
 13. [MQTT & Home Assistant](#13-mqtt--home-assistant)
-14. [Why didn't I get an alert? (rate limiting & suppression, explained)](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
-15. [Self-monitoring](#15-self-monitoring)
-16. [Bug reports](#16-bug-reports)
-17. [Where your data lives](#17-where-your-data-lives)
-18. [Troubleshooting](#18-troubleshooting)
+14. [Apple HomeKit](#14-apple-homekit)
+15. [Why didn't I get an alert? (rate limiting & suppression, explained)](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
+16. [Self-monitoring](#16-self-monitoring)
+17. [Bug reports](#17-bug-reports)
+18. [Where your data lives](#18-where-your-data-lives)
+19. [Troubleshooting](#19-troubleshooting)
 
 ---
 
@@ -199,20 +200,23 @@ this guide mostly mirrors:
   back it looks, how many events it considers, and which Ollama model answers.
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
-- **Self-Monitoring** — watches the bridge's own health; see [section 15](#15-self-monitoring).
+- **Self-Monitoring** — watches the bridge's own health; see [section 16](#16-self-monitoring).
 - **Bug Reports** — emails the developer when something breaks internally. See
-  [section 16](#16-bug-reports).
+  [section 17](#17-bug-reports).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must
   be before Email or Telegram will still ping you. It never fully mutes either channel — a
   confident detection still alerts you at 3am — and it has no effect on the Feed, the daily
   digest, or self-monitoring, which all keep working exactly as normal. See
-  [section 14](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
+  [section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
   fits with the other rate-limiting layers.
 - **Known Vehicles** — the list a transcribed license plate is checked against. Its own
   section below. See [section 10](#10-license-plate-recognition--known-vehicles).
 - **MQTT / Home Assistant** — publishes events over MQTT with Home Assistant auto-discovery,
   optionally using this app as its own broker. Its own section below. See
   [section 13](#13-mqtt--home-assistant).
+- **Apple HomeKit** — shows your cameras in Apple's Home app as motion sensors, for native
+  iPhone notifications. Shows the pairing QR code here. Its own section below. See
+  [section 14](#14-apple-homekit).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
 - **Backup** — exports everything on this list (plus cameras and trigger zones) as one JSON
   file, and restores from a previous export. Includes secrets, so treat the downloaded file
@@ -313,7 +317,7 @@ starter profiles. That `gate` name specifically also gets one extra behavior: wh
 reports the gate as closed, a person or vehicle that's clearly still on the inside/camera side
 won't trigger a notification just for being there — but someone on the outside/road side, an
 active delivery, a newly-left package, or an animal still will. See
-[section 14](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
+[section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for the full
 explanation.
 
 **Adding your own profile:** click **+ add profile**, fill in a Name and at least one
@@ -415,9 +419,53 @@ alert-worthy ones) — turn on **Only When Notification Recommended** if you'd r
 Assistant only hear about the same events Email/Telegram would alert on. Either way, MQTT
 publishing never affects whether Email/Telegram/the Feed treat an event as alert-worthy — it's
 purely an additional output, not another suppression layer. See
-[section 14](#14-why-didnt-i-get-an-alert-rate-limiting--suppression-explained).
+[section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained).
 
-## 14. Why didn't I get an alert? (rate limiting & suppression, explained)
+## 14. Apple HomeKit
+
+Off by default. When enabled, each camera appears in Apple's **Home** app as a motion sensor,
+so your iPhone gets a native notification the moment an alert-worthy event happens — no
+Telegram account, no email, and no Home Assistant in between.
+
+**What you get, and what you don't.** This is alerts only. Live video *through* HomeKit isn't
+included: Apple gates camera streaming behind HomeKit Secure Video, which requires a paid MFi
+licence. Watching your cameras live still works exactly as it always has, in the dashboard's
+LIVE tab. Everything else about HomeKit — notifications, automations triggered by motion,
+seeing which camera fired — works normally.
+
+**Setting it up.** HomeKit needs a small companion service (the "sidecar") running alongside
+the app; see [DEPLOYMENT.md](DEPLOYMENT.md) for the one-time install. Once it's running:
+
+1. Open **SETTINGS → APPLE HOMEKIT** in the dashboard and turn **enabled** on, then **save**.
+2. A QR code appears, with the numeric pairing code beneath it.
+3. On your iPhone, open **Home** → **+** → **Add Accessory**, and scan the code. (If the
+   camera won't focus on your screen, tap "More options…" and type the numeric code instead.)
+4. Sentinel Core appears as a bridge, with a motion sensor for each camera.
+
+**Cameras appear as they're seen.** A camera only shows up in Home after its first alert-worthy
+event — there's no list to configure. That means a brand-new setup starts empty and fills in
+naturally over the first day or two. Each camera keeps its identity across restarts, so once
+it's appeared it stays put and your automations keep working.
+
+**What triggers a notification.** Only events that would also have alerted Email/Telegram —
+the same judgement described in
+[section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained). Raw
+trigger-zone motion does *not* fire HomeKit on its own; if it did, every passing car and moving
+shadow would become a push notification. The sensor stays "detected" for 10 seconds and then
+resets, which is what Home uses to decide a notification is warranted.
+
+To get notified, make sure notifications are enabled for the accessory in the Home app itself
+(tap the sensor → settings → **Status and Notifications**) — Apple keeps that switch on the
+phone, not here.
+
+**If the sidecar isn't running**, the settings section says so plainly and nothing else breaks:
+alerts keep flowing to email, Telegram, MQTT and the Feed exactly as before. HomeKit is purely
+an additional output, never a suppression layer.
+
+**To unpair**, remove the bridge from the Home app on your iPhone. Turning **enabled** off here
+just stops sending motion; it doesn't undo the pairing.
+
+## 15. Why didn't I get an alert? (rate limiting & suppression, explained)
 
 There are several independent layers that can each suppress a notification. If something
 didn't alert when you expected it to, it's almost always one of these:
@@ -460,7 +508,7 @@ Note that license plate recognition ([section 10](#10-license-plate-recognition-
 is *not* in this list on purpose — a known or unknown plate never suppresses or forces an
 alert, it only annotates one that was already going to fire.
 
-## 15. Self-monitoring
+## 16. Self-monitoring
 
 Watches for the two ways the bridge can silently stop protecting you: Ollama becoming
 unreachable, or the alert queue backing up faster than it's processed. It only messages you
@@ -469,7 +517,7 @@ momentary blip doesn't page you, but real degradation gets caught before you'd o
 notice by just... not getting alerts. It also tells you when things recover, if
 **Notify On Recovery** is on.
 
-## 16. Bug reports
+## 17. Bug reports
 
 Off by default. When enabled, both the bridge and the dashboard automatically email a
 developer address (fixed, not something you set) whenever something in the code hits an
@@ -483,7 +531,7 @@ mail setup for this, and if Email isn't configured, bug reports simply can't sen
 else breaks). A repeating error only emails once per hour rather than once per occurrence, so a
 persistent issue doesn't flood the inbox.
 
-## 17. Where your data lives
+## 18. Where your data lives
 
 - `BlueIrisOllamaBridge/data/images/YYYY-MM-DD/` — saved Blue Iris alert snapshots (if
   **Save Images** is on)
@@ -491,11 +539,14 @@ persistent issue doesn't flood the inbox.
 - `BlueIrisOllamaBridge.Web/data/cameras.db` — your added cameras
 - `BlueIrisOllamaBridge.Web/data/triggers.db` — trigger zone configs and trigger events
 - Recorded clips live alongside the trigger event data
+- `homekit-bridge/persist/` — HomeKit pairing keys and this bridge's identity, if you're using
+  HomeKit. Deleting it unpairs every iPhone and forces re-pairing with a new code, so it's
+  worth keeping if you ever move the install to another machine.
 
 Retention cleanup runs automatically according to **Retention Days** in Bridge settings; it
 removes old images but not the `events.db` history rows themselves.
 
-## 18. Troubleshooting
+## 19. Troubleshooting
 
 **A setting I just changed doesn't seem to be doing anything (Cameras/Triggers).** Zone and
 camera config changes are picked up within about ten seconds of saving — give it a moment,

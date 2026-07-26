@@ -22,6 +22,7 @@ public sealed record SettingsSnapshot(
     QuietHoursSettingsDto? QuietHours,
     List<KnownVehicle>? KnownVehicles,
     MqttSettingsDto? Mqtt,
+    HomeKitSettingsDto? HomeKit,
     BugReportSettingsDto? BugReports,
     WebhookSettingsDto? Webhook);
 
@@ -113,6 +114,13 @@ public static class SettingsEndpoints
                     extra.Add("Broker Host is required when not running the embedded broker.");
             }));
 
+        app.MapPut("/api/settings/homekit", async (HomeKitSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, settings, "HomeKit", ct, extra =>
+            {
+                if (dto.Enabled && !Uri.TryCreate(dto.SidecarBaseUrl, UriKind.Absolute, out _))
+                    extra.Add("Sidecar Base Url must be a valid absolute URL when HomeKit is enabled.");
+            }));
+
         app.MapPut("/api/settings/bug-reports", async (BugReportSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "BugReports", ct));
 
@@ -183,6 +191,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", cancellationToken),
         await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", cancellationToken) ?? [],
         await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", cancellationToken),
+        await settings.GetSectionAsync<HomeKitSettingsDto>("HomeKit", cancellationToken),
         await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", cancellationToken),
         await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", cancellationToken));
 
@@ -208,6 +217,7 @@ public static class SettingsEndpoints
         if (snapshot.QuietHours is not null) await settings.MergeSectionAsync("QuietHours", snapshot.QuietHours, cancellationToken);
         if (snapshot.KnownVehicles is not null) await settings.ReplaceSectionAsync("KnownVehicles", snapshot.KnownVehicles, cancellationToken);
         if (snapshot.Mqtt is not null) await settings.MergeSectionAsync("Mqtt", snapshot.Mqtt, cancellationToken);
+        if (snapshot.HomeKit is not null) await settings.MergeSectionAsync("HomeKit", snapshot.HomeKit, cancellationToken);
         if (snapshot.BugReports is not null) await settings.MergeSectionAsync("BugReports", snapshot.BugReports, cancellationToken);
         if (snapshot.Webhook is not null) await settings.MergeSectionAsync("Webhook", snapshot.Webhook, cancellationToken);
     }
