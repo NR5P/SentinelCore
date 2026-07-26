@@ -32,15 +32,29 @@ public static class LicenseStatus
 
         try
         {
-            using var publicKey = RSA.Create();
-            publicKey.ImportFromPem(PublicKeyPem);
-            var contents = File.ReadAllText(licenseFilePath);
-            return LicenseVerifier.Verify(contents, publicKey);
+            return Verify(File.ReadAllText(licenseFilePath));
         }
         catch
         {
-            // A placeholder/malformed embedded public key, or a file that can't be read, is
-            // just "no valid license" - never a startup crash over licensing.
+            // A file that exists but can't be read (permissions, encoding, ...) is just "no
+            // valid license" - never a startup crash over licensing.
+            return null;
+        }
+    }
+
+    // Verifies raw .lic contents directly - used before writing an uploaded file to disk, so a
+    // garbled upload never overwrites a license that was already working.
+    public static LicenseInfo? Verify(string licenseFileContents)
+    {
+        try
+        {
+            using var publicKey = RSA.Create();
+            publicKey.ImportFromPem(PublicKeyPem);
+            return LicenseVerifier.Verify(licenseFileContents, publicKey);
+        }
+        catch
+        {
+            // A placeholder/malformed embedded public key is also just "no valid license".
             return null;
         }
     }

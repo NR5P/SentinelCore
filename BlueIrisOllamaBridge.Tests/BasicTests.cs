@@ -1217,6 +1217,15 @@ public sealed class BasicTests
         Assert.Null(LicenseStatus.Check(missingPath));
     }
 
+    [Fact]
+    public void LicenseStatus_Verify_ReturnsNullForContentNotSignedByTheEmbeddedKey()
+    {
+        // LicenseStatus always verifies against the real embedded production public key, so this
+        // can only exercise the "doesn't verify" path - a genuine round trip needs the matching
+        // private key, which never touches this repo.
+        Assert.Null(LicenseStatus.Verify("not a license file"));
+    }
+
     private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment
     {
         public string ApplicationName { get; set; } = "Tests";
