@@ -350,12 +350,14 @@ public sealed class TelegramChatOptions
     [Range(1, 60)]
     public int PollTimeoutSeconds { get; init; } = 25;
 
-    // Long enough for a small local model to chew through a full event log plus the app
-    // documentation (now included for every question - see ChatAnswerService) on modest CPU
-    // hardware. A "how do I..." question isn't time-critical the way an alert is, so a longer
-    // wait here is the right tradeoff over cutting the request off early.
+    // Long enough for a small local model to chew through a full event log (up to
+    // MaxEventsInContext lines) or a documentation excerpt on modest CPU hardware - confirmed
+    // against a real, actively-used camera with ~90 events in its 3-day lookback window that
+    // 180s wasn't always enough. A "how do I..." or "what happened" question isn't time-critical
+    // the way an alert is, so a longer wait here is the right tradeoff over cutting the request
+    // off early - matches OllamaOptions.RequestTimeoutSeconds' own default for the same reason.
     [Range(5, 600)]
-    public int TimeoutSeconds { get; init; } = 180;
+    public int TimeoutSeconds { get; init; } = 300;
 }
 
 public sealed class DailySummaryOptions
