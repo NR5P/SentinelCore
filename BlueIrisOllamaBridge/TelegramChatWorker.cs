@@ -221,8 +221,13 @@ public sealed class TelegramChatWorker : BackgroundService
         var log = new StringBuilder();
         foreach (var e in events)
         {
+            // Same day-of-week + ISO-date + 24h-time format the chat system prompt uses for
+            // "today's date" (see ChatAnswerService) - a small local model comparing "did this
+            // happen today" against two differently-formatted dates (e.g. this line's old
+            // "7/25/2026 1:43 PM" against a prompt's "Sunday, July 26, 2026") is prone to
+            // getting the day wrong; matching formats turns it into a direct string comparison.
             log.Append(
-                $"{e.OccurredAt:g} | {e.Camera} | {e.EventType ?? "unknown"} | notified={(e.NotificationRecommended == true ? "yes" : "no")} | {e.Summary}\n");
+                $"{e.OccurredAt:dddd yyyy-MM-dd HH:mm} | {e.Camera} | {e.EventType ?? "unknown"} | notified={(e.NotificationRecommended == true ? "yes" : "no")} | {e.Summary}\n");
         }
 
         return log.ToString();
