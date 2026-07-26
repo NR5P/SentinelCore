@@ -40,15 +40,21 @@ builder.Services.AddSingleton<IBugReportSender, WebBugReportSender>();
 builder.Services.AddSingleton<ILoggerProvider>(sp =>
     new BugReportLoggerProvider("BlueIrisOllamaBridge.Web", sp));
 
+// Optional dashboard login - see AuthGateMiddleware. In-memory only, so a redeploy/restart
+// (this project is deployed by rebuilding in-place, not by publish) logs everyone out.
+builder.Services.AddSingleton<SessionStore>();
+
 var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseMiddleware<AuthGateMiddleware>();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
 app.MapTriggerEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();
+app.MapAuthEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 

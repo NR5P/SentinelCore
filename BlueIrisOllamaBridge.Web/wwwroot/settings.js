@@ -675,6 +675,172 @@ window.GateWatchSettings = (function () {
     return section;
   }
 
+  function renderAuthSection() {
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">LOGIN</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "Require a username and password to open this dashboard. Off by default - anyone who can reach this network can otherwise use it freely.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+
+    const status = document.createElement("div");
+    status.className = "settings-hint";
+    status.textContent = "checking login status…";
+    body.appendChild(status);
+
+    const formWrap = document.createElement("div");
+    body.appendChild(formWrap);
+
+    const errors = document.createElement("ul");
+    errors.className = "field-errors";
+    body.appendChild(errors);
+
+    function renderEnableForm() {
+      formWrap.innerHTML = `
+        <div class="field-row field-row-wide">
+          <label class="field-label">Username</label>
+          <input type="text" class="field-input" id="auth-new-username" autocomplete="username" />
+        </div>
+        <div class="field-row field-row-wide">
+          <label class="field-label">Password</label>
+          <input type="password" class="field-input" id="auth-new-password" autocomplete="new-password" />
+        </div>
+        <div class="field-row field-row-wide">
+          <label class="field-label">Confirm Password</label>
+          <input type="password" class="field-input" id="auth-new-confirm" autocomplete="new-password" />
+        </div>
+        <button class="btn" id="auth-enable-btn">require login</button>`;
+
+      document.getElementById("auth-enable-btn").addEventListener("click", async () => {
+        errors.innerHTML = "";
+        const username = document.getElementById("auth-new-username").value.trim();
+        const password = document.getElementById("auth-new-password").value;
+        const confirmPassword = document.getElementById("auth-new-confirm").value;
+        if (password !== confirmPassword) {
+          showFieldErrors(errors, ["Passwords do not match."]);
+          return;
+        }
+        try {
+          const response = await fetch("/api/auth/enable", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            showFieldErrors(errors, payload.errors || ["Could not enable login."]);
+            showToast("Login not enabled", false);
+            return;
+          }
+          showToast("Login required", true);
+          window.GateWatchAuth.check();
+          await refreshStatus();
+        } catch {
+          showFieldErrors(errors, ["Network error while saving."]);
+        }
+      });
+    }
+
+    function renderChangeForm(currentUsername) {
+      formWrap.innerHTML = `
+        <div class="field-row field-row-wide">
+          <label class="field-label">Current Password</label>
+          <input type="password" class="field-input" id="auth-current-password" autocomplete="current-password" />
+        </div>
+        <div class="field-row field-row-wide">
+          <label class="field-label">Username</label>
+          <input type="text" class="field-input" id="auth-username" value="${escapeHtml(currentUsername)}" autocomplete="username" />
+        </div>
+        <div class="field-row field-row-wide">
+          <label class="field-label">New Password (leave blank to keep current)</label>
+          <input type="password" class="field-input" id="auth-password" autocomplete="new-password" />
+        </div>
+        <div class="field-row field-row-wide">
+          <label class="field-label">Confirm New Password</label>
+          <input type="password" class="field-input" id="auth-confirm" autocomplete="new-password" />
+        </div>
+        <div class="settings-section-footer">
+          <button class="btn" id="auth-update-btn">save</button>
+          <button class="btn" id="auth-disable-btn">turn off login</button>
+        </div>`;
+
+      document.getElementById("auth-update-btn").addEventListener("click", async () => {
+        errors.innerHTML = "";
+        const currentPassword = document.getElementById("auth-current-password").value;
+        const newUsername = document.getElementById("auth-username").value.trim();
+        const newPassword = document.getElementById("auth-password").value;
+        const confirmNewPassword = document.getElementById("auth-confirm").value;
+        if (newPassword !== confirmNewPassword) {
+          showFieldErrors(errors, ["Passwords do not match."]);
+          return;
+        }
+        try {
+          const response = await fetch("/api/auth/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ currentPassword, newUsername, newPassword: newPassword || null })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            showFieldErrors(errors, payload.errors || ["Could not save."]);
+            showToast("Not saved", false);
+            return;
+          }
+          showToast("Login updated", true);
+          await refreshStatus();
+        } catch {
+          showFieldErrors(errors, ["Network error while saving."]);
+        }
+      });
+
+      document.getElementById("auth-disable-btn").addEventListener("click", async () => {
+        if (!confirm("Turn off login? Anyone on the network will then have full access to this dashboard.")) return;
+        try {
+          const response = await fetch("/api/auth/disable", { method: "POST" });
+          if (!response.ok) {
+            showToast("Could not turn off login", false);
+            return;
+          }
+          showToast("Login turned off", true);
+          window.GateWatchAuth.check();
+          await refreshStatus();
+        } catch {
+          showFieldErrors(errors, ["Network error while saving."]);
+        }
+      });
+    }
+
+    async function refreshStatus() {
+      errors.innerHTML = "";
+      try {
+        const response = await fetch("/api/auth/status");
+        const payload = await response.json();
+        if (payload.enabled) {
+          status.textContent = "login is required to open this dashboard.";
+          renderChangeForm(payload.username || "");
+        } else {
+          status.textContent = "no login required - open to anyone on the network.";
+          renderEnableForm();
+        }
+      } catch {
+        status.textContent = "could not check login status.";
+      }
+    }
+
+    refreshStatus();
+
+    section.append(header, body);
+    return section;
+  }
+
   function renderKnownVehiclesSection(vehicles) {
     const section = document.createElement("div");
     section.className = "settings-section";
@@ -872,6 +1038,7 @@ window.GateWatchSettings = (function () {
       for (const schema of SECTIONS) {
         root.appendChild(renderSection(schema, data[schema.key]));
       }
+      root.appendChild(renderAuthSection());
       root.appendChild(renderLicenseSection());
       root.appendChild(renderKnownVehiclesSection(data.knownVehicles));
       root.appendChild(renderPromptProfilesSection(data.promptProfiles));

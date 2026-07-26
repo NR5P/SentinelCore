@@ -167,6 +167,10 @@ body.unlicensed .live-tile::after {
   box-shadow: 0 0 10px var(--red);
 }
 
+#logout-btn.hidden {
+  display: none;
+}
+
 main {
   max-width: 1200px;
   margin: 0 auto;

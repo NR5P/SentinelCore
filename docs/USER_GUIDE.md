@@ -47,8 +47,9 @@ turn that on for a given camera's trigger zone. See [section 6](#6-the-triggers-
 
 ## 2. Opening the dashboard
 
-Point a browser at `http://<your-server's-LAN-IP>:3320`. There's no login — it's designed for
-LAN-only use, so don't expose port 3320 (or 5080) to the internet.
+Point a browser at `http://<your-server's-LAN-IP>:3320`. There's no login by default — it's
+designed for LAN-only use, so don't expose port 3320 (or 5080) to the internet unless you've
+turned on the login (see below) and put it behind HTTPS yourself.
 
 Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") showing
 whether the dashboard can currently reach its own backend, and five tabs: **feed**, **live**,
@@ -57,9 +58,18 @@ whether the dashboard can currently reach its own backend, and five tabs: **feed
 The first time you open the dashboard (or after clicking **Re-Run Setup Wizard** in
 Settings → Bridge), a short setup wizard walks through the essentials instead: an API key for
 Blue Iris (generated for you automatically), which AI backend analyzes snapshots, adding at
-least one camera, and optional notifications. Every step past the welcome screen can be
-skipped, and everything it touches can also be changed later in SETTINGS - nothing about it is
-one-way or final.
+least one camera, optional notifications, and whether to require a login. Every step past the
+welcome screen can be skipped, and everything it touches can also be changed later in SETTINGS
+- nothing about it is one-way or final.
+
+**Requiring a login.** Off by default - if this dashboard never leaves your own network, there's
+nothing to set up. If it might ever be reachable elsewhere, turn it on either during setup or
+later in SETTINGS → LOGIN, with a username and password. Once on, opening the dashboard shows a
+sign-in screen instead of your data. Signing out, changing the username/password, or turning it
+back off again are all in SETTINGS → LOGIN too. There's a short lockout after repeated wrong
+attempts from the same device. Signing in issues a session that's remembered for 30 days, but
+note that it lives only in the server's memory - restarting the service (which happens on every
+update) signs everyone out.
 
 If a purchased install is missing its `license.lic` file (or it's been altered), a thin amber
 notice appears under the top bar, and an "UNLICENSED" watermark appears across snapshot images,

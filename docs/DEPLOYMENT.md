@@ -183,9 +183,15 @@ the wizard doesn't cover or if you'd rather edit the file directly.
    small notice but every feature keeps working regardless - this is visibility, not a
    functional lock. See `LicenseGenerator/README.md` if you're the one issuing licenses rather
    than installing a purchased copy.
+7. Optionally require a login for the dashboard under `Auth` (`Enabled`/`Username`/
+   `PasswordHash`) - off by default, matching every install before this feature existed. The
+   setup wizard and Settings → LOGIN are the supported way to turn this on (they handle
+   hashing); there's no supported way to set `PasswordHash` by hand.
 
 Do not expose port 5080 to the internet. The API key is LAN authentication, not a substitute
-for TLS on an untrusted network.
+for TLS on an untrusted network. The same applies to port 3320/the dashboard login - it's a
+username/password over plain HTTP unless you put a TLS-terminating reverse proxy in front of
+it yourself.
 
 ### Web dashboard — `BlueIrisOllamaBridge.Web/appsettings.json`
 

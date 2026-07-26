@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BlueIrisOllamaBridge.Licensing;
+using BlueIrisOllamaBridge.Web;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -1224,6 +1225,81 @@ public sealed class BasicTests
         // can only exercise the "doesn't verify" path - a genuine round trip needs the matching
         // private key, which never touches this repo.
         Assert.Null(LicenseStatus.Verify("not a license file"));
+    }
+
+    [Fact]
+    public void PasswordHasher_Verify_AcceptsTheCorrectPassword()
+    {
+        var stored = PasswordHasher.Hash("correct horse battery staple");
+
+        Assert.True(PasswordHasher.Verify("correct horse battery staple", stored));
+    }
+
+    [Fact]
+    public void PasswordHasher_Verify_RejectsTheWrongPassword()
+    {
+        var stored = PasswordHasher.Hash("correct horse battery staple");
+
+        Assert.False(PasswordHasher.Verify("wrong password", stored));
+    }
+
+    [Fact]
+    public void PasswordHasher_Hash_ProducesADifferentStoredValueEachTime()
+    {
+        // Different random salts each call - two hashes of the same password should never be
+        // byte-identical, even though both verify correctly against that same password.
+        var first = PasswordHasher.Hash("correct horse battery staple");
+        var second = PasswordHasher.Hash("correct horse battery staple");
+
+        Assert.NotEqual(first, second);
+        Assert.True(PasswordHasher.Verify("correct horse battery staple", first));
+        Assert.True(PasswordHasher.Verify("correct horse battery staple", second));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not a hash at all")]
+    [InlineData("PBKDF2.SHA256.not-a-number.c2FsdA==.aGFzaA==")]
+    [InlineData("PBKDF2.SHA256.210000.not-valid-base64!!!.aGFzaA==")]
+    public void PasswordHasher_Verify_ReturnsFalseRatherThanThrowing_ForMalformedStoredHash(string malformed)
+    {
+        Assert.False(PasswordHasher.Verify("anything", malformed));
+    }
+
+    [Fact]
+    public void SessionStore_CreatedSession_ValidatesUntilInvalidated()
+    {
+        var sessions = new SessionStore();
+        var token = sessions.CreateSession();
+
+        Assert.True(sessions.Validate(token));
+
+        sessions.Invalidate(token);
+
+        Assert.False(sessions.Validate(token));
+    }
+
+    [Fact]
+    public void SessionStore_Validate_RejectsAnUnknownToken()
+    {
+        var sessions = new SessionStore();
+
+        Assert.False(sessions.Validate("this-token-was-never-issued"));
+        Assert.False(sessions.Validate(null));
+        Assert.False(sessions.Validate(""));
+    }
+
+    [Fact]
+    public void SessionStore_InvalidateAll_ClearsEverySession()
+    {
+        var sessions = new SessionStore();
+        var first = sessions.CreateSession();
+        var second = sessions.CreateSession();
+
+        sessions.InvalidateAll();
+
+        Assert.False(sessions.Validate(first));
+        Assert.False(sessions.Validate(second));
     }
 
     private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment

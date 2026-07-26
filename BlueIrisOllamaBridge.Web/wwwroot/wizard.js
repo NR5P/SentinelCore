@@ -264,6 +264,77 @@ window.GateWatchWizard = (function () {
       }
     },
     {
+      id: "login",
+      title: "DASHBOARD LOGIN",
+      skippable: true,
+      async render() {
+        bodyEl.innerHTML = `<p>Checking&hellip;</p>`;
+        try {
+          const response = await fetch("/api/auth/status");
+          const payload = await response.json();
+          if (payload.enabled) {
+            bodyEl.innerHTML = `<p>A login is already required for this dashboard. Change the
+              username/password or turn it off anytime in SETTINGS.</p>`;
+            return;
+          }
+        } catch {
+          // Fall through to the normal form - if the status check itself failed, offering to
+          // set one up (rather than silently skipping) is the safer default.
+        }
+
+        bodyEl.innerHTML = `
+          <p>Require a username and password to open this dashboard? Worth it if it might ever
+          be reachable outside your own network - skip this if it's staying LAN-only.</p>
+          <div class="field-row field-row-wide">
+            <label class="field-label">Username</label>
+            <input type="text" id="wizard-auth-username" class="field-input" autocomplete="username" />
+          </div>
+          <div class="field-row field-row-wide">
+            <label class="field-label">Password</label>
+            <input type="password" id="wizard-auth-password" class="field-input" autocomplete="new-password" />
+          </div>
+          <div class="field-row field-row-wide">
+            <label class="field-label">Confirm Password</label>
+            <input type="password" id="wizard-auth-confirm" class="field-input" autocomplete="new-password" />
+          </div>`;
+      },
+      async onNext() {
+        const usernameInput = document.getElementById("wizard-auth-username");
+        // Either already configured (nothing rendered to submit) or the status check failed
+        // and this is just the informational branch - either way, nothing to do.
+        if (!usernameInput) return true;
+
+        const username = usernameInput.value.trim();
+        const password = document.getElementById("wizard-auth-password").value;
+        const confirm = document.getElementById("wizard-auth-confirm").value;
+
+        // Nothing entered - same as skip, login stays off.
+        if (!username && !password) return true;
+
+        if (password !== confirm) {
+          showErrors(["Passwords do not match."]);
+          return false;
+        }
+
+        try {
+          const response = await fetch("/api/auth/enable", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            showErrors(payload.errors || ["Could not enable login."]);
+            return false;
+          }
+          return true;
+        } catch {
+          showErrors(["Network error while enabling login."]);
+          return false;
+        }
+      }
+    },
+    {
       id: "finish",
       title: "FINISH",
       render() {
