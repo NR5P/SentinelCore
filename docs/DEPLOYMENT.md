@@ -150,9 +150,16 @@ This is fast (well under a second of actual test time) and worth running before 
 
 ## 6. First-time configuration
 
+The dashboard's own setup wizard (opens automatically on first visit once both services are
+running - see [USER_GUIDE.md § Opening the dashboard](USER_GUIDE.md#2-opening-the-dashboard))
+covers the essentials below - API key, vision backend, a camera, notifications - without
+hand-editing `appsettings.json`. The walkthrough here is the manual/advanced path, for anything
+the wizard doesn't cover or if you'd rather edit the file directly.
+
 ### Main app — `BlueIrisOllamaBridge/appsettings.json`
 
-1. **Generate and set a real API key** (Blue Iris authenticates with this):
+1. **Generate and set a real API key** (Blue Iris authenticates with this) - the setup wizard
+   does this step for you automatically; only do it by hand if you're skipping the wizard:
    ```bash
    openssl rand -hex 32
    ```

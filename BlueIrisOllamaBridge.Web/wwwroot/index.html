@@ -203,9 +203,26 @@
     </div>
   </div>
 
+  <div id="setup-wizard" class="lightbox hidden">
+    <div class="zone-editor-panel wizard-panel">
+      <div class="zone-editor-header">
+        <span id="wizard-title">SETUP</span>
+        <span id="wizard-step-count" class="event-count"></span>
+      </div>
+      <div id="wizard-body" class="wizard-body"></div>
+      <div class="zone-editor-footer">
+        <button id="wizard-back-btn" class="btn">back</button>
+        <button id="wizard-skip-btn" class="btn">skip</button>
+        <button id="wizard-next-btn" class="btn">next</button>
+        <ul class="field-errors" id="wizard-errors"></ul>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/hls.min.js"></script>
+  <script src="wizard.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
   <script src="cameras.js"></script>

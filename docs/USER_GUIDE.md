@@ -54,6 +54,13 @@ Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") 
 whether the dashboard can currently reach its own backend, and five tabs: **feed**, **live**,
 **cameras**, **triggers**, **settings**.
 
+The first time you open the dashboard (or after clicking **Re-Run Setup Wizard** in
+Settings → Bridge), a short setup wizard walks through the essentials instead: an API key for
+Blue Iris (generated for you automatically), which AI backend analyzes snapshots, adding at
+least one camera, and optional notifications. Every step past the welcome screen can be
+skipped, and everything it touches can also be changed later in SETTINGS - nothing about it is
+one-way or final.
+
 ## 3. The FEED tab — Blue Iris alerts
 
 This is the history of everything Blue Iris has sent over, newest first, refreshing itself
