@@ -9,7 +9,7 @@ namespace BlueIrisOllamaBridge.Web;
 // write (PUT /api/settings/homekit), and unpairing is done from the Home app on the phone.
 public static class HomeKitEndpoints
 {
-    private sealed record HomeKitStatus(bool Paired, string[] Accessories, string? PairingCode);
+    private sealed record HomeKitStatus(bool Enabled, bool Published, bool Paired, string[] Accessories, string? PairingCode);
 
     public static void MapHomeKitEndpoints(this WebApplication app)
     {
@@ -35,6 +35,11 @@ public static class HomeKitEndpoints
                 return Results.Ok(new
                 {
                     running = true,
+                    // The sidecar runs for everyone but only advertises to the network once
+                    // HomeKit is switched on, so "running" and "published" are different things
+                    // and the UI needs both to say something useful.
+                    enabled = status?.Enabled ?? false,
+                    published = status?.Published ?? false,
                     paired = status?.Paired ?? false,
                     accessories = status?.Accessories ?? [],
                     pairingCode = status?.PairingCode

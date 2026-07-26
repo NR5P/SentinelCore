@@ -111,7 +111,7 @@ ollama pull gemma3:4b
 
 ```bash
 git clone <your-repo-url> BlueIrisOllamaBridge
-cd BlueIrisOllamaBridge
+cd BlueIrisOllamaBridge/core
 ```
 
 (If you're reading this on the box where it's already deployed, the working copy already
@@ -119,6 +119,10 @@ lives at `/opt/sentinelcore` — the repo root holds `.git` plus a
 `core/` folder with all the .NET projects (and a sibling iOS app folder, if present).
 `cd` into `core/` and `git pull` for updates, covered in
 [section 11](#11-updating-to-a-new-version).)
+
+**If you just want it running**, skip ahead to [section 8](#8-installing-as-systemd-services)
+and run `./scripts/install-linux.sh` — it does the build, tests, service install and startup in
+one go. Sections 4 through 7 are for understanding the pieces or running them by hand.
 
 ## 4. Building
 
@@ -239,9 +243,32 @@ Run each in its own terminal. Stop with Ctrl+C.
 
 ## 8. Installing as systemd services
 
-These are the **exact, working unit files** for this deployment — copy them verbatim, only
-adjusting the user, paths, and `dotnet` location if yours differ from `media` /
-`/opt/sentinelcore/core`.
+**The short version:** run the installer and skip the rest of this section.
+
+```bash
+./scripts/install-linux.sh
+```
+
+It builds, runs the tests, installs and starts all three services (alert pipeline, dashboard,
+and — if Node.js is present — the HomeKit sidecar), then prints a health check. Everything runs
+in place from this checkout, so updating later is just `git pull && ./scripts/deploy.sh`.
+
+Override the defaults if your setup differs:
+
+```bash
+APP_USER=someone INSTALL_DIR=/srv/sentinel WEB_PORT=8080 ./scripts/install-linux.sh
+```
+
+The installer deliberately leaves two things to you, because both depend on your network:
+the firewall rules ([section 14](#14-firewall)) and passwordless restarts
+([section 10](#10-passwordless-restarts-optional)). It prints reminders for both when it finishes.
+
+---
+
+The rest of this section is what the installer generates, for reference or if you'd rather do it
+by hand. The templates live in `systemd/` with `__PLACEHOLDER__` values the installer fills in;
+what follows is one worked example with those substituted for this machine (`media` /
+`/opt/sentinelcore/core`).
 
 **`/etc/systemd/system/blueiris-ollama-bridge.service`:**
 
@@ -297,12 +324,13 @@ SyslogIdentifier=blueiris-ollama-bridge-web
 WantedBy=multi-user.target
 ```
 
-Install and start both:
+Install and start them (the third line only if you're adding the HomeKit sidecar):
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now blueiris-ollama-bridge
 sudo systemctl enable --now blueiris-ollama-bridge-web
+sudo systemctl enable --now blueiris-ollama-bridge-homekit
 ```
 
 `Restart=always` means systemd brings a crashed service back up on its own after 5 seconds —
@@ -311,32 +339,29 @@ service instead of a test instance and get silently restarted, masking the mista
 testing manually alongside a live install, always track the exact PID you started and kill
 only that PID.
 
-### 8a. The HomeKit sidecar (optional)
+### 8a. The HomeKit sidecar
 
-Only needed if you want your cameras in Apple's Home app — see
-[USER_GUIDE section 14](USER_GUIDE.md#14-apple-homekit). Skip this entirely otherwise; nothing
-else depends on it.
+Installed automatically by `install-linux.sh` whenever Node.js (v22 or newer) is present — you
+don't need to do anything here unless Node was missing at install time.
 
-This one is a small Node.js service rather than .NET. HomeKit speaks HAP (its own pairing
-crypto and mDNS advertisement), and `@homebridge/hap-nodejs` — the library Homebridge itself
-runs on — is the only maintained implementation. It's ~150 lines of glue around that library.
+It's a small Node.js service rather than .NET. HomeKit speaks HAP (its own pairing crypto and
+mDNS advertisement), and `@homebridge/hap-nodejs` — the library Homebridge itself runs on — is
+the only maintained implementation. It's ~200 lines of glue around that library.
 
-Install Node.js (v22 or newer) and the sidecar's two dependencies:
+**Running it costs nothing if you don't use HomeKit.** The sidecar watches `HomeKit:Enabled` in
+the main app's config and stays completely off the network until it's switched on in the
+dashboard — no accessory is advertised, no port is opened. Flipping the toggle takes effect
+within about ten seconds, no restart needed, and flipping it back off unpublishes the bridge
+while keeping existing pairings intact.
+
+If Node wasn't installed when you ran the installer, add it and re-run:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs
 ```
 
 ```bash
-cd core/homekit-bridge && npm install
-```
-
-Then install its unit file the same way as the other two:
-
-```bash
-sudo cp core/systemd/blueiris-ollama-bridge-homekit.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now blueiris-ollama-bridge-homekit
+./scripts/install-linux.sh
 ```
 
 Two ports are involved, and they're deliberately different in kind:

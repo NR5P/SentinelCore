@@ -759,6 +759,12 @@ window.GateWatchSettings = (function () {
           status.textContent = payload.error || "The HomeKit sidecar isn't running.";
           return;
         }
+        if (!payload.enabled) {
+          // The sidecar is installed and healthy, it just isn't advertising anything yet -
+          // nothing is on your network until the toggle above goes on.
+          status.textContent = "turned off - switch enabled on and save to get a pairing code.";
+          return;
+        }
         if (payload.paired) {
           const names = (payload.accessories || []).join(", ");
           status.textContent = names
@@ -814,6 +820,18 @@ window.GateWatchSettings = (function () {
         timeoutSeconds: data.timeoutSeconds || 10
       };
       await submit("/api/settings/homekit", payload, "Apple HomeKit", errors, saveBtn);
+
+      // The sidecar re-reads the config on its own schedule, so the QR isn't ready the instant
+      // this returns. Poll briefly rather than showing "turned off" to someone who just turned
+      // it on and is waiting for a code to scan.
+      if (payload.enabled) {
+        status.textContent = "starting HomeKit…";
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          await refreshStatus();
+          if (section.querySelector(".homekit-qr-image")) return;
+        }
+      }
       await refreshStatus();
     });
 

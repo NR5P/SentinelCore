@@ -433,14 +433,18 @@ licence. Watching your cameras live still works exactly as it always has, in the
 LIVE tab. Everything else about HomeKit — notifications, automations triggered by motion,
 seeing which camera fired — works normally.
 
-**Setting it up.** HomeKit needs a small companion service (the "sidecar") running alongside
-the app; see [DEPLOYMENT.md](DEPLOYMENT.md) for the one-time install. Once it's running:
+**Setting it up.**
 
 1. Open **SETTINGS → APPLE HOMEKIT** in the dashboard and turn **enabled** on, then **save**.
-2. A QR code appears, with the numeric pairing code beneath it.
+2. Wait a few seconds — a QR code appears, with the numeric pairing code beneath it.
 3. On your iPhone, open **Home** → **+** → **Add Accessory**, and scan the code. (If the
    camera won't focus on your screen, tap "More options…" and type the numeric code instead.)
 4. Sentinel Core appears as a bridge, with a motion sensor for each camera.
+
+That's it — no install step. The companion service HomeKit needs (the "sidecar") is set up
+automatically, and until you turn the toggle on it stays completely off your network: nothing
+advertised, nothing to find. If the settings section says the sidecar isn't running, Node.js
+was missing when the app was installed; see [DEPLOYMENT.md](DEPLOYMENT.md) section 8a.
 
 **Cameras appear as they're seen.** A camera only shows up in Home after its first alert-worthy
 event — there's no list to configure. That means a brand-new setup starts empty and fills in
