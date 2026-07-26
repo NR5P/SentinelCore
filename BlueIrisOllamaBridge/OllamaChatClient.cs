@@ -43,16 +43,37 @@ public sealed class OllamaChatClient : IOllamaChatClient
             }
         };
 
-        using var response = await _httpClient.PostAsJsonAsync("api/chat", request, cancellationToken);
-        var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        HttpResponseMessage response;
+        string responseText;
+        try
         {
-            _logger.LogWarning("Ollama chat request failed: {StatusCode} {Body}", (int)response.StatusCode, responseText);
-            return "I couldn't reach the analysis model just now.";
+            response = await _httpClient.PostAsJsonAsync("api/chat", request, cancellationToken);
+            responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            // A large event log or a large documentation excerpt can genuinely take longer than
+            // this client's own configured timeout (TelegramChatOptions.TimeoutSeconds) to
+            // process on modest CPU hardware - that's a timeout, not a bad response, so it never
+            // reaches the status-code check below. Previously this exception went unhandled all
+            // the way up to a raw 500 from the /api/chat/ask endpoint; a plain answer that says
+            // so is a much better outcome for a feature that's explicitly "nag/inform, never
+            // break" everywhere else it touches the UI.
+            _logger.LogWarning(ex, "Ollama chat request timed out or failed to connect.");
+            return "That took too long to answer - try a more specific question, or a shorter time range if you asked about history.";
         }
 
-        using var document = JsonDocument.Parse(responseText);
-        var content = document.RootElement.GetProperty("message").GetProperty("content").GetString();
-        return string.IsNullOrWhiteSpace(content) ? "I couldn't come up with an answer for that." : content.Trim();
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Ollama chat request failed: {StatusCode} {Body}", (int)response.StatusCode, responseText);
+                return "I couldn't reach the analysis model just now.";
+            }
+
+            using var document = JsonDocument.Parse(responseText);
+            var content = document.RootElement.GetProperty("message").GetProperty("content").GetString();
+            return string.IsNullOrWhiteSpace(content) ? "I couldn't come up with an answer for that." : content.Trim();
+        }
     }
 }
