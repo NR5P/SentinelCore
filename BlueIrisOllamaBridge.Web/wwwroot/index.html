@@ -26,6 +26,7 @@
       <span class="status-dot" id="status-dot"></span>
       <span id="status-text">connecting&hellip;</span>
     </div>
+    <button id="logout-btn" class="btn hidden" data-tip-below data-tip-right data-tip="Sign out of this dashboard.">logout</button>
   </header>
 
   <div id="license-banner" class="license-banner hidden">
@@ -223,11 +224,37 @@
     </div>
   </div>
 
+  <!-- No backdrop-click-to-close (unlike #lightbox) and no skip button (unlike #setup-wizard) -
+       a login that's actually required has to be completed, not dismissed. -->
+  <div id="login-gate" class="lightbox hidden">
+    <div class="zone-editor-panel wizard-panel">
+      <div class="zone-editor-header">
+        <span>SIGN IN</span>
+      </div>
+      <div class="wizard-body">
+        <p>This dashboard requires a login.</p>
+        <div class="field-row field-row-wide">
+          <label class="field-label">Username</label>
+          <input type="text" class="field-input" id="login-username" autocomplete="username" />
+        </div>
+        <div class="field-row field-row-wide">
+          <label class="field-label">Password</label>
+          <input type="password" class="field-input" id="login-password" autocomplete="current-password" />
+        </div>
+      </div>
+      <div class="zone-editor-footer">
+        <button id="login-submit-btn" class="btn">sign in</button>
+        <ul class="field-errors" id="login-errors"></ul>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/hls.min.js"></script>
   <script src="wizard.js"></script>
   <script src="license.js"></script>
+  <script src="auth.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
   <script src="cameras.js"></script>
