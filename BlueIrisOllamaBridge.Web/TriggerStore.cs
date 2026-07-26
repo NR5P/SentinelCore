@@ -42,6 +42,10 @@ public interface ITriggerConfigStore
 {
     Task<TriggerConfig?> GetAsync(Guid cameraId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TriggerConfig>> GetEnabledAsync(CancellationToken cancellationToken);
+
+    // Unlike GetEnabledAsync, includes disabled zones too - used for config export, where
+    // silently dropping a disabled zone would mean it never comes back on restore.
+    Task<IReadOnlyList<TriggerConfig>> GetAllAsync(CancellationToken cancellationToken);
     Task SaveAsync(TriggerConfig config, CancellationToken cancellationToken);
 }
 
@@ -151,6 +155,31 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile
                 FROM TriggerConfigs WHERE Enabled = 1;
+                """;
+
+            var results = new List<TriggerConfig>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(ReadConfig(reader));
+
+            return results;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<TriggerConfig>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
+                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile
+                FROM TriggerConfigs;
                 """;
 
             var results = new List<TriggerConfig>();

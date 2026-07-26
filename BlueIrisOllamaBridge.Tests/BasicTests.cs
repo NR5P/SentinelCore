@@ -1302,6 +1302,43 @@ public sealed class BasicTests
         Assert.False(sessions.Validate(second));
     }
 
+    [Fact]
+    public async Task SqliteCameraStore_RestoreAsync_UpsertsByExplicitId()
+    {
+        using var store = new SqliteCameraStore(Path.Combine(Path.GetTempPath(), $"cam-{Guid.NewGuid():N}"));
+        var id = Guid.NewGuid();
+        var original = new Camera(id, "Front Gate", "rtsp://example/1", null, null, false, DateTimeOffset.UtcNow);
+
+        await store.RestoreAsync(original, CancellationToken.None);
+        var restored = await store.GetAsync(id, CancellationToken.None);
+        Assert.Equal("Front Gate", restored?.Name);
+
+        // Restoring the same Id again updates in place rather than inserting a duplicate row -
+        // otherwise a repeated import would pile up ghost cameras every time.
+        var updated = original with { Name = "Back Gate" };
+        await store.RestoreAsync(updated, CancellationToken.None);
+        var all = await store.GetAllAsync(CancellationToken.None);
+
+        Assert.Single(all);
+        Assert.Equal("Back Gate", all[0].Name);
+        Assert.Equal(id, all[0].Id);
+    }
+
+    [Fact]
+    public async Task SqliteTriggerStore_GetAllAsync_IncludesDisabledConfigsUnlikeGetEnabledAsync()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId), CancellationToken.None);
+
+        var enabled = await store.GetEnabledAsync(CancellationToken.None);
+        var all = await store.GetAllAsync(CancellationToken.None);
+
+        Assert.Empty(enabled);
+        Assert.Single(all);
+        Assert.Equal(cameraId, all[0].CameraId);
+    }
+
     private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment
     {
         public string ApplicationName { get; set; } = "Tests";

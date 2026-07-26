@@ -3,30 +3,34 @@ using BlueIrisOllamaBridge;
 
 namespace BlueIrisOllamaBridge.Web;
 
+// Every user-editable settings section, in one place - shared by GET /api/settings and the
+// config backup/restore feature (BackupEndpoints), so both read the exact same shape and
+// there's no risk of the two drifting apart as sections get added later.
+public sealed record SettingsSnapshot(
+    BridgeSettingsDto? Bridge,
+    OllamaSettingsDto? Ollama,
+    CloudVisionSettingsDto? CloudVision,
+    VisionRoutingSettingsDto? VisionRouting,
+    ImageProcessingSettingsDto? ImageProcessing,
+    Dictionary<string, PromptProfile>? PromptProfiles,
+    EmailSettingsDto? Email,
+    DailySummarySettingsDto? DailySummary,
+    TelegramSettingsDto? Telegram,
+    TelegramChatSettingsDto? TelegramChat,
+    BlueIrisSettingsDto? BlueIris,
+    SelfMonitoringSettingsDto? SelfMonitoring,
+    QuietHoursSettingsDto? QuietHours,
+    List<KnownVehicle>? KnownVehicles,
+    MqttSettingsDto? Mqtt,
+    BugReportSettingsDto? BugReports,
+    WebhookSettingsDto? Webhook);
+
 public static class SettingsEndpoints
 {
     public static void MapSettingsEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/settings", async (AppSettingsFile settings, CancellationToken ct) => Results.Ok(new
-        {
-            bridge = await settings.GetSectionAsync<BridgeSettingsDto>("Bridge", ct),
-            ollama = await settings.GetSectionAsync<OllamaSettingsDto>("Ollama", ct),
-            cloudVision = await settings.GetSectionAsync<CloudVisionSettingsDto>("CloudVision", ct),
-            visionRouting = await settings.GetSectionAsync<VisionRoutingSettingsDto>("VisionRouting", ct),
-            imageProcessing = await settings.GetSectionAsync<ImageProcessingSettingsDto>("ImageProcessing", ct),
-            promptProfiles = await settings.GetSectionAsync<Dictionary<string, PromptProfile>>("PromptProfiles", ct),
-            email = await settings.GetSectionAsync<EmailSettingsDto>("Email", ct),
-            dailySummary = await settings.GetSectionAsync<DailySummarySettingsDto>("DailySummary", ct),
-            telegram = await settings.GetSectionAsync<TelegramSettingsDto>("Telegram", ct),
-            telegramChat = await settings.GetSectionAsync<TelegramChatSettingsDto>("TelegramChat", ct),
-            blueIris = await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", ct),
-            selfMonitoring = await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", ct),
-            quietHours = await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", ct),
-            knownVehicles = await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", ct) ?? [],
-            mqtt = await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", ct),
-            bugReports = await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", ct),
-            webhook = await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", ct)
-        }));
+        app.MapGet("/api/settings", async (AppSettingsFile settings, CancellationToken ct) =>
+            Results.Ok(await BuildSnapshotAsync(settings, ct)));
 
         app.MapPut("/api/settings/bridge", async (BridgeSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "Bridge", ct, extra =>
@@ -161,6 +165,51 @@ public static class SettingsEndpoints
             await settings.ReplaceSectionAsync("PromptProfiles", profiles, ct);
             return Results.Ok(new { saved = true });
         });
+    }
+
+    public static async Task<SettingsSnapshot> BuildSnapshotAsync(AppSettingsFile settings, CancellationToken cancellationToken) => new(
+        await settings.GetSectionAsync<BridgeSettingsDto>("Bridge", cancellationToken),
+        await settings.GetSectionAsync<OllamaSettingsDto>("Ollama", cancellationToken),
+        await settings.GetSectionAsync<CloudVisionSettingsDto>("CloudVision", cancellationToken),
+        await settings.GetSectionAsync<VisionRoutingSettingsDto>("VisionRouting", cancellationToken),
+        await settings.GetSectionAsync<ImageProcessingSettingsDto>("ImageProcessing", cancellationToken),
+        await settings.GetSectionAsync<Dictionary<string, PromptProfile>>("PromptProfiles", cancellationToken),
+        await settings.GetSectionAsync<EmailSettingsDto>("Email", cancellationToken),
+        await settings.GetSectionAsync<DailySummarySettingsDto>("DailySummary", cancellationToken),
+        await settings.GetSectionAsync<TelegramSettingsDto>("Telegram", cancellationToken),
+        await settings.GetSectionAsync<TelegramChatSettingsDto>("TelegramChat", cancellationToken),
+        await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", cancellationToken),
+        await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", cancellationToken),
+        await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", cancellationToken),
+        await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", cancellationToken) ?? [],
+        await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", cancellationToken),
+        await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", cancellationToken),
+        await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", cancellationToken));
+
+    // Applied by config restore - merges each present section exactly the way its own PUT
+    // endpoint above already does (Merge for most sections, Replace for the two wholly user-
+    // owned lists), so restoring behaves identically to re-saving each section by hand. A
+    // section absent from the snapshot (null) is left completely untouched - restore overlays
+    // onto the current config, it never wipes something the backup doesn't mention.
+    public static async Task ApplySnapshotAsync(SettingsSnapshot snapshot, AppSettingsFile settings, CancellationToken cancellationToken)
+    {
+        if (snapshot.Bridge is not null) await settings.MergeSectionAsync("Bridge", snapshot.Bridge, cancellationToken);
+        if (snapshot.Ollama is not null) await settings.MergeSectionAsync("Ollama", snapshot.Ollama, cancellationToken);
+        if (snapshot.CloudVision is not null) await settings.MergeSectionAsync("CloudVision", snapshot.CloudVision, cancellationToken);
+        if (snapshot.VisionRouting is not null) await settings.MergeSectionAsync("VisionRouting", snapshot.VisionRouting, cancellationToken);
+        if (snapshot.ImageProcessing is not null) await settings.MergeSectionAsync("ImageProcessing", snapshot.ImageProcessing, cancellationToken);
+        if (snapshot.PromptProfiles is not null) await settings.ReplaceSectionAsync("PromptProfiles", snapshot.PromptProfiles, cancellationToken);
+        if (snapshot.Email is not null) await settings.MergeSectionAsync("Email", snapshot.Email, cancellationToken);
+        if (snapshot.DailySummary is not null) await settings.MergeSectionAsync("DailySummary", snapshot.DailySummary, cancellationToken);
+        if (snapshot.Telegram is not null) await settings.MergeSectionAsync("Telegram", snapshot.Telegram, cancellationToken);
+        if (snapshot.TelegramChat is not null) await settings.MergeSectionAsync("TelegramChat", snapshot.TelegramChat, cancellationToken);
+        if (snapshot.BlueIris is not null) await settings.MergeSectionAsync("BlueIris", snapshot.BlueIris, cancellationToken);
+        if (snapshot.SelfMonitoring is not null) await settings.MergeSectionAsync("SelfMonitoring", snapshot.SelfMonitoring, cancellationToken);
+        if (snapshot.QuietHours is not null) await settings.MergeSectionAsync("QuietHours", snapshot.QuietHours, cancellationToken);
+        if (snapshot.KnownVehicles is not null) await settings.ReplaceSectionAsync("KnownVehicles", snapshot.KnownVehicles, cancellationToken);
+        if (snapshot.Mqtt is not null) await settings.MergeSectionAsync("Mqtt", snapshot.Mqtt, cancellationToken);
+        if (snapshot.BugReports is not null) await settings.MergeSectionAsync("BugReports", snapshot.BugReports, cancellationToken);
+        if (snapshot.Webhook is not null) await settings.MergeSectionAsync("Webhook", snapshot.Webhook, cancellationToken);
     }
 
     private static async Task<IResult> SaveSectionAsync<T>(
