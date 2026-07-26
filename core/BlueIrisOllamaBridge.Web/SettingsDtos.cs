@@ -209,6 +209,17 @@ public sealed class BugReportSettingsDto
     public bool Enabled { get; set; }
 }
 
+public sealed class HomeKitSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Required]
+    public string SidecarBaseUrl { get; set; } = "http://127.0.0.1:3321";
+
+    [Range(1, 120)]
+    public int TimeoutSeconds { get; set; } = 10;
+}
+
 public sealed class MqttSettingsDto
 {
     public bool Enabled { get; set; }

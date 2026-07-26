@@ -1458,6 +1458,90 @@ public sealed class BasicTests
         Assert.Equal(cameraId, all[0].CameraId);
     }
 
+    [Fact]
+    public async Task HomeKitAlertAction_WhenEnabledAndNotificationRecommended_TriggersSidecar()
+    {
+        var handler = new RecordingHandler();
+        var action = BuildHomeKitAction(handler, new HomeKitOptions { Enabled = true, SidecarBaseUrl = "http://127.0.0.1:3321" });
+
+        await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
+
+        Assert.Single(handler.Requests);
+        Assert.Equal("http://127.0.0.1:3321/api/trigger", handler.Requests[0].Url);
+        Assert.Contains("gate camera front door", handler.Requests[0].Body);
+    }
+
+    [Fact]
+    public async Task HomeKitAlertAction_WhenDisabled_DoesNotCallSidecar()
+    {
+        var handler = new RecordingHandler();
+        var action = BuildHomeKitAction(handler, new HomeKitOptions { Enabled = false });
+
+        await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task HomeKitAlertAction_WhenNotificationNotRecommended_DoesNotCallSidecar()
+    {
+        var handler = new RecordingHandler();
+        var action = BuildHomeKitAction(handler, new HomeKitOptions { Enabled = true });
+
+        // A completed analysis that simply isn't alert-worthy - HomeKit motion is a push
+        // notification on someone's phone, so this must stay silent.
+        var result = new AlertResult
+        {
+            Camera = "gate camera front door",
+            Analysis = new VisionAnalysis { NotificationRecommended = false }
+        };
+
+        await action.ExecuteAsync(result, CancellationToken.None);
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task HomeKitAlertAction_WhenSidecarIsDown_DoesNotThrow()
+    {
+        var handler = new RecordingHandler { Throw = new HttpRequestException("connection refused") };
+        var action = BuildHomeKitAction(handler, new HomeKitOptions { Enabled = true });
+
+        // The sidecar is a separate, optional process. A dead one must never break the alert
+        // pipeline for the actions queued behind it.
+        await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
+    }
+
+    private static HomeKitAlertAction BuildHomeKitAction(RecordingHandler handler, HomeKitOptions options) =>
+        new(new HttpClient(handler),
+            new StaticOptionsMonitor<HomeKitOptions>(options),
+            NullLogger<HomeKitAlertAction>.Instance);
+
+    private static AlertResult NotifiableResult(string camera) => new()
+    {
+        Camera = camera,
+        Analysis = new VisionAnalysis
+        {
+            NotificationRecommended = true,
+            Summary = "A person is standing outside the gate."
+        }
+    };
+
+    private sealed class RecordingHandler : HttpMessageHandler
+    {
+        public List<(string Url, string Body)> Requests { get; } = [];
+        public Exception? Throw { get; init; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Throw is not null) throw Throw;
+
+            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
+            Requests.Add((request.RequestUri!.ToString(), body));
+            return new HttpResponseMessage(System.Net.HttpStatusCode.NoContent);
+        }
+    }
+
     private sealed class FakeHostEnvironment(string contentRootPath) : IHostEnvironment
     {
         public string ApplicationName { get; set; } = "Tests";

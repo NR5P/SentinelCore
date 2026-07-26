@@ -1,0 +1,23 @@
+[Unit]
+Description=Blue Iris Ollama Bridge HomeKit Sidecar
+Wants=network-online.target
+# avahi-daemon owns mDNS on this host; the sidecar advertises through it over D-Bus rather
+# than binding UDP 5353 itself, so it needs avahi up first.
+After=network-online.target avahi-daemon.service blueiris-ollama-bridge.service
+
+[Service]
+Type=simple
+User=media
+Group=media
+WorkingDirectory=/opt/sentinelcore/core/homekit-bridge
+ExecStart=/usr/bin/node /opt/sentinelcore/core/homekit-bridge/index.js
+
+Environment=NODE_ENV=production
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+SyslogIdentifier=blueiris-ollama-bridge-homekit
+
+[Install]
+WantedBy=multi-user.target

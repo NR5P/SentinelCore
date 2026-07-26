@@ -75,6 +75,10 @@ builder.Services.AddOptions<MqttOptions>()
     .Bind(builder.Configuration.GetSection(MqttOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<HomeKitOptions>()
+    .Bind(builder.Configuration.GetSection(HomeKitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<BugReportOptions>()
     .Bind(builder.Configuration.GetSection(BugReportOptions.SectionName))
     .ValidateDataAnnotations()
@@ -170,6 +174,11 @@ var telegramSettings = builder.Configuration.GetSection(TelegramOptions.SectionN
 builder.Services.AddHttpClient<IAlertAction, TelegramAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(telegramSettings.TimeoutSeconds);
+});
+var homeKitSettings = builder.Configuration.GetSection(HomeKitOptions.SectionName).Get<HomeKitOptions>() ?? new();
+builder.Services.AddHttpClient<IAlertAction, HomeKitAlertAction>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(homeKitSettings.TimeoutSeconds);
 });
 var telegramChatSettings = builder.Configuration.GetSection(TelegramChatOptions.SectionName).Get<TelegramChatOptions>() ?? new();
 builder.Services.AddHttpClient(nameof(TelegramChatWorker), client =>

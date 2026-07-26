@@ -36,6 +36,10 @@ builder.Services.AddHttpClient();
 // always enough), so this needs headroom above that or the proxy would cut the request off
 // before the main app itself gives up and returns its own graceful "took too long" message.
 builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout = TimeSpan.FromSeconds(330));
+// The HomeKit sidecar is on loopback and only ever asked for a status blob or a small PNG, so a
+// short timeout is right here - if it's not answering promptly it's not running, and the settings
+// UI should say so immediately rather than hanging.
+builder.Services.AddHttpClient(nameof(HomeKitEndpoints), client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddSingleton<AlertForwarder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
@@ -62,6 +66,7 @@ app.MapLicenseEndpoints();
 app.MapAuthEndpoints();
 app.MapBackupEndpoints();
 app.MapChatEndpoints();
+app.MapHomeKitEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 
