@@ -12,12 +12,18 @@ public sealed class HomeKitAlertAction : IAlertAction
 {
     private readonly HttpClient _httpClient;
     private readonly IOptionsMonitor<HomeKitOptions> _optionsMonitor;
+    private readonly IOptionsMonitor<QuietHoursOptions> _quietHoursMonitor;
     private readonly ILogger<HomeKitAlertAction> _logger;
 
-    public HomeKitAlertAction(HttpClient httpClient, IOptionsMonitor<HomeKitOptions> options, ILogger<HomeKitAlertAction> logger)
+    public HomeKitAlertAction(
+        HttpClient httpClient,
+        IOptionsMonitor<HomeKitOptions> options,
+        IOptionsMonitor<QuietHoursOptions> quietHoursOptions,
+        ILogger<HomeKitAlertAction> logger)
     {
         _httpClient = httpClient;
         _optionsMonitor = options;
+        _quietHoursMonitor = quietHoursOptions;
         _logger = logger;
     }
 
@@ -27,6 +33,19 @@ public sealed class HomeKitAlertAction : IAlertAction
         if (!options.Enabled || result.Analysis is null) return;
 
         if (!AlertNotificationPolicy.ShouldNotify(result)) return;
+
+        // Email and Telegram have always had a confidence floor; this one didn't, which made it
+        // the only channel where a low-confidence reading still woke someone's phone at 3am.
+        // Same quiet-hours treatment as the others, so a raised overnight bar applies here too.
+        var minimumConfidence = QuietHoursPolicy.EffectiveMinimumConfidence(
+            _quietHoursMonitor.CurrentValue, options.MinimumConfidence, result.OccurredAt);
+        if (result.Analysis.Confidence < minimumConfidence)
+        {
+            _logger.LogInformation(
+                "Skipping HomeKit motion for {AlertId}: confidence {Confidence} is below the {Minimum} threshold",
+                result.Id, result.Analysis.Confidence, minimumConfidence);
+            return;
+        }
 
         var url = $"{options.SidecarBaseUrl.TrimEnd('/')}/api/trigger";
 

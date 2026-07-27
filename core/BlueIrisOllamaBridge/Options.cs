@@ -275,6 +275,11 @@ public sealed class HomeKitOptions
 
     [Range(1, 120)]
     public int TimeoutSeconds { get; init; } = 10;
+
+    // Every HomeKit trip is a push notification on a phone, so this matches the Email/Telegram
+    // default rather than letting low-confidence readings through. Quiet hours can raise it.
+    [Range(0, 1)]
+    public double MinimumConfidence { get; init; } = 0.6;
 }
 
 public sealed class WebhookOptions

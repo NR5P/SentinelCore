@@ -251,6 +251,9 @@ public sealed class HomeKitSettingsDto
 
     [Range(1, 120)]
     public int TimeoutSeconds { get; set; } = 10;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; set; } = 0.6;
 }
 
 public sealed class MqttSettingsDto

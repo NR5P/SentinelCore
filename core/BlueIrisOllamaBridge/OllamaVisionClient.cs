@@ -310,6 +310,16 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
         none, with_person, at_gate, inside_property, near_vehicle, unknown
 
         Rules:
+        - The questions above are a checklist, not a statement of fact. A question that mentions a
+          person, vehicle, or package does NOT mean one is present. Decide from the image alone
+          whether each subject exists before describing anything about it.
+        - If nothing can be identified - the view is obstructed, too dark, overexposed, blurred, or
+          the lens is dirty or covered - set every "visible" field to false, event_type to "none",
+          notification_recommended to false, confidence to 0.2 or lower, and say plainly in summary
+          that the view is obstructed. Do not answer the positional questions in that case.
+        - summary and notification_reason must agree with the visible flags. Never describe a
+          person unless person.visible is true, or a vehicle unless vehicle.visible is true. If
+          person.visible is false, summary must not mention a person at all.
         - Ordinary traffic traveling along the public road is not notification-worthy.
         - A vehicle stopped in the entrance immediately outside the gate is notification-worthy.
         - A vehicle in the driveway (inside_driveway) is notification-worthy. A single still frame
