@@ -175,8 +175,22 @@ clip if one was recorded (marked with a ▶ clip badge).
 ## 7. The SETTINGS tab
 
 Every section below saves independently and applies live — no restart needed, except where
-noted. Click a section header to expand it. Hover any label for a one-line explanation, which
-this guide mostly mirrors:
+noted. Click a section header to expand it; each one opens with a short paragraph explaining
+what it's for and whether you're likely to need it. Hovering a field label gives a one-line
+explanation of that specific setting (on a desktop — hover tips don't exist on a touchscreen,
+which is why the section paragraphs are there).
+
+**Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
+shows only the settings most people actually change: Bridge, Email, Daily Summary, Telegram
+Alerts, Quiet Hours, Bug Reports, Apple HomeKit, Backup, Login and License. **Advanced** adds
+everything else: the AI tuning knobs, image processing, self-monitoring thresholds, webhooks,
+MQTT, known vehicles and prompt profiles.
+
+Nothing is ever lost or reset by switching — advanced settings keep working exactly as
+configured while hidden, and the choice is remembered on that device only, so a phone can stay
+simple while a desktop shows everything.
+
+The full list below covers both modes:
 
 - **Bridge** — the API key Blue Iris authenticates with, the max accepted image size, how
   long events/images are kept before automatic cleanup, whether images are saved at all, and

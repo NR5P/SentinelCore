@@ -2,6 +2,8 @@ window.GateWatchSettings = (function () {
   const SECTIONS = [
     {
       key: "bridge", title: "BRIDGE", endpoint: "/api/settings/bridge",
+      basic: true,
+      description: "How Blue Iris talks to this app, and how long history is kept. The API key here has to match what you entered in Blue Iris - if alerts stop arriving, check that first. Re-run setup wizard walks you through the essentials again without losing anything you've already configured.",
       fields: [
         { name: "apiKey", label: "API Key", type: "password", tip: "The secret Blue Iris must send with each alert. If this doesn't match what Blue Iris is configured with, alerts are rejected." },
         { name: "maximumImageBytes", label: "Max Image Bytes", type: "number", min: 1024, max: 104857600, tip: "Largest snapshot accepted from Blue Iris. Anything bigger is refused instead of eating memory." },
@@ -20,6 +22,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "ollama", title: "OLLAMA", endpoint: "/api/settings/ollama",
+      basic: false,
+      description: "Tuning for the local AI that looks at your snapshots. The defaults are picked to keep descriptions literal and consistent, which is what you want for security alerts. You can ignore this section entirely unless answers are coming back wrong or too slowly.",
       fields: [
         { name: "model", label: "Model", type: "text", tip: "Which local vision model analyses the snapshots, e.g. gemma3:4b. It must already be pulled in Ollama." },
         { name: "keepAlive", label: "Keep Alive", type: "text", tip: "How long Ollama keeps the model loaded in memory between alerts, e.g. 5m. Longer means faster replies but more RAM held." },
@@ -33,6 +37,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "cloudVision", title: "CLOUD VISION", endpoint: "/api/settings/cloud-vision",
+      basic: false,
+      description: "Use an outside AI service instead of, or as a backup to, the local model. It's faster and more accurate than a small local model, but it costs money per image and sends your snapshots off your network. Only needed if the local model isn't keeping up.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow this cloud account to be used for alert analysis, either as the primary backend or as a fallback - see VISION ROUTING below to choose which." },
         { name: "provider", label: "Provider", type: "select", options: [
@@ -48,6 +54,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "visionRouting", title: "VISION ROUTING", endpoint: "/api/settings/vision-routing",
+      basic: false,
+      description: "Which AI analyses a snapshot first, and whether to fall back to the other one if it fails. This only does something once Cloud Vision above is set up - with Ollama alone there's nothing to route between.",
       fields: [
         { name: "primary", label: "Primary Backend", type: "select", options: [
             { value: "ollama", label: "Ollama (local)" },
@@ -58,6 +66,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "imageProcessing", title: "IMAGE PROCESSING", endpoint: "/api/settings/image-processing",
+      basic: false,
+      description: "Snapshots are shrunk before going to the AI, which is faster and usually just as accurate. Lower quality means quicker answers but a blurrier image for the model to read. Best left alone unless analysis is too slow or the AI is missing obvious things.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Shrink snapshots before sending them to the AI. Usually faster with no real loss in accuracy." },
         { name: "maxWidth", label: "Max Width", type: "number", min: 256, max: 4096, tip: "Images wider than this are scaled down before analysis." },
@@ -68,6 +78,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "email", title: "EMAIL", endpoint: "/api/settings/email",
+      basic: true,
+      description: "Emails you when something worth knowing about happens. Most providers - Gmail included - need an app password here rather than your normal one. Only events the AI judges alert-worthy are sent, so you won't get a message every time a shadow moves.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Send email when an alert is worth telling you about." },
         { name: "smtpHost", label: "SMTP Host", type: "text", tip: "Outgoing mail server, e.g. smtp.gmail.com." },
@@ -85,6 +97,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "dailySummary", title: "DAILY SUMMARY", endpoint: "/api/settings/daily-summary",
+      basic: true,
+      description: "A twice-daily email digest of everything the cameras saw. This is the “what did I miss” roundup rather than an urgent alert, and it arrives even on quiet days. Needs Email above to be working first.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Email a digest of everything that happened, instead of only alerting on notable events." },
         { name: "morningHour", label: "Morning Hour (0-23)", type: "number", min: 0, max: 23, tip: "Hour of day the morning digest is sent, in 24-hour time. 7 means 7am." },
@@ -94,6 +108,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "telegram", title: "TELEGRAM ALERTS", endpoint: "/api/settings/telegram",
+      basic: true,
+      description: "Sends alerts to your phone through a Telegram bot - usually faster and harder to miss than email. You'll need to create a bot by messaging @BotFather in Telegram, then paste the token it gives you here.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Push alerts to your phone through a Telegram bot." },
         { name: "botToken", label: "Bot Token", type: "password", tip: "The token BotFather gave you when you created the bot." },
@@ -106,6 +122,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "telegramChat", title: "TELEGRAM CHAT", endpoint: "/api/settings/telegram-chat",
+      basic: false,
+      description: "Lets you text the bot questions like “what happened last night?” and get an answer from your camera history. This also powers the ask box on the Feed tab, so turning it off here turns off both.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Let you message the bot and ask questions about recent gate activity." },
         { name: "lookbackDays", label: "Lookback Days", type: "number", min: 1, max: 30, tip: "How far back the bot looks when answering a question." },
@@ -115,6 +133,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "blueIris", title: "BLUE IRIS SNAPSHOT", endpoint: "/api/settings/blue-iris",
+      basic: false,
+      description: "Lets the Telegram bot's /photo command pull a live picture from Blue Iris on demand, instead of waiting for the next alert. Entirely optional and unrelated to normal alerting.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow the /photo command to pull a fresh snapshot from Blue Iris on demand." },
         { name: "camera", label: "Camera Short Name", type: "text", tip: "The camera's short name in Blue Iris, e.g. gateCamera. Must match exactly." },
@@ -124,6 +144,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "selfMonitoring", title: "SELF-MONITORING", endpoint: "/api/settings/self-monitoring",
+      basic: false,
+      description: "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive, or alerts backing up faster than they're processed. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Watch the bridge's own health and tell you if it stops working properly." },
         { name: "checkIntervalSeconds", label: "Check Interval (s)", type: "number", min: 10, max: 3600, tip: "How often to run the health check." },
@@ -135,6 +157,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "quietHours", title: "QUIET HOURS", endpoint: "/api/settings/quiet-hours",
+      basic: true,
+      description: "During hours you choose, the AI has to be more confident before it wakes you. It never fully silences anything - something clearly worth knowing about still gets through at 3am - and it has no effect on the Feed or the daily summary.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "During the window below, raise the confidence bar for Email and Telegram alerts so only confident detections still ping you. Nothing is ever fully muted, and the Feed and daily digest are unaffected." },
         { name: "startHour", label: "Start Hour (0-23)", type: "number", min: 0, max: 23, tip: "Hour the quiet window begins, in 24-hour time. 22 means 10pm." },
@@ -144,6 +168,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "webhook", title: "WEBHOOK", endpoint: "/api/settings/webhook",
+      basic: false,
+      description: "Sends each analysed event to another system as JSON, for home automation, logging, or anything you're building yourself. Only useful if you have somewhere specific to send it.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "POST each analysed event to another system, for home automation or logging." },
         { name: "url", label: "URL", type: "text", tip: "Address the event data is posted to." },
@@ -154,6 +180,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "mqtt", title: "MQTT / HOME ASSISTANT", endpoint: "/api/settings/mqtt",
+      basic: false,
+      description: "Publishes events over MQTT so Home Assistant, or anything else that speaks MQTT, can see your cameras. Home Assistant picks them up automatically with no manual YAML. If you don't already run a broker this app can be one; if you don't use Home Assistant, skip this.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Publish every analysed event over MQTT, with Home Assistant auto-discovery so cameras show up as devices with no manual setup on the Home Assistant side." },
         { name: "runEmbeddedBroker", label: "Run Built-In Broker", type: "checkbox", tip: "Have this app act as its own MQTT broker on the port below, so you don't need a separate one (like Mosquitto) running anywhere. Leave off to connect to a broker you already have - e.g. Home Assistant's own Mosquitto add-on. Needs a restart to take effect if changed." },
@@ -171,6 +199,8 @@ window.GateWatchSettings = (function () {
     },
     {
       key: "bugReports", title: "BUG REPORTS", endpoint: "/api/settings/bug-reports",
+      basic: true,
+      description: "Emails the developer when something breaks inside the app, using the email account configured above. Off by default - nothing is ever sent unless you turn it on.",
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Email the developer when something in the bridge or dashboard hits an internal error, using the same account configured under Email above. Goes to a fixed developer address, not one you set - there's nothing else to configure here." }
       ]
@@ -289,9 +319,68 @@ window.GateWatchSettings = (function () {
     return row;
   }
 
+  // Which of the six hand-written sections belong in basic mode. The schema sections carry
+  // their own `basic` flag; these don't have a schema, so they're listed here instead.
+  const BASIC_CUSTOM_SECTIONS = new Set(["APPLE HOMEKIT", "BACKUP", "LOGIN", "LICENSE"]);
+
+  // Advanced is opt-in and remembered per device, so the owner can run advanced on a desktop
+  // while someone else's phone stays simple. Purely a display preference - nothing here is
+  // security-relevant, and every setting is still reachable either way.
+  const ADVANCED_MODE_KEY = "gatewatch.settings.advanced";
+
+  function isAdvancedMode() {
+    try {
+      return localStorage.getItem(ADVANCED_MODE_KEY) === "true";
+    } catch {
+      // Private browsing and some locked-down setups throw on access rather than returning
+      // null. Falling back to basic is the safe default.
+      return false;
+    }
+  }
+
+  function setAdvancedMode(advanced) {
+    try {
+      localStorage.setItem(ADVANCED_MODE_KEY, advanced ? "true" : "false");
+    } catch {
+      // Preference just won't persist; the toggle still works for this visit.
+    }
+  }
+
+  function applyMode(advanced) {
+    const root = document.getElementById("settings-root");
+    for (const section of root.querySelectorAll(".settings-section")) {
+      section.classList.toggle("hidden", !advanced && section.dataset.basic !== "true");
+    }
+
+    // Whatever was open may now be hidden, so open the first section actually on screen -
+    // otherwise basic mode can load with everything collapsed.
+    const visible = [...root.querySelectorAll(".settings-section")].filter(s => !s.classList.contains("hidden"));
+    if (visible.length > 0 && !visible.some(s => s.classList.contains("open"))) {
+      visible[0].classList.add("open");
+    }
+
+    const label = document.getElementById("mode-label");
+    if (label) label.textContent = advanced ? "advanced" : "basic";
+
+    // The MutationObserver in app.js only watches childList, so a class-only change like this
+    // won't reposition tooltips on its own.
+    window.GateWatchTooltips.schedule();
+  }
+
+  // Real text rather than a tooltip: the per-field tips are hover-only by design (so a tap
+  // doesn't leave one stuck open), which means they're invisible on a phone. This paragraph is
+  // what actually orients someone, on any device.
+  function buildSectionIntro(text) {
+    const intro = document.createElement("p");
+    intro.className = "settings-hint settings-section-intro";
+    intro.textContent = text;
+    return intro;
+  }
+
   function renderSection(schema, data) {
     const section = document.createElement("div");
     section.className = "settings-section";
+    if (schema.basic) section.dataset.basic = "true";
 
     const header = document.createElement("div");
     header.className = "settings-section-header";
@@ -304,6 +393,8 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
+
+    if (schema.description) body.appendChild(buildSectionIntro(schema.description));
 
     const grid = document.createElement("div");
     grid.className = "field-grid";
@@ -610,6 +701,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("Saves everything configurable here - settings, cameras, trigger zones, known vehicles, prompt profiles - into one file you can restore later or move to another machine. Worth doing before any big change, and after you first get things working the way you like."));
 
     const warning = document.createElement("div");
     warning.className = "settings-hint";
@@ -717,6 +809,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications. Live video isn't included - that needs Apple's paid HomeKit Secure Video licensing - but everything else works. Nothing is put on your network until you turn this on."));
 
     const fields = [
       {
@@ -856,6 +949,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("Installs the licence file you were emailed after purchase. Missing or invalid shows a notice and a watermark, and nothing else - every feature keeps working either way, so this is never urgent."));
 
     const status = document.createElement("div");
     status.className = "settings-hint";
@@ -936,6 +1030,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("Requires a username and password to open this dashboard. Off by default, which is fine on a home network you trust - but turn it on before this is reachable from anywhere else. Sessions live in memory, so everyone is signed out whenever the app restarts."));
 
     const status = document.createElement("div");
     status.className = "settings-hint";
@@ -1102,6 +1197,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("Vehicles you recognise, matched against plates the AI reads. This is informational only - a match or non-match is noted in the alert but never changes whether one fires. Only does anything for cameras using a prompt profile with licence plate recognition turned on."));
 
     const hint = document.createElement("div");
     hint.className = "settings-hint";
@@ -1153,6 +1249,7 @@ window.GateWatchSettings = (function () {
     const header = document.createElement("div");
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">PROMPT PROFILES</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "What the AI is told to look for on each camera - what matters, what to ignore, and what's worth alerting you about. Around a hundred ready-made profiles are included.";
     header.addEventListener("click", () => {
       section.classList.toggle("open");
       window.GateWatchTooltips.schedule();
@@ -1160,6 +1257,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("Prompt profiles are the instructions given to the AI for each camera - what to look at, what to ignore, and what counts as worth alerting you about. Around a hundred ready-made profiles ship with the app covering common camera placements; pick one per trigger zone rather than writing your own unless you have a specific need."));
 
     const count = Object.keys(profiles || {}).length;
     const hint = document.createElement("div");
@@ -1291,8 +1389,21 @@ window.GateWatchSettings = (function () {
       root.appendChild(renderKnownVehiclesSection(data.knownVehicles));
       root.appendChild(renderPromptProfilesSection(data.promptProfiles));
 
-      const first = root.querySelector(".settings-section");
-      if (first) first.classList.add("open");
+      // The hand-written sections don't go through renderSection, so tag them here by title.
+      for (const section of root.querySelectorAll(".settings-section")) {
+        const title = section.querySelector(".settings-section-title")?.textContent ?? "";
+        if (BASIC_CUSTOM_SECTIONS.has(title)) section.dataset.basic = "true";
+      }
+
+      const toggle = document.getElementById("advanced-mode-toggle");
+      if (toggle) {
+        toggle.checked = isAdvancedMode();
+        toggle.onchange = () => {
+          setAdvancedMode(toggle.checked);
+          applyMode(toggle.checked);
+        };
+      }
+      applyMode(isAdvancedMode());
     } catch (err) {
       root.innerHTML = `<div class="empty-state">failed to load settings: ${err.message}</div>`;
     }
