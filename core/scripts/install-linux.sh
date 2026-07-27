@@ -30,14 +30,89 @@ INSTALL_DIR=${INSTALL_DIR:-$ROOT_DIR}
 MAIN_PORT=${MAIN_PORT:-5080}
 WEB_PORT=${WEB_PORT:-3320}
 
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
+# Nothing here is installed without asking first (or ASSUME_YES=1 for unattended runs) -
+# this touches the whole machine, not just this directory.
+
+missing=()
+command -v dotnet  >/dev/null 2>&1 || missing+=("dotnet")
+command -v ffmpeg  >/dev/null 2>&1 || missing+=("ffmpeg")
+command -v node    >/dev/null 2>&1 || missing+=("node")
+command -v ollama  >/dev/null 2>&1 || missing+=("ollama")
+
+describe_dependency() {
+  case "$1" in
+    dotnet) echo ".NET 10 SDK      - required, the app is built and run with it" ;;
+    ffmpeg) echo "ffmpeg           - required for live view, trigger zones and clip recording" ;;
+    node)   echo "Node.js 22+      - only for Apple HomeKit support; skippable" ;;
+    ollama) echo "Ollama           - local AI vision. Skippable if you'll use a cloud model instead" ;;
+  esac
+}
+
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "The following are not installed:"
+  for dep in "${missing[@]}"; do echo "  - $(describe_dependency "$dep")"; done
+  echo
+
+  if [[ "${ASSUME_YES:-0}" == "1" ]]; then
+    reply=y
+  elif [[ ! -t 0 ]]; then
+    # No terminal to prompt on, and no explicit consent - don't silently change the machine.
+    echo "Not running interactively. Re-run with ASSUME_YES=1 to install these automatically," >&2
+    echo "or install them yourself and run this again." >&2
+    exit 1
+  else
+    read -r -p "Install them now? This uses sudo and changes system packages. [y/N] " reply
+  fi
+
+  if [[ "$reply" =~ ^[Yy]$ ]]; then
+    apt_packages=()
+    for dep in "${missing[@]}"; do
+      case "$dep" in
+        dotnet) apt_packages+=("dotnet-sdk-10.0") ;;
+        ffmpeg) apt_packages+=("ffmpeg") ;;
+      esac
+    done
+
+    if [[ ${#apt_packages[@]} -gt 0 ]]; then
+      echo "==> Installing: ${apt_packages[*]}"
+      sudo apt-get update
+      sudo apt-get install -y "${apt_packages[@]}"
+    fi
+
+    # Node comes from NodeSource rather than apt - distro packages are often far too old for
+    # the HomeKit library, which needs 22+.
+    if [[ " ${missing[*]} " == *" node "* ]]; then
+      echo "==> Installing Node.js LTS (NodeSource)"
+      curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+      sudo apt-get install -y nodejs
+    fi
+
+    if [[ " ${missing[*]} " == *" ollama "* ]]; then
+      echo "==> Installing Ollama"
+      curl -fsSL https://ollama.com/install.sh | sh
+    fi
+  else
+    echo "Skipping dependency install."
+  fi
+fi
+
+# .NET is the one hard requirement - without it there's nothing to build.
 if ! command -v dotnet >/dev/null 2>&1; then
-  echo "dotnet was not found. Install the .NET 10 SDK first." >&2
+  echo "dotnet is still not available. Install the .NET 10 SDK and run this again." >&2
   exit 1
 fi
 DOTNET_PATH=$(command -v dotnet)
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "WARNING: ffmpeg was not found. Live view, trigger zones and clip recording need it." >&2
+  echo "WARNING: ffmpeg is not installed. Live view, trigger zones and clip recording won't work." >&2
+fi
+
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma3:4b'," >&2
+  echo "         or configure a cloud vision provider in the dashboard's setup wizard." >&2
 fi
 
 # Node is only needed for HomeKit. Missing Node is a skip, not a failure.

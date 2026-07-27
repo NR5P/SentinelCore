@@ -126,15 +126,21 @@ HAPStorage.setCustomStoragePath(PERSIST_DIR);
 
 const bridge = new Bridge(BRIDGE_NAME, uuid.generate("sentinelcore:bridge"));
 
+// On Linux, avahi-daemon almost always already owns UDP 5353; talking to it over D-Bus rather
+// than binding our own responder avoids fighting it for the port. Windows and macOS have no
+// avahi, so they use hap-nodejs's own bundled responder instead. Override with
+// HOMEKIT_ADVERTISER if your setup differs (e.g. a Linux box with no avahi installed - use
+// "ciao" there).
+const ADVERTISER = process.env.HOMEKIT_ADVERTISER
+  || (process.platform === "linux" ? MDNSAdvertiser.AVAHI : MDNSAdvertiser.CIAO);
+
 const publishInfo = {
   username: identity.username,
   pincode: identity.pincode,
   setupID: identity.setupId,
   port: HAP_PORT,
   category: Categories.BRIDGE,
-  // This box runs avahi-daemon, which owns UDP 5353. Talking to it over D-Bus rather than
-  // binding our own responder avoids fighting it for the port.
-  advertiser: MDNSAdvertiser.AVAHI,
+  advertiser: ADVERTISER,
 };
 
 // normalized camera name -> { accessory, service, resetTimer, name }
@@ -311,6 +317,7 @@ const server = http.createServer((req, res) => {
 server.listen(CONTROL_PORT, "127.0.0.1", () => {
   console.log(`Control API listening on http://127.0.0.1:${CONTROL_PORT}`);
   console.log(`Watching ${MAIN_SETTINGS_PATH} for HomeKit:Enabled`);
+  console.log(`mDNS advertiser: ${ADVERTISER} (platform ${process.platform})`);
 });
 
 pollSettings();
