@@ -349,6 +349,19 @@ public sealed class BlueIrisOptions
     [Required]
     public string Camera { get; init; } = string.Empty;
 
+    // Optional friendly Sentinel event name -> Blue Iris short-name mappings used by day
+    // timeline playback. The legacy Camera value remains the fallback for single-camera setups.
+    public Dictionary<string, string> CameraMappings { get; init; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // The timeline never exposes an entire recording day. Each Blue Iris alert is represented
+    // only by this short window around the trigger, using the clip already recorded by Blue Iris.
+    [Range(0, 120)]
+    public int EventClipPreSeconds { get; init; } = 5;
+
+    [Range(1, 300)]
+    public int EventClipPostSeconds { get; init; } = 10;
+
     // Blue Iris's direct image endpoint accepts these as query parameters. Leave both blank
     // if the web server doesn't require login on your LAN.
     public string Username { get; init; } = string.Empty;

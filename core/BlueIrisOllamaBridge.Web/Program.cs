@@ -39,6 +39,8 @@ builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection(Bridg
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
+builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>();
+builder.Services.AddSingleton<BlueIrisTimelineClient>();
 
 var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
     ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
@@ -123,6 +125,7 @@ app.MapBackupEndpoints();
 app.MapChatEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();
+app.MapTimelineEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 

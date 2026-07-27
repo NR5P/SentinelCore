@@ -91,6 +91,89 @@ class SentinelRepository(
         }
     }
 
+    suspend fun timeline(camera: String, date: String): RecordingTimelineDay =
+        withContext(Dispatchers.IO) {
+            val path = "/api/timeline/day?camera=" +
+                URLEncoder.encode(camera, StandardCharsets.UTF_8.name()) +
+                "&date=" + URLEncoder.encode(date, StandardCharsets.UTF_8.name())
+            val json = JSONObject(request(path))
+            val recordingJson = json.getJSONObject("recording")
+            val segmentArray = recordingJson.optJSONArray("segments") ?: JSONArray()
+            val segments = buildList {
+                for (index in 0 until segmentArray.length()) {
+                    val item = segmentArray.getJSONObject(index)
+                    add(
+                        TimelineRecordingSegment(
+                            eventId = item.getString("eventId"),
+                            start = parseInstant(item.getString("start")),
+                            end = parseInstant(item.getString("end")),
+                        ),
+                    )
+                }
+            }
+            val eventArray = json.optJSONArray("events") ?: JSONArray()
+            val timelineEvents = buildList {
+                for (index in 0 until eventArray.length()) {
+                    val item = eventArray.getJSONObject(index)
+                    add(
+                        TimelineSecurityEvent(
+                            id = item.getString("id"),
+                            camera = item.getString("camera"),
+                            occurredAt = parseInstant(item.getString("occurredAt")),
+                            eventType = item.optString("eventType", "unknown"),
+                            category = item.optString("category", "other"),
+                            severity = item.optString("severity", "low"),
+                            summary = item.optString("summary"),
+                            confidence = item.optDouble("confidence"),
+                            notified = item.optBoolean("notified"),
+                            reviewed = item.optBoolean("reviewed"),
+                            hasImage = item.optBoolean("hasImage"),
+                            hasClip = item.optBoolean("hasClip"),
+                        ),
+                    )
+                }
+            }
+            RecordingTimelineDay(
+                camera = json.getString("camera"),
+                date = json.getString("date"),
+                start = parseInstant(json.getString("start")),
+                end = parseInstant(json.getString("end")),
+                recording = TimelineRecording(
+                    configured = recordingJson.optBoolean("configured"),
+                    available = recordingJson.optBoolean("available"),
+                    sourceCamera = recordingJson.optString("sourceCamera"),
+                    error = recordingJson.nullableString("error"),
+                    mode = recordingJson.optString("mode", "triggerClips"),
+                    preSeconds = recordingJson.optInt("preSeconds", 5),
+                    postSeconds = recordingJson.optInt("postSeconds", 10),
+                    segments = segments,
+                ),
+                events = timelineEvents,
+            )
+        }
+
+    suspend fun timelineCameras(): List<String> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/timeline/cameras"))
+        buildList {
+            for (index in 0 until array.length()) add(array.getString(index))
+        }
+    }
+
+    suspend fun setReviewed(eventId: String, reviewed: Boolean) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("reviewed", reviewed).toString()
+        request(
+            "/api/events/${URLEncoder.encode(eventId, StandardCharsets.UTF_8.name())}/reviewed",
+            method = "PUT",
+            body = body,
+        )
+    }
+
+    fun timelineFramePath(eventId: String, at: Instant): String =
+        "/api/timeline/frame?eventId=" +
+            URLEncoder.encode(eventId, StandardCharsets.UTF_8.name()) +
+            "&at=" + URLEncoder.encode(at.toString(), StandardCharsets.UTF_8.name()) +
+            "&width=1280&height=720"
+
     suspend fun login(username: String, password: String) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("username", username)

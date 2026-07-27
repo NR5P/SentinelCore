@@ -16,6 +16,8 @@ The device and Sentinel Core server must currently be on the same local network.
 
 - Native event feed with pull-to-refresh, search, notification filter, and automatic refresh
 - Event detail with full-resolution alert snapshot
+- Day-indexed Blue Iris trigger clips with AI event markers, pre/post-event frame scrubbing,
+  automatic unsaved-gap skipping, object/severity filters, and shared reviewed/unreviewed state
 - Trigger history with snapshot and recorded-clip playback
 - Live camera list and native HLS playback
 - APNs event alerts with foreground presentation, test delivery, and event deep links

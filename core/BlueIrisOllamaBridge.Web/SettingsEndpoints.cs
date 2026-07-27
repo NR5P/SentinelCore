@@ -96,6 +96,8 @@ public static class SettingsEndpoints
         app.MapPut("/api/settings/blue-iris", async (BlueIrisSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "BlueIris", ct, extra =>
             {
+                if (dto.Enabled && string.IsNullOrWhiteSpace(dto.BaseUrl))
+                    extra.Add("BaseUrl is required when Blue Iris is enabled.");
                 if (dto.Enabled && string.IsNullOrWhiteSpace(dto.Camera))
                     extra.Add("Camera is required when Blue Iris is enabled.");
             }));

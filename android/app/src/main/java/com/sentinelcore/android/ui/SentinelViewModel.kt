@@ -20,6 +20,7 @@ import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.SentinelRepository
 import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.data.PushStatus
+import com.sentinelcore.android.data.RecordingTimelineDay
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.PushTokenStore
 import com.sentinelcore.android.push.PushTokenUpdates
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.net.URI
 import java.time.Instant
+import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicLong
 
 data class SentinelUiState(
@@ -51,6 +53,10 @@ data class SentinelUiState(
     val pushRegistrationEnabled: Boolean = false,
     val pushMessage: String? = null,
     val pendingPushEventId: String? = null,
+    val timelineDay: RecordingTimelineDay? = null,
+    val timelineLoading: Boolean = false,
+    val timelineError: String? = null,
+    val timelineCameras: List<String> = emptyList(),
 ) {
     val isConfigured: Boolean
         get() = runCatching {
@@ -76,6 +82,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     val state: StateFlow<SentinelUiState> = _state.asStateFlow()
 
     private var connectionJob: Job? = null
+    private var timelineJob: Job? = null
 
     init {
         repository.baseUrl = _state.value.serverUrl
@@ -248,6 +255,60 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     fun absoluteUrl(path: String): String? = repository.absoluteUrl(path)
 
     fun mediaHeaders(): Map<String, String> = repository.mediaHeaders()
+
+    fun loadTimeline(camera: String, date: LocalDate) {
+        if (camera.isBlank()) return
+        timelineJob?.cancel()
+        timelineJob = viewModelScope.launch {
+            _state.update {
+                it.copy(timelineDay = null, timelineLoading = true, timelineError = null)
+            }
+            try {
+                val value = repository.timeline(camera, date.toString())
+                _state.update {
+                    it.copy(timelineDay = value, timelineLoading = false, timelineError = null)
+                }
+            } catch (error: Exception) {
+                val message = readableError(error)
+                _state.update {
+                    it.copy(timelineDay = null, timelineLoading = false, timelineError = message)
+                }
+                log("Timeline request failed: $message", DiagnosticLevel.ERROR)
+            }
+        }
+    }
+
+    fun loadTimelineCameras() {
+        viewModelScope.launch {
+            runCatching { repository.timelineCameras() }
+                .onSuccess { value -> _state.update { it.copy(timelineCameras = value) } }
+                .onFailure { error ->
+                    log("Timeline camera list failed: ${readableError(error)}", DiagnosticLevel.NOTICE)
+                }
+        }
+    }
+
+    fun setTimelineEventReviewed(eventId: String, reviewed: Boolean) {
+        viewModelScope.launch {
+            try {
+                repository.setReviewed(eventId, reviewed)
+                _state.update { current ->
+                    current.copy(
+                        timelineDay = current.timelineDay?.copy(
+                            events = current.timelineDay.events.map {
+                                if (it.id == eventId) it.copy(reviewed = reviewed) else it
+                            },
+                        ),
+                    )
+                }
+            } catch (error: Exception) {
+                _state.update { it.copy(timelineError = readableError(error)) }
+            }
+        }
+    }
+
+    fun timelineFramePath(eventId: String, at: Instant): String =
+        repository.timelineFramePath(eventId, at)
 
     fun clearDiagnostics() {
         _state.update { it.copy(diagnostics = emptyList()) }

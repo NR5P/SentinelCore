@@ -298,6 +298,7 @@ window.GateWatchExposure.check();
 const tabs = document.querySelectorAll(".tab");
 const views = {
   feed: document.getElementById("view-feed"),
+  timeline: document.getElementById("view-timeline"),
   live: document.getElementById("view-live"),
   cameras: document.getElementById("view-cameras"),
   triggers: document.getElementById("view-triggers"),
@@ -305,6 +306,7 @@ const views = {
 };
 let settingsLoaded = false;
 let camerasLoaded = false;
+let timelineLoaded = false;
 let currentView = "feed";
 
 for (const tab of tabs) {
@@ -314,6 +316,7 @@ for (const tab of tabs) {
     for (const [name, el] of Object.entries(views)) el.classList.toggle("hidden", name !== target);
 
     if (currentView === "live" && target !== "live") window.GateWatchCameras.hideLive();
+    if (currentView === "timeline" && target !== "timeline") window.GateWatchTimeline.stop();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -326,6 +329,10 @@ for (const tab of tabs) {
     if (target === "cameras") window.GateWatchCameras.renderList();
     if (target === "live") window.GateWatchCameras.showLive();
     if (target === "triggers") window.GateWatchTriggers.load();
+    if (target === "timeline") {
+      if (!timelineLoaded) timelineLoaded = true;
+      window.GateWatchTimeline.load();
+    }
 
     currentView = target;
     // Switching tabs only toggles the "active"/"hidden" classes above - no nodes are added or

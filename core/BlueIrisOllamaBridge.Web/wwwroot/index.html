@@ -25,6 +25,7 @@
     </div>
     <nav class="tabs" id="tabs">
       <button class="tab active" data-view="feed" data-tip-below data-tip="Alerts from Blue Iris that the AI has analysed, newest first." >feed</button>
+      <button class="tab" data-view="timeline" data-tip-below data-tip="Review saved trigger clips across a day, with Sentinel AI events marked on the time rail.">timeline</button>
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones. Separate from Blue Iris.">cameras</button>
       <button class="tab" data-view="triggers" data-tip-below data-tip-right data-tip="Motion caught inside a trigger zone. Click a thumbnail to view the snapshot or play its clip.">triggers</button>
@@ -78,6 +79,72 @@
 
       <div id="feed" class="feed">
         <div class="empty-state">loading feed&hellip;</div>
+      </div>
+    </section>
+
+    <section id="view-timeline" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">DAY_TIMELINE</div>
+        <div class="toolbar-actions">
+          <span id="timeline-count" class="event-count">0 AI events</span>
+          <button id="timeline-refresh" class="btn">refresh</button>
+        </div>
+      </div>
+
+      <div class="timeline-controls sentinel-box">
+        <select id="timeline-camera" class="field-input" aria-label="Timeline camera"></select>
+        <button id="timeline-prev-day" class="btn" aria-label="Previous day">&lsaquo;</button>
+        <input id="timeline-date" type="date" class="field-input" aria-label="Timeline date">
+        <button id="timeline-next-day" class="btn" aria-label="Next day">&rsaquo;</button>
+        <span id="timeline-recording-status" class="event-count"></span>
+      </div>
+
+      <div class="timeline-player sentinel-box">
+        <div class="timeline-frame-wrap">
+          <img id="timeline-frame" class="hidden" alt="Saved trigger frame">
+          <div id="timeline-frame-empty" class="empty-state">choose a saved trigger clip</div>
+        </div>
+        <div id="timeline-rail" class="timeline-rail" aria-label="24 hour trigger event index">
+          <div id="timeline-ranges"></div>
+          <div id="timeline-markers"></div>
+          <div id="timeline-cursor"></div>
+          <input id="timeline-scrubber" type="range" min="0" max="86400" step="1" value="43200">
+        </div>
+        <div class="timeline-transport">
+          <button id="timeline-prev-event" class="btn">previous event</button>
+          <button id="timeline-play" class="btn">play</button>
+          <button id="timeline-next-event" class="btn">next event</button>
+          <span id="timeline-clock" class="card-event-type">--:--:--</span>
+          <span class="timeline-spacer"></span>
+          <label><input id="timeline-skip-gaps" type="checkbox" checked> skip unsaved gaps</label>
+        </div>
+      </div>
+
+      <div class="timeline-filters">
+        <select id="timeline-category" class="field-input">
+          <option value="">all objects</option>
+          <option value="person">people</option>
+          <option value="vehicle">vehicles</option>
+          <option value="animal">animals</option>
+          <option value="package">packages</option>
+          <option value="plate">plates</option>
+          <option value="other">other</option>
+        </select>
+        <select id="timeline-severity" class="field-input">
+          <option value="">all severities</option>
+          <option value="critical">critical</option>
+          <option value="high">high</option>
+          <option value="medium">medium</option>
+          <option value="low">low</option>
+        </select>
+        <select id="timeline-reviewed" class="field-input">
+          <option value="">all review states</option>
+          <option value="false">unreviewed</option>
+          <option value="true">reviewed</option>
+        </select>
+      </div>
+      <div id="timeline-events" class="timeline-events">
+        <div class="empty-state">open the timeline to load trigger clips</div>
       </div>
     </section>
 
@@ -280,5 +347,6 @@
   <script src="settings.js"></script>
   <script src="cameras.js"></script>
   <script src="triggers.js"></script>
+  <script src="timeline.js"></script>
 </body>
 </html>

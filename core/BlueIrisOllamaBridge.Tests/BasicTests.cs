@@ -852,7 +852,9 @@ public sealed class BasicTests
             var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
             using var store = new SqliteEventStore(options, new FakeHostEnvironment(tempDir));
 
-            var inWindow = MakeResult(new DateTimeOffset(2026, 7, 24, 10, 0, 0, TimeSpan.FromHours(-5)));
+            var inWindow = MakeResult(
+                new DateTimeOffset(2026, 7, 24, 10, 0, 0, TimeSpan.FromHours(-5)),
+                blueIrisAlertId: "alert-record-42");
             var outsideWindow = MakeResult(new DateTimeOffset(2026, 7, 23, 10, 0, 0, TimeSpan.FromHours(-5)));
 
             await store.RecordAsync(inWindow, TestContext.Current.CancellationToken);
@@ -868,6 +870,7 @@ public sealed class BasicTests
             Assert.Equal("completed", record.Status);
             Assert.Equal("vehicle_entering_property", record.EventType);
             Assert.True(record.NotificationRecommended);
+            Assert.Equal("alert-record-42", record.BlueIrisAlertId);
         }
         finally
         {
@@ -1003,10 +1006,12 @@ public sealed class BasicTests
         string camera = "gateCamera",
         string eventType = "vehicle_entering_property",
         string summary = "A car pulled into the driveway.",
-        bool notified = true) => new()
+        bool notified = true,
+        string? blueIrisAlertId = null) => new()
     {
         Id = Guid.NewGuid(),
         Camera = camera,
+        BlueIrisAlertId = blueIrisAlertId,
         OccurredAt = occurredAt,
         ReceivedAt = occurredAt,
         CompletedAt = occurredAt,
@@ -1721,6 +1726,48 @@ public sealed class BasicTests
         Assert.Equal(result.Id.ToString(), message.EventId);
         Assert.Equal("person", message.EventType);
         Assert.Contains("driveway", message.Body);
+    }
+
+    [Fact]
+    public async Task TimelineReviewStore_SharesReviewedStateAndCanClearIt()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions
+            {
+                ApiKey = "test-key-1234567890",
+                DataDirectory = tempDir
+            });
+            var store = new SqliteTimelineReviewStore(options, new FakeHostEnvironment(tempDir));
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+
+            await store.SetReviewedAsync(first, true, CancellationToken.None);
+            var reviewed = await store.GetReviewedAsync([first, second], CancellationToken.None);
+            Assert.Contains(first, reviewed);
+            Assert.DoesNotContain(second, reviewed);
+
+            await store.SetReviewedAsync(first, false, CancellationToken.None);
+            Assert.Empty(await store.GetReviewedAsync([first], CancellationToken.None));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("alert-record.jpg", "alert-record")]
+    [InlineData("alert-record", "alert-record")]
+    [InlineData("  alert-record.jpeg  ", "alert-record")]
+    [InlineData(null, "")]
+    public void BlueIrisTimelineClient_NormalizeRecord_MatchesAlertDatabaseIdentifiers(
+        string? input,
+        string expected)
+    {
+        Assert.Equal(expected, BlueIrisTimelineClient.NormalizeRecord(input));
     }
 
     private static HomeKitAlertAction BuildHomeKitAction(RecordingHandler handler, HomeKitOptions options) =>

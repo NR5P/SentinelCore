@@ -132,14 +132,17 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
-      key: "blueIris", title: "BLUE IRIS SNAPSHOT", endpoint: "/api/settings/blue-iris",
+      key: "blueIris", title: "BLUE IRIS MEDIA", endpoint: "/api/settings/blue-iris",
       basic: false,
-      description: "Lets the Telegram bot's /photo command pull a live picture from Blue Iris on demand, instead of waiting for the next alert. Entirely optional and unrelated to normal alerting.",
+      description: "Connects Sentinel to Blue Iris for on-demand snapshots and short alert-linked timeline clips. Sentinel never copies an entire recording day.",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow the /photo command to pull a fresh snapshot from Blue Iris on demand." },
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow snapshots and trigger-clip timeline review through Blue Iris." },
+        { name: "baseUrl", label: "Blue Iris URL", type: "text", tip: "The Blue Iris web server URL reachable from Sentinel Core, including its port." },
         { name: "camera", label: "Camera Short Name", type: "text", tip: "The camera's short name in Blue Iris, e.g. gateCamera. Must match exactly." },
         { name: "username", label: "Username", type: "text", tip: "Blue Iris login used to request the snapshot." },
-        { name: "password", label: "Password", type: "password", tip: "Password for that Blue Iris account." }
+        { name: "password", label: "Password", type: "password", tip: "Password for the Blue Iris account used by Core; it is never sent to a mobile client." },
+        { name: "eventClipPreSeconds", label: "Timeline Seconds Before Trigger", type: "number", min: 0, max: 120, tip: "How much of the existing Blue Iris trigger clip Sentinel may expose before the event. Blue Iris must record at least this much pre-trigger video." },
+        { name: "eventClipPostSeconds", label: "Timeline Seconds After Trigger", type: "number", min: 1, max: 300, tip: "How much of the existing Blue Iris trigger clip Sentinel may expose after the event. No footage between trigger windows is requested or saved." }
       ]
     },
     {
@@ -219,7 +222,7 @@ window.GateWatchSettings = (function () {
     dailySummary: "A twice-daily digest of everything that happened, separate from individual alerts.",
     telegram: "Push alerts to your phone through a Telegram bot.",
     telegramChat: "Lets you message the bot to ask questions about recent activity.",
-    blueIris: "Pulling a fresh snapshot from Blue Iris on demand via the /photo command.",
+    blueIris: "Blue Iris snapshots and short alert-linked trigger clips. No full-day video is copied.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
     quietHours: "Raise the bar for Email/Telegram alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",

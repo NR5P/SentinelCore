@@ -195,9 +195,27 @@ Watches for the two ways this service can silently stop protecting the camera: O
 
 ## Web UI
 
-`BlueIrisOllamaBridge.Web` is a separate ASP.NET Core project (own subfolder, own process) that serves a read-only dashboard of the event history from `events.db` - a dark, terminal-styled feed of recent events with thumbnails, click-to-zoom, and auto-refresh. It's a plain HTML/CSS/JS static site (no build step, no framework) served alongside a small read-only JSON API.
+`BlueIrisOllamaBridge.Web` is a separate ASP.NET Core project (own subfolder, own process) that serves the event history from `events.db` - a dark, terminal-styled feed of recent events with thumbnails, click-to-zoom, auto-refresh, and a day-indexed trigger-clip timeline. The timeline overlays AI markers on short Blue Iris alert-linked clip windows, proxies timestamp frames for rapid review, and stores reviewed/unreviewed state in `timeline-reviews.db`. It does not save or expose continuous full-day video. It's a plain HTML/CSS/JS static site (no build step, no framework) served alongside a small JSON API.
 
 It doesn't run the alert pipeline itself; it only reads the same SQLite database and image files the main service already writes, via a `ProjectReference` back to `BlueIrisOllamaBridge` so it reuses `IEventStore` directly rather than duplicating any logic.
+
+Trigger-clip review uses the main app's `BlueIris` URL and credentials. When an event's friendly
+camera name is different from the Blue Iris short name, map it explicitly:
+
+```json
+"BlueIris": {
+  "Enabled": true,
+  "BaseUrl": "http://192.168.1.20:81",
+  "Camera": "gateCamera",
+  "CameraMappings": {
+    "gate camera front door": "gateCamera"
+  },
+  "EventClipPreSeconds": 5,
+  "EventClipPostSeconds": 10,
+  "Username": "sentinel",
+  "Password": "replace-me"
+}
+```
 
 Runs on port 3320 (port 332 itself is a privileged port on Linux and would need root or `setcap` to bind - 3320 avoids that). Configure `Bridge:DataDirectory` in `BlueIrisOllamaBridge.Web/appsettings.json` to point at the same `data/` directory the main service uses:
 

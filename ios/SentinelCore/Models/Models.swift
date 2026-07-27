@@ -71,6 +71,51 @@ struct PushDeliveryReport: Codable {
     let removed: Int
 }
 
+struct RecordingTimelineDay: Codable {
+    let camera: String
+    let date: String
+    let start: Date
+    let end: Date
+    let recording: TimelineRecording
+    var events: [TimelineSecurityEvent]
+}
+
+struct TimelineRecording: Codable {
+    let configured: Bool
+    let available: Bool
+    let sourceCamera: String
+    let error: String?
+    let mode: String
+    let preSeconds: Int
+    let postSeconds: Int
+    let segments: [TimelineRecordingSegment]
+}
+
+struct TimelineRecordingSegment: Codable, Hashable {
+    let eventId: UUID
+    let start: Date
+    let end: Date
+}
+
+struct TimelineSecurityEvent: Codable, Identifiable, Hashable {
+    let id: UUID
+    let camera: String
+    let occurredAt: Date
+    let eventType: String
+    let category: String
+    let severity: String
+    let summary: String
+    let confidence: Double
+    let notified: Bool
+    var reviewed: Bool
+    let hasImage: Bool
+    let hasClip: Bool
+}
+
+struct ReviewedBody: Encodable {
+    let reviewed: Bool
+}
+
 extension JSONDecoder {
     static let sentinel: JSONDecoder = {
         let decoder = JSONDecoder()

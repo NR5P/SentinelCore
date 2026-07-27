@@ -17,6 +17,8 @@ For a physical device, the device and Sentinel Core server must be on the same l
 - Cookie-based dashboard authentication
 - Event feed with search and notified-only filtering
 - Event images and metadata
+- Day-indexed Blue Iris trigger clips with AI event markers, pre/post-event frame scrubbing,
+  automatic unsaved-gap skipping, object/severity filters, and shared reviewed/unreviewed state
 - Motion-trigger snapshots and clips
 - Live camera HLS playback with audio
 - FCM event alerts with foreground presentation, test delivery, and event deep links

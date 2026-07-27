@@ -53,6 +53,28 @@ final class SentinelClient {
         try await get("/api/cameras")
     }
 
+    func timeline(camera: String, date: String) async throws -> RecordingTimelineDay {
+        try await get(
+            "/api/timeline/day",
+            query: [
+                .init(name: "camera", value: camera),
+                .init(name: "date", value: date)
+            ]
+        )
+    }
+
+    func timelineCameras() async throws -> [String] {
+        try await get("/api/timeline/cameras")
+    }
+
+    func setReviewed(eventId: UUID, reviewed: Bool) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/events/\(eventId.uuidString)/reviewed",
+            method: "PUT",
+            body: ReviewedBody(reviewed: reviewed)
+        )
+    }
+
     func login(username: String, password: String) async throws {
         let _: EmptyResponse = try await send(
             "/api/auth/login",
@@ -89,12 +111,12 @@ final class SentinelClient {
         try await send("/api/push/test", method: "POST", body: Optional<String>.none)
     }
 
-    func url(path: String) -> URL? {
+    func url(path: String, query: [URLQueryItem] = []) -> URL? {
         guard var components = URLComponents(string: model.serverURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return nil
         }
         components.path = path
-        components.query = nil
+        components.queryItems = query.isEmpty ? nil : query
         return components.url
     }
 

@@ -86,6 +86,7 @@ struct RootView: View {
     @ViewBuilder private func sectionView(_ section: AppSection) -> some View {
         switch section {
         case .feed: EventFeedView()
+        case .timeline: RecordingTimelineView()
         case .live: LiveCamerasView(isActive: selection == .live)
         case .triggers: TriggerFeedView()
         case .settings: SettingsView()
@@ -94,12 +95,13 @@ struct RootView: View {
 }
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case feed, live, triggers, settings
+    case feed, timeline, live, triggers, settings
     var id: Self { self }
     var title: String { rawValue.uppercased() }
     var icon: String {
         switch self {
         case .feed: "shield.lefthalf.filled"
+        case .timeline: "clock.arrow.circlepath"
         case .live: "video.fill"
         case .triggers: "wave.3.right.circle.fill"
         case .settings: "gearshape.fill"
