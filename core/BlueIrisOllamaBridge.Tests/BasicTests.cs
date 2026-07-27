@@ -1458,6 +1458,99 @@ public sealed class BasicTests
         Assert.Equal(cameraId, all[0].CameraId);
     }
 
+    [Theory]
+    // Loopback and every private range - the normal case, must never warn.
+    [InlineData("127.0.0.1", true)]
+    [InlineData("10.0.0.5", true)]
+    [InlineData("172.16.0.1", true)]
+    [InlineData("172.31.255.254", true)]
+    [InlineData("192.168.50.8", true)]
+    [InlineData("169.254.1.1", true)]
+    [InlineData("100.64.0.1", true)]     // CGNAT, and what Tailscale hands out
+    [InlineData("::1", true)]
+    [InlineData("fe80::1", true)]
+    [InlineData("fd00::1", true)]        // unique-local
+    [InlineData("::ffff:192.168.1.5", true)] // IPv4-mapped IPv6, as Kestrel often reports it
+    // Public addresses - these are the evidence of real exposure.
+    [InlineData("8.8.8.8", false)]
+    [InlineData("1.1.1.1", false)]
+    [InlineData("172.32.0.1", false)]    // just past the 172.16/12 block
+    [InlineData("172.15.255.255", false)] // just before it
+    [InlineData("192.169.1.1", false)]   // adjacent to 192.168/16 but public
+    [InlineData("100.128.0.1", false)]   // just past the CGNAT block
+    [InlineData("2606:4700::1111", false)]
+    public void ExposureTracker_IsLocalNetwork_ClassifiesAddressesCorrectly(string address, bool expectedLocal)
+    {
+        Assert.Equal(expectedLocal, ExposureTracker.IsLocalNetwork(System.Net.IPAddress.Parse(address)));
+    }
+
+    [Fact]
+    public void ExposureTracker_IsLocalNetwork_TreatsUnknownAddressAsLocal()
+    {
+        // Kestrel reports null for some transports (Unix sockets). Staying quiet is right -
+        // an unknown source is not evidence of exposure.
+        Assert.True(ExposureTracker.IsLocalNetwork(null));
+    }
+
+    [Fact]
+    public void ExposureTracker_StaysQuietUntilSomethingExternalArrives()
+    {
+        var tracker = new ExposureTracker();
+        Assert.False(tracker.HasSeenExternalRequest);
+
+        tracker.Record(System.Net.IPAddress.Parse("203.0.113.7"));
+
+        Assert.True(tracker.HasSeenExternalRequest);
+        Assert.Equal("203.0.113.7", tracker.LastExternalAddress);
+    }
+
+    [Fact]
+    public void RetentionWorker_PruneExpiredFiles_NeverTouchesTheDatabaseInTheDataRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "images", "2020-01-01"));
+        Directory.CreateDirectory(Path.Combine(root, "results"));
+
+        // Everything backdated well past any cutoff - this is the quiet-period scenario where a
+        // root-wide sweep would decide the database had expired and unlink it.
+        var stale = DateTime.UtcNow.AddDays(-400);
+        var database = Path.Combine(root, "events.db");
+        var journal = Path.Combine(root, "events.db-journal");
+        var image = Path.Combine(root, "images", "2020-01-01", "old.jpg");
+        var result = Path.Combine(root, "results", "old.json");
+
+        foreach (var path in new[] { database, journal, image, result })
+        {
+            File.WriteAllText(path, "x");
+            File.SetLastWriteTimeUtc(path, stale);
+        }
+
+        RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
+
+        Assert.True(File.Exists(database), "events.db must survive retention.");
+        Assert.True(File.Exists(journal), "events.db-journal must survive retention - deleting it mid-write corrupts.");
+        Assert.False(File.Exists(image), "expired images should still be pruned.");
+        Assert.False(File.Exists(result), "expired results should still be pruned.");
+
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public void RetentionWorker_PruneExpiredFiles_KeepsFilesNewerThanTheCutoff()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "images"));
+
+        var fresh = Path.Combine(root, "images", "recent.jpg");
+        File.WriteAllText(fresh, "x");
+        File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow.AddDays(-1));
+
+        RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
+
+        Assert.True(File.Exists(fresh));
+        Directory.Delete(root, recursive: true);
+    }
+
     [Fact]
     public async Task HomeKitAlertAction_WhenEnabledAndNotificationRecommended_TriggersSidecar()
     {

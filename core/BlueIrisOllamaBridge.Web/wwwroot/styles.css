@@ -72,6 +72,29 @@ body {
   display: none;
 }
 
+/* Amber by default, matching the licence notice's "worth knowing, nothing is broken" tone.
+   Turns red only for the genuinely dangerous combination: reachable off-LAN with no login. */
+.exposure-banner {
+  padding: 8px 28px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-align: center;
+  line-height: 1.5;
+  color: var(--amber);
+  background: rgba(255, 181, 69, 0.08);
+  border-bottom: 1px solid var(--amber);
+}
+
+.exposure-banner-severe {
+  color: var(--red);
+  background: rgba(255, 77, 94, 0.1);
+  border-bottom-color: var(--red);
+}
+
+.exposure-banner.hidden {
+  display: none;
+}
+
 /* Unlicensed watermark - toggled by license.js adding/removing body.unlicensed based on
    /api/license/status. Purely cosmetic (pointer-events: none) - never blocks viewing or
    interacting with anything underneath, matching the "nag, never gate" rule everywhere else

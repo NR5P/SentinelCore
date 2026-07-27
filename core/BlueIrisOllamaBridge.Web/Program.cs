@@ -65,7 +65,14 @@ builder.Services.AddSingleton<ILoggerProvider>(sp =>
 // (this project is deployed by rebuilding in-place, not by publish) logs everyone out.
 builder.Services.AddSingleton<SessionStore>();
 
+// Records whether anything has reached this dashboard from outside the LAN - see ExposureTracker.
+builder.Services.AddSingleton<ExposureTracker>();
+
 var app = builder.Build();
+
+// First in the pipeline so it sees every request, including static files: someone loading the
+// dashboard itself from off-LAN is exactly the case worth knowing about.
+app.UseMiddleware<ExposureWarningMiddleware>();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -81,6 +88,20 @@ app.MapChatEndpoints();
 app.MapHomeKitEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
+
+// Drives the dashboard's exposure banner. Reports only what's actually been observed - it stays
+// quiet until something genuinely reaches this host from off-LAN.
+app.MapGet("/api/exposure/status", async (ExposureTracker tracker, AppSettingsFile settings, CancellationToken ct) =>
+{
+    var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
+    return Results.Ok(new
+    {
+        externalRequestSeen = tracker.HasSeenExternalRequest,
+        lastExternalAddress = tracker.LastExternalAddress,
+        lastExternalAt = tracker.LastExternalAt,
+        loginEnabled = auth is { Enabled: true }
+    });
+});
 
 app.MapGet("/api/events", async (
     IEventStore store, CancellationToken ct, int limit = 50,
