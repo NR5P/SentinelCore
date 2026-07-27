@@ -2363,9 +2363,10 @@ public sealed class BasicTests
     // prose while leaving person.visible false - the same contradiction that produced the phantom
     // gate alerts in production - which meant it no longer described a notifiable event once the
     // visibility guard landed. Confidence is set because every channel now has a floor.
-    private static AlertResult NotifiableResult(string camera) => new()
+    private static AlertResult NotifiableResult(string camera, string? imagePath = null) => new()
     {
         Camera = camera,
+        ImagePath = imagePath,
         Analysis = new VisionAnalysis
         {
             NotificationRecommended = true,
@@ -2374,6 +2375,101 @@ public sealed class BasicTests
             Summary = "A person is standing outside the gate."
         }
     };
+
+    // --- Alert emails: each picture appears exactly once ---------------------------------------
+    //
+    // Every image was being embedded inline (a LinkedResource the HTML references via cid:) and
+    // then attached again as a separate file with the same bytes - so an alert with both the
+    // snapshot and the analysed-region crop arrived with four pictures, the two real ones each
+    // shown twice. Mail clients don't dedupe by content, so nothing hid this from the recipient.
+
+    private static EmailOptions EmailOptionsForTest(bool attachImage) => new()
+    {
+        AttachImage = attachImage,
+        Username = "sender@example.com",
+        FromName = "Gate Camera",
+        ToAddress = "owner@example.com"
+    };
+
+    private static string CreateFakeJpeg(out string directory)
+    {
+        directory = Path.Combine(Path.GetTempPath(), $"email-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "snapshot.jpg");
+        File.WriteAllBytes(path, [0xFF, 0xD8, 0xFF, 0xD9]);
+        return path;
+    }
+
+    [Fact]
+    public void EmailAlertAction_BuildMessage_NeverAttachesFiles()
+    {
+        // The fix in one assertion: LinkedResources display inline via cid: and Attachments show
+        // up as separate files a client has to open. There is now exactly one place a picture can
+        // appear, so Attachments must always be empty.
+        var imagePath = CreateFakeJpeg(out var directory);
+        try
+        {
+            var result = NotifiableResult("gate camera front door", imagePath);
+            var notification = new EmailAlertAction.EmailNotification("person", "Person at gate");
+
+            using var message = EmailAlertAction.BuildMessage(
+                EmailOptionsForTest(attachImage: true), result, notification, cropOverlay: [1, 2, 3]);
+
+            Assert.Empty(message.Attachments);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void EmailAlertAction_BuildMessage_EmbedsBothPicturesExactlyOnce()
+    {
+        var imagePath = CreateFakeJpeg(out var directory);
+        try
+        {
+            var result = NotifiableResult("gate camera front door", imagePath);
+            var notification = new EmailAlertAction.EmailNotification("person", "Person at gate");
+
+            using var message = EmailAlertAction.BuildMessage(
+                EmailOptionsForTest(attachImage: true), result, notification, cropOverlay: [1, 2, 3]);
+
+            var resources = message.AlternateViews.Single().LinkedResources;
+            Assert.Equal(2, resources.Count);
+            Assert.Contains(resources, r => r.ContentId == "gate-alert-image");
+            Assert.Contains(resources, r => r.ContentId == "gate-alert-crop");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void EmailAlertAction_BuildMessage_WhenAttachImageIsOff_SendsNoPicturesAtAll()
+    {
+        // The setting is named and described as one on/off switch for whether a picture appears
+        // ("Include the snapshot in the email rather than text only"). Previously the inline
+        // copies ignored it entirely, so turning it off still sent pictures - just without the
+        // second, attached copy.
+        var imagePath = CreateFakeJpeg(out var directory);
+        try
+        {
+            var result = NotifiableResult("gate camera front door", imagePath);
+            var notification = new EmailAlertAction.EmailNotification("person", "Person at gate");
+
+            using var message = EmailAlertAction.BuildMessage(
+                EmailOptionsForTest(attachImage: false), result, notification, cropOverlay: [1, 2, 3]);
+
+            Assert.Empty(message.AlternateViews.Single().LinkedResources);
+            Assert.Empty(message.Attachments);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 
     private sealed class RecordingHandler : HttpMessageHandler
     {

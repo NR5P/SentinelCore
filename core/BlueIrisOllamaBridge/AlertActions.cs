@@ -336,7 +336,9 @@ public sealed class EmailAlertAction : IAlertAction
         }
     }
 
-    private MailMessage BuildMessage(EmailOptions options, AlertResult result, EmailNotification notification, byte[]? cropOverlay)
+    // Public and static (it never touched instance state) so the "each picture appears exactly
+    // once" guarantee is directly testable, the same way BugReportEmail.Build is.
+    public static MailMessage BuildMessage(EmailOptions options, AlertResult result, EmailNotification notification, byte[]? cropOverlay)
     {
         var fromAddress = string.IsNullOrWhiteSpace(options.FromAddress)
             ? options.Username
@@ -351,11 +353,20 @@ public sealed class EmailAlertAction : IAlertAction
         message.To.Add(options.ToAddress);
 
         var analysis = result.Analysis!;
-        var imageExists = !string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath);
+
+        // One switch for whether pictures appear at all, which is what the setting says it does
+        // ("Include the snapshot in the email rather than text only"). Previously the inline
+        // copies were added regardless, so turning it off still sent pictures.
+        var includeImages = options.AttachImage;
+        var imageExists = includeImages
+            && !string.IsNullOrWhiteSpace(result.ImagePath)
+            && File.Exists(result.ImagePath);
+        var includeCrop = includeImages && cropOverlay is not null;
+
         var imageHtml = imageExists
             ? "<p><img src=\"cid:gate-alert-image\" alt=\"Gate camera alert\" style=\"max-width:100%;height:auto;border:1px solid #ccc;\" /></p>"
             : string.Empty;
-        var cropHtml = cropOverlay is not null
+        var cropHtml = includeCrop
             ? """
               <p style="font-size:13px;color:#555;margin-bottom:2px;">Area the AI analyzed (outlined in red):</p>
               <p><img src="cid:gate-alert-crop" alt="Analyzed region" style="max-width:100%;height:auto;border:1px solid #ccc;" /></p>
@@ -395,9 +406,9 @@ public sealed class EmailAlertAction : IAlertAction
             resource.ContentType.Name = Path.GetFileName(result.ImagePath);
             view.LinkedResources.Add(resource);
         }
-        if (cropOverlay is not null)
+        if (includeCrop)
         {
-            var cropResource = new LinkedResource(new MemoryStream(cropOverlay), MediaTypeNames.Image.Jpeg)
+            var cropResource = new LinkedResource(new MemoryStream(cropOverlay!), MediaTypeNames.Image.Jpeg)
             {
                 ContentId = "gate-alert-crop",
                 TransferEncoding = TransferEncoding.Base64
@@ -407,10 +418,10 @@ public sealed class EmailAlertAction : IAlertAction
         }
         message.AlternateViews.Add(view);
 
-        if (options.AttachImage && imageExists)
-            message.Attachments.Add(new Attachment(result.ImagePath!));
-        if (options.AttachImage && cropOverlay is not null)
-            message.Attachments.Add(new Attachment(new MemoryStream(cropOverlay), "analyzed-region.jpg", MediaTypeNames.Image.Jpeg));
+        // Deliberately no message.Attachments here. Both pictures are already embedded above as
+        // linked resources and displayed inline by the cid: references in the HTML; attaching the
+        // same bytes again made every alert arrive with four pictures - the snapshot and the
+        // analysed region, each shown twice.
 
         return message;
     }
@@ -525,5 +536,6 @@ public sealed class EmailAlertAction : IAlertAction
     private static bool EqualsValue(string value, string expected) =>
         string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);
 
-    private sealed record EmailNotification(string Category, string Subject);
+    // Public alongside BuildMessage, which takes one.
+    public sealed record EmailNotification(string Category, string Subject);
 }
