@@ -1458,6 +1458,68 @@ public sealed class BasicTests
         Assert.Equal(cameraId, all[0].CameraId);
     }
 
+    [Fact]
+    public void HttpsSettings_NotConfigured_StaysOffSilently()
+    {
+        // The shipped default. Must not warn - plain HTTP is a legitimate choice, not a fault.
+        var settings = new HttpsSettings(null, null, 3443);
+
+        Assert.False(settings.CanEnable(out var reason));
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public void HttpsSettings_ConfiguredButFileMissing_StaysOffWithAReason()
+    {
+        // The important case: a wrong path must not stop the dashboard booting, which is what
+        // Kestrel's own certificate configuration would do.
+        var settings = new HttpsSettings("/nonexistent/server.crt", "/nonexistent/server.key", 3443);
+
+        Assert.False(settings.CanEnable(out var reason));
+        Assert.Contains("not found", reason);
+    }
+
+    [Fact]
+    public void HttpsSettings_OnlyOneHalfConfigured_StaysOffWithAReason()
+    {
+        var settings = new HttpsSettings("/tmp/server.crt", null, 3443);
+
+        Assert.False(settings.CanEnable(out var reason));
+        Assert.Contains("both", reason);
+    }
+
+    [Fact]
+    public void HttpsSettings_WhenBothFilesExist_Enables()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"https-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var certificate = Path.Combine(directory, "server.crt");
+        var key = Path.Combine(directory, "server.key");
+        File.WriteAllText(certificate, "x");
+        File.WriteAllText(key, "x");
+
+        var settings = new HttpsSettings(certificate, key, 3443);
+
+        Assert.True(settings.CanEnable(out var reason));
+        Assert.Null(reason);
+        Directory.Delete(directory, recursive: true);
+    }
+
+    [Theory]
+    [InlineData("http://0.0.0.0:3320", 3320)]
+    [InlineData("http://0.0.0.0:8080", 8080)]
+    [InlineData("http://+:5000", 5000)]
+    [InlineData("https://0.0.0.0:3443;http://0.0.0.0:3320", 3320)] // picks the HTTP one
+    [InlineData("", HttpsSettings.DefaultHttpPort)]
+    [InlineData(null, HttpsSettings.DefaultHttpPort)]
+    [InlineData("nonsense", HttpsSettings.DefaultHttpPort)]
+    public void HttpsSettings_ParseHttpPort_KeepsTheExistingHttpListener(string? urls, int expected)
+    {
+        // Enabling HTTPS forces every endpoint to be declared explicitly, so getting this wrong
+        // would silently stop HTTP listening and break Blue Iris and both mobile apps at once.
+        Assert.Equal(expected, HttpsSettings.ParseHttpPort(urls));
+    }
+
     [Theory]
     // Loopback and every private range - the normal case, must never warn.
     [InlineData("127.0.0.1", true)]

@@ -1,0 +1,24 @@
+[Unit]
+Description=Reissue the Sentinel Core dashboard certificate before it expires
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__INSTALL_DIR__
+# Only reissues when the certificate is within 30 days of expiring, so this is a no-op almost
+# every time it runs. The leaf is capped at 825 days for iOS compatibility, which is long enough
+# that nobody would remember to renew it by hand - and an expired certificate means the dashboard
+# won't load at all, which is worse than the plain-HTTP warning it replaced.
+ExecStart=/bin/bash -c '\
+  CERT="__INSTALL_DIR__/certs/server.crt"; \
+  if [ ! -f "$CERT" ]; then echo "No certificate yet - nothing to renew."; exit 0; fi; \
+  if openssl x509 -in "$CERT" -noout -checkend 2592000; then \
+    echo "Certificate still valid for more than 30 days - nothing to do."; exit 0; \
+  fi; \
+  echo "Certificate expires within 30 days - reissuing."; \
+  __INSTALL_DIR__/scripts/setup-local-https.sh'
+
+[Install]
+WantedBy=multi-user.target

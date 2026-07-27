@@ -190,4 +190,9 @@ cat <<NEXT
 
     2. Passwordless restarts, so ./scripts/deploy.sh doesn't prompt each time.
        See docs/DEPLOYMENT.md, "Passwordless restarts".
+
+    Optional: browsers label the dashboard "Not Secure" because it runs over plain HTTP, which
+    is fine on a home network. To get a padlock instead, run ./scripts/setup-local-https.sh -
+    it explains what's involved. No public certificate authority will issue for a private
+    address, so this needs either your own authority or a domain; see docs/DEPLOYMENT.md 14a.
 NEXT

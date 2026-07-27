@@ -16,3 +16,9 @@ node_modules/
 # Committing these would hand anyone who cloned the repo the ability to impersonate the
 # bridge, and would break every existing iPhone pairing if restored onto another machine.
 homekit-bridge/persist/
+
+# The local certificate authority and the server key it signs. The CA private key is the whole
+# security of this scheme - anyone holding it can issue certificates every trusting device will
+# accept. It is generated per install by scripts/setup-local-https.sh and must never be shared,
+# which is exactly why the product ships a generator instead of a bundled certificate.
+certs/

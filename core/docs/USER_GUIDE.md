@@ -52,6 +52,15 @@ Point a browser at `http://<your-server's-LAN-IP>:3320`. There's no login by def
 designed for LAN-only use, so don't expose port 3320 (or 5080) to the internet unless you've
 turned on the login (see below) and put it behind HTTPS yourself.
 
+**About the "Not Secure" label.** Browsers show this because the dashboard is served over plain
+HTTP, which is fine on a home network you trust — nothing is broken. If it bothers you, or if
+you've turned the login on and would rather your password wasn't sent in the clear, HTTPS is
+available; see [DEPLOYMENT.md](DEPLOYMENT.md) section 14a. It isn't automatic, because no
+certificate authority on the internet will issue a certificate for a private address like
+`192.168.1.50`, so it takes either your own certificate authority or a domain you own. If you
+ever see the dashboard warn that it was reached from *outside* your network, take that one
+seriously — that's a different thing entirely, and means the port is more exposed than intended.
+
 Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") showing
 whether the dashboard can currently reach its own backend, and five tabs: **feed**, **live**,
 **cameras**, **triggers**, **settings**.
