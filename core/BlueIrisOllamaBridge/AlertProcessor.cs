@@ -85,6 +85,17 @@ public sealed class AlertProcessor : BackgroundService
             };
             await _store.SaveAsync(result, cancellationToken);
 
+            // Never let the visibility guard drop an alert silently. In practice this fires when
+            // the frame is unreadable and the model still writes a subject into the prose, but it
+            // would also catch a reply that parsed yet omitted the subject blocks - and that
+            // second case is worth seeing in the log rather than quietly losing.
+            if (analysis.NotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result))
+            {
+                _logger.LogInformation(
+                    "Alert {AlertId} recommended a notification but no subject was visible - suppressed. Summary: {Summary}",
+                    alert.Id, analysis.Summary);
+            }
+
             foreach (var action in _actions)
             {
                 try { await action.ExecuteAsync(result, cancellationToken); }

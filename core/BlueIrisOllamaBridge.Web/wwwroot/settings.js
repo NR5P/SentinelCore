@@ -846,6 +846,10 @@ window.GateWatchSettings = (function () {
       {
         name: "sidecarBaseUrl", label: "sidecar url", type: "text",
         tip: "Where the HomeKit sidecar's control API is listening. The default is right unless you changed its port."
+      },
+      {
+        name: "minimumConfidence", label: "minimum confidence", type: "number", min: 0, max: 1, step: 0.05,
+        tip: "How sure the AI must be before this trips a HomeKit motion alert on your phone. Raise it if you get woken by false alarms; lower it if real events are being missed. Quiet Hours can raise this further overnight."
       }
     ];
 
