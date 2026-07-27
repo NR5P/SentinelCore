@@ -25,7 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowOutward
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Speaker
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -61,7 +60,6 @@ import com.sentinelcore.android.ui.components.relativeTime
 import com.sentinelcore.android.ui.theme.SentinelBackground
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
-import com.sentinelcore.android.ui.theme.SentinelGreenDim
 import com.sentinelcore.android.ui.theme.SentinelText
 import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlin.math.roundToInt
@@ -198,6 +196,7 @@ fun TriggerDetailScreen(
 @Composable
 fun LiveCamerasScreen(
     state: SentinelUiState,
+    model: SentinelViewModel,
     onCamera: (Camera) -> Unit,
     onRefresh: () -> Unit,
 ) {
@@ -225,19 +224,16 @@ fun LiveCamerasScreen(
                         Modifier.fillMaxWidth().clickable { onCamera(camera) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Box(
-                                Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                                    .clip(RoundedCornerShape(5.dp))
-                                    .background(Color.Black),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Default.Videocam,
-                                    contentDescription = null,
-                                    tint = SentinelGreenDim,
-                                    modifier = Modifier.size(42.dp),
-                                )
-                            }
+                            SentinelPlayer(
+                                url = model.absoluteUrl(
+                                    "/api/cameras/${camera.id}/stream/stream.m3u8",
+                                ),
+                                headers = model.mediaHeaders(),
+                                muted = true,
+                                showControls = false,
+                                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                                    .clip(RoundedCornerShape(5.dp)),
+                            )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(7.dp).background(SentinelGreen, CircleShape))
                                 Spacer(Modifier.width(8.dp))
@@ -301,6 +297,8 @@ fun LivePlayerScreen(
 private fun SentinelPlayer(
     url: String?,
     headers: Map<String, String>,
+    muted: Boolean = false,
+    showControls: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     if (url == null) {
@@ -311,7 +309,7 @@ private fun SentinelPlayer(
     }
 
     val context = LocalContext.current
-    val player = remember(url, headers) {
+    val player = remember(url, headers, muted) {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(headers)
@@ -320,6 +318,7 @@ private fun SentinelPlayer(
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(url))
+                volume = if (muted) 0f else 1f
                 playWhenReady = true
                 prepare()
             }
@@ -333,10 +332,13 @@ private fun SentinelPlayer(
         factory = { viewContext ->
             PlayerView(viewContext).apply {
                 this.player = player
-                useController = true
+                useController = showControls
             }
         },
-        update = { it.player = player },
+        update = {
+            it.player = player
+            it.useController = showControls
+        },
         modifier = modifier.background(Color.Black),
     )
 }

@@ -4,6 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.sentinelcore.android"
     compileSdk = 35
@@ -62,6 +66,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("com.google.firebase:firebase-messaging:25.1.1")
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
@@ -70,4 +76,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
-

@@ -50,6 +50,36 @@ struct SettingsView: View {
                 }
             }
 
+            Section("PUSH NOTIFICATIONS") {
+                LabeledContent("PERMISSION", value: model.pushAuthorization)
+                if let status = model.pushStatus {
+                    LabeledContent("CORE", value: status.enabled ? "ENABLED" : "DISABLED")
+                    LabeledContent("APPLE PROVIDER", value: status.appleConfigured ? "CONFIGURED" : "NOT CONFIGURED")
+                    LabeledContent("REGISTERED DEVICES", value: "\(status.registeredDevices)")
+                }
+                Button(model.pushRegistrationEnabled ? "REFRESH REGISTRATION" : "ENABLE NOTIFICATIONS") {
+                    Task { await model.enablePushNotifications() }
+                }
+                if model.pushRegistrationEnabled {
+                    Button("DISABLE ON THIS DEVICE", role: .destructive) {
+                        Task { await model.disablePushNotifications() }
+                    }
+                }
+                Button("SEND TEST NOTIFICATION") {
+                    Task { await model.sendTestPushNotification() }
+                }
+                .disabled(
+                    model.pushStatus?.appleConfigured != true ||
+                        model.pushAuthorization == "DENIED" ||
+                        !model.pushRegistrationEnabled
+                )
+                if let pushMessage = model.pushMessage {
+                    Text(pushMessage)
+                        .font(.caption)
+                        .foregroundStyle(SentinelTheme.textDim)
+                }
+            }
+
             Section("DIAGNOSTICS") {
                 DisclosureGroup("CONNECTION LOG", isExpanded: $showingDiagnostics) {
                     if model.diagnostics.isEmpty {
@@ -80,7 +110,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("This first native client manages its connection locally. Full server configuration, camera editing, motion-zone drawing, push registration, and background alert delivery are the next integration layers.")
+                Text("This native client manages its connection and push registration locally. Full server configuration, camera editing, and motion-zone drawing remain in the Core dashboard.")
                     .font(.caption)
                     .foregroundStyle(SentinelTheme.textDim)
             }

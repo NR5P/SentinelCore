@@ -51,6 +51,26 @@ struct LoginBody: Encodable {
     let password: String
 }
 
+struct PushStatus: Codable {
+    let enabled: Bool
+    let appleConfigured: Bool
+    let firebaseConfigured: Bool
+    let registeredDevices: Int
+}
+
+struct PushDeviceBody: Encodable {
+    let platform: String
+    let token: String
+    let deviceName: String?
+}
+
+struct PushDeliveryReport: Codable {
+    let attempted: Int
+    let delivered: Int
+    let failed: Int
+    let removed: Int
+}
+
 extension JSONDecoder {
     static let sentinel: JSONDecoder = {
         let decoder = JSONDecoder()

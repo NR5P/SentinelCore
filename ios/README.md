@@ -18,9 +18,14 @@ The device and Sentinel Core server must currently be on the same local network.
 - Event detail with full-resolution alert snapshot
 - Trigger history with snapshot and recorded-clip playback
 - Live camera list and native HLS playback
+- APNs event alerts with foreground presentation, test delivery, and event deep links
 - Optional dashboard username/password login
 - Server connection settings and health status
 - Shared SwiftUI codebase for iOS, iPadOS, and macOS
 
 The app talks to the existing `BlueIrisOllamaBridge.Web` JSON API. It does not connect
 directly to cameras or the main bridge on port 5080.
+
+Real push delivery requires an Apple Developer signing identity, an APNs key, and
+Core provider configuration. See
+[`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md).

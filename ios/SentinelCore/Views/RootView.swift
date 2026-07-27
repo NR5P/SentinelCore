@@ -27,6 +27,9 @@ struct RootView: View {
         .task(id: model.serverURL) {
             await model.connect(resetNetworkSession: true)
         }
+        .onChange(of: model.selectedEvent?.id) { _, eventId in
+            if eventId != nil { selection = .feed }
+        }
     }
 
     private var splitNavigation: some View {
@@ -50,6 +53,9 @@ struct RootView: View {
         } detail: {
             NavigationStack {
                 sectionView(selection ?? .feed)
+                    .navigationDestination(item: $model.selectedEvent) { event in
+                        EventDetailView(event: event)
+                    }
             }
             .background(SentinelTheme.background)
         }
@@ -60,6 +66,9 @@ struct RootView: View {
             ForEach(AppSection.allCases) { section in
                 NavigationStack {
                     sectionView(section)
+                        .navigationDestination(item: $model.selectedEvent) { event in
+                            EventDetailView(event: event)
+                        }
                 }
                 .tabItem { Label(section.title, systemImage: section.icon) }
                 .tag(section)
@@ -77,7 +86,7 @@ struct RootView: View {
     @ViewBuilder private func sectionView(_ section: AppSection) -> some View {
         switch section {
         case .feed: EventFeedView()
-        case .live: LiveCamerasView()
+        case .live: LiveCamerasView(isActive: selection == .live)
         case .triggers: TriggerFeedView()
         case .settings: SettingsView()
         }

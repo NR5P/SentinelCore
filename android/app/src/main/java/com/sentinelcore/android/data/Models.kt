@@ -38,6 +38,20 @@ data class AuthStatus(
     val username: String?,
 )
 
+data class PushStatus(
+    val enabled: Boolean,
+    val appleConfigured: Boolean,
+    val firebaseConfigured: Boolean,
+    val registeredDevices: Int,
+)
+
+data class PushDeliveryReport(
+    val attempted: Int,
+    val delivered: Int,
+    val failed: Int,
+    val removed: Int,
+)
+
 data class DiagnosticEntry(
     val id: Long,
     val timestamp: Instant,
@@ -63,4 +77,3 @@ class SentinelApiException(
     val statusCode: Int,
     override val message: String,
 ) : Exception(message)
-

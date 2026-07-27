@@ -37,6 +37,8 @@ if (httpsEnabled)
 builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection(BridgeOptions.SectionName));
 
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
+builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
+builder.Services.AddSingleton<PushNotificationDispatcher>();
 
 var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
     ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
@@ -120,6 +122,7 @@ app.MapAuthEndpoints();
 app.MapBackupEndpoints();
 app.MapChatEndpoints();
 app.MapHomeKitEndpoints();
+app.MapPushEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 
@@ -165,6 +168,26 @@ app.MapGet("/api/events/filter-options", async (IEventStore store, CancellationT
 {
     var options = await store.GetFilterOptionsAsync(ct);
     return Results.Ok(new { cameras = options.Cameras, eventTypes = options.EventTypes });
+});
+
+app.MapGet("/api/events/{id:guid}", async (Guid id, IEventStore store, CancellationToken ct) =>
+{
+    var e = await store.GetEventAsync(id, ct);
+    return e is null
+        ? Results.NotFound(new { error = "Event not found." })
+        : Results.Ok(new
+        {
+            e.Id,
+            e.Camera,
+            occurredAt = e.OccurredAt,
+            e.Status,
+            eventType = e.EventType ?? "unknown",
+            summary = e.Summary ?? string.Empty,
+            notified = e.NotificationRecommended == true,
+            notificationReason = e.NotificationReason ?? string.Empty,
+            confidence = e.Confidence ?? 0,
+            hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath)
+        });
 });
 
 app.MapGet("/api/events/{id:guid}/image", async (Guid id, IEventStore store, CancellationToken ct) =>

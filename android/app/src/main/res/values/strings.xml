@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Sentinel Core</string>
+    <string name="security_alert_channel_id">security_alerts</string>
+    <string name="security_alert_channel_name">Security alerts</string>
+    <string name="security_alert_channel_description">AI-reviewed camera security events from Sentinel Core</string>
 </resources>
-

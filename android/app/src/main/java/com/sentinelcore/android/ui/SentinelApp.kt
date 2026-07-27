@@ -90,6 +90,13 @@ private fun AppShell(
     var section by rememberSaveable { mutableStateOf(AppSection.FEED) }
     var detail by remember { mutableStateOf<DetailScreen?>(null) }
     BackHandler(detail != null) { detail = null }
+    LaunchedEffect(state.pendingPushEventId, state.events) {
+        val eventId = state.pendingPushEventId ?: return@LaunchedEffect
+        val event = state.events.firstOrNull { it.id == eventId } ?: return@LaunchedEffect
+        section = AppSection.FEED
+        detail = DetailScreen.Event(event)
+        model.consumePushEvent()
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
@@ -216,6 +223,7 @@ private fun ScreenContent(
                 )
                 AppSection.LIVE -> LiveCamerasScreen(
                     state = state,
+                    model = model,
                     onCamera = { onDetail(DetailScreen.Camera(it)) },
                     onRefresh = model::connect,
                 )

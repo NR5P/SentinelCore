@@ -41,6 +41,10 @@ final class SentinelClient {
         return try await get("/api/events", query: items)
     }
 
+    func event(id: UUID) async throws -> SecurityEvent {
+        try await get("/api/events/\(id.uuidString)")
+    }
+
     func triggers() async throws -> [TriggerEvent] {
         try await get("/api/triggers", query: [.init(name: "limit", value: "100")])
     }
@@ -59,6 +63,30 @@ final class SentinelClient {
 
     func logout() async throws {
         let _: EmptyResponse = try await send("/api/auth/logout", method: "POST", body: Optional<String>.none)
+    }
+
+    func pushStatus() async throws -> PushStatus {
+        try await get("/api/push/status")
+    }
+
+    func registerPushDevice(token: String, deviceName: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/push/devices",
+            method: "POST",
+            body: PushDeviceBody(platform: "apple", token: token, deviceName: deviceName)
+        )
+    }
+
+    func unregisterPushDevice(token: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/push/devices/unregister",
+            method: "POST",
+            body: PushDeviceBody(platform: "apple", token: token, deviceName: nil)
+        )
+    }
+
+    func testPushNotification() async throws -> PushDeliveryReport {
+        try await send("/api/push/test", method: "POST", body: Optional<String>.none)
     }
 
     func url(path: String) -> URL? {

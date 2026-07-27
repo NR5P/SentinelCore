@@ -29,6 +29,40 @@ public sealed class BridgeOptions
     };
 }
 
+public sealed class PushNotificationOptions
+{
+    public const string SectionName = "PushNotifications";
+
+    public bool Enabled { get; init; }
+    public bool OnlyWhenNotificationRecommended { get; init; } = true;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; init; } = 0.60;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; init; } = 5;
+
+    public ApplePushOptions Apple { get; init; } = new();
+    public FirebasePushOptions Firebase { get; init; } = new();
+}
+
+public sealed class ApplePushOptions
+{
+    public bool Enabled { get; init; }
+    public string TeamId { get; init; } = string.Empty;
+    public string KeyId { get; init; } = string.Empty;
+    public string BundleId { get; init; } = "com.sentinelcore.client";
+    public string PrivateKeyPath { get; init; } = string.Empty;
+    public bool UseSandbox { get; init; } = true;
+}
+
+public sealed class FirebasePushOptions
+{
+    public bool Enabled { get; init; }
+    public string ProjectId { get; init; } = string.Empty;
+    public string ServiceAccountPath { get; init; } = string.Empty;
+}
+
 public sealed class ImageProcessingOptions
 {
     public const string SectionName = "ImageProcessing";

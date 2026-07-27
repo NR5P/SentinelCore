@@ -1,5 +1,9 @@
 package com.sentinelcore.android.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -55,7 +59,14 @@ fun SettingsScreen(
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        model.refreshNotificationPermission()
+        if (it) model.enablePushNotifications()
+    }
     LaunchedEffect(state.serverUrl) { address = state.serverUrl }
+    LaunchedEffect(Unit) { model.refreshNotificationPermission() }
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("SETTINGS", state)
@@ -124,6 +135,56 @@ fun SettingsScreen(
             }
 
             item {
+                SettingsSection("PUSH NOTIFICATIONS") {
+                    SettingsRow("PERMISSION", state.pushPermission)
+                    state.pushStatus?.let { status ->
+                        SettingsRow("CORE", if (status.enabled) "ENABLED" else "DISABLED")
+                        SettingsRow(
+                            "FIREBASE PROVIDER",
+                            if (status.firebaseConfigured) "CONFIGURED" else "NOT CONFIGURED",
+                        )
+                        SettingsRow("REGISTERED DEVICES", status.registeredDevices.toString())
+                    }
+                    Button(
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                model.enablePushNotifications()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (state.pushRegistrationEnabled) {
+                                "REFRESH REGISTRATION"
+                            } else {
+                                "ENABLE NOTIFICATIONS"
+                            },
+                        )
+                    }
+                    if (state.pushRegistrationEnabled) {
+                        OutlinedButton(
+                            onClick = model::disablePushNotifications,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("DISABLE ON THIS DEVICE")
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = model::sendTestPushNotification,
+                        enabled = state.pushStatus?.firebaseConfigured == true &&
+                            state.pushPermission == "ENABLED" &&
+                            state.pushRegistrationEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("SEND TEST NOTIFICATION")
+                    }
+                    state.pushMessage?.let { Text(it, color = SentinelTextDim) }
+                }
+            }
+
+            item {
                 SettingsSection("DIAGNOSTICS") {
                     TextButton(
                         onClick = { showDiagnostics = !showDiagnostics },
@@ -160,9 +221,9 @@ fun SettingsScreen(
 
             item {
                 Text(
-                    "This native client manages its connection locally. Full server configuration, " +
-                        "camera editing, motion-zone drawing, push registration, and background alert " +
-                        "delivery are future integration layers.",
+                    "This native client manages its connection and push registration locally. " +
+                        "Full server configuration, camera editing, and " +
+                        "motion-zone drawing remain in the Core dashboard.",
                     color = SentinelTextDim,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
                         .fillMaxWidth()

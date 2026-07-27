@@ -1667,6 +1667,62 @@ public sealed class BasicTests
         await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
     }
 
+    [Fact]
+    public async Task PushDeviceStore_UpsertsAndRemovesRegistrations()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions
+            {
+                ApiKey = "test-key-1234567890",
+                DataDirectory = tempDir
+            });
+            var store = new SqlitePushDeviceStore(options, new FakeHostEnvironment(tempDir));
+
+            var first = await store.UpsertAsync("ANDROID", "fid-123", "First name", CancellationToken.None);
+            var updated = await store.UpsertAsync("android", "fid-123", "Updated name", CancellationToken.None);
+            await store.UpsertAsync("apple", "apns-456", "iPhone", CancellationToken.None);
+
+            Assert.Equal(first.Id, updated.Id);
+            Assert.Equal("android", updated.Platform);
+            Assert.Equal("Updated name", updated.DeviceName);
+            Assert.Equal(2, await store.CountAsync(CancellationToken.None));
+
+            await store.RemoveAsync("ANDROID", "fid-123", CancellationToken.None);
+            var remaining = await store.GetAllAsync(CancellationToken.None);
+            Assert.Single(remaining);
+            Assert.Equal("apple", remaining[0].Platform);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PushMessage_FromAlertCarriesEventDeepLinkData()
+    {
+        var result = new AlertResult
+        {
+            Id = Guid.NewGuid(),
+            Camera = "Front gate",
+            Analysis = new VisionAnalysis
+            {
+                Summary = "A person entered the driveway.",
+                EventType = "person"
+            }
+        };
+
+        var message = PushMessage.FromAlert(result);
+
+        Assert.Equal("Front gate", message.Title);
+        Assert.Equal(result.Id.ToString(), message.EventId);
+        Assert.Equal("person", message.EventType);
+        Assert.Contains("driveway", message.Body);
+    }
+
     private static HomeKitAlertAction BuildHomeKitAction(RecordingHandler handler, HomeKitOptions options) =>
         new(new HttpClient(handler),
             new StaticOptionsMonitor<HomeKitOptions>(options),

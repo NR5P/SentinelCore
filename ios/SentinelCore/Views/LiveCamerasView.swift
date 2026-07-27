@@ -3,6 +3,7 @@ import SwiftUI
 
 struct LiveCamerasView: View {
     @EnvironmentObject private var model: AppModel
+    let isActive: Bool
 
     var body: some View {
         ScrollView {
@@ -10,12 +11,7 @@ struct LiveCamerasView: View {
                 ForEach(model.cameras) { camera in
                     NavigationLink(value: camera) {
                         VStack(alignment: .leading, spacing: 10) {
-                            ZStack {
-                                Rectangle().fill(.black)
-                                Image(systemName: "video.fill")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(SentinelTheme.greenDim)
-                            }
+                            LiveCameraPreview(camera: camera, isActive: isActive)
                             .aspectRatio(16 / 9, contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 5))
                             HStack {
@@ -57,6 +53,58 @@ struct LiveCamerasView: View {
     }
 }
 
+private struct LiveCameraPreview: View {
+    @EnvironmentObject private var model: AppModel
+    let camera: Camera
+    let isActive: Bool
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Rectangle().fill(.black)
+            if let player {
+                VideoPlayer(player: player)
+                    // The whole tile opens the camera detail; playback controls live there.
+                    .allowsHitTesting(false)
+            } else {
+                ProgressView("Starting stream…")
+                    .foregroundStyle(SentinelTheme.textDim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
+                .padding(10)
+        }
+        .task(id: isActive) {
+            if isActive {
+                startPlayback()
+            } else {
+                stopPlayback()
+            }
+        }
+        .onDisappear(perform: stopPlayback)
+    }
+
+    private func startPlayback() {
+        guard player == nil else {
+            player?.play()
+            return
+        }
+        guard let url = model.client.url(
+            path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8"
+        ) else { return }
+
+        let newPlayer = AVPlayer(url: url)
+        newPlayer.isMuted = true
+        player = newPlayer
+        newPlayer.play()
+    }
+
+    private func stopPlayback() {
+        player?.pause()
+        player = nil
+    }
+}
+
 struct LivePlayerView: View {
     @EnvironmentObject private var model: AppModel
     let camera: Camera
@@ -78,8 +126,9 @@ struct LivePlayerView: View {
         .navigationTitle(camera.name)
         .task {
             guard let url = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8") else { return }
-            player = AVPlayer(url: url)
-            player?.play()
+            let newPlayer = AVPlayer(url: url)
+            player = newPlayer
+            newPlayer.play()
         }
         .onDisappear {
             player?.pause()
