@@ -56,11 +56,11 @@ by one `dotnet build` at the repo root.
 | Working directory | `BlueIrisOllamaBridge/` | `BlueIrisOllamaBridge.Web/` |
 | Binary | `bin/Release/net10.0/BlueIrisOllamaBridge.dll` | `bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll` |
 
-> **Note on the `systemd/` folder in this repo:** those two `.service` files are an older
-> install-to-`/opt` template (used by `scripts/install-linux.sh`) and do **not** match how
-> this system actually runs today. Use the exact unit files in
-> [section 8](#8-installing-as-systemd-services) below, which reflect the real, in-place
-> deployment — not the checked-in templates.
+> **Note on the `systemd/` folder in this repo:** those files are templates with
+> `__PLACEHOLDER__` values that `scripts/install-linux.sh` fills in, and they describe this
+> same in-place layout. The worked examples in
+> [section 8](#8-installing-as-systemd-services) are what the installer generates from them,
+> shown with the placeholders substituted.
 
 ## 2. Prerequisites
 
