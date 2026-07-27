@@ -4,6 +4,12 @@ using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Lets the same binaries run as a Windows Service or a systemd unit without a separate build.
+// Both are no-ops when the process wasn't started by that service manager - including when it's
+// run straight from a terminal - so this is safe on every platform.
+builder.Host.UseWindowsService();
+builder.Host.UseSystemd();
+
 builder.Services.AddOptions<BridgeOptions>()
     .Bind(builder.Configuration.GetSection(BridgeOptions.SectionName))
     .ValidateDataAnnotations()

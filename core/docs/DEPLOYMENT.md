@@ -64,8 +64,13 @@ by one `dotnet build` at the repo root.
 
 ## 2. Prerequisites
 
-- **Linux** (this guide assumes Ubuntu/Debian-family; adjust package manager commands for
-  others)
+**The installer handles all of these for you** — `./scripts/install-linux.sh` on Linux or
+`.\scripts\install-windows.ps1` on Windows detects what's missing and offers to install it. This
+list is what it's installing, for reference or if you'd rather do it by hand.
+
+- **Linux or Windows.** Most of this guide is written for Linux (Ubuntu/Debian-family). Windows
+  is supported too and is worth considering, since Blue Iris is Windows-only — running both on
+  one machine avoids needing a second box. See [section 8b](#8b-windows) for what differs.
 - **.NET 10 SDK**
 - **Ollama**, running locally, with a vision-capable model pulled (default `gemma3:4b`) -
   required for the default configuration. An offsite Cloud Vision backend (OpenAI, Anthropic, or
@@ -380,6 +385,47 @@ to `MDNSAdvertiser.CIAO` in `index.js` to use the sidecar's own built-in respond
 Pairing state and this bridge's stable identity (its virtual MAC and pairing code) live in
 `core/homekit-bridge/persist/`, which is gitignored. **Don't delete it** — doing so unpairs
 every iPhone and generates a new pairing code.
+
+### 8b. Windows
+
+Worth considering over Linux for one reason: **Blue Iris is Windows-only**, so running Sentinel
+Core on the same machine means you don't need a second box at all.
+
+From an **elevated** PowerShell (right-click → Run as Administrator):
+
+```powershell
+.\scripts\install-windows.ps1
+```
+
+Same job as the Linux installer — detects and offers to install missing dependencies (via
+`winget`), builds, runs the tests, registers the services, starts them, health-checks. Overrides
+work the same way:
+
+```powershell
+.\scripts\install-windows.ps1 -WebPort 8080 -AssumeYes
+```
+
+What differs from Linux:
+
+| | Linux | Windows |
+|---|---|---|
+| Service manager | systemd units | Windows Services |
+| Service names | `blueiris-ollama-bridge`, `-web`, `-homekit` | `SentinelCoreBridge`, `SentinelCoreWeb`, `SentinelCoreHomeKit` |
+| Dependencies | apt / NodeSource / Ollama script | winget |
+| HomeKit mDNS | avahi over D-Bus | hap-nodejs's own responder (`ciao`) |
+| Logs | `journalctl -u <name>` | Event Viewer, or the console when run by hand |
+| Restart a service | `sudo systemctl restart <name>` | `Restart-Service <name>` |
+
+The same binaries run on both — the .NET hosts call `UseWindowsService()` and `UseSystemd()`,
+each a no-op when the process wasn't started by that service manager, so there's no separate
+build and no `#if WINDOWS` anywhere.
+
+Firewall rules are the one manual step, same as on Linux; the installer prints the exact
+`New-NetFirewallRule` commands when it finishes.
+
+> **Status:** the Windows installer is newer and less battle-tested than the Linux one. The
+> application code itself is the same on both platforms and is well covered, but if you hit a
+> problem with service registration specifically, that's the least-exercised part.
 
 ## 9. The deploy script
 

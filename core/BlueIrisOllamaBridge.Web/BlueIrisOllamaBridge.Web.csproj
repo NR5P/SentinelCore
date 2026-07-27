@@ -10,4 +10,8 @@
   <ItemGroup>
     <ProjectReference Include="../BlueIrisOllamaBridge/BlueIrisOllamaBridge.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+  </ItemGroup>
 </Project>
