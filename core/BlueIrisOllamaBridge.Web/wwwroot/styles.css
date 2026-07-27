@@ -580,6 +580,31 @@ main {
   line-height: 1.5;
 }
 
+/* Section intro paragraph. Slightly roomier than a plain hint and separated from the fields
+   below, since it's explanatory prose rather than a note attached to one control. */
+.settings-section-intro {
+  margin: 0 0 14px;
+  max-width: 70ch;
+  border-left: 2px solid var(--border-bright);
+  padding-left: 10px;
+}
+
+.mode-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.mode-label {
+  color: var(--green-dim);
+  font-size: 12px;
+  letter-spacing: 1px;
+  /* Fixed width so the toolbar doesn't shift when "basic" becomes "advanced". */
+  min-width: 62px;
+  text-align: right;
+}
+
 .homekit-qr {
   display: flex;
   flex-direction: column;
@@ -1261,5 +1286,10 @@ main {
   }
   .zone-size-wrap {
     max-width: 100%;
+  }
+  /* The settings toolbar can't fit both on a phone. The mode switch is an actual control;
+     "changes apply live, no restart" is reassurance you only need to read once. */
+  #view-settings .event-count {
+    display: none;
   }
 }
