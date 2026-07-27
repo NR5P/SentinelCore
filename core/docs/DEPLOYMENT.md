@@ -565,6 +565,92 @@ sudo ufw allow from 192.168.50.0/24 to any port 51826 proto tcp
 Do **not** open 3321. That's the sidecar's control API, bound to `127.0.0.1` and meant only for
 the main app on this same host.
 
+## 14a. HTTPS (optional)
+
+Plain HTTP is the shipped default and is fine on a home network you trust. Turn this on if the
+browser's "Not Secure" label bothers you, if you've enabled the dashboard login (the password
+crosses the wire in cleartext otherwise), or if you want Android's proper "Install app" prompt
+for the web app, which only appears over HTTPS.
+
+**The awkward part, stated plainly:** no public certificate authority will issue a certificate
+for a private address like `192.168.50.8`. Let's Encrypt cannot help. That leaves two routes,
+and a trap:
+
+> **The trap:** a plain self-signed certificate makes things *worse*, not better. Browsers show a
+> full-page "your connection is not private" warning on every visit — far more alarming than the
+> small "Not Secure" label you started with. What follows is not that; it's a certificate signed
+> by an authority your devices are told to trust, which shows an ordinary padlock.
+
+### Route A — your own certificate authority (no domain needed)
+
+```bash
+./scripts/setup-local-https.sh
+```
+
+This creates an authority **unique to your install** in `core/certs/`, then issues a server
+certificate covering this machine's hostname, its `.local` name, and every LAN IP. It's safe to
+re-run: it keeps the authority (so devices stay trusted) and reissues only the server
+certificate.
+
+Then point the dashboard at it in `BlueIrisOllamaBridge.Web/appsettings.json`:
+
+```json
+"Https": {
+  "CertificatePath": "/full/path/to/core/certs/server.crt",
+  "KeyPath": "/full/path/to/core/certs/server.key",
+  "Port": 3443
+}
+```
+
+and restart: `sudo systemctl restart blueiris-ollama-bridge-web`
+
+**Plain HTTP keeps listening on 3320.** That's deliberate — both mobile apps default to `http://`
+when you type a bare address, so forcing everything to HTTPS would break them on any device that
+hadn't yet trusted the authority. Bookmark the `https://` address; nothing else changes.
+
+Finally, install `core/certs/ca.crt` on each device you browse from. The script prints
+per-platform instructions when it finishes. The one people get stuck on is iOS: installing the
+profile is **not** enough, you must then go to **Settings → General → About → Certificate Trust
+Settings** and switch it on.
+
+Open the firewall for the HTTPS port the same way as the others:
+
+```bash
+sudo ufw allow from 192.168.50.0/24 to any port 3443 proto tcp
+```
+
+**Renewal.** The certificate is capped at 825 days because Apple rejects anything longer, even
+from an authority you added yourself. Nobody remembers a two-year deadline, and an expired
+certificate means the dashboard won't load at all — worse than the warning it replaced. So
+install the timer, which checks monthly and reissues within 30 days of expiry:
+
+```bash
+sudo cp systemd/blueiris-ollama-bridge-cert-renew.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now blueiris-ollama-bridge-cert-renew.timer
+```
+
+(Edit the two `__INSTALL_DIR__`/`__APP_USER__` placeholders first, or let
+`install-linux.sh` fill them in.) The authority itself lasts ten years, so renewals never require
+touching a phone again.
+
+### Route B — a real domain (no per-device setup)
+
+If per-device trust is too much friction — likely if other people use the dashboard — buy a cheap
+domain and get a genuinely trusted certificate via a **DNS-01** challenge, which works for a host
+that isn't reachable from the internet. Point `sentinel.yourdomain.com` at the LAN IP using your
+router's DNS, and every device just works with no installation at all. Caddy or certbot with a
+DNS plugin will automate issuance and renewal; feed the resulting files into the same `Https`
+block above.
+
+### A note if you're distributing this
+
+The authority is generated per install and deliberately **not** bundled with the product. Shipping
+one would mean every install shared a single private key, so anyone with a copy could issue
+certificates that every other customer's devices would trust. That's why this is a script rather
+than a file, and why HTTP remains the default — the same choice Home Assistant, Unifi and Proxmox
+all make.
+
 ## 15. Troubleshooting
 
 **Build fails with `Fatal error. Internal CLR error. (0x80131506)`.** Known MSBuild
