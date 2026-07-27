@@ -235,13 +235,29 @@
     frameEl.play().catch(() => {});
   }
 
+  // Where the cursor actually ends up for an event: the start of its clip when it has one, which
+  // is ClipPreSeconds *before* the event itself. Jumping has to compare against this rather than
+  // against occurredAt - otherwise "next event" lands a few seconds ahead of the cursor, the
+  // event it just moved to still counts as being in the future, and every further press picks
+  // the same one again. That looked like the button doing nothing at all.
+  function positionFor(event) {
+    return secondsFor(segmentForEvent(event)?.start || event.occurredAt);
+  }
+
   function jump(direction) {
     const current = Number(scrubberEl.value);
-    const events = filteredEvents().sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt));
-    const event = direction > 0
-      ? events.find(item => secondsFor(item.occurredAt) > current + .5)
-      : [...events].reverse().find(item => secondsFor(item.occurredAt) < current - .5);
-    if (event) seek(secondsFor(segmentForEvent(event)?.start || event.occurredAt));
+    const positions = filteredEvents()
+      .map(event => positionFor(event))
+      .sort((a, b) => a - b);
+
+    // The scrubber is a step="1" range input, so a fractional seek snaps to a whole second and
+    // the cursor can sit up to half a second off where it was sent. A one-second margin keeps
+    // that rounding from re-selecting the event we're already on.
+    const target = direction > 0
+      ? positions.find(seconds => seconds > current + 1)
+      : [...positions].reverse().find(seconds => seconds < current - 1);
+
+    if (target !== undefined) seek(target);
   }
 
   function escapeHtml(value) {
