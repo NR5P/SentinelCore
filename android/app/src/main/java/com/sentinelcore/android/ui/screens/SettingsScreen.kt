@@ -108,6 +108,9 @@ fun SettingsScreen(
                     state.authStatus?.username?.let {
                         SettingsRow("SIGNED IN AS", it)
                     }
+                    state.authStatus?.role?.let {
+                        SettingsRow("ROLE", it.uppercase())
+                    }
                     if (state.authStatus?.enabled == true) {
                         OutlinedButton(
                             onClick = model::signOut,
@@ -171,14 +174,19 @@ fun SettingsScreen(
                             Text("DISABLE ON THIS DEVICE")
                         }
                     }
-                    OutlinedButton(
-                        onClick = model::sendTestPushNotification,
-                        enabled = state.pushStatus?.firebaseConfigured == true &&
-                            state.pushPermission == "ENABLED" &&
-                            state.pushRegistrationEnabled,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("SEND TEST NOTIFICATION")
+                    // Admin-only on the server (it messages every registered device, not just
+                    // this one) - hidden rather than disabled for a Viewer, since there's
+                    // nothing they could do to enable it.
+                    if (state.isAdmin) {
+                        OutlinedButton(
+                            onClick = model::sendTestPushNotification,
+                            enabled = state.pushStatus?.firebaseConfigured == true &&
+                                state.pushPermission == "ENABLED" &&
+                                state.pushRegistrationEnabled,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("SEND TEST NOTIFICATION")
+                        }
                     }
                     state.pushMessage?.let { Text(it, color = SentinelTextDim) }
                 }
@@ -222,8 +230,8 @@ fun SettingsScreen(
             item {
                 Text(
                     "This native client manages its connection and push registration locally. " +
-                        "Full server configuration, camera editing, and " +
-                        "motion-zone drawing remain in the Core dashboard.",
+                        "Full server configuration, camera editing, motion-zone drawing, and " +
+                        "account management remain in the Core dashboard.",
                     color = SentinelTextDim,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
                         .fillMaxWidth()

@@ -39,6 +39,7 @@ class SentinelRepository(
             configured = json.optBoolean("configured"),
             authenticated = json.optBoolean("authenticated"),
             username = json.nullableString("username"),
+            role = json.nullableString("role"),
         )
     }
 
