@@ -20,9 +20,13 @@ final class SentinelClient {
         let configuration = URLSessionConfiguration.default
         configuration.httpCookieStorage = .shared
         configuration.httpShouldSetCookies = true
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 120
-        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 10
+        configuration.timeoutIntervalForResource = 15
+        // This client only targets a server on the current LAN. Waiting for a network path
+        // can leave the UI in CONNECTING for the full resource timeout when that host is
+        // powered off or the Mac/device is on a different network. Fail promptly so the
+        // user gets LINK LOST and can retry as soon as the server is available.
+        configuration.waitsForConnectivity = false
         return URLSession(configuration: configuration)
     }
 
