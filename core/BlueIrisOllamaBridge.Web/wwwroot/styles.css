@@ -1353,7 +1353,7 @@ main {
   border-radius: 5px;
 }
 
-.timeline-frame-wrap img {
+.timeline-frame-wrap video {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -1366,7 +1366,7 @@ main {
   place-items: center;
 }
 
-.timeline-frame-wrap img.hidden,
+.timeline-frame-wrap video.hidden,
 .timeline-frame-wrap .empty-state.hidden {
   display: none;
 }

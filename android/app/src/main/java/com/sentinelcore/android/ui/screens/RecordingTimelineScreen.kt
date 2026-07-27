@@ -41,6 +41,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,9 +54,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.PlayerView
 import com.sentinelcore.android.data.RecordingTimelineDay
 import com.sentinelcore.android.data.TimelineSecurityEvent
 import com.sentinelcore.android.ui.SentinelUiState
@@ -77,11 +86,28 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun RecordingTimelineScreen(
     state: SentinelUiState,
     model: SentinelViewModel,
 ) {
+    val context = LocalContext.current
+    // Recomputed on every recomposition (a fresh Map each time), but `remember` only rebuilds the
+    // player when the header *contents* actually change - e.g. the auth cookie appearing after a
+    // login that happened while this screen was already open.
+    val mediaHeaders = model.mediaHeaders()
+    val player = remember(mediaHeaders) {
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(mediaHeaders)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
+            .build()
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+    var loadedTriggerEventId by remember { mutableStateOf<String?>(null) }
+
     val cameras = remember(state.events, state.timelineCameras) {
         (state.timelineCameras + state.events.map { it.camera })
             .distinct()
@@ -114,16 +140,6 @@ fun RecordingTimelineScreen(
             cursorMillis = initialCursor(day).toEpochMilli()
         }
     }
-    LaunchedEffect(playing, state.timelineDay) {
-        while (playing) {
-            delay(500)
-            val day = state.timelineDay ?: break
-            val current = Instant.ofEpochMilli(cursorMillis)
-            val next = advance(day, current)
-            if (next == null) playing = false else cursorMillis = next.toEpochMilli()
-        }
-    }
-
     val timeline = state.timelineDay
     val filtered = timeline?.events?.filter {
         it.category in categories &&
@@ -135,6 +151,55 @@ fun RecordingTimelineScreen(
     val cursor = Instant.ofEpochMilli(cursorMillis)
     val currentSegment = timeline?.recording?.segments?.firstOrNull {
         !cursor.isBefore(it.start) && !cursor.isAfter(it.end)
+    }
+
+    // Loads/seeks the player to match the scrubber whenever cursor lands in a different
+    // segment than what's loaded, or drifts from where the player itself already is. The
+    // >300ms threshold on the same-segment branch keeps this from fighting the playback
+    // polling loop below, which nudges cursorMillis from the player's own position.
+    LaunchedEffect(currentSegment?.triggerEventId, cursorMillis) {
+        val segment = currentSegment
+        if (segment == null) {
+            if (loadedTriggerEventId != null) {
+                player.pause()
+                player.clearMediaItems()
+                loadedTriggerEventId = null
+            }
+            return@LaunchedEffect
+        }
+        val offsetMs = Duration.between(segment.start, cursor).toMillis().coerceAtLeast(0)
+        if (segment.triggerEventId != loadedTriggerEventId) {
+            val url = model.absoluteUrl("/api/triggers/${segment.triggerEventId}/clip")
+                ?: return@LaunchedEffect
+            loadedTriggerEventId = segment.triggerEventId
+            player.setMediaItem(MediaItem.fromUri(url))
+            player.prepare()
+            player.seekTo(offsetMs)
+            player.playWhenReady = playing
+        } else if (kotlin.math.abs(player.currentPosition - offsetMs) > 300) {
+            player.seekTo(offsetMs)
+        }
+    }
+
+    // Drives playback: toggles the player and, while playing, polls its real position to move
+    // the scrubber (rather than a synthetic fixed-rate tick), jumping to the next trigger clip
+    // once the current one's saved window ends - there's no footage in the gap to play through.
+    LaunchedEffect(playing) {
+        player.playWhenReady = playing
+        while (playing) {
+            delay(250)
+            val day = state.timelineDay ?: break
+            val segment = loadedTriggerEventId?.let { id ->
+                day.recording.segments.firstOrNull { it.triggerEventId == id }
+            } ?: break
+            val updated = segment.start.plusMillis(player.currentPosition)
+            if (!updated.isBefore(segment.end)) {
+                val next = day.recording.segments.firstOrNull { it.start.isAfter(segment.end) }
+                if (next == null) { playing = false } else { cursorMillis = next.start.toEpochMilli() }
+            } else {
+                cursorMillis = updated.toEpochMilli()
+            }
+        }
     }
 
     Column(Modifier.fillMaxSize().background(SentinelBackground)) {
@@ -209,13 +274,16 @@ fun RecordingTimelineScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (timeline != null && timeline.recording.available) {
                             if (currentSegment != null) {
-                                SentinelRemoteImage(
-                                    model = model,
-                                    path = model.timelineFramePath(currentSegment.eventId, cursor),
+                                AndroidView(
+                                    factory = { viewContext ->
+                                        PlayerView(viewContext).apply {
+                                            this.player = player
+                                            useController = true
+                                        }
+                                    },
+                                    update = { it.player = player },
                                     modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                                        .clip(RoundedCornerShape(8.dp)),
-                                    description = "Saved trigger frame",
-                                    contentScale = ContentScale.Fit,
+                                        .clip(RoundedCornerShape(8.dp)).background(Color.Black),
                                 )
                             } else {
                                 Box(
@@ -437,13 +505,6 @@ private fun initialCursor(day: RecordingTimelineDay): Instant =
 
 private fun clipStart(day: RecordingTimelineDay?, event: TimelineSecurityEvent): Instant? =
     day?.recording?.segments?.firstOrNull { it.eventId == event.id }?.start
-
-private fun advance(day: RecordingTimelineDay, cursor: Instant): Instant? {
-    val next = cursor.plusMillis(500)
-    if (!next.isBefore(day.end)) return null
-    if (day.recording.segments.any { !next.isBefore(it.start) && next.isBefore(it.end) }) return next
-    return day.recording.segments.firstOrNull { it.start.isAfter(next) }?.start
-}
 
 private fun nextEvent(events: List<TimelineSecurityEvent>, cursor: Instant) =
     events.filter { it.occurredAt.isAfter(cursor.plusMillis(500)) }.minByOrNull { it.occurredAt }

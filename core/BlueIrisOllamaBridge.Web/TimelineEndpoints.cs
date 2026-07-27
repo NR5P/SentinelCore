@@ -11,20 +11,28 @@ public static class TimelineEndpoints
     {
         app.MapGet("/api/timeline/cameras", async (
             IEventStore events,
-            AppSettingsFile settings,
+            ICameraStore cameraStore,
+            ITriggerConfigStore triggerConfigStore,
             CancellationToken ct) =>
         {
             var options = await events.GetFilterOptionsAsync(ct);
-            var blueIris = await settings.GetSectionAsync<BlueIrisOptions>(
-                BlueIrisOptions.SectionName,
-                ct) ?? new BlueIrisOptions();
             var cameras = options.Cameras.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var friendlyName in blueIris.CameraMappings.Keys)
-                cameras.Add(friendlyName);
-            if (cameras.Count == 0 &&
-                blueIris.Enabled &&
-                !string.IsNullOrWhiteSpace(blueIris.Camera))
-                cameras.Add(blueIris.Camera);
+
+            // A camera newly set up to record trigger clips should show up here immediately,
+            // even before its first AI-confirmed event lands.
+            var recordingCameraIds = (await triggerConfigStore.GetEnabledAsync(ct))
+                .Where(config => config.RecordClips)
+                .Select(config => config.CameraId)
+                .ToHashSet();
+            if (recordingCameraIds.Count > 0)
+            {
+                foreach (var localCamera in await cameraStore.GetAllAsync(ct))
+                {
+                    if (recordingCameraIds.Contains(localCamera.Id))
+                        cameras.Add(localCamera.Name);
+                }
+            }
+
             return Results.Ok(cameras.OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
         });
 
@@ -33,7 +41,9 @@ public static class TimelineEndpoints
             string date,
             IEventStore events,
             ITimelineReviewStore reviews,
-            BlueIrisTimelineClient blueIris,
+            ICameraStore cameraStore,
+            ITriggerConfigStore triggerConfigStore,
+            ITriggerEventStore triggerEventStore,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(camera))
@@ -53,15 +63,35 @@ public static class TimelineEndpoints
                 .OrderBy(item => item.OccurredAt)
                 .ToArray();
             var reviewed = await reviews.GetReviewedAsync(dayEvents.Select(item => item.Id), ct);
-            var recordings = await blueIris.GetAlertClipsAsync(camera, start, end, ct);
-            var clipsByEvent = MatchClips(dayEvents, recordings.Clips);
+
+            // The AI events above are keyed by whatever free-text camera name the alert carried
+            // (Blue Iris or any other external sender); local trigger clips belong to a specific
+            // dashboard Camera (Guid-keyed). Matching by name is the only link between the two.
+            var localCamera = (await cameraStore.GetAllAsync(ct))
+                .FirstOrDefault(c => string.Equals(c.Name, camera, StringComparison.OrdinalIgnoreCase));
+            var triggerConfig = localCamera is not null
+                ? await triggerConfigStore.GetAsync(localCamera.Id, ct)
+                : null;
+            var recordingConfigured = triggerConfig is { Enabled: true, RecordClips: true };
+            var preSeconds = triggerConfig?.ClipPreSeconds ?? 5;
+            var postSeconds = triggerConfig?.ClipPostSeconds ?? 10;
+
+            IReadOnlyList<TriggerEvent> localTriggerEvents = recordingConfigured
+                ? await triggerEventStore.GetEventsInRangeAsync(localCamera!.Id, start, end, ct)
+                : [];
+            var clipsByEvent = MatchTriggerEvents(dayEvents, localTriggerEvents);
             var segments = dayEvents
                 .Where(item => clipsByEvent.ContainsKey(item.Id))
-                .Select(item => new
+                .Select(item =>
                 {
-                    eventId = item.Id,
-                    start = Max(start, item.OccurredAt.AddSeconds(-recordings.PreSeconds)),
-                    end = Min(end, item.OccurredAt.AddSeconds(recordings.PostSeconds))
+                    var trigger = clipsByEvent[item.Id];
+                    return new
+                    {
+                        eventId = item.Id,
+                        triggerEventId = trigger.Id,
+                        start = Max(start, trigger.OccurredAt.AddSeconds(-preSeconds)),
+                        end = Min(end, trigger.OccurredAt.AddSeconds(postSeconds))
+                    };
                 })
                 .ToArray();
 
@@ -73,13 +103,15 @@ public static class TimelineEndpoints
                 end,
                 recording = new
                 {
-                    recordings.Configured,
-                    recordings.Available,
-                    sourceCamera = recordings.Camera,
-                    recordings.Error,
-                    mode = "triggerClips",
-                    preSeconds = recordings.PreSeconds,
-                    postSeconds = recordings.PostSeconds,
+                    configured = recordingConfigured,
+                    available = recordingConfigured,
+                    sourceCamera = localCamera?.Name ?? camera,
+                    error = recordingConfigured
+                        ? null
+                        : $"No camera in this dashboard has trigger-clip recording enabled for '{camera}'.",
+                    mode = "localTriggerClips",
+                    preSeconds,
+                    postSeconds,
                     segments
                 },
                 events = dayEvents.Select(item => new
@@ -98,53 +130,6 @@ public static class TimelineEndpoints
                     hasClip = clipsByEvent.ContainsKey(item.Id)
                 })
             });
-        });
-
-        app.MapGet("/api/timeline/frame", async (
-            Guid eventId,
-            DateTimeOffset at,
-            IEventStore events,
-            AppSettingsFile settings,
-            BlueIrisTimelineClient blueIris,
-            ILogger<BlueIrisTimelineClient> logger,
-            CancellationToken ct,
-            int width = 1280,
-            int height = 720) =>
-        {
-            var cameraEvent = await events.GetEventAsync(eventId, ct);
-            if (cameraEvent is null)
-                return Results.NotFound(new { error = "Event not found." });
-            if (string.IsNullOrWhiteSpace(cameraEvent.BlueIrisAlertId))
-                return Results.NotFound(new { error = "This event has no Blue Iris trigger clip." });
-
-            var options = await settings.GetSectionAsync<BlueIrisOptions>(
-                BlueIrisOptions.SectionName,
-                ct) ?? new BlueIrisOptions();
-            var clipStart = cameraEvent.OccurredAt.AddSeconds(-options.EventClipPreSeconds);
-            var clipEnd = cameraEvent.OccurredAt.AddSeconds(options.EventClipPostSeconds);
-            if (at < clipStart || at > clipEnd)
-                return Results.BadRequest(new { error = "The requested time is outside this trigger clip." });
-
-            try
-            {
-                var frame = await blueIris.GetFrameAsync(cameraEvent.Camera, at, width, height, ct);
-                return frame is null
-                    ? Results.NotFound(new { error = "No recorded frame is available at this time." })
-                    : Results.File(frame.Bytes, frame.ContentType);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                logger.LogWarning(
-                    exception,
-                    "Could not load a Blue Iris recording frame for {Camera} at {At}",
-                    cameraEvent.Camera,
-                    at);
-                return Results.NotFound(new { error = "No recorded frame is available at this time." });
-            }
         });
 
         app.MapPut("/api/events/{id:guid}/reviewed", async (
@@ -167,37 +152,31 @@ public static class TimelineEndpoints
         return new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
     }
 
-    private static IReadOnlyDictionary<Guid, BlueIrisAlertClip> MatchClips(
+    // The two rows come from the same trigger a few statements apart (see
+    // TriggerZoneMonitor.MaybeTriggerAsync: the local TriggerEvent is written, then - only when
+    // SendToAlerts is on for that zone - the same snapshot is forwarded into the AI alert
+    // pipeline that produces the AlertEventRecord), so their timestamps are always close. This
+    // is nearest-timestamp matching between two clocks on the *same* process, not an attempt to
+    // reconcile independently-timestamped systems.
+    public static IReadOnlyDictionary<Guid, TriggerEvent> MatchTriggerEvents(
         IReadOnlyList<AlertEventRecord> events,
-        IReadOnlyList<BlueIrisAlertClip> clips)
+        IReadOnlyList<TriggerEvent> triggerEvents)
     {
-        var byRecord = clips
-            .GroupBy(clip => clip.AlertRecord, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-        var matches = new Dictionary<Guid, BlueIrisAlertClip>();
+        var withClips = triggerEvents.Where(item => !string.IsNullOrWhiteSpace(item.ClipPath)).ToArray();
+        var matches = new Dictionary<Guid, TriggerEvent>();
 
         foreach (var item in events)
         {
-            var record = BlueIrisTimelineClient.NormalizeRecord(item.BlueIrisAlertId);
-            if (!string.IsNullOrWhiteSpace(record) && byRecord.TryGetValue(record, out var exact))
-            {
-                matches[item.Id] = exact;
-                continue;
-            }
-
-            // Old Sentinel rows may predate &ALERT_DB being supplied. A close timestamp match
-            // preserves playback for those rows without ever opening unrelated parts of the day.
-            if (!string.IsNullOrWhiteSpace(record)) continue;
-            var nearest = clips
-                .Select(clip => new
+            var nearest = withClips
+                .Select(trigger => new
                 {
-                    Clip = clip,
-                    Distance = Math.Abs((clip.OccurredAt - item.OccurredAt).TotalSeconds)
+                    Trigger = trigger,
+                    Distance = Math.Abs((trigger.OccurredAt - item.OccurredAt).TotalSeconds)
                 })
                 .Where(candidate => candidate.Distance <= 5)
                 .OrderBy(candidate => candidate.Distance)
                 .FirstOrDefault();
-            if (nearest is not null) matches[item.Id] = nearest.Clip;
+            if (nearest is not null) matches[item.Id] = nearest.Trigger;
         }
 
         return matches;

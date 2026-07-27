@@ -307,9 +307,6 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun timelineFramePath(eventId: String, at: Instant): String =
-        repository.timelineFramePath(eventId, at)
-
     fun clearDiagnostics() {
         _state.update { it.copy(diagnostics = emptyList()) }
     }

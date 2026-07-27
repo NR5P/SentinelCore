@@ -40,7 +40,6 @@ builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>();
-builder.Services.AddSingleton<BlueIrisTimelineClient>();
 
 var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
     ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");

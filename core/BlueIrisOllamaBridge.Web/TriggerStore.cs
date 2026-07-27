@@ -55,6 +55,10 @@ public interface ITriggerEventStore
     Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, CancellationToken cancellationToken);
     Task<TriggerEvent?> GetAsync(Guid id, CancellationToken cancellationToken);
 
+    // Powers the day timeline: this camera's local trigger events (and their clips, once built)
+    // that fall within a specific day, so they can be matched up against AI-confirmed events.
+    Task<IReadOnlyList<TriggerEvent>> GetEventsInRangeAsync(Guid cameraId, DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken);
+
     // Clips can only be cut once the post-roll has actually elapsed, so the event row is written
     // immediately (image first) and the clip path is patched in afterwards.
     Task SetClipPathAsync(Guid id, string clipPath, CancellationToken cancellationToken);
@@ -277,6 +281,35 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 : "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath FROM TriggerEvents WHERE CameraId = $cameraId ORDER BY OccurredAt DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$limit", limit);
             if (cameraId is not null) command.Parameters.AddWithValue("$cameraId", cameraId.Value.ToString("N"));
+
+            var results = new List<TriggerEvent>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(ReadEvent(reader));
+
+            return results;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<TriggerEvent>> GetEventsInRangeAsync(Guid cameraId, DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath
+                FROM TriggerEvents
+                WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end
+                ORDER BY OccurredAt ASC;
+                """;
+            command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
+            command.Parameters.AddWithValue("$start", start.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$end", end.UtcDateTime.ToString("O"));
 
             var results = new List<TriggerEvent>();
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);

@@ -74,6 +74,7 @@ data class TimelineRecording(
 
 data class TimelineRecordingSegment(
     val eventId: String,
+    val triggerEventId: String,
     val start: Instant,
     val end: Instant,
 )
