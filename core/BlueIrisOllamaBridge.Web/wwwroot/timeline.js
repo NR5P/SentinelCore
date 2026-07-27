@@ -19,8 +19,9 @@
 
   let day = null;
   let playing = false;
-  let timer = null;
-  let frameTimer = null;
+  // The trigger clip (identified by triggerEventId) currently loaded into the <video> element,
+  // so scrubbing within the same clip only seeks instead of re-fetching it.
+  let loadedSegment = null;
 
   function localDateString(date = new Date()) {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -70,10 +71,7 @@
     stop();
     try {
       statusEl.textContent = "loading trigger clips…";
-      frameEl.removeAttribute("src");
-      frameEl.classList.add("hidden");
-      frameEmptyEl.classList.remove("hidden");
-      frameEmptyEl.textContent = "loading day…";
+      resetFrame("loading day…");
       if (!dateEl.value) dateEl.value = localDateString();
       if (!cameraEl.options.length) await loadCameras();
       if (!cameraEl.value) {
@@ -172,62 +170,69 @@
     clockEl.textContent = atSeconds(seconds).toLocaleTimeString();
   }
 
+  function resetFrame(message) {
+    loadedSegment = null;
+    frameEl.pause();
+    frameEl.removeAttribute("src");
+    frameEl.load();
+    frameEl.classList.add("hidden");
+    frameEmptyEl.classList.remove("hidden");
+    frameEmptyEl.textContent = message;
+  }
+
+  // Loads/seeks the <video> to match the scrubber position. Only re-fetches the clip when the
+  // scrubber has moved into a different trigger event's segment.
   function updateFrame() {
     if (!day?.recording.available) {
-      frameEl.removeAttribute("src");
-      frameEl.classList.add("hidden");
-      frameEmptyEl.classList.remove("hidden");
-      frameEmptyEl.textContent = day?.recording.error || "trigger clips are unavailable";
+      resetFrame(day?.recording.error || "trigger clips are unavailable");
       return;
     }
     const at = atSeconds(Number(scrubberEl.value));
     const segment = segmentAt(at);
     if (!segment) {
-      frameEl.removeAttribute("src");
-      frameEl.classList.add("hidden");
-      frameEmptyEl.classList.remove("hidden");
-      frameEmptyEl.textContent = "no saved trigger clip at this point";
+      resetFrame("no saved trigger clip at this point");
       return;
     }
-    const query = new URLSearchParams({
-      eventId: segment.eventId,
-      at: at.toISOString(),
-      width: "1280",
-      height: "720"
-    });
-    frameEl.src = `/api/timeline/frame?${query}`;
+    const offset = Math.max(0, (at - new Date(segment.start)) / 1000);
     frameEl.classList.remove("hidden");
     frameEmptyEl.classList.add("hidden");
+    if (loadedSegment?.triggerEventId === segment.triggerEventId) {
+      if (Math.abs(frameEl.currentTime - offset) > 0.25) frameEl.currentTime = offset;
+      return;
+    }
+    loadedSegment = segment;
+    frameEl.src = `/api/triggers/${segment.triggerEventId}/clip`;
+    frameEl.addEventListener("loadedmetadata", () => { frameEl.currentTime = offset; }, { once: true });
   }
 
   function start() {
     if (!day || playing) return;
+    updateFrame();
+    if (!loadedSegment) return;
     playing = true;
     playEl.textContent = "pause";
-    timer = setInterval(() => {
-      let next = Number(scrubberEl.value) + .5;
-      if (skipGapsEl.checked) {
-        const at = atSeconds(next);
-        const inside = day.recording.segments.some(segment =>
-          new Date(segment.start) <= at && new Date(segment.end) > at);
-        if (!inside) {
-          const upcoming = day.recording.segments.find(segment => new Date(segment.start) > at);
-          if (!upcoming) return stop();
-          next = secondsFor(upcoming.start);
-        }
-      }
-      if (next >= totalSeconds()) return stop();
-      scrubberEl.value = String(next);
-      updateCursor();
-    }, 500);
-    frameTimer = setInterval(updateFrame, 1000);
+    frameEl.play().catch(() => {});
   }
 
   function stop() {
     playing = false;
     playEl.textContent = "play";
-    clearInterval(timer);
-    clearInterval(frameTimer);
+    frameEl.pause();
+  }
+
+  // Reached the end of the currently-playing clip's saved window. With "skip unsaved gaps" on,
+  // jump straight to the next trigger clip (there's no footage to show in between); otherwise
+  // stop, mirroring the old flip-book behavior of pausing at the edge of what was recorded.
+  function advancePastSegment() {
+    if (!playing || !loadedSegment) return;
+    if (!skipGapsEl.checked) return stop();
+    const finishedEnd = new Date(loadedSegment.end);
+    const next = day.recording.segments.find(segment => new Date(segment.start) > finishedEnd);
+    if (!next) return stop();
+    scrubberEl.value = String(secondsFor(next.start));
+    updateCursor();
+    updateFrame();
+    frameEl.play().catch(() => {});
   }
 
   function jump(direction) {
@@ -256,8 +261,7 @@
   scrubberEl.addEventListener("input", () => {
     stop();
     updateCursor();
-    clearTimeout(frameTimer);
-    frameTimer = setTimeout(updateFrame, 120);
+    updateFrame();
   });
   playEl.addEventListener("click", () => playing ? stop() : start());
   document.getElementById("timeline-prev-event").addEventListener("click", () => jump(-1));
@@ -276,10 +280,22 @@
     load();
   });
   frameEl.addEventListener("error", () => {
+    if (!frameEl.getAttribute("src")) return;
     frameEl.classList.add("hidden");
     frameEmptyEl.classList.remove("hidden");
-    frameEmptyEl.textContent = "no saved trigger frame at this point";
+    frameEmptyEl.textContent = "no saved trigger clip at this point";
   });
+  frameEl.addEventListener("timeupdate", () => {
+    if (!playing || !loadedSegment) return;
+    const seconds = secondsFor(loadedSegment.start) + frameEl.currentTime;
+    if (seconds >= secondsFor(loadedSegment.end)) {
+      advancePastSegment();
+      return;
+    }
+    scrubberEl.value = String(Math.min(totalSeconds() - 1, seconds));
+    updateCursor();
+  });
+  frameEl.addEventListener("ended", advancePastSegment);
 
   window.GateWatchTimeline = { load, stop };
 })();

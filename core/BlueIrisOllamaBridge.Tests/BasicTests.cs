@@ -1630,6 +1630,83 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public async Task SqliteTriggerStore_GetEventsInRangeAsync_FiltersByCameraAndOccurredAtWindow()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        var trigger = await store.AddAsync(cameraId, "image.jpg", 0.1, CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+
+        var matched = await store.GetEventsInRangeAsync(
+            cameraId, now.AddMinutes(-5), now.AddMinutes(5), CancellationToken.None);
+        var beforeWindow = await store.GetEventsInRangeAsync(
+            cameraId, now.AddHours(-2), now.AddHours(-1), CancellationToken.None);
+        var otherCamera = await store.GetEventsInRangeAsync(
+            Guid.NewGuid(), now.AddMinutes(-5), now.AddMinutes(5), CancellationToken.None);
+
+        Assert.Single(matched);
+        Assert.Equal(trigger.Id, matched[0].Id);
+        Assert.Empty(beforeWindow);
+        Assert.Empty(otherCamera);
+    }
+
+    // --- Timeline trigger-clip correlation (TimelineEndpoints.MatchTriggerEvents) -------------
+    //
+    // The AI event and its local trigger row are written a few statements apart from the same
+    // snapshot (TriggerZoneMonitor.MaybeTriggerAsync), so their timestamps are always close -
+    // this matches nearest-timestamp within a tight tolerance, not two independently-clocked
+    // systems.
+
+    private static AlertEventRecord MakeAlertEvent(DateTimeOffset occurredAt) =>
+        new(Guid.NewGuid(), "GateCam", occurredAt, "Completed", "vehicle", "A car pulled in.", true, null, 0.9, null);
+
+    private static TriggerEvent MakeTriggerEvent(DateTimeOffset occurredAt, string? clipPath) =>
+        new(Guid.NewGuid(), Guid.NewGuid(), occurredAt, "image.jpg", 0.12, clipPath);
+
+    [Fact]
+    public void MatchTriggerEvents_PicksNearestTriggerWithAClipWithinTolerance()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertEvent = MakeAlertEvent(now);
+        // Closest in time but has no clip yet (post-roll hasn't finished) - must be skipped in
+        // favor of the next-nearest one that actually has a clip.
+        var noClipYet = MakeTriggerEvent(now.AddSeconds(0.2), null);
+        var withClip = MakeTriggerEvent(now.AddSeconds(1), "clip.mp4");
+        var tooFarWithClip = MakeTriggerEvent(now.AddSeconds(30), "far-clip.mp4");
+
+        var matches = TimelineEndpoints.MatchTriggerEvents(
+            [alertEvent], [noClipYet, withClip, tooFarWithClip]);
+
+        Assert.Single(matches);
+        Assert.Equal(withClip.Id, matches[alertEvent.Id].Id);
+    }
+
+    [Fact]
+    public void MatchTriggerEvents_NoMatchWhenNearestClipExceedsTolerance()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertEvent = MakeAlertEvent(now);
+        var farTrigger = MakeTriggerEvent(now.AddSeconds(10), "clip.mp4");
+
+        var matches = TimelineEndpoints.MatchTriggerEvents([alertEvent], [farTrigger]);
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void MatchTriggerEvents_MatchesAtExactlyFiveSecondTolerance()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertEvent = MakeAlertEvent(now);
+        var boundaryTrigger = MakeTriggerEvent(now.AddSeconds(5), "clip.mp4");
+
+        var matches = TimelineEndpoints.MatchTriggerEvents([alertEvent], [boundaryTrigger]);
+
+        Assert.Single(matches);
+        Assert.Equal(boundaryTrigger.Id, matches[alertEvent.Id].Id);
+    }
+
+    [Fact]
     public void HttpsSettings_NotConfigured_StaysOffSilently()
     {
         // The shipped default. Must not warn - plain HTTP is a legitimate choice, not a fault.
@@ -1924,18 +2001,6 @@ public sealed class BasicTests
         }
     }
 
-    [Theory]
-    [InlineData("alert-record.jpg", "alert-record")]
-    [InlineData("alert-record", "alert-record")]
-    [InlineData("  alert-record.jpeg  ", "alert-record")]
-    [InlineData(null, "")]
-    public void BlueIrisTimelineClient_NormalizeRecord_MatchesAlertDatabaseIdentifiers(
-        string? input,
-        string expected)
-    {
-        Assert.Equal(expected, BlueIrisTimelineClient.NormalizeRecord(input));
-    }
-
     // --- Outage alerts (StartupNotificationWorker) -------------------------------------------
     //
     // The decision is a pure function precisely so these can cover every branch without a
@@ -2150,9 +2215,12 @@ public sealed class BasicTests
             new StaticOptionsMonitor<BridgeOptions>(new BridgeOptions { DataDirectory = dataDirectory }),
             new FakeHostEnvironment(dataDirectory),
             NullLogger<StartupNotificationWorker>.Instance);
-    private static HomeKitAlertAction BuildHomeKitAction(RecordingHandler handler, HomeKitOptions options) =>
+
+    private static HomeKitAlertAction BuildHomeKitAction(
+        RecordingHandler handler, HomeKitOptions options, QuietHoursOptions? quietHours = null) =>
         new(new HttpClient(handler),
             new StaticOptionsMonitor<HomeKitOptions>(options),
+            new StaticOptionsMonitor<QuietHoursOptions>(quietHours ?? new QuietHoursOptions()),
             NullLogger<HomeKitAlertAction>.Instance);
 
     private static DiscordAlertAction BuildDiscordAction(RecordingHandler handler, DiscordOptions options) =>
@@ -2161,12 +2229,148 @@ public sealed class BasicTests
             new StaticOptionsMonitor<QuietHoursOptions>(new QuietHoursOptions()),
             NullLogger<DiscordAlertAction>.Instance);
 
+    // --- Phantom alerts: nothing visible must never notify ------------------------------------
+    //
+    // Real events on this system reported "a person is present on the outside side of the gate"
+    // with person.visible false and every other subject absent - the frame was a spiderweb across
+    // the lens lit by the IR illuminator. These pin the guard that stops that reaching a phone.
+
+    private static AlertResult NothingVisible(string gateState, string profile = "gate") => new()
+    {
+        Camera = "gate camera front door",
+        Profile = profile,
+        Analysis = new VisionAnalysis
+        {
+            NotificationRecommended = true,
+            Confidence = 0.3,
+            EventType = "none",
+            Gate = new GateAnalysis { State = gateState },
+            // Exactly what the model returned on the real 5:35am events: the positional field is
+            // filled in even though nothing is visible.
+            Person = new PersonAnalysis { Visible = false, Location = "outside_gate" },
+            Summary = "A person is present on the outside side of the gate."
+        }
+    };
+
+    // A genuinely notifiable event - person actually visible outside the gate - with the
+    // confidence and timestamp varied, since AlertResult/VisionAnalysis are classes rather than
+    // records and so can't be copied with `with`.
+    private static AlertResult VisiblePersonResult(double confidence, DateTimeOffset? occurredAt = null) => new()
+    {
+        Camera = "gate camera front door",
+        Profile = "gate",
+        OccurredAt = occurredAt ?? DateTimeOffset.Now,
+        Analysis = new VisionAnalysis
+        {
+            NotificationRecommended = true,
+            Confidence = confidence,
+            EventType = "person_at_gate",
+            Gate = new GateAnalysis { State = "closed" },
+            Person = new PersonAnalysis { Visible = true, Location = "outside_gate", Activity = "standing" },
+            Summary = "A person is standing outside the gate."
+        }
+    };
+
+    [Theory]
+    [InlineData("unknown")]   // what an unreadable frame actually returns - the case that leaked
+    [InlineData("closed")]
+    [InlineData("open")]
+    public void ShouldNotify_WhenNothingIsVisible_IsFalseWhateverTheGateState(string gateState) =>
+        Assert.False(AlertNotificationPolicy.ShouldNotify(NothingVisible(gateState)));
+
+    [Fact]
+    public void ShouldNotify_WhenNothingIsVisible_IsFalseForNonGateProfilesToo()
+    {
+        // The old suppression only ran for the gate profile, so every other camera had no
+        // protection at all. The guard is deliberately profile-independent.
+        Assert.False(AlertNotificationPolicy.ShouldNotify(NothingVisible("unknown", profile: "back-door")));
+    }
+
+    [Fact]
+    public void ShouldNotify_WhenPersonIsActuallyVisibleOutside_StillNotifies()
+    {
+        // The guard must not cost a real detection - this is the event you want waking you up.
+        var result = NotifiableResult("gate camera front door");
+        Assert.True(AlertNotificationPolicy.ShouldNotify(result));
+    }
+
+    [Fact]
+    public void ShouldNotify_WhenOnlyAPackageWasDelivered_StillNotifies()
+    {
+        // A parcel left at the gate with the courier already gone is a real event with no person
+        // or vehicle in frame, so package status has to count as a subject in its own right.
+        var result = new AlertResult
+        {
+            Camera = "gate camera front door",
+            Profile = "gate",
+            Analysis = new VisionAnalysis
+            {
+                NotificationRecommended = true,
+                Confidence = 0.9,
+                Gate = new GateAnalysis { State = "closed" },
+                Package = new PackageAnalysis { Visible = true, Status = "delivered", Location = "at_gate" },
+                Summary = "A package has been left at the gate."
+            }
+        };
+
+        Assert.True(AlertNotificationPolicy.ShouldNotify(result));
+    }
+
+    [Fact]
+    public async Task HomeKitAlertAction_BelowTheConfidenceFloor_DoesNotTrigger()
+    {
+        // The channel that was waking the phone: Email and Telegram floored at 0.6, HomeKit had
+        // no floor at all, so a 0.3-confidence reading still rang.
+        var handler = new RecordingHandler();
+        var result = VisiblePersonResult(confidence: 0.3);
+
+        var action = BuildHomeKitAction(handler, new HomeKitOptions { Enabled = true, MinimumConfidence = 0.6 });
+        await action.ExecuteAsync(result, CancellationToken.None);
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task HomeKitAlertAction_AboveTheConfidenceFloor_Triggers()
+    {
+        var handler = new RecordingHandler();
+        var action = BuildHomeKitAction(handler, new HomeKitOptions { Enabled = true, MinimumConfidence = 0.6 });
+
+        await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
+
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task HomeKitAlertAction_DuringQuietHours_UsesTheRaisedFloor()
+    {
+        // Quiet hours already raise the bar for Email and Telegram; HomeKit ignored them entirely,
+        // which is backwards for the one channel that makes a noise next to your bed.
+        var handler = new RecordingHandler();
+        var quiet = new QuietHoursOptions { Enabled = true, StartHour = 22, EndHour = 6, MinimumConfidence = 0.95 };
+
+        var atThreeAm = new DateTimeOffset(2026, 7, 27, 3, 0, 0, DateTimeOffset.Now.Offset);
+        var result = VisiblePersonResult(confidence: 0.9, occurredAt: atThreeAm);
+
+        var action = BuildHomeKitAction(handler, new HomeKitOptions { Enabled = true, MinimumConfidence = 0.6 }, quiet);
+        await action.ExecuteAsync(result, CancellationToken.None);
+
+        // 0.9 clears the normal 0.6 bar but not the 0.95 overnight one.
+        Assert.Empty(handler.Requests);
+    }
+
+    // The summary and the structured flags have to agree. This fixture used to assert a person in
+    // prose while leaving person.visible false - the same contradiction that produced the phantom
+    // gate alerts in production - which meant it no longer described a notifiable event once the
+    // visibility guard landed. Confidence is set because every channel now has a floor.
     private static AlertResult NotifiableResult(string camera) => new()
     {
         Camera = camera,
         Analysis = new VisionAnalysis
         {
             NotificationRecommended = true,
+            Confidence = 0.9,
+            Person = new PersonAnalysis { Visible = true, Location = "outside_gate", Activity = "standing" },
             Summary = "A person is standing outside the gate."
         }
     };

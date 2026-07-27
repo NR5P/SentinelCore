@@ -41,7 +41,6 @@ builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>();
-builder.Services.AddSingleton<BlueIrisTimelineClient>();
 
 var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
     ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
@@ -183,7 +182,12 @@ app.MapGet("/api/exposure/status", async (ExposureTracker tracker, AppSettingsFi
         lastExternalAt = tracker.LastExternalAt,
         loginEnabled = auth is { Enabled: true }
     });
-});
+    // The old blanket AuthGateMiddleware gated everything under /api bar three named paths, so
+    // this was covered without saying so. Under the per-endpoint model it has to opt in, or it
+    // would hand an unauthenticated caller whether a login exists and the last off-LAN address
+    // that reached this host. Harmless when the login is off - the synthetic Admin principal
+    // satisfies it - so the exposure banner keeps working in the shipped default.
+}).RequireAuthorization();
 
 app.MapGet("/api/events", async (
     IEventStore store, CancellationToken ct, int limit = 50,

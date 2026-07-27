@@ -147,15 +147,13 @@ window.GateWatchSettings = (function () {
     {
       key: "blueIris", title: "BLUE IRIS MEDIA", endpoint: "/api/settings/blue-iris",
       basic: false,
-      description: "Connects Sentinel to Blue Iris for on-demand snapshots and short alert-linked timeline clips. Sentinel never copies an entire recording day.",
+      description: "Connects Sentinel to Blue Iris for on-demand live snapshots (used by the Telegram bot's /photo command). Sentinel's own Timeline uses its own recorded trigger clips instead and does not need Blue Iris to be running.",
       fields: [
-        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow snapshots and trigger-clip timeline review through Blue Iris." },
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow on-demand snapshots through Blue Iris." },
         { name: "baseUrl", label: "Blue Iris URL", type: "text", tip: "The Blue Iris web server URL reachable from Sentinel Core, including its port." },
         { name: "camera", label: "Camera Short Name", type: "text", tip: "The camera's short name in Blue Iris, e.g. gateCamera. Must match exactly." },
         { name: "username", label: "Username", type: "text", tip: "Blue Iris login used to request the snapshot." },
-        { name: "password", label: "Password", type: "password", tip: "Password for the Blue Iris account used by Core; it is never sent to a mobile client." },
-        { name: "eventClipPreSeconds", label: "Timeline Seconds Before Trigger", type: "number", min: 0, max: 120, tip: "How much of the existing Blue Iris trigger clip Sentinel may expose before the event. Blue Iris must record at least this much pre-trigger video." },
-        { name: "eventClipPostSeconds", label: "Timeline Seconds After Trigger", type: "number", min: 1, max: 300, tip: "How much of the existing Blue Iris trigger clip Sentinel may expose after the event. No footage between trigger windows is requested or saved." }
+        { name: "password", label: "Password", type: "password", tip: "Password for the Blue Iris account used by Core; it is never sent to a mobile client." }
       ]
     },
     {
@@ -246,7 +244,7 @@ window.GateWatchSettings = (function () {
     telegram: "Push alerts to your phone through a Telegram bot.",
     telegramChat: "Lets you message the bot to ask questions about recent activity.",
     discord: "Post alert cards and trigger snapshots to a Discord channel through a webhook.",
-    blueIris: "Blue Iris snapshots and short alert-linked trigger clips. No full-day video is copied.",
+    blueIris: "On-demand Blue Iris snapshots for the Telegram bot. Sentinel's Timeline uses its own local trigger clips instead.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
     quietHours: "Raise the bar for Email, Telegram, and Discord alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",
@@ -846,6 +844,10 @@ window.GateWatchSettings = (function () {
       {
         name: "sidecarBaseUrl", label: "sidecar url", type: "text",
         tip: "Where the HomeKit sidecar's control API is listening. The default is right unless you changed its port."
+      },
+      {
+        name: "minimumConfidence", label: "minimum confidence", type: "number", min: 0, max: 1, step: 0.05,
+        tip: "How sure the AI must be before this trips a HomeKit motion alert on your phone. Raise it if you get woken by false alarms; lower it if real events are being missed. Quiet Hours can raise this further overnight."
       }
     ];
 
