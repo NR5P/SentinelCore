@@ -309,9 +309,8 @@ fun RecordingTimelineScreen(
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = {
-                                    previousEvent(filtered, cursor)?.let {
-                                        cursorMillis = clipStart(timeline, it)?.toEpochMilli()
-                                            ?: it.occurredAt.toEpochMilli()
+                                    previousEvent(timeline, filtered, cursor)?.let {
+                                        cursorMillis = it.toEpochMilli()
                                     }
                                 }) { Icon(Icons.Default.SkipPrevious, "Previous event") }
                                 IconButton(onClick = { playing = !playing }) {
@@ -321,9 +320,8 @@ fun RecordingTimelineScreen(
                                     )
                                 }
                                 IconButton(onClick = {
-                                    nextEvent(filtered, cursor)?.let {
-                                        cursorMillis = clipStart(timeline, it)?.toEpochMilli()
-                                            ?: it.occurredAt.toEpochMilli()
+                                    nextEvent(timeline, filtered, cursor)?.let {
+                                        cursorMillis = it.toEpochMilli()
                                     }
                                 }) { Icon(Icons.Default.SkipNext, "Next event") }
                                 Text(cursor.shortTime(), color = SentinelCyan)
@@ -506,11 +504,22 @@ private fun initialCursor(day: RecordingTimelineDay): Instant =
 private fun clipStart(day: RecordingTimelineDay?, event: TimelineSecurityEvent): Instant? =
     day?.recording?.segments?.firstOrNull { it.eventId == event.id }?.start
 
-private fun nextEvent(events: List<TimelineSecurityEvent>, cursor: Instant) =
-    events.filter { it.occurredAt.isAfter(cursor.plusMillis(500)) }.minByOrNull { it.occurredAt }
+// Both jumps compare against where the cursor actually lands - the start of the event's clip,
+// which is ClipPreSeconds before the event itself - rather than against occurredAt. Comparing one
+// and moving to the other leaves the cursor a few seconds short of the event just selected, so it
+// still reads as being ahead and every further tap picks the same one again.
+private fun eventPosition(day: RecordingTimelineDay?, event: TimelineSecurityEvent): Instant =
+    clipStart(day, event) ?: event.occurredAt
 
-private fun previousEvent(events: List<TimelineSecurityEvent>, cursor: Instant) =
-    events.filter { it.occurredAt.isBefore(cursor.minusMillis(500)) }.maxByOrNull { it.occurredAt }
+private fun nextEvent(day: RecordingTimelineDay?, events: List<TimelineSecurityEvent>, cursor: Instant) =
+    events.map { eventPosition(day, it) }
+        .filter { it.isAfter(cursor.plusMillis(500)) }
+        .minOrNull()
+
+private fun previousEvent(day: RecordingTimelineDay?, events: List<TimelineSecurityEvent>, cursor: Instant) =
+    events.map { eventPosition(day, it) }
+        .filter { it.isBefore(cursor.minusMillis(500)) }
+        .maxOrNull()
 
 private fun categoryColor(category: String) = when (category) {
     "person" -> SentinelCyan

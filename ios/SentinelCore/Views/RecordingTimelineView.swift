@@ -347,11 +347,17 @@ struct RecordingTimelineView: View {
     }
 
     private func jumpEvent(direction: Int) {
-        let ordered = filteredEvents.sorted { $0.occurredAt < $1.occurredAt }
+        // Compare against where the cursor actually lands - the start of the event's clip, which
+        // is ClipPreSeconds before the event itself - rather than against occurredAt. Comparing
+        // one and seeking to the other leaves the cursor a few seconds short of the event just
+        // moved to, so it still counts as being ahead and every further tap picks it again.
+        let positions = filteredEvents
+            .map { clipStart(for: $0) ?? $0.occurredAt }
+            .sorted()
         let target = direction > 0
-            ? ordered.first(where: { $0.occurredAt > cursor.addingTimeInterval(0.5) })
-            : ordered.last(where: { $0.occurredAt < cursor.addingTimeInterval(-0.5) })
-        if let target { cursor = clipStart(for: target) ?? target.occurredAt }
+            ? positions.first(where: { $0 > cursor.addingTimeInterval(0.5) })
+            : positions.last(where: { $0 < cursor.addingTimeInterval(-0.5) })
+        if let target { cursor = target }
     }
 
     private func membership(_ value: String, in set: Binding<Set<String>>) -> Binding<Bool> {
