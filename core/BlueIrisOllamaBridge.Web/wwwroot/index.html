@@ -29,7 +29,8 @@
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones. Separate from Blue Iris.">cameras</button>
       <button class="tab" data-view="triggers" data-tip-below data-tip-right data-tip="Motion caught inside a trigger zone. Click a thumbnail to view the snapshot or play its clip.">triggers</button>
-      <button class="tab" data-view="settings" data-tip-below data-tip-right data-tip="Configuration for the Blue Iris bridge, AI model, and alerts. Changes apply live.">settings</button>
+      <button class="tab" id="tab-settings" data-view="settings" data-tip-below data-tip-right data-tip="Configuration for the Blue Iris bridge, AI model, and alerts. Changes apply live.">settings</button>
+      <button class="tab hidden" id="tab-accounts" data-view="accounts" data-tip-below data-tip-right data-tip="Your account, and (for admins) every account signed in to this dashboard.">accounts</button>
     </nav>
     <div class="status" id="status" data-tip-below data-tip-right data-tip="Whether this dashboard can currently reach the server.">
       <span class="status-dot" id="status-dot"></span>
@@ -215,6 +216,16 @@
         <div class="empty-state">loading settings&hellip;</div>
       </div>
     </section>
+
+    <section id="view-accounts" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">ACCOUNTS</div>
+      </div>
+
+      <div id="accounts-root" class="settings-root">
+        <div class="empty-state">loading accounts&hellip;</div>
+      </div>
+    </section>
   </main>
 
   <div id="lightbox" class="lightbox hidden">
@@ -343,6 +354,7 @@
   <script src="license.js"></script>
   <script src="exposure.js"></script>
   <script src="auth.js"></script>
+  <script src="accounts.js"></script>
   <script src="app.js"></script>
   <script src="settings.js"></script>
   <script src="cameras.js"></script>
