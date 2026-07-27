@@ -1,0 +1,14 @@
+{
+  "name": "Sentinel Core",
+  "short_name": "Sentinel",
+  "description": "AI camera alerts, live view and motion trigger zones for your home.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#05070a",
+  "theme_color": "#05070a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
