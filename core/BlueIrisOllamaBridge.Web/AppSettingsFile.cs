@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -12,7 +13,17 @@ public sealed class AppSettingsFile(string path)
     // convention) rather than converting to camelCase on write. Case-insensitive on read as a
     // safety net.
     private static readonly JsonSerializerOptions SectionOptions = new() { PropertyNameCaseInsensitive = true };
-    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+    // UnsafeRelaxedJsonEscaping despite the name: "unsafe" refers to embedding JSON straight
+    // into HTML, which never happens to this file - it's written to disk and read back by the
+    // JSON config parser, and everything the dashboard displays is re-serialised separately by
+    // ASP.NET. The default encoder escapes every apostrophe to ', so saving any one
+    // setting rewrote dozens of unrelated prompt-profile lines and buried the real change in a
+    // huge diff.
+    private static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public async Task<T?> GetSectionAsync<T>(string sectionName, CancellationToken cancellationToken)
