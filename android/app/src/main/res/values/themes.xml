@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SentinelCore" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#05080A</item>
+        <item name="android:navigationBarColor">#091015</item>
+        <item name="android:statusBarColor">#05080A</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
