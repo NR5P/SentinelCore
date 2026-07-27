@@ -1667,6 +1667,221 @@ public sealed class BasicTests
         await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
     }
 
+    // --- Outage alerts (StartupNotificationWorker) -------------------------------------------
+    //
+    // The decision is a pure function precisely so these can cover every branch without a
+    // filesystem, a clock, or an SMTP server.
+
+    private static readonly TimeSpan TwoMinutes = TimeSpan.FromMinutes(2);
+
+    [Fact]
+    public void StartupDiagnosis_WithNoPreviousHeartbeat_ReportsNothing()
+    {
+        // Fresh install. Greeting a new customer with a fault report would be a bad first run.
+        var diagnosis = StartupDiagnosis.Evaluate(null, DateTimeOffset.UtcNow, TwoMinutes);
+
+        Assert.Equal(OutageKind.None, diagnosis.Kind);
+        Assert.False(diagnosis.ShouldNotify);
+    }
+
+    [Fact]
+    public void StartupDiagnosis_WhenRestartIsQuick_ReportsNothing()
+    {
+        // The case that matters most for noise: this app is deployed by restarting in place, so
+        // without the threshold every deploy would email.
+        var now = DateTimeOffset.UtcNow;
+        var previous = new HeartbeatState(now.AddSeconds(-8), now.AddHours(-3), CleanShutdown: true);
+
+        var diagnosis = StartupDiagnosis.Evaluate(previous, now, TwoMinutes);
+
+        Assert.Equal(OutageKind.None, diagnosis.Kind);
+    }
+
+    [Fact]
+    public void StartupDiagnosis_WhenDownLongWithoutCleanShutdown_ReportsUnexpected()
+    {
+        // The power-cut case this feature exists for.
+        var now = DateTimeOffset.UtcNow;
+        var lastSeen = now.AddHours(-3);
+        var previous = new HeartbeatState(lastSeen, now.AddHours(-9), CleanShutdown: false);
+
+        var diagnosis = StartupDiagnosis.Evaluate(previous, now, TwoMinutes);
+
+        Assert.Equal(OutageKind.Unexpected, diagnosis.Kind);
+        Assert.True(diagnosis.ShouldNotify);
+        Assert.Equal(lastSeen, diagnosis.DownSinceUtc);
+        Assert.Equal(3, diagnosis.Downtime.TotalHours, precision: 2);
+    }
+
+    [Fact]
+    public void StartupDiagnosis_WhenDownLongAfterCleanShutdown_ReportsClean()
+    {
+        // Still worth an email - the cameras weren't being watched either way - but it must not
+        // be described as a power cut when somebody stopped it deliberately.
+        var now = DateTimeOffset.UtcNow;
+        var previous = new HeartbeatState(now.AddHours(-1), now.AddHours(-5), CleanShutdown: true);
+
+        var diagnosis = StartupDiagnosis.Evaluate(previous, now, TwoMinutes);
+
+        Assert.Equal(OutageKind.Clean, diagnosis.Kind);
+        Assert.True(diagnosis.ShouldNotify);
+    }
+
+    [Fact]
+    public void StartupDiagnosis_WhenClockMovedBackwards_ReportsNothing()
+    {
+        // A flat RTC battery makes a machine boot with a wrong clock until NTP syncs, and losing
+        // power is exactly when that surfaces. A backwards clock yields a negative gap, which is
+        // below any threshold and so reports nothing.
+        var now = DateTimeOffset.UtcNow;
+        var previous = new HeartbeatState(now.AddHours(2), now.AddHours(1), CleanShutdown: false);
+
+        var diagnosis = StartupDiagnosis.Evaluate(previous, now, TwoMinutes);
+
+        Assert.Equal(OutageKind.None, diagnosis.Kind);
+    }
+
+    [Fact]
+    public void StartupDiagnosis_WhenClockJumpedFarForward_ReportsNothing()
+    {
+        // The dangerous direction. Without the sanity bound this sends a confident email saying
+        // the server was down for years, which reads as a bug rather than an outage.
+        var now = DateTimeOffset.UtcNow;
+        var previous = new HeartbeatState(now.AddDays(-500), now.AddDays(-500), CleanShutdown: false);
+
+        var diagnosis = StartupDiagnosis.Evaluate(previous, now, TwoMinutes);
+
+        Assert.Equal(OutageKind.None, diagnosis.Kind);
+    }
+
+    [Fact]
+    public void StartupDiagnosis_WhenDownForWeeks_StillReports()
+    {
+        // The sanity bound must not swallow a long but entirely believable outage - a holiday
+        // home, or a box that sat unplugged for a month.
+        var now = DateTimeOffset.UtcNow;
+        var previous = new HeartbeatState(now.AddDays(-30), now.AddDays(-31), CleanShutdown: false);
+
+        var diagnosis = StartupDiagnosis.Evaluate(previous, now, TwoMinutes);
+
+        Assert.Equal(OutageKind.Unexpected, diagnosis.Kind);
+    }
+
+    [Fact]
+    public void StartupDiagnosis_AtExactlyTheThreshold_Notifies()
+    {
+        // Pins the boundary so the comparison can't be loosened to > without a test noticing.
+        var now = DateTimeOffset.UtcNow;
+        var previous = new HeartbeatState(now - TwoMinutes, now.AddHours(-1), CleanShutdown: false);
+
+        var diagnosis = StartupDiagnosis.Evaluate(previous, now, TwoMinutes);
+
+        Assert.Equal(OutageKind.Unexpected, diagnosis.Kind);
+    }
+
+    [Fact]
+    public async Task StartupNotificationWorker_WritesAndReadsBackHeartbeat()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"heartbeat-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            var worker = BuildStartupWorker(directory);
+            await worker.StartAsync(CancellationToken.None);
+            await worker.StopAsync(CancellationToken.None);
+
+            var path = Path.Combine(directory, "heartbeat.json");
+            Assert.True(File.Exists(path));
+
+            var state = JsonSerializer.Deserialize<HeartbeatState>(
+                File.ReadAllText(path), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+            Assert.NotNull(state);
+            // Stopping through the host is the only path that sets this, which is what makes it a
+            // usable signal for "was this shutdown deliberate".
+            Assert.True(state!.CleanShutdown);
+
+            // Nothing half-written left behind for the next start to trip over.
+            Assert.Empty(Directory.GetFiles(directory, "heartbeat.json*.tmp"));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StartupNotificationWorker_WithCorruptHeartbeat_StartsWithoutThrowing()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"heartbeat-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "heartbeat.json"), "{ this is not json");
+
+        try
+        {
+            var worker = BuildStartupWorker(directory);
+
+            // A truncated file is a plausible outcome of the very power cut being detected. It
+            // must degrade to "no outage report", never to a crash loop on startup.
+            await worker.StartAsync(CancellationToken.None);
+            await worker.StopAsync(CancellationToken.None);
+
+            var state = JsonSerializer.Deserialize<HeartbeatState>(
+                File.ReadAllText(Path.Combine(directory, "heartbeat.json")),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(state);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void OutageEmail_GoesToTheAlertAddressAndStatesTheDuration()
+    {
+        var email = new EmailOptions
+        {
+            Enabled = true,
+            Username = "sender@example.com",
+            AppPassword = "app-password",
+            ToAddress = "owner@example.com",
+            FromName = "Gate Camera"
+        };
+        var diagnosis = new StartupDiagnosis(OutageKind.Unexpected, TimeSpan.FromHours(3), DateTimeOffset.UtcNow.AddHours(-3));
+
+        using var message = OutageEmail.Build(email, diagnosis);
+
+        // The whole point is that it lands in the same inbox as the alerts.
+        Assert.Equal("owner@example.com", Assert.Single(message.To).Address);
+        Assert.Contains("3 hours", message.Body);
+        Assert.Contains("3 hours", message.Subject);
+        // An unexpected outage must not be described as a planned stop.
+        Assert.Contains("power cut", message.Body);
+        Assert.DoesNotContain("planned", message.Subject);
+    }
+
+    [Theory]
+    [InlineData(45, "45 seconds")]
+    [InlineData(60, "1 minute")]
+    [InlineData(120, "2 minutes")]
+    [InlineData(3600, "1 hour")]
+    [InlineData(5400, "1 hour 30 minutes")]
+    [InlineData(86400, "1 day")]
+    [InlineData(180000, "2 days 2 hours")]
+    public void OutageEmail_DescribesDurationsReadably(int seconds, string expected) =>
+        Assert.Equal(expected, OutageEmail.Describe(TimeSpan.FromSeconds(seconds)));
+
+    private static StartupNotificationWorker BuildStartupWorker(string dataDirectory) =>
+        new(new StaticOptionsMonitor<StartupNotificationOptions>(new StartupNotificationOptions()),
+            // Deliberately unconfigured: these tests exercise the heartbeat and the decision, and
+            // must never attempt a real SMTP connection.
+            new StaticOptionsMonitor<EmailOptions>(new EmailOptions()),
+            new StaticOptionsMonitor<BridgeOptions>(new BridgeOptions { DataDirectory = dataDirectory }),
+            new FakeHostEnvironment(dataDirectory),
+            NullLogger<StartupNotificationWorker>.Instance);
+
     private static HomeKitAlertAction BuildHomeKitAction(RecordingHandler handler, HomeKitOptions options) =>
         new(new HttpClient(handler),
             new StaticOptionsMonitor<HomeKitOptions>(options),

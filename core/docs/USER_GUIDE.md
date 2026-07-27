@@ -191,7 +191,8 @@ which is why the section paragraphs are there).
 
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
 shows only the settings most people actually change: Bridge, Email, Daily Summary, Telegram
-Alerts, Quiet Hours, Bug Reports, Apple HomeKit, Backup, Login and License. **Advanced** adds
+Alerts, Outage Alerts, Quiet Hours, Bug Reports, Apple HomeKit, Backup, Login and License.
+**Advanced** adds
 everything else: the AI tuning knobs, image processing, self-monitoring thresholds, webhooks,
 MQTT, known vehicles and prompt profiles.
 
@@ -224,6 +225,13 @@ The full list below covers both modes:
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
 - **Self-Monitoring** — watches the bridge's own health; see [section 16](#16-self-monitoring).
+- **Outage Alerts** — emails you (at the same address as your alerts) when the server starts up
+  after having been off for a while, so a power cut doesn't go unnoticed until you next open the
+  Feed. The email says how long it was down and whether it was shut down deliberately or lost
+  power. Two settings: a minimum downtime, so ordinary restarts and updates stay silent, and how
+  often the server records that it's alive. Note the limit: this can only tell you the server
+  *came back*. If the machine stays off, nothing is running to send the email — for that you'd
+  need something outside the house watching.
 - **Bug Reports** — emails the developer when something breaks internally. See
   [section 17](#17-bug-reports).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must

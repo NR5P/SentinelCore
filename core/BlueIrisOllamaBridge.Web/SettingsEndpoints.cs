@@ -19,6 +19,7 @@ public sealed record SettingsSnapshot(
     TelegramChatSettingsDto? TelegramChat,
     BlueIrisSettingsDto? BlueIris,
     SelfMonitoringSettingsDto? SelfMonitoring,
+    StartupNotificationSettingsDto? StartupNotification,
     QuietHoursSettingsDto? QuietHours,
     List<KnownVehicle>? KnownVehicles,
     MqttSettingsDto? Mqtt,
@@ -102,6 +103,9 @@ public static class SettingsEndpoints
 
         app.MapPut("/api/settings/self-monitoring", async (SelfMonitoringSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "SelfMonitoring", ct));
+
+        app.MapPut("/api/settings/startup-notification", async (StartupNotificationSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, settings, "StartupNotification", ct));
 
         app.MapPut("/api/settings/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
             await SaveSectionAsync(dto, settings, "QuietHours", ct));
@@ -188,6 +192,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<TelegramChatSettingsDto>("TelegramChat", cancellationToken),
         await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", cancellationToken),
         await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", cancellationToken),
+        await settings.GetSectionAsync<StartupNotificationSettingsDto>("StartupNotification", cancellationToken),
         await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", cancellationToken),
         await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", cancellationToken) ?? [],
         await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", cancellationToken),
@@ -214,6 +219,7 @@ public static class SettingsEndpoints
         if (snapshot.TelegramChat is not null) await settings.MergeSectionAsync("TelegramChat", snapshot.TelegramChat, cancellationToken);
         if (snapshot.BlueIris is not null) await settings.MergeSectionAsync("BlueIris", snapshot.BlueIris, cancellationToken);
         if (snapshot.SelfMonitoring is not null) await settings.MergeSectionAsync("SelfMonitoring", snapshot.SelfMonitoring, cancellationToken);
+        if (snapshot.StartupNotification is not null) await settings.MergeSectionAsync("StartupNotification", snapshot.StartupNotification, cancellationToken);
         if (snapshot.QuietHours is not null) await settings.MergeSectionAsync("QuietHours", snapshot.QuietHours, cancellationToken);
         if (snapshot.KnownVehicles is not null) await settings.ReplaceSectionAsync("KnownVehicles", snapshot.KnownVehicles, cancellationToken);
         if (snapshot.Mqtt is not null) await settings.MergeSectionAsync("Mqtt", snapshot.Mqtt, cancellationToken);
