@@ -3,7 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var address = ""
-    @State private var showingResetConfirmation = false
+    @State private var showingDiagnostics = false
 
     var body: some View {
         Form {
@@ -19,8 +19,12 @@ struct SettingsView: View {
                     ConnectionBadge().frame(maxWidth: 190)
                 }
                 Button("SAVE AND RECONNECT") {
-                    model.serverURL = normalized(address)
+                    Task {
+                        model.serverURL = normalized(address)
+                        await model.connect(resetNetworkSession: true)
+                    }
                 }
+                .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             Section("ACCOUNT") {
@@ -46,36 +50,33 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                if model.diagnostics.isEmpty {
-                    Text("No requests recorded yet.")
-                        .foregroundStyle(SentinelTheme.textDim)
-                } else {
-                    ForEach(model.diagnostics) { entry in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Text(entry.level.rawValue)
-                                    .foregroundStyle(entry.level == .error ? SentinelTheme.red : SentinelTheme.cyan)
-                                Spacer()
-                                Text(entry.timestamp.formatted(date: .omitted, time: .standard))
-                                    .foregroundStyle(SentinelTheme.textDim)
+            Section("DIAGNOSTICS") {
+                DisclosureGroup("CONNECTION LOG", isExpanded: $showingDiagnostics) {
+                    if model.diagnostics.isEmpty {
+                        Text("No requests recorded yet.")
+                            .foregroundStyle(SentinelTheme.textDim)
+                    } else {
+                        ForEach(model.diagnostics.prefix(30)) { entry in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(entry.level.rawValue)
+                                        .foregroundStyle(entry.level == .error ? SentinelTheme.red : SentinelTheme.cyan)
+                                    Spacer()
+                                    Text(entry.timestamp.formatted(date: .omitted, time: .standard))
+                                        .foregroundStyle(SentinelTheme.textDim)
+                                }
+                                .font(.caption2)
+                                Text(entry.message)
+                                    .font(.caption)
+                                    .textSelection(.enabled)
                             }
-                            .font(.caption2)
-                            Text(entry.message)
-                                .font(.caption)
-                                .textSelection(.enabled)
                         }
                     }
+                    Button("CLEAR LOG") { model.clearDiagnostics() }
                 }
-            } header: {
-                HStack {
-                    Text("CONNECTION LOG")
-                    Spacer()
-                    Button("CLEAR") { model.clearDiagnostics() }
-                        .font(.caption)
-                }
-            } footer: {
                 Text("Request bodies, passwords, cookies, and server response contents are never written here.")
+                    .font(.caption)
+                    .foregroundStyle(SentinelTheme.textDim)
             }
 
             Section {
@@ -89,6 +90,7 @@ struct SettingsView: View {
         .background(SentinelTheme.background)
         .navigationTitle("SETTINGS")
         .onAppear { address = model.serverURL }
+        .onChange(of: model.serverURL) { _, newValue in address = newValue }
     }
 
     private func normalized(_ value: String) -> String {

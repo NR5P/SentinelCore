@@ -10,5 +10,6 @@ struct SentinelCoreApp: App {
                 .environmentObject(appModel)
                 .preferredColorScheme(.dark)
         }
+        .defaultSize(width: 1180, height: 760)
     }
 }

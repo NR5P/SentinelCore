@@ -33,6 +33,10 @@ struct LoginView: View {
         }
         .padding()
         .foregroundStyle(SentinelTheme.text)
+        .onSubmit {
+            guard !signingIn, !username.isEmpty, !password.isEmpty else { return }
+            Task { await signIn() }
+        }
     }
 
     private func signIn() async {

@@ -15,9 +15,11 @@ final class AppModel: ObservableObject {
     @Published var isLoading = false
     @Published var lastError: String?
     @Published var diagnostics: [DiagnosticEntry] = []
+    @Published var lastUpdated: Date?
 
     private(set) lazy var client = SentinelClient(model: self)
     private var localNetworkBrowser: NWBrowser?
+    private var isConnecting = false
 
     init() {
         serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
@@ -26,17 +28,29 @@ final class AppModel: ObservableObject {
     var isConfigured: Bool { URL(string: serverURL)?.host != nil }
     var requiresLogin: Bool { authStatus?.enabled == true && authStatus?.authenticated == false }
 
-    func connect() async {
+    func connect(resetNetworkSession: Bool = false) async {
         guard isConfigured else {
             connectionState = .notConfigured
             return
         }
+        guard !isConnecting else {
+            log("Connection request skipped because one is already active", level: .notice)
+            return
+        }
+
+        isConnecting = true
+        defer { isConnecting = false }
         log("Connecting to \(serverURL)")
-        connectionState = .checking
+        let wasOffline = connectionState == .offline
+        if connectionState != .online {
+            connectionState = .checking
+        }
         // A URLSession created while local-network access was denied can retain the old
         // unsatisfied network path. Recreate it on each explicit connection attempt so a
         // newly-granted privacy decision takes effect immediately.
-        client.resetSession()
+        if resetNetworkSession || wasOffline {
+            client.resetSession()
+        }
         startLocalNetworkPermissionProbe()
         // Give macOS a moment to present/register the local-network permission before the
         // first HTTP request. The browser stays alive for the app's lifetime.
@@ -50,7 +64,6 @@ final class AppModel: ObservableObject {
             }
             try await refreshAll()
             connectionState = .online
-            lastError = nil
             log("Connection established; loaded \(events.count) events")
         } catch {
             if Self.isCancellation(error) {
@@ -96,6 +109,7 @@ final class AppModel: ObservableObject {
         } else {
             lastError = nil
         }
+        lastUpdated = .now
     }
 
     private static func isCancellation(_ error: Error) -> Bool {
@@ -129,7 +143,7 @@ final class AppModel: ObservableObject {
                 case .ready:
                     self.log("Local-network discovery is ready")
                     if self.connectionState != .online {
-                        await self.connect()
+                        await self.connect(resetNetworkSession: true)
                     }
                 case let .waiting(error):
                     self.log("Waiting for local-network permission: \(error)", level: .notice)

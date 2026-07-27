@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selection: AppSection? = .feed
 
     var body: some View {
@@ -11,7 +12,11 @@ struct RootView: View {
             } else if model.requiresLogin {
                 LoginView()
             } else {
-                appNavigation
+                if horizontalSizeClass == .compact {
+                    compactNavigation
+                } else {
+                    splitNavigation
+                }
             }
         }
         .fontDesign(.monospaced)
@@ -20,18 +25,20 @@ struct RootView: View {
         // Reconnect whenever setup/settings changes the address. Keeping this task on the
         // persistent root prevents SwiftUI from cancelling it when ServerSetupView disappears.
         .task(id: model.serverURL) {
-            await model.connect()
+            await model.connect(resetNetworkSession: true)
         }
     }
 
-    private var appNavigation: some View {
+    private var splitNavigation: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 BrandHeader()
                 List(AppSection.allCases, selection: $selection) { section in
                     Label(section.title, systemImage: section.icon)
                         .tag(section)
-                        .foregroundStyle(selection == section ? SentinelTheme.green : SentinelTheme.text)
+                        // macOS uses the accent color for the selected row. Dark text keeps the
+                        // label readable against Sentinel's bright green selection.
+                        .foregroundStyle(selection == section ? SentinelTheme.background : SentinelTheme.text)
                 }
                 .scrollContentBackground(.hidden)
 
@@ -42,14 +49,33 @@ struct RootView: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 220)
         } detail: {
             NavigationStack {
-                sectionView
+                sectionView(selection ?? .feed)
             }
             .background(SentinelTheme.background)
         }
     }
 
-    @ViewBuilder private var sectionView: some View {
-        switch selection ?? .feed {
+    private var compactNavigation: some View {
+        TabView(selection: compactSelection) {
+            ForEach(AppSection.allCases) { section in
+                NavigationStack {
+                    sectionView(section)
+                }
+                .tabItem { Label(section.title, systemImage: section.icon) }
+                .tag(section)
+            }
+        }
+    }
+
+    private var compactSelection: Binding<AppSection> {
+        Binding(
+            get: { selection ?? .feed },
+            set: { selection = $0 }
+        )
+    }
+
+    @ViewBuilder private func sectionView(_ section: AppSection) -> some View {
+        switch section {
         case .feed: EventFeedView()
         case .live: LiveCamerasView()
         case .triggers: TriggerFeedView()
@@ -91,13 +117,24 @@ struct ConnectionBadge: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(model.connectionState == .online ? SentinelTheme.green : SentinelTheme.red)
+                .fill(statusColor)
                 .frame(width: 8, height: 8)
-                .shadow(color: model.connectionState == .online ? SentinelTheme.green : SentinelTheme.red, radius: 5)
+                .shadow(color: statusColor, radius: 5)
             Text(model.connectionState.label)
                 .font(.caption)
                 .foregroundStyle(SentinelTheme.textDim)
             Spacer()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Server status: \(model.connectionState.label)")
+    }
+
+    private var statusColor: Color {
+        switch model.connectionState {
+        case .online: SentinelTheme.green
+        case .checking, .authenticationRequired: SentinelTheme.amber
+        case .offline: SentinelTheme.red
+        case .notConfigured: SentinelTheme.textDim
         }
     }
 }

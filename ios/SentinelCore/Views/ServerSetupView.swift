@@ -20,7 +20,7 @@ struct ServerSetupView: View {
                     .keyboardType(.URL)
                     #endif
                 Button("CONNECT") {
-                    model.serverURL = normalized(address)
+                    connect()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -31,6 +31,11 @@ struct ServerSetupView: View {
         .padding()
         .foregroundStyle(SentinelTheme.text)
         .onAppear { address = model.serverURL }
+        .onSubmit(connect)
+    }
+
+    private func connect() {
+        model.serverURL = normalized(address)
     }
 
     private func normalized(_ value: String) -> String {

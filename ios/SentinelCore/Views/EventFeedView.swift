@@ -21,9 +21,9 @@ struct EventFeedView: View {
                 sectionHeader
                 if filteredEvents.isEmpty {
                     ContentUnavailableView(
-                        model.isLoading ? "Loading feed…" : "No events",
-                        systemImage: "shield.slash",
-                        description: Text("Alerts received by Sentinel Core will appear here.")
+                        emptyTitle,
+                        systemImage: model.isLoading ? "arrow.triangle.2.circlepath" : "shield.slash",
+                        description: Text(emptyDescription)
                     )
                     .foregroundStyle(SentinelTheme.textDim)
                     .padding(.top, 60)
@@ -59,9 +59,10 @@ struct EventFeedView: View {
                 .toggleStyle(.button)
             }
             ToolbarItem {
-                Button { Task { await model.connect() } } label: {
+                Button { Task { await model.connect(resetNetworkSession: true) } } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .disabled(model.isLoading)
             }
         }
         .task {
@@ -74,61 +75,55 @@ struct EventFeedView: View {
 
     private var sectionHeader: some View {
         HStack {
-            Text("\(filteredEvents.count) EVENTS")
-                .foregroundStyle(SentinelTheme.textDim)
-                .font(.caption)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(filteredEvents.count) EVENTS")
+                    .foregroundStyle(SentinelTheme.textDim)
+                    .font(.caption)
+                if let lastUpdated = model.lastUpdated {
+                    Text("UPDATED \(lastUpdated.formatted(date: .omitted, time: .shortened))")
+                        .foregroundStyle(SentinelTheme.textDim.opacity(0.75))
+                        .font(.caption2)
+                }
+            }
             Spacer()
             ConnectionBadge().frame(maxWidth: 180)
         }
         .padding(.bottom, 4)
     }
+
+    private var emptyTitle: String {
+        if model.isLoading { return "Loading feed…" }
+        if !search.isEmpty || notifiedOnly { return "No matching events" }
+        return "No events"
+    }
+
+    private var emptyDescription: String {
+        if !search.isEmpty || notifiedOnly {
+            return "Try changing your search or notification filter."
+        }
+        return "Alerts received by Sentinel Core will appear here."
+    }
 }
 
 struct EventCard: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let event: SecurityEvent
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            AsyncImage(url: imageURL) { phase in
-                switch phase {
-                case let .success(image):
-                    image.resizable().scaledToFill()
-                case .failure:
-                    Image(systemName: "photo").foregroundStyle(SentinelTheme.textDim)
-                default:
-                    ProgressView()
+        Group {
+            if horizontalSizeClass == .compact {
+                VStack(alignment: .leading, spacing: 12) {
+                    eventImage
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                    eventDetails
                 }
-            }
-            .frame(width: 132, height: 88)
-            .background(SentinelTheme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .clipped()
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(event.camera).foregroundStyle(SentinelTheme.green).bold()
-                    Spacer()
-                    Text(event.occurredAt, style: .relative)
-                        .foregroundStyle(SentinelTheme.textDim)
-                        .font(.caption)
+            } else {
+                HStack(alignment: .top, spacing: 14) {
+                    eventImage
+                        .frame(width: 156, height: 96)
+                    eventDetails
                 }
-                Text(event.summary.isEmpty ? "No description" : event.summary)
-                    .foregroundStyle(SentinelTheme.text)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(3)
-                HStack {
-                    Text(event.eventType.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .foregroundStyle(SentinelTheme.cyan)
-                    Spacer()
-                    if event.notified {
-                        Label("NOTIFIED", systemImage: "bell.fill")
-                            .foregroundStyle(SentinelTheme.green)
-                    }
-                    Text(event.confidence, format: .percent.precision(.fractionLength(0)))
-                        .foregroundStyle(SentinelTheme.textDim)
-                }
-                .font(.caption)
             }
         }
         .sentinelPanel()
@@ -136,6 +131,46 @@ struct EventCard: View {
             if event.notified {
                 Rectangle().fill(SentinelTheme.green).frame(width: 2).padding(.vertical, 5)
             }
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(event.camera), \(event.summary), \(event.occurredAt.formatted())")
+    }
+
+    private var eventImage: some View {
+        SentinelRemoteImage(url: imageURL)
+            .background(SentinelTheme.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .clipped()
+    }
+
+    private var eventDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(event.camera).foregroundStyle(SentinelTheme.green).bold()
+                Spacer()
+                Text(event.occurredAt, style: .relative)
+                    .foregroundStyle(SentinelTheme.textDim)
+                    .font(.caption)
+            }
+            Text(event.summary.isEmpty ? "No description" : event.summary)
+                .foregroundStyle(SentinelTheme.text)
+                .multilineTextAlignment(.leading)
+                .lineLimit(horizontalSizeClass == .compact ? 4 : 3)
+            HStack(spacing: 10) {
+                Text(event.eventType.replacingOccurrences(of: "_", with: " ").uppercased())
+                    .foregroundStyle(SentinelTheme.cyan)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if event.notified {
+                    Image(systemName: "bell.fill")
+                        .foregroundStyle(SentinelTheme.green)
+                        .accessibilityLabel("Notification sent")
+                }
+                Text(event.confidence, format: .percent.precision(.fractionLength(0)))
+                    .foregroundStyle(SentinelTheme.textDim)
+            }
+            .font(.caption)
         }
     }
 
