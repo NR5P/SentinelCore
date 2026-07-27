@@ -212,6 +212,17 @@ public sealed class SelfMonitoringSettingsDto
     public bool NotifyOnRecovery { get; set; } = true;
 }
 
+public sealed class StartupNotificationSettingsDto
+{
+    public bool Enabled { get; set; } = true;
+
+    [Range(1, 1440)]
+    public int MinimumDowntimeMinutes { get; set; } = 2;
+
+    [Range(10, 3600)]
+    public int HeartbeatIntervalSeconds { get; set; } = 60;
+}
+
 public sealed class QuietHoursSettingsDto
 {
     public bool Enabled { get; set; }

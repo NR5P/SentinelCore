@@ -505,3 +505,22 @@ public sealed class SelfMonitoringOptions
 
     public bool NotifyOnRecovery { get; init; } = true;
 }
+
+public sealed class StartupNotificationOptions
+{
+    public const string SectionName = "StartupNotification";
+
+    // Sends to Email:ToAddress - the same inbox as the alerts. Unlike SelfMonitoring, which can
+    // only report problems it's running to observe, this one reports the outage after the fact.
+    public bool Enabled { get; init; } = true;
+
+    // Below this, a restart isn't worth an email. A redeploy takes a few seconds, so the default
+    // keeps ordinary restarts silent while still catching anything that looks like a real outage.
+    [Range(1, 1440)]
+    public int MinimumDowntimeMinutes { get; init; } = 2;
+
+    // Also the resolution of the reported downtime: the gap is measured from the last heartbeat,
+    // so it can under-report by up to this much. The email says "at least" for that reason.
+    [Range(10, 3600)]
+    public int HeartbeatIntervalSeconds { get; init; } = 60;
+}

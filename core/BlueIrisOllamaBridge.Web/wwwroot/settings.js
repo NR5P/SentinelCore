@@ -172,6 +172,16 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "startupNotification", title: "OUTAGE ALERTS", endpoint: "/api/settings/startup-notification",
+      basic: true,
+      description: "Emails you when the server comes back after being off - so a power cut doesn't go unnoticed until you next check the feed. The email goes to the same address as your alerts, and says how long it was down and whether it was shut down on purpose or lost power. Note this can only tell you it came back: if the machine stays off, nothing is running to send the email.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Email you on startup when the server has been down longer than the threshold below." },
+        { name: "minimumDowntimeMinutes", label: "Minimum Downtime (min)", type: "number", min: 1, max: 1440, tip: "Ignore outages shorter than this. Stops routine restarts and updates, which take seconds, from emailing you every time." },
+        { name: "heartbeatIntervalSeconds", label: "Heartbeat Interval (s)", type: "number", min: 10, max: 3600, tip: "How often the server records that it's alive. Also how precise the reported downtime is - the real outage can be up to this much longer than the email says." }
+      ]
+    },
+    {
       key: "quietHours", title: "QUIET HOURS", endpoint: "/api/settings/quiet-hours",
       basic: true,
       description: "During hours you choose, the AI has to be more confident before it wakes you. It never fully silences anything - something clearly worth knowing about still gets through at 3am - and it has no effect on the Feed or the daily summary.",

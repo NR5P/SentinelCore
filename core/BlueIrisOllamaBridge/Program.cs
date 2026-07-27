@@ -78,6 +78,10 @@ builder.Services.AddOptions<SelfMonitoringOptions>()
     .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<StartupNotificationOptions>()
+    .Bind(builder.Configuration.GetSection(StartupNotificationOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<QuietHoursOptions>()
     .Bind(builder.Configuration.GetSection(QuietHoursOptions.SectionName))
     .ValidateDataAnnotations()
@@ -155,6 +159,9 @@ builder.Services.AddHostedService<DailySummaryWorker>();
 builder.Services.AddSingleton<ChatAnswerService>();
 builder.Services.AddHostedService<TelegramChatWorker>();
 builder.Services.AddHostedService<SelfMonitoringWorker>();
+// Registered in the main app only - all three services would otherwise each report the same
+// reboot separately.
+builder.Services.AddHostedService<StartupNotificationWorker>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<OllamaVisionClient>(client =>
