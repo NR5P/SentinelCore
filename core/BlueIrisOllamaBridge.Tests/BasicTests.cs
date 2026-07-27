@@ -1519,6 +1519,83 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public async Task SqliteTriggerStore_GetEventsInRangeAsync_FiltersByCameraAndOccurredAtWindow()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        var trigger = await store.AddAsync(cameraId, "image.jpg", 0.1, CancellationToken.None);
+        var now = DateTimeOffset.UtcNow;
+
+        var matched = await store.GetEventsInRangeAsync(
+            cameraId, now.AddMinutes(-5), now.AddMinutes(5), CancellationToken.None);
+        var beforeWindow = await store.GetEventsInRangeAsync(
+            cameraId, now.AddHours(-2), now.AddHours(-1), CancellationToken.None);
+        var otherCamera = await store.GetEventsInRangeAsync(
+            Guid.NewGuid(), now.AddMinutes(-5), now.AddMinutes(5), CancellationToken.None);
+
+        Assert.Single(matched);
+        Assert.Equal(trigger.Id, matched[0].Id);
+        Assert.Empty(beforeWindow);
+        Assert.Empty(otherCamera);
+    }
+
+    // --- Timeline trigger-clip correlation (TimelineEndpoints.MatchTriggerEvents) -------------
+    //
+    // The AI event and its local trigger row are written a few statements apart from the same
+    // snapshot (TriggerZoneMonitor.MaybeTriggerAsync), so their timestamps are always close -
+    // this matches nearest-timestamp within a tight tolerance, not two independently-clocked
+    // systems.
+
+    private static AlertEventRecord MakeAlertEvent(DateTimeOffset occurredAt) =>
+        new(Guid.NewGuid(), "GateCam", occurredAt, "Completed", "vehicle", "A car pulled in.", true, null, 0.9, null);
+
+    private static TriggerEvent MakeTriggerEvent(DateTimeOffset occurredAt, string? clipPath) =>
+        new(Guid.NewGuid(), Guid.NewGuid(), occurredAt, "image.jpg", 0.12, clipPath);
+
+    [Fact]
+    public void MatchTriggerEvents_PicksNearestTriggerWithAClipWithinTolerance()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertEvent = MakeAlertEvent(now);
+        // Closest in time but has no clip yet (post-roll hasn't finished) - must be skipped in
+        // favor of the next-nearest one that actually has a clip.
+        var noClipYet = MakeTriggerEvent(now.AddSeconds(0.2), null);
+        var withClip = MakeTriggerEvent(now.AddSeconds(1), "clip.mp4");
+        var tooFarWithClip = MakeTriggerEvent(now.AddSeconds(30), "far-clip.mp4");
+
+        var matches = TimelineEndpoints.MatchTriggerEvents(
+            [alertEvent], [noClipYet, withClip, tooFarWithClip]);
+
+        Assert.Single(matches);
+        Assert.Equal(withClip.Id, matches[alertEvent.Id].Id);
+    }
+
+    [Fact]
+    public void MatchTriggerEvents_NoMatchWhenNearestClipExceedsTolerance()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertEvent = MakeAlertEvent(now);
+        var farTrigger = MakeTriggerEvent(now.AddSeconds(10), "clip.mp4");
+
+        var matches = TimelineEndpoints.MatchTriggerEvents([alertEvent], [farTrigger]);
+
+        Assert.Empty(matches);
+    }
+
+    [Fact]
+    public void MatchTriggerEvents_MatchesAtExactlyFiveSecondTolerance()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertEvent = MakeAlertEvent(now);
+        var boundaryTrigger = MakeTriggerEvent(now.AddSeconds(5), "clip.mp4");
+
+        var matches = TimelineEndpoints.MatchTriggerEvents([alertEvent], [boundaryTrigger]);
+
+        Assert.Single(matches);
+        Assert.Equal(boundaryTrigger.Id, matches[alertEvent.Id].Id);
+    }
+
+    [Fact]
     public void HttpsSettings_NotConfigured_StaysOffSilently()
     {
         // The shipped default. Must not warn - plain HTTP is a legitimate choice, not a fault.
@@ -1811,18 +1888,6 @@ public sealed class BasicTests
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             Directory.Delete(tempDir, recursive: true);
         }
-    }
-
-    [Theory]
-    [InlineData("alert-record.jpg", "alert-record")]
-    [InlineData("alert-record", "alert-record")]
-    [InlineData("  alert-record.jpeg  ", "alert-record")]
-    [InlineData(null, "")]
-    public void BlueIrisTimelineClient_NormalizeRecord_MatchesAlertDatabaseIdentifiers(
-        string? input,
-        string expected)
-    {
-        Assert.Equal(expected, BlueIrisTimelineClient.NormalizeRecord(input));
     }
 
     // --- Outage alerts (StartupNotificationWorker) -------------------------------------------

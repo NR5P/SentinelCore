@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 
 struct RecordingTimelineView: View {
@@ -12,6 +13,9 @@ struct RecordingTimelineView: View {
     @State private var selectedSeverities = Set(["critical", "high", "medium", "low"])
     @State private var reviewFilter = ReviewFilter.all
     @State private var errorMessage: String?
+    @State private var player = AVPlayer()
+    @State private var loadedSegment: TimelineRecordingSegment?
+    @State private var timeObserverToken: Any?
 
     private var cameraNames: [String] {
         Array(Set(availableCameras + model.events.map(\.camera))).sorted {
@@ -48,12 +52,16 @@ struct RecordingTimelineView: View {
         .task(id: "\(selectedCamera)|\(selectedDate.timeIntervalSinceReferenceDate)") {
             await loadDay()
         }
-        .task(id: isPlaying) {
-            guard isPlaying else { return }
-            while !Task.isCancelled && isPlaying {
-                try? await Task.sleep(for: .milliseconds(500))
-                advancePlayback()
-            }
+        .task { addPlayerTimeObserver() }
+        .onChange(of: cursor) { _, newValue in syncPlayer(to: newValue) }
+        .onChange(of: isPlaying) { _, playing in
+            if playing { player.play() } else { player.pause() }
+        }
+        .onDisappear {
+            if let timeObserverToken { player.removeTimeObserver(timeObserverToken) }
+            timeObserverToken = nil
+            player.pause()
+            player.replaceCurrentItem(with: nil)
         }
     }
 
@@ -104,9 +112,8 @@ struct RecordingTimelineView: View {
         VStack(spacing: 12) {
             ZStack {
                 Rectangle().fill(.black)
-                if let frameURL {
-                    SentinelRemoteImage(url: frameURL, contentMode: .fit)
-                        .id(frameURL)
+                if currentSegment != nil {
+                    VideoPlayer(player: player)
                 } else {
                     ContentUnavailableView(
                         "No saved trigger clip",
@@ -238,21 +245,66 @@ struct RecordingTimelineView: View {
         }
     }
 
-    private var frameURL: URL? {
-        guard let day,
-              day.recording.available,
-              let segment = day.recording.segments.first(where: {
-                  $0.start <= cursor && $0.end >= cursor
-              }) else { return nil }
-        return model.client.url(
-            path: "/api/timeline/frame",
-            query: [
-                .init(name: "eventId", value: segment.eventId.uuidString),
-                .init(name: "at", value: cursor.ISO8601Format()),
-                .init(name: "width", value: "1280"),
-                .init(name: "height", value: "720")
-            ]
-        )
+    private var currentSegment: TimelineRecordingSegment? {
+        guard let day, day.recording.available else { return nil }
+        return day.recording.segments.first(where: { $0.start <= cursor && $0.end >= cursor })
+    }
+
+    // Called whenever `cursor` moves, whichever moved it: the rail drag, jumpEvent, the NOW
+    // button, or the player's own periodic time observer while playing. The >0.3s threshold on
+    // the same-segment path means a cursor update that merely mirrors the player's current
+    // position (the common case while playing) doesn't turn around and re-seek the player.
+    private func syncPlayer(to date: Date) {
+        guard let segment = currentSegment else {
+            if loadedSegment != nil {
+                player.pause()
+                player.replaceCurrentItem(with: nil)
+                loadedSegment = nil
+            }
+            return
+        }
+        let offset = max(0, date.timeIntervalSince(segment.start))
+        if segment.triggerEventId != loadedSegment?.triggerEventId {
+            loadedSegment = segment
+            guard let url = model.client.url(path: "/api/triggers/\(segment.triggerEventId.uuidString)/clip") else {
+                return
+            }
+            player.replaceCurrentItem(with: AVPlayerItem(url: url))
+            player.seek(to: CMTime(seconds: offset, preferredTimescale: 600))
+            if isPlaying { player.play() }
+            return
+        }
+        if abs(player.currentTime().seconds - offset) > 0.3 {
+            player.seek(to: CMTime(seconds: offset, preferredTimescale: 600))
+        }
+    }
+
+    private func addPlayerTimeObserver() {
+        guard timeObserverToken == nil else { return }
+        timeObserverToken = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+            queue: .main
+        ) { time in
+            guard isPlaying, let segment = loadedSegment else { return }
+            let updated = segment.start.addingTimeInterval(time.seconds)
+            if updated >= segment.end {
+                advancePastSegment()
+            } else {
+                cursor = updated
+            }
+        }
+    }
+
+    // Reached the end of the currently-playing clip's saved window. There's no footage in the
+    // gap between trigger clips, so jump straight to the next one rather than trying to "play
+    // through" it.
+    private func advancePastSegment() {
+        guard let day, let segment = loadedSegment,
+              let next = day.recording.segments.first(where: { $0.start > segment.end }) else {
+            isPlaying = false
+            return
+        }
+        cursor = next.start
     }
 
     private func loadDay() async {
@@ -277,6 +329,9 @@ struct RecordingTimelineView: View {
             day = nil
             errorMessage = error.localizedDescription
         }
+        // `cursor` may coincidentally already hold this exact value (e.g. no segments/events on
+        // either day), in which case onChange(of: cursor) wouldn't fire on its own.
+        syncPlayer(to: cursor)
     }
 
     private func toggleReviewed(_ event: TimelineSecurityEvent) async {
@@ -297,24 +352,6 @@ struct RecordingTimelineView: View {
             ? ordered.first(where: { $0.occurredAt > cursor.addingTimeInterval(0.5) })
             : ordered.last(where: { $0.occurredAt < cursor.addingTimeInterval(-0.5) })
         if let target { cursor = clipStart(for: target) ?? target.occurredAt }
-    }
-
-    private func advancePlayback() {
-        guard let day else { return }
-        let next = cursor.addingTimeInterval(0.5)
-        if next >= day.end {
-            isPlaying = false
-            return
-        }
-        if let segment = day.recording.segments.first(where: { $0.start <= next && $0.end > next }) {
-            cursor = min(next, segment.end)
-            return
-        }
-        if let nextSegment = day.recording.segments.first(where: { $0.start > next }) {
-            cursor = nextSegment.start
-        } else {
-            isPlaying = false
-        }
     }
 
     private func membership(_ value: String, in set: Binding<Set<String>>) -> Binding<Bool> {

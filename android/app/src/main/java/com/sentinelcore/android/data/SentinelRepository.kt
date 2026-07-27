@@ -105,6 +105,7 @@ class SentinelRepository(
                     add(
                         TimelineRecordingSegment(
                             eventId = item.getString("eventId"),
+                            triggerEventId = item.getString("triggerEventId"),
                             start = parseInstant(item.getString("start")),
                             end = parseInstant(item.getString("end")),
                         ),
@@ -167,12 +168,6 @@ class SentinelRepository(
             body = body,
         )
     }
-
-    fun timelineFramePath(eventId: String, at: Instant): String =
-        "/api/timeline/frame?eventId=" +
-            URLEncoder.encode(eventId, StandardCharsets.UTF_8.name()) +
-            "&at=" + URLEncoder.encode(at.toString(), StandardCharsets.UTF_8.name()) +
-            "&width=1280&height=720"
 
     suspend fun login(username: String, password: String) = withContext(Dispatchers.IO) {
         val body = JSONObject()

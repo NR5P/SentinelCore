@@ -93,6 +93,7 @@ struct TimelineRecording: Codable {
 
 struct TimelineRecordingSegment: Codable, Hashable {
     let eventId: UUID
+    let triggerEventId: UUID
     let start: Date
     let end: Date
 }
