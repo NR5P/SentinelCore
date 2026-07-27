@@ -18,6 +18,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 9. [Prompt profiles — what the AI is told to look for](#9-prompt-profiles--what-the-ai-is-told-to-look-for)
 10. [License plate recognition & known vehicles](#10-license-plate-recognition--known-vehicles)
 11. [The Telegram bot](#11-the-telegram-bot)
+11a. [Discord alerts](#11a-discord-alerts)
 12. [Email](#12-email)
 13. [MQTT & Home Assistant](#13-mqtt--home-assistant)
 14. [Apple HomeKit](#14-apple-homekit)
@@ -266,6 +267,8 @@ The full list below covers both modes:
   confidence gate, duplicate cooldown, and whether to attach the image.
 - **Telegram Chat** — lets you text the bot questions about recent activity; how many days
   back it looks, how many events it considers, and which Ollama model answers.
+- **Discord Alerts** — posts alert cards and optional snapshots to a Discord channel using one
+  incoming webhook URL; no bot application is required.
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
 - **Self-Monitoring** — watches the bridge's own health; see [section 16](#16-self-monitoring).
@@ -441,6 +444,17 @@ Two special commands:
 
 Everything else you type is treated as a free-text question.
 
+## 11a. Discord alerts
+
+Discord uses an incoming webhook rather than a bot account. In the destination Discord
+channel, open **Edit Channel → Integrations → Webhooks**, create a webhook, copy its URL, then
+paste it into **Settings → Discord Alerts** and enable the integration.
+
+Each post contains the camera, AI summary, reason and confidence, plus the trigger snapshot
+when **Attach Image** is enabled. It follows the same notification recommendation, confidence,
+quiet-hours and duplicate-cooldown rules as Telegram. Treat the webhook URL like a password:
+anyone who has it can post to that channel.
+
 ## 12. Email
 
 **Email** sends individual alerts the same way Telegram does, with its own duplicate-cooldown
@@ -514,10 +528,11 @@ automatically, and until you turn the toggle on it stays completely off your net
 advertised, nothing to find. If the settings section says the sidecar isn't running, Node.js
 was missing when the app was installed; see [DEPLOYMENT.md](DEPLOYMENT.md) section 8a.
 
-**Cameras appear as they're seen.** A camera only shows up in Home after its first alert-worthy
-event — there's no list to configure. That means a brand-new setup starts empty and fills in
-naturally over the first day or two. Each camera keeps its identity across restarts, so once
-it's appeared it stays put and your automations keep working.
+**Camera identity is durable.** Cameras from the Blue Iris camera mapping are registered before
+the HomeKit bridge publishes. Any other camera is learned on its first alert and saved in
+`homekit-bridge/persist/cameras.json`, then restored before every later publish. This keeps
+HomeKit accessory IDs stable across restarts and prevents the first motion event from racing
+Apple Home's accessory synchronization.
 
 **What triggers a notification.** Only events that would also have alerted Email/Telegram —
 the same judgement described in
@@ -536,6 +551,13 @@ an additional output, never a suppression layer.
 
 **To unpair**, remove the bridge from the Home app on your iPhone. Turning **enabled** off here
 just stops sending motion; it doesn't undo the pairing.
+
+**If Home says “Accessory Not Responding” while the dashboard says paired**, first remove the
+old Sentinel Core bridge from Apple Home. Then use **Settings → Apple HomeKit → Reset Pairing**.
+The HomeKit sidecar restarts with fresh controller keys while retaining the known camera list;
+wait for the new QR code and add it again. The settings panel also shows the HAP port,
+advertiser, and most recent motion sent, which separates pairing trouble from an alert that
+never reached HomeKit.
 
 ## 15. Why didn't I get an alert? (rate limiting & suppression, explained)
 

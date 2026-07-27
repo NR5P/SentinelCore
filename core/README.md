@@ -142,6 +142,20 @@ Sends the alert summary (and photo, if `AttachImage` is true) to a Telegram chat
 }
 ```
 
+## Discord notifications
+
+Discord alerts use an incoming channel webhook, so no Discord bot application, token exchange,
+public callback URL, or inbound firewall rule is needed.
+
+1. In Discord, open the destination channel's **Edit Channel → Integrations → Webhooks**.
+2. Create a webhook and copy its URL.
+3. In Sentinel Core, open **Settings → Discord Alerts**, paste the URL, enable it, and save.
+
+Alerts use a Discord embed with the camera, summary, reason, confidence and optional trigger
+snapshot. AI-generated text cannot mention `@everyone`, roles or users. The Discord settings
+also have the same notification recommendation, confidence, quiet-hours and duplicate-cooldown
+behavior as Telegram.
+
 ### Chatting with the bot
 
 With `Telegram` configured as above, you can also text the bot questions - "what happened at the gate today?", "was anyone here last night?" - and get an answer built from `events.db` and a local Ollama model, from anywhere you have cell signal. This only ever answers messages from the `ChatId` configured above; anyone else who finds and messages the bot is silently ignored.
@@ -228,7 +242,7 @@ Runs on port 3320 (port 332 itself is a privileged port on Linux and would need 
 
 ### Settings
 
-The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `BlueIrisOllamaBridge.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Blue Iris, self-monitoring, quiet hours, and the webhook. Each section validates and saves independently.
+The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `BlueIrisOllamaBridge.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Discord alerts, Blue Iris, self-monitoring, quiet hours, and the webhook. Each section validates and saves independently.
 
 Everything shown is picked up live via `IOptionsMonitor<T>` - .NET's built-in file-watch reload on `appsettings.json` - so saving a change takes effect within a couple seconds, no restart. Two things are deliberately left out of the UI because they can't be: `Bridge:QueueCapacity` and `Bridge:DataDirectory` size an in-memory queue and open a SQLite connection once at startup, so changing them always needs a restart regardless of how the value is stored. A few `*BaseUrl`/`*TimeoutSeconds` fields are similarly baked into an HTTP client at startup and are also left out rather than half-supported.
 
@@ -236,7 +250,7 @@ Run it interactively with `dotnet run --project BlueIrisOllamaBridge.Web/BlueIri
 
 ## The additional action
 
-The built-in generic-webhook action is separate from Telegram. Configure:
+The built-in generic-webhook action is separate from Telegram and Discord. Configure:
 
 ```json
 "Webhook": {

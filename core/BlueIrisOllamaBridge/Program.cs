@@ -58,6 +58,11 @@ builder.Services.AddOptions<TelegramOptions>()
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.BotToken), "Telegram:BotToken is required when Telegram is enabled.")
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ChatId), "Telegram:ChatId is required when Telegram is enabled.")
     .ValidateOnStart();
+builder.Services.AddOptions<DiscordOptions>()
+    .Bind(builder.Configuration.GetSection(DiscordOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => !o.Enabled || DiscordOptions.IsValidWebhookUrl(o.WebhookUrl), "Discord:WebhookUrl must be a valid Discord HTTPS webhook URL when Discord is enabled.")
+    .ValidateOnStart();
 builder.Services.AddOptions<TelegramChatOptions>()
     .Bind(builder.Configuration.GetSection(TelegramChatOptions.SectionName))
     .ValidateDataAnnotations()
@@ -199,6 +204,11 @@ var telegramSettings = builder.Configuration.GetSection(TelegramOptions.SectionN
 builder.Services.AddHttpClient<IAlertAction, TelegramAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(telegramSettings.TimeoutSeconds);
+});
+var discordSettings = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>() ?? new();
+builder.Services.AddHttpClient<IAlertAction, DiscordAlertAction>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(discordSettings.TimeoutSeconds);
 });
 var homeKitSettings = builder.Configuration.GetSection(HomeKitOptions.SectionName).Get<HomeKitOptions>() ?? new();
 builder.Services.AddHttpClient<IAlertAction, HomeKitAlertAction>(client =>

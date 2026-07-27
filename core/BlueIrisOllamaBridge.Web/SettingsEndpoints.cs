@@ -16,6 +16,7 @@ public sealed record SettingsSnapshot(
     EmailSettingsDto? Email,
     DailySummarySettingsDto? DailySummary,
     TelegramSettingsDto? Telegram,
+    DiscordSettingsDto? Discord,
     TelegramChatSettingsDto? TelegramChat,
     BlueIrisSettingsDto? BlueIris,
     SelfMonitoringSettingsDto? SelfMonitoring,
@@ -88,6 +89,13 @@ public static class SettingsEndpoints
                 if (!dto.Enabled) return;
                 if (string.IsNullOrWhiteSpace(dto.BotToken)) extra.Add("BotToken is required when Telegram is enabled.");
                 if (string.IsNullOrWhiteSpace(dto.ChatId)) extra.Add("ChatId is required when Telegram is enabled.");
+            }));
+
+        app.MapPut("/api/settings/discord", async (DiscordSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, settings, "Discord", ct, extra =>
+            {
+                if (dto.Enabled && !DiscordOptions.IsValidWebhookUrl(dto.WebhookUrl))
+                    extra.Add("WebhookUrl must be a valid Discord HTTPS webhook URL when Discord is enabled.");
             }));
 
         app.MapPut("/api/settings/telegram-chat", async (TelegramChatSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
@@ -187,6 +195,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<EmailSettingsDto>("Email", cancellationToken),
         await settings.GetSectionAsync<DailySummarySettingsDto>("DailySummary", cancellationToken),
         await settings.GetSectionAsync<TelegramSettingsDto>("Telegram", cancellationToken),
+        await settings.GetSectionAsync<DiscordSettingsDto>("Discord", cancellationToken),
         await settings.GetSectionAsync<TelegramChatSettingsDto>("TelegramChat", cancellationToken),
         await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", cancellationToken),
         await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", cancellationToken),
@@ -213,6 +222,7 @@ public static class SettingsEndpoints
         if (snapshot.Email is not null) await settings.MergeSectionAsync("Email", snapshot.Email, cancellationToken);
         if (snapshot.DailySummary is not null) await settings.MergeSectionAsync("DailySummary", snapshot.DailySummary, cancellationToken);
         if (snapshot.Telegram is not null) await settings.MergeSectionAsync("Telegram", snapshot.Telegram, cancellationToken);
+        if (snapshot.Discord is not null) await settings.MergeSectionAsync("Discord", snapshot.Discord, cancellationToken);
         if (snapshot.TelegramChat is not null) await settings.MergeSectionAsync("TelegramChat", snapshot.TelegramChat, cancellationToken);
         if (snapshot.BlueIris is not null) await settings.MergeSectionAsync("BlueIris", snapshot.BlueIris, cancellationToken);
         if (snapshot.SelfMonitoring is not null) await settings.MergeSectionAsync("SelfMonitoring", snapshot.SelfMonitoring, cancellationToken);

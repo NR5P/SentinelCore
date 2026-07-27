@@ -149,6 +149,21 @@ public sealed class TelegramSettingsDto
     public int DuplicateCooldownMinutes { get; set; } = 10;
 }
 
+public sealed class DiscordSettingsDto
+{
+    public bool Enabled { get; set; }
+    public string WebhookUrl { get; set; } = string.Empty;
+    public bool OnlyWhenNotificationRecommended { get; set; } = true;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; set; } = 0.60;
+
+    public bool AttachImage { get; set; } = true;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; set; } = 10;
+}
+
 public sealed class TelegramChatSettingsDto
 {
     public bool Enabled { get; set; } = true;

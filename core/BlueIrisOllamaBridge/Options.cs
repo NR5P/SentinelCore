@@ -394,6 +394,46 @@ public sealed class TelegramOptions
     public int DuplicateCooldownMinutes { get; init; } = 10;
 }
 
+public sealed class DiscordOptions
+{
+    public const string SectionName = "Discord";
+
+    public bool Enabled { get; init; }
+    public string WebhookUrl { get; init; } = string.Empty;
+    public bool OnlyWhenNotificationRecommended { get; init; } = true;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; init; } = 0.60;
+
+    public bool AttachImage { get; init; } = true;
+
+    [Range(1, 300)]
+    public int TimeoutSeconds { get; init; } = 20;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; init; } = 10;
+
+    public static bool IsValidWebhookUrl(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var trustedHost =
+            string.Equals(uri.Host, "discord.com", StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith(".discord.com", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(uri.Host, "discordapp.com", StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith(".discordapp.com", StringComparison.OrdinalIgnoreCase);
+
+        return trustedHost &&
+               System.Text.RegularExpressions.Regex.IsMatch(
+                   uri.AbsolutePath,
+                   @"^/api(?:/v\d+)?/webhooks/[^/]+/[^/]+",
+                   System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                   System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+}
+
 public sealed class TelegramChatOptions
 {
     public const string SectionName = "TelegramChat";

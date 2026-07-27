@@ -132,6 +132,19 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "discord", title: "DISCORD ALERTS", endpoint: "/api/settings/discord",
+      basic: true,
+      description: "Posts alert cards and snapshots to a Discord channel using an incoming webhook. In Discord, open the channel settings, choose Integrations, create a Webhook, and paste its URL here. No bot application or public server is needed.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Post camera alerts to a Discord channel." },
+        { name: "webhookUrl", label: "Webhook URL", type: "password", tip: "The Discord channel webhook URL. Treat it like a password: anyone with it can post to that channel." },
+        { name: "onlyWhenNotificationRecommended", label: "Only When Notification Recommended", type: "checkbox", tip: "Only post when the AI judges the event worth your attention." },
+        { name: "minimumConfidence", label: "Minimum Confidence", type: "number", min: 0, max: 1, step: 0.05, tip: "How sure the AI must be before posting the alert." },
+        { name: "attachImage", label: "Attach Image", type: "checkbox", tip: "Include the trigger snapshot in the Discord alert card." },
+        { name: "duplicateCooldownMinutes", label: "Duplicate Cooldown (min)", type: "number", min: 0, max: 1440, tip: "Suppress repeat posts for the same camera and event category during this window. 0 disables this." }
+      ]
+    },
+    {
       key: "blueIris", title: "BLUE IRIS MEDIA", endpoint: "/api/settings/blue-iris",
       basic: false,
       description: "Connects Sentinel to Blue Iris for on-demand snapshots and short alert-linked timeline clips. Sentinel never copies an entire recording day.",
@@ -222,9 +235,10 @@ window.GateWatchSettings = (function () {
     dailySummary: "A twice-daily digest of everything that happened, separate from individual alerts.",
     telegram: "Push alerts to your phone through a Telegram bot.",
     telegramChat: "Lets you message the bot to ask questions about recent activity.",
+    discord: "Post alert cards and trigger snapshots to a Discord channel through a webhook.",
     blueIris: "Blue Iris snapshots and short alert-linked trigger clips. No full-day video is copied.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
-    quietHours: "Raise the bar for Email/Telegram alerts during a window (e.g. overnight) without ever fully muting them.",
+    quietHours: "Raise the bar for Email, Telegram, and Discord alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",
     mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker.",
     bugReports: "Email the developer when something breaks internally, using the Email account above."
@@ -839,6 +853,10 @@ window.GateWatchSettings = (function () {
     status.textContent = "checking HomeKit sidecar…";
     pairing.appendChild(status);
 
+    const diagnostics = document.createElement("div");
+    diagnostics.className = "settings-hint";
+    pairing.appendChild(diagnostics);
+
     const qrWrap = document.createElement("div");
     qrWrap.className = "homekit-qr";
     pairing.appendChild(qrWrap);
@@ -853,8 +871,13 @@ window.GateWatchSettings = (function () {
 
         if (!payload.running) {
           status.textContent = payload.error || "The HomeKit sidecar isn't running.";
+          diagnostics.textContent = "";
           return;
         }
+        const lastTrigger = payload.lastTriggerAt
+          ? ` Last motion sent for ${payload.lastTriggerCamera || "a camera"} at ${new Date(payload.lastTriggerAt).toLocaleString()}.`
+          : " No motion has been sent since this sidecar started.";
+        diagnostics.textContent = `HomeKit endpoint: TCP ${payload.hapPort || 51826}; advertiser: ${payload.advertiser || "unknown"}.${lastTrigger}`;
         if (!payload.enabled) {
           // The sidecar is installed and healthy, it just isn't advertising anything yet -
           // nothing is on your network until the toggle above goes on.
@@ -906,7 +929,51 @@ window.GateWatchSettings = (function () {
     refreshBtn.dataset.tip = "Re-check the sidecar's pairing status.";
     refreshBtn.addEventListener("click", () => refreshStatus());
 
-    footer.append(saveBtn, refreshBtn, errors);
+    const resetBtn = document.createElement("button");
+    resetBtn.className = "btn";
+    resetBtn.textContent = "reset pairing";
+    resetBtn.dataset.tip = "Create a completely new HomeKit bridge identity when Apple Home says the existing accessory is not responding. You will need to remove the old bridge from Home and scan a new QR code.";
+    resetBtn.addEventListener("click", async () => {
+      const confirmed = window.confirm(
+        "This erases Sentinel Core's HomeKit pairing and creates a new bridge identity. Remove the old Sentinel Core bridge from Apple Home, then click OK. You will need to scan a new QR code."
+      );
+      if (!confirmed) return;
+
+      resetBtn.disabled = true;
+      errors.innerHTML = "";
+      try {
+        const response = await fetch("/api/homekit/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: "RESET" })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          showFieldErrors(errors, [payload.error || "Could not reset HomeKit pairing."]);
+          return;
+        }
+
+        status.textContent = "pairing reset - waiting for the HomeKit service to restart…";
+        diagnostics.textContent = "";
+        // systemd/Windows Service restarts the sidecar. Wait for the new unpaired identity and
+        // QR rather than making the user guess when it is ready.
+        for (let attempt = 0; attempt < 20; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          await refreshStatus();
+          if (section.querySelector(".homekit-qr-image")) {
+            showToast("HomeKit pairing reset - scan the new code", true);
+            return;
+          }
+        }
+        showFieldErrors(errors, ["Pairing was reset, but the sidecar has not restarted yet. Restart the HomeKit service, then press refresh."]);
+      } catch {
+        showFieldErrors(errors, ["Network error while resetting HomeKit pairing."]);
+      } finally {
+        resetBtn.disabled = false;
+      }
+    });
+
+    footer.append(saveBtn, refreshBtn, resetBtn, errors);
     body.appendChild(footer);
 
     saveBtn.addEventListener("click", async () => {

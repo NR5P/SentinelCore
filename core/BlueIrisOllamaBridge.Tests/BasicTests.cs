@@ -165,6 +165,61 @@ public sealed class BasicTests
         Assert.Contains("Vehicle stopped at the gate entrance.", caption);
     }
 
+    [Theory]
+    [InlineData("https://discord.com/api/webhooks/123/token", true)]
+    [InlineData("https://discord.com/api/v10/webhooks/123/token", true)]
+    [InlineData("https://canary.discord.com/api/webhooks/123/token", true)]
+    [InlineData("http://discord.com/api/webhooks/123/token", false)]
+    [InlineData("https://example.com/api/webhooks/123/token", false)]
+    [InlineData("", false)]
+    public void DiscordOptions_ValidatesOfficialHttpsWebhookUrls(string url, bool expected)
+    {
+        Assert.Equal(expected, DiscordOptions.IsValidWebhookUrl(url));
+    }
+
+    [Fact]
+    public void DiscordAlertAction_BuildPayload_DisablesMentionsAndIncludesAlertDetails()
+    {
+        var result = new AlertResult
+        {
+            Camera = "Gate front door",
+            OccurredAt = DateTimeOffset.Parse("2026-07-27T12:00:00Z"),
+            Analysis = new VisionAnalysis
+            {
+                Summary = "@everyone A person is at the gate.",
+                NotificationReason = "Person remained near the entrance.",
+                Confidence = 0.91,
+                EventType = "person"
+            }
+        };
+
+        using var document = JsonDocument.Parse(DiscordAlertAction.BuildPayloadJson(result, "snapshot.jpg"));
+        var root = document.RootElement;
+        Assert.Empty(root.GetProperty("allowed_mentions").GetProperty("parse").EnumerateArray());
+        var embed = root.GetProperty("embeds")[0];
+        Assert.Equal("Gate front door", embed.GetProperty("title").GetString());
+        Assert.Contains("@everyone", embed.GetProperty("description").GetString());
+        Assert.Equal("attachment://snapshot.jpg", embed.GetProperty("image").GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public async Task DiscordAlertAction_WhenConfigured_PostsNotifiableAlert()
+    {
+        var handler = new RecordingHandler();
+        var action = BuildDiscordAction(handler, new DiscordOptions
+        {
+            Enabled = true,
+            WebhookUrl = "https://discord.com/api/webhooks/123/token",
+            MinimumConfidence = 0
+        });
+
+        await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
+
+        Assert.Single(handler.Requests);
+        Assert.Equal("https://discord.com/api/webhooks/123/token", handler.Requests[0].Url);
+        Assert.Contains("gate camera front door", handler.Requests[0].Body);
+    }
+
     [Fact]
     public void BlueIrisSnapshotClient_BuildSnapshotUrl_WithoutCredentials_OmitsQueryString()
     {
@@ -1774,6 +1829,12 @@ public sealed class BasicTests
         new(new HttpClient(handler),
             new StaticOptionsMonitor<HomeKitOptions>(options),
             NullLogger<HomeKitAlertAction>.Instance);
+
+    private static DiscordAlertAction BuildDiscordAction(RecordingHandler handler, DiscordOptions options) =>
+        new(new HttpClient(handler),
+            new StaticOptionsMonitor<DiscordOptions>(options),
+            new StaticOptionsMonitor<QuietHoursOptions>(new QuietHoursOptions()),
+            NullLogger<DiscordAlertAction>.Instance);
 
     private static AlertResult NotifiableResult(string camera) => new()
     {

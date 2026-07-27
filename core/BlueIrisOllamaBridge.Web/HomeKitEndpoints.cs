@@ -1,15 +1,26 @@
 namespace BlueIrisOllamaBridge.Web;
 
-// Read-only window onto the HomeKit sidecar (core/homekit-bridge) for the settings UI: is it
-// running, is it paired, and the pairing QR to scan. The sidecar binds 127.0.0.1 only, so the
+// Window onto the HomeKit sidecar (core/homekit-bridge) for the settings UI: is it running, is
+// it paired, the pairing QR to scan, and an explicit pairing reset for stale controller keys.
+// The sidecar binds 127.0.0.1 only, so the
 // browser can't reach it directly - everything is proxied through here, including the QR image
 // bytes themselves (a redirect would send the browser to an address it can't resolve).
 //
-// Nothing here can change HomeKit state. Turning the integration on/off is a normal settings
-// write (PUT /api/settings/homekit), and unpairing is done from the Home app on the phone.
 public static class HomeKitEndpoints
 {
-    private sealed record HomeKitStatus(bool Enabled, bool Published, bool Paired, string[] Accessories, string? PairingCode);
+    private sealed record HomeKitStatus(
+        bool Enabled,
+        bool Published,
+        bool Paired,
+        string[] Accessories,
+        string? PairingCode,
+        int HapPort,
+        string? Advertiser,
+        DateTimeOffset? StartedAt,
+        DateTimeOffset? LastTriggerAt,
+        string? LastTriggerCamera);
+
+    private sealed record HomeKitResetRequest(string? Confirm);
 
     public static void MapHomeKitEndpoints(this WebApplication app)
     {
@@ -42,7 +53,12 @@ public static class HomeKitEndpoints
                     published = status?.Published ?? false,
                     paired = status?.Paired ?? false,
                     accessories = status?.Accessories ?? [],
-                    pairingCode = status?.PairingCode
+                    pairingCode = status?.PairingCode,
+                    hapPort = status?.HapPort,
+                    advertiser = status?.Advertiser,
+                    startedAt = status?.StartedAt,
+                    lastTriggerAt = status?.LastTriggerAt,
+                    lastTriggerCamera = status?.LastTriggerCamera
                 });
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
@@ -79,6 +95,41 @@ public static class HomeKitEndpoints
             {
                 logger.LogDebug(ex, "HomeKit sidecar is not reachable at {BaseUrl}", baseUrl);
                 return Results.NotFound();
+            }
+        });
+
+        app.MapPost("/api/homekit/reset", async (
+            HomeKitResetRequest request,
+            IHttpClientFactory httpClientFactory,
+            IConfiguration configuration,
+            ILogger<HomeKitStatus> logger,
+            CancellationToken ct) =>
+        {
+            if (!string.Equals(request.Confirm, "RESET", StringComparison.Ordinal))
+                return Results.BadRequest(new { error = "Explicit confirmation is required." });
+
+            var baseUrl = SidecarBaseUrl(configuration);
+            var client = httpClientFactory.CreateClient(nameof(HomeKitEndpoints));
+
+            try
+            {
+                using var response = await client.PostAsync($"{baseUrl}/api/reset", content: null, ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    logger.LogWarning("HomeKit sidecar reset returned {StatusCode}", (int)response.StatusCode);
+                    return Results.Json(
+                        new { error = "The HomeKit sidecar could not reset its pairing data." },
+                        statusCode: StatusCodes.Status502BadGateway);
+                }
+
+                return Results.Accepted(value: new { reset = true, restarting = true });
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                logger.LogDebug(ex, "HomeKit sidecar is not reachable at {BaseUrl}", baseUrl);
+                return Results.Json(
+                    new { error = "The HomeKit sidecar isn't running." },
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });
     }

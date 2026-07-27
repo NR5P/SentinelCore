@@ -9,10 +9,11 @@
 // thin wrapper: it owns everything Apple-specific and exposes a tiny loopback-only HTTP API that
 // the main app pings when an alert is worth a notification.
 //
-// One HomeKit Bridge accessory holds one MotionSensor per camera. Motion sensors are created
-// lazily - the first time we hear a camera's name - so there's no camera list to keep in sync
-// with the .NET side. Accessory UUIDs are derived from the camera name, so identity survives
-// restarts and a re-created accessory is recognised as the same one it was before.
+// One HomeKit Bridge accessory holds one MotionSensor per camera. A camera is learned the first
+// time an alert names it, then persisted and restored before the bridge is published on every
+// later boot. HomeKit requires a stable accessory graph and stable UUIDs; publishing an empty
+// bridge and adding the first sensor at the same instant it fires can leave Apple Home with an
+// unresponsive or missing child accessory.
 //
 // This service is installed for everyone, but stays off the network until HomeKit:Enabled is
 // turned on in the dashboard. Installing the product shouldn't put an unpaired accessory on
@@ -35,8 +36,9 @@ const {
 } = require("@homebridge/hap-nodejs");
 const QRCode = require("qrcode");
 
-const PERSIST_DIR = path.join(__dirname, "persist");
+const PERSIST_DIR = process.env.HOMEKIT_PERSIST_DIR || path.join(__dirname, "persist");
 const IDENTITY_FILE = path.join(PERSIST_DIR, "identity.json");
+const CAMERAS_FILE = path.join(PERSIST_DIR, "cameras.json");
 
 // The main app's config is the single source of truth for whether HomeKit is on - the dashboard
 // writes it there, same as every other setting.
@@ -146,34 +148,74 @@ const publishInfo = {
 // normalized camera name -> { accessory, service, resetTimer, name }
 const motionAccessories = new Map();
 let published = false;
+const startedAt = new Date().toISOString();
+let lastTriggerAt = null;
+let lastTriggerCamera = null;
 
 function normalize(cameraName) {
   return cameraName.trim().toLowerCase();
 }
 
-function getOrCreateMotionAccessory(cameraName) {
+function persistCameraNames() {
+  fs.mkdirSync(PERSIST_DIR, { recursive: true });
+  const names = [...motionAccessories.values()].map((entry) => entry.name);
+  const tempPath = `${CAMERAS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(names, null, 2), { mode: 0o600 });
+  fs.renameSync(tempPath, CAMERAS_FILE);
+}
+
+function loadCameraNames() {
+  try {
+    if (!fs.existsSync(CAMERAS_FILE)) return [];
+    const value = JSON.parse(fs.readFileSync(CAMERAS_FILE, "utf8"));
+    if (!Array.isArray(value)) throw new Error("expected a JSON array");
+    return value
+      .filter((name) => typeof name === "string" && name.trim() !== "")
+      .map((name) => name.trim());
+  } catch (error) {
+    console.warn(`Could not load ${CAMERAS_FILE}: ${error.message}`);
+    return [];
+  }
+}
+
+function loadConfiguredCameraNames() {
+  try {
+    const settings = JSON.parse(fs.readFileSync(MAIN_SETTINGS_PATH, "utf8"));
+    const mappings = settings?.BlueIris?.CameraMappings;
+    if (!mappings || typeof mappings !== "object" || Array.isArray(mappings)) return [];
+    return Object.keys(mappings).filter((name) => name.trim() !== "");
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.warn(`Could not seed HomeKit cameras from ${MAIN_SETTINGS_PATH}: ${error.message}`);
+    }
+    return [];
+  }
+}
+
+function getOrCreateMotionAccessory(cameraName, persist = true) {
+  cameraName = cameraName.trim();
   const key = normalize(cameraName);
   const existing = motionAccessories.get(key);
   if (existing) return existing;
 
-  // Deriving the UUID from the name (rather than randomly) is what makes this safe to do lazily:
-  // the same camera always resolves to the same accessory identity, so a restart re-creates it
-  // as the accessory HomeKit already knows rather than as a new one.
+  // The same camera always resolves to the same accessory identity across restarts.
   const accessory = new Accessory(cameraName, uuid.generate(`sentinelcore:camera:${key}`));
   const service = accessory.addService(Service.MotionSensor, cameraName);
+  service.updateCharacteristic(Characteristic.MotionDetected, false);
 
-  // Safe whether or not the bridge is currently published - additions to a live bridge are
-  // pushed to paired controllers, and unpublish() leaves already-added accessories in place.
   bridge.addBridgedAccessory(accessory);
 
   const entry = { accessory, service, resetTimer: null, name: cameraName };
   motionAccessories.set(key, entry);
+  if (persist) persistCameraNames();
   console.log(`Added HomeKit motion sensor for camera "${cameraName}"`);
   return entry;
 }
 
 function triggerMotion(cameraName) {
   const entry = getOrCreateMotionAccessory(cameraName);
+  lastTriggerAt = new Date().toISOString();
+  lastTriggerCamera = entry.name;
 
   // updateCharacteristic (not setValue): this is a passive sensor with no SET handler, we're
   // pushing a new value out to paired controllers.
@@ -185,6 +227,15 @@ function triggerMotion(cameraName) {
     entry.service.updateCharacteristic(Characteristic.MotionDetected, false);
     entry.resetTimer = null;
   }, MOTION_RESET_MS);
+}
+
+function restoreMotionAccessories() {
+  const names = [...new Set([...loadCameraNames(), ...loadConfiguredCameraNames()])];
+  for (const name of names) getOrCreateMotionAccessory(name, false);
+  if (names.length > 0) {
+    persistCameraNames();
+    console.log(`Restored ${motionAccessories.size} HomeKit camera sensor(s) before publish.`);
+  }
 }
 
 function isPaired() {
@@ -218,7 +269,9 @@ function readEnabledFlag() {
 }
 
 async function applyEnabledState(next) {
-  if (next === enabled) return;
+  // A failed publish must be retried on the next poll even though the configured enabled value
+  // did not change. Likewise, an interrupted unpublish is retried until state matches config.
+  if (next === enabled && ((next && published) || (!next && !published))) return;
   enabled = next;
 
   if (enabled && !published) {
@@ -252,7 +305,7 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/api/trigger") {
     let body = "";
     req.on("data", (chunk) => {
@@ -289,9 +342,35 @@ const server = http.createServer((req, res) => {
       published,
       paired: isPaired(),
       accessories: [...motionAccessories.values()].map((entry) => entry.name),
+      hapPort: HAP_PORT,
+      advertiser: ADVERTISER,
+      startedAt,
+      lastTriggerAt,
+      lastTriggerCamera,
       // Only useful until they've paired; after that it's just noise on the settings page.
       pairingCode: published && !isPaired() ? identity.pincode : null,
     });
+  }
+
+  if (req.method === "POST" && req.url === "/api/reset") {
+    // This API only listens on loopback. The dashboard additionally requires an explicit
+    // confirmation value before proxying a reset. A new identity is the cleanest recovery from
+    // the case where Apple Home and HAP storage each retain different controller keys.
+    try {
+      if (published) {
+        await bridge.unpublish();
+        published = false;
+      }
+      Accessory.cleanupAccessoryData(identity.username);
+      if (fs.existsSync(IDENTITY_FILE)) fs.unlinkSync(IDENTITY_FILE);
+      sendJson(res, 202, { reset: true, restarting: true });
+      console.log("HomeKit pairing data reset; exiting so the service manager creates a new identity.");
+      setTimeout(() => process.exit(75), 250);
+    } catch (error) {
+      console.error("Could not reset HomeKit pairing data:", error);
+      sendJson(res, 500, { error: "Could not reset HomeKit pairing data." });
+    }
+    return;
   }
 
   if (req.method === "GET" && req.url === "/api/qr") {
@@ -320,17 +399,23 @@ server.listen(CONTROL_PORT, "127.0.0.1", () => {
   console.log(`mDNS advertiser: ${ADVERTISER} (platform ${process.platform})`);
 });
 
+// Restore every known child accessory before publish(), so Apple Home receives a complete,
+// consistent accessory graph during pairing and after every sidecar restart.
+restoreMotionAccessories();
 pollSettings();
 const pollTimer = setInterval(pollSettings, SETTINGS_POLL_MS);
 
 // systemd sends SIGTERM on stop/restart; unpublishing cleanly means paired iPhones see the
 // bridge go away rather than treating it as unresponsive.
+let shuttingDown = false;
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
+  process.on(signal, async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`Received ${signal}, shutting down.`);
     clearInterval(pollTimer);
     server.close();
-    if (published) bridge.unpublish();
+    if (published) await bridge.unpublish();
     process.exit(0);
   });
 }
