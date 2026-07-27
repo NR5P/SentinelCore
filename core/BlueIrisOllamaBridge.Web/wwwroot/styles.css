@@ -1245,6 +1245,21 @@ main {
   main {
     padding: 16px 16px 40px;
   }
+  /* Five tabs at the desktop size total ~456px, which pushed the whole page into sideways
+     scrolling on a 375px screen. Tightening them fits all five with no horizontal scroll;
+     the shrink/ellipsis pair is the backstop if a longer tab name is ever added. */
+  .tabs {
+    gap: 3px;
+  }
+  .tab {
+    padding: 6px 8px;
+    letter-spacing: 0.5px;
+    font-size: 11px;
+    min-width: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .field-grid {
     grid-template-columns: 1fr;
   }
