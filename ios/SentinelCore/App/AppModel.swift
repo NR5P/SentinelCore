@@ -67,6 +67,9 @@ final class AppModel: ObservableObject {
 
     var isConfigured: Bool { URL(string: serverURL)?.host != nil }
     var requiresLogin: Bool { authStatus?.enabled == true && authStatus?.authenticated == false }
+    // Absent role (older server, or login not required) reads as Admin - matches the server's
+    // own AuthGateMiddleware treatment of "no login required" as full access for everyone.
+    var isAdmin: Bool { (authStatus?.role ?? "Admin") == "Admin" }
 
     func connect(resetNetworkSession: Bool = false) async {
         guard isConfigured else {
