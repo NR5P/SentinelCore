@@ -2,3 +2,6 @@
 **/.DS_Store
 **/xcuserdata/
 *.xcuserstate
+**/google-services.json
+**/firebase-service-account*.json
+**/AuthKey_*.p8

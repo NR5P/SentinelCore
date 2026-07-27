@@ -149,6 +149,21 @@ public sealed class TelegramSettingsDto
     public int DuplicateCooldownMinutes { get; set; } = 10;
 }
 
+public sealed class DiscordSettingsDto
+{
+    public bool Enabled { get; set; }
+    public string WebhookUrl { get; set; } = string.Empty;
+    public bool OnlyWhenNotificationRecommended { get; set; } = true;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; set; } = 0.60;
+
+    public bool AttachImage { get; set; } = true;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; set; } = 10;
+}
+
 public sealed class TelegramChatSettingsDto
 {
     public bool Enabled { get; set; } = true;
@@ -166,9 +181,16 @@ public sealed class TelegramChatSettingsDto
 public sealed class BlueIrisSettingsDto
 {
     public bool Enabled { get; set; }
+    public string BaseUrl { get; set; } = string.Empty;
     public string Camera { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+
+    [Range(0, 120)]
+    public int EventClipPreSeconds { get; set; } = 5;
+
+    [Range(1, 300)]
+    public int EventClipPostSeconds { get; set; } = 10;
 }
 
 public sealed class SelfMonitoringSettingsDto

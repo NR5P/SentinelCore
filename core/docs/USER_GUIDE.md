@@ -9,6 +9,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 1. [What this system does](#1-what-this-system-does)
 2. [Opening the dashboard](#2-opening-the-dashboard)
 3. [The FEED tab — Blue Iris alerts](#3-the-feed-tab--blue-iris-alerts)
+3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
@@ -17,6 +18,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 9. [Prompt profiles — what the AI is told to look for](#9-prompt-profiles--what-the-ai-is-told-to-look-for)
 10. [License plate recognition & known vehicles](#10-license-plate-recognition--known-vehicles)
 11. [The Telegram bot](#11-the-telegram-bot)
+11a. [Discord alerts](#11a-discord-alerts)
 12. [Email](#12-email)
 13. [MQTT & Home Assistant](#13-mqtt--home-assistant)
 14. [Apple HomeKit](#14-apple-homekit)
@@ -62,8 +64,8 @@ ever see the dashboard warn that it was reached from *outside* your network, tak
 seriously — that's a different thing entirely, and means the port is more exposed than intended.
 
 Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") showing
-whether the dashboard can currently reach its own backend, and five tabs: **feed**, **live**,
-**cameras**, **triggers**, **settings**.
+whether the dashboard can currently reach its own backend, and six tabs: **feed**,
+**timeline**, **live**, **cameras**, **triggers**, **settings**.
 
 The first time you open the dashboard (or after clicking **Re-Run Setup Wizard** in
 Settings → Bridge), a short setup wizard walks through the essentials instead: an API key for
@@ -125,6 +127,50 @@ closer to a minute on a modest local machine - both are normal.
 Every filter combines with the others (all must match), and the count at the top of the tab
 reflects the current filter, not the total history. **clear** resets everything back to the
 unfiltered, most-recent-50 view.
+
+## 3a. The TIMELINE tab — trigger-clip review
+
+This is a day index of Sentinel's AI events, not a continuous 24-hour recording. Pick a camera
+and date to see its events across the local day. Each short green range is a saved trigger
+clip, limited to the configured seconds before and after that event; no video is saved for the
+space between green ranges. Colored marks show every AI event, including events whose source
+clip has since been removed. Drag inside a green range or click an event to inspect it, use the
+previous/next controls to move between events, or press **play** to review the clips in order.
+Playback automatically skips every unsaved gap.
+
+The object filter covers people, vehicles, animals, packages, plates, and other detections.
+The severity filter is derived from the AI confidence and whether Sentinel recommended a
+notification. Review state is stored by the Sentinel server, so marking an item reviewed on
+an iPhone is immediately reflected on Android, macOS, iPad, and the web dashboard.
+
+For Blue Iris cameras, the trigger recording remains in Blue Iris. Sentinel securely reads the
+alert-linked clip and proxies timestamp frames, so Blue Iris credentials are never sent to a
+phone or browser. The timeline's `EventClipPreSeconds` and `EventClipPostSeconds` settings
+control the window Sentinel exposes; configure Blue Iris to record at least the same pre- and
+post-trigger duration and to record only when triggered if that is your retention policy.
+Sentinel does not create or retain a full-day Blue Iris copy.
+
+For cameras recorded directly by Sentinel, its recorder maintains only a small rolling
+pre-trigger buffer and writes an MP4 for the configured trigger window. It continuously
+deletes unused buffer pieces rather than archiving the day.
+
+For cameras whose friendly event name differs from the Blue Iris short name, add a mapping in
+the main app's `BlueIris` settings:
+
+```json
+"CameraMappings": {
+  "gate camera front door": "gateCamera",
+  "driveway": "DrivewayHD"
+}
+```
+
+Blue Iris's web server must be enabled and reachable from the Sentinel server. The configured
+Blue Iris account must be allowed to view clips. If a day shows its AI marks but says
+**trigger clips unavailable**, verify the Blue Iris URL, account, permissions, camera short
+name, and mapping. If an individual event says **NO CLIP**, its Blue Iris alert record was not
+found or its clip is no longer retained. The Blue Iris alert action must send `&ALERT_DB` in
+the `alertId` field (the supplied PowerShell command already does). A mapping is needed for each
+Blue Iris camera you want to review.
 
 ## 4. The LIVE tab — viewing your own cameras
 
@@ -191,10 +237,9 @@ which is why the section paragraphs are there).
 
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
 shows only the settings most people actually change: Bridge, Email, Daily Summary, Telegram
-Alerts, Outage Alerts, Quiet Hours, Bug Reports, Apple HomeKit, Backup, Login and License.
-**Advanced** adds
-everything else: the AI tuning knobs, image processing, self-monitoring thresholds, webhooks,
-MQTT, known vehicles and prompt profiles.
+Alerts, Discord Alerts, Outage Alerts, Quiet Hours, Bug Reports, Apple HomeKit, Backup, Login
+and License. **Advanced** adds everything else: the AI tuning knobs, image processing,
+self-monitoring thresholds, webhooks, MQTT, known vehicles and prompt profiles.
 
 Nothing is ever lost or reset by switching — advanced settings keep working exactly as
 configured while hidden, and the choice is remembered on that device only, so a phone can stay
@@ -222,6 +267,8 @@ The full list below covers both modes:
   confidence gate, duplicate cooldown, and whether to attach the image.
 - **Telegram Chat** — lets you text the bot questions about recent activity; how many days
   back it looks, how many events it considers, and which Ollama model answers.
+- **Discord Alerts** — posts alert cards and optional snapshots to a Discord channel using one
+  incoming webhook URL; no bot application is required.
 - **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
   Iris on demand.
 - **Self-Monitoring** — watches the bridge's own health; see [section 16](#16-self-monitoring).
@@ -404,6 +451,17 @@ Two special commands:
 
 Everything else you type is treated as a free-text question.
 
+## 11a. Discord alerts
+
+Discord uses an incoming webhook rather than a bot account. In the destination Discord
+channel, open **Edit Channel → Integrations → Webhooks**, create a webhook, copy its URL, then
+paste it into **Settings → Discord Alerts** and enable the integration.
+
+Each post contains the camera, AI summary, reason and confidence, plus the trigger snapshot
+when **Attach Image** is enabled. It follows the same notification recommendation, confidence,
+quiet-hours and duplicate-cooldown rules as Telegram. Treat the webhook URL like a password:
+anyone who has it can post to that channel.
+
 ## 12. Email
 
 **Email** sends individual alerts the same way Telegram does, with its own duplicate-cooldown
@@ -477,10 +535,11 @@ automatically, and until you turn the toggle on it stays completely off your net
 advertised, nothing to find. If the settings section says the sidecar isn't running, Node.js
 was missing when the app was installed; see [DEPLOYMENT.md](DEPLOYMENT.md) section 8a.
 
-**Cameras appear as they're seen.** A camera only shows up in Home after its first alert-worthy
-event — there's no list to configure. That means a brand-new setup starts empty and fills in
-naturally over the first day or two. Each camera keeps its identity across restarts, so once
-it's appeared it stays put and your automations keep working.
+**Camera identity is durable.** Cameras from the Blue Iris camera mapping are registered before
+the HomeKit bridge publishes. Any other camera is learned on its first alert and saved in
+`homekit-bridge/persist/cameras.json`, then restored before every later publish. This keeps
+HomeKit accessory IDs stable across restarts and prevents the first motion event from racing
+Apple Home's accessory synchronization.
 
 **What triggers a notification.** Only events that would also have alerted Email/Telegram —
 the same judgement described in
@@ -499,6 +558,13 @@ an additional output, never a suppression layer.
 
 **To unpair**, remove the bridge from the Home app on your iPhone. Turning **enabled** off here
 just stops sending motion; it doesn't undo the pairing.
+
+**If Home says “Accessory Not Responding” while the dashboard says paired**, first remove the
+old Sentinel Core bridge from Apple Home. Then use **Settings → Apple HomeKit → Reset Pairing**.
+The HomeKit sidecar restarts with fresh controller keys while retaining the known camera list;
+wait for the new QR code and add it again. The settings panel also shows the HAP port,
+advertiser, and most recent motion sent, which separates pairing trouble from an alert that
+never reached HomeKit.
 
 ## 15. Why didn't I get an alert? (rate limiting & suppression, explained)
 

@@ -41,12 +41,38 @@ final class SentinelClient {
         return try await get("/api/events", query: items)
     }
 
+    func event(id: UUID) async throws -> SecurityEvent {
+        try await get("/api/events/\(id.uuidString)")
+    }
+
     func triggers() async throws -> [TriggerEvent] {
         try await get("/api/triggers", query: [.init(name: "limit", value: "100")])
     }
 
     func cameras() async throws -> [Camera] {
         try await get("/api/cameras")
+    }
+
+    func timeline(camera: String, date: String) async throws -> RecordingTimelineDay {
+        try await get(
+            "/api/timeline/day",
+            query: [
+                .init(name: "camera", value: camera),
+                .init(name: "date", value: date)
+            ]
+        )
+    }
+
+    func timelineCameras() async throws -> [String] {
+        try await get("/api/timeline/cameras")
+    }
+
+    func setReviewed(eventId: UUID, reviewed: Bool) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/events/\(eventId.uuidString)/reviewed",
+            method: "PUT",
+            body: ReviewedBody(reviewed: reviewed)
+        )
     }
 
     func login(username: String, password: String) async throws {
@@ -61,12 +87,36 @@ final class SentinelClient {
         let _: EmptyResponse = try await send("/api/auth/logout", method: "POST", body: Optional<String>.none)
     }
 
-    func url(path: String) -> URL? {
+    func pushStatus() async throws -> PushStatus {
+        try await get("/api/push/status")
+    }
+
+    func registerPushDevice(token: String, deviceName: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/push/devices",
+            method: "POST",
+            body: PushDeviceBody(platform: "apple", token: token, deviceName: deviceName)
+        )
+    }
+
+    func unregisterPushDevice(token: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/push/devices/unregister",
+            method: "POST",
+            body: PushDeviceBody(platform: "apple", token: token, deviceName: nil)
+        )
+    }
+
+    func testPushNotification() async throws -> PushDeliveryReport {
+        try await send("/api/push/test", method: "POST", body: Optional<String>.none)
+    }
+
+    func url(path: String, query: [URLQueryItem] = []) -> URL? {
         guard var components = URLComponents(string: model.serverURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return nil
         }
         components.path = path
-        components.query = nil
+        components.queryItems = query.isEmpty ? nil : query
         return components.url
     }
 

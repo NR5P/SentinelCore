@@ -38,6 +38,61 @@ data class AuthStatus(
     val username: String?,
 )
 
+data class PushStatus(
+    val enabled: Boolean,
+    val appleConfigured: Boolean,
+    val firebaseConfigured: Boolean,
+    val registeredDevices: Int,
+)
+
+data class PushDeliveryReport(
+    val attempted: Int,
+    val delivered: Int,
+    val failed: Int,
+    val removed: Int,
+)
+
+data class RecordingTimelineDay(
+    val camera: String,
+    val date: String,
+    val start: Instant,
+    val end: Instant,
+    val recording: TimelineRecording,
+    val events: List<TimelineSecurityEvent>,
+)
+
+data class TimelineRecording(
+    val configured: Boolean,
+    val available: Boolean,
+    val sourceCamera: String,
+    val error: String?,
+    val mode: String,
+    val preSeconds: Int,
+    val postSeconds: Int,
+    val segments: List<TimelineRecordingSegment>,
+)
+
+data class TimelineRecordingSegment(
+    val eventId: String,
+    val start: Instant,
+    val end: Instant,
+)
+
+data class TimelineSecurityEvent(
+    val id: String,
+    val camera: String,
+    val occurredAt: Instant,
+    val eventType: String,
+    val category: String,
+    val severity: String,
+    val summary: String,
+    val confidence: Double,
+    val notified: Boolean,
+    val reviewed: Boolean,
+    val hasImage: Boolean,
+    val hasClip: Boolean,
+)
+
 data class DiagnosticEntry(
     val id: Long,
     val timestamp: Instant,
@@ -63,4 +118,3 @@ class SentinelApiException(
     val statusCode: Int,
     override val message: String,
 ) : Exception(message)
-

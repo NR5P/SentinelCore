@@ -58,6 +58,11 @@ builder.Services.AddOptions<TelegramOptions>()
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.BotToken), "Telegram:BotToken is required when Telegram is enabled.")
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ChatId), "Telegram:ChatId is required when Telegram is enabled.")
     .ValidateOnStart();
+builder.Services.AddOptions<DiscordOptions>()
+    .Bind(builder.Configuration.GetSection(DiscordOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => !o.Enabled || DiscordOptions.IsValidWebhookUrl(o.WebhookUrl), "Discord:WebhookUrl must be a valid Discord HTTPS webhook URL when Discord is enabled.")
+    .ValidateOnStart();
 builder.Services.AddOptions<TelegramChatOptions>()
     .Bind(builder.Configuration.GetSection(TelegramChatOptions.SectionName))
     .ValidateDataAnnotations()
@@ -93,6 +98,22 @@ builder.Services.AddOptions<BugReportOptions>()
     .Bind(builder.Configuration.GetSection(BugReportOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<PushNotificationOptions>()
+    .Bind(builder.Configuration.GetSection(PushNotificationOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(
+        o => !o.Enabled || !o.Apple.Enabled ||
+             (!string.IsNullOrWhiteSpace(o.Apple.TeamId) &&
+              !string.IsNullOrWhiteSpace(o.Apple.KeyId) &&
+              !string.IsNullOrWhiteSpace(o.Apple.BundleId) &&
+              !string.IsNullOrWhiteSpace(o.Apple.PrivateKeyPath)),
+        "PushNotifications:Apple provider credentials are required when Apple push is enabled.")
+    .Validate(
+        o => !o.Enabled || !o.Firebase.Enabled ||
+             (!string.IsNullOrWhiteSpace(o.Firebase.ProjectId) &&
+              !string.IsNullOrWhiteSpace(o.Firebase.ServiceAccountPath)),
+        "PushNotifications:Firebase provider credentials are required when Firebase push is enabled.")
+    .ValidateOnStart();
 
 builder.Services.AddSingleton<IBugReportSender, SmtpBugReportSender>();
 builder.Services.AddSingleton<ILoggerProvider>(sp =>
@@ -117,7 +138,10 @@ builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
 builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
+builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
+builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
+builder.Services.AddSingleton<IAlertAction, PushAlertAction>();
 
 // Registered before MqttPublisher so the embedded broker (if enabled) is listening before the
 // publisher's own client tries to connect to it.
@@ -187,6 +211,11 @@ var telegramSettings = builder.Configuration.GetSection(TelegramOptions.SectionN
 builder.Services.AddHttpClient<IAlertAction, TelegramAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(telegramSettings.TimeoutSeconds);
+});
+var discordSettings = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>() ?? new();
+builder.Services.AddHttpClient<IAlertAction, DiscordAlertAction>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(discordSettings.TimeoutSeconds);
 });
 var homeKitSettings = builder.Configuration.GetSection(HomeKitOptions.SectionName).Get<HomeKitOptions>() ?? new();
 builder.Services.AddHttpClient<IAlertAction, HomeKitAlertAction>(client =>

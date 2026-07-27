@@ -165,6 +165,61 @@ public sealed class BasicTests
         Assert.Contains("Vehicle stopped at the gate entrance.", caption);
     }
 
+    [Theory]
+    [InlineData("https://discord.com/api/webhooks/123/token", true)]
+    [InlineData("https://discord.com/api/v10/webhooks/123/token", true)]
+    [InlineData("https://canary.discord.com/api/webhooks/123/token", true)]
+    [InlineData("http://discord.com/api/webhooks/123/token", false)]
+    [InlineData("https://example.com/api/webhooks/123/token", false)]
+    [InlineData("", false)]
+    public void DiscordOptions_ValidatesOfficialHttpsWebhookUrls(string url, bool expected)
+    {
+        Assert.Equal(expected, DiscordOptions.IsValidWebhookUrl(url));
+    }
+
+    [Fact]
+    public void DiscordAlertAction_BuildPayload_DisablesMentionsAndIncludesAlertDetails()
+    {
+        var result = new AlertResult
+        {
+            Camera = "Gate front door",
+            OccurredAt = DateTimeOffset.Parse("2026-07-27T12:00:00Z"),
+            Analysis = new VisionAnalysis
+            {
+                Summary = "@everyone A person is at the gate.",
+                NotificationReason = "Person remained near the entrance.",
+                Confidence = 0.91,
+                EventType = "person"
+            }
+        };
+
+        using var document = JsonDocument.Parse(DiscordAlertAction.BuildPayloadJson(result, "snapshot.jpg"));
+        var root = document.RootElement;
+        Assert.Empty(root.GetProperty("allowed_mentions").GetProperty("parse").EnumerateArray());
+        var embed = root.GetProperty("embeds")[0];
+        Assert.Equal("Gate front door", embed.GetProperty("title").GetString());
+        Assert.Contains("@everyone", embed.GetProperty("description").GetString());
+        Assert.Equal("attachment://snapshot.jpg", embed.GetProperty("image").GetProperty("url").GetString());
+    }
+
+    [Fact]
+    public async Task DiscordAlertAction_WhenConfigured_PostsNotifiableAlert()
+    {
+        var handler = new RecordingHandler();
+        var action = BuildDiscordAction(handler, new DiscordOptions
+        {
+            Enabled = true,
+            WebhookUrl = "https://discord.com/api/webhooks/123/token",
+            MinimumConfidence = 0
+        });
+
+        await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
+
+        Assert.Single(handler.Requests);
+        Assert.Equal("https://discord.com/api/webhooks/123/token", handler.Requests[0].Url);
+        Assert.Contains("gate camera front door", handler.Requests[0].Body);
+    }
+
     [Fact]
     public void BlueIrisSnapshotClient_BuildSnapshotUrl_WithoutCredentials_OmitsQueryString()
     {
@@ -852,7 +907,9 @@ public sealed class BasicTests
             var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
             using var store = new SqliteEventStore(options, new FakeHostEnvironment(tempDir));
 
-            var inWindow = MakeResult(new DateTimeOffset(2026, 7, 24, 10, 0, 0, TimeSpan.FromHours(-5)));
+            var inWindow = MakeResult(
+                new DateTimeOffset(2026, 7, 24, 10, 0, 0, TimeSpan.FromHours(-5)),
+                blueIrisAlertId: "alert-record-42");
             var outsideWindow = MakeResult(new DateTimeOffset(2026, 7, 23, 10, 0, 0, TimeSpan.FromHours(-5)));
 
             await store.RecordAsync(inWindow, TestContext.Current.CancellationToken);
@@ -868,6 +925,7 @@ public sealed class BasicTests
             Assert.Equal("completed", record.Status);
             Assert.Equal("vehicle_entering_property", record.EventType);
             Assert.True(record.NotificationRecommended);
+            Assert.Equal("alert-record-42", record.BlueIrisAlertId);
         }
         finally
         {
@@ -1003,10 +1061,12 @@ public sealed class BasicTests
         string camera = "gateCamera",
         string eventType = "vehicle_entering_property",
         string summary = "A car pulled into the driveway.",
-        bool notified = true) => new()
+        bool notified = true,
+        string? blueIrisAlertId = null) => new()
     {
         Id = Guid.NewGuid(),
         Camera = camera,
+        BlueIrisAlertId = blueIrisAlertId,
         OccurredAt = occurredAt,
         ReceivedAt = occurredAt,
         CompletedAt = occurredAt,
@@ -1667,6 +1727,104 @@ public sealed class BasicTests
         await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
     }
 
+    [Fact]
+    public async Task PushDeviceStore_UpsertsAndRemovesRegistrations()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions
+            {
+                ApiKey = "test-key-1234567890",
+                DataDirectory = tempDir
+            });
+            var store = new SqlitePushDeviceStore(options, new FakeHostEnvironment(tempDir));
+
+            var first = await store.UpsertAsync("ANDROID", "fid-123", "First name", CancellationToken.None);
+            var updated = await store.UpsertAsync("android", "fid-123", "Updated name", CancellationToken.None);
+            await store.UpsertAsync("apple", "apns-456", "iPhone", CancellationToken.None);
+
+            Assert.Equal(first.Id, updated.Id);
+            Assert.Equal("android", updated.Platform);
+            Assert.Equal("Updated name", updated.DeviceName);
+            Assert.Equal(2, await store.CountAsync(CancellationToken.None));
+
+            await store.RemoveAsync("ANDROID", "fid-123", CancellationToken.None);
+            var remaining = await store.GetAllAsync(CancellationToken.None);
+            Assert.Single(remaining);
+            Assert.Equal("apple", remaining[0].Platform);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void PushMessage_FromAlertCarriesEventDeepLinkData()
+    {
+        var result = new AlertResult
+        {
+            Id = Guid.NewGuid(),
+            Camera = "Front gate",
+            Analysis = new VisionAnalysis
+            {
+                Summary = "A person entered the driveway.",
+                EventType = "person"
+            }
+        };
+
+        var message = PushMessage.FromAlert(result);
+
+        Assert.Equal("Front gate", message.Title);
+        Assert.Equal(result.Id.ToString(), message.EventId);
+        Assert.Equal("person", message.EventType);
+        Assert.Contains("driveway", message.Body);
+    }
+
+    [Fact]
+    public async Task TimelineReviewStore_SharesReviewedStateAndCanClearIt()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions
+            {
+                ApiKey = "test-key-1234567890",
+                DataDirectory = tempDir
+            });
+            var store = new SqliteTimelineReviewStore(options, new FakeHostEnvironment(tempDir));
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+
+            await store.SetReviewedAsync(first, true, CancellationToken.None);
+            var reviewed = await store.GetReviewedAsync([first, second], CancellationToken.None);
+            Assert.Contains(first, reviewed);
+            Assert.DoesNotContain(second, reviewed);
+
+            await store.SetReviewedAsync(first, false, CancellationToken.None);
+            Assert.Empty(await store.GetReviewedAsync([first], CancellationToken.None));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("alert-record.jpg", "alert-record")]
+    [InlineData("alert-record", "alert-record")]
+    [InlineData("  alert-record.jpeg  ", "alert-record")]
+    [InlineData(null, "")]
+    public void BlueIrisTimelineClient_NormalizeRecord_MatchesAlertDatabaseIdentifiers(
+        string? input,
+        string expected)
+    {
+        Assert.Equal(expected, BlueIrisTimelineClient.NormalizeRecord(input));
+    }
+
     // --- Outage alerts (StartupNotificationWorker) -------------------------------------------
     //
     // The decision is a pure function precisely so these can cover every branch without a
@@ -1881,11 +2039,16 @@ public sealed class BasicTests
             new StaticOptionsMonitor<BridgeOptions>(new BridgeOptions { DataDirectory = dataDirectory }),
             new FakeHostEnvironment(dataDirectory),
             NullLogger<StartupNotificationWorker>.Instance);
-
     private static HomeKitAlertAction BuildHomeKitAction(RecordingHandler handler, HomeKitOptions options) =>
         new(new HttpClient(handler),
             new StaticOptionsMonitor<HomeKitOptions>(options),
             NullLogger<HomeKitAlertAction>.Instance);
+
+    private static DiscordAlertAction BuildDiscordAction(RecordingHandler handler, DiscordOptions options) =>
+        new(new HttpClient(handler),
+            new StaticOptionsMonitor<DiscordOptions>(options),
+            new StaticOptionsMonitor<QuietHoursOptions>(new QuietHoursOptions()),
+            NullLogger<DiscordAlertAction>.Instance);
 
     private static AlertResult NotifiableResult(string camera) => new()
     {

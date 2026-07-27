@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
@@ -41,6 +42,7 @@ import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.EventFeedScreen
 import com.sentinelcore.android.ui.screens.LiveCamerasScreen
 import com.sentinelcore.android.ui.screens.LivePlayerScreen
+import com.sentinelcore.android.ui.screens.RecordingTimelineScreen
 import com.sentinelcore.android.ui.screens.LoginScreen
 import com.sentinelcore.android.ui.screens.ServerSetupScreen
 import com.sentinelcore.android.ui.screens.SettingsScreen
@@ -90,6 +92,13 @@ private fun AppShell(
     var section by rememberSaveable { mutableStateOf(AppSection.FEED) }
     var detail by remember { mutableStateOf<DetailScreen?>(null) }
     BackHandler(detail != null) { detail = null }
+    LaunchedEffect(state.pendingPushEventId, state.events) {
+        val eventId = state.pendingPushEventId ?: return@LaunchedEffect
+        val event = state.events.firstOrNull { it.id == eventId } ?: return@LaunchedEffect
+        section = AppSection.FEED
+        detail = DetailScreen.Event(event)
+        model.consumePushEvent()
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
@@ -216,9 +225,11 @@ private fun ScreenContent(
                 )
                 AppSection.LIVE -> LiveCamerasScreen(
                     state = state,
+                    model = model,
                     onCamera = { onDetail(DetailScreen.Camera(it)) },
                     onRefresh = model::connect,
                 )
+                AppSection.TIMELINE -> RecordingTimelineScreen(state = state, model = model)
                 AppSection.TRIGGERS -> TriggerFeedScreen(
                     state = state,
                     model = model,
@@ -236,6 +247,7 @@ private enum class AppSection(
     val icon: ImageVector,
 ) {
     FEED("FEED", Icons.Default.Security),
+    TIMELINE("TIMELINE", Icons.Default.History),
     LIVE("LIVE", Icons.Default.LiveTv),
     TRIGGERS("TRIGGERS", Icons.Default.Radar),
     SETTINGS("SETTINGS", Icons.Default.Settings),

@@ -17,11 +17,18 @@ For a physical device, the device and Sentinel Core server must be on the same l
 - Cookie-based dashboard authentication
 - Event feed with search and notified-only filtering
 - Event images and metadata
+- Day-indexed Blue Iris trigger clips with AI event markers, pre/post-event frame scrubbing,
+  automatic unsaved-gap skipping, object/severity filters, and shared reviewed/unreviewed state
 - Motion-trigger snapshots and clips
 - Live camera HLS playback with audio
+- FCM event alerts with foreground presentation, test delivery, and event deep links
 - Phone bottom navigation and tablet navigation rail
 - Pull-to-refresh equivalents and 30-second foreground refresh
 - Connection status, errors, and local diagnostics
 - Persistent local server configuration
 
 Cleartext HTTP is intentionally enabled because initial deployments use private-LAN addresses. Use HTTPS before exposing Sentinel Core beyond a trusted local network.
+
+Real push delivery requires a Firebase Android app, `google-services.json`, and Core
+provider configuration. See
+[`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md).

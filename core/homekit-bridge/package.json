@@ -9,7 +9,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test test.js"
   },
   "dependencies": {
     "@homebridge/hap-nodejs": "^2.1.9",

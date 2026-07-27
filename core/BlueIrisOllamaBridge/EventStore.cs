@@ -58,7 +58,8 @@ public sealed record AlertEventRecord(
     bool? NotificationRecommended,
     string? NotificationReason,
     double? Confidence,
-    string? ImagePath);
+    string? ImagePath,
+    string? BlueIrisAlertId = null);
 
 // SQLite-backed history of every alert (queued/completed/failed), one row per alert id,
 // updated in place as the alert progresses. This is a queryable companion to the JSON
@@ -165,7 +166,8 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
-                       NotificationRecommended, NotificationReason, Confidence, ImagePath
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath,
+                       BlueIrisAlertId
                 FROM AlertEvents
                 WHERE OccurredAt >= $from AND OccurredAt < $to
                 ORDER BY OccurredAt ASC;
@@ -230,7 +232,8 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
-                       NotificationRecommended, NotificationReason, Confidence, ImagePath
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath,
+                       BlueIrisAlertId
                 FROM AlertEvents
                 WHERE Id = $id;
                 """;
@@ -286,7 +289,8 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             var whereClause = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
             command.CommandText = $"""
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
-                       NotificationRecommended, NotificationReason, Confidence, ImagePath
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath,
+                       BlueIrisAlertId
                 FROM AlertEvents
                 {whereClause}
                 ORDER BY OccurredAt DESC
@@ -352,7 +356,8 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         reader.IsDBNull(6) ? null : reader.GetInt64(6) != 0,
         reader.IsDBNull(7) ? null : reader.GetString(7),
         reader.IsDBNull(8) ? null : reader.GetDouble(8),
-        reader.IsDBNull(9) ? null : reader.GetString(9));
+        reader.IsDBNull(9) ? null : reader.GetString(9),
+        reader.IsDBNull(10) ? null : reader.GetString(10));
 
     private static string ToUtcSortable(DateTimeOffset value) => value.UtcDateTime.ToString("O");
 
