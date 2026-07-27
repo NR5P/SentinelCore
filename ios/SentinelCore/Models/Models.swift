@@ -34,6 +34,9 @@ struct AuthStatus: Codable {
     let configured: Bool
     let authenticated: Bool
     let username: String?
+    // Absent on servers older than the multi-account update - treated as Admin everywhere it's
+    // read, since that's what every pre-upgrade single-account login effectively was.
+    let role: String?
 }
 
 struct HealthResponse: Codable {

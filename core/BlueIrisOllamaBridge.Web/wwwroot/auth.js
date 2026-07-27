@@ -5,6 +5,8 @@ window.GateWatchAuth = (function () {
   const submitBtn = document.getElementById("login-submit-btn");
   const errorsEl = document.getElementById("login-errors");
   const logoutBtn = document.getElementById("logout-btn");
+  const accountsTab = document.getElementById("tab-accounts");
+  const settingsTab = document.getElementById("tab-settings");
 
   function showErrors(messages) {
     errorsEl.innerHTML = "";
@@ -53,6 +55,12 @@ window.GateWatchAuth = (function () {
       const response = await fetch("/api/auth/status");
       const payload = await response.json();
       logoutBtn.classList.toggle("hidden", !payload.enabled);
+      // Meaningless when login isn't required - there's no real account to show or manage,
+      // since every request is treated as a synthetic admin (see AuthGateMiddleware).
+      accountsTab.classList.toggle("hidden", !payload.enabled);
+      // /api/settings is Admin-only server-side once login is required - hide the tab for a
+      // signed-in Viewer rather than let them click through to a raw 403.
+      settingsTab.classList.toggle("hidden", payload.enabled && payload.role !== "Admin");
       if (payload.authenticated) return;
 
       overlay.classList.remove("hidden");

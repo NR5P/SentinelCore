@@ -31,6 +31,9 @@ struct SettingsView: View {
                 if let username = model.authStatus?.username {
                     LabeledContent("SIGNED IN AS", value: username)
                 }
+                if let role = model.authStatus?.role {
+                    LabeledContent("ROLE", value: role.uppercased())
+                }
                 if model.authStatus?.enabled == true {
                     Button("SIGN OUT", role: .destructive) {
                         Task { await model.signOut() }
@@ -65,14 +68,19 @@ struct SettingsView: View {
                         Task { await model.disablePushNotifications() }
                     }
                 }
-                Button("SEND TEST NOTIFICATION") {
-                    Task { await model.sendTestPushNotification() }
+                // Admin-only on the server (it messages every registered device, not just this
+                // one) - hidden rather than disabled for a Viewer, since there's nothing they
+                // could do to enable it.
+                if model.isAdmin {
+                    Button("SEND TEST NOTIFICATION") {
+                        Task { await model.sendTestPushNotification() }
+                    }
+                    .disabled(
+                        model.pushStatus?.appleConfigured != true ||
+                            model.pushAuthorization == "DENIED" ||
+                            !model.pushRegistrationEnabled
+                    )
                 }
-                .disabled(
-                    model.pushStatus?.appleConfigured != true ||
-                        model.pushAuthorization == "DENIED" ||
-                        !model.pushRegistrationEnabled
-                )
                 if let pushMessage = model.pushMessage {
                     Text(pushMessage)
                         .font(.caption)
@@ -110,7 +118,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("This native client manages its connection and push registration locally. Full server configuration, camera editing, and motion-zone drawing remain in the Core dashboard.")
+                Text("This native client manages its connection and push registration locally. Full server configuration, camera editing, motion-zone drawing, and account management remain in the Core dashboard.")
                     .font(.caption)
                     .foregroundStyle(SentinelTheme.textDim)
             }

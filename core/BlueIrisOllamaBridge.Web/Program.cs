@@ -1,5 +1,6 @@
 using BlueIrisOllamaBridge;
 using BlueIrisOllamaBridge.Web;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -43,7 +44,8 @@ builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>()
 
 var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
     ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
-builder.Services.AddSingleton(new AppSettingsFile(mainAppSettingsPath));
+var appSettingsFile = new AppSettingsFile(mainAppSettingsPath);
+builder.Services.AddSingleton(appSettingsFile);
 
 // Cameras added through the UI are stored separately from the main app's data entirely -
 // they're for live viewing only and the alert pipeline never sees them.
@@ -53,6 +55,38 @@ var camerasRoot = Path.IsPathRooted(camerasDataDirectory)
     : Path.Combine(builder.Environment.ContentRootPath, camerasDataDirectory);
 builder.Services.AddSingleton<ICameraStore>(new SqliteCameraStore(camerasRoot));
 builder.Services.AddSingleton<HlsStreamManager>();
+
+// Dashboard accounts - separate from the main app's data for the same reason cameras are. Also
+// backs the cookie authentication handler's session storage below (same instance, same reason
+// SqliteTriggerStore backs two interfaces at once).
+var accountStore = new SqliteAccountStore(camerasRoot);
+builder.Services.AddSingleton<IAccountStore>(accountStore);
+
+// Real per-account cookie login, replacing the old single-shared-credential hand-rolled check.
+// Sessions persist in accountStore's Sessions table (SqliteAccountStore.SessionStore below), so
+// a redeploy/restart no longer logs every signed-in person out.
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.Cookie.Name = "session"; // keep the existing cookie name - no forced re-login on upgrade
+        options.ExpireTimeSpan = TimeSpan.FromDays(30);
+        options.SlidingExpiration = true;
+        options.SessionStore = accountStore;
+        // This is an API, not an MVC app - never redirect to a login page, just report the
+        // status code and let the SPA/mobile clients react to it.
+        options.Events.OnRedirectToLogin = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return Task.CompletedTask;
+        };
+        options.Events.OnRedirectToAccessDenied = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return Task.CompletedTask;
+        };
+    });
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole(nameof(AccountRole.Admin))));
 
 // Trigger zones have their own detection database and image folder, separate from the main
 // app's. What happens after a trigger fires is opt-in per camera - see AlertForwarder for the
@@ -86,14 +120,16 @@ builder.Services.AddSingleton<IBugReportSender, WebBugReportSender>();
 builder.Services.AddSingleton<ILoggerProvider>(sp =>
     new BugReportLoggerProvider("BlueIrisOllamaBridge.Web", sp));
 
-// Optional dashboard login - see AuthGateMiddleware. In-memory only, so a redeploy/restart
-// (this project is deployed by rebuilding in-place, not by publish) logs everyone out.
-builder.Services.AddSingleton<SessionStore>();
-
 // Records whether anything has reached this dashboard from outside the LAN - see ExposureTracker.
 builder.Services.AddSingleton<ExposureTracker>();
 
 var app = builder.Build();
+
+// One-time: promotes a pre-upgrade install's single shared Auth:Username/PasswordHash into the
+// first Admin account, so nobody who could already log in loses access. A no-op on every
+// startup after the first (and for any install that never had login enabled) - see
+// AccountMigration for details.
+await AccountMigration.MigrateLegacyAuthIfNeededAsync(accountStore, appSettingsFile, CancellationToken.None);
 
 if (httpsEnabled)
 {
@@ -113,13 +149,19 @@ app.UseMiddleware<ExposureWarningMiddleware>();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+// UseAuthentication populates context.User from the session cookie (if any). AuthGateMiddleware
+// then overrides context.User with a synthetic Admin when Auth:Enabled is false, so
+// UseAuthorization's per-endpoint RequireAuthorization checks always pass in that state.
+app.UseAuthentication();
 app.UseMiddleware<AuthGateMiddleware>();
+app.UseAuthorization();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
 app.MapTriggerEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();
 app.MapAuthEndpoints();
+app.MapAccountEndpoints();
 app.MapBackupEndpoints();
 app.MapChatEndpoints();
 app.MapHomeKitEndpoints();
@@ -140,7 +182,12 @@ app.MapGet("/api/exposure/status", async (ExposureTracker tracker, AppSettingsFi
         lastExternalAt = tracker.LastExternalAt,
         loginEnabled = auth is { Enabled: true }
     });
-});
+    // The old blanket AuthGateMiddleware gated everything under /api bar three named paths, so
+    // this was covered without saying so. Under the per-endpoint model it has to opt in, or it
+    // would hand an unauthenticated caller whether a login exists and the last off-LAN address
+    // that reached this host. Harmless when the login is off - the synthetic Admin principal
+    // satisfies it - so the exposure banner keeps working in the shipped default.
+}).RequireAuthorization();
 
 app.MapGet("/api/events", async (
     IEventStore store, CancellationToken ct, int limit = 50,
@@ -162,7 +209,7 @@ app.MapGet("/api/events", async (
         confidence = e.Confidence ?? 0,
         hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath)
     }));
-});
+}).RequireAuthorization();
 
 // Independent of any currently-applied filter, so the dropdowns always show every camera/
 // event type that has ever appeared, not just what's in the current filtered result set.
@@ -170,7 +217,7 @@ app.MapGet("/api/events/filter-options", async (IEventStore store, CancellationT
 {
     var options = await store.GetFilterOptionsAsync(ct);
     return Results.Ok(new { cameras = options.Cameras, eventTypes = options.EventTypes });
-});
+}).RequireAuthorization();
 
 app.MapGet("/api/events/{id:guid}", async (Guid id, IEventStore store, CancellationToken ct) =>
 {
@@ -190,7 +237,7 @@ app.MapGet("/api/events/{id:guid}", async (Guid id, IEventStore store, Cancellat
             confidence = e.Confidence ?? 0,
             hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath)
         });
-});
+}).RequireAuthorization();
 
 app.MapGet("/api/events/{id:guid}/image", async (Guid id, IEventStore store, CancellationToken ct) =>
 {
@@ -200,6 +247,8 @@ app.MapGet("/api/events/{id:guid}/image", async (Guid id, IEventStore store, Can
 
     var bytes = await File.ReadAllBytesAsync(record.ImagePath, ct);
     return Results.File(bytes, "image/jpeg");
-});
+}).RequireAuthorization();
 
 app.Run();
+
+public partial class Program;

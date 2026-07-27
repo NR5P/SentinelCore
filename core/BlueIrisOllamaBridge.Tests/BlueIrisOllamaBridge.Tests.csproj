@@ -14,6 +14,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../BlueIrisOllamaBridge/BlueIrisOllamaBridge.csproj" />
-    <ProjectReference Include="../BlueIrisOllamaBridge.Web/BlueIrisOllamaBridge.Web.csproj" />
+    <!-- Both projects are top-level-statement executables, so each has its own global::Program -
+         referencing both here would make "Program" ambiguous without this alias (see
+         WebApplicationFactory usage in WebAuthorizationTests.cs). -->
+    <ProjectReference Include="../BlueIrisOllamaBridge.Web/BlueIrisOllamaBridge.Web.csproj" Aliases="global,WebHost" />
   </ItemGroup>
 </Project>

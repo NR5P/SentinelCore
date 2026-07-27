@@ -54,7 +54,7 @@ public static class ChatEndpoints
                 logger.LogWarning(ex, "Could not reach the main app at {BaseUrl} to ask a question", baseUrl);
                 return Results.Json(new { error = "Could not reach the main app." }, statusCode: 502);
             }
-        });
+        }).RequireAuthorization();
     }
 
     private sealed record ChatAnswerResponse(string? Answer);

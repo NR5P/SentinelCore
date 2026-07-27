@@ -36,6 +36,9 @@ data class AuthStatus(
     val configured: Boolean,
     val authenticated: Boolean,
     val username: String?,
+    // Absent on servers older than the multi-account update - treated as Admin everywhere it's
+    // read, since that's what every pre-upgrade single-account login effectively was.
+    val role: String?,
 )
 
 data class PushStatus(

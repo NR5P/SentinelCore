@@ -34,7 +34,7 @@ public static class TimelineEndpoints
             }
 
             return Results.Ok(cameras.OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
-        });
+        }).RequireAuthorization();
 
         app.MapGet("/api/timeline/day", async (
             string camera,
@@ -130,7 +130,7 @@ public static class TimelineEndpoints
                     hasClip = clipsByEvent.ContainsKey(item.Id)
                 })
             });
-        });
+        }).RequireAuthorization();
 
         app.MapPut("/api/events/{id:guid}/reviewed", async (
             Guid id,
@@ -143,7 +143,7 @@ public static class TimelineEndpoints
                 return Results.NotFound(new { error = "Event not found." });
             await reviews.SetReviewedAsync(id, request.Reviewed, ct);
             return Results.Ok(new { id, request.Reviewed });
-        });
+        }).RequireAuthorization();
     }
 
     private static DateTimeOffset AtLocalMidnight(DateOnly day)

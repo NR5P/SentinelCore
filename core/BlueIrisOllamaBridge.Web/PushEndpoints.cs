@@ -24,7 +24,7 @@ public static class PushEndpoints
                 firebaseConfigured = IsFirebaseConfigured(options),
                 registeredDevices = await devices.CountAsync(ct)
             });
-        });
+        }).RequireAuthorization();
 
         app.MapPost("/api/push/devices", async (
             RegisterPushDeviceRequest request,
@@ -46,7 +46,7 @@ public static class PushEndpoints
                 device.DeviceName,
                 device.UpdatedAt
             });
-        });
+        }).RequireAuthorization();
 
         app.MapPost("/api/push/devices/unregister", async (
             UnregisterPushDeviceRequest request,
@@ -58,7 +58,7 @@ public static class PushEndpoints
 
             await devices.RemoveAsync(request.Platform, request.Token, ct);
             return Results.Ok(new { success = true });
-        });
+        }).RequireAuthorization();
 
         app.MapPost("/api/push/test", async (
             AppSettingsFile settings,
@@ -75,7 +75,7 @@ public static class PushEndpoints
 
             var report = await dispatcher.SendAsync(options, PushMessage.Test(), ct);
             return Results.Ok(report);
-        });
+        }).RequireAuthorization("AdminOnly");
     }
 
     private static List<string> Validate(string platform, string token, string? deviceName)

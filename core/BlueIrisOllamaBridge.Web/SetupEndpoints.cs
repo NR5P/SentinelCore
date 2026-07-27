@@ -15,25 +15,27 @@ public static class SetupEndpoints
 {
     public static void MapSetupEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/setup/status", async (AppSettingsFile settings, CancellationToken ct) =>
+        var setup = app.MapGroup("/api/setup").RequireAuthorization("AdminOnly");
+
+        setup.MapGet("/status", async (AppSettingsFile settings, CancellationToken ct) =>
         {
             var status = await settings.GetSectionAsync<SetupStatusDto>("Setup", ct);
             return Results.Ok(new { completed = status?.Completed ?? false });
         });
 
-        app.MapPost("/api/setup/complete", async (AppSettingsFile settings, CancellationToken ct) =>
+        setup.MapPost("/complete", async (AppSettingsFile settings, CancellationToken ct) =>
         {
             await settings.MergeSectionAsync("Setup", new SetupStatusDto { Completed = true }, ct);
             return Results.Ok(new { completed = true });
         });
 
-        app.MapPost("/api/setup/reset", async (AppSettingsFile settings, CancellationToken ct) =>
+        setup.MapPost("/reset", async (AppSettingsFile settings, CancellationToken ct) =>
         {
             await settings.MergeSectionAsync("Setup", new SetupStatusDto { Completed = false }, ct);
             return Results.Ok(new { completed = false });
         });
 
-        app.MapPost("/api/setup/generate-api-key", async (AppSettingsFile settings, CancellationToken ct) =>
+        setup.MapPost("/generate-api-key", async (AppSettingsFile settings, CancellationToken ct) =>
         {
             var bridge = await settings.GetSectionAsync<BridgeSettingsDto>("Bridge", ct);
 
@@ -51,7 +53,7 @@ public static class SetupEndpoints
             return Results.Ok(new { apiKey, generated = !alreadyConfigured });
         });
 
-        app.MapGet("/api/setup/vision-status", async (IHttpClientFactory httpClientFactory, IConfiguration configuration, CancellationToken ct) =>
+        setup.MapGet("/vision-status", async (IHttpClientFactory httpClientFactory, IConfiguration configuration, CancellationToken ct) =>
         {
             var baseUrl = (configuration["MainAppBaseUrl"] ?? "http://127.0.0.1:5080").TrimEnd('/');
             var client = httpClientFactory.CreateClient(nameof(SetupEndpoints));

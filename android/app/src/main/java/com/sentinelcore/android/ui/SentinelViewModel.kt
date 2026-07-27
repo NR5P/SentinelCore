@@ -66,6 +66,11 @@ data class SentinelUiState(
 
     val requiresLogin: Boolean
         get() = authStatus?.let { it.enabled && !it.authenticated } == true
+
+    // Absent role (older server, or login not required) reads as Admin - matches the server's
+    // own AuthGateMiddleware treatment of "no login required" as full access for everyone.
+    val isAdmin: Boolean
+        get() = (authStatus?.role ?: "Admin") == "Admin"
 }
 
 class SentinelViewModel(application: Application) : AndroidViewModel(application) {

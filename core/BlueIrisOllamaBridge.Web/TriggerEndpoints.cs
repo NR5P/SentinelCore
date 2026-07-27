@@ -22,7 +22,7 @@ public static class TriggerEndpoints
     public static void MapTriggerEndpoints(this WebApplication app)
     {
         app.MapGet("/api/cameras/{id:guid}/trigger-config", async (Guid id, ITriggerConfigStore store, CancellationToken ct) =>
-            Results.Ok(await store.GetAsync(id, ct) ?? TriggerConfig.Disabled(id)));
+            Results.Ok(await store.GetAsync(id, ct) ?? TriggerConfig.Disabled(id))).RequireAuthorization("AdminOnly");
 
         app.MapPut("/api/cameras/{id:guid}/trigger-config", async (Guid id, TriggerConfigDto dto, ICameraStore cameraStore, ITriggerConfigStore store, CancellationToken ct) =>
         {
@@ -37,7 +37,7 @@ public static class TriggerEndpoints
                 dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
-        });
+        }).RequireAuthorization("AdminOnly");
 
         // Just the names, not the full /api/settings payload - the zone editor's profile picker
         // has no business seeing API keys/bot tokens/passwords along with it.
@@ -48,7 +48,7 @@ public static class TriggerEndpoints
                 .Select(kvp => new { key = kvp.Key, displayName = string.IsNullOrWhiteSpace(kvp.Value.DisplayName) ? kvp.Key : kvp.Value.DisplayName })
                 .OrderBy(p => p.displayName, StringComparer.OrdinalIgnoreCase);
             return Results.Ok(names);
-        });
+        }).RequireAuthorization("AdminOnly");
 
         app.MapGet("/api/cameras/{id:guid}/reference-frame", async (Guid id, ICameraStore cameraStore, HlsStreamManager streams, CancellationToken ct) =>
         {
@@ -59,7 +59,7 @@ public static class TriggerEndpoints
             if (bytes is null) return Results.Problem("Could not grab a frame from this camera - check the stream URL/credentials.", statusCode: 502);
 
             return Results.File(bytes, "image/jpeg");
-        });
+        }).RequireAuthorization("AdminOnly");
 
         app.MapGet("/api/triggers", async (ICameraStore cameraStore, ITriggerEventStore store, CancellationToken ct, int limit = 50, Guid? cameraId = null) =>
         {
@@ -77,7 +77,7 @@ public static class TriggerEndpoints
                 triggerAreaFraction = e.TriggerAreaFraction,
                 hasClip = !string.IsNullOrWhiteSpace(e.ClipPath) && File.Exists(e.ClipPath)
             }));
-        });
+        }).RequireAuthorization();
 
         app.MapGet("/api/triggers/{id:guid}/image", async (Guid id, ITriggerEventStore store, CancellationToken ct) =>
         {
@@ -86,7 +86,7 @@ public static class TriggerEndpoints
 
             var bytes = await File.ReadAllBytesAsync(trigger.ImagePath, ct);
             return Results.File(bytes, "image/jpeg");
-        });
+        }).RequireAuthorization();
 
         // Streamed from disk with range support so the browser can seek without pulling the
         // whole clip first.
@@ -96,7 +96,7 @@ public static class TriggerEndpoints
             if (trigger?.ClipPath is null || !File.Exists(trigger.ClipPath)) return Results.NotFound();
 
             return Results.File(trigger.ClipPath, "video/mp4", enableRangeProcessing: true);
-        });
+        }).RequireAuthorization();
     }
 
     private static List<string> Validate(TriggerConfigDto dto)
