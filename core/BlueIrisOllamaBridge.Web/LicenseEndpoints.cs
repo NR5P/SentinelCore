@@ -14,32 +14,34 @@ public static class LicenseEndpoints
 
     public static void MapLicenseEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/license/status", async (AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
+        var license = app.MapGroup("/api/license").RequireAuthorization("AdminOnly");
+
+        license.MapGet("/status", async (AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
         {
             var licensePath = await ResolveLicensePathAsync(settings, configuration, ct);
-            var license = LicenseStatus.Check(licensePath);
-            return Results.Ok(license is null
+            var status = LicenseStatus.Check(licensePath);
+            return Results.Ok(status is null
                 ? new { valid = false }
-                : new { valid = true, customerName = license.CustomerName });
+                : new { valid = true, customerName = status.CustomerName });
         });
 
         // Takes the raw .lic file contents (uploaded from the browser, not a path - this app
         // has no way to know what's on the customer's own computer). Validated with the same
         // embedded public key everything else uses before it's ever written to disk, so a
         // garbled upload can't silently clobber a license that was already working.
-        app.MapPost("/api/license/install", async (HttpRequest request, AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
+        license.MapPost("/install", async (HttpRequest request, AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
         {
             using var reader = new StreamReader(request.Body);
             var contents = await reader.ReadToEndAsync(ct);
 
-            var license = LicenseStatus.Verify(contents);
-            if (license is null)
+            var verified = LicenseStatus.Verify(contents);
+            if (verified is null)
                 return Results.BadRequest(new { error = "That file doesn't look like a valid license - nothing was changed." });
 
             var licensePath = await ResolveLicensePathAsync(settings, configuration, ct);
             await File.WriteAllTextAsync(licensePath, contents, ct);
 
-            return Results.Ok(new { valid = true, customerName = license.CustomerName });
+            return Results.Ok(new { valid = true, customerName = verified.CustomerName });
         });
     }
 

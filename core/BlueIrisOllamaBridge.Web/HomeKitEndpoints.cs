@@ -24,7 +24,9 @@ public static class HomeKitEndpoints
 
     public static void MapHomeKitEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/homekit/status", async (
+        var homeKit = app.MapGroup("/api/homekit").RequireAuthorization("AdminOnly");
+
+        homeKit.MapGet("/status", async (
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
             ILogger<HomeKitStatus> logger,
@@ -70,7 +72,7 @@ public static class HomeKitEndpoints
             }
         });
 
-        app.MapGet("/api/homekit/qr", async (
+        homeKit.MapGet("/qr", async (
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
             ILogger<HomeKitStatus> logger,
@@ -98,7 +100,7 @@ public static class HomeKitEndpoints
             }
         });
 
-        app.MapPost("/api/homekit/reset", async (
+        homeKit.MapPost("/reset", async (
             HomeKitResetRequest request,
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,

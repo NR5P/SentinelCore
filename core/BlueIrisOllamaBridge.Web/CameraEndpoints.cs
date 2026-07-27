@@ -22,7 +22,7 @@ public static class CameraEndpoints
     public static void MapCameraEndpoints(this WebApplication app)
     {
         app.MapGet("/api/cameras", async (ICameraStore store, CancellationToken ct) =>
-            Results.Ok(await store.GetAllAsync(ct)));
+            Results.Ok(await store.GetAllAsync(ct))).RequireAuthorization();
 
         app.MapPost("/api/cameras", async (CameraInputDto dto, ICameraStore store, CancellationToken ct) =>
         {
@@ -31,7 +31,7 @@ public static class CameraEndpoints
 
             var camera = await store.AddAsync(dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio, ct);
             return Results.Ok(camera);
-        });
+        }).RequireAuthorization("AdminOnly");
 
         app.MapPut("/api/cameras/{id:guid}", async (Guid id, CameraInputDto dto, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
         {
@@ -44,14 +44,14 @@ public static class CameraEndpoints
             // Source may have changed - restart the stream on next view rather than serving stale settings.
             streams.StopStream(id);
             return Results.Ok(new { saved = true });
-        });
+        }).RequireAuthorization("AdminOnly");
 
         app.MapDelete("/api/cameras/{id:guid}", async (Guid id, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
         {
             streams.StopStream(id);
             var deleted = await store.DeleteAsync(id, ct);
             return deleted ? Results.Ok(new { deleted = true }) : Results.NotFound();
-        });
+        }).RequireAuthorization("AdminOnly");
 
         app.MapGet("/api/cameras/{id:guid}/stream/{file}", async (Guid id, string file, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
         {
@@ -78,7 +78,7 @@ public static class CameraEndpoints
             if (segmentPath is null || !File.Exists(segmentPath)) return Results.NotFound();
 
             return Results.File(segmentPath, "video/mp2t");
-        });
+        }).RequireAuthorization();
     }
 
     private static List<string> Validate(CameraInputDto dto)

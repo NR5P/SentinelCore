@@ -24,7 +24,9 @@ public static class BackupEndpoints
 
     public static void MapBackupEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/backup/export", async (AppSettingsFile settings, ICameraStore cameras, ITriggerConfigStore triggerConfigs, CancellationToken ct) =>
+        var backup = app.MapGroup("/api/backup").RequireAuthorization("AdminOnly");
+
+        backup.MapGet("/export", async (AppSettingsFile settings, ICameraStore cameras, ITriggerConfigStore triggerConfigs, CancellationToken ct) =>
         {
             var document = new BackupDocument(
                 CurrentSchemaVersion,
@@ -42,7 +44,7 @@ public static class BackupEndpoints
         // camera's original Id instead of minting a new one, so the trigger zones in the same
         // backup still resolve correctly. Nothing in the current setup that isn't mentioned in
         // the backup is touched or removed - restore overlays, it never wipes.
-        app.MapPost("/api/backup/import", async (HttpRequest request, AppSettingsFile settings, ICameraStore cameras, ITriggerConfigStore triggerConfigs, CancellationToken ct) =>
+        backup.MapPost("/import", async (HttpRequest request, AppSettingsFile settings, ICameraStore cameras, ITriggerConfigStore triggerConfigs, CancellationToken ct) =>
         {
             BackupDocument? document;
             try

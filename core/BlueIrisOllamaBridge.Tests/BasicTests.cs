@@ -1,8 +1,11 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BlueIrisOllamaBridge.Licensing;
 using BlueIrisOllamaBridge.Web;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -1327,39 +1330,147 @@ public sealed class BasicTests
     }
 
     [Fact]
-    public void SessionStore_CreatedSession_ValidatesUntilInvalidated()
+    public async Task SqliteAccountStore_LastAdminGuard_PreventsDeletingOrDemotingTheLastAdmin()
     {
-        var sessions = new SessionStore();
-        var token = sessions.CreateSession();
+        using var store = new SqliteAccountStore(Path.Combine(Path.GetTempPath(), $"accounts-{Guid.NewGuid():N}"));
+        var solo = await store.CreateAsync("solo-admin", "hash", AccountRole.Admin, null, CancellationToken.None);
 
-        Assert.True(sessions.Validate(token));
+        Assert.False(await store.UpdateRoleAsync(solo.Id, AccountRole.Viewer, CancellationToken.None));
+        Assert.False(await store.DeleteAsync(solo.Id, CancellationToken.None));
 
-        sessions.Invalidate(token);
+        // A second admin makes both operations safe again - the guard is about "zero admins
+        // left", not about protecting any particular account.
+        var second = await store.CreateAsync("second-admin", "hash", AccountRole.Admin, null, CancellationToken.None);
+        Assert.True(await store.UpdateRoleAsync(solo.Id, AccountRole.Viewer, CancellationToken.None));
 
-        Assert.False(sessions.Validate(token));
+        // Now `second` is the only admin again - deleting it should be refused just like before.
+        Assert.False(await store.DeleteAsync(second.Id, CancellationToken.None));
     }
 
     [Fact]
-    public void SessionStore_Validate_RejectsAnUnknownToken()
+    public async Task SqliteAccountStore_Sessions_RoundTripReflectsCurrentAccountRole_NotWhatWasTrueAtSignIn()
     {
-        var sessions = new SessionStore();
+        using var store = new SqliteAccountStore(Path.Combine(Path.GetTempPath(), $"accounts-{Guid.NewGuid():N}"));
+        var account = await store.CreateAsync("viewer-turned-admin", "hash", AccountRole.Viewer, null, CancellationToken.None);
 
-        Assert.False(sessions.Validate("this-token-was-never-issued"));
-        Assert.False(sessions.Validate(null));
-        Assert.False(sessions.Validate(""));
+        var ticket = new AuthenticationTicket(
+            AccountPrincipal.Create(account),
+            new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) },
+            CookieAuthenticationDefaults.AuthenticationScheme);
+        var token = await store.StoreAsync(ticket);
+
+        var retrieved = await store.RetrieveAsync(token);
+        Assert.Equal(nameof(AccountRole.Viewer), retrieved?.Principal.FindFirstValue(ClaimTypes.Role));
+
+        // A role change takes effect on the very next retrieval - RetrieveAsync re-derives the
+        // principal from the live account, it doesn't trust whatever was baked in at sign-in.
+        await store.UpdateRoleAsync(account.Id, AccountRole.Admin, CancellationToken.None);
+        var afterPromotion = await store.RetrieveAsync(token);
+        Assert.Equal(nameof(AccountRole.Admin), afterPromotion?.Principal.FindFirstValue(ClaimTypes.Role));
     }
 
     [Fact]
-    public void SessionStore_InvalidateAll_ClearsEverySession()
+    public async Task SqliteAccountStore_Sessions_RetrieveAsync_ReturnsNullForUnknownOrRemovedToken()
     {
-        var sessions = new SessionStore();
-        var first = sessions.CreateSession();
-        var second = sessions.CreateSession();
+        using var store = new SqliteAccountStore(Path.Combine(Path.GetTempPath(), $"accounts-{Guid.NewGuid():N}"));
+        var account = await store.CreateAsync("someone", "hash", AccountRole.Viewer, null, CancellationToken.None);
+        var ticket = new AuthenticationTicket(
+            AccountPrincipal.Create(account),
+            new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) },
+            CookieAuthenticationDefaults.AuthenticationScheme);
 
-        sessions.InvalidateAll();
+        Assert.Null(await store.RetrieveAsync("this-token-was-never-issued"));
 
-        Assert.False(sessions.Validate(first));
-        Assert.False(sessions.Validate(second));
+        var token = await store.StoreAsync(ticket);
+        await store.RemoveAsync(token);
+
+        Assert.Null(await store.RetrieveAsync(token));
+    }
+
+    [Fact]
+    public async Task SqliteAccountStore_InvalidateForAccountAsync_LeavesOtherAccountsSessionsAlone()
+    {
+        using var store = new SqliteAccountStore(Path.Combine(Path.GetTempPath(), $"accounts-{Guid.NewGuid():N}"));
+        var alice = await store.CreateAsync("alice", "hash", AccountRole.Admin, null, CancellationToken.None);
+        var bob = await store.CreateAsync("bob", "hash", AccountRole.Viewer, null, CancellationToken.None);
+
+        var aliceToken = await store.StoreAsync(new AuthenticationTicket(
+            AccountPrincipal.Create(alice),
+            new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) },
+            CookieAuthenticationDefaults.AuthenticationScheme));
+        var bobToken = await store.StoreAsync(new AuthenticationTicket(
+            AccountPrincipal.Create(bob),
+            new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) },
+            CookieAuthenticationDefaults.AuthenticationScheme));
+
+        await store.InvalidateForAccountAsync(alice.Id, CancellationToken.None);
+
+        Assert.Null(await store.RetrieveAsync(aliceToken));
+        Assert.NotNull(await store.RetrieveAsync(bobToken));
+
+        await store.InvalidateAllAsync(CancellationToken.None);
+        Assert.Null(await store.RetrieveAsync(bobToken));
+    }
+
+    [Fact]
+    public async Task AccountMigration_LegacyAuthEnabled_CreatesFirstAdminFromExistingCredentials()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Path.Combine(Path.GetTempPath(), $"migration-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var settingsPath = Path.Combine(directory, "appsettings.json");
+        var legacyHash = PasswordHasher.Hash("the-old-shared-password");
+        await File.WriteAllTextAsync(settingsPath, $$"""
+            { "Auth": { "Enabled": true, "Username": "household", "PasswordHash": "{{legacyHash}}" } }
+            """, ct);
+        var settings = new AppSettingsFile(settingsPath);
+        using var accounts = new SqliteAccountStore(directory);
+
+        await AccountMigration.MigrateLegacyAuthIfNeededAsync(accounts, settings, ct);
+
+        var all = await accounts.GetAllAsync(ct);
+        var migrated = Assert.Single(all);
+        Assert.Equal("household", migrated.Username);
+        Assert.Equal(AccountRole.Admin, migrated.Role);
+        // Copied as-is, not re-hashed - the old hash must still verify against the original password.
+        Assert.True(PasswordHasher.Verify("the-old-shared-password", migrated.PasswordHash));
+    }
+
+    [Fact]
+    public async Task AccountMigration_LegacyAuthDisabled_DoesNothing()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Path.Combine(Path.GetTempPath(), $"migration-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var settingsPath = Path.Combine(directory, "appsettings.json");
+        await File.WriteAllTextAsync(settingsPath, """{ "Auth": { "Enabled": false } }""", ct);
+        var settings = new AppSettingsFile(settingsPath);
+        using var accounts = new SqliteAccountStore(directory);
+
+        await AccountMigration.MigrateLegacyAuthIfNeededAsync(accounts, settings, ct);
+
+        Assert.False(await accounts.AnyAccountsExistAsync(ct));
+    }
+
+    [Fact]
+    public async Task AccountMigration_AccountsAlreadyExist_IsANoOpEvenIfLegacyAuthWasEnabled()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = Path.Combine(Path.GetTempPath(), $"migration-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var settingsPath = Path.Combine(directory, "appsettings.json");
+        await File.WriteAllTextAsync(settingsPath, $$"""
+            { "Auth": { "Enabled": true, "Username": "household", "PasswordHash": "{{PasswordHasher.Hash("whatever")}}" } }
+            """, ct);
+        var settings = new AppSettingsFile(settingsPath);
+        using var accounts = new SqliteAccountStore(directory);
+        await accounts.CreateAsync("already-here", "hash", AccountRole.Admin, null, ct);
+
+        await AccountMigration.MigrateLegacyAuthIfNeededAsync(accounts, settings, ct);
+
+        var all = await accounts.GetAllAsync(ct);
+        var only = Assert.Single(all);
+        Assert.Equal("already-here", only.Username);
     }
 
     [Fact]

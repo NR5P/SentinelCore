@@ -32,21 +32,25 @@ public static class SettingsEndpoints
 {
     public static void MapSettingsEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/settings", async (AppSettingsFile settings, CancellationToken ct) =>
-            Results.Ok(await BuildSnapshotAsync(settings, ct)));
+        // Every route here - including the GET - is Admin-only: the settings snapshot contains
+        // SMTP passwords, bot tokens, and API keys, so even read access isn't safe for a Viewer.
+        var settings = app.MapGroup("/api/settings").RequireAuthorization("AdminOnly");
 
-        app.MapPut("/api/settings/bridge", async (BridgeSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "Bridge", ct, extra =>
+        settings.MapGet("", async (AppSettingsFile appSettings, CancellationToken ct) =>
+            Results.Ok(await BuildSnapshotAsync(appSettings, ct)));
+
+        settings.MapPut("/bridge", async (BridgeSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Bridge", ct, extra =>
             {
                 if (dto.ApiKey.StartsWith("CHANGE-ME", StringComparison.OrdinalIgnoreCase))
                     extra.Add("ApiKey must be changed from the default.");
             }));
 
-        app.MapPut("/api/settings/ollama", async (OllamaSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "Ollama", ct));
+        settings.MapPut("/ollama", async (OllamaSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Ollama", ct));
 
-        app.MapPut("/api/settings/cloud-vision", async (CloudVisionSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "CloudVision", ct, extra =>
+        settings.MapPut("/cloud-vision", async (CloudVisionSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "CloudVision", ct, extra =>
             {
                 if (dto.Enabled && string.IsNullOrWhiteSpace(dto.ApiKey))
                     extra.Add("ApiKey is required when cloud vision is enabled.");
@@ -54,18 +58,18 @@ public static class SettingsEndpoints
                     extra.Add("Provider must be 'openai', 'anthropic', or 'google'.");
             }));
 
-        app.MapPut("/api/settings/vision-routing", async (VisionRoutingSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "VisionRouting", ct, extra =>
+        settings.MapPut("/vision-routing", async (VisionRoutingSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "VisionRouting", ct, extra =>
             {
                 if (dto.Primary is not ("ollama" or "cloud"))
                     extra.Add("Primary must be 'ollama' or 'cloud'.");
             }));
 
-        app.MapPut("/api/settings/image-processing", async (ImageProcessingSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "ImageProcessing", ct));
+        settings.MapPut("/image-processing", async (ImageProcessingSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "ImageProcessing", ct));
 
-        app.MapPut("/api/settings/email", async (EmailSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "Email", ct, extra =>
+        settings.MapPut("/email", async (EmailSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Email", ct, extra =>
             {
                 if (!dto.Enabled) return;
                 if (string.IsNullOrWhiteSpace(dto.Username)) extra.Add("Username is required when email is enabled.");
@@ -77,33 +81,33 @@ public static class SettingsEndpoints
                     extra.Add("ToAddress must be a valid email address.");
             }));
 
-        app.MapPut("/api/settings/daily-summary", async (DailySummarySettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "DailySummary", ct, extra =>
+        settings.MapPut("/daily-summary", async (DailySummarySettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "DailySummary", ct, extra =>
             {
                 if (dto.MorningHour == dto.EveningHour)
                     extra.Add("MorningHour and EveningHour must differ.");
             }));
 
-        app.MapPut("/api/settings/telegram", async (TelegramSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "Telegram", ct, extra =>
+        settings.MapPut("/telegram", async (TelegramSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Telegram", ct, extra =>
             {
                 if (!dto.Enabled) return;
                 if (string.IsNullOrWhiteSpace(dto.BotToken)) extra.Add("BotToken is required when Telegram is enabled.");
                 if (string.IsNullOrWhiteSpace(dto.ChatId)) extra.Add("ChatId is required when Telegram is enabled.");
             }));
 
-        app.MapPut("/api/settings/discord", async (DiscordSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "Discord", ct, extra =>
+        settings.MapPut("/discord", async (DiscordSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Discord", ct, extra =>
             {
                 if (dto.Enabled && !DiscordOptions.IsValidWebhookUrl(dto.WebhookUrl))
                     extra.Add("WebhookUrl must be a valid Discord HTTPS webhook URL when Discord is enabled.");
             }));
 
-        app.MapPut("/api/settings/telegram-chat", async (TelegramChatSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "TelegramChat", ct));
+        settings.MapPut("/telegram-chat", async (TelegramChatSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "TelegramChat", ct));
 
-        app.MapPut("/api/settings/blue-iris", async (BlueIrisSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "BlueIris", ct, extra =>
+        settings.MapPut("/blue-iris", async (BlueIrisSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "BlueIris", ct, extra =>
             {
                 if (dto.Enabled && string.IsNullOrWhiteSpace(dto.BaseUrl))
                     extra.Add("BaseUrl is required when Blue Iris is enabled.");
@@ -111,41 +115,41 @@ public static class SettingsEndpoints
                     extra.Add("Camera is required when Blue Iris is enabled.");
             }));
 
-        app.MapPut("/api/settings/self-monitoring", async (SelfMonitoringSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "SelfMonitoring", ct));
+        settings.MapPut("/self-monitoring", async (SelfMonitoringSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "SelfMonitoring", ct));
 
-        app.MapPut("/api/settings/startup-notification", async (StartupNotificationSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "StartupNotification", ct));
+        settings.MapPut("/startup-notification", async (StartupNotificationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "StartupNotification", ct));
 
-        app.MapPut("/api/settings/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "QuietHours", ct));
+        settings.MapPut("/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "QuietHours", ct));
 
-        app.MapPut("/api/settings/mqtt", async (MqttSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "Mqtt", ct, extra =>
+        settings.MapPut("/mqtt", async (MqttSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Mqtt", ct, extra =>
             {
                 if (!dto.Enabled) return;
                 if (!dto.RunEmbeddedBroker && string.IsNullOrWhiteSpace(dto.BrokerHost))
                     extra.Add("Broker Host is required when not running the embedded broker.");
             }));
 
-        app.MapPut("/api/settings/homekit", async (HomeKitSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "HomeKit", ct, extra =>
+        settings.MapPut("/homekit", async (HomeKitSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "HomeKit", ct, extra =>
             {
                 if (dto.Enabled && !Uri.TryCreate(dto.SidecarBaseUrl, UriKind.Absolute, out _))
                     extra.Add("Sidecar Base Url must be a valid absolute URL when HomeKit is enabled.");
             }));
 
-        app.MapPut("/api/settings/bug-reports", async (BugReportSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "BugReports", ct));
+        settings.MapPut("/bug-reports", async (BugReportSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "BugReports", ct));
 
-        app.MapPut("/api/settings/webhook", async (WebhookSettingsDto dto, AppSettingsFile settings, CancellationToken ct) =>
-            await SaveSectionAsync(dto, settings, "Webhook", ct, extra =>
+        settings.MapPut("/webhook", async (WebhookSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Webhook", ct, extra =>
             {
                 if (dto.Enabled && !Uri.TryCreate(dto.Url, UriKind.Absolute, out _))
                     extra.Add("Url must be a valid absolute URL when the webhook is enabled.");
             }));
 
-        app.MapPut("/api/settings/known-vehicles", async (List<KnownVehicle> vehicles, AppSettingsFile settings, CancellationToken ct) =>
+        settings.MapPut("/known-vehicles", async (List<KnownVehicle> vehicles, AppSettingsFile appSettings, CancellationToken ct) =>
         {
             var errors = new List<string>();
             foreach (var vehicle in vehicles)
@@ -156,11 +160,11 @@ public static class SettingsEndpoints
 
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
-            await settings.ReplaceSectionAsync("KnownVehicles", vehicles, ct);
+            await appSettings.ReplaceSectionAsync("KnownVehicles", vehicles, ct);
             return Results.Ok(new { saved = true });
         });
 
-        app.MapPut("/api/settings/prompt-profiles", async (Dictionary<string, PromptProfile> profiles, AppSettingsFile settings, CancellationToken ct) =>
+        settings.MapPut("/prompt-profiles", async (Dictionary<string, PromptProfile> profiles, AppSettingsFile appSettings, CancellationToken ct) =>
         {
             var errors = new List<string>();
             if (profiles.Count == 0)
@@ -184,7 +188,7 @@ public static class SettingsEndpoints
 
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
-            await settings.ReplaceSectionAsync("PromptProfiles", profiles, ct);
+            await appSettings.ReplaceSectionAsync("PromptProfiles", profiles, ct);
             return Results.Ok(new { saved = true });
         });
     }

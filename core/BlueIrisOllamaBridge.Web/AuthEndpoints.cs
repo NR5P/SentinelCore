@@ -1,22 +1,23 @@
 using System.Collections.Concurrent;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace BlueIrisOllamaBridge.Web;
 
 public sealed class AuthSettingsDto
 {
     public bool Enabled { get; set; }
-    public string Username { get; set; } = "";
-    public string PasswordHash { get; set; } = "";
 }
 
 // Optional dashboard login - off by default (see the "Auth" default in appsettings.json), so
-// merging/deploying this never locks anyone out. A single shared username/password, not
-// multi-user accounts - this is a household tool, not a team product. See AuthGateMiddleware
-// for where this actually gets enforced; these endpoints are the only way Auth:Enabled/
-// Username/PasswordHash ever change.
+// merging/deploying this never locks anyone out. Real per-person accounts (Admin/Viewer roles)
+// live in IAccountStore - see AccountEndpoints.cs for creating/managing them. This file only
+// covers signing in/out and turning the login requirement on/off; AuthGateMiddleware is where
+// Auth:Enabled actually gets enforced (as "everyone is a synthetic Admin" while it's false).
 public static class AuthEndpoints
 {
-    private const int MinPasswordLength = 8;
+    internal const int MinPasswordLength = 8;
 
     // Simple per-IP lockout on repeated bad logins - in-memory, no new dependency, matches the
     // rest of this feature's "hand-rolled, not framework machinery" style.
@@ -26,37 +27,35 @@ public static class AuthEndpoints
 
     public static void MapAuthEndpoints(this WebApplication app)
     {
-        // Always reachable, even with no session - the frontend needs this to decide whether
-        // to show the login overlay at all. `authenticated` reflects THIS request's own
-        // session cookie (true whenever login isn't required in the first place) - safe to
-        // expose unauthenticated since it reveals nothing beyond "is this specific browser
-        // already signed in," not who the account belongs to.
-        app.MapGet("/api/auth/status", async (HttpContext context, AppSettingsFile settings, SessionStore sessions, CancellationToken ct) =>
+        // Always reachable, no matter the auth state - the frontend needs this to decide
+        // whether to show the login overlay, and to know the current account's role once
+        // signed in (so it can gate admin-only UI without a second round-trip).
+        app.MapGet("/api/auth/status", async (HttpContext context, AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
         {
             var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
             var enabled = auth?.Enabled ?? false;
-            var authenticated = !enabled || sessions.Validate(context.Request.Cookies["session"]);
+            var authenticated = !enabled || context.User.Identity?.IsAuthenticated == true;
             return Results.Ok(new
             {
                 enabled,
-                configured = !string.IsNullOrEmpty(auth?.PasswordHash),
+                configured = await accounts.AnyAccountsExistAsync(ct),
                 authenticated,
                 // Only handed back once the caller has already proven they're signed in - an
-                // anonymous prober gets no hint about who the account belongs to.
-                username = enabled && authenticated ? auth?.Username : null
+                // anonymous prober gets no hint about who's using this dashboard.
+                username = enabled && authenticated ? context.User.Identity?.Name : null,
+                role = enabled && authenticated ? context.User.FindFirstValue(ClaimTypes.Role) : null
             });
         });
 
-        app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AppSettingsFile settings, SessionStore sessions, CancellationToken ct) =>
+        app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
         {
             var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
             if (IsRateLimited(ip))
                 return Results.StatusCode(StatusCodes.Status429TooManyRequests);
 
             var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
-            var valid = auth is { Enabled: true }
-                && string.Equals(auth.Username, request.Username, StringComparison.Ordinal)
-                && PasswordHasher.Verify(request.Password ?? "", auth.PasswordHash);
+            var account = auth is { Enabled: true } ? await accounts.GetByUsernameAsync(request.Username ?? "", ct) : null;
+            var valid = account is not null && PasswordHasher.Verify(request.Password ?? "", account.PasswordHash);
 
             if (!valid)
             {
@@ -64,92 +63,58 @@ public static class AuthEndpoints
                 return Results.Json(new { error = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            SetSessionCookie(context, sessions.CreateSession());
+            await SignInAsync(context, account!);
             return Results.Ok(new { success = true });
         });
 
-        app.MapPost("/api/auth/logout", (HttpContext context, SessionStore sessions) =>
+        // No RequireAuthorization here on purpose: signing out with an already-expired or
+        // missing session should still succeed rather than 401 - it has nothing left to do.
+        app.MapPost("/api/auth/logout", async (HttpContext context) =>
         {
-            sessions.Invalidate(context.Request.Cookies["session"]);
-            context.Response.Cookies.Delete("session");
+            await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
             return Results.Ok(new { success = true });
         });
 
-        // Only reachable while Auth:Enabled is false - AuthGateMiddleware passes everything
-        // through untouched in that state, which is exactly the state this endpoint needs to
-        // be callable in (there's no session to require yet). Once this flips Enabled to true,
-        // every subsequent call - including a second call to this same endpoint - goes through
-        // the normal gate like anything else.
-        app.MapPost("/api/auth/enable", async (HttpContext context, EnableRequest request, AppSettingsFile settings, SessionStore sessions, CancellationToken ct) =>
+        // Turns the login requirement on. While no accounts exist yet, AdminOnly trivially
+        // passes for anyone (AuthGateMiddleware's synthetic Admin, since nothing has been
+        // enabled yet) and this call creates the first real Admin account from the supplied
+        // credentials. Once accounts exist, calling this again just flips Auth:Enabled back on
+        // (e.g. after a prior disable) - no new account is created, so it can't be used to
+        // sneak in a second admin, and a real Admin session is required to call it at all.
+        app.MapPost("/api/auth/enable", async (HttpContext context, EnableRequest request, AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
         {
+            if (await accounts.AnyAccountsExistAsync(ct))
+            {
+                await settings.MergeSectionAsync("Auth", new AuthSettingsDto { Enabled = true }, ct);
+                return Results.Ok(new { success = true });
+            }
+
             var errors = ValidateCredentials(request.Username, request.Password);
             if (errors.Count > 0)
                 return Results.BadRequest(new { errors });
 
-            await settings.MergeSectionAsync("Auth", new AuthSettingsDto
-            {
-                Enabled = true,
-                Username = request.Username.Trim(),
-                PasswordHash = PasswordHasher.Hash(request.Password)
-            }, ct);
+            var account = await accounts.CreateAsync(request.Username.Trim(), PasswordHasher.Hash(request.Password), AccountRole.Admin, null, ct);
+            await settings.MergeSectionAsync("Auth", new AuthSettingsDto { Enabled = true }, ct);
 
-            SetSessionCookie(context, sessions.CreateSession());
+            await SignInAsync(context, account);
             return Results.Ok(new { success = true });
-        });
+        }).RequireAuthorization("AdminOnly");
 
-        app.MapPost("/api/auth/update", async (HttpContext context, UpdateRequest request, AppSettingsFile settings, SessionStore sessions, CancellationToken ct) =>
+        app.MapPost("/api/auth/disable", async (AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
         {
-            var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
-            if (auth is null || !PasswordHasher.Verify(request.CurrentPassword ?? "", auth.PasswordHash))
-                return Results.BadRequest(new { errors = new[] { "Current password is incorrect." } });
-
-            var newUsername = string.IsNullOrWhiteSpace(request.NewUsername) ? auth.Username : request.NewUsername.Trim();
-            var newPassword = string.IsNullOrEmpty(request.NewPassword) ? null : request.NewPassword;
-
-            if (newPassword is not null)
-            {
-                var errors = ValidateCredentials(newUsername, newPassword);
-                if (errors.Count > 0)
-                    return Results.BadRequest(new { errors });
-            }
-
-            await settings.MergeSectionAsync("Auth", new AuthSettingsDto
-            {
-                Enabled = true,
-                Username = newUsername,
-                PasswordHash = newPassword is null ? auth.PasswordHash : PasswordHasher.Hash(newPassword)
-            }, ct);
-
-            // A credential change invalidates every existing session (including this one's old
-            // token) before issuing a fresh one - a stolen-but-still-open session shouldn't
-            // survive a rotation meant to shut it out, but the person making the change is
-            // never logged out by their own action.
-            sessions.InvalidateAll();
-            SetSessionCookie(context, sessions.CreateSession());
+            await settings.MergeSectionAsync("Auth", new AuthSettingsDto { Enabled = false }, ct);
+            await accounts.InvalidateAllAsync(ct);
             return Results.Ok(new { success = true });
-        });
-
-        app.MapPost("/api/auth/disable", async (AppSettingsFile settings, SessionStore sessions, CancellationToken ct) =>
-        {
-            await settings.MergeSectionAsync("Auth", new { Enabled = false }, ct);
-            sessions.InvalidateAll();
-            return Results.Ok(new { success = true });
-        });
+        }).RequireAuthorization("AdminOnly");
     }
 
-    private static void SetSessionCookie(HttpContext context, string token)
-    {
-        context.Response.Cookies.Append("session", token, new CookieOptions
-        {
-            HttpOnly = true,
-            SameSite = SameSiteMode.Lax,
-            Secure = context.Request.IsHttps,
-            Expires = DateTimeOffset.UtcNow.AddDays(30),
-            Path = "/"
-        });
-    }
+    private static Task SignInAsync(HttpContext context, Account account) =>
+        context.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            AccountPrincipal.Create(account),
+            new AuthenticationProperties { IsPersistent = true });
 
-    private static List<string> ValidateCredentials(string username, string password)
+    internal static List<string> ValidateCredentials(string username, string password)
     {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(username))
@@ -189,11 +154,4 @@ public sealed class EnableRequest
 {
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
-}
-
-public sealed class UpdateRequest
-{
-    public string? CurrentPassword { get; set; }
-    public string? NewUsername { get; set; }
-    public string? NewPassword { get; set; }
 }
