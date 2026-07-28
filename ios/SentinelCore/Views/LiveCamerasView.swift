@@ -10,34 +10,27 @@ struct LiveCamerasView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], spacing: 16) {
                 ForEach(model.cameras) { camera in
                     NavigationLink(value: camera) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            LiveCameraPreview(camera: camera, isActive: isActive)
-                            .aspectRatio(16 / 9, contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
-                            HStack {
-                                Circle().fill(SentinelTheme.green).frame(width: 7, height: 7)
-                                Text(camera.name).foregroundStyle(SentinelTheme.green).bold()
-                                Spacer()
-                                if camera.includeAudio == true {
-                                    Image(systemName: "speaker.wave.2.fill")
-                                        .foregroundStyle(SentinelTheme.cyan)
-                                        .accessibilityLabel("Audio enabled")
-                                }
-                                Image(systemName: "arrow.up.right")
-                                    .foregroundStyle(SentinelTheme.textDim)
-                            }
-                        }
-                        .sentinelPanel()
+                        CameraCard(camera: camera, isActive: isActive)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding()
         }
-        .background(SentinelTheme.background)
-        .navigationTitle("LIVE")
+        .navigationTitle("Live")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.large)
+        #endif
         .navigationDestination(for: Camera.self) { LivePlayerView(camera: $0) }
         .refreshable { await model.connect() }
+        .toolbar {
+            ToolbarItem {
+                Button { Task { await model.connect(resetNetworkSession: true) } } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.isLoading)
+            }
+        }
         .overlay {
             if model.cameras.isEmpty && !model.isLoading {
                 ContentUnavailableView(
@@ -45,11 +38,37 @@ struct LiveCamerasView: View {
                     systemImage: "video.slash",
                     description: Text("Add cameras in the Sentinel Core dashboard.")
                 )
-                .foregroundStyle(SentinelTheme.textDim)
+                .foregroundStyle(.secondary)
             } else if model.cameras.isEmpty {
                 ProgressView("Loading cameras…")
             }
         }
+    }
+}
+
+private struct CameraCard: View {
+    let camera: Camera
+    let isActive: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LiveCameraPreview(camera: camera, isActive: isActive)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            HStack {
+                Circle().fill(SentinelTheme.green).frame(width: 7, height: 7)
+                Text(camera.name).foregroundStyle(SentinelTheme.green).bold()
+                Spacer()
+                if camera.includeAudio == true {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .foregroundStyle(SentinelTheme.cyan)
+                        .accessibilityLabel("Audio enabled")
+                }
+                Image(systemName: "arrow.up.right")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .sentinelCard()
     }
 }
 
@@ -68,7 +87,8 @@ private struct LiveCameraPreview: View {
                     .allowsHitTesting(false)
             } else {
                 ProgressView("Starting stream…")
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .tint(.white)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
@@ -117,13 +137,17 @@ struct LivePlayerView: View {
                 VideoPlayer(player: player)
             } else {
                 ProgressView("Starting stream…")
-                    .foregroundStyle(SentinelTheme.text)
+                    .tint(.white)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
                 .padding()
         }
         .navigationTitle(camera.name)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             guard let url = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8") else { return }
             let newPlayer = AVPlayer(url: url)

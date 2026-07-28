@@ -36,15 +36,19 @@ struct RecordingTimelineView: View {
             VStack(spacing: 14) {
                 controls
                 playbackPanel
+                #if os(iOS)
                 filterBar
+                #endif
                 eventList
             }
             .padding()
             .frame(maxWidth: 1100)
             .frame(maxWidth: .infinity)
         }
-        .background(SentinelTheme.background)
-        .navigationTitle("DAY_TIMELINE")
+        .navigationTitle("Timeline")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.large)
+        #endif
         .task {
             availableCameras = (try? await model.client.timelineCameras()) ?? []
             if selectedCamera.isEmpty { selectedCamera = cameraNames.first ?? "" }
@@ -63,24 +67,36 @@ struct RecordingTimelineView: View {
             player.pause()
             player.replaceCurrentItem(with: nil)
         }
+        #if os(macOS)
+        // On iOS the filters sit inline (filterBar, above) since there's no title-bar toolbar
+        // real estate; on macOS they move up here instead of scrolling away with content.
+        .toolbar {
+            ToolbarItemGroup {
+                filterControls
+            }
+        }
+        #endif
     }
 
     private var controls: some View {
         VStack(spacing: 10) {
             HStack {
-                Picker("CAMERA", selection: $selectedCamera) {
+                Picker("Camera", selection: $selectedCamera) {
                     if cameraNames.isEmpty {
-                        Text("NO EVENT CAMERAS").tag("")
+                        Text("No event cameras").tag("")
                     }
                     ForEach(cameraNames, id: \.self) { Text($0).tag($0) }
                 }
                 .pickerStyle(.menu)
-                Spacer()
+                .lineLimit(1)
+                .frame(maxWidth: 150, alignment: .leading)
+                Spacer(minLength: 8)
                 Button {
                     selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) ?? selectedDate
                 } label: { Image(systemName: "chevron.left") }
-                DatePicker("DATE", selection: $selectedDate, in: ...Date.now, displayedComponents: .date)
+                DatePicker("Date", selection: $selectedDate, in: ...Date.now, displayedComponents: .date)
                     .labelsHidden()
+                    .fixedSize()
                 Button {
                     selectedDate = min(
                         Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate,
@@ -93,19 +109,19 @@ struct RecordingTimelineView: View {
                 HStack {
                     Label(
                         recording.available
-                            ? "\(recording.segments.count) TRIGGER CLIPS"
-                            : "TRIGGER CLIPS UNAVAILABLE",
+                            ? "\(recording.segments.count) trigger clips"
+                            : "Trigger clips unavailable",
                         systemImage: recording.available ? "externaldrive.fill.badge.checkmark" : "externaldrive.badge.xmark"
                     )
                     .foregroundStyle(recording.available ? SentinelTheme.green : SentinelTheme.amber)
                     Spacer()
-                    Text("\(filteredEvents.count) OF \(day?.events.count ?? 0) AI EVENTS")
-                        .foregroundStyle(SentinelTheme.textDim)
+                    Text("\(filteredEvents.count) of \(day?.events.count ?? 0) AI events")
+                        .foregroundStyle(.secondary)
                 }
                 .font(.caption)
             }
         }
-        .sentinelPanel()
+        .sentinelCard()
     }
 
     private var playbackPanel: some View {
@@ -118,9 +134,9 @@ struct RecordingTimelineView: View {
                     ContentUnavailableView(
                         "No saved trigger clip",
                         systemImage: "video.slash",
-                        description: Text(day?.recording.error ?? "Choose a green trigger window on the timeline.")
+                        description: Text(day?.recording.error ?? "Choose a highlighted trigger window on the timeline.")
                     )
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
                 }
             }
             .aspectRatio(16 / 9, contentMode: .fit)
@@ -143,7 +159,7 @@ struct RecordingTimelineView: View {
                     Text(cursor.formatted(date: .omitted, time: .standard))
                         .foregroundStyle(SentinelTheme.cyan)
                     Spacer()
-                    Button("NOW") {
+                    Button("Now") {
                         selectedDate = Calendar.current.startOfDay(for: .now)
                         cursor = .now
                     }
@@ -151,7 +167,7 @@ struct RecordingTimelineView: View {
                 .buttonStyle(.bordered)
             } else if selectedCamera.isEmpty {
                 Text("AI events will provide the camera choices for day review.")
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
             } else {
                 ProgressView("Loading day…")
             }
@@ -162,34 +178,41 @@ struct RecordingTimelineView: View {
                     .font(.caption)
             }
         }
-        .sentinelPanel()
+        .sentinelCard()
     }
 
+    // Shared by the inline iOS filter row and the macOS toolbar (see `.toolbar` in `body`).
+    @ViewBuilder private var filterControls: some View {
+        Menu("Objects (\(selectedCategories.count))") {
+            ForEach(["person", "vehicle", "animal", "package", "plate", "other"], id: \.self) { value in
+                Toggle(value.capitalized, isOn: membership(value, in: $selectedCategories))
+            }
+        }
+        Menu("Severity (\(selectedSeverities.count))") {
+            ForEach(["critical", "high", "medium", "low"], id: \.self) { value in
+                Toggle(value.capitalized, isOn: membership(value, in: $selectedSeverities))
+            }
+        }
+        Picker("Review", selection: $reviewFilter) {
+            ForEach(ReviewFilter.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.menu)
+        Button("Reset Filters") {
+            selectedCategories = Set(["person", "vehicle", "animal", "package", "plate", "other"])
+            selectedSeverities = Set(["critical", "high", "medium", "low"])
+            reviewFilter = .all
+        }
+    }
+
+    #if os(iOS)
     private var filterBar: some View {
         HStack {
-            Menu("OBJECTS \(selectedCategories.count)") {
-                ForEach(["person", "vehicle", "animal", "package", "plate", "other"], id: \.self) { value in
-                    Toggle(value.capitalized, isOn: membership(value, in: $selectedCategories))
-                }
-            }
-            Menu("SEVERITY \(selectedSeverities.count)") {
-                ForEach(["critical", "high", "medium", "low"], id: \.self) { value in
-                    Toggle(value.capitalized, isOn: membership(value, in: $selectedSeverities))
-                }
-            }
-            Picker("REVIEW", selection: $reviewFilter) {
-                ForEach(ReviewFilter.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.menu)
+            filterControls
             Spacer()
-            Button("RESET FILTERS") {
-                selectedCategories = Set(["person", "vehicle", "animal", "package", "plate", "other"])
-                selectedSeverities = Set(["critical", "high", "medium", "low"])
-                reviewFilter = .all
-            }
         }
         .buttonStyle(.bordered)
     }
+    #endif
 
     private var eventList: some View {
         LazyVStack(spacing: 10) {
@@ -217,12 +240,11 @@ struct RecordingTimelineView: View {
                                     .foregroundStyle(severityColor(event.severity))
                                 if !event.hasClip {
                                     Text("NO CLIP")
-                                        .foregroundStyle(SentinelTheme.textDim)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                             .font(.caption)
                             Text(event.summary.isEmpty ? event.eventType : event.summary)
-                                .foregroundStyle(SentinelTheme.text)
                                 .lineLimit(2)
                         }
                         Spacer()
@@ -235,12 +257,12 @@ struct RecordingTimelineView: View {
                     } label: {
                         Image(systemName: event.reviewed ? "checkmark.circle.fill" : "circle")
                             .font(.title2)
-                            .foregroundStyle(event.reviewed ? SentinelTheme.green : SentinelTheme.textDim)
+                            .foregroundStyle(event.reviewed ? SentinelTheme.green : .secondary)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(event.reviewed ? "Mark unreviewed" : "Mark reviewed")
                 }
-                .sentinelPanel()
+                .sentinelCard()
             }
         }
     }
@@ -381,7 +403,7 @@ struct RecordingTimelineView: View {
         case "plate": SentinelTheme.amber
         case "package": .purple
         case "animal": .orange
-        default: SentinelTheme.textDim
+        default: .secondary
         }
     }
 
@@ -390,7 +412,7 @@ struct RecordingTimelineView: View {
         case "critical": SentinelTheme.red
         case "high": SentinelTheme.amber
         case "medium": SentinelTheme.cyan
-        default: SentinelTheme.textDim
+        default: .secondary
         }
     }
 }
@@ -403,7 +425,7 @@ private struct TimelineRail: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 6).fill(SentinelTheme.panel)
+                RoundedRectangle(cornerRadius: 6).fill(.quaternary)
                 ForEach(day.recording.segments, id: \.self) { segment in
                     RoundedRectangle(cornerRadius: 2)
                         .fill(SentinelTheme.greenDim.opacity(0.65))
@@ -416,8 +438,10 @@ private struct TimelineRail: View {
                         .frame(width: event.severity == "critical" ? 4 : 2, height: 28)
                         .offset(x: geometry.size.width * position(event.occurredAt))
                 }
+                // .primary rather than a fixed white/black - the old hardcoded white cursor was
+                // invisible against a light background once dark mode stopped being forced.
                 Rectangle()
-                    .fill(.white)
+                    .fill(.primary)
                     .frame(width: 2, height: 42)
                     .offset(x: geometry.size.width * position(cursor))
                 Slider(
@@ -444,14 +468,14 @@ private struct TimelineRail: View {
     private func markerColor(_ severity: String) -> Color {
         severity == "critical" ? SentinelTheme.red :
         severity == "high" ? SentinelTheme.amber :
-        severity == "medium" ? SentinelTheme.cyan : SentinelTheme.textDim
+        severity == "medium" ? SentinelTheme.cyan : .secondary
     }
 }
 
 private enum ReviewFilter: String, CaseIterable, Identifiable {
     case all, unreviewed, reviewed
     var id: Self { self }
-    var label: String { rawValue.uppercased() }
+    var label: String { rawValue.capitalized }
     func includes(_ reviewed: Bool) -> Bool {
         self == .all || (self == .reviewed && reviewed) || (self == .unreviewed && !reviewed)
     }

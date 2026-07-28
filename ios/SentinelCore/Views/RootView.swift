@@ -19,9 +19,7 @@ struct RootView: View {
                 }
             }
         }
-        .fontDesign(.monospaced)
         .tint(SentinelTheme.green)
-        .background(SentinelTheme.background.ignoresSafeArea())
         // Reconnect whenever setup/settings changes the address. Keeping this task on the
         // persistent root prevents SwiftUI from cancelling it when ServerSetupView disappears.
         .task(id: model.serverURL) {
@@ -36,19 +34,17 @@ struct RootView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 BrandHeader()
-                List(AppSection.allCases, selection: $selection) { section in
-                    Label(section.title, systemImage: section.icon)
-                        .tag(section)
-                        // macOS uses the accent color for the selected row. Dark text keeps the
-                        // label readable against Sentinel's bright green selection.
-                        .foregroundStyle(selection == section ? SentinelTheme.background : SentinelTheme.text)
+                // On macOS, Settings lives in the app's Settings scene (Cmd+,) instead of a
+                // sidebar row - see SentinelCoreApp. iPadOS has no such scene, so it keeps all
+                // sections here.
+                List(AppSection.sidebarCases, selection: $selection) { section in
+                    Label(section.title, systemImage: section.icon).tag(section)
                 }
-                .scrollContentBackground(.hidden)
+                .listStyle(.sidebar)
 
                 ConnectionBadge()
                     .padding()
             }
-            .background(SentinelTheme.panel)
             .navigationSplitViewColumnWidth(min: 190, ideal: 220)
         } detail: {
             NavigationStack {
@@ -57,7 +53,6 @@ struct RootView: View {
                         EventDetailView(event: event)
                     }
             }
-            .background(SentinelTheme.background)
         }
     }
 
@@ -97,7 +92,15 @@ struct RootView: View {
 enum AppSection: String, CaseIterable, Identifiable {
     case feed, timeline, live, triggers, settings
     var id: Self { self }
-    var title: String { rawValue.uppercased() }
+    var title: String {
+        switch self {
+        case .feed: "Feed"
+        case .timeline: "Timeline"
+        case .live: "Live"
+        case .triggers: "Triggers"
+        case .settings: "Settings"
+        }
+    }
     var icon: String {
         switch self {
         case .feed: "shield.lefthalf.filled"
@@ -107,8 +110,19 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .settings: "gearshape.fill"
         }
     }
+
+    // macOS gets a real Settings scene (Cmd+,) instead of a sidebar row - see SentinelCoreApp.
+    static var sidebarCases: [AppSection] {
+        #if os(macOS)
+        allCases.filter { $0 != .settings }
+        #else
+        allCases
+        #endif
+    }
 }
 
+// The ">_" wordmark is the one place that keeps the terminal-style monospace font on purpose -
+// a logotype, not body text, so it stays a deliberate accent rather than the whole app's font.
 struct BrandHeader: View {
     var body: some View {
         HStack(spacing: 8) {
@@ -117,6 +131,7 @@ struct BrandHeader: View {
             Spacer()
         }
         .font(.headline)
+        .fontDesign(.monospaced)
         .shadow(color: SentinelTheme.green.opacity(0.5), radius: 6)
         .padding()
     }
@@ -133,7 +148,7 @@ struct ConnectionBadge: View {
                 .shadow(color: statusColor, radius: 5)
             Text(model.connectionState.label)
                 .font(.caption)
-                .foregroundStyle(SentinelTheme.textDim)
+                .foregroundStyle(.secondary)
             Spacer()
         }
         .accessibilityElement(children: .combine)
@@ -145,7 +160,7 @@ struct ConnectionBadge: View {
         case .online: SentinelTheme.green
         case .checking, .authenticationRequired: SentinelTheme.amber
         case .offline: SentinelTheme.red
-        case .notConfigured: SentinelTheme.textDim
+        case .notConfigured: .secondary
         }
     }
 }

@@ -8,28 +8,27 @@ struct ServerSetupView: View {
         VStack(spacing: 24) {
             BrandHeader().frame(maxWidth: 420)
             VStack(alignment: .leading, spacing: 14) {
-                Text("CONNECT TO YOUR SERVER")
+                Text("Connect to your server")
                     .foregroundStyle(SentinelTheme.cyan)
                     .font(.headline)
                 Text("Enter the local-network address of the Sentinel Core dashboard.")
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
                 TextField("http://192.168.1.50:3320", text: $address)
                     .textFieldStyle(.roundedBorder)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
-                Button("CONNECT") {
+                Button("Connect") {
                     connect()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .sentinelPanel()
+            .sentinelCard()
             .frame(maxWidth: 500)
         }
         .padding()
-        .foregroundStyle(SentinelTheme.text)
         .onAppear { address = model.serverURL }
         .onSubmit(connect)
     }
