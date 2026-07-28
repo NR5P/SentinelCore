@@ -1,5 +1,6 @@
 package com.sentinelcore.android.ui
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -38,6 +39,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sentinelcore.android.ui.components.ConnectionBadge
+import com.sentinelcore.android.ui.screens.CameraAdminScreen
+import com.sentinelcore.android.ui.screens.CameraDiscoveryScreen
+import com.sentinelcore.android.ui.screens.CameraEditScreen
+import com.sentinelcore.android.ui.screens.CameraZoneEditorScreen
 import com.sentinelcore.android.ui.screens.DetailHeader
 import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.EventFeedScreen
@@ -235,7 +240,83 @@ private fun SentinelNavHost(
         }
 
         composable(AppSection.SETTINGS.route) {
-            SettingsScreen(state = state, model = model)
+            SettingsScreen(
+                state = state,
+                model = model,
+                onManageCameras = { navController.navigate("settings/cameras") },
+            )
+        }
+
+        composable("settings/cameras") {
+            CameraAdminScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+                onAddCamera = { navController.navigate("settings/cameras/new") },
+                onEditCamera = { navController.navigate("settings/cameras/${it.id}") },
+                onDiscover = { navController.navigate("settings/cameras/discover") },
+            )
+        }
+        composable("settings/cameras/discover") {
+            CameraDiscoveryScreen(
+                model = model,
+                onBack = { navController.popBackStack() },
+                onResultSelected = {
+                    navController.navigate(
+                        "settings/cameras/new?prefill=${Uri.encode(it.ipAddress)}",
+                    )
+                },
+            )
+        }
+        composable(
+            route = "settings/cameras/new?prefill={prefill}",
+            arguments = listOf(
+                navArgument("prefill") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { entry ->
+            CameraEditScreen(
+                camera = null,
+                prefillStreamUrl = entry.arguments?.getString("prefill"),
+                model = model,
+                onBack = { navController.popBackStack() },
+                onConfigureZone = {},
+            )
+        }
+        composable(
+            route = "settings/cameras/{cameraId}",
+            arguments = listOf(navArgument("cameraId") { type = NavType.StringType }),
+        ) { entry ->
+            val camera = state.cameras.firstOrNull { it.id == entry.arguments?.getString("cameraId") }
+            if (camera != null) {
+                CameraEditScreen(
+                    camera = camera,
+                    prefillStreamUrl = null,
+                    model = model,
+                    onBack = { navController.popBackStack() },
+                    onConfigureZone = { navController.navigate("settings/cameras/${it.id}/zone") },
+                )
+            } else {
+                DetailLoading(onBack = { navController.popBackStack() })
+            }
+        }
+        composable(
+            route = "settings/cameras/{cameraId}/zone",
+            arguments = listOf(navArgument("cameraId") { type = NavType.StringType }),
+        ) { entry ->
+            val camera = state.cameras.firstOrNull { it.id == entry.arguments?.getString("cameraId") }
+            if (camera != null) {
+                CameraZoneEditorScreen(
+                    camera = camera,
+                    model = model,
+                    onBack = { navController.popBackStack() },
+                )
+            } else {
+                DetailLoading(onBack = { navController.popBackStack() })
+            }
         }
     }
 }
