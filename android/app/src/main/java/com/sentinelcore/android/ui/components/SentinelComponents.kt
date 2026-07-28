@@ -54,8 +54,11 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 
+// Reserved for surfaces that should still look distinctly "Sentinel" rather than a generic
+// Material container - today just the setup/login card. Everywhere else that used to reach for
+// this (event rows, grid tiles, settings sections) now uses a plain Card instead.
 @Composable
-fun SentinelPanel(
+fun BrandedCard(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {

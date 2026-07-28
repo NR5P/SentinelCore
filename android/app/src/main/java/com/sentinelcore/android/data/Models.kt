@@ -111,11 +111,11 @@ enum class DiagnosticLevel {
 }
 
 enum class ConnectionState(val label: String) {
-    NOT_CONFIGURED("SET SERVER"),
-    CHECKING("CONNECTING"),
-    ONLINE("LINK ESTABLISHED"),
-    AUTHENTICATION_REQUIRED("SIGN IN"),
-    OFFLINE("LINK LOST"),
+    NOT_CONFIGURED("Set server"),
+    CHECKING("Connecting…"),
+    ONLINE("Connected"),
+    AUTHENTICATION_REQUIRED("Sign in required"),
+    OFFLINE("Offline"),
 }
 
 class SentinelApiException(

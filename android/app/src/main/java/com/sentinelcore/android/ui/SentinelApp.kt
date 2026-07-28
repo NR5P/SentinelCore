@@ -1,6 +1,5 @@
 package com.sentinelcore.android.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -14,6 +13,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -24,20 +24,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.sentinelcore.android.data.Camera
-import com.sentinelcore.android.data.ConnectionState
-import com.sentinelcore.android.data.SecurityEvent
-import com.sentinelcore.android.data.TriggerEvent
+import androidx.navigation.NavHostController
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.sentinelcore.android.ui.components.ConnectionBadge
+import com.sentinelcore.android.ui.screens.DetailHeader
 import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.EventFeedScreen
 import com.sentinelcore.android.ui.screens.LiveCamerasScreen
@@ -89,15 +90,33 @@ private fun AppShell(
     state: SentinelUiState,
     model: SentinelViewModel,
 ) {
-    var section by rememberSaveable { mutableStateOf(AppSection.FEED) }
-    var detail by remember { mutableStateOf<DetailScreen?>(null) }
-    BackHandler(detail != null) { detail = null }
-    LaunchedEffect(state.pendingPushEventId, state.events) {
+    val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+    // Detail routes are nested under their section ("feed/event/{eventId}"), so a route match
+    // has to check for that prefix too - otherwise the tab bar would deselect itself the moment
+    // a detail screen opens.
+    val selectedSection = AppSection.entries.firstOrNull { section ->
+        currentRoute == section.route || currentRoute?.startsWith("${section.route}/") == true
+    } ?: AppSection.FEED
+
+    // Navigates straight to the pushed event without waiting for state.events to already contain
+    // it - the detail route itself shows a brief loading state if the list hasn't caught up yet,
+    // which is simpler and more robust than the old approach of dropping the deep link entirely
+    // when the event wasn't loaded yet.
+    LaunchedEffect(state.pendingPushEventId) {
         val eventId = state.pendingPushEventId ?: return@LaunchedEffect
-        val event = state.events.firstOrNull { it.id == eventId } ?: return@LaunchedEffect
-        section = AppSection.FEED
-        detail = DetailScreen.Event(event)
+        navController.navigate("feed/event/$eventId") { launchSingleTop = true }
         model.consumePushEvent()
+    }
+
+    val onSelectSection: (AppSection) -> Unit = { section ->
+        // Every tab switch becomes a real back-stack entry (no popUpTo/saveState) so system back
+        // actually walks backward through tab history instead of exiting immediately - guarded
+        // here so re-tapping the already-selected tab doesn't push a duplicate entry.
+        if (currentRoute != section.route) {
+            navController.navigate(section.route) { launchSingleTop = true }
+        }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -105,21 +124,15 @@ private fun AppShell(
         if (useRail) {
             Row(Modifier.fillMaxSize()) {
                 SentinelNavigationRail(
-                    selected = section,
+                    selected = selectedSection,
                     state = state,
-                    onSelected = {
-                        section = it
-                        detail = null
-                    },
+                    onSelected = onSelectSection,
                 )
-                ScreenContent(
-                    modifier = Modifier.weight(1f),
-                    section = section,
-                    detail = detail,
+                SentinelNavHost(
+                    navController = navController,
                     state = state,
                     model = model,
-                    onDetail = { detail = it },
-                    onBack = { detail = null },
+                    modifier = Modifier.weight(1f),
                 )
             }
         } else {
@@ -129,11 +142,8 @@ private fun AppShell(
                     NavigationBar(containerColor = SentinelPanel) {
                         AppSection.entries.forEach { item ->
                             NavigationBarItem(
-                                selected = section == item,
-                                onClick = {
-                                    section = item
-                                    detail = null
-                                },
+                                selected = selectedSection == item,
+                                onClick = { onSelectSection(item) },
                                 icon = { Icon(item.icon, contentDescription = item.title) },
                                 label = { Text(item.title) },
                             )
@@ -141,16 +151,103 @@ private fun AppShell(
                     }
                 },
             ) { padding ->
-                ScreenContent(
-                    modifier = Modifier.padding(padding),
-                    section = section,
-                    detail = detail,
+                SentinelNavHost(
+                    navController = navController,
                     state = state,
                     model = model,
-                    onDetail = { detail = it },
-                    onBack = { detail = null },
+                    modifier = Modifier.padding(padding),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SentinelNavHost(
+    navController: NavHostController,
+    state: SentinelUiState,
+    model: SentinelViewModel,
+    modifier: Modifier = Modifier,
+) {
+    NavHost(navController = navController, startDestination = AppSection.FEED.route, modifier = modifier) {
+        composable(AppSection.FEED.route) {
+            EventFeedScreen(
+                state = state,
+                model = model,
+                onEvent = { navController.navigate("feed/event/${it.id}") },
+                onRefresh = { model.connect(resetNetworkSession = true) },
+            )
+        }
+        composable(
+            route = "feed/event/{eventId}",
+            arguments = listOf(navArgument("eventId") { type = NavType.StringType }),
+        ) { entry ->
+            val event = state.events.firstOrNull { it.id == entry.arguments?.getString("eventId") }
+            if (event != null) {
+                EventDetailScreen(event = event, model = model, onBack = { navController.popBackStack() })
+            } else {
+                DetailLoading(onBack = { navController.popBackStack() })
+            }
+        }
+
+        composable(AppSection.TIMELINE.route) {
+            RecordingTimelineScreen(state = state, model = model)
+        }
+
+        composable(AppSection.LIVE.route) {
+            LiveCamerasScreen(
+                state = state,
+                model = model,
+                onCamera = { navController.navigate("live/camera/${it.id}") },
+                onRefresh = model::connect,
+            )
+        }
+        composable(
+            route = "live/camera/{cameraId}",
+            arguments = listOf(navArgument("cameraId") { type = NavType.StringType }),
+        ) { entry ->
+            val camera = state.cameras.firstOrNull { it.id == entry.arguments?.getString("cameraId") }
+            if (camera != null) {
+                LivePlayerScreen(camera = camera, model = model, onBack = { navController.popBackStack() })
+            } else {
+                DetailLoading(onBack = { navController.popBackStack() })
+            }
+        }
+
+        composable(AppSection.TRIGGERS.route) {
+            TriggerFeedScreen(
+                state = state,
+                model = model,
+                onTrigger = { navController.navigate("triggers/trigger/${it.id}") },
+                onRefresh = model::connect,
+            )
+        }
+        composable(
+            route = "triggers/trigger/{triggerId}",
+            arguments = listOf(navArgument("triggerId") { type = NavType.StringType }),
+        ) { entry ->
+            val trigger = state.triggers.firstOrNull { it.id == entry.arguments?.getString("triggerId") }
+            if (trigger != null) {
+                TriggerDetailScreen(trigger = trigger, model = model, onBack = { navController.popBackStack() })
+            } else {
+                DetailLoading(onBack = { navController.popBackStack() })
+            }
+        }
+
+        composable(AppSection.SETTINGS.route) {
+            SettingsScreen(state = state, model = model)
+        }
+    }
+}
+
+// Shown briefly for a detail route whose id isn't in `state` yet (e.g. a push notification
+// landed before the event list finished its first load) rather than dropping the navigation.
+@Composable
+private fun DetailLoading(onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        DetailHeader("Loading…", onBack)
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
         }
     }
 }
@@ -168,8 +265,10 @@ private fun SentinelNavigationRail(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(">_", color = SentinelGreen)
-                Text("SENTINEL", color = SentinelGreen)
+                // Kept as a deliberate monospace logotype - see Theme.kt for why the rest of the
+                // app no longer forces monospace globally.
+                Text(">_", color = SentinelGreen, fontFamily = FontFamily.Monospace)
+                Text("SENTINEL", color = SentinelGreen, fontFamily = FontFamily.Monospace)
             }
         },
     ) {
@@ -189,72 +288,14 @@ private fun SentinelNavigationRail(
     }
 }
 
-@Composable
-private fun ScreenContent(
-    modifier: Modifier,
-    section: AppSection,
-    detail: DetailScreen?,
-    state: SentinelUiState,
-    model: SentinelViewModel,
-    onDetail: (DetailScreen) -> Unit,
-    onBack: () -> Unit,
-) {
-    Box(modifier.fillMaxSize()) {
-        when (val selectedDetail = detail) {
-            is DetailScreen.Event -> EventDetailScreen(
-                event = selectedDetail.event,
-                model = model,
-                onBack = onBack,
-            )
-            is DetailScreen.Trigger -> TriggerDetailScreen(
-                trigger = selectedDetail.trigger,
-                model = model,
-                onBack = onBack,
-            )
-            is DetailScreen.Camera -> LivePlayerScreen(
-                camera = selectedDetail.value,
-                model = model,
-                onBack = onBack,
-            )
-            null -> when (section) {
-                AppSection.FEED -> EventFeedScreen(
-                    state = state,
-                    model = model,
-                    onEvent = { onDetail(DetailScreen.Event(it)) },
-                    onRefresh = { model.connect(resetNetworkSession = true) },
-                )
-                AppSection.LIVE -> LiveCamerasScreen(
-                    state = state,
-                    model = model,
-                    onCamera = { onDetail(DetailScreen.Camera(it)) },
-                    onRefresh = model::connect,
-                )
-                AppSection.TIMELINE -> RecordingTimelineScreen(state = state, model = model)
-                AppSection.TRIGGERS -> TriggerFeedScreen(
-                    state = state,
-                    model = model,
-                    onTrigger = { onDetail(DetailScreen.Trigger(it)) },
-                    onRefresh = model::connect,
-                )
-                AppSection.SETTINGS -> SettingsScreen(state = state, model = model)
-            }
-        }
-    }
-}
-
 private enum class AppSection(
     val title: String,
     val icon: ImageVector,
+    val route: String,
 ) {
-    FEED("FEED", Icons.Default.Security),
-    TIMELINE("TIMELINE", Icons.Default.History),
-    LIVE("LIVE", Icons.Default.LiveTv),
-    TRIGGERS("TRIGGERS", Icons.Default.Radar),
-    SETTINGS("SETTINGS", Icons.Default.Settings),
-}
-
-private sealed interface DetailScreen {
-    data class Event(val event: SecurityEvent) : DetailScreen
-    data class Trigger(val trigger: TriggerEvent) : DetailScreen
-    data class Camera(val value: com.sentinelcore.android.data.Camera) : DetailScreen
+    FEED("Feed", Icons.Default.Security, "feed"),
+    TIMELINE("Timeline", Icons.Default.History, "timeline"),
+    LIVE("Live", Icons.Default.LiveTv, "live"),
+    TRIGGERS("Triggers", Icons.Default.Radar, "triggers"),
+    SETTINGS("Settings", Icons.Default.Settings, "settings"),
 }

@@ -29,20 +29,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.ui.SentinelUiState
+import com.sentinelcore.android.ui.components.BrandedCard
 import com.sentinelcore.android.ui.components.ConnectionBadge
-import com.sentinelcore.android.ui.components.SentinelPanel
 import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelBackground
 import com.sentinelcore.android.ui.theme.SentinelGreen
-import com.sentinelcore.android.ui.theme.SentinelText
-import com.sentinelcore.android.ui.theme.SentinelTextDim
 
 @Composable
 fun ServerSetupScreen(
@@ -56,7 +54,7 @@ fun ServerSetupScreen(
         modifier = Modifier.fillMaxSize().background(SentinelBackground).padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        SentinelPanel(Modifier.fillMaxWidth().widthIn(max = 560.dp)) {
+        BrandedCard(Modifier.fillMaxWidth().widthIn(max = 560.dp)) {
             Column(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.Start,
@@ -67,16 +65,14 @@ fun ServerSetupScreen(
                     color = SentinelGreen,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
                 )
-                Text(
-                    "Connect this device to the Sentinel Core server on your local network.",
-                    color = SentinelText,
-                )
+                Text("Connect this device to the Sentinel Core server on your local network.")
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("SERVER ADDRESS") },
+                    label = { Text("Server address") },
                     placeholder = { Text("http://192.168.50.8:3320") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
@@ -89,15 +85,15 @@ fun ServerSetupScreen(
                 )
                 Text(
                     "Your Android device and server must be on the same network.",
-                    color = SentinelTextDim,
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
                     onClick = { onConnect(address) },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = canConnect,
                 ) {
-                    Text("ESTABLISH LINK")
+                    Text("Connect")
                 }
             }
         }
@@ -124,11 +120,11 @@ fun LoginScreen(
         modifier = Modifier.fillMaxSize().background(SentinelBackground).padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        SentinelPanel(Modifier.fillMaxWidth().widthIn(max = 520.dp)) {
+        BrandedCard(Modifier.fillMaxWidth().widthIn(max = 520.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Icon(Icons.Default.Lock, contentDescription = null, tint = SentinelGreen)
                 Text(
-                    "AUTHENTICATION_REQUIRED",
+                    "Sign in required",
                     color = SentinelGreen,
                     style = MaterialTheme.typography.titleLarge,
                 )
@@ -137,7 +133,7 @@ fun LoginScreen(
                     value = username,
                     onValueChange = { username = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("USERNAME") },
+                    label = { Text("Username") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 )
@@ -145,7 +141,7 @@ fun LoginScreen(
                     value = password,
                     onValueChange = { password = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("PASSWORD") },
+                    label = { Text("Password") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(
@@ -165,12 +161,12 @@ fun LoginScreen(
                     if (state.isLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.height(18.dp),
-                            color = Color.Black,
+                            color = MaterialTheme.colorScheme.onPrimary,
                             strokeWidth = 2.dp,
                         )
                         Spacer(Modifier.height(4.dp))
                     }
-                    Text("SIGN IN")
+                    Text("Sign In")
                 }
             }
         }

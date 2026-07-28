@@ -1,11 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.SentinelCore" parent="android:style/Theme.Material.NoActionBar">
-        <item name="android:fontFamily">monospace</item>
+    <style name="Theme.SentinelCore" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#05080A</item>
-        <item name="android:navigationBarColor">#091015</item>
-        <item name="android:statusBarColor">#05080A</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">#FAFAF8</item>
+        <item name="android:navigationBarColor">#F0F1EC</item>
+        <item name="android:statusBarColor">#FAFAF8</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!-- The splash brand screen itself stays dark regardless of system appearance (the
+         monochrome launcher icon is a white glyph, so it needs a dark backdrop) - only
+         postSplashScreenTheme actually differs between the light/dark variants of this file. -->
+    <style name="Theme.SentinelCore.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#05080A</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_monochrome</item>
+        <item name="postSplashScreenTheme">@style/Theme.SentinelCore</item>
     </style>
 </resources>

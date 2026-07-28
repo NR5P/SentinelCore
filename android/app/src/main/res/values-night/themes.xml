@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SentinelCore" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#05080A</item>
+        <item name="android:navigationBarColor">#091015</item>
+        <item name="android:statusBarColor">#05080A</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Same dark splash brand screen as the light variant (values/themes.xml) - only
+         postSplashScreenTheme differs, since that's what the app actually switches to. -->
+    <style name="Theme.SentinelCore.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#05080A</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_monochrome</item>
+        <item name="postSplashScreenTheme">@style/Theme.SentinelCore</item>
+    </style>
+</resources>
