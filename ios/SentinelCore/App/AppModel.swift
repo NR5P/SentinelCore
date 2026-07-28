@@ -354,11 +354,11 @@ enum ConnectionState: Equatable {
 
     var label: String {
         switch self {
-        case .notConfigured: "SET SERVER"
-        case .checking: "CONNECTING"
-        case .online: "LINK ESTABLISHED"
-        case .authenticationRequired: "SIGN IN"
-        case .offline: "LINK LOST"
+        case .notConfigured: "Set server"
+        case .checking: "Connecting…"
+        case .online: "Connected"
+        case .authenticationRequired: "Sign in required"
+        case .offline: "Offline"
         }
     }
 }

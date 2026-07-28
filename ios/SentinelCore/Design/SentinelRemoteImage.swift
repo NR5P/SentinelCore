@@ -13,18 +13,18 @@ struct SentinelRemoteImage: View {
                     .aspectRatio(contentMode: contentMode)
             case .failure:
                 ZStack {
-                    SentinelTheme.panel
+                    Rectangle().fill(.quaternary)
                     Image(systemName: "photo.badge.exclamationmark")
                         .font(.title2)
-                        .foregroundStyle(SentinelTheme.textDim)
+                        .foregroundStyle(.secondary)
                 }
             case .empty:
                 ZStack {
-                    SentinelTheme.panel
+                    Rectangle().fill(.quaternary)
                     ProgressView().controlSize(.small)
                 }
             @unknown default:
-                SentinelTheme.panel
+                Rectangle().fill(.quaternary)
             }
         }
         .accessibilityLabel("Security camera image")

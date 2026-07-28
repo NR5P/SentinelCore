@@ -7,18 +7,18 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("SERVER") {
+            Section("Server") {
                 TextField("Dashboard address", text: $address)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
                 HStack {
-                    Text("STATUS")
+                    Text("Status")
                     Spacer()
                     ConnectionBadge().frame(maxWidth: 190)
                 }
-                Button("SAVE AND RECONNECT") {
+                Button("Save and Reconnect") {
                     Task {
                         model.serverURL = normalized(address)
                         await model.connect(resetNetworkSession: true)
@@ -27,44 +27,44 @@ struct SettingsView: View {
                 .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
-            Section("ACCOUNT") {
+            Section("Account") {
                 if let username = model.authStatus?.username {
-                    LabeledContent("SIGNED IN AS", value: username)
+                    LabeledContent("Signed in as", value: username)
                 }
                 if let role = model.authStatus?.role {
-                    LabeledContent("ROLE", value: role.uppercased())
+                    LabeledContent("Role", value: role.capitalized)
                 }
                 if model.authStatus?.enabled == true {
-                    Button("SIGN OUT", role: .destructive) {
+                    Button("Sign Out", role: .destructive) {
                         Task { await model.signOut() }
                     }
                 } else {
                     Text("Dashboard login is not enabled.")
-                        .foregroundStyle(SentinelTheme.textDim)
+                        .foregroundStyle(.secondary)
                 }
             }
 
-            Section("SYSTEM") {
-                LabeledContent("EVENTS LOADED", value: "\(model.events.count)")
-                LabeledContent("CAMERAS", value: "\(model.cameras.count)")
-                LabeledContent("MOTION TRIGGERS", value: "\(model.triggers.count)")
+            Section("System") {
+                LabeledContent("Events loaded", value: "\(model.events.count)")
+                LabeledContent("Cameras", value: "\(model.cameras.count)")
+                LabeledContent("Motion triggers", value: "\(model.triggers.count)")
                 if let lastError = model.lastError {
                     Text(lastError).foregroundStyle(SentinelTheme.red)
                 }
             }
 
-            Section("PUSH NOTIFICATIONS") {
-                LabeledContent("PERMISSION", value: model.pushAuthorization)
+            Section("Push Notifications") {
+                LabeledContent("Permission", value: model.pushAuthorization.capitalized)
                 if let status = model.pushStatus {
-                    LabeledContent("CORE", value: status.enabled ? "ENABLED" : "DISABLED")
-                    LabeledContent("APPLE PROVIDER", value: status.appleConfigured ? "CONFIGURED" : "NOT CONFIGURED")
-                    LabeledContent("REGISTERED DEVICES", value: "\(status.registeredDevices)")
+                    LabeledContent("Core", value: status.enabled ? "Enabled" : "Disabled")
+                    LabeledContent("Apple provider", value: status.appleConfigured ? "Configured" : "Not configured")
+                    LabeledContent("Registered devices", value: "\(status.registeredDevices)")
                 }
-                Button(model.pushRegistrationEnabled ? "REFRESH REGISTRATION" : "ENABLE NOTIFICATIONS") {
+                Button(model.pushRegistrationEnabled ? "Refresh Registration" : "Enable Notifications") {
                     Task { await model.enablePushNotifications() }
                 }
                 if model.pushRegistrationEnabled {
-                    Button("DISABLE ON THIS DEVICE", role: .destructive) {
+                    Button("Disable on This Device", role: .destructive) {
                         Task { await model.disablePushNotifications() }
                     }
                 }
@@ -72,7 +72,7 @@ struct SettingsView: View {
                 // one) - hidden rather than disabled for a Viewer, since there's nothing they
                 // could do to enable it.
                 if model.isAdmin {
-                    Button("SEND TEST NOTIFICATION") {
+                    Button("Send Test Notification") {
                         Task { await model.sendTestPushNotification() }
                     }
                     .disabled(
@@ -84,16 +84,18 @@ struct SettingsView: View {
                 if let pushMessage = model.pushMessage {
                     Text(pushMessage)
                         .font(.caption)
-                        .foregroundStyle(SentinelTheme.textDim)
+                        .foregroundStyle(.secondary)
                 }
             }
 
-            Section("DIAGNOSTICS") {
-                DisclosureGroup("CONNECTION LOG", isExpanded: $showingDiagnostics) {
+            Section("Diagnostics") {
+                DisclosureGroup("Connection Log", isExpanded: $showingDiagnostics) {
                     if model.diagnostics.isEmpty {
                         Text("No requests recorded yet.")
-                            .foregroundStyle(SentinelTheme.textDim)
+                            .foregroundStyle(.secondary)
                     } else {
+                        // Monospace is kept here on purpose - this is genuinely tabular/log
+                        // content, unlike the rest of the app's now-system-font text.
                         ForEach(model.diagnostics.prefix(30)) { entry in
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack {
@@ -101,32 +103,34 @@ struct SettingsView: View {
                                         .foregroundStyle(entry.level == .error ? SentinelTheme.red : SentinelTheme.cyan)
                                     Spacer()
                                     Text(entry.timestamp.formatted(date: .omitted, time: .standard))
-                                        .foregroundStyle(SentinelTheme.textDim)
+                                        .foregroundStyle(.secondary)
                                 }
                                 .font(.caption2)
                                 Text(entry.message)
                                     .font(.caption)
                                     .textSelection(.enabled)
                             }
+                            .fontDesign(.monospaced)
                         }
                     }
-                    Button("CLEAR LOG") { model.clearDiagnostics() }
+                    Button("Clear Log") { model.clearDiagnostics() }
                 }
                 Text("Request bodies, passwords, cookies, and server response contents are never written here.")
                     .font(.caption)
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
                 Text("This native client manages its connection and push registration locally. Full server configuration, camera editing, motion-zone drawing, and account management remain in the Core dashboard.")
                     .font(.caption)
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .background(SentinelTheme.background)
-        .navigationTitle("SETTINGS")
+        .navigationTitle("Settings")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.large)
+        #endif
         .onAppear { address = model.serverURL }
         .onChange(of: model.serverURL) { _, newValue in address = newValue }
     }

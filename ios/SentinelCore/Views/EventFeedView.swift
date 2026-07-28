@@ -16,38 +16,42 @@ struct EventFeedView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                sectionHeader
-                if filteredEvents.isEmpty {
-                    ContentUnavailableView(
-                        emptyTitle,
-                        systemImage: model.isLoading ? "arrow.triangle.2.circlepath" : "shield.slash",
-                        description: Text(emptyDescription)
-                    )
-                    .foregroundStyle(SentinelTheme.textDim)
-                    .padding(.top, 60)
-                } else {
-                    ForEach(filteredEvents) { event in
-                        NavigationLink(value: event) {
-                            EventCard(event: event)
-                        }
-                        .buttonStyle(.plain)
+        List {
+            sectionHeader
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+
+            if filteredEvents.isEmpty {
+                ContentUnavailableView(
+                    emptyTitle,
+                    systemImage: model.isLoading ? "arrow.triangle.2.circlepath" : "shield.slash",
+                    description: Text(emptyDescription)
+                )
+                .foregroundStyle(.secondary)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            } else {
+                ForEach(filteredEvents) { event in
+                    NavigationLink(value: event) {
+                        EventCard(event: event)
                     }
                 }
-                if let lastError = model.lastError {
-                    Label(lastError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(SentinelTheme.amber)
-                        .sentinelPanel()
-                }
             }
-            .padding()
-            .frame(maxWidth: 1000)
-            .frame(maxWidth: .infinity)
+
+            if let lastError = model.lastError {
+                Label(lastError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(SentinelTheme.amber)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
         }
-        .background(SentinelTheme.background)
-        .navigationTitle("EVENT_FEED")
+        .listStyle(.plain)
+        .navigationTitle("Feed")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.large)
+        #endif
         .navigationDestination(for: SecurityEvent.self) { EventDetailView(event: $0) }
         .searchable(text: $search, prompt: "Search camera activity")
         .refreshable { await model.connect() }
@@ -76,18 +80,19 @@ struct EventFeedView: View {
     private var sectionHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(filteredEvents.count) EVENTS")
-                    .foregroundStyle(SentinelTheme.textDim)
+                Text("\(filteredEvents.count) events")
+                    .foregroundStyle(.secondary)
                     .font(.caption)
                 if let lastUpdated = model.lastUpdated {
-                    Text("UPDATED \(lastUpdated.formatted(date: .omitted, time: .shortened))")
-                        .foregroundStyle(SentinelTheme.textDim.opacity(0.75))
+                    Text("Updated \(lastUpdated.formatted(date: .omitted, time: .shortened))")
+                        .foregroundStyle(.secondary.opacity(0.75))
                         .font(.caption2)
                 }
             }
             Spacer()
             ConnectionBadge().frame(maxWidth: 180)
         }
+        .padding(.horizontal)
         .padding(.bottom, 4)
     }
 
@@ -126,21 +131,19 @@ struct EventCard: View {
                 }
             }
         }
-        .sentinelPanel()
+        .padding(.vertical, 6)
         .overlay(alignment: .leading) {
             if event.notified {
-                Rectangle().fill(SentinelTheme.green).frame(width: 2).padding(.vertical, 5)
+                Rectangle().fill(SentinelTheme.green).frame(width: 3).padding(.vertical, 5)
             }
         }
-        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(event.camera), \(event.summary), \(event.occurredAt.formatted())")
     }
 
     private var eventImage: some View {
         SentinelRemoteImage(url: imageURL)
-            .background(SentinelTheme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
             .clipped()
     }
 
@@ -150,15 +153,14 @@ struct EventCard: View {
                 Text(event.camera).foregroundStyle(SentinelTheme.green).bold()
                 Spacer()
                 Text(event.occurredAt, style: .relative)
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
                     .font(.caption)
             }
             Text(event.summary.isEmpty ? "No description" : event.summary)
-                .foregroundStyle(SentinelTheme.text)
                 .multilineTextAlignment(.leading)
                 .lineLimit(horizontalSizeClass == .compact ? 4 : 3)
             HStack(spacing: 10) {
-                Text(event.eventType.replacingOccurrences(of: "_", with: " ").uppercased())
+                Text(event.eventType.replacingOccurrences(of: "_", with: " ").capitalized)
                     .foregroundStyle(SentinelTheme.cyan)
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -168,7 +170,7 @@ struct EventCard: View {
                         .accessibilityLabel("Notification sent")
                 }
                 Text(event.confidence, format: .percent.precision(.fractionLength(0)))
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
             }
             .font(.caption)
         }

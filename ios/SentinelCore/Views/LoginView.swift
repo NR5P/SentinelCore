@@ -11,7 +11,7 @@ struct LoginView: View {
         VStack(spacing: 24) {
             BrandHeader().frame(maxWidth: 420)
             VStack(alignment: .leading, spacing: 14) {
-                Text("SIGN IN").foregroundStyle(SentinelTheme.cyan).font(.headline)
+                Text("Sign in").foregroundStyle(SentinelTheme.cyan).font(.headline)
                 TextField("Username", text: $username)
                     .textFieldStyle(.roundedBorder)
                     #if os(iOS)
@@ -22,17 +22,16 @@ struct LoginView: View {
                 if let errorMessage {
                     Text(errorMessage).font(.caption).foregroundStyle(SentinelTheme.red)
                 }
-                Button(signingIn ? "CONNECTING…" : "SIGN IN") {
+                Button(signingIn ? "Connecting…" : "Sign In") {
                     Task { await signIn() }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(signingIn || username.isEmpty || password.isEmpty)
             }
-            .sentinelPanel()
+            .sentinelCard()
             .frame(maxWidth: 460)
         }
         .padding()
-        .foregroundStyle(SentinelTheme.text)
         .onSubmit {
             guard !signingIn, !username.isEmpty, !password.isEmpty else { return }
             Task { await signIn() }

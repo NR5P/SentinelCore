@@ -16,10 +16,20 @@ struct TriggerFeedView: View {
             }
             .padding()
         }
-        .background(SentinelTheme.background)
-        .navigationTitle("TRIGGERS")
+        .navigationTitle("Triggers")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.large)
+        #endif
         .navigationDestination(for: TriggerEvent.self) { TriggerDetailView(trigger: $0) }
         .refreshable { await model.connect() }
+        .toolbar {
+            ToolbarItem {
+                Button { Task { await model.connect(resetNetworkSession: true) } } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.isLoading)
+            }
+        }
         .overlay {
             if model.triggers.isEmpty && !model.isLoading {
                 ContentUnavailableView(
@@ -27,7 +37,7 @@ struct TriggerFeedView: View {
                     systemImage: "wave.3.right",
                     description: Text("Motion detected inside configured camera zones will appear here.")
                 )
-                    .foregroundStyle(SentinelTheme.textDim)
+                    .foregroundStyle(.secondary)
             } else if model.triggers.isEmpty {
                 ProgressView("Loading triggers…")
             }
@@ -44,24 +54,23 @@ struct TriggerCard: View {
             SentinelRemoteImage(url: model.client.url(path: "/api/triggers/\(trigger.id.uuidString)/image"))
             .frame(height: 165)
             .frame(maxWidth: .infinity)
-            .background(SentinelTheme.panel)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .clipped()
             HStack {
                 Text(trigger.cameraName).foregroundStyle(SentinelTheme.green).bold()
                 Spacer()
                 if trigger.hasClip {
-                    Label("CLIP", systemImage: "play.fill").foregroundStyle(SentinelTheme.cyan)
+                    Label("Clip", systemImage: "play.fill").foregroundStyle(SentinelTheme.cyan)
                 }
             }
             Text(trigger.occurredAt.formatted(date: .abbreviated, time: .shortened))
-                .foregroundStyle(SentinelTheme.textDim)
+                .foregroundStyle(.secondary)
                 .font(.caption)
-            Text("MOTION AREA \(trigger.triggerAreaFraction, format: .percent.precision(.fractionLength(1)))")
-                .foregroundStyle(SentinelTheme.textDim)
+            Text("Motion area \(trigger.triggerAreaFraction, format: .percent.precision(.fractionLength(1)))")
+                .foregroundStyle(.secondary)
                 .font(.caption2)
         }
-        .sentinelPanel()
+        .sentinelCard()
     }
 }
 
@@ -94,22 +103,24 @@ struct TriggerDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent("CAMERA", value: trigger.cameraName)
-                    LabeledContent("TIME", value: trigger.occurredAt.formatted(date: .complete, time: .standard))
+                    LabeledContent("Camera", value: trigger.cameraName)
+                    LabeledContent("Time", value: trigger.occurredAt.formatted(date: .complete, time: .standard))
                     LabeledContent(
-                        "MOTION AREA",
+                        "Motion area",
                         value: trigger.triggerAreaFraction.formatted(.percent.precision(.fractionLength(1)))
                     )
-                    LabeledContent("MEDIA", value: trigger.hasClip ? "VIDEO CLIP" : "SNAPSHOT")
+                    LabeledContent("Media", value: trigger.hasClip ? "Video clip" : "Snapshot")
                 }
-                .sentinelPanel()
+                .sentinelCard()
             }
             .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
             .padding()
         }
-        .background(SentinelTheme.background)
         .navigationTitle(trigger.cameraName)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .task {
             guard trigger.hasClip,
                   let url = model.client.url(path: "/api/triggers/\(trigger.id.uuidString)/clip")

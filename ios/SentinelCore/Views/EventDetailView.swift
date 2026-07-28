@@ -24,27 +24,29 @@ struct EventDetailView: View {
                         }
                         Spacer()
                         Text(event.confidence, format: .percent.precision(.fractionLength(0)))
-                            .foregroundStyle(SentinelTheme.textDim)
+                            .foregroundStyle(.secondary)
                     }
-                    LabeledContent("CAMERA", value: event.camera)
-                    LabeledContent("TIME", value: event.occurredAt.formatted(date: .complete, time: .standard))
-                    LabeledContent("STATUS", value: event.status.uppercased())
-                    Divider().overlay(SentinelTheme.greenDim)
-                    Text(event.summary).font(.title3).foregroundStyle(SentinelTheme.text)
+                    LabeledContent("Camera", value: event.camera)
+                    LabeledContent("Time", value: event.occurredAt.formatted(date: .complete, time: .standard))
+                    LabeledContent("Status", value: event.status.capitalized)
+                    Divider()
+                    Text(event.summary).font(.title3)
                     if event.notified {
                         Label(event.notificationReason.isEmpty ? "Notification sent" : event.notificationReason,
                               systemImage: "bell.fill")
                             .foregroundStyle(SentinelTheme.green)
                     }
                 }
-                .sentinelPanel()
+                .sentinelCard()
             }
             .padding()
             .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
         }
-        .background(SentinelTheme.background)
         .navigationTitle(event.camera)
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 
     private var imageURL: URL? {
