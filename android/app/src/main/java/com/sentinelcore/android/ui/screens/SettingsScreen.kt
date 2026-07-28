@@ -56,6 +56,7 @@ import com.sentinelcore.android.ui.theme.SentinelRed
 fun SettingsScreen(
     state: SentinelUiState,
     model: SentinelViewModel,
+    onManageCameras: () -> Unit,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
@@ -123,6 +124,22 @@ fun SettingsScreen(
                             "Dashboard login is not enabled.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+
+            // Camera CRUD, discovery, and trigger-zone configuration are all AdminOnly on the
+            // server - hidden entirely for a Viewer rather than shown-disabled, same convention
+            // as the Send Test Notification button below.
+            if (state.isAdmin) {
+                item {
+                    SettingsSection("Cameras") {
+                        TextButton(
+                            onClick = onManageCameras,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Manage Cameras", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -235,8 +252,7 @@ fun SettingsScreen(
             item {
                 Text(
                     "This native client manages its connection and push registration locally. " +
-                        "Full server configuration, camera editing, motion-zone drawing, and " +
-                        "account management remain in the Core dashboard.",
+                        "Full server configuration and account management remain in the Core dashboard.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
                         .fillMaxWidth()

@@ -31,6 +31,71 @@ data class Camera(
     val includeAudio: Boolean,
 )
 
+data class CameraInput(
+    val name: String,
+    val streamUrl: String,
+    val username: String?,
+    val password: String?,
+    val includeAudio: Boolean,
+)
+
+data class Point2D(val x: Double, val y: Double)
+
+// Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
+data class TriggerConfig(
+    val enabled: Boolean,
+    val zonePolygon: List<Point2D>,
+    val minTriggerArea: Double,
+    val cooldownSeconds: Int,
+    val maxTriggersPerMinute: Int,
+    val shadowSensitivity: Int,
+    val recordClips: Boolean,
+    val clipPreSeconds: Int,
+    val clipPostSeconds: Int,
+    val sendToAlerts: Boolean,
+    val alertProfile: String,
+)
+
+data class PromptProfileName(val key: String, val displayName: String)
+
+data class CameraProbeRequest(
+    val address: String,
+    val username: String?,
+    val password: String?,
+)
+
+data class CameraProbeResult(
+    val status: String, // "Found" | "NeedsCredentials" | "NotFound"
+    val streamUrl: String?,
+    val suggestedName: String?,
+    val manufacturer: String?,
+    val model: String?,
+    val resolution: String?,
+    val message: String?,
+)
+
+data class ScanInterface(
+    val name: String,
+    val description: String,
+    val address: String,
+    val prefixLength: Int,
+    val looksVirtual: Boolean,
+)
+
+data class ScanResultCamera(
+    val ipAddress: String,
+    val manufacturer: String?,
+    val model: String?,
+    val suggestedName: String,
+    val needsCredentials: Boolean,
+    val alreadySaved: Boolean,
+)
+
+data class ScanJobSnapshot(
+    val status: String, // "Running" | "Completed"
+    val results: List<ScanResultCamera>,
+)
+
 data class AuthStatus(
     val enabled: Boolean,
     val configured: Boolean,

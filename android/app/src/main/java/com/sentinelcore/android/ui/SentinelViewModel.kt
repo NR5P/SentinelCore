@@ -12,12 +12,19 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.sentinelcore.android.data.AuthStatus
 import com.sentinelcore.android.data.Camera
+import com.sentinelcore.android.data.CameraInput
+import com.sentinelcore.android.data.CameraProbeRequest
+import com.sentinelcore.android.data.CameraProbeResult
 import com.sentinelcore.android.data.ConnectionState
 import com.sentinelcore.android.data.DiagnosticEntry
 import com.sentinelcore.android.data.DiagnosticLevel
+import com.sentinelcore.android.data.PromptProfileName
+import com.sentinelcore.android.data.ScanInterface
+import com.sentinelcore.android.data.ScanJobSnapshot
 import com.sentinelcore.android.data.SecurityEvent
 import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.SentinelRepository
+import com.sentinelcore.android.data.TriggerConfig
 import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.data.PushStatus
 import com.sentinelcore.android.data.RecordingTimelineDay
@@ -260,6 +267,67 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     fun absoluteUrl(path: String): String? = repository.absoluteUrl(path)
 
     fun mediaHeaders(): Map<String, String> = repository.mediaHeaders()
+
+    suspend fun refreshCameras() {
+        val value = repository.cameras()
+        _state.update { it.copy(cameras = value) }
+    }
+
+    suspend fun createCamera(input: CameraInput): Camera {
+        val created = repository.createCamera(input)
+        _state.update { it.copy(cameras = it.cameras + created) }
+        return created
+    }
+
+    suspend fun updateCamera(id: String, input: CameraInput) {
+        repository.updateCamera(id, input)
+        _state.update { current ->
+            current.copy(
+                cameras = current.cameras.map {
+                    if (it.id == id) {
+                        it.copy(name = input.name, streamUrl = input.streamUrl, includeAudio = input.includeAudio)
+                    } else {
+                        it
+                    }
+                },
+            )
+        }
+    }
+
+    // Optimistic remove with rollback on failure, rather than a full refetch.
+    suspend fun deleteCamera(camera: Camera) {
+        val previous = _state.value.cameras
+        _state.update { it.copy(cameras = it.cameras.filterNot { existing -> existing.id == camera.id }) }
+        try {
+            repository.deleteCamera(camera.id)
+        } catch (error: Exception) {
+            _state.update { it.copy(cameras = previous) }
+            throw error
+        }
+    }
+
+    suspend fun probeCamera(request: CameraProbeRequest): CameraProbeResult =
+        repository.probeCamera(request)
+
+    suspend fun fetchScanInterfaces(): List<ScanInterface> = repository.fetchScanInterfaces()
+
+    suspend fun startScan(interfaceAddresses: List<String>): String =
+        repository.startScan(interfaceAddresses)
+
+    suspend fun fetchScanStatus(scanId: String): ScanJobSnapshot = repository.fetchScanStatus(scanId)
+
+    suspend fun fetchTriggerConfig(cameraId: String): TriggerConfig =
+        repository.fetchTriggerConfig(cameraId)
+
+    suspend fun saveTriggerConfig(cameraId: String, config: TriggerConfig): TriggerConfig =
+        repository.saveTriggerConfig(cameraId, config)
+
+    // Live ffmpeg snapshot, never cached - fetched fresh every time the zone editor opens.
+    suspend fun fetchReferenceFrame(cameraId: String): ByteArray =
+        repository.fetchReferenceFrame(cameraId)
+
+    suspend fun fetchPromptProfileNames(): List<PromptProfileName> =
+        repository.fetchPromptProfileNames()
 
     fun loadTimeline(camera: String, date: LocalDate) {
         if (camera.isBlank()) return

@@ -78,14 +78,122 @@ class SentinelRepository(
     suspend fun cameras(): List<Camera> = withContext(Dispatchers.IO) {
         val array = JSONArray(request("/api/cameras"))
         buildList {
+            for (index in 0 until array.length()) add(parseCamera(array.getJSONObject(index)))
+        }
+    }
+
+    suspend fun createCamera(input: CameraInput): Camera = withContext(Dispatchers.IO) {
+        parseCamera(JSONObject(request("/api/cameras", method = "POST", body = input.toJson().toString())))
+    }
+
+    suspend fun updateCamera(id: String, input: CameraInput) = withContext(Dispatchers.IO) {
+        request(
+            "/api/cameras/${queryValue(id)}",
+            method = "PUT",
+            body = input.toJson().toString(),
+        )
+    }
+
+    suspend fun deleteCamera(id: String) = withContext(Dispatchers.IO) {
+        request("/api/cameras/${queryValue(id)}", method = "DELETE")
+    }
+
+    suspend fun probeCamera(probeRequest: CameraProbeRequest): CameraProbeResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("address", probeRequest.address)
+                .put("username", probeRequest.username)
+                .put("password", probeRequest.password)
+                .toString()
+            val json = JSONObject(request("/api/cameras/discovery/probe", method = "POST", body = body))
+            CameraProbeResult(
+                status = json.optString("status", "NotFound"),
+                streamUrl = json.nullableString("streamUrl"),
+                suggestedName = json.nullableString("suggestedName"),
+                manufacturer = json.nullableString("manufacturer"),
+                model = json.nullableString("model"),
+                resolution = json.nullableString("resolution"),
+                message = json.nullableString("message"),
+            )
+        }
+
+    suspend fun fetchScanInterfaces(): List<ScanInterface> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/cameras/discovery/interfaces"))
+        buildList {
             for (index in 0 until array.length()) {
                 val json = array.getJSONObject(index)
                 add(
-                    Camera(
-                        id = json.getString("id"),
-                        name = json.optString("name", "Camera"),
-                        streamUrl = json.nullableString("streamUrl"),
-                        includeAudio = json.optBoolean("includeAudio"),
+                    ScanInterface(
+                        name = json.optString("name"),
+                        description = json.optString("description"),
+                        address = json.getString("address"),
+                        prefixLength = json.optInt("prefixLength"),
+                        looksVirtual = json.optBoolean("looksVirtual"),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun startScan(interfaceAddresses: List<String>): String = withContext(Dispatchers.IO) {
+        val addresses = JSONArray()
+        interfaceAddresses.forEach(addresses::put)
+        val body = JSONObject().put("interfaceAddresses", addresses).toString()
+        JSONObject(request("/api/cameras/discovery/scan", method = "POST", body = body))
+            .getString("scanId")
+    }
+
+    suspend fun fetchScanStatus(scanId: String): ScanJobSnapshot = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/cameras/discovery/scan/${queryValue(scanId)}"))
+        val resultsArray = json.optJSONArray("results") ?: JSONArray()
+        val results = buildList {
+            for (index in 0 until resultsArray.length()) {
+                val item = resultsArray.getJSONObject(index)
+                add(
+                    ScanResultCamera(
+                        ipAddress = item.getString("ipAddress"),
+                        manufacturer = item.nullableString("manufacturer"),
+                        model = item.nullableString("model"),
+                        suggestedName = item.optString("suggestedName", item.getString("ipAddress")),
+                        needsCredentials = item.optBoolean("needsCredentials"),
+                        alreadySaved = item.optBoolean("alreadySaved"),
+                    ),
+                )
+            }
+        }
+        ScanJobSnapshot(status = json.optString("status", "Running"), results = results)
+    }
+
+    suspend fun fetchTriggerConfig(cameraId: String): TriggerConfig = withContext(Dispatchers.IO) {
+        parseTriggerConfig(JSONObject(request("/api/cameras/${queryValue(cameraId)}/trigger-config")))
+    }
+
+    suspend fun saveTriggerConfig(cameraId: String, config: TriggerConfig): TriggerConfig =
+        withContext(Dispatchers.IO) {
+            val json = JSONObject(
+                request(
+                    "/api/cameras/${queryValue(cameraId)}/trigger-config",
+                    method = "PUT",
+                    body = config.toJson().toString(),
+                ),
+            )
+            parseTriggerConfig(json)
+        }
+
+    // Live ffmpeg snapshot, never cached - fetched fresh every time the zone editor opens.
+    suspend fun fetchReferenceFrame(cameraId: String): ByteArray = withContext(Dispatchers.IO) {
+        requestBytes("/api/cameras/${queryValue(cameraId)}/reference-frame")
+    }
+
+    suspend fun fetchPromptProfileNames(): List<PromptProfileName> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/prompt-profile-names"))
+        buildList {
+            for (index in 0 until array.length()) {
+                val json = array.getJSONObject(index)
+                add(
+                    PromptProfileName(
+                        key = json.getString("key"),
+                        displayName = json.optString("displayName", json.getString("key")),
                     ),
                 )
             }
@@ -263,6 +371,26 @@ class SentinelRepository(
     }
 
     private fun request(path: String, method: String = "GET", body: String? = null): String {
+        val connection = openValidated(path, method, body)
+        return try {
+            connection.inputStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    // Raw-bytes counterpart to request() - shares the same connect/validate/error-mapping logic,
+    // just skips the text decode step. Used for the trigger-zone editor's reference-frame JPEG.
+    private fun requestBytes(path: String): ByteArray {
+        val connection = openValidated(path)
+        return try {
+            connection.inputStream.use { it.readBytes() }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun openValidated(path: String, method: String = "GET", body: String? = null): HttpURLConnection {
         val url = URL(absoluteUrl(path) ?: throw IllegalArgumentException(
             "Enter a valid server address, such as http://192.168.1.50:3320.",
         ))
@@ -282,29 +410,28 @@ class SentinelRepository(
             val status = connection.responseCode
             storeCookies(connection)
             logger("$method $status in ${elapsedMilliseconds(started)} ms", DiagnosticLevel.INFO)
-            val response = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                ?.bufferedReader(StandardCharsets.UTF_8)
-                ?.use { it.readText() }
-                .orEmpty()
-
             if (status !in 200..299) {
-                val message = parseServerError(response)
+                val errorBody = connection.errorStream
+                    ?.bufferedReader(StandardCharsets.UTF_8)
+                    ?.use { it.readText() }
+                    .orEmpty()
+                val message = parseServerError(errorBody)
                     ?: if (status == 401) "This server requires you to sign in."
                     else "Server request failed (HTTP $status)."
+                connection.disconnect()
                 throw SentinelApiException(status, message)
             }
-            return response
+            return connection
         } catch (error: SentinelApiException) {
             throw error
         } catch (error: Exception) {
+            connection.disconnect()
             logger(
                 "$method failed after ${elapsedMilliseconds(started)} ms: " +
                     (error.message ?: error.javaClass.simpleName),
                 DiagnosticLevel.ERROR,
             )
             throw IOException(error.message ?: "Could not connect to Sentinel Core.", error)
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -364,6 +491,64 @@ class SentinelRepository(
             confidence = json.optDouble("confidence", 0.0),
             hasImage = json.optBoolean("hasImage"),
         )
+
+    private fun parseCamera(json: JSONObject): Camera =
+        Camera(
+            id = json.getString("id"),
+            name = json.optString("name", "Camera"),
+            streamUrl = json.nullableString("streamUrl"),
+            includeAudio = json.optBoolean("includeAudio"),
+        )
+
+    private fun parseTriggerConfig(json: JSONObject): TriggerConfig {
+        val polygonArray = json.optJSONArray("zonePolygon") ?: JSONArray()
+        val polygon = buildList {
+            for (index in 0 until polygonArray.length()) {
+                val point = polygonArray.getJSONObject(index)
+                add(Point2D(x = point.getDouble("x"), y = point.getDouble("y")))
+            }
+        }
+        return TriggerConfig(
+            enabled = json.optBoolean("enabled"),
+            zonePolygon = polygon,
+            minTriggerArea = json.optDouble("minTriggerArea", 0.02),
+            cooldownSeconds = json.optInt("cooldownSeconds", 5),
+            maxTriggersPerMinute = json.optInt("maxTriggersPerMinute", 6),
+            shadowSensitivity = json.optInt("shadowSensitivity", 50),
+            recordClips = json.optBoolean("recordClips"),
+            clipPreSeconds = json.optInt("clipPreSeconds", 5),
+            clipPostSeconds = json.optInt("clipPostSeconds", 10),
+            sendToAlerts = json.optBoolean("sendToAlerts"),
+            alertProfile = json.optString("alertProfile", "default"),
+        )
+    }
+
+    private fun CameraInput.toJson(): JSONObject =
+        JSONObject()
+            .put("name", name)
+            .put("streamUrl", streamUrl)
+            .put("username", username)
+            .put("password", password)
+            .put("includeAudio", includeAudio)
+
+    private fun TriggerConfig.toJson(): JSONObject {
+        val polygon = JSONArray()
+        zonePolygon.forEach { point ->
+            polygon.put(JSONObject().put("x", point.x).put("y", point.y))
+        }
+        return JSONObject()
+            .put("enabled", enabled)
+            .put("zonePolygon", polygon)
+            .put("minTriggerArea", minTriggerArea)
+            .put("cooldownSeconds", cooldownSeconds)
+            .put("maxTriggersPerMinute", maxTriggersPerMinute)
+            .put("shadowSensitivity", shadowSensitivity)
+            .put("recordClips", recordClips)
+            .put("clipPreSeconds", clipPreSeconds)
+            .put("clipPostSeconds", clipPostSeconds)
+            .put("sendToAlerts", sendToAlerts)
+            .put("alertProfile", alertProfile)
+    }
 
     private fun elapsedMilliseconds(started: Long): Long =
         (System.nanoTime() - started) / 1_000_000
