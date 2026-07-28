@@ -24,6 +24,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -32,6 +34,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,20 +52,15 @@ import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.components.ConnectionBadge
 import com.sentinelcore.android.ui.components.EmptyState
-import com.sentinelcore.android.ui.components.SentinelPanel
 import com.sentinelcore.android.ui.components.SentinelRemoteImage
 import com.sentinelcore.android.ui.components.StatusChip
 import com.sentinelcore.android.ui.components.fullDateTime
 import com.sentinelcore.android.ui.components.relativeTime
 import com.sentinelcore.android.ui.components.shortTime
 import com.sentinelcore.android.ui.theme.SentinelAmber
-import com.sentinelcore.android.ui.theme.SentinelBackground
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelGreenDim
-import com.sentinelcore.android.ui.theme.SentinelRed
-import com.sentinelcore.android.ui.theme.SentinelText
-import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlin.math.roundToInt
 
 @Composable
@@ -83,9 +80,9 @@ fun EventFeedScreen(
                 event.eventType.contains(search, ignoreCase = true))
     }
 
-    Column(Modifier.fillMaxSize().background(SentinelBackground)) {
+    Column(Modifier.fillMaxSize()) {
         ScreenHeader(
-            title = "EVENT_FEED",
+            title = "Feed",
             state = state,
             onRefresh = onRefresh,
         )
@@ -98,7 +95,7 @@ fun EventFeedScreen(
         ) {
             item {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     OutlinedTextField(
@@ -117,15 +114,15 @@ fun EventFeedScreen(
                     ) {
                         Column {
                             Text(
-                                "${filtered.size} EVENTS",
-                                color = SentinelTextDim,
+                                "${filtered.size} events",
                                 style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             state.lastUpdated?.let {
                                 Text(
-                                    "UPDATED ${it.shortTime()}",
-                                    color = SentinelTextDim.copy(alpha = 0.75f),
+                                    "Updated ${it.shortTime()}",
                                     style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                                 )
                             }
                         }
@@ -133,7 +130,7 @@ fun EventFeedScreen(
                         FilterChip(
                             selected = notifiedOnly,
                             onClick = { notifiedOnly = !notifiedOnly },
-                            label = { Text("NOTIFIED") },
+                            label = { Text("Notified") },
                             leadingIcon = {
                                 Icon(
                                     Icons.Default.Notifications,
@@ -180,10 +177,15 @@ fun EventFeedScreen(
 
             state.lastError?.let { error ->
                 item {
-                    SentinelPanel(
-                        Modifier.padding(horizontal = 16.dp).fillMaxWidth().widthIn(max = 1000.dp),
+                    Card(
+                        modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().widthIn(max = 1000.dp),
                     ) {
-                        Text(error, color = SentinelAmber, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            error,
+                            color = SentinelAmber,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(14.dp),
+                        )
                     }
                 }
             }
@@ -198,8 +200,8 @@ private fun EventCard(
     model: SentinelViewModel,
     modifier: Modifier = Modifier,
 ) {
-    SentinelPanel(modifier) {
-        BoxWithConstraints {
+    Card(modifier, colors = CardDefaults.cardColors()) {
+        BoxWithConstraints(Modifier.padding(14.dp)) {
             val compact = maxWidth < 620.dp
             if (compact) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -207,7 +209,7 @@ private fun EventCard(
                         model = model,
                         path = event.imagePath(),
                         modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(5.dp)),
+                            .clip(RoundedCornerShape(6.dp)),
                         description = "${event.camera} event",
                     )
                     EventSummary(event)
@@ -218,7 +220,7 @@ private fun EventCard(
                         model = model,
                         path = event.imagePath(),
                         modifier = Modifier.width(156.dp).height(96.dp)
-                            .clip(RoundedCornerShape(5.dp)),
+                            .clip(RoundedCornerShape(6.dp)),
                         description = "${event.camera} event",
                     )
                     EventSummary(event, Modifier.weight(1f))
@@ -227,7 +229,7 @@ private fun EventCard(
             if (event.notified) {
                 Box(
                     Modifier.align(Alignment.CenterStart)
-                        .width(2.dp)
+                        .width(3.dp)
                         .fillMaxSize()
                         .background(SentinelGreen),
                 )
@@ -253,19 +255,18 @@ private fun EventSummary(
             )
             Text(
                 event.occurredAt.relativeTime(),
-                color = SentinelTextDim,
                 style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Text(
             event.summary.ifBlank { "No description" },
-            color = SentinelText,
             maxLines = 4,
             overflow = TextOverflow.Ellipsis,
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                event.eventType.replace('_', ' ').uppercase(),
+                event.eventType.replace('_', ' ').replaceFirstChar(Char::uppercase),
                 color = SentinelCyan,
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
@@ -283,8 +284,8 @@ private fun EventSummary(
             }
             Text(
                 "${(event.confidence * 100).roundToInt()}%",
-                color = SentinelTextDim,
                 style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -296,7 +297,7 @@ fun EventDetailScreen(
     model: SentinelViewModel,
     onBack: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().background(SentinelBackground)) {
+    Column(Modifier.fillMaxSize()) {
         DetailHeader(event.camera, onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -316,8 +317,11 @@ fun EventDetailScreen(
                             .clip(RoundedCornerShape(8.dp)),
                         description = "${event.camera} event image",
                     )
-                    SentinelPanel(Modifier.fillMaxWidth()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 StatusChip(
                                     event.eventType.replace('_', ' ').uppercase(),
@@ -328,16 +332,15 @@ fun EventDetailScreen(
                                 Spacer(Modifier.weight(1f))
                                 Text(
                                     "${(event.confidence * 100).roundToInt()}%",
-                                    color = SentinelTextDim,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            MetadataRow("CAMERA", event.camera)
-                            MetadataRow("TIME", event.occurredAt.fullDateTime())
-                            MetadataRow("STATUS", event.status.uppercase())
+                            MetadataRow("Camera", event.camera)
+                            MetadataRow("Time", event.occurredAt.fullDateTime())
+                            MetadataRow("Status", event.status.replaceFirstChar(Char::uppercase))
                             HorizontalDivider(color = SentinelGreenDim)
                             Text(
                                 event.summary.ifBlank { "No description" },
-                                color = SentinelText,
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             if (event.notified) {
@@ -355,58 +358,41 @@ fun EventDetailScreen(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenHeader(
     title: String,
     state: SentinelUiState,
     onRefresh: (() -> Unit)? = null,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                title,
-                color = SentinelText,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            ConnectionBadge(state.connectionState)
-        }
-        if (onRefresh != null) {
-            IconButton(onClick = onRefresh, enabled = !state.isLoading) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = SentinelGreen)
+    TopAppBar(
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ConnectionBadge(state.connectionState)
             }
-        }
-    }
+        },
+        actions = {
+            if (onRefresh != null) {
+                IconButton(onClick = onRefresh, enabled = !state.isLoading) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                }
+            }
+        },
+    )
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun DetailHeader(title: String, onBack: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = onBack) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = SentinelGreen,
-            )
-        }
-        Text(
-            title,
-            color = SentinelText,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+    TopAppBar(
+        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+        },
+    )
 }
 
 @Composable
@@ -414,13 +400,12 @@ fun MetadataRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(
             label,
-            color = SentinelTextDim,
             style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.weight(1f))
         Text(
             value,
-            color = SentinelText,
             style = MaterialTheme.typography.bodySmall,
             maxLines = 3,
             overflow = TextOverflow.Ellipsis,

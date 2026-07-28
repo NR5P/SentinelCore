@@ -3,6 +3,8 @@ package com.sentinelcore.android.ui.screens
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -69,16 +72,16 @@ import com.sentinelcore.android.data.RecordingTimelineDay
 import com.sentinelcore.android.data.TimelineSecurityEvent
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
-import com.sentinelcore.android.ui.components.SentinelPanel
 import com.sentinelcore.android.ui.components.SentinelRemoteImage
 import com.sentinelcore.android.ui.components.shortTime
 import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelBackground
+import com.sentinelcore.android.ui.theme.SentinelCategoryAnimal
+import com.sentinelcore.android.ui.theme.SentinelCategoryPackage
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelGreenDim
 import com.sentinelcore.android.ui.theme.SentinelRed
-import com.sentinelcore.android.ui.theme.SentinelText
 import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlinx.coroutines.delay
 import java.time.Duration
@@ -202,8 +205,8 @@ fun RecordingTimelineScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().background(SentinelBackground)) {
-        ScreenHeader("DAY_TIMELINE", state)
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader("Timeline", state)
         if (state.timelineLoading) {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = SentinelGreen)
         }
@@ -212,14 +215,21 @@ fun RecordingTimelineScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                SentinelPanel(
-                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().widthIn(max = 1000.dp),
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().widthIn(max = 1000.dp),
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box {
                                 OutlinedButton(onClick = { cameraMenu = true }) {
-                                    Text(camera.ifBlank { "CHOOSE CAMERA" })
+                                    Text(
+                                        camera.ifBlank { "Choose camera" },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 }
                                 DropdownMenu(cameraMenu, onDismissRequest = { cameraMenu = false }) {
                                     cameras.forEach {
@@ -236,7 +246,7 @@ fun RecordingTimelineScreen(
                             }) {
                                 Icon(Icons.Default.ChevronLeft, "Previous day")
                             }
-                            Text(date, color = SentinelText)
+                            Text(date)
                             IconButton(
                                 onClick = { date = LocalDate.parse(date).plusDays(1).toString() },
                                 enabled = LocalDate.parse(date).isBefore(LocalDate.now()),
@@ -248,18 +258,18 @@ fun RecordingTimelineScreen(
                             Row {
                                 Text(
                                     if (it.recording.available) {
-                                        "${it.recording.segments.size} TRIGGER CLIPS"
+                                        "${it.recording.segments.size} trigger clips"
                                     } else {
-                                        "TRIGGER CLIPS UNAVAILABLE"
+                                        "Trigger clips unavailable"
                                     },
                                     color = if (it.recording.available) SentinelGreen else SentinelAmber,
                                     style = MaterialTheme.typography.labelSmall,
                                 )
                                 Spacer(Modifier.weight(1f))
                                 Text(
-                                    "${filtered.size} OF ${it.events.size} AI EVENTS",
-                                    color = SentinelTextDim,
+                                    "${filtered.size} of ${it.events.size} AI events",
                                     style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -268,10 +278,13 @@ fun RecordingTimelineScreen(
             }
 
             item {
-                SentinelPanel(
-                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().widthIn(max = 1000.dp),
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().widthIn(max = 1000.dp),
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         if (timeline != null && timeline.recording.available) {
                             if (currentSegment != null) {
                                 AndroidView(
@@ -293,7 +306,7 @@ fun RecordingTimelineScreen(
                                 ) {
                                     Text(
                                         "No saved trigger clip at this time.",
-                                        color = SentinelTextDim,
+                                        color = Color.White,
                                     )
                                 }
                             }
@@ -338,7 +351,7 @@ fun RecordingTimelineScreen(
                                         } else {
                                             "No saved trigger clip is selected."
                                         },
-                                    color = SentinelTextDim,
+                                    color = Color.White,
                                     modifier = Modifier.padding(24.dp),
                                 )
                             }
@@ -358,13 +371,18 @@ fun RecordingTimelineScreen(
                         FilterChip(
                             selected = categories.size < 6,
                             onClick = { objectMenu = true },
-                            label = { Text("OBJECTS ${categories.size}") },
+                            label = { Text("Objects (${categories.size})") },
                             leadingIcon = { Icon(Icons.Default.FilterList, null) },
                         )
                         DropdownMenu(objectMenu, onDismissRequest = { objectMenu = false }) {
                             listOf("person", "vehicle", "animal", "package", "plate", "other").forEach {
                                 DropdownMenuItem(
-                                    text = { Text((if (it in categories) "✓ " else "") + it.uppercase()) },
+                                    text = {
+                                        Text(
+                                            (if (it in categories) "✓ " else "") +
+                                                it.replaceFirstChar(Char::uppercase),
+                                        )
+                                    },
                                     onClick = {
                                         categories = if (it in categories) categories - it else categories + it
                                     },
@@ -376,12 +394,17 @@ fun RecordingTimelineScreen(
                         FilterChip(
                             selected = severities.size < 4,
                             onClick = { severityMenu = true },
-                            label = { Text("SEVERITY ${severities.size}") },
+                            label = { Text("Severity (${severities.size})") },
                         )
                         DropdownMenu(severityMenu, onDismissRequest = { severityMenu = false }) {
                             listOf("critical", "high", "medium", "low").forEach {
                                 DropdownMenuItem(
-                                    text = { Text((if (it in severities) "✓ " else "") + it.uppercase()) },
+                                    text = {
+                                        Text(
+                                            (if (it in severities) "✓ " else "") +
+                                                it.replaceFirstChar(Char::uppercase),
+                                        )
+                                    },
                                     onClick = {
                                         severities = if (it in severities) severities - it else severities + it
                                     },
@@ -398,7 +421,7 @@ fun RecordingTimelineScreen(
                                 else -> "all"
                             }
                         },
-                        label = { Text(reviewFilter.uppercase()) },
+                        label = { Text(reviewFilter.replaceFirstChar(Char::uppercase)) },
                     )
                 }
             }
@@ -430,26 +453,45 @@ private fun DayTimelineRail(
     events: List<TimelineSecurityEvent>,
     cursor: Instant,
 ) {
+    // Canvas's draw scope isn't a composable context, so every theme-aware color it needs has to
+    // be resolved to a plain value here first rather than read live inside drawXxx calls below.
+    val trackBackground = SentinelBackground
+    val segmentColor = SentinelGreenDim
+    val criticalColor = SentinelRed
+    val highColor = SentinelAmber
+    val mediumColor = SentinelCyan
+    val lowColor = SentinelTextDim
+    // MaterialTheme.colorScheme.onSurface rather than a fixed white/black - the old hardcoded
+    // Color.White cursor was invisible against a light background once dark mode stopped being
+    // the app's only theme.
+    val cursorColor = MaterialTheme.colorScheme.onSurface
+
     Canvas(
         Modifier.fillMaxWidth().height(42.dp).clip(RoundedCornerShape(6.dp))
-            .background(SentinelBackground),
+            .background(trackBackground),
     ) {
         val total = Duration.between(day.start, day.end).toMillis().toFloat().coerceAtLeast(1f)
         day.recording.segments.forEach {
             val x1 = Duration.between(day.start, it.start).toMillis() / total * size.width
             val x2 = Duration.between(day.start, it.end).toMillis() / total * size.width
             drawRect(
-                SentinelGreenDim,
+                segmentColor,
                 topLeft = Offset(x1, size.height * 0.3f),
                 size = androidx.compose.ui.geometry.Size((x2 - x1).coerceAtLeast(2f), size.height * 0.4f),
             )
         }
         events.forEach {
+            val color = when (it.severity) {
+                "critical" -> criticalColor
+                "high" -> highColor
+                "medium" -> mediumColor
+                else -> lowColor
+            }
             val x = Duration.between(day.start, it.occurredAt).toMillis() / total * size.width
-            drawLine(severityColor(it.severity), Offset(x, 4f), Offset(x, size.height - 4f), 3f)
+            drawLine(color, Offset(x, 4f), Offset(x, size.height - 4f), 3f)
         }
         val cursorX = Duration.between(day.start, cursor).toMillis() / total * size.width
-        drawLine(Color.White, Offset(cursorX, 0f), Offset(cursorX, size.height), 3f)
+        drawLine(cursorColor, Offset(cursorX, 0f), Offset(cursorX, size.height), 3f)
     }
 }
 
@@ -461,24 +503,39 @@ private fun TimelineEventRow(
     onReviewed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    SentinelPanel(modifier.clickable(onClick = onSelect)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Card(modifier.clickable(onClick = onSelect)) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             SentinelRemoteImage(
                 model = model,
                 path = if (event.hasImage) "/api/events/${event.id}/image" else null,
-                modifier = Modifier.width(112.dp).height(68.dp).clip(RoundedCornerShape(5.dp)),
+                modifier = Modifier.width(112.dp).height(68.dp).clip(RoundedCornerShape(6.dp)),
                 description = "${event.category} event",
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(event.occurredAt.shortTime(), color = SentinelCyan)
-                    Text(event.category.uppercase(), color = categoryColor(event.category))
-                    Text(event.severity.uppercase(), color = severityColor(event.severity))
-                    if (!event.hasClip) Text("NO CLIP", color = SentinelTextDim)
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(event.occurredAt.shortTime(), color = SentinelCyan, maxLines = 1)
+                    Text(
+                        event.category.uppercase(),
+                        color = categoryColor(event.category),
+                        maxLines = 1,
+                    )
+                    Text(
+                        event.severity.uppercase(),
+                        color = severityColor(event.severity),
+                        maxLines = 1,
+                    )
+                    if (!event.hasClip) Text("NO CLIP", color = SentinelTextDim, maxLines = 1)
                 }
                 Text(
                     event.summary.ifBlank { event.eventType },
-                    color = SentinelText,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -521,15 +578,17 @@ private fun previousEvent(day: RecordingTimelineDay?, events: List<TimelineSecur
         .filter { it.isBefore(cursor.minusMillis(500)) }
         .maxOrNull()
 
+@Composable
 private fun categoryColor(category: String) = when (category) {
     "person" -> SentinelCyan
     "vehicle" -> SentinelGreen
     "plate" -> SentinelAmber
-    "package" -> Color(0xFFB388FF)
-    "animal" -> Color(0xFFFF8A50)
+    "package" -> SentinelCategoryPackage
+    "animal" -> SentinelCategoryAnimal
     else -> SentinelTextDim
 }
 
+@Composable
 private fun severityColor(severity: String) = when (severity) {
     "critical" -> SentinelRed
     "high" -> SentinelAmber

@@ -20,8 +20,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -35,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
@@ -44,13 +47,10 @@ import com.sentinelcore.android.data.DiagnosticLevel
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.components.ConnectionBadge
-import com.sentinelcore.android.ui.components.SentinelPanel
 import com.sentinelcore.android.ui.components.shortTime
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelRed
-import com.sentinelcore.android.ui.theme.SentinelText
-import com.sentinelcore.android.ui.theme.SentinelTextDim
 
 @Composable
 fun SettingsScreen(
@@ -69,19 +69,19 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { model.refreshNotificationPermission() }
 
     Column(Modifier.fillMaxSize()) {
-        ScreenHeader("SETTINGS", state)
+        ScreenHeader("Settings", state)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
-                SettingsSection("SERVER") {
+                SettingsSection("Server") {
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("DASHBOARD ADDRESS") },
+                        label = { Text("Dashboard address") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                         singleLine = true,
                     )
@@ -89,7 +89,7 @@ fun SettingsScreen(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("STATUS", color = SentinelTextDim)
+                        Text("Status")
                         Spacer(Modifier.weight(1f))
                         ConnectionBadge(state.connectionState)
                     }
@@ -98,55 +98,55 @@ fun SettingsScreen(
                         enabled = address.isNotBlank() && !state.isLoading,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("SAVE AND RECONNECT")
+                        Text("Save and Reconnect")
                     }
                 }
             }
 
             item {
-                SettingsSection("ACCOUNT") {
+                SettingsSection("Account") {
                     state.authStatus?.username?.let {
-                        SettingsRow("SIGNED IN AS", it)
+                        SettingsRow("Signed in as", it)
                     }
                     state.authStatus?.role?.let {
-                        SettingsRow("ROLE", it.uppercase())
+                        SettingsRow("Role", it.replaceFirstChar(Char::uppercase))
                     }
                     if (state.authStatus?.enabled == true) {
                         OutlinedButton(
                             onClick = model::signOut,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("SIGN OUT", color = SentinelRed)
+                            Text("Sign Out", color = SentinelRed)
                         }
                     } else {
                         Text(
                             "Dashboard login is not enabled.",
-                            color = SentinelTextDim,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
 
             item {
-                SettingsSection("SYSTEM") {
-                    SettingsRow("EVENTS LOADED", state.events.size.toString())
-                    SettingsRow("CAMERAS", state.cameras.size.toString())
-                    SettingsRow("MOTION TRIGGERS", state.triggers.size.toString())
-                    SettingsRow("APP VERSION", BuildConfig.VERSION_NAME)
+                SettingsSection("System") {
+                    SettingsRow("Events loaded", state.events.size.toString())
+                    SettingsRow("Cameras", state.cameras.size.toString())
+                    SettingsRow("Motion triggers", state.triggers.size.toString())
+                    SettingsRow("App version", BuildConfig.VERSION_NAME)
                     state.lastError?.let { Text(it, color = SentinelRed) }
                 }
             }
 
             item {
-                SettingsSection("PUSH NOTIFICATIONS") {
-                    SettingsRow("PERMISSION", state.pushPermission)
+                SettingsSection("Push notifications") {
+                    SettingsRow("Permission", state.pushPermission.lowercase().replaceFirstChar(Char::uppercase))
                     state.pushStatus?.let { status ->
-                        SettingsRow("CORE", if (status.enabled) "ENABLED" else "DISABLED")
+                        SettingsRow("Core", if (status.enabled) "Enabled" else "Disabled")
                         SettingsRow(
-                            "FIREBASE PROVIDER",
-                            if (status.firebaseConfigured) "CONFIGURED" else "NOT CONFIGURED",
+                            "Firebase provider",
+                            if (status.firebaseConfigured) "Configured" else "Not configured",
                         )
-                        SettingsRow("REGISTERED DEVICES", status.registeredDevices.toString())
+                        SettingsRow("Registered devices", status.registeredDevices.toString())
                     }
                     Button(
                         onClick = {
@@ -160,9 +160,9 @@ fun SettingsScreen(
                     ) {
                         Text(
                             if (state.pushRegistrationEnabled) {
-                                "REFRESH REGISTRATION"
+                                "Refresh Registration"
                             } else {
-                                "ENABLE NOTIFICATIONS"
+                                "Enable Notifications"
                             },
                         )
                     }
@@ -171,7 +171,7 @@ fun SettingsScreen(
                             onClick = model::disablePushNotifications,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("DISABLE ON THIS DEVICE")
+                            Text("Disable on This Device")
                         }
                     }
                     // Admin-only on the server (it messages every registered device, not just
@@ -185,21 +185,23 @@ fun SettingsScreen(
                                 state.pushRegistrationEnabled,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("SEND TEST NOTIFICATION")
+                            Text("Send Test Notification")
                         }
                     }
-                    state.pushMessage?.let { Text(it, color = SentinelTextDim) }
+                    state.pushMessage?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
 
             item {
-                SettingsSection("DIAGNOSTICS") {
+                SettingsSection("Diagnostics") {
                     TextButton(
                         onClick = { showDiagnostics = !showDiagnostics },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "CONNECTION LOG",
+                            "Connection Log",
                             color = SentinelGreen,
                             modifier = Modifier.weight(1f),
                         )
@@ -211,18 +213,21 @@ fun SettingsScreen(
                     AnimatedVisibility(showDiagnostics) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (state.diagnostics.isEmpty()) {
-                                Text("No requests recorded yet.", color = SentinelTextDim)
+                                Text(
+                                    "No requests recorded yet.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             } else {
                                 state.diagnostics.take(30).forEach { DiagnosticRow(it) }
                             }
                             TextButton(onClick = model::clearDiagnostics) {
-                                Text("CLEAR LOG")
+                                Text("Clear Log")
                             }
                         }
                     }
                     Text(
                         "Request bodies, passwords, cookies, and server response contents are never written here.",
-                        color = SentinelTextDim,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -232,7 +237,7 @@ fun SettingsScreen(
                     "This native client manages its connection and push registration locally. " +
                         "Full server configuration, camera editing, motion-zone drawing, and " +
                         "account management remain in the Core dashboard.",
-                    color = SentinelTextDim,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
                         .fillMaxWidth()
                         .widthIn(max = 900.dp),
@@ -252,8 +257,11 @@ private fun SettingsSection(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(title, color = SentinelCyan)
-        SentinelPanel(Modifier.fillMaxWidth()) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 content()
             }
         }
@@ -263,12 +271,14 @@ private fun SettingsSection(
 @Composable
 private fun SettingsRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, color = SentinelTextDim)
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.weight(1f))
-        Text(value, color = SentinelText)
+        Text(value)
     }
 }
 
+// Monospace is kept here on purpose - this is genuinely tabular/log content, unlike the rest of
+// the screen's now-system-font text (see Theme.kt for why the app no longer forces it globally).
 @Composable
 private fun DiagnosticRow(entry: DiagnosticEntry) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -276,13 +286,18 @@ private fun DiagnosticRow(entry: DiagnosticEntry) {
             Text(
                 entry.level.name,
                 color = if (entry.level == DiagnosticLevel.ERROR) SentinelRed else SentinelCyan,
+                fontFamily = FontFamily.Monospace,
             )
             Spacer(Modifier.weight(1f))
-            Text(entry.timestamp.shortTime(), color = SentinelTextDim)
+            Text(
+                entry.timestamp.shortTime(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+            )
         }
         SelectionContainer {
-            Text(entry.message, color = SentinelText)
+            Text(entry.message, fontFamily = FontFamily.Monospace)
         }
-        HorizontalDivider(color = SentinelTextDim.copy(alpha = 0.25f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
     }
 }

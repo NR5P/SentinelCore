@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowOutward
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Speaker
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -52,16 +53,12 @@ import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.components.EmptyState
-import com.sentinelcore.android.ui.components.SentinelPanel
 import com.sentinelcore.android.ui.components.SentinelRemoteImage
 import com.sentinelcore.android.ui.components.StatusChip
 import com.sentinelcore.android.ui.components.fullDateTime
 import com.sentinelcore.android.ui.components.relativeTime
-import com.sentinelcore.android.ui.theme.SentinelBackground
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
-import com.sentinelcore.android.ui.theme.SentinelText
-import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlin.math.roundToInt
 
 @Composable
@@ -71,8 +68,8 @@ fun TriggerFeedScreen(
     onTrigger: (TriggerEvent) -> Unit,
     onRefresh: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().background(SentinelBackground)) {
-        ScreenHeader("TRIGGERS", state, onRefresh)
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader("Triggers", state, onRefresh)
         if (state.isLoading) {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = SentinelGreen)
         }
@@ -104,13 +101,16 @@ private fun TriggerCard(
     model: SentinelViewModel,
     modifier: Modifier = Modifier,
 ) {
-    SentinelPanel(modifier) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Card(modifier) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             SentinelRemoteImage(
                 model = model,
                 path = "/api/triggers/${trigger.id}/image",
                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(5.dp)),
+                    .clip(RoundedCornerShape(6.dp)),
                 description = "${trigger.cameraName} motion trigger",
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -126,18 +126,18 @@ private fun TriggerCard(
                         contentDescription = "Video clip",
                         tint = SentinelCyan,
                     )
-                    Text("CLIP", color = SentinelCyan, style = MaterialTheme.typography.labelSmall)
+                    Text("Clip", color = SentinelCyan, style = MaterialTheme.typography.labelSmall)
                 }
             }
             Text(
                 trigger.occurredAt.relativeTime(),
-                color = SentinelTextDim,
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "MOTION AREA ${(trigger.triggerAreaFraction * 1000).roundToInt() / 10.0}%",
-                color = SentinelTextDim,
+                "Motion area ${(trigger.triggerAreaFraction * 1000).roundToInt() / 10.0}%",
                 style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -149,7 +149,7 @@ fun TriggerDetailScreen(
     model: SentinelViewModel,
     onBack: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().background(SentinelBackground)) {
+    Column(Modifier.fillMaxSize()) {
         DetailHeader(trigger.cameraName, onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -176,15 +176,18 @@ fun TriggerDetailScreen(
                             description = "${trigger.cameraName} trigger image",
                         )
                     }
-                    SentinelPanel(Modifier.fillMaxWidth()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            MetadataRow("CAMERA", trigger.cameraName)
-                            MetadataRow("TIME", trigger.occurredAt.fullDateTime())
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            MetadataRow("Camera", trigger.cameraName)
+                            MetadataRow("Time", trigger.occurredAt.fullDateTime())
                             MetadataRow(
-                                "MOTION AREA",
+                                "Motion area",
                                 "${(trigger.triggerAreaFraction * 1000).roundToInt() / 10.0}%",
                             )
-                            MetadataRow("MEDIA", if (trigger.hasClip) "VIDEO CLIP" else "SNAPSHOT")
+                            MetadataRow("Media", if (trigger.hasClip) "Video clip" else "Snapshot")
                         }
                     }
                 }
@@ -200,8 +203,8 @@ fun LiveCamerasScreen(
     onCamera: (Camera) -> Unit,
     onRefresh: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().background(SentinelBackground)) {
-        ScreenHeader("LIVE", state, onRefresh)
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader("Live", state, onRefresh)
         if (state.isLoading) {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = SentinelGreen)
         }
@@ -220,10 +223,13 @@ fun LiveCamerasScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 items(state.cameras, key = Camera::id) { camera ->
-                    SentinelPanel(
-                        Modifier.fillMaxWidth().clickable { onCamera(camera) },
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { onCamera(camera) },
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
                             SentinelPlayer(
                                 url = model.absoluteUrl(
                                     "/api/cameras/${camera.id}/stream/stream.m3u8",
@@ -232,7 +238,7 @@ fun LiveCamerasScreen(
                                 muted = true,
                                 showControls = false,
                                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                                    .clip(RoundedCornerShape(5.dp)),
+                                    .clip(RoundedCornerShape(6.dp)),
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(7.dp).background(SentinelGreen, CircleShape))
@@ -254,7 +260,7 @@ fun LiveCamerasScreen(
                                 Icon(
                                     Icons.Default.ArrowOutward,
                                     contentDescription = "Open live camera",
-                                    tint = SentinelTextDim,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -303,7 +309,7 @@ private fun SentinelPlayer(
 ) {
     if (url == null) {
         Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
-            Text("STREAM UNAVAILABLE", color = SentinelTextDim)
+            Text("Stream unavailable", color = Color.White)
         }
         return
     }
