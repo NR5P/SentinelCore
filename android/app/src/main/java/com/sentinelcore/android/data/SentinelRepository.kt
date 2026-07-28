@@ -365,6 +365,30 @@ class SentinelRepository(
         logger("Created a fresh network session", DiagnosticLevel.INFO)
     }
 
+    // Used to decide between the local and remote server addresses before a real connect - any
+    // HTTP response counts as "reachable" (even a 401 or 500), since the point is just to detect
+    // whether the host is reachable at all. Opens its own connection with a short timeout rather
+    // than going through openConnection()/the shared baseUrl, so the real-request 15s/30s
+    // timeouts used elsewhere stay untouched.
+    suspend fun probeReachable(urlString: String, timeoutMs: Int = 2500): Boolean =
+        withContext(Dispatchers.IO) {
+            val trimmed = urlString.trim().trimEnd('/')
+            if (trimmed.isBlank()) return@withContext false
+            val url = runCatching { URL("$trimmed/api/auth/status") }.getOrNull() ?: return@withContext false
+            var connection: HttpURLConnection? = null
+            try {
+                connection = url.openConnection() as HttpURLConnection
+                connection.connectTimeout = timeoutMs
+                connection.readTimeout = timeoutMs
+                connection.responseCode
+                true
+            } catch (error: IOException) {
+                false
+            } finally {
+                connection?.disconnect()
+            }
+        }
+
     fun clearAuthenticationSession() {
         cookieManager.cookieStore.removeAll()
         imageCache.evictAll()
