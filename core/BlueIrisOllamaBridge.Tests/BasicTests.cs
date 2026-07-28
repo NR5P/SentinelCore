@@ -2806,4 +2806,103 @@ public sealed class BasicTests
         public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task RestoreAsync(Camera camera, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
+
+    // --- Alert queue: clearing a backlog -------------------------------------------------------
+
+    [Fact]
+    public async Task AlertQueue_Clear_OnAnEmptyQueue_ReturnsEmpty()
+    {
+        var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 10 }));
+        Assert.Empty(queue.Clear());
+        Assert.Equal(0, queue.ApproximateCount);
+    }
+
+    [Fact]
+    public async Task AlertQueue_Clear_DrainsEverythingWaitingAndResetsTheCount()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 10 }));
+
+        var alerts = Enumerable.Range(0, 5).Select(i => MakeAlert($"camera-{i}")).ToList();
+        foreach (var alert in alerts) Assert.True(await queue.TryEnqueueAsync(alert, ct));
+        Assert.Equal(5, queue.ApproximateCount);
+
+        var cleared = queue.Clear();
+
+        Assert.Equal(5, cleared.Count);
+        Assert.Equal(alerts.Select(a => a.Id), cleared.Select(a => a.Id));
+        Assert.Equal(0, queue.ApproximateCount);
+        Assert.Empty(queue.Clear()); // nothing left to drain a second time
+    }
+
+    [Fact]
+    public async Task AlertQueue_TryEnqueueAsync_WhenFull_ReturnsFalseAndDoesNotCountTheRejectedAlert()
+    {
+        // Found while writing Clear()'s own tests: the channel was configured with
+        // FullMode.DropWrite, under which Writer.TryWrite returns true even when full - the
+        // channel "handles" an over-capacity write by silently discarding it rather than
+        // rejecting it. That meant a saturated queue kept reporting every alert as successfully
+        // queued (Program.cs would return 202 and write a "queued" database row nothing would
+        // ever pick up) while _count kept incrementing for alerts that were never actually added -
+        // and the "queue is full" 503 branch in Program.cs was effectively unreachable. This
+        // pins the fix: TryEnqueueAsync must genuinely fail once the queue is full, and the count
+        // must not include what it rejected.
+        var ct = TestContext.Current.CancellationToken;
+        var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 2 }));
+
+        Assert.True(await queue.TryEnqueueAsync(MakeAlert("a"), ct));
+        Assert.True(await queue.TryEnqueueAsync(MakeAlert("b"), ct));
+        Assert.False(await queue.TryEnqueueAsync(MakeAlert("rejected"), ct));
+
+        Assert.Equal(2, queue.ApproximateCount);
+        Assert.Equal(2, queue.Clear().Count); // exactly what was really added, not 3
+    }
+
+    [Fact]
+    public async Task AlertQueue_Clear_LeavesRoomToEnqueueAgainAfterward()
+    {
+        // A cleared queue has to be a genuinely usable queue afterward, not a broken/closed
+        // channel - this is what makes it safe to clear a backlog while alerts keep arriving.
+        var ct = TestContext.Current.CancellationToken;
+        var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 2 }));
+
+        await queue.TryEnqueueAsync(MakeAlert("a"), ct);
+        await queue.TryEnqueueAsync(MakeAlert("b"), ct);
+        Assert.False(await queue.TryEnqueueAsync(MakeAlert("c"), ct)); // full
+
+        queue.Clear();
+
+        Assert.True(await queue.TryEnqueueAsync(MakeAlert("d"), ct));
+        Assert.Equal(1, queue.ApproximateCount);
+    }
+
+    [Fact]
+    public async Task AlertQueue_Clear_DoesNotAffectAnAlertAlreadyDequeuedForProcessing()
+    {
+        // Clear() must only discard what's still waiting - not reach back and un-deliver
+        // something a reader already pulled out to analyze. That item is "in progress", not
+        // "queued", and finishing it normally is the whole point of leaving it alone.
+        var ct = TestContext.Current.CancellationToken;
+        var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 10 }));
+
+        await queue.TryEnqueueAsync(MakeAlert("in-progress"), ct);
+        await queue.TryEnqueueAsync(MakeAlert("still-waiting"), ct);
+
+        IncomingAlert? dequeued = null;
+        await foreach (var item in queue.ReadAllAsync(ct))
+        {
+            dequeued = item;
+            break;
+        }
+
+        var cleared = queue.Clear();
+
+        Assert.Equal("in-progress", dequeued!.Camera);
+        Assert.Single(cleared);
+        Assert.Equal("still-waiting", cleared[0].Camera);
+    }
+
+    private static IncomingAlert MakeAlert(string camera) => new(
+        Guid.NewGuid(), camera, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+        "default", "image/jpeg", "shot.jpg", [1, 2, 3], null);
 }

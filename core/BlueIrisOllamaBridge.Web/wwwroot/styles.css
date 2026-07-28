@@ -238,6 +238,11 @@ main {
   letter-spacing: 1px;
 }
 
+#queue-status.hidden,
+#clear-queue-btn.hidden {
+  display: none;
+}
+
 .btn {
   background: transparent;
   color: var(--green);

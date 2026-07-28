@@ -355,6 +355,53 @@ app.MapGet("/api/results/{id:guid}", async (Guid id, IResultStore store, Cancell
     return result is null ? Results.NotFound(new { error = "Alert result not found." }) : Results.Ok(result);
 });
 
+app.MapGet("/api/queue/status", (IAlertQueue queue) =>
+    Results.Ok(new { queued = queue.ApproximateCount }));
+
+// For when the queue has fallen so far behind that catching up isn't worth it - each alert here
+// takes as long as a real Ollama analysis does, so a backlog of a few hundred can mean hours.
+// Only discards what's still waiting; whatever's already being analyzed finishes normally.
+//
+// Driven by the database (GetPendingAlertsAsync), not just what's sitting in the in-memory
+// channel - the same source AlertRecoveryService itself trusts for "what's queued" after a
+// restart. queue.Clear() alone would miss anything that was ever accepted but never actually made
+// it into the channel (the DropWrite-vs-Wait bug fixed alongside this endpoint is exactly that
+// kind of gap), so this is the version that's actually guaranteed to match "what's left queued."
+app.MapPost("/api/queue/clear", async (IAlertQueue queue, IEventStore eventStore, IResultStore store, ILogger<Program> logger, CancellationToken ct) =>
+{
+    // Drained first so nothing still sitting in memory gets picked up and analyzed between here
+    // and the database update below.
+    queue.Clear();
+
+    var pending = await eventStore.GetPendingAlertsAsync(ct);
+    foreach (var record in pending)
+    {
+        // Same terminal-AlertResult pattern AlertRecoveryService.AbandonAsync uses for "failed" -
+        // this is what stops the row from being marked "queued" forever, which is what would
+        // otherwise make AlertRecoveryService resume it right back into the queue on the next
+        // restart.
+        await store.SaveAsync(new AlertResult
+        {
+            Id = record.Id,
+            Camera = record.Camera,
+            BlueIrisAlertId = record.BlueIrisAlertId,
+            OccurredAt = record.OccurredAt,
+            ReceivedAt = record.ReceivedAt,
+            CompletedAt = DateTimeOffset.UtcNow,
+            Profile = record.Profile,
+            Model = "cancelled",
+            Status = "cancelled",
+            ImagePath = record.ImagePath,
+            Error = "Cleared from the analysis queue by an operator - never analyzed."
+        }, ct);
+    }
+
+    if (pending.Count > 0)
+        logger.LogWarning("Cleared {Count} alert(s) from the analysis queue", pending.Count);
+
+    return Results.Ok(new { cleared = pending.Count });
+});
+
 // Same Q&A logic the Telegram bot already uses (ChatAnswerService) - reachable here so the
 // dashboard's own ask box (see BlueIrisOllamaBridge.Web/ChatEndpoints.cs) doesn't need a
 // Telegram account. Already covered by ApiKeyMiddleware above like every other /api route.

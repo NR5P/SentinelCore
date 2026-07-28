@@ -5,6 +5,8 @@ const eventCountEl = document.getElementById("event-count");
 const statusDotEl = document.getElementById("status-dot");
 const statusTextEl = document.getElementById("status-text");
 const refreshBtn = document.getElementById("refresh-btn");
+const queueStatusEl = document.getElementById("queue-status");
+const clearQueueBtn = document.getElementById("clear-queue-btn");
 const lightbox = document.getElementById("lightbox");
 const lightboxImg = document.getElementById("lightbox-img");
 const askInput = document.getElementById("ask-input");
@@ -250,6 +252,48 @@ async function loadEvents() {
   }
 }
 
+// Only visible when something is actually waiting - most people never see this, only when the
+// queue has genuinely fallen behind. Polled on the same cadence as the feed itself.
+async function loadQueueStatus() {
+  try {
+    const response = await fetch("/api/queue/status");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { queued } = await response.json();
+
+    const show = queued > 0;
+    queueStatusEl.classList.toggle("hidden", !show);
+    clearQueueBtn.classList.toggle("hidden", !show);
+    if (show) queueStatusEl.textContent = `${queued} queued`;
+  } catch (err) {
+    console.error("Failed to load queue status", err);
+  }
+}
+
+async function clearQueue() {
+  if (!confirm("Discard everything waiting in the analysis queue? Whatever is already being analyzed finishes normally - this only clears what's still waiting behind it. This cannot be undone.")) {
+    return;
+  }
+
+  clearQueueBtn.disabled = true;
+  clearQueueBtn.textContent = "clearing…";
+
+  try {
+    const response = await fetch("/api/queue/clear", { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert(payload.error || "Could not clear the queue just now.");
+      return;
+    }
+    await loadQueueStatus();
+    await loadEvents();
+  } catch {
+    alert("Network error while clearing the queue.");
+  } finally {
+    clearQueueBtn.disabled = false;
+    clearQueueBtn.textContent = "clear queue";
+  }
+}
+
 // Stateless like the backend already is - each question replaces whatever answer is showing,
 // no running conversation history to manage.
 async function askQuestion() {
@@ -284,10 +328,13 @@ askBtn.addEventListener("click", askQuestion);
 askInput.addEventListener("keydown", (e) => { if (e.key === "Enter") askQuestion(); });
 
 refreshBtn.addEventListener("click", loadEvents);
+clearQueueBtn.addEventListener("click", clearQueue);
 
 loadFilterOptions();
 loadEvents();
+loadQueueStatus();
 setInterval(loadEvents, REFRESH_INTERVAL_MS);
+setInterval(loadQueueStatus, REFRESH_INTERVAL_MS);
 window.GateWatchWizard.checkAndMaybeShow();
 window.GateWatchAuth.check();
 window.GateWatchLicense.check();

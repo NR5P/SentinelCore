@@ -52,6 +52,8 @@
         <div class="toolbar-actions">
           <span id="event-count" class="event-count" data-tip-below data-tip-right data-tip="How many events match the current filters. The feed reloads on its own every 30 seconds.">0 events</span>
           <button id="refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload the feed now instead of waiting for the next automatic refresh.">refresh</button>
+          <span id="queue-status" class="event-count hidden" data-tip-below data-tip-right data-tip="Alerts waiting to be analyzed. Each one takes as long as a real AI analysis does, so a large number here can mean a long wait."></span>
+          <button id="clear-queue-btn" class="btn hidden" data-tip-below data-tip-right data-tip="Discard everything waiting in the analysis queue without analyzing it. Whatever is already being analyzed right now finishes normally - this only clears the backlog behind it. Cannot be undone.">clear queue</button>
         </div>
       </div>
 
