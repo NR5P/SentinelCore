@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var address = ""
+    @State private var remoteAddress = ""
     @State private var showingDiagnostics = false
 
     var body: some View {
@@ -13,14 +14,30 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
+                TextField("Remote address (optional)", text: $remoteAddress)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    #endif
                 HStack {
                     Text("Status")
                     Spacer()
+                    if model.hasRemoteServerURL {
+                        Text(model.isUsingRemote ? "via Remote" : "via Local")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     ConnectionBadge().frame(maxWidth: 190)
                 }
+                Text("A Cloudflare Tunnel (or any other externally-reachable) address to use when the local address can't be reached, such as away from home on cellular.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Button("Save and Reconnect") {
                     Task {
                         model.serverURL = normalized(address)
+                        model.remoteServerURL = remoteAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? ""
+                            : normalized(remoteAddress)
                         await model.connect(resetNetworkSession: true)
                     }
                 }
@@ -142,8 +159,12 @@ struct SettingsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
-        .onAppear { address = model.serverURL }
+        .onAppear {
+            address = model.serverURL
+            remoteAddress = model.remoteServerURL
+        }
         .onChange(of: model.serverURL) { _, newValue in address = newValue }
+        .onChange(of: model.remoteServerURL) { _, newValue in remoteAddress = newValue }
     }
 
     private func normalized(_ value: String) -> String {
