@@ -8,6 +8,13 @@ final class AppModel: ObservableObject {
     @Published var serverURL: String {
         didSet { UserDefaults.standard.set(serverURL, forKey: "serverURL") }
     }
+    // Optional Cloudflare Tunnel (or any other externally-reachable) address, used only when
+    // the local address can't be reached - see connect() for the resolution order.
+    @Published var remoteServerURL: String {
+        didSet { UserDefaults.standard.set(remoteServerURL, forKey: "remoteServerURL") }
+    }
+    @Published private(set) var activeServerURL: String = ""
+    @Published private(set) var isUsingRemote = false
     @Published var connectionState: ConnectionState = .checking
     @Published var authStatus: AuthStatus?
     @Published var events: [SecurityEvent] = []
@@ -31,6 +38,7 @@ final class AppModel: ObservableObject {
 
     init() {
         serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
+        remoteServerURL = UserDefaults.standard.string(forKey: "remoteServerURL") ?? ""
         pushRegistrationEnabled = UserDefaults.standard.bool(forKey: "pushRegistrationEnabled")
         observers.append(NotificationCenter.default.addObserver(
             forName: .sentinelPushTokenChanged,
@@ -66,6 +74,7 @@ final class AppModel: ObservableObject {
     }
 
     var isConfigured: Bool { URL(string: serverURL)?.host != nil }
+    var hasRemoteServerURL: Bool { URL(string: remoteServerURL)?.host != nil }
     var requiresLogin: Bool { authStatus?.enabled == true && authStatus?.authenticated == false }
     // Absent role (older server, or login not required) reads as Admin - matches the server's
     // own AuthGateMiddleware treatment of "no login required" as full access for everyone.
@@ -98,6 +107,7 @@ final class AppModel: ObservableObject {
         // Give macOS a moment to present/register the local-network permission before the
         // first HTTP request. The browser stays alive for the app's lifetime.
         try? await Task.sleep(for: .milliseconds(500))
+        await resolveActiveServerURL()
         do {
             authStatus = try await client.authStatus()
             if requiresLogin {
@@ -119,6 +129,26 @@ final class AppModel: ObservableObject {
             connectionState = .offline
             lastError = error.localizedDescription
             log("Connection failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    // Prefers the local address whenever it's reachable at all (any HTTP response counts,
+    // not just 2xx) and only falls back to the remote address on an actual network failure -
+    // this runs at the top of every connect(), so moving between home and away self-heals on
+    // the next reconnect without any WiFi/SSID detection.
+    private func resolveActiveServerURL() async {
+        guard hasRemoteServerURL else {
+            activeServerURL = serverURL
+            isUsingRemote = false
+            return
+        }
+        if await client.probeReachable(serverURL) {
+            activeServerURL = serverURL
+            isUsingRemote = false
+        } else {
+            log("Local address unreachable; using remote address")
+            activeServerURL = remoteServerURL
+            isUsingRemote = true
         }
     }
 
