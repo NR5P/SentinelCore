@@ -73,12 +73,14 @@ window.GateWatchCameras = (function () {
   }
 
   function openForm(camera) {
+    closeDiscovery();
     editingId = camera ? camera.id : null;
     const wrap = document.getElementById("camera-form-wrap");
     const fields = document.getElementById("camera-form-fields");
     const errors = document.getElementById("camera-form-errors");
     errors.innerHTML = "";
     fields.innerHTML = "";
+    setTestStatus("", null);
 
     fields.appendChild(buildTextField("cam-name", "Name", camera?.name ?? "",
       "Whatever you want to call this camera, e.g. 'front gate'. Shown on the Live and Triggers tabs."));
@@ -203,6 +205,255 @@ window.GateWatchCameras = (function () {
     }
   }
 
+  function setTestStatus(message, kind) {
+    const el = document.getElementById("camera-test-status");
+    el.textContent = message;
+    el.className = "camera-test-status" + (kind ? ` camera-test-status-${kind}` : "");
+  }
+
+  // Accepts either a bare IP/host or a full rtsp://host/path style URL - pulls just the host out
+  // of either, so the same Stream URL field works whether the user already knows the exact path
+  // or just pasted in the camera's IP hoping to find out.
+  function extractAddress(rawUrl) {
+    try {
+      const url = new URL(rawUrl.includes("://") ? rawUrl : `rtsp://${rawUrl}`);
+      return url.hostname;
+    } catch {
+      return rawUrl;
+    }
+  }
+
+  // True for a bare IP/host or a URL with no real path yet (what someone types when they know
+  // the camera's address but not its stream path) - false once there's an actual path, which
+  // means the user already knows the URL that works and it must not be silently overwritten.
+  function looksLikeABareAddress(rawUrl) {
+    try {
+      const url = new URL(rawUrl.includes("://") ? rawUrl : `rtsp://${rawUrl}`);
+      return !url.pathname || url.pathname === "/";
+    } catch {
+      return true;
+    }
+  }
+
+  async function testConnection() {
+    const urlField = document.getElementById("cam-url");
+    const nameField = document.getElementById("cam-name");
+    const usernameField = document.getElementById("cam-username");
+    const passwordField = document.getElementById("cam-password");
+
+    const address = extractAddress(urlField.value.trim());
+    if (!address) {
+      setTestStatus("Enter a stream URL or IP address first.", "error");
+      return;
+    }
+
+    setTestStatus("testing…", null);
+
+    try {
+      const response = await fetch("/api/cameras/discovery/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address,
+          username: usernameField.value.trim() || null,
+          password: passwordField.value || null
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setTestStatus((payload.errors || ["Test failed."]).join(" "), "error");
+        return;
+      }
+
+      if (payload.status === "Found") {
+        const details = [
+          payload.resolution,
+          payload.manufacturer && payload.model ? `${payload.manufacturer} ${payload.model}` : null
+        ].filter(Boolean).join(", ");
+        setTestStatus(`found${details ? " - " + details : ""}`, "ok");
+
+        // Offer the real, verified stream URL/name it found - never overwrites a URL the user
+        // already knows the real path for, only fills in a bare address or an empty name.
+        if (payload.streamUrl && looksLikeABareAddress(urlField.value.trim())) urlField.value = payload.streamUrl;
+        if (payload.suggestedName && !nameField.value.trim()) nameField.value = payload.suggestedName;
+      } else if (payload.status === "NeedsCredentials") {
+        setTestStatus(payload.message, "warn");
+      } else {
+        setTestStatus(payload.message || "No camera found at this address.", "error");
+      }
+    } catch {
+      setTestStatus("Network error while testing.", "error");
+    }
+  }
+
+  // ---------------- Network discovery ----------------
+
+  let discoveryPollTimer = null;
+
+  async function openDiscovery() {
+    closeForm();
+    const wrap = document.getElementById("camera-discovery-wrap");
+    const interfacesRoot = document.getElementById("discovery-interfaces-root");
+    setDiscoveryStatus("", null);
+    document.getElementById("discovery-results-root").innerHTML = "";
+    interfacesRoot.innerHTML = `<div class="empty-state">loading network interfaces&hellip;</div>`;
+    wrap.classList.remove("hidden");
+    wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+    try {
+      const response = await fetch("/api/cameras/discovery/interfaces");
+      const interfaces = await response.json();
+      renderInterfaceCheckboxes(interfacesRoot, interfaces);
+    } catch {
+      interfacesRoot.innerHTML = `<div class="empty-state">Could not load network interfaces.</div>`;
+    }
+  }
+
+  function closeDiscovery() {
+    stopDiscoveryPolling();
+    document.getElementById("camera-discovery-wrap").classList.add("hidden");
+  }
+
+  function renderInterfaceCheckboxes(root, interfaces) {
+    root.innerHTML = "";
+    if (interfaces.length === 0) {
+      root.innerHTML = `<div class="empty-state">No usable network interfaces were found.</div>`;
+      return;
+    }
+
+    const label = document.createElement("div");
+    label.className = "field-label";
+    label.textContent = "scan these network interfaces:";
+    root.appendChild(label);
+
+    for (const iface of interfaces) {
+      const row = document.createElement("label");
+      row.className = "field-checkbox-row";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = iface.address;
+      input.dataset.role = "discovery-interface";
+      // Default-checked only for interfaces that don't look virtual (Docker, VPN, WSL, etc.) -
+      // the heuristic informs the default, it doesn't decide on its own; every interface stays
+      // available to opt into.
+      input.checked = !iface.looksVirtual;
+      const text = document.createElement("span");
+      text.textContent = `${iface.address} (${iface.name}${iface.looksVirtual ? " - looks virtual" : ""})`;
+      row.append(input, text);
+      root.appendChild(row);
+    }
+  }
+
+  function setDiscoveryStatus(message, kind) {
+    const el = document.getElementById("discovery-status");
+    el.textContent = message;
+    el.className = "camera-test-status" + (kind ? ` camera-test-status-${kind}` : "");
+  }
+
+  async function startScan() {
+    const selected = [...document.querySelectorAll('input[data-role="discovery-interface"]:checked')]
+      .map(input => input.value);
+    if (selected.length === 0) {
+      setDiscoveryStatus("Select at least one network interface first.", "error");
+      return;
+    }
+
+    setDiscoveryStatus("scanning…", null);
+    document.getElementById("discovery-results-root").innerHTML = "";
+
+    try {
+      const response = await fetch("/api/cameras/discovery/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interfaceAddresses: selected })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setDiscoveryStatus((payload.errors || ["Scan failed to start."]).join(" "), "error");
+        return;
+      }
+      pollScan(payload.scanId);
+    } catch {
+      setDiscoveryStatus("Network error while starting the scan.", "error");
+    }
+  }
+
+  function pollScan(scanId) {
+    stopDiscoveryPolling();
+    discoveryPollTimer = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/cameras/discovery/scan/${scanId}`);
+        if (!response.ok) {
+          stopDiscoveryPolling();
+          setDiscoveryStatus("Scan result no longer available.", "error");
+          return;
+        }
+        const snapshot = await response.json();
+        renderDiscoveryResults(snapshot.results);
+        if (snapshot.status === "Completed") {
+          stopDiscoveryPolling();
+          setDiscoveryStatus(
+            snapshot.results.length === 0 ? "no cameras found" : `found ${snapshot.results.length} camera(s)`,
+            snapshot.results.length === 0 ? null : "ok"
+          );
+        }
+      } catch {
+        stopDiscoveryPolling();
+        setDiscoveryStatus("Network error while checking scan progress.", "error");
+      }
+    }, 1000);
+  }
+
+  function stopDiscoveryPolling() {
+    if (discoveryPollTimer) {
+      clearInterval(discoveryPollTimer);
+      discoveryPollTimer = null;
+    }
+  }
+
+  function renderDiscoveryResults(results) {
+    const root = document.getElementById("discovery-results-root");
+    root.innerHTML = "";
+
+    for (const item of results) {
+      const card = document.createElement("div");
+      card.className = "camera-card";
+
+      const info = document.createElement("div");
+      info.className = "camera-card-info";
+      const details = [
+        item.manufacturer && item.model ? `${item.manufacturer} ${item.model}` : null,
+        item.needsCredentials ? "needs credentials" : null
+      ].filter(Boolean).join(" - ");
+      info.innerHTML = `
+        <span class="camera-card-name">${escapeHtml(item.suggestedName)}</span>
+        <span class="camera-card-meta">${escapeHtml(item.ipAddress)}${details ? " - " + escapeHtml(details) : ""}</span>
+        ${item.alreadySaved ? `<span class="camera-card-meta">already added</span>` : ""}
+      `;
+
+      const actions = document.createElement("div");
+      actions.className = "camera-card-actions";
+      if (!item.alreadySaved) {
+        const addBtn = document.createElement("button");
+        addBtn.className = "btn";
+        addBtn.textContent = "add";
+        addBtn.dataset.tipRight = "";
+        addBtn.dataset.tip = "Open the add-camera form with this camera's address filled in. Use Test Connection there to find its real stream URL, especially if it needs credentials.";
+        addBtn.addEventListener("click", () => {
+          closeDiscovery();
+          // Never write a real stream URL here - just the bare address. The manual form's own
+          // Test Connection button (same probe endpoint) is what turns that into a verified,
+          // working URL, especially once the user supplies credentials this scan never asked for.
+          openForm({ name: item.suggestedName, streamUrl: item.ipAddress, username: "", password: "", includeAudio: false });
+        });
+        actions.appendChild(addBtn);
+      }
+
+      card.append(info, actions);
+      root.appendChild(card);
+    }
+  }
+
   async function removeCamera(camera) {
     if (!confirm(`Remove camera "${camera.name}"? This only removes it from the live view - nothing to do with Blue Iris.`)) return;
 
@@ -296,6 +547,10 @@ window.GateWatchCameras = (function () {
   document.getElementById("add-camera-btn").addEventListener("click", () => openForm(null));
   document.getElementById("camera-cancel-btn").addEventListener("click", closeForm);
   document.getElementById("camera-save-btn").addEventListener("click", saveCamera);
+  document.getElementById("camera-test-btn").addEventListener("click", testConnection);
+  document.getElementById("discover-cameras-btn").addEventListener("click", openDiscovery);
+  document.getElementById("discovery-cancel-btn").addEventListener("click", closeDiscovery);
+  document.getElementById("discovery-scan-btn").addEventListener("click", startScan);
 
   return { load, renderList, showLive, hideLive };
 })();

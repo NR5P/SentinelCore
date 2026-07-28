@@ -167,6 +167,7 @@
         <div class="toolbar-label">CAMERAS</div>
         <div class="toolbar-actions">
           <button id="add-camera-btn" class="btn" data-tip-below data-tip-right data-tip="Add a camera by its stream URL. Most IP cameras expose an rtsp:// address.">+ add camera</button>
+          <button id="discover-cameras-btn" class="btn" data-tip-below data-tip-right data-tip="Scan your network for cameras that support ONVIF discovery - the standard most IP cameras speak. Sends one broadcast per network adapter you select; doesn't touch any camera you haven't chosen to scan for.">discover cameras</button>
         </div>
       </div>
 
@@ -175,9 +176,23 @@
           <div class="field-grid" id="camera-form-fields"></div>
           <div class="settings-section-footer">
             <button id="camera-save-btn" class="btn" data-tip="Save this camera. It appears on the Live tab straight away.">save</button>
+            <button id="camera-test-btn" class="btn" data-tip="Check whether this camera is reachable before saving - tries the camera's own discovery protocol first, then a few common stream address patterns.">test connection</button>
             <button id="camera-cancel-btn" class="btn" data-tip="Close this form and discard any changes you have made.">cancel</button>
+            <span id="camera-test-status" class="camera-test-status"></span>
             <ul class="field-errors" id="camera-form-errors"></ul>
           </div>
+        </div>
+      </div>
+
+      <div id="camera-discovery-wrap" class="settings-section hidden">
+        <div class="settings-section-body" style="display:flex; flex-direction:column; gap:12px;">
+          <div id="discovery-interfaces-root"></div>
+          <div class="settings-section-footer">
+            <button id="discovery-scan-btn" class="btn" data-tip="Send a network discovery broadcast on the selected interfaces and list any cameras that answer.">scan</button>
+            <button id="discovery-cancel-btn" class="btn" data-tip="Close this panel.">close</button>
+            <span id="discovery-status" class="camera-test-status"></span>
+          </div>
+          <div id="discovery-results-root"></div>
         </div>
       </div>
 

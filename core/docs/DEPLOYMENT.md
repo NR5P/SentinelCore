@@ -229,6 +229,11 @@ it yourself.
 - `CamerasDataDirectory` is where `cameras.db`, `triggers.db`, and recorded clips live — can
   be relative (to the Web project's working directory) or absolute.
 - `FfmpegPath` can be a bare command name (resolved via `PATH`) or an absolute path.
+- `CameraDiscovery:FfprobePath` (not shown above — omit it entirely unless you need it) overrides
+  where the camera discovery feature looks for `ffprobe`, the tool it uses to verify a candidate
+  stream URL actually carries video. Left unset, it's derived from `FfmpegPath` (swapping `ffmpeg`
+  for `ffprobe` in the same location), which is correct for the overwhelming majority of installs
+  since the two ship side by side. Only set this if `ffprobe` lives somewhere `ffmpeg` doesn't.
 
 Also do not expose port 3320 to the internet — there's no login on the dashboard.
 
@@ -564,6 +569,11 @@ sudo ufw allow from 192.168.50.0/24 to any port 51826 proto tcp
 
 Do **not** open 3321. That's the sidecar's control API, bound to `127.0.0.1` and meant only for
 the main app on this same host.
+
+Camera discovery (Test Connection / Discover Cameras on the CAMERAS tab) needs no firewall change
+at all — it's outbound only, from this host to a camera, so `ufw`'s default incoming-only rules
+don't affect it. Nothing listens for a reply on an open port; it only runs when you click one of
+those two buttons, never in the background.
 
 ## 14a. HTTPS (optional)
 
