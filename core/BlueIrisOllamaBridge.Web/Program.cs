@@ -177,6 +177,7 @@ app.MapAuthEndpoints();
 app.MapAccountEndpoints();
 app.MapBackupEndpoints();
 app.MapChatEndpoints();
+app.MapQueueEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();
 app.MapTimelineEndpoints();
