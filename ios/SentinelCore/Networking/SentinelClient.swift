@@ -53,6 +53,58 @@ final class SentinelClient {
         try await get("/api/cameras")
     }
 
+    func createCamera(_ input: CameraInput) async throws -> Camera {
+        try await send("/api/cameras", method: "POST", body: input)
+    }
+
+    func updateCamera(id: UUID, _ input: CameraInput) async throws {
+        let _: EmptyResponse = try await send("/api/cameras/\(id.uuidString)", method: "PUT", body: input)
+    }
+
+    func deleteCamera(id: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/cameras/\(id.uuidString)",
+            method: "DELETE",
+            body: Optional<String>.none
+        )
+    }
+
+    func probeCamera(_ request: CameraProbeRequest) async throws -> CameraProbeResult {
+        try await send("/api/cameras/discovery/probe", method: "POST", body: request)
+    }
+
+    func fetchScanInterfaces() async throws -> [ScanInterface] {
+        try await get("/api/cameras/discovery/interfaces")
+    }
+
+    func startScan(_ request: ScanRequest) async throws -> ScanStartResult {
+        try await send("/api/cameras/discovery/scan", method: "POST", body: request)
+    }
+
+    func fetchScanStatus(scanId: UUID) async throws -> ScanJobSnapshot {
+        try await get("/api/cameras/discovery/scan/\(scanId.uuidString)")
+    }
+
+    func fetchTriggerConfig(cameraId: UUID) async throws -> TriggerConfig {
+        try await get("/api/cameras/\(cameraId.uuidString)/trigger-config")
+    }
+
+    func saveTriggerConfig(cameraId: UUID, _ config: TriggerConfig) async throws -> TriggerConfig {
+        try await send("/api/cameras/\(cameraId.uuidString)/trigger-config", method: "PUT", body: config)
+    }
+
+    // Live ffmpeg snapshot, never cached - fetched fresh every time the zone editor opens.
+    func fetchReferenceFrame(cameraId: UUID) async throws -> Data {
+        guard let url = url(path: "/api/cameras/\(cameraId.uuidString)/reference-frame") else {
+            throw ClientError.invalidServerAddress
+        }
+        return try await performData(URLRequest(url: url))
+    }
+
+    func fetchPromptProfileNames() async throws -> [PromptProfileName] {
+        try await get("/api/prompt-profile-names")
+    }
+
     func timeline(camera: String, date: String) async throws -> RecordingTimelineDay {
         try await get(
             "/api/timeline/day",
@@ -143,7 +195,10 @@ final class SentinelClient {
         return try await perform(request)
     }
 
-    private func perform<T: Decodable>(_ request: URLRequest) async throws -> T {
+    // Shared by `perform` (JSON) and `performData` (raw bytes, e.g. the reference-frame JPEG) -
+    // runs the request, logs it, and turns a non-2xx response into a ClientError with the
+    // server's message extracted, without assuming the success body is JSON.
+    private func executeAndValidate(_ request: URLRequest) async throws -> Data {
         let started = ContinuousClock.now
         let method = request.httpMethod ?? "GET"
         let displayURL = request.url?.absoluteString ?? "(invalid URL)"
@@ -166,10 +221,23 @@ final class SentinelClient {
             if http.statusCode == 401 { throw ClientError.authenticationRequired }
             throw ClientError.server(status: http.statusCode, message: message)
         }
-        if T.self == EmptyResponse.self { return EmptyResponse() as! T }
+        return data
+    }
+
+    private func performData(_ request: URLRequest) async throws -> Data {
+        try await executeAndValidate(request)
+    }
+
+    private func perform<T: Decodable>(_ request: URLRequest) async throws -> T {
+        if T.self == EmptyResponse.self {
+            _ = try await executeAndValidate(request)
+            return EmptyResponse() as! T
+        }
+        let data = try await executeAndValidate(request)
         do {
             return try JSONDecoder.sentinel.decode(T.self, from: data)
         } catch {
+            let displayURL = request.url?.absoluteString ?? "(invalid URL)"
             model.log("Could not decode \(displayURL): \(error)", level: .error)
             throw error
         }
