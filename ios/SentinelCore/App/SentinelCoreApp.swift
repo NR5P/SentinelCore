@@ -15,7 +15,10 @@ struct SentinelCoreApp: App {
             RootView()
                 .environmentObject(appModel)
         }
+        #if os(macOS)
         .defaultSize(width: 1180, height: 760)
+        #endif
+
         #if os(macOS)
         // Cmd+, and the app-menu "Settings…" item, replacing the sidebar's Settings row
         // (AppSection.sidebarCases filters it out on macOS) with the standard Mac convention.
