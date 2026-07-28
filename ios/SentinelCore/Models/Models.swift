@@ -29,6 +29,88 @@ struct Camera: Codable, Identifiable, Hashable {
     let includeAudio: Bool?
 }
 
+struct CameraInput: Encodable {
+    var name: String
+    var streamUrl: String
+    var username: String?
+    var password: String?
+    var includeAudio: Bool
+}
+
+struct Point2D: Codable, Hashable {
+    var x: Double
+    var y: Double
+}
+
+// Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
+struct TriggerConfig: Codable, Equatable {
+    var enabled: Bool
+    var zonePolygon: [Point2D]
+    var minTriggerArea: Double
+    var cooldownSeconds: Int
+    var maxTriggersPerMinute: Int
+    var shadowSensitivity: Int
+    var recordClips: Bool
+    var clipPreSeconds: Int
+    var clipPostSeconds: Int
+    var sendToAlerts: Bool
+    var alertProfile: String
+}
+
+struct PromptProfileName: Codable, Identifiable, Hashable {
+    var id: String { key }
+    var key: String
+    var displayName: String
+}
+
+struct CameraProbeRequest: Encodable {
+    var address: String
+    var username: String?
+    var password: String?
+}
+
+struct CameraProbeResult: Codable {
+    var status: String // "Found" | "NeedsCredentials" | "NotFound"
+    var streamUrl: String?
+    var suggestedName: String?
+    var manufacturer: String?
+    var model: String?
+    var resolution: String?
+    var message: String?
+}
+
+struct ScanInterface: Codable, Identifiable, Hashable {
+    var id: String { address }
+    var name: String
+    var description: String
+    var address: String
+    var prefixLength: Int
+    var looksVirtual: Bool
+}
+
+struct ScanRequest: Encodable {
+    var interfaceAddresses: [String]
+}
+
+struct ScanStartResult: Codable {
+    var scanId: UUID
+}
+
+struct ScanResultCamera: Codable, Identifiable, Hashable {
+    var id: String { ipAddress }
+    var ipAddress: String
+    var manufacturer: String?
+    var model: String?
+    var suggestedName: String
+    var needsCredentials: Bool
+    var alreadySaved: Bool
+}
+
+struct ScanJobSnapshot: Codable {
+    var status: String // "Running" | "Completed"
+    var results: [ScanResultCamera]
+}
+
 struct AuthStatus: Codable {
     let enabled: Bool
     let configured: Bool

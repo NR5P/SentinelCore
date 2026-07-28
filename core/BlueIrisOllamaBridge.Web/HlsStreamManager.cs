@@ -143,12 +143,12 @@ public sealed class HlsStreamManager : IDisposable
 
     public static List<string> BuildFfmpegArguments(string sourceUrl, bool includeAudio, string outputDir)
     {
-        var args = new List<string>
-        {
-            "-rtsp_transport", "tcp",
-            "-i", sourceUrl,
-            "-c:v", "copy"
-        };
+        var args = new List<string>();
+        // -rtsp_transport is an RTSP-demuxer-only option; ffmpeg errors out ("Option not found")
+        // if it's passed ahead of a non-RTSP input like an http:// MJPEG/snapshot URL.
+        if (IsRtspUrl(sourceUrl))
+            args.AddRange(["-rtsp_transport", "tcp"]);
+        args.AddRange(["-i", sourceUrl, "-c:v", "copy"]);
 
         if (includeAudio)
             args.AddRange(["-c:a", "aac", "-ac", "1"]);
@@ -166,6 +166,9 @@ public sealed class HlsStreamManager : IDisposable
 
         return args;
     }
+
+    private static bool IsRtspUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme.Equals("rtsp", StringComparison.OrdinalIgnoreCase);
 
     public static string BuildAuthenticatedUrl(Camera camera)
     {
@@ -194,7 +197,11 @@ public sealed class HlsStreamManager : IDisposable
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        foreach (var arg in new[] { "-rtsp_transport", "tcp", "-i", sourceUrl, "-frames:v", "1", "-y", tempPath })
+        var snapshotArgs = new List<string>();
+        if (IsRtspUrl(sourceUrl))
+            snapshotArgs.AddRange(["-rtsp_transport", "tcp"]);
+        snapshotArgs.AddRange(["-i", sourceUrl, "-frames:v", "1", "-y", tempPath]);
+        foreach (var arg in snapshotArgs)
             psi.ArgumentList.Add(arg);
 
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffmpeg.");

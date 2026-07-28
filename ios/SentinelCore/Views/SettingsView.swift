@@ -44,6 +44,17 @@ struct SettingsView: View {
                 }
             }
 
+            // Camera CRUD, discovery, and trigger-zone configuration are all AdminOnly on the
+            // server - hidden entirely for a Viewer rather than shown-disabled, same convention
+            // as the Send Test Notification button below.
+            if model.isAdmin {
+                Section("Cameras") {
+                    NavigationLink("Manage Cameras") {
+                        CameraAdminView()
+                    }
+                }
+            }
+
             Section("System") {
                 LabeledContent("Events loaded", value: "\(model.events.count)")
                 LabeledContent("Cameras", value: "\(model.cameras.count)")
@@ -121,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("This native client manages its connection and push registration locally. Full server configuration, camera editing, motion-zone drawing, and account management remain in the Core dashboard.")
+                Text("This native client manages its connection and push registration locally. Full server configuration and account management remain in the Core dashboard.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
