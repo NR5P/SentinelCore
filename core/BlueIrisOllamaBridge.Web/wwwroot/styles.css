@@ -1300,6 +1300,23 @@ main {
   color: var(--red);
 }
 
+.camera-test-status {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.camera-test-status-ok {
+  color: var(--green);
+}
+
+.camera-test-status-warn {
+  color: var(--amber);
+}
+
+.camera-test-status-error {
+  color: var(--red);
+}
+
 .sentinel-box {
   border: 1px solid var(--border);
   border-radius: 5px;

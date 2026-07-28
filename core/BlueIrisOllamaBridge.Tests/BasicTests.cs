@@ -6,6 +6,7 @@ using BlueIrisOllamaBridge.Licensing;
 using BlueIrisOllamaBridge.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -2501,5 +2502,308 @@ public sealed class BasicTests
         public T CurrentValue { get; } = value;
         public T Get(string? name) => CurrentValue;
         public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
+
+    // --- Camera discovery: WS-UsernameToken digest --------------------------------------------
+    //
+    // These pin down the byte-level details flagged as the highest-risk part of the whole
+    // camera-discovery feature: a digest that's computed slightly wrong still looks like a valid
+    // digest (right length, valid base64) and only shows up as every real camera silently
+    // rejecting auth. Testable with no camera, no socket, no HTTP - it's a pure function.
+
+    [Fact]
+    public void OnvifUsernameToken_ComputeDigest_OfEmptyInputs_MatchesKnownSha1OfEmptyString()
+    {
+        // SHA1("") = da39a3ee5e6b4b0d3255bfef95601890afd80709 is a widely-known constant. Using
+        // an empty nonce, created, and password means the concatenated hash input is also empty,
+        // so this pins the digest function against a value that isn't just re-deriving itself
+        // with .NET's own SHA1 API under a different name.
+        var digest = OnvifUsernameToken.ComputeDigest(nonceBytes: [], created: "", password: "");
+        Assert.Equal("DA39A3EE5E6B4B0D3255BFEF95601890AFD80709", Convert.ToHexString(digest));
+    }
+
+    [Fact]
+    public void OnvifUsernameToken_ComputeDigest_ConcatenatesRawNonceBytesDirectly()
+    {
+        // An independent reimplementation, not a round-trip through ComputeDigest itself - the
+        // expected hash is computed here by hand-concatenating the raw nonce bytes and UTF-8
+        // strings and calling SHA1 directly, so this only passes if ComputeDigest's internals
+        // genuinely match the spec. The classic implementation bug - hashing the base64 TEXT of
+        // the nonce instead of its raw bytes - produces a still-plausible-looking digest (right
+        // length, valid base64), so a same-function comparison wouldn't catch it; this would.
+        byte[] nonceBytes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        const string created = "2026-01-01T00:00:00.000Z";
+        const string password = "password";
+
+        var expected = SHA1.HashData([
+            .. nonceBytes,
+            .. System.Text.Encoding.UTF8.GetBytes(created),
+            .. System.Text.Encoding.UTF8.GetBytes(password)
+        ]);
+
+        Assert.Equal(expected, OnvifUsernameToken.ComputeDigest(nonceBytes, created, password));
+    }
+
+    [Fact]
+    public void OnvifUsernameToken_ComputeDigest_ConcatenationOrderIsNonceThenCreatedThenPassword()
+    {
+        byte[] nonce = [1, 2, 3];
+        var a = OnvifUsernameToken.ComputeDigest(nonce, "created-value", "password-value");
+        var b = OnvifUsernameToken.ComputeDigest(nonce, "password-value", "created-value"); // swapped
+        Assert.NotEqual(a, b);
+    }
+
+    [Fact]
+    public void OnvifUsernameToken_Build_NonceInTokenMatchesTheBytesActuallyHashed()
+    {
+        // Guards against computing the digest from one nonce/created pair and then serializing a
+        // DIFFERENT nonce/created into the token that goes out on the wire - the camera would
+        // recompute a different digest from what it received and reject every call.
+        var token = OnvifUsernameToken.Build("admin", "secret");
+        var expectedDigest = OnvifUsernameToken.ComputeDigest(Convert.FromBase64String(token.Nonce), token.Created, "secret");
+
+        Assert.Equal(Convert.ToBase64String(expectedDigest), token.PasswordDigest);
+    }
+
+    [Fact]
+    public void OnvifUsernameToken_Build_GeneratesADifferentNoncePerCall()
+    {
+        // Some camera firmware keeps a replay cache and rejects a second SOAP call reusing the
+        // same nonce - Build() must be called fresh per call, never memoized/reused.
+        var first = OnvifUsernameToken.Build("admin", "secret");
+        var second = OnvifUsernameToken.Build("admin", "secret");
+        Assert.NotEqual(first.Nonce, second.Nonce);
+    }
+
+    // --- Camera discovery: ONVIF SOAP envelope shape -------------------------------------------
+
+    [Fact]
+    public void OnvifClient_BuildEnvelope_WithCredentials_IncludesUsernameTokenHeader()
+    {
+        var envelope = OnvifClient.BuildEnvelope(new System.Xml.Linq.XElement("Probe"), "admin", "secret");
+
+        var ns = envelope.GetDefaultNamespace();
+        System.Xml.Linq.XNamespace wsse = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd";
+        var usernameToken = envelope.Descendants(wsse + "UsernameToken").SingleOrDefault();
+
+        Assert.NotNull(usernameToken);
+        Assert.Equal("admin", usernameToken!.Element(wsse + "Username")?.Value);
+        Assert.False(string.IsNullOrWhiteSpace(usernameToken.Element(wsse + "Password")?.Value));
+        Assert.False(string.IsNullOrWhiteSpace(usernameToken.Element(wsse + "Nonce")?.Value));
+    }
+
+    [Fact]
+    public void OnvifClient_BuildEnvelope_WithoutCredentials_OmitsUsernameTokenHeader()
+    {
+        // Some cameras answer GetDeviceInformation without any auth at all - a security header
+        // must not be sent when the caller supplied no username, rather than sending an empty
+        // or garbage one.
+        var envelope = OnvifClient.BuildEnvelope(new System.Xml.Linq.XElement("Probe"), null, null);
+
+        System.Xml.Linq.XNamespace wsse = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd";
+        Assert.Empty(envelope.Descendants(wsse + "UsernameToken"));
+    }
+
+    // --- Camera discovery: WS-Discovery probe/parse --------------------------------------------
+
+    [Fact]
+    public void WsDiscoveryClient_TryParseProbeMatch_ParsesAGenuineOnvifReply()
+    {
+        var messageId = "uuid:11111111-1111-1111-1111-111111111111";
+        var reply = $$"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+                        xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery"
+                        xmlns:dn="http://www.onvif.org/ver10/network/wsdl">
+              <e:Header>
+                <w:MessageID>uuid:22222222-2222-2222-2222-222222222222</w:MessageID>
+                <w:RelatesTo>{{messageId}}</w:RelatesTo>
+                <w:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches</w:Action>
+              </e:Header>
+              <e:Body>
+                <d:ProbeMatches>
+                  <d:ProbeMatch>
+                    <w:EndpointReference>
+                      <w:Address>urn:uuid:9c8f1a2b-0000-0000-0000-000000000001</w:Address>
+                    </w:EndpointReference>
+                    <d:Types>dn:NetworkVideoTransmitter</d:Types>
+                    <d:XAddrs>http://192.168.1.50/onvif/device_service</d:XAddrs>
+                    <d:MetadataVersion>1</d:MetadataVersion>
+                  </d:ProbeMatch>
+                </d:ProbeMatches>
+              </e:Body>
+            </e:Envelope>
+            """;
+
+        var parsed = WsDiscoveryClient.TryParseProbeMatch(System.Text.Encoding.UTF8.GetBytes(reply), messageId, out var match);
+
+        Assert.True(parsed);
+        Assert.Equal("urn:uuid:9c8f1a2b-0000-0000-0000-000000000001", match!.EndpointAddress);
+        Assert.Equal(["http://192.168.1.50/onvif/device_service"], match.XAddrs);
+    }
+
+    [Fact]
+    public void WsDiscoveryClient_TryParseProbeMatch_RejectsAReplyToADifferentProbe()
+    {
+        // Multiple WS-Discovery clients can share the multicast group; a reply carrying someone
+        // else's MessageID in RelatesTo must be ignored rather than misattributed to this probe.
+        var reply = """
+            <e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+                        xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <e:Header><w:RelatesTo>uuid:not-ours</w:RelatesTo></e:Header>
+              <e:Body>
+                <d:ProbeMatches>
+                  <d:ProbeMatch>
+                    <w:EndpointReference><w:Address>urn:uuid:x</w:Address></w:EndpointReference>
+                    <d:XAddrs>http://192.168.1.50/onvif/device_service</d:XAddrs>
+                  </d:ProbeMatch>
+                </d:ProbeMatches>
+              </e:Body>
+            </e:Envelope>
+            """;
+
+        var parsed = WsDiscoveryClient.TryParseProbeMatch(
+            System.Text.Encoding.UTF8.GetBytes(reply), "uuid:11111111-1111-1111-1111-111111111111", out var match);
+
+        Assert.False(parsed);
+        Assert.Null(match);
+    }
+
+    [Fact]
+    public void WsDiscoveryClient_TryParseProbeMatch_RejectsGarbage()
+    {
+        var parsed = WsDiscoveryClient.TryParseProbeMatch(
+            System.Text.Encoding.UTF8.GetBytes("not xml at all"), "uuid:anything", out var match);
+
+        Assert.False(parsed);
+        Assert.Null(match);
+    }
+
+    [Fact]
+    public void WsDiscoveryClient_BuildProbeMessage_TargetsNetworkVideoTransmitters()
+    {
+        var probe = WsDiscoveryClient.BuildProbeMessage(out var messageId);
+        var text = System.Text.Encoding.UTF8.GetString(probe);
+
+        Assert.Contains(messageId, text);
+        Assert.Contains("NetworkVideoTransmitter", text);
+        Assert.Contains("http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe", text);
+    }
+
+    // --- Camera discovery: ffprobe JSON parsing -------------------------------------------------
+
+    [Fact]
+    public void CameraDiscoveryService_ParseFfprobeOutput_ExtractsResolutionFromTheVideoStream()
+    {
+        const string json = """
+            {
+              "streams": [
+                { "codec_type": "audio", "codec_name": "aac" },
+                { "codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080 }
+              ]
+            }
+            """;
+
+        var result = CameraDiscoveryService.ParseFfprobeOutput(json);
+
+        Assert.NotNull(result);
+        Assert.Equal("h264", result!.Codec);
+        Assert.Equal("1920x1080", result.Resolution);
+    }
+
+    [Fact]
+    public void CameraDiscoveryService_ParseFfprobeOutput_WhenNoVideoStreamPresent_ReturnsNull()
+    {
+        // An audio-only source (or a URL that answered with something else entirely) is not a
+        // usable camera stream even though ffprobe itself succeeded.
+        const string json = """{ "streams": [ { "codec_type": "audio", "codec_name": "aac" } ] }""";
+        Assert.Null(CameraDiscoveryService.ParseFfprobeOutput(json));
+    }
+
+    [Fact]
+    public void CameraDiscoveryService_ParseFfprobeOutput_RejectsGarbage()
+    {
+        // A candidate URL that answers with an HTML login page or a 404 body rather than JSON
+        // must degrade to "not found", not throw and take the whole probe down with it.
+        Assert.Null(CameraDiscoveryService.ParseFfprobeOutput("<html>not json</html>"));
+    }
+
+    // --- Camera discovery: network scan ---------------------------------------------------------
+
+    [Theory]
+    [InlineData("docker0", "", true)]
+    [InlineData("veth3a1b2c", "", true)]
+    [InlineData("", "Hyper-V Virtual Switch", true)]
+    [InlineData("wg0", "WireGuard Tunnel", true)] // caught incidentally - "Tunnel" contains the "tun" hint, not because "wg0" itself is recognized
+    [InlineData("Ethernet 5", "ASUS USB-AC56 Wireless Adapter", false)] // a name the (necessarily incomplete) hint list won't catch - the point of LooksVirtual being advisory, not a hard filter
+    [InlineData("eth0", "Realtek PCIe GbE Family Controller", false)]
+    [InlineData("Wi-Fi", "Intel(R) Wi-Fi 6 AX200", false)]
+    public void CameraDiscoveryService_IsLikelyVirtualAdapter_MatchesKnownVirtualAdapterNaming(
+        string name, string description, bool expected) =>
+        Assert.Equal(expected, CameraDiscoveryService.IsLikelyVirtualAdapter(name, description));
+
+    [Fact]
+    public async Task CameraDiscoveryService_GetScanStatus_ForAnUnknownJob_ReturnsNull()
+    {
+        var service = BuildDiscoveryService();
+        Assert.Null(service.GetScanStatus(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task CameraDiscoveryService_StartScan_WithNoInterfaces_CompletesWithNoResults()
+    {
+        // The one part of the scan pipeline testable without real hardware or a socket: with
+        // nothing to probe, WS-Discovery's Task.WhenAll over an empty list resolves immediately,
+        // so this also stands as a regression guard that the job reaches Completed at all rather
+        // than getting stuck at Running forever.
+        var ct = TestContext.Current.CancellationToken;
+        var service = BuildDiscoveryService();
+        var jobId = service.StartScan([]);
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        ScanJobSnapshot? snapshot;
+        do
+        {
+            snapshot = service.GetScanStatus(jobId);
+            if (snapshot!.Status == ScanStatus.Completed) break;
+            await Task.Delay(20, ct);
+        } while (DateTimeOffset.UtcNow < deadline);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(ScanStatus.Completed, snapshot.Status);
+        Assert.Empty(snapshot.Results);
+    }
+
+    [Fact]
+    public void CameraDiscoveryService_GetCandidateInterfaces_DoesNotThrow()
+    {
+        // A thin sanity check against the real machine's actual network interfaces - .NET gives
+        // no supported way to fabricate a NetworkInterface for a real unit test, so this only
+        // proves the enumeration/filtering code runs cleanly, not any particular result.
+        var interfaces = CameraDiscoveryService.GetCandidateInterfaces();
+        Assert.NotNull(interfaces);
+    }
+
+    private static CameraDiscoveryService BuildDiscoveryService()
+    {
+        var onvif = new OnvifClient(new HttpClient());
+        var cameraStore = new EmptyCameraStore();
+        var configuration = new ConfigurationBuilder().Build();
+        return new CameraDiscoveryService(onvif, cameraStore, configuration, NullLogger<CameraDiscoveryService>.Instance);
+    }
+
+    private sealed class EmptyCameraStore : ICameraStore
+    {
+        public Task<IReadOnlyList<Camera>> GetAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Camera>>([]);
+        public Task<Camera?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Camera?>(null);
+        public Task<Camera> AddAsync(string name, string streamUrl, string? username, string? password, bool includeAudio, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<bool> UpdateAsync(Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task RestoreAsync(Camera camera, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

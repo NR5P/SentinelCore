@@ -188,6 +188,24 @@ shows up on the **LIVE** tab for viewing and on the **TRIGGERS** tab for motion 
 This is completely separate from your Blue Iris setup — Blue Iris keeps working exactly as it
 always has, whether or not you add any cameras here.
 
+**Don't know your camera's stream URL?** Two ways to find it without guessing:
+
+- **Test Connection**, on the add-camera form — type in the camera's IP address (or as much of
+  the URL as you know) and optional login, and click it. It checks the camera's own discovery
+  protocol (ONVIF, which most IP cameras speak) first, and if that comes back empty, tries a
+  handful of common stream address patterns. If it finds a working stream, it fills in the real
+  URL and a suggested name for you — it never overwrites a URL you've already typed a real path
+  into.
+- **Discover Cameras**, next to Add Camera — scans your network for cameras all at once, the
+  same way. It only runs when you click it — nothing scans automatically or on a schedule. You'll
+  be asked which network adapter to scan on machines with more than one; cameras it already knows
+  about are marked so they don't show up as new. Cameras it finds that need a login can't be
+  added straight from the scan (there's no way to ask for creds for every camera before knowing
+  how many there are) — click **add** and use Test Connection on the form to supply them.
+
+Either way, this only ever probes addresses you asked about — a single IP for Test Connection,
+or the network segments you explicitly selected for Discover Cameras.
+
 ## 6. The TRIGGERS tab — motion zones on your own cameras
 
 This is where you set up motion detection on cameras you added in the CAMERAS tab. Click a

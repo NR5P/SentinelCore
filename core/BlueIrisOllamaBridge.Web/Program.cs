@@ -1,9 +1,15 @@
+using System.Text.Json.Serialization;
 using BlueIrisOllamaBridge;
 using BlueIrisOllamaBridge.Web;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// So enums like CameraProbeStatus serialize as readable strings ("Found", "NeedsCredentials")
+// rather than raw integers - the first enum this project has put on the wire.
+builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 // Lets the same binaries run as a Windows Service or a systemd unit without a separate build.
 // Both are no-ops when the process wasn't started by that service manager - including when it's
@@ -55,6 +61,12 @@ var camerasRoot = Path.IsPathRooted(camerasDataDirectory)
     : Path.Combine(builder.Environment.ContentRootPath, camerasDataDirectory);
 builder.Services.AddSingleton<ICameraStore>(new SqliteCameraStore(camerasRoot));
 builder.Services.AddSingleton<HlsStreamManager>();
+
+// Short timeout on purpose - a camera being probed is either on the LAN and answers in
+// milliseconds, or it isn't there, and the whole point of the probe is to fail fast on the ones
+// that aren't rather than let a single bad IP stall out a user-facing request.
+builder.Services.AddHttpClient<OnvifClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddSingleton<CameraDiscoveryService>();
 
 // Dashboard accounts - separate from the main app's data for the same reason cameras are. Also
 // backs the cookie authentication handler's session storage below (same instance, same reason
@@ -157,6 +169,7 @@ app.UseMiddleware<AuthGateMiddleware>();
 app.UseAuthorization();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
+app.MapCameraDiscoveryEndpoints();
 app.MapTriggerEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();
