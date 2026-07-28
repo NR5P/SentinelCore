@@ -59,6 +59,7 @@ fun SettingsScreen(
     onManageCameras: () -> Unit,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
+    var remoteAddress by rememberSaveable { mutableStateOf(state.remoteServerUrl) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -67,6 +68,7 @@ fun SettingsScreen(
         if (it) model.enablePushNotifications()
     }
     LaunchedEffect(state.serverUrl) { address = state.serverUrl }
+    LaunchedEffect(state.remoteServerUrl) { remoteAddress = state.remoteServerUrl }
     LaunchedEffect(Unit) { model.refreshNotificationPermission() }
 
     Column(Modifier.fillMaxSize()) {
@@ -86,16 +88,39 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                         singleLine = true,
                     )
+                    OutlinedTextField(
+                        value = remoteAddress,
+                        onValueChange = { remoteAddress = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Remote address (optional)") },
+                        placeholder = { Text("https://your-tunnel.example.com") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        singleLine = true,
+                    )
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("Status")
                         Spacer(Modifier.weight(1f))
+                        if (state.hasRemoteServerUrl) {
+                            Text(
+                                if (state.isUsingRemote) "via Remote" else "via Local",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                        }
                         ConnectionBadge(state.connectionState)
                     }
+                    Text(
+                        "A Cloudflare Tunnel (or any other externally-reachable) address to use " +
+                            "when the local address can't be reached, such as away from home on cellular.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Button(
-                        onClick = { model.saveServer(address) },
+                        onClick = { model.saveServers(address, remoteAddress) },
                         enabled = address.isNotBlank() && !state.isLoading,
                         modifier = Modifier.fillMaxWidth(),
                     ) {

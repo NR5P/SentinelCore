@@ -46,6 +46,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 data class SentinelUiState(
     val serverUrl: String = "",
+    // Optional Cloudflare Tunnel (or any other externally-reachable) address, used only when
+    // the local address can't be reached - see SentinelViewModel.connect() for the resolution.
+    val remoteServerUrl: String = "",
+    val activeServerUrl: String = "",
+    val isUsingRemote: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.NOT_CONFIGURED,
     val authStatus: AuthStatus? = null,
     val events: List<SecurityEvent> = emptyList(),
@@ -71,6 +76,12 @@ data class SentinelUiState(
             uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank()
         }.getOrDefault(false)
 
+    val hasRemoteServerUrl: Boolean
+        get() = runCatching {
+            val uri = URI(remoteServerUrl)
+            uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank()
+        }.getOrDefault(false)
+
     val requiresLogin: Boolean
         get() = authStatus?.let { it.enabled && !it.authenticated } == true
 
@@ -88,6 +99,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     private val _state = MutableStateFlow(
         SentinelUiState(
             serverUrl = preferences.getString(SERVER_URL_KEY, "").orEmpty(),
+            remoteServerUrl = preferences.getString(REMOTE_SERVER_URL_KEY, "").orEmpty(),
             pushRegistrationEnabled = preferences.getBoolean(PUSH_ENABLED_KEY, false),
         ),
     )
@@ -128,6 +140,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             }
             if (resetNetworkSession || wasOffline) repository.resetSession()
             log("Connecting to ${_state.value.serverUrl}", DiagnosticLevel.INFO)
+            resolveActiveServerUrl()
 
             try {
                 val auth = repository.authStatus()
@@ -161,6 +174,27 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                 }
                 log("Connection failed: ${readableError(error)}", DiagnosticLevel.ERROR)
             }
+        }
+    }
+
+    // Prefers the local address whenever it's reachable at all (any HTTP response counts, not
+    // just 2xx) and only falls back to the remote address on an actual network failure - this
+    // runs at the top of every connect(), so moving between home and away self-heals on the
+    // next reconnect without any WiFi/SSID detection.
+    private suspend fun resolveActiveServerUrl() {
+        val current = _state.value
+        if (!current.hasRemoteServerUrl) {
+            repository.baseUrl = current.serverUrl
+            _state.update { it.copy(activeServerUrl = current.serverUrl, isUsingRemote = false) }
+            return
+        }
+        if (repository.probeReachable(current.serverUrl)) {
+            repository.baseUrl = current.serverUrl
+            _state.update { it.copy(activeServerUrl = current.serverUrl, isUsingRemote = false) }
+        } else {
+            log("Local address unreachable; using remote address", DiagnosticLevel.INFO)
+            repository.baseUrl = current.remoteServerUrl
+            _state.update { it.copy(activeServerUrl = current.remoteServerUrl, isUsingRemote = true) }
         }
     }
 
@@ -210,8 +244,37 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         _state.update {
             SentinelUiState(
                 serverUrl = normalized,
+                remoteServerUrl = it.remoteServerUrl,
                 diagnostics = it.diagnostics,
                 connectionState = if (normalized.isBlank()) {
+                    ConnectionState.NOT_CONFIGURED
+                } else {
+                    ConnectionState.CHECKING
+                },
+            )
+        }
+        connect(resetNetworkSession = true)
+    }
+
+    // Saves both addresses and reconnects exactly once - saveServer()/a hypothetical
+    // saveRemoteServer() called back-to-back would each independently trigger connect(),
+    // racing against connect()'s own "already active" guard.
+    fun saveServers(localAddress: String, remoteAddress: String) {
+        val normalizedLocal = SentinelRepository.normalizeAddress(localAddress)
+        val normalizedRemote = if (remoteAddress.isBlank()) "" else SentinelRepository.normalizeAddress(remoteAddress)
+        connectionJob?.cancel()
+        repository.clearAuthenticationSession()
+        repository.baseUrl = normalizedLocal
+        preferences.edit()
+            .putString(SERVER_URL_KEY, normalizedLocal)
+            .putString(REMOTE_SERVER_URL_KEY, normalizedRemote)
+            .apply()
+        _state.update {
+            SentinelUiState(
+                serverUrl = normalizedLocal,
+                remoteServerUrl = normalizedRemote,
+                diagnostics = it.diagnostics,
+                connectionState = if (normalizedLocal.isBlank()) {
                     ConnectionState.NOT_CONFIGURED
                 } else {
                     ConnectionState.CHECKING
@@ -569,6 +632,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     companion object {
         private const val SERVER_URL_KEY = "server_url"
+        private const val REMOTE_SERVER_URL_KEY = "remote_server_url"
         private const val PUSH_ENABLED_KEY = "push_registration_enabled"
     }
 }
