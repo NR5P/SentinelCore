@@ -29,6 +29,7 @@
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones. Separate from Blue Iris.">cameras</button>
       <button class="tab" data-view="triggers" data-tip-below data-tip-right data-tip="Motion caught inside a trigger zone. Click a thumbnail to view the snapshot or play its clip.">triggers</button>
+      <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
       <button class="tab" id="tab-settings" data-view="settings" data-tip-below data-tip-right data-tip="Configuration for the Blue Iris bridge, AI model, and alerts. Changes apply live.">settings</button>
       <button class="tab hidden" id="tab-accounts" data-view="accounts" data-tip-below data-tip-right data-tip="Your account, and (for admins) every account signed in to this dashboard.">accounts</button>
     </nav>
@@ -217,6 +218,31 @@
       </div>
     </section>
 
+    <section id="view-automations" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">AUTOMATIONS</div>
+        <div class="toolbar-actions">
+          <span class="event-count" data-tip-below data-tip-right data-tip="Each rule watches completed AI alerts and, when one matches, publishes a custom MQTT message or calls an API endpoint of your choosing.">custom MQTT + webhook rules per camera/detection</span>
+          <button id="add-automation-btn" class="btn" data-tip-below data-tip-right data-tip="Create a new rule: which cameras/detections it watches, and what it does when they match.">+ add rule</button>
+        </div>
+      </div>
+
+      <div id="automation-form-wrap" class="settings-section hidden">
+        <div class="settings-section-body" style="display:flex;">
+          <div class="field-grid" id="automation-form-fields"></div>
+          <div class="settings-section-footer">
+            <button id="automation-save-btn" class="btn" data-tip="Save this rule. It applies to the next alert that matches.">save</button>
+            <button id="automation-cancel-btn" class="btn" data-tip="Close this form and discard any changes you have made.">cancel</button>
+            <ul class="field-errors" id="automation-form-errors"></ul>
+          </div>
+        </div>
+      </div>
+
+      <div id="automations-root" class="settings-root">
+        <div class="empty-state">loading automation rules&hellip;</div>
+      </div>
+    </section>
+
     <section id="view-settings" class="view hidden">
       <div class="toolbar">
         <div class="toolbar-label">SETTINGS</div>
@@ -376,6 +402,7 @@
   <script src="settings.js"></script>
   <script src="cameras.js"></script>
   <script src="triggers.js"></script>
+  <script src="automations.js"></script>
   <script src="timeline.js"></script>
 </body>
 </html>

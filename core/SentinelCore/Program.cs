@@ -151,6 +151,8 @@ builder.Services.AddSingleton<IMqttPublisher>(sp => sp.GetRequiredService<MqttPu
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttPublisher>());
 builder.Services.AddSingleton<IAlertAction, MqttAlertAction>();
 
+builder.Services.AddSingleton<IAutomationRuleStore, SqliteAutomationRuleStore>();
+
 // Before AlertProcessor so interrupted alerts are already waiting when it starts draining.
 builder.Services.AddHostedService<AlertRecoveryService>();
 builder.Services.AddHostedService<AlertProcessor>();
@@ -222,6 +224,13 @@ builder.Services.AddHttpClient<IAlertAction, HomeKitAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(homeKitSettings.TimeoutSeconds);
 });
+// Registered as its own concrete type (not just IAlertAction) so the /test endpoint can resolve
+// it directly - same pattern as MqttPublisher/IMqttPublisher above.
+builder.Services.AddHttpClient<AutomationAlertAction>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
+builder.Services.AddSingleton<IAlertAction>(sp => sp.GetRequiredService<AutomationAlertAction>());
 var telegramChatSettings = builder.Configuration.GetSection(TelegramChatOptions.SectionName).Get<TelegramChatOptions>() ?? new();
 builder.Services.AddHttpClient(nameof(TelegramChatWorker), client =>
 {
@@ -405,6 +414,8 @@ app.MapPost("/api/queue/clear", async (IAlertQueue queue, IEventStore eventStore
 // Same Q&A logic the Telegram bot already uses (ChatAnswerService) - reachable here so the
 // dashboard's own ask box (see SentinelCore.Web/ChatEndpoints.cs) doesn't need a
 // Telegram account. Already covered by ApiKeyMiddleware above like every other /api route.
+app.MapAutomationRuleEndpoints();
+
 app.MapPost("/api/chat/ask", async (ChatQuestionRequest request, ChatAnswerService chatAnswers, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(request.Question))

@@ -14,6 +14,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
 6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
+6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
 7. [The SETTINGS tab](#7-the-settings-tab)
 8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
 9. [Prompt profiles — what the AI is told to look for](#9-prompt-profiles--what-the-ai-is-told-to-look-for)
@@ -267,6 +268,43 @@ instance.
 The **TRIGGERS** tab itself (separate from the zone editor) shows a simple history of motion
 events caught by any zone, each with a thumbnail — click it to view the snapshot, or play the
 clip if one was recorded (marked with a ▶ clip badge).
+
+## 6a. The AUTOMATIONS tab — custom MQTT & webhook rules
+
+The MQTT and Webhook channels under [Settings](#13-mqtt--home-assistant) each send everything
+to one fixed destination — every event to the same topic prefix, or every notifiable alert to
+the same URL. The **AUTOMATIONS** tab is for when you want something more specific: *when
+camera X sees Y, do Z* — a different MQTT topic per detection, a call to a different API
+endpoint depending on which camera fired, or several rules covering different automations at
+once. Any number of rules can be active at the same time.
+
+Click **+ add rule** to create one:
+
+| Field | What it does |
+|---|---|
+| Name | A label for your own reference, e.g. "Gate — package delivered". |
+| Cameras | Comma-separated camera names this rule watches. Must match the name exactly as shown on the FEED tab (the Blue Iris camera name, or one of your own added cameras). Leave blank to match every camera. |
+| Detected categories | Which kinds of detection fire the rule — person at gate, vehicle entering, package delivered, animal, etc. Leave every box unchecked to match any detection, including ones that don't fall into a named category. |
+| Minimum confidence | Only fires when the AI's confidence is at least this. |
+| Only when a notification is recommended | On by default — skips alerts the AI itself judged not worth telling anyone about. |
+| Cooldown minutes | Suppresses repeats of the same camera/category within this window, so one lingering car doesn't fire the rule over and over. |
+| Action | Either **Publish a custom MQTT message** or **Call an API endpoint (webhook)**. |
+
+**MQTT action.** Requires the MQTT integration to be turned on under Settings first (rules
+reuse that same broker connection). Set a **topic** and a **payload** — both accept the
+`{{token}}` placeholders listed at the bottom of the form (camera, summary, confidence,
+category, vehicle/person/package/animal details, and more), so a topic like
+`home/sentinelcore/{{camera}}/{{category}}` or a JSON payload with `{{summary}}` embedded in it
+both work. **Retain** keeps the broker holding the last message for any new subscriber — turn
+it on for a status-style topic, leave it off for a one-off event notification.
+
+**Webhook action.** Set a URL, HTTP method, optional headers (one `Name: Value` per line — also
+token-aware, so something like `Authorization: Bearer {{camera}}` works if you needed it to),
+and a body. The URL and body both accept the same `{{token}}` placeholders as MQTT.
+
+Every rule card has a **test** button that fires it immediately against sample data — useful
+for checking a topic/payload or URL/body actually work before waiting for a real detection. The
+result (published topic, or the HTTP status the endpoint returned) shows next to the button.
 
 ## 7. The SETTINGS tab
 

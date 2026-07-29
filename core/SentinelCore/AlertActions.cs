@@ -54,6 +54,23 @@ public sealed class WebhookAlertAction : IAlertAction
 // suppressed instead of re-sent every time a new frame happens to trigger analysis.
 public static class AlertCategorizer
 {
+    // Every category Categorize can return, in the same order it checks them - used by automation
+    // rules (see AutomationAlertAction) to populate a category picker in the dashboard without
+    // that list drifting out of sync with the logic below.
+    public static readonly IReadOnlyList<string> KnownCategories =
+    [
+        "package-delivered",
+        "delivery-in-progress",
+        "person-outside-vehicle",
+        "person-walking",
+        "person-at-gate",
+        "vehicle-entering",
+        "vehicle-at-gate",
+        "vehicle-inside",
+        "person-on-property",
+        "animal"
+    ];
+
     public static string? Categorize(VisionAnalysis analysis)
     {
         if (EqualsValue(analysis.Package.Status, "delivered"))
