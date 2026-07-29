@@ -638,6 +638,58 @@ main {
   padding-left: 10px;
 }
 
+.system-status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.system-stat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.system-stat-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.system-stat-label strong {
+  color: var(--text);
+  font-weight: normal;
+}
+
+.system-stat-bar {
+  height: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.system-stat-bar-fill {
+  height: 100%;
+  background: var(--green-dim);
+  transition: width 0.4s ease;
+}
+
+.system-stat-bar-fill.warn { background: var(--amber); }
+.system-stat-bar-fill.danger { background: var(--red); }
+
+.system-stat-plain {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.system-stat-plain strong {
+  color: var(--text);
+  font-weight: normal;
+}
+
 .mode-switch {
   display: flex;
   align-items: center;

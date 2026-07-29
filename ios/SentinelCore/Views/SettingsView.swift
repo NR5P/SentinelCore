@@ -79,6 +79,33 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Server Health") {
+                if let status = model.systemStatus {
+                    LabeledContent("CPU") {
+                        Text("\(Int(status.cpuUsagePercent.rounded()))% of \(status.processorCount) core\(status.processorCount == 1 ? "" : "s")")
+                    }
+                    ProgressView(value: min(status.cpuUsagePercent / 100, 1))
+                    LabeledContent("Memory") {
+                        Text("\(Self.formatBytes(status.memoryUsedBytes)) / \(Self.formatBytes(status.memoryTotalBytes))")
+                    }
+                    ProgressView(value: min(status.memoryUsedFraction, 1))
+                    LabeledContent("Disk") {
+                        Text("\(Self.formatBytes(status.diskUsedBytes)) / \(Self.formatBytes(status.diskTotalBytes))")
+                    }
+                    ProgressView(value: min(status.diskUsedFraction, 1))
+                    LabeledContent("Analysis queue", value: "\(status.queuedAlerts) pending")
+                    LabeledContent("Vision backend", value: status.visionBackendHealthy ? "Reachable" : "Unreachable")
+                        .foregroundStyle(status.visionBackendHealthy ? .primary : SentinelTheme.red)
+                    LabeledContent("Uptime", value: Self.formatUptime(status.uptimeSeconds))
+                } else {
+                    Text("Could not load server status.")
+                        .foregroundStyle(.secondary)
+                }
+                Button("Refresh") {
+                    Task { await model.refreshSystemStatus() }
+                }
+            }
+
             Section("System") {
                 LabeledContent("Events loaded", value: "\(model.events.count)")
                 LabeledContent("Cameras", value: "\(model.cameras.count)")
@@ -169,6 +196,7 @@ struct SettingsView: View {
         .onAppear {
             address = model.serverURL
             remoteAddress = model.remoteServerURL
+            Task { await model.refreshSystemStatus() }
         }
         .onChange(of: model.serverURL) { _, newValue in address = newValue }
         .onChange(of: model.remoteServerURL) { _, newValue in remoteAddress = newValue }
@@ -185,6 +213,20 @@ struct SettingsView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let withScheme = trimmed.contains("://") ? trimmed : "\(defaultScheme)://\(trimmed)"
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+    }
+
+    private static func formatUptime(_ seconds: Double) -> String {
+        let totalMinutes = Int(seconds / 60)
+        let days = totalMinutes / 1440
+        let hours = (totalMinutes % 1440) / 60
+        let minutes = totalMinutes % 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(minutes)m" }
+        return "\(minutes)m"
     }
 }
 

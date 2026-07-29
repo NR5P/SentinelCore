@@ -187,6 +187,10 @@ builder.Services.AddHostedService<SelfMonitoringWorker>();
 // Registered in the main app only - all three services would otherwise each report the same
 // reboot separately.
 builder.Services.AddHostedService<StartupNotificationWorker>();
+// Registered as both so the /api/system/status endpoint below can read Latest off the same
+// instance the background loop is updating, rather than standing up a second sampler.
+builder.Services.AddSingleton<SystemStatsSampler>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<SystemStatsSampler>());
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<OllamaVisionClient>(client =>
@@ -432,6 +436,11 @@ app.MapGet("/api/results/{id:guid}", async (Guid id, IResultStore store, Cancell
 
 app.MapGet("/api/queue/status", (IAlertQueue queue) =>
     Results.Ok(new { queued = queue.ApproximateCount }));
+
+app.MapGet("/api/system/status", (SystemStatsSampler sampler) =>
+    sampler.Latest is { } snapshot
+        ? Results.Ok(snapshot)
+        : Results.Json(new { error = "System stats are not available yet." }, statusCode: 503));
 
 // For when the queue has fallen so far behind that catching up isn't worth it - each alert here
 // takes as long as a real Ollama analysis does, so a backlog of a few hundred can mean hours.

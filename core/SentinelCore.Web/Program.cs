@@ -279,6 +279,7 @@ app.MapAccountEndpoints();
 app.MapBackupEndpoints();
 app.MapChatEndpoints();
 app.MapQueueEndpoints();
+app.MapSystemStatusEndpoints();
 app.MapAutomationRuleProxyEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();

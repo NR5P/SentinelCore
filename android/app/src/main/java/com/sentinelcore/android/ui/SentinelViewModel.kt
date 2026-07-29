@@ -28,6 +28,7 @@ import com.sentinelcore.android.data.SentinelRepository
 import com.sentinelcore.android.data.TriggerConfig
 import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.data.PushStatus
+import com.sentinelcore.android.data.SystemStatus
 import com.sentinelcore.android.data.RecordingTimelineDay
 import com.sentinelcore.android.net.DiscoveredServer
 import com.sentinelcore.android.net.ServerDiscovery
@@ -65,6 +66,7 @@ data class SentinelUiState(
     val diagnostics: List<DiagnosticEntry> = emptyList(),
     val lastUpdated: Instant? = null,
     val pushStatus: PushStatus? = null,
+    val systemStatus: SystemStatus? = null,
     val pushPermission: String = "NOT REQUESTED",
     val pushRegistrationEnabled: Boolean = false,
     val pushMessage: String? = null,
@@ -648,6 +650,15 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     private suspend fun refreshPushStatus() {
         runCatching { repository.pushStatus() }
             .onSuccess { status -> _state.update { it.copy(pushStatus = status) } }
+    }
+
+    // Public (unlike refreshPushStatus above) - called directly from SettingsScreen's
+    // LaunchedEffect since there's no other flow that already touches system status.
+    fun refreshSystemStatus() {
+        viewModelScope.launch {
+            runCatching { repository.systemStatus() }
+                .onSuccess { status -> _state.update { it.copy(systemStatus = status) } }
+        }
     }
 
     private suspend fun syncPushRegistration(

@@ -24,6 +24,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -51,6 +52,7 @@ import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.components.ConnectionBadge
 import com.sentinelcore.android.ui.components.shortTime
+import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelRed
@@ -76,6 +78,7 @@ fun SettingsScreen(
     LaunchedEffect(state.serverUrl) { address = state.serverUrl }
     LaunchedEffect(state.remoteServerUrl) { remoteAddress = state.remoteServerUrl }
     LaunchedEffect(Unit) { model.refreshNotificationPermission() }
+    LaunchedEffect(Unit) { model.refreshSystemStatus() }
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("Settings", state)
@@ -187,6 +190,40 @@ fun SettingsScreen(
                         ) {
                             Text("Manage Accounts", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
+                    }
+                }
+            }
+
+            item {
+                SettingsSection("Server health") {
+                    state.systemStatus?.let { status ->
+                        SettingsRow(
+                            "CPU",
+                            "${status.cpuUsagePercent.toInt()}% of ${status.processorCount} core${if (status.processorCount == 1) "" else "s"}",
+                        )
+                        UsageBar(status.cpuUsagePercent / 100.0)
+                        SettingsRow(
+                            "Memory",
+                            "${formatBytes(status.memoryUsedBytes)} / ${formatBytes(status.memoryTotalBytes)}",
+                        )
+                        UsageBar(status.memoryUsedFraction)
+                        SettingsRow(
+                            "Disk",
+                            "${formatBytes(status.diskUsedBytes)} / ${formatBytes(status.diskTotalBytes)}",
+                        )
+                        UsageBar(status.diskUsedFraction)
+                        SettingsRow("Analysis queue", "${status.queuedAlerts} pending")
+                        SettingsRow(
+                            "Vision backend",
+                            if (status.visionBackendHealthy) "Reachable" else "Unreachable",
+                        )
+                        SettingsRow("Uptime", formatUptime(status.uptimeSeconds))
+                    } ?: Text("Could not load server status.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(
+                        onClick = model::refreshSystemStatus,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Refresh")
                     }
                 }
             }
@@ -418,6 +455,45 @@ private fun SettingsRow(label: String, value: String) {
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.weight(1f))
         Text(value)
+    }
+}
+
+@Composable
+private fun UsageBar(fraction: Double) {
+    val clamped = fraction.coerceIn(0.0, 1.0)
+    val color = when {
+        clamped >= 0.9 -> SentinelRed
+        clamped >= 0.7 -> SentinelAmber
+        else -> SentinelGreen
+    }
+    LinearProgressIndicator(
+        progress = { clamped.toFloat() },
+        modifier = Modifier.fillMaxWidth(),
+        color = color,
+    )
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var unit = 0
+    while (value >= 1024 && unit < units.size - 1) {
+        value /= 1024
+        unit++
+    }
+    return if (unit == 0) "${value.toInt()} ${units[unit]}" else "%.1f %s".format(value, units[unit])
+}
+
+private fun formatUptime(seconds: Double): String {
+    val totalMinutes = (seconds / 60).toInt()
+    val days = totalMinutes / 1440
+    val hours = (totalMinutes % 1440) / 60
+    val minutes = totalMinutes % 60
+    return when {
+        days > 0 -> "${days}d ${hours}h"
+        hours > 0 -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
     }
 }
 

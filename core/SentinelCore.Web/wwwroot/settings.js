@@ -361,7 +361,7 @@ window.GateWatchSettings = (function () {
 
   // Which of the six hand-written sections belong in basic mode. The schema sections carry
   // their own `basic` flag; these don't have a schema, so they're listed here instead.
-  const BASIC_CUSTOM_SECTIONS = new Set(["APPLE HOMEKIT", "BACKUP", "LOGIN", "LICENSE"]);
+  const BASIC_CUSTOM_SECTIONS = new Set(["APPLE HOMEKIT", "BACKUP", "LOGIN", "LICENSE", "SYSTEM HEALTH"]);
 
   // Advanced is opt-in and remembered per device, so the owner can run advanced on a desktop
   // while someone else's phone stays simple. Purely a display preference - nothing here is
@@ -1031,6 +1031,114 @@ window.GateWatchSettings = (function () {
     return section;
   }
 
+  const SYSTEM_STATUS_POLL_MS = 5_000;
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+  }
+
+  function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  }
+
+  function barSeverityClass(percent) {
+    if (percent >= 90) return "danger";
+    if (percent >= 70) return "warn";
+    return "";
+  }
+
+  function buildStatBar(labelText, percent, detailText) {
+    const row = document.createElement("div");
+    row.className = "system-stat-row";
+
+    const label = document.createElement("div");
+    label.className = "system-stat-label";
+    label.innerHTML = `<span>${labelText}</span><strong>${detailText}</strong>`;
+
+    const track = document.createElement("div");
+    track.className = "system-stat-bar";
+    const fill = document.createElement("div");
+    fill.className = `system-stat-bar-fill ${barSeverityClass(percent)}`.trim();
+    fill.style.width = `${Math.min(100, Math.max(0, percent)).toFixed(0)}%`;
+    track.appendChild(fill);
+
+    row.append(label, track);
+    return row;
+  }
+
+  function buildStatPlain(labelText, detailText) {
+    const row = document.createElement("div");
+    row.className = "system-stat-plain";
+    row.innerHTML = `<span>${labelText}</span><strong>${detailText}</strong>`;
+    return row;
+  }
+
+  // Read-only telemetry, not configuration - no save button, just a live snapshot polled on
+  // its own interval so it stays current without reloading the whole settings form (which
+  // would blow away any in-progress edits elsewhere on the page).
+  function renderSystemStatusSection() {
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">SYSTEM HEALTH</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "How hard this server is working right now - CPU, memory, disk, and the analysis queue. Read-only; nothing here is configuration.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("How hard this server is currently working. Useful for checking whether it's keeping up before you add more cameras or lean on cloud vision less."));
+
+    const grid = document.createElement("div");
+    grid.className = "system-status-grid";
+    grid.innerHTML = `<div class="empty-state">checking system status&hellip;</div>`;
+    body.appendChild(grid);
+
+    async function refresh() {
+      try {
+        const response = await fetch("/api/system/status");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const s = await response.json();
+
+        grid.innerHTML = "";
+        grid.appendChild(buildStatBar("CPU", s.cpuUsagePercent, `${s.cpuUsagePercent.toFixed(0)}% of ${s.processorCount} core${s.processorCount === 1 ? "" : "s"}`));
+        const memPercent = s.memoryTotalBytes > 0 ? (s.memoryUsedBytes / s.memoryTotalBytes) * 100 : 0;
+        grid.appendChild(buildStatBar("Memory", memPercent, `${formatBytes(s.memoryUsedBytes)} / ${formatBytes(s.memoryTotalBytes)}`));
+        const diskUsed = s.diskTotalBytes - s.diskFreeBytes;
+        const diskPercent = s.diskTotalBytes > 0 ? (diskUsed / s.diskTotalBytes) * 100 : 0;
+        grid.appendChild(buildStatBar("Disk", diskPercent, `${formatBytes(diskUsed)} / ${formatBytes(s.diskTotalBytes)}`));
+        grid.appendChild(buildStatPlain("Analysis queue", `${s.queuedAlerts} pending`));
+        grid.appendChild(buildStatPlain("Vision backend", s.visionBackendHealthy ? "reachable" : "unreachable"));
+        grid.appendChild(buildStatPlain("Uptime", formatUptime(s.uptimeSeconds)));
+      } catch {
+        grid.innerHTML = `<div class="empty-state">could not load system status.</div>`;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, SYSTEM_STATUS_POLL_MS);
+
+    section.append(header, body);
+    return section;
+  }
+
   function renderLicenseSection() {
     const section = document.createElement("div");
     section.className = "settings-section";
@@ -1479,6 +1587,7 @@ window.GateWatchSettings = (function () {
       for (const schema of SECTIONS) {
         root.appendChild(renderSection(schema, data[schema.key]));
       }
+      root.appendChild(renderSystemStatusSection());
       root.appendChild(renderHomeKitSection(data.homeKit));
       root.appendChild(renderBackupSection());
       root.appendChild(renderAuthSection());

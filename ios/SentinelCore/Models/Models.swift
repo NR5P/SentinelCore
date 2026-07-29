@@ -188,6 +188,28 @@ struct PushStatus: Codable {
     let registeredDevices: Int
 }
 
+struct SystemStatus: Codable {
+    let cpuUsagePercent: Double
+    let processorCount: Int
+    let memoryUsedBytes: Int64
+    let memoryTotalBytes: Int64
+    let diskFreeBytes: Int64
+    let diskTotalBytes: Int64
+    let queuedAlerts: Int
+    let uptimeSeconds: Double
+    let visionBackendHealthy: Bool
+
+    var memoryUsedFraction: Double {
+        memoryTotalBytes > 0 ? Double(memoryUsedBytes) / Double(memoryTotalBytes) : 0
+    }
+
+    var diskUsedBytes: Int64 { diskTotalBytes - diskFreeBytes }
+
+    var diskUsedFraction: Double {
+        diskTotalBytes > 0 ? Double(diskUsedBytes) / Double(diskTotalBytes) : 0
+    }
+}
+
 struct PushDeviceBody: Encodable {
     let platform: String
     let token: String

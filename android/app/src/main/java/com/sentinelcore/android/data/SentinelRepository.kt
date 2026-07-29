@@ -360,6 +360,21 @@ class SentinelRepository(
         )
     }
 
+    suspend fun systemStatus(): SystemStatus = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/system/status"))
+        SystemStatus(
+            cpuUsagePercent = json.optDouble("cpuUsagePercent"),
+            processorCount = json.optInt("processorCount"),
+            memoryUsedBytes = json.optLong("memoryUsedBytes"),
+            memoryTotalBytes = json.optLong("memoryTotalBytes"),
+            diskFreeBytes = json.optLong("diskFreeBytes"),
+            diskTotalBytes = json.optLong("diskTotalBytes"),
+            queuedAlerts = json.optInt("queuedAlerts"),
+            uptimeSeconds = json.optDouble("uptimeSeconds"),
+            visionBackendHealthy = json.optBoolean("visionBackendHealthy"),
+        )
+    }
+
     suspend fun registerPushDevice(token: String, deviceName: String) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("platform", "android")

@@ -138,6 +138,27 @@ data class PushStatus(
     val registeredDevices: Int,
 )
 
+data class SystemStatus(
+    val cpuUsagePercent: Double,
+    val processorCount: Int,
+    val memoryUsedBytes: Long,
+    val memoryTotalBytes: Long,
+    val diskFreeBytes: Long,
+    val diskTotalBytes: Long,
+    val queuedAlerts: Int,
+    val uptimeSeconds: Double,
+    val visionBackendHealthy: Boolean,
+) {
+    val memoryUsedFraction: Double
+        get() = if (memoryTotalBytes > 0) memoryUsedBytes.toDouble() / memoryTotalBytes else 0.0
+
+    val diskUsedBytes: Long
+        get() = diskTotalBytes - diskFreeBytes
+
+    val diskUsedFraction: Double
+        get() = if (diskTotalBytes > 0) diskUsedBytes.toDouble() / diskTotalBytes else 0.0
+}
+
 data class PushDeliveryReport(
     val attempted: Int,
     val delivered: Int,
