@@ -30,10 +30,13 @@ public static class AuthEndpoints
         // Always reachable, no matter the auth state - the frontend needs this to decide
         // whether to show the login overlay, and to know the current account's role once
         // signed in (so it can gate admin-only UI without a second round-trip).
-        app.MapGet("/api/auth/status", async (HttpContext context, AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
+        app.MapGet("/api/auth/status", async (HttpContext context, AppSettingsFile settings, IAccountStore accounts, InternetExposedSettings internetExposed, CancellationToken ct) =>
         {
             var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
-            var enabled = auth?.Enabled ?? false;
+            // Always required on the Internet Exposed Mode port, regardless of the base Auth
+            // setting - matches AuthGateMiddleware's enforcement of the same rule.
+            var isExposedRequest = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port;
+            var enabled = isExposedRequest || (auth?.Enabled ?? false);
             var authenticated = !enabled || context.User.Identity?.IsAuthenticated == true;
             return Results.Ok(new
             {

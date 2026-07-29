@@ -37,7 +37,7 @@ struct SettingsView: View {
                         model.serverURL = normalized(address)
                         model.remoteServerURL = remoteAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? ""
-                            : normalized(remoteAddress)
+                            : normalized(remoteAddress, defaultScheme: "https")
                         await model.connect(resetNetworkSession: true)
                     }
                 }
@@ -167,9 +167,13 @@ struct SettingsView: View {
         .onChange(of: model.remoteServerURL) { _, newValue in remoteAddress = newValue }
     }
 
-    private func normalized(_ value: String) -> String {
+    // Local addresses default to http:// (a bare LAN IP typing "192.168.1.50" shouldn't force a
+    // scheme nobody configured). The remote address defaults to https:// instead: it's meant to
+    // reach a public internet-facing hostname (e.g. a Cloudflare Tunnel), and silently falling
+    // back to plain HTTP there would send credentials/cookies over the internet in the clear.
+    private func normalized(_ value: String, defaultScheme: String = "http") -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
+        let withScheme = trimmed.contains("://") ? trimmed : "\(defaultScheme)://\(trimmed)"
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
     }
 }

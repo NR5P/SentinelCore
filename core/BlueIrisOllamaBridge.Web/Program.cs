@@ -21,6 +21,17 @@ builder.Host.UseSystemd();
 // it's on is decided by whether a certificate is actually present on disk - see HttpsSettings.
 var httpsSettings = HttpsSettings.FromConfiguration(builder.Configuration);
 var httpsEnabled = httpsSettings.CanEnable(out var httpsSkipReason);
+
+// A third, dedicated port for traffic reaching this server from outside the LAN (e.g. via a
+// Cloudflare Tunnel) - requires HTTPS to already be enabled, and reuses its certificate. See
+// InternetExposedSettings for why: requests on this port always require login and are always
+// genuine HTTPS, by construction, with no forwarded-header trust needed.
+var internetExposedSettings = InternetExposedSettings.FromConfiguration(builder.Configuration);
+// CanEnable already re-validates httpsSettings.CanEnable() itself, so this doesn't need (and
+// must not short-circuit on) the outer httpsEnabled flag - that would leave internetExposedSkipReason
+// unassigned whenever httpsEnabled was false.
+var internetExposedEnabled = internetExposedSettings.CanEnable(httpsSettings, out var internetExposedSkipReason);
+
 if (httpsEnabled)
 {
     // Calling Listen() at all makes Kestrel ignore the Urls setting entirely, so the existing
@@ -36,8 +47,14 @@ if (httpsEnabled)
     {
         kestrel.ListenAnyIP(httpPort);
         kestrel.ListenAnyIP(httpsSettings.Port, listen => listen.UseHttps(certificate));
+        if (internetExposedEnabled)
+            kestrel.ListenAnyIP(internetExposedSettings.Port, listen => listen.UseHttps(certificate));
     });
 }
+
+// Reflects whether the mode is *actually* active (certificate loadable, port valid) rather than
+// just requested - AuthGateMiddleware and /api/auth/status trust this, not the raw config.
+builder.Services.AddSingleton(internetExposedSettings with { Enabled = internetExposedEnabled });
 
 // Only DataDirectory is used here (to find the shared events.db/images), so this
 // deliberately skips the main app's ApiKey validation - this project has no API key.
@@ -52,6 +69,12 @@ var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
     ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
 var appSettingsFile = new AppSettingsFile(mainAppSettingsPath);
 builder.Services.AddSingleton(appSettingsFile);
+
+// A second AppSettingsFile instance, pointed at this project's own appsettings.json rather than
+// the main app's - reuses the same safe read/merge/write logic for settings that configure this
+// project's own Kestrel binding (Internet Exposed Mode), which can't live in the shared file.
+var webAppSettingsPath = Path.Combine(builder.Environment.ContentRootPath, "appsettings.json");
+builder.Services.AddKeyedSingleton("web", new AppSettingsFile(webAppSettingsPath));
 
 // Cameras added through the UI are stored separately from the main app's data entirely -
 // they're for live viewing only and the alert pipeline never sees them.
@@ -153,6 +176,17 @@ else if (httpsSkipReason is not null)
     // Only when it was configured but unusable - staying quiet otherwise, since running on plain
     // HTTP is the shipped default and not something to nag about.
     app.Logger.LogWarning("{Reason} Continuing on plain HTTP. See docs/DEPLOYMENT.md to set up HTTPS.", httpsSkipReason);
+}
+
+if (internetExposedEnabled)
+{
+    app.Logger.LogInformation(
+        "Internet Exposed Mode enabled on port {Port} - login and HTTPS are always required there. Point a Cloudflare Tunnel (or other reverse proxy) at this port, not the LAN one.",
+        internetExposedSettings.Port);
+}
+else if (internetExposedSkipReason is not null)
+{
+    app.Logger.LogWarning("{Reason} Internet Exposed Mode is not active.", internetExposedSkipReason);
 }
 
 // First in the pipeline so it sees every request, including static files: someone loading the

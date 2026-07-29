@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using BlueIrisOllamaBridge;
+using Microsoft.AspNetCore.Mvc;
 
 namespace BlueIrisOllamaBridge.Web;
 
@@ -190,6 +191,50 @@ public static class SettingsEndpoints
 
             await appSettings.ReplaceSectionAsync("PromptProfiles", profiles, ct);
             return Results.Ok(new { saved = true });
+        });
+
+        // Lives in this project's own appsettings.json (a keyed AppSettingsFile instance
+        // registered separately in Program.cs), not the main app's shared settings file - it
+        // configures this project's own Kestrel binding, the same category as the Https block
+        // it depends on. Takes effect after a restart, like Https already does.
+        settings.MapGet("/internet-exposed", async (
+            [FromKeyedServices("web")] AppSettingsFile webSettings,
+            InternetExposedSettings active,
+            CancellationToken ct) =>
+        {
+            var dto = await webSettings.GetSectionAsync<InternetExposedSettingsDto>("InternetExposed", ct)
+                ?? new InternetExposedSettingsDto();
+            return Results.Ok(new { dto.Enabled, dto.Port, active = active.Enabled, activePort = active.Port });
+        });
+
+        settings.MapPut("/internet-exposed", async (
+            InternetExposedSettingsDto dto,
+            [FromKeyedServices("web")] AppSettingsFile webSettings,
+            IConfiguration configuration,
+            IAccountStore accounts,
+            CancellationToken ct) =>
+        {
+            var errors = ValidateDataAnnotations(dto);
+            if (dto.Enabled)
+            {
+                var httpsSettings = HttpsSettings.FromConfiguration(configuration);
+                if (!httpsSettings.CanEnable(out var httpsReason))
+                {
+                    errors.Add(httpsReason
+                        ?? "Internet Exposed Mode requires a local HTTPS certificate to be configured first - see docs/DEPLOYMENT.md.");
+                }
+                else if (dto.Port == httpsSettings.Port)
+                {
+                    errors.Add($"Internet Exposed port {dto.Port} must be different from the HTTPS port.");
+                }
+
+                if (!await accounts.AnyAccountsExistAsync(ct))
+                    errors.Add("Create an admin account before enabling Internet Exposed Mode - otherwise the port would require login with no way to sign in.");
+            }
+            if (errors.Count > 0) return Results.BadRequest(new { errors });
+
+            await webSettings.MergeSectionAsync("InternetExposed", dto, ct);
+            return Results.Ok(new { saved = true, restartRequired = true });
         });
     }
 

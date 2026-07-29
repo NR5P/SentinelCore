@@ -231,6 +231,18 @@ public sealed class QuietHoursSettingsDto
     public double MinimumConfidence { get; set; } = 0.85;
 }
 
+// Backing DTO for the Settings UI's "Internet Exposed Mode" toggle - persisted separately from
+// the rest of SettingsSnapshot (see SettingsEndpoints.MapInternetExposedEndpoints) because it
+// lives in this project's own appsettings.json (it configures this project's own Kestrel
+// binding, same category as HttpsSettings), not the main app's shared settings file.
+public sealed class InternetExposedSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(1, 65535)]
+    public int Port { get; set; } = InternetExposedSettings.DefaultPort;
+}
+
 public sealed class BugReportSettingsDto
 {
     public bool Enabled { get; set; }
