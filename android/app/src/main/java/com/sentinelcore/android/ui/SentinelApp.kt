@@ -39,6 +39,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sentinelcore.android.ui.components.ConnectionBadge
+import com.sentinelcore.android.ui.screens.AccountAdminScreen
+import com.sentinelcore.android.ui.screens.AccountEditScreen
 import com.sentinelcore.android.ui.screens.CameraAdminScreen
 import com.sentinelcore.android.ui.screens.CameraDiscoveryScreen
 import com.sentinelcore.android.ui.screens.CameraEditScreen
@@ -244,6 +246,22 @@ private fun SentinelNavHost(
                 state = state,
                 model = model,
                 onManageCameras = { navController.navigate("settings/cameras") },
+                onManageAccounts = { navController.navigate("settings/accounts") },
+            )
+        }
+
+        composable("settings/accounts") {
+            AccountAdminScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+                onAddAccount = { navController.navigate("settings/accounts/new") },
+            )
+        }
+        composable("settings/accounts/new") {
+            AccountEditScreen(
+                model = model,
+                onBack = { navController.popBackStack() },
             )
         }
 

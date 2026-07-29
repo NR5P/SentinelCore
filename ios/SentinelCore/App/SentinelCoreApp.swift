@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 @main
 struct SentinelCoreApp: App {
@@ -9,6 +12,29 @@ struct SentinelCoreApp: App {
     #endif
 
     @StateObject private var appModel = AppModel()
+
+    init() {
+        #if os(iOS)
+        // Only large titles get this treatment (not the .inline titles on detail screens) -
+        // largeTitleTextAttributes is a distinct attribute set from titleTextAttributes, so this
+        // scopes itself automatically to exactly the top-level tabs (Feed, Timeline, Live,
+        // Triggers, Settings) without touching anything pushed on top of them. Echoes
+        // BrandHeader's green-glow monospace treatment of the ">_ SENTINEL_CORE" wordmark.
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithDefaultBackground()
+        let shadow = NSShadow()
+        shadow.shadowColor = UIColor(SentinelTheme.green).withAlphaComponent(0.55)
+        shadow.shadowBlurRadius = 8
+        appearance.largeTitleTextAttributes = [
+            .foregroundColor: UIColor(SentinelTheme.green),
+            .font: UIFont.monospacedSystemFont(ofSize: 32, weight: .bold),
+            .shadow: shadow
+        ]
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().compactAppearance = appearance
+        #endif
+    }
 
     var body: some Scene {
         WindowGroup {

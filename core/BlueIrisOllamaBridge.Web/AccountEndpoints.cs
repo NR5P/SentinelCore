@@ -95,17 +95,17 @@ public static class AccountEndpoints
                 return Results.BadRequest(new { errors });
 
             await accounts.UpdatePasswordAsync(selfId, PasswordHasher.Hash(request.NewPassword), ct);
-            await accounts.InvalidateForAccountAsync(selfId, ct);
 
-            // The caller's own session was just invalidated along with every other one for this
-            // account - sign them back in immediately so changing your own password doesn't log
-            // you out of the very request that just did it.
-            var refreshed = await accounts.GetByIdAsync(selfId, ct);
-            await context.SignInAsync(
-                CookieAuthenticationDefaults.AuthenticationScheme,
-                AccountPrincipal.Create(refreshed!),
-                new AuthenticationProperties { IsPersistent = true });
-
+            // Deliberately NOT calling InvalidateForAccountAsync here (unlike the admin-triggered
+            // reset-password/role endpoints, which target a DIFFERENT account than the caller's
+            // own and so have no continuity concern). Re-establishing a working session via
+            // SignInAsync mid-request, on an HttpContext ASP.NET Core has already authenticated
+            // from the incoming cookie, does not reliably persist a new entry in this app's
+            // ITicketStore-backed session store - Options.SessionStore.StoreAsync silently never
+            // runs, so the caller would end up with a Set-Cookie that looks fine but is dead,
+            // logging them out despite the 200 response. Leaving the current session alone avoids
+            // that: the caller already proved the current password above, so nothing insecure
+            // about letting this one session keep working.
             return Results.Ok(new { success = true });
         }).RequireAuthorization();
     }

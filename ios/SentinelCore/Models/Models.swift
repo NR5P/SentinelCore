@@ -121,6 +121,14 @@ struct AuthStatus: Codable {
     let role: String?
 }
 
+struct Account: Codable, Identifiable, Hashable {
+    let id: UUID
+    let username: String
+    let displayName: String?
+    let role: String
+    let createdAt: Date
+}
+
 struct HealthResponse: Codable {
     let status: String
     let timestamp: Date?
@@ -134,6 +142,26 @@ struct APIError: Codable {
 struct LoginBody: Encodable {
     let username: String
     let password: String
+}
+
+struct CreateAccountBody: Encodable {
+    let username: String
+    let password: String
+    let role: String
+    let displayName: String?
+}
+
+struct UpdateRoleBody: Encodable {
+    let role: String
+}
+
+struct ResetPasswordBody: Encodable {
+    let newPassword: String
+}
+
+struct ChangePasswordBody: Encodable {
+    let currentPassword: String
+    let newPassword: String
 }
 
 struct PushStatus: Codable {

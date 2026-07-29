@@ -5,6 +5,7 @@ struct SettingsView: View {
     @State private var address = ""
     @State private var remoteAddress = ""
     @State private var showingDiagnostics = false
+    @State private var showingChangePassword = false
 
     var body: some View {
         Form {
@@ -52,6 +53,7 @@ struct SettingsView: View {
                     LabeledContent("Role", value: role.capitalized)
                 }
                 if model.authStatus?.enabled == true {
+                    Button("Change Password") { showingChangePassword = true }
                     Button("Sign Out", role: .destructive) {
                         Task { await model.signOut() }
                     }
@@ -68,6 +70,11 @@ struct SettingsView: View {
                 Section("Cameras") {
                     NavigationLink("Manage Cameras") {
                         CameraAdminView()
+                    }
+                }
+                Section("Accounts") {
+                    NavigationLink("Manage Accounts") {
+                        AccountAdminView()
                     }
                 }
             }
@@ -149,7 +156,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("This native client manages its connection and push registration locally. Full server configuration and account management remain in the Core dashboard.")
+                Text("This native client manages its connection and push registration locally. Full server configuration remains in the Core dashboard.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -165,6 +172,9 @@ struct SettingsView: View {
         }
         .onChange(of: model.serverURL) { _, newValue in address = newValue }
         .onChange(of: model.remoteServerURL) { _, newValue in remoteAddress = newValue }
+        .sheet(isPresented: $showingChangePassword) {
+            ChangePasswordSheet()
+        }
     }
 
     // Local addresses default to http:// (a bare LAN IP typing "192.168.1.50" shouldn't force a
@@ -175,5 +185,70 @@ struct SettingsView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let withScheme = trimmed.contains("://") ? trimmed : "\(defaultScheme)://\(trimmed)"
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
+    }
+}
+
+private struct ChangePasswordSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var canSave: Bool {
+        !currentPassword.isEmpty && newPassword.count >= 8 && newPassword == confirmPassword
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("Current password", text: $currentPassword)
+                    SecureField("New password (min. 8 characters)", text: $newPassword)
+                    SecureField("Confirm new password", text: $confirmPassword)
+                }
+                if !confirmPassword.isEmpty && newPassword != confirmPassword {
+                    Section {
+                        Text("New passwords don't match.").foregroundStyle(SentinelTheme.red)
+                    }
+                }
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage).foregroundStyle(SentinelTheme.red)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Change Password")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "Saving…" : "Save") {
+                        Task { await save() }
+                    }
+                    .disabled(isSaving || !canSave)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        errorMessage = nil
+        do {
+            try await model.client.changeMyPassword(currentPassword: currentPassword, newPassword: newPassword)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

@@ -20,6 +20,7 @@ final class AppModel: ObservableObject {
     @Published var events: [SecurityEvent] = []
     @Published var triggers: [TriggerEvent] = []
     @Published var cameras: [Camera] = []
+    @Published var accounts: [Account] = []
     @Published var isLoading = false
     @Published var lastError: String?
     @Published var diagnostics: [DiagnosticEntry] = []

@@ -19,6 +19,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
@@ -33,12 +34,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.BuildConfig
@@ -51,16 +54,19 @@ import com.sentinelcore.android.ui.components.shortTime
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelRed
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
     state: SentinelUiState,
     model: SentinelViewModel,
     onManageCameras: () -> Unit,
+    onManageAccounts: () -> Unit,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
     var remoteAddress by rememberSaveable { mutableStateOf(state.remoteServerUrl) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
+    var showChangePassword by rememberSaveable { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
@@ -139,6 +145,12 @@ fun SettingsScreen(
                     }
                     if (state.authStatus?.enabled == true) {
                         OutlinedButton(
+                            onClick = { showChangePassword = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Change Password")
+                        }
+                        OutlinedButton(
                             onClick = model::signOut,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -164,6 +176,16 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("Manage Cameras", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                item {
+                    SettingsSection("Accounts") {
+                        TextButton(
+                            onClick = onManageAccounts,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Manage Accounts", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
                     }
                 }
@@ -277,7 +299,7 @@ fun SettingsScreen(
             item {
                 Text(
                     "This native client manages its connection and push registration locally. " +
-                        "Full server configuration and account management remain in the Core dashboard.",
+                        "Full server configuration remains in the Core dashboard.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
                         .fillMaxWidth()
@@ -286,6 +308,87 @@ fun SettingsScreen(
             }
         }
     }
+
+    if (showChangePassword) {
+        ChangePasswordDialog(model = model, onDismiss = { showChangePassword = false })
+    }
+}
+
+@Composable
+private fun ChangePasswordDialog(model: SentinelViewModel, onDismiss: () -> Unit) {
+    var currentPassword by rememberSaveable { mutableStateOf("") }
+    var newPassword by rememberSaveable { mutableStateOf("") }
+    var confirmPassword by rememberSaveable { mutableStateOf("") }
+    var isSaving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    val mismatch = confirmPassword.isNotEmpty() && newPassword != confirmPassword
+    val canSave = currentPassword.isNotEmpty() && newPassword.length >= 8 && newPassword == confirmPassword
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Change Password") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = currentPassword,
+                    onValueChange = { currentPassword = it },
+                    label = { Text("Current password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it },
+                    label = { Text("New password (min. 8 characters)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = confirmPassword,
+                    onValueChange = { confirmPassword = it },
+                    label = { Text("Confirm new password") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (mismatch) {
+                    Text("New passwords don't match.", color = SentinelRed)
+                }
+                errorMessage?.let { Text(it, color = SentinelRed) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSave && !isSaving,
+                onClick = {
+                    scope.launch {
+                        isSaving = true
+                        errorMessage = null
+                        try {
+                            model.changeMyPassword(currentPassword, newPassword)
+                            onDismiss()
+                        } catch (error: Exception) {
+                            errorMessage = error.message ?: "Could not change the password."
+                        } finally {
+                            isSaving = false
+                        }
+                    }
+                },
+            ) {
+                Text(if (isSaving) "Saving…" else "Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
