@@ -98,6 +98,50 @@ class SentinelRepository(
         request("/api/cameras/${queryValue(id)}", method = "DELETE")
     }
 
+    suspend fun accounts(): List<Account> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/accounts"))
+        buildList {
+            for (index in 0 until array.length()) add(parseAccount(array.getJSONObject(index)))
+        }
+    }
+
+    suspend fun createAccount(
+        username: String,
+        password: String,
+        role: String,
+        displayName: String?,
+    ): Account = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("username", username)
+            .put("password", password)
+            .put("role", role)
+            .put("displayName", displayName)
+        parseAccount(JSONObject(request("/api/accounts", method = "POST", body = body.toString())))
+    }
+
+    suspend fun updateAccountRole(id: String, role: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("role", role)
+        request("/api/accounts/${queryValue(id)}/role", method = "PUT", body = body.toString())
+    }
+
+    suspend fun resetAccountPassword(id: String, newPassword: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("newPassword", newPassword)
+        request("/api/accounts/${queryValue(id)}/reset-password", method = "POST", body = body.toString())
+    }
+
+    suspend fun deleteAccount(id: String) = withContext(Dispatchers.IO) {
+        request("/api/accounts/${queryValue(id)}", method = "DELETE")
+    }
+
+    // The server deliberately leaves the current session alone (doesn't invalidate it) - no
+    // separate re-login needed here, the existing cookie just keeps working.
+    suspend fun changeMyPassword(currentPassword: String, newPassword: String) = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("currentPassword", currentPassword)
+            .put("newPassword", newPassword)
+        request("/api/accounts/change-password", method = "POST", body = body.toString())
+    }
+
     suspend fun probeCamera(probeRequest: CameraProbeRequest): CameraProbeResult =
         withContext(Dispatchers.IO) {
             val body = JSONObject()
@@ -522,6 +566,15 @@ class SentinelRepository(
             name = json.optString("name", "Camera"),
             streamUrl = json.nullableString("streamUrl"),
             includeAudio = json.optBoolean("includeAudio"),
+        )
+
+    private fun parseAccount(json: JSONObject): Account =
+        Account(
+            id = json.getString("id"),
+            username = json.optString("username"),
+            displayName = json.nullableString("displayName"),
+            role = json.optString("role", "Viewer"),
+            createdAt = parseInstant(json.getString("createdAt")),
         )
 
     private fun parseTriggerConfig(json: JSONObject): TriggerConfig {

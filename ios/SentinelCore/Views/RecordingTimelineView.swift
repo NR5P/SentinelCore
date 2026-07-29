@@ -80,23 +80,36 @@ struct RecordingTimelineView: View {
 
     private var controls: some View {
         VStack(spacing: 10) {
-            HStack {
-                Picker("Camera", selection: $selectedCamera) {
-                    if cameraNames.isEmpty {
-                        Text("No event cameras").tag("")
-                    }
-                    ForEach(cameraNames, id: \.self) { Text($0).tag($0) }
+            // A Picker's auto-generated menu-style label ignores .lineLimit on iOS, so a long
+            // camera name wraps instead of truncating and collides with the row below it. A Menu
+            // gives full control over its own label Text, where .lineLimit(1) actually works.
+            Menu {
+                ForEach(cameraNames, id: \.self) { name in
+                    Button(name) { selectedCamera = name }
                 }
-                .pickerStyle(.menu)
-                .lineLimit(1)
-                .frame(maxWidth: 150, alignment: .leading)
-                Spacer(minLength: 8)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "video.fill")
+                    Text(selectedCamera.isEmpty ? "No event cameras" : selectedCamera)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            HStack {
                 Button {
                     selectedDate = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) ?? selectedDate
                 } label: { Image(systemName: "chevron.left") }
+                Spacer()
                 DatePicker("Date", selection: $selectedDate, in: ...Date.now, displayedComponents: .date)
                     .labelsHidden()
                     .fixedSize()
+                Spacer()
                 Button {
                     selectedDate = min(
                         Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) ?? selectedDate,

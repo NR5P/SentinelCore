@@ -106,6 +106,14 @@ data class AuthStatus(
     val role: String?,
 )
 
+data class Account(
+    val id: String,
+    val username: String,
+    val displayName: String?,
+    val role: String,
+    val createdAt: Instant,
+)
+
 data class PushStatus(
     val enabled: Boolean,
     val appleConfigured: Boolean,

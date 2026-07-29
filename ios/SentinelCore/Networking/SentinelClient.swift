@@ -127,6 +127,52 @@ final class SentinelClient {
         )
     }
 
+    func accounts() async throws -> [Account] {
+        try await get("/api/accounts")
+    }
+
+    func createAccount(username: String, password: String, role: String, displayName: String?) async throws -> Account {
+        try await send(
+            "/api/accounts",
+            method: "POST",
+            body: CreateAccountBody(username: username, password: password, role: role, displayName: displayName)
+        )
+    }
+
+    func updateAccountRole(id: UUID, role: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/accounts/\(id.uuidString)/role",
+            method: "PUT",
+            body: UpdateRoleBody(role: role)
+        )
+    }
+
+    func resetAccountPassword(id: UUID, newPassword: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/accounts/\(id.uuidString)/reset-password",
+            method: "POST",
+            body: ResetPasswordBody(newPassword: newPassword)
+        )
+    }
+
+    func deleteAccount(id: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/accounts/\(id.uuidString)",
+            method: "DELETE",
+            body: Optional<String>.none
+        )
+    }
+
+    // The server deliberately leaves the current session alone (doesn't invalidate it) - no
+    // separate re-login needed here, the existing cookie just keeps working.
+    func changeMyPassword(currentPassword: String, newPassword: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/accounts/change-password",
+            method: "POST",
+            body: ChangePasswordBody(currentPassword: currentPassword, newPassword: newPassword)
+        )
+    }
+
     func login(username: String, password: String) async throws {
         let _: EmptyResponse = try await send(
             "/api/auth/login",

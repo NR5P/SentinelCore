@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
+import com.sentinelcore.android.data.Account
 import com.sentinelcore.android.data.AuthStatus
 import com.sentinelcore.android.data.Camera
 import com.sentinelcore.android.data.CameraInput
@@ -56,6 +57,7 @@ data class SentinelUiState(
     val events: List<SecurityEvent> = emptyList(),
     val triggers: List<TriggerEvent> = emptyList(),
     val cameras: List<Camera> = emptyList(),
+    val accounts: List<Account> = emptyList(),
     val isLoading: Boolean = false,
     val lastError: String? = null,
     val diagnostics: List<DiagnosticEntry> = emptyList(),
@@ -371,6 +373,46 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun probeCamera(request: CameraProbeRequest): CameraProbeResult =
         repository.probeCamera(request)
+
+    suspend fun refreshAccounts() {
+        val value = repository.accounts()
+        _state.update { it.copy(accounts = value) }
+    }
+
+    suspend fun createAccount(username: String, password: String, role: String, displayName: String?): Account {
+        val created = repository.createAccount(username, password, role, displayName)
+        _state.update { it.copy(accounts = it.accounts + created) }
+        return created
+    }
+
+    suspend fun updateAccountRole(account: Account, role: String) {
+        repository.updateAccountRole(account.id, role)
+        _state.update { current ->
+            current.copy(accounts = current.accounts.map { if (it.id == account.id) it.copy(role = role) else it })
+        }
+    }
+
+    suspend fun resetAccountPassword(account: Account, newPassword: String) {
+        repository.resetAccountPassword(account.id, newPassword)
+    }
+
+    // Optimistic remove with rollback on failure, rather than a full refetch - same pattern as
+    // deleteCamera above. A failure here is expected and common (server refuses to delete the
+    // last remaining admin account), so the rollback matters more than it does for cameras.
+    suspend fun deleteAccount(account: Account) {
+        val previous = _state.value.accounts
+        _state.update { it.copy(accounts = it.accounts.filterNot { existing -> existing.id == account.id }) }
+        try {
+            repository.deleteAccount(account.id)
+        } catch (error: Exception) {
+            _state.update { it.copy(accounts = previous) }
+            throw error
+        }
+    }
+
+    suspend fun changeMyPassword(currentPassword: String, newPassword: String) {
+        repository.changeMyPassword(currentPassword, newPassword)
+    }
 
     suspend fun fetchScanInterfaces(): List<ScanInterface> = repository.fetchScanInterfaces()
 
