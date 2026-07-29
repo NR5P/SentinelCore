@@ -51,6 +51,17 @@ data class CameraInput(
     val onvifProfileToken: String?,
 )
 
+data class KnownFace(
+    val id: String,
+    val label: String,
+    val enrollments: List<KnownFaceEnrollment>,
+)
+
+data class KnownFaceEnrollment(
+    val id: String,
+    val photoUrl: String,
+)
+
 data class Point2D(val x: Double, val y: Double)
 
 // Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.

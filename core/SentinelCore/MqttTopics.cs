@@ -92,6 +92,8 @@ public static class MqttTopics
             notification_recommended = analysis?.NotificationRecommended,
             notification_reason = analysis?.NotificationReason,
             person_visible = analysis?.Person.Visible,
+            person_known_face_labels = analysis?.Person.KnownFaceLabels,
+            person_unrecognized_face_detected = analysis?.Person.UnrecognizedFaceDetected,
             vehicle_visible = analysis?.Vehicle.Visible,
             vehicle_license_plate = string.IsNullOrWhiteSpace(analysis?.Vehicle.LicensePlateText) ? null : analysis.Vehicle.LicensePlateText,
             vehicle_known_label = analysis?.Vehicle.KnownVehicleLabel,

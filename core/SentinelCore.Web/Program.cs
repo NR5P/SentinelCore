@@ -102,6 +102,10 @@ builder.Services.Configure<BridgeOptions>(builder.Configuration.GetSection(Bridg
 
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
+// Loads its own copy of the ONNX face-detection/embedding models - this is a separate process
+// from the main app, so enrollment (computing an embedding for an uploaded reference photo)
+// needs its own IFaceRecognitionService rather than sharing the main app's in-memory instance.
+builder.Services.AddSingleton<IFaceRecognitionService, FaceRecognitionService>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>();
 
@@ -268,6 +272,7 @@ app.UseMiddleware<AuthGateMiddleware>();
 app.UseAuthorization();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
+app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();
 app.MapCameraPtzEndpoints();

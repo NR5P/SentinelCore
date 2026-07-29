@@ -69,6 +69,28 @@ final class SentinelClient {
         )
     }
 
+    func knownFaces() async throws -> [KnownFace] {
+        try await get("/api/known-faces")
+    }
+
+    func createKnownFace(label: String, imageData: Data, fileName: String = "photo.jpg", mimeType: String = "image/jpeg") async throws -> KnownFace {
+        try await sendMultipart("/api/known-faces", fields: ["label": label], fileFieldName: "image", fileData: imageData, fileName: fileName, mimeType: mimeType)
+    }
+
+    func addKnownFaceEnrollment(faceId: String, imageData: Data, fileName: String = "photo.jpg", mimeType: String = "image/jpeg") async throws -> KnownFace {
+        try await sendMultipart("/api/known-faces/\(faceId)/enrollments", fields: [:], fileFieldName: "image", fileData: imageData, fileName: fileName, mimeType: mimeType)
+    }
+
+    func deleteKnownFaceEnrollment(faceId: String, enrollmentId: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/known-faces/\(faceId)/enrollments/\(enrollmentId)", method: "DELETE", body: Optional<String>.none
+        )
+    }
+
+    func deleteKnownFace(id: String) async throws {
+        let _: EmptyResponse = try await send("/api/known-faces/\(id)", method: "DELETE", body: Optional<String>.none)
+    }
+
     func probeCamera(_ request: CameraProbeRequest) async throws -> CameraProbeResult {
         try await send("/api/cameras/discovery/probe", method: "POST", body: request)
     }
@@ -265,6 +287,40 @@ final class SentinelClient {
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let body { request.httpBody = try JSONEncoder().encode(body) }
+        return try await perform(request)
+    }
+
+    // Only used for Known Faces photo enrollment - every other endpoint in this client sends
+    // plain JSON. Builds a standard multipart/form-data body by hand since there's no other
+    // binary-upload need in this app to justify a dependency for it.
+    private func sendMultipart<T: Decodable>(
+        _ path: String,
+        fields: [String: String],
+        fileFieldName: String,
+        fileData: Data,
+        fileName: String,
+        mimeType: String
+    ) async throws -> T {
+        guard let url = url(path: path) else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        for (name, value) in fields {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"\(fileFieldName)\"; filename=\"\(fileName)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        body.append(fileData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        request.httpBody = body
         return try await perform(request)
     }
 

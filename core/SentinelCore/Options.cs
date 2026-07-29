@@ -210,12 +210,40 @@ public sealed class PromptProfile
     // for a gate/door check that has this enabled - not exposed on the saved PromptProfiles list,
     // since every other alert path (Blue Iris, trigger zones) has no use for it.
     public bool CameraBlockedCheckEnabled { get; init; }
+
+    // Off by default. When on, AlertProcessor runs local face detection/matching (see
+    // FaceRecognitionService, KnownFaceMatcher) against the alert image and labels any faces
+    // that match the configured KnownFaces list. Unlike LicensePlateRecognitionEnabled, this
+    // never changes what's sent to the vision model - detection and matching happen entirely
+    // outside the VLM, so there's no prompt/schema change for any backend.
+    public bool FaceRecognitionEnabled { get; init; }
 }
 
 public sealed class KnownVehicle
 {
     public string Plate { get; init; } = string.Empty;
     public string Label { get; init; } = string.Empty;
+}
+
+public sealed class KnownFace
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
+    public string Label { get; init; } = string.Empty;
+    public List<KnownFaceEnrollment> Enrollments { get; init; } = [];
+}
+
+public sealed class KnownFaceEnrollment
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
+
+    // Relative to Bridge:DataDirectory, e.g. "known-faces/{knownFaceId}/{enrollmentId}.jpg" -
+    // the reference photo this embedding was computed from, kept so the enrollment list can
+    // show a thumbnail of what was enrolled.
+    public string ImagePath { get; init; } = string.Empty;
+
+    // The face embedding vector computed from ImagePath at enrollment time (ArcFace, 512-dim,
+    // L2-normalized). Compared against detected faces via cosine similarity in KnownFaceMatcher.
+    public float[] Embedding { get; init; } = [];
 }
 
 public sealed class CropRegion

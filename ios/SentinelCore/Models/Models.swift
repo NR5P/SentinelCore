@@ -49,6 +49,17 @@ struct CameraInput: Encodable {
     var onvifProfileToken: String?
 }
 
+struct KnownFace: Codable, Identifiable, Hashable {
+    let id: String
+    let label: String
+    let enrollments: [KnownFaceEnrollment]
+}
+
+struct KnownFaceEnrollment: Codable, Identifiable, Hashable {
+    let id: String
+    let photoUrl: String
+}
+
 struct Point2D: Codable, Hashable {
     var x: Double
     var y: Double

@@ -48,6 +48,8 @@ import com.sentinelcore.android.ui.screens.CameraZoneEditorScreen
 import com.sentinelcore.android.ui.screens.DetailHeader
 import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.EventFeedScreen
+import com.sentinelcore.android.ui.screens.KnownFaceAdminScreen
+import com.sentinelcore.android.ui.screens.KnownFaceEditScreen
 import com.sentinelcore.android.ui.screens.LiveCamerasScreen
 import com.sentinelcore.android.ui.screens.LivePlayerScreen
 import com.sentinelcore.android.ui.screens.RecordingTimelineScreen
@@ -254,7 +256,40 @@ private fun SentinelNavHost(
                 model = model,
                 onManageCameras = { navController.navigate("settings/cameras") },
                 onManageAccounts = { navController.navigate("settings/accounts") },
+                onManageKnownFaces = { navController.navigate("settings/faces") },
             )
+        }
+
+        composable("settings/faces") {
+            KnownFaceAdminScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+                onAddFace = { navController.navigate("settings/faces/new") },
+                onEditFace = { navController.navigate("settings/faces/${it.id}") },
+            )
+        }
+        composable("settings/faces/new") {
+            KnownFaceEditScreen(
+                face = null,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            route = "settings/faces/{faceId}",
+            arguments = listOf(navArgument("faceId") { type = NavType.StringType }),
+        ) { entry ->
+            val face = state.knownFaces.firstOrNull { it.id == entry.arguments?.getString("faceId") }
+            if (face != null) {
+                KnownFaceEditScreen(
+                    face = face,
+                    model = model,
+                    onBack = { navController.popBackStack() },
+                )
+            } else {
+                DetailLoading(onBack = { navController.popBackStack() })
+            }
         }
 
         composable("settings/accounts") {

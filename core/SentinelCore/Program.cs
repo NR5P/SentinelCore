@@ -150,6 +150,9 @@ builder.Services.AddSingleton<IPromptProfileProvider, PromptProfileProvider>();
 // Empty by default - only consulted for profiles with LicensePlateRecognitionEnabled turned on.
 builder.Services.Configure<List<KnownVehicle>>(builder.Configuration.GetSection("KnownVehicles"));
 
+// Empty by default - only consulted for profiles with FaceRecognitionEnabled turned on.
+builder.Services.Configure<List<KnownFace>>(builder.Configuration.GetSection("KnownFaces"));
+
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
 builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
@@ -182,6 +185,10 @@ builder.Services.AddSingleton<ChatAnswerService>();
 // AlertNotificationPolicy's person/vehicle/package/animal requirement, which doesn't apply to an
 // ambient state check. See GateCheckAnalyzer.
 builder.Services.AddSingleton<GateCheckAnalyzer>();
+// Loads its ONNX face-detection/embedding models once at startup - registered as a singleton
+// for the same reason GateCheckAnalyzer and the vision clients are: expensive to construct,
+// safe to reuse across every alert for the process lifetime.
+builder.Services.AddSingleton<IFaceRecognitionService, FaceRecognitionService>();
 builder.Services.AddHostedService<TelegramChatWorker>();
 builder.Services.AddHostedService<SelfMonitoringWorker>();
 // Registered in the main app only - all three services would otherwise each report the same

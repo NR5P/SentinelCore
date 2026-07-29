@@ -19,6 +19,7 @@ import com.sentinelcore.android.data.CameraProbeResult
 import com.sentinelcore.android.data.ConnectionState
 import com.sentinelcore.android.data.DiagnosticEntry
 import com.sentinelcore.android.data.DiagnosticLevel
+import com.sentinelcore.android.data.KnownFace
 import com.sentinelcore.android.data.PromptProfileName
 import com.sentinelcore.android.data.ScanInterface
 import com.sentinelcore.android.data.ScanJobSnapshot
@@ -61,6 +62,7 @@ data class SentinelUiState(
     val triggers: List<TriggerEvent> = emptyList(),
     val cameras: List<Camera> = emptyList(),
     val accounts: List<Account> = emptyList(),
+    val knownFaces: List<KnownFace> = emptyList(),
     val isLoading: Boolean = false,
     val lastError: String? = null,
     val diagnostics: List<DiagnosticEntry> = emptyList(),
@@ -413,6 +415,54 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun probeCamera(request: CameraProbeRequest): CameraProbeResult =
         repository.probeCamera(request)
+
+    suspend fun refreshKnownFaces() {
+        val value = repository.knownFaces()
+        _state.update { it.copy(knownFaces = value) }
+    }
+
+    suspend fun createKnownFace(label: String, imageBytes: ByteArray): KnownFace {
+        val created = repository.createKnownFace(label, imageBytes)
+        _state.update { it.copy(knownFaces = it.knownFaces + created) }
+        return created
+    }
+
+    suspend fun addKnownFaceEnrollment(faceId: String, imageBytes: ByteArray): KnownFace {
+        val updated = repository.addKnownFaceEnrollment(faceId, imageBytes)
+        _state.update { current ->
+            current.copy(knownFaces = current.knownFaces.map { if (it.id == faceId) updated else it })
+        }
+        return updated
+    }
+
+    suspend fun deleteKnownFaceEnrollment(face: KnownFace, enrollmentId: String) {
+        val previous = _state.value.knownFaces
+        _state.update { current ->
+            current.copy(
+                knownFaces = current.knownFaces.map {
+                    if (it.id == face.id) it.copy(enrollments = it.enrollments.filterNot { e -> e.id == enrollmentId }) else it
+                },
+            )
+        }
+        try {
+            repository.deleteKnownFaceEnrollment(face.id, enrollmentId)
+        } catch (error: Exception) {
+            _state.update { it.copy(knownFaces = previous) }
+            throw error
+        }
+    }
+
+    // Optimistic remove with rollback on failure, rather than a full refetch.
+    suspend fun deleteKnownFace(face: KnownFace) {
+        val previous = _state.value.knownFaces
+        _state.update { it.copy(knownFaces = it.knownFaces.filterNot { existing -> existing.id == face.id }) }
+        try {
+            repository.deleteKnownFace(face.id)
+        } catch (error: Exception) {
+            _state.update { it.copy(knownFaces = previous) }
+            throw error
+        }
+    }
 
     suspend fun refreshAccounts() {
         val value = repository.accounts()

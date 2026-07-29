@@ -80,6 +80,19 @@ public sealed class PersonAnalysis
 
     [JsonPropertyName("description")]
     public string Description { get; init; } = string.Empty;
+
+    // Not part of the model's JSON output - filled in afterward by AlertProcessor running local
+    // face detection/matching (see FaceRecognitionService, KnownFaceMatcher). Empty when face
+    // recognition wasn't enabled for this profile, no face was detected, or no detected face
+    // matched a configured KnownFace closely enough.
+    [JsonPropertyName("known_face_labels")]
+    public List<string> KnownFaceLabels { get; set; } = [];
+
+    // True when at least one face was detected but didn't match any KnownFace closely enough -
+    // lets notifications distinguish "no one recognizable" from "no face at all", the same
+    // spirit as a vehicle's "unrecognized" plate vs. no plate read at all.
+    [JsonPropertyName("unrecognized_face_detected")]
+    public bool UnrecognizedFaceDetected { get; set; }
 }
 
 public sealed class VehicleAnalysis

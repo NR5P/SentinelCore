@@ -24,6 +24,7 @@ public sealed record SettingsSnapshot(
     StartupNotificationSettingsDto? StartupNotification,
     QuietHoursSettingsDto? QuietHours,
     List<KnownVehicle>? KnownVehicles,
+    List<KnownFace>? KnownFaces,
     MqttSettingsDto? Mqtt,
     HomeKitSettingsDto? HomeKit,
     BugReportSettingsDto? BugReports,
@@ -255,6 +256,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<StartupNotificationSettingsDto>("StartupNotification", cancellationToken),
         await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", cancellationToken),
         await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", cancellationToken) ?? [],
+        await settings.GetSectionAsync<List<KnownFace>>("KnownFaces", cancellationToken) ?? [],
         await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", cancellationToken),
         await settings.GetSectionAsync<HomeKitSettingsDto>("HomeKit", cancellationToken),
         await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", cancellationToken),
@@ -283,6 +285,10 @@ public static class SettingsEndpoints
         if (snapshot.StartupNotification is not null) await settings.MergeSectionAsync("StartupNotification", snapshot.StartupNotification, cancellationToken);
         if (snapshot.QuietHours is not null) await settings.MergeSectionAsync("QuietHours", snapshot.QuietHours, cancellationToken);
         if (snapshot.KnownVehicles is not null) await settings.ReplaceSectionAsync("KnownVehicles", snapshot.KnownVehicles, cancellationToken);
+        // Enrollment photos on disk aren't part of the backup file (same as alert images
+        // aren't) - restoring KnownFaces brings back the labels/embeddings, but re-enrolling
+        // is needed if the photos themselves were lost.
+        if (snapshot.KnownFaces is not null) await settings.ReplaceSectionAsync("KnownFaces", snapshot.KnownFaces, cancellationToken);
         if (snapshot.Mqtt is not null) await settings.MergeSectionAsync("Mqtt", snapshot.Mqtt, cancellationToken);
         if (snapshot.HomeKit is not null) await settings.MergeSectionAsync("HomeKit", snapshot.HomeKit, cancellationToken);
         if (snapshot.BugReports is not null) await settings.MergeSectionAsync("BugReports", snapshot.BugReports, cancellationToken);

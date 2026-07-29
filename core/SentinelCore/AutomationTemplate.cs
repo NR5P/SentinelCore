@@ -15,6 +15,7 @@ public static partial class AutomationTemplate
         "camera", "profile", "alert_id", "occurred_at", "event_type", "category", "summary",
         "confidence", "confidence_percent", "notification_reason", "notification_recommended",
         "person_visible", "person_location", "person_activity", "person_description",
+        "person_known_face_labels", "person_unrecognized_face_detected",
         "vehicle_visible", "vehicle_location", "vehicle_activity", "vehicle_type", "vehicle_color",
         "vehicle_description", "vehicle_license_plate", "vehicle_known_label", "vehicle_delivery_company",
         "package_status", "package_location", "animal_visible", "animal_description"
@@ -59,6 +60,8 @@ public static partial class AutomationTemplate
         values["person_location"] = analysis.Person.Location;
         values["person_activity"] = analysis.Person.Activity;
         values["person_description"] = analysis.Person.Description;
+        values["person_known_face_labels"] = string.Join(", ", analysis.Person.KnownFaceLabels);
+        values["person_unrecognized_face_detected"] = analysis.Person.UnrecognizedFaceDetected ? "true" : "false";
         values["vehicle_visible"] = analysis.Vehicle.Visible ? "true" : "false";
         values["vehicle_location"] = analysis.Vehicle.Location;
         values["vehicle_activity"] = analysis.Vehicle.Activity;

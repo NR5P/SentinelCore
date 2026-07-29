@@ -64,6 +64,7 @@ fun SettingsScreen(
     model: SentinelViewModel,
     onManageCameras: () -> Unit,
     onManageAccounts: () -> Unit,
+    onManageKnownFaces: () -> Unit,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
     var remoteAddress by rememberSaveable { mutableStateOf(state.remoteServerUrl) }
@@ -189,6 +190,16 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("Manage Accounts", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+                item {
+                    SettingsSection("Known Faces") {
+                        TextButton(
+                            onClick = onManageKnownFaces,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Manage Known Faces", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
                     }
                 }

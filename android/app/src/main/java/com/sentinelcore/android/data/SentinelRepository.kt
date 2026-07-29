@@ -98,6 +98,51 @@ class SentinelRepository(
         request("/api/cameras/${queryValue(id)}", method = "DELETE")
     }
 
+    suspend fun knownFaces(): List<KnownFace> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/known-faces"))
+        buildList {
+            for (index in 0 until array.length()) add(parseKnownFace(array.getJSONObject(index)))
+        }
+    }
+
+    suspend fun createKnownFace(label: String, imageBytes: ByteArray, fileName: String = "photo.jpg"): KnownFace =
+        withContext(Dispatchers.IO) {
+            parseKnownFace(
+                JSONObject(
+                    requestMultipart(
+                        "/api/known-faces",
+                        fields = mapOf("label" to label),
+                        fileFieldName = "image",
+                        fileBytes = imageBytes,
+                        fileName = fileName,
+                    ),
+                ),
+            )
+        }
+
+    suspend fun addKnownFaceEnrollment(faceId: String, imageBytes: ByteArray, fileName: String = "photo.jpg"): KnownFace =
+        withContext(Dispatchers.IO) {
+            parseKnownFace(
+                JSONObject(
+                    requestMultipart(
+                        "/api/known-faces/${queryValue(faceId)}/enrollments",
+                        fields = emptyMap(),
+                        fileFieldName = "image",
+                        fileBytes = imageBytes,
+                        fileName = fileName,
+                    ),
+                ),
+            )
+        }
+
+    suspend fun deleteKnownFaceEnrollment(faceId: String, enrollmentId: String) = withContext(Dispatchers.IO) {
+        request("/api/known-faces/${queryValue(faceId)}/enrollments/${queryValue(enrollmentId)}", method = "DELETE")
+    }
+
+    suspend fun deleteKnownFace(id: String) = withContext(Dispatchers.IO) {
+        request("/api/known-faces/${queryValue(id)}", method = "DELETE")
+    }
+
     suspend fun accounts(): List<Account> = withContext(Dispatchers.IO) {
         val array = JSONArray(request("/api/accounts"))
         buildList {
@@ -534,6 +579,93 @@ class SentinelRepository(
         }
     }
 
+    // Only used for Known Faces photo enrollment - everything else in this repository sends
+    // plain JSON via request()/openValidated(). There's no OkHttp/Retrofit in this app (see
+    // openValidated's own comment on why), so this hand-builds a standard multipart/form-data
+    // body the same way request()'s JSON body is hand-written, rather than adding a dependency
+    // for one endpoint's worth of file uploads.
+    private fun requestMultipart(
+        path: String,
+        fields: Map<String, String>,
+        fileFieldName: String,
+        fileBytes: ByteArray,
+        fileName: String,
+    ): String {
+        val connection = openValidatedMultipart(path, fields, fileFieldName, fileBytes, fileName)
+        return try {
+            connection.inputStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun openValidatedMultipart(
+        path: String,
+        fields: Map<String, String>,
+        fileFieldName: String,
+        fileBytes: ByteArray,
+        fileName: String,
+    ): HttpURLConnection {
+        val url = URL(absoluteUrl(path) ?: throw IllegalArgumentException(
+            "Enter a valid server address, such as http://192.168.1.50:3320.",
+        ))
+        val started = System.nanoTime()
+        val method = "POST"
+        logger("$method $url", DiagnosticLevel.INFO)
+        val connection = openConnection(url)
+        val boundary = "Boundary-${System.currentTimeMillis()}"
+
+        try {
+            connection.requestMethod = method
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            connection.doOutput = true
+            connection.outputStream.use { output ->
+                for ((name, value) in fields) {
+                    output.write("--$boundary\r\n".toByteArray(StandardCharsets.UTF_8))
+                    output.write(
+                        "Content-Disposition: form-data; name=\"$name\"\r\n\r\n".toByteArray(StandardCharsets.UTF_8),
+                    )
+                    output.write("$value\r\n".toByteArray(StandardCharsets.UTF_8))
+                }
+                output.write("--$boundary\r\n".toByteArray(StandardCharsets.UTF_8))
+                output.write(
+                    "Content-Disposition: form-data; name=\"$fileFieldName\"; filename=\"$fileName\"\r\n"
+                        .toByteArray(StandardCharsets.UTF_8),
+                )
+                output.write("Content-Type: image/jpeg\r\n\r\n".toByteArray(StandardCharsets.UTF_8))
+                output.write(fileBytes)
+                output.write("\r\n--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8))
+            }
+
+            val status = connection.responseCode
+            storeCookies(connection)
+            logger("$method $status in ${elapsedMilliseconds(started)} ms", DiagnosticLevel.INFO)
+            if (status !in 200..299) {
+                val errorBody = connection.errorStream
+                    ?.bufferedReader(StandardCharsets.UTF_8)
+                    ?.use { it.readText() }
+                    .orEmpty()
+                val message = parseServerError(errorBody)
+                    ?: if (status == 401) "This server requires you to sign in."
+                    else "Server request failed (HTTP $status)."
+                connection.disconnect()
+                throw SentinelApiException(status, message)
+            }
+            return connection
+        } catch (error: SentinelApiException) {
+            throw error
+        } catch (error: Exception) {
+            connection.disconnect()
+            logger(
+                "$method failed after ${elapsedMilliseconds(started)} ms: " +
+                    (error.message ?: error.javaClass.simpleName),
+                DiagnosticLevel.ERROR,
+            )
+            throw IOException(error.message ?: "Could not connect to Sentinel Core.", error)
+        }
+    }
+
     private fun openConnection(url: URL): HttpURLConnection {
         val connection = url.openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
@@ -601,6 +733,17 @@ class SentinelRepository(
             onvifPtzServiceUrl = json.nullableString("onvifPtzServiceUrl"),
             onvifProfileToken = json.nullableString("onvifProfileToken"),
         )
+
+    private fun parseKnownFace(json: JSONObject): KnownFace {
+        val array = json.optJSONArray("enrollments") ?: JSONArray()
+        val enrollments = buildList {
+            for (index in 0 until array.length()) {
+                val enrollment = array.getJSONObject(index)
+                add(KnownFaceEnrollment(id = enrollment.getString("id"), photoUrl = enrollment.getString("photoUrl")))
+            }
+        }
+        return KnownFace(id = json.getString("id"), label = json.optString("label", ""), enrollments = enrollments)
+    }
 
     private fun parseAccount(json: JSONObject): Account =
         Account(

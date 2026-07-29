@@ -77,6 +77,11 @@ struct SettingsView: View {
                         AccountAdminView()
                     }
                 }
+                Section("Known Faces") {
+                    NavigationLink("Manage Known Faces") {
+                        KnownFacesAdminView()
+                    }
+                }
             }
 
             Section("Server Health") {

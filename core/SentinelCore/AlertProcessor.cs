@@ -10,6 +10,8 @@ public sealed class AlertProcessor : BackgroundService
     private readonly IPromptProfileProvider _profileProvider;
     private readonly IEnumerable<IAlertAction> _actions;
     private readonly IOptionsMonitor<List<KnownVehicle>> _knownVehicles;
+    private readonly IOptionsMonitor<List<KnownFace>> _knownFaces;
+    private readonly IFaceRecognitionService _faceRecognition;
     private readonly ILogger<AlertProcessor> _logger;
 
     public AlertProcessor(
@@ -19,6 +21,8 @@ public sealed class AlertProcessor : BackgroundService
         IPromptProfileProvider profileProvider,
         IEnumerable<IAlertAction> actions,
         IOptionsMonitor<List<KnownVehicle>> knownVehicles,
+        IOptionsMonitor<List<KnownFace>> knownFaces,
+        IFaceRecognitionService faceRecognition,
         ILogger<AlertProcessor> logger)
     {
         _queue = queue;
@@ -26,6 +30,8 @@ public sealed class AlertProcessor : BackgroundService
         _store = store;
         _actions = actions;
         _knownVehicles = knownVehicles;
+        _knownFaces = knownFaces;
+        _faceRecognition = faceRecognition;
         _logger = logger;
         _profileProvider = profileProvider;
     }
@@ -67,6 +73,15 @@ public sealed class AlertProcessor : BackgroundService
             if (profile.LicensePlateRecognitionEnabled)
             {
                 analysis.Vehicle.KnownVehicleLabel = KnownVehicleMatcher.Match(_knownVehicles.CurrentValue, analysis.Vehicle.LicensePlateText);
+            }
+            if (profile.FaceRecognitionEnabled)
+            {
+                // Runs entirely locally against the raw alert image, independent of the vision
+                // backend above - see FaceRecognitionService for why this doesn't ask the VLM.
+                var embeddings = _faceRecognition.DetectFaceEmbeddings(alert.ImageBytes);
+                var labels = embeddings.Select(e => KnownFaceMatcher.Match(_knownFaces.CurrentValue, e)).ToList();
+                analysis.Person.KnownFaceLabels = labels.OfType<string>().Distinct().ToList();
+                analysis.Person.UnrecognizedFaceDetected = labels.Any(l => l is null);
             }
             var result = new AlertResult
             {

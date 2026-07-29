@@ -668,9 +668,25 @@ window.GateWatchSettings = (function () {
     plateText.textContent = "License plate recognition";
     plateWrap.append(plateSwitch, plateText);
 
-    body.append(displayNameRow, nameRow, promptRow, questionsWrap, cropWrap, plateWrap);
+    const faceWrap = document.createElement("div");
+    faceWrap.className = "field-row field-checkbox-row";
+    faceWrap.dataset.tip = "Also run local face detection/matching against the Known Faces list below, entirely on-device (no image is sent anywhere for this). Off by default - never affects whether an alert fires.";
+    const faceSwitch = document.createElement("label");
+    faceSwitch.className = "switch";
+    const faceInput = document.createElement("input");
+    faceInput.type = "checkbox";
+    faceInput.checked = !!profile.faceRecognitionEnabled;
+    const faceTrack = document.createElement("span");
+    faceTrack.className = "switch-track";
+    faceSwitch.append(faceInput, faceTrack);
+    const faceText = document.createElement("span");
+    faceText.className = "field-label";
+    faceText.textContent = "Face recognition";
+    faceWrap.append(faceSwitch, faceText);
+
+    body.append(displayNameRow, nameRow, promptRow, questionsWrap, cropWrap, plateWrap, faceWrap);
     card.append(header, body);
-    card._fields = { displayNameInput, nameInput, promptArea, qList, cropInput, cropGrid, plateInput };
+    card._fields = { displayNameInput, nameInput, promptArea, qList, cropInput, cropGrid, plateInput, faceInput };
     return card;
   }
 
@@ -692,8 +708,9 @@ window.GateWatchSettings = (function () {
     }
 
     const licensePlateRecognitionEnabled = f.plateInput.checked;
+    const faceRecognitionEnabled = f.faceInput.checked;
 
-    return { name, profile: { displayName, systemPrompt, questions, crop, licensePlateRecognitionEnabled } };
+    return { name, profile: { displayName, systemPrompt, questions, crop, licensePlateRecognitionEnabled, faceRecognitionEnabled } };
   }
 
   function buildKnownVehicleRow(vehicle) {
@@ -1447,6 +1464,165 @@ window.GateWatchSettings = (function () {
     return section;
   }
 
+  function renderKnownFacesSection() {
+    const section = document.createElement("div");
+    section.className = "settings-section";
+
+    const header = document.createElement("div");
+    header.className = "settings-section-header";
+    header.innerHTML = `<span class="settings-section-title">KNOWN FACES</span><span class="settings-section-caret">&#9656;</span>`;
+    header.dataset.tip = "People recognized from a photo, for cameras/profiles with face recognition turned on. Runs entirely on-device - informational only, a match or non-match never changes whether an alert fires.";
+    header.addEventListener("click", () => {
+      section.classList.toggle("open");
+      window.GateWatchTooltips.schedule();
+    });
+
+    const body = document.createElement("div");
+    body.className = "settings-section-body";
+    body.appendChild(buildSectionIntro("People you recognize, matched against faces detected in alert photos using a local, on-device model - no image ever leaves your network for this. Informational only - a match or non-match is noted in the alert but never changes whether one fires. Only does anything for cameras using a prompt profile with face recognition turned on."));
+
+    const listWrap = document.createElement("div");
+    listWrap.className = "known-faces-list";
+    body.appendChild(listWrap);
+
+    const errors = document.createElement("ul");
+    errors.className = "field-errors";
+
+    async function refresh() {
+      listWrap.innerHTML = `<div class="empty-state">loading&hellip;</div>`;
+      try {
+        const response = await fetch("/api/known-faces");
+        const list = response.ok ? await response.json() : [];
+        listWrap.innerHTML = "";
+        if (list.length === 0) {
+          listWrap.innerHTML = `<div class="empty-state">No known faces enrolled yet.</div>`;
+        }
+        for (const face of list) listWrap.appendChild(buildKnownFaceCard(face, refresh, errors));
+      } catch {
+        listWrap.innerHTML = `<div class="empty-state">Could not load known faces.</div>`;
+      }
+    }
+
+    const addRow = document.createElement("div");
+    addRow.className = "field-row-wide known-vehicle-row";
+    const labelInput = document.createElement("input");
+    labelInput.type = "text";
+    labelInput.className = "field-input";
+    labelInput.placeholder = "name, e.g. Nathan";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*";
+    const addBtn = document.createElement("button");
+    addBtn.className = "btn";
+    addBtn.textContent = "+ add person";
+    addBtn.dataset.tip = "Enroll a new known person from a clear, front-facing photo of just them.";
+    addBtn.addEventListener("click", async () => {
+      errors.innerHTML = "";
+      const label = labelInput.value.trim();
+      const file = fileInput.files[0];
+      if (!label) { showFieldErrors(errors, ["A name is required."]); return; }
+      if (!file) { showFieldErrors(errors, ["Choose a photo first."]); return; }
+
+      addBtn.disabled = true;
+      const originalText = addBtn.textContent;
+      addBtn.textContent = "adding...";
+      try {
+        const form = new FormData();
+        form.append("label", label);
+        form.append("image", file);
+        const response = await fetch("/api/known-faces", { method: "POST", body: form });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          showFieldErrors(errors, [payload.error || "Could not add that person."]);
+          showToast("Known faces: not saved", false);
+        } else {
+          labelInput.value = "";
+          fileInput.value = "";
+          showToast("Known faces saved", true);
+          await refresh();
+        }
+      } catch {
+        showFieldErrors(errors, ["Network error while adding."]);
+      } finally {
+        addBtn.disabled = false;
+        addBtn.textContent = originalText;
+      }
+    });
+    addRow.append(labelInput, fileInput, addBtn);
+
+    body.append(addRow, errors);
+    section.append(header, body);
+    refresh();
+    return section;
+  }
+
+  function buildKnownFaceCard(face, onChange, sharedErrors) {
+    const card = document.createElement("div");
+    card.className = "profile-card";
+
+    const header = document.createElement("div");
+    header.className = "profile-card-header";
+    header.style.cursor = "default";
+    const name = document.createElement("span");
+    name.className = "profile-card-summary";
+    name.textContent = face.label;
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "icon-btn";
+    removeBtn.textContent = "✕";
+    removeBtn.setAttribute("data-tip-right", "");
+    removeBtn.dataset.tip = `Remove ${face.label} and all their enrolled photos.`;
+    removeBtn.addEventListener("click", async () => {
+      if (!confirm(`Remove ${face.label} from known faces?`)) return;
+      await fetch(`/api/known-faces/${face.id}`, { method: "DELETE" });
+      await onChange();
+    });
+    header.append(name, removeBtn);
+
+    const photos = document.createElement("div");
+    photos.className = "known-face-photos";
+    for (const enrollment of face.enrollments) {
+      const thumbWrap = document.createElement("div");
+      thumbWrap.className = "known-face-photo";
+      const img = document.createElement("img");
+      img.src = enrollment.photoUrl;
+      img.alt = face.label;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "icon-btn known-face-photo-remove";
+      del.textContent = "✕";
+      del.dataset.tip = "Remove this photo.";
+      del.addEventListener("click", async () => {
+        await fetch(`/api/known-faces/${face.id}/enrollments/${enrollment.id}`, { method: "DELETE" });
+        await onChange();
+      });
+      thumbWrap.append(img, del);
+      photos.appendChild(thumbWrap);
+    }
+
+    const addPhotoInput = document.createElement("input");
+    addPhotoInput.type = "file";
+    addPhotoInput.accept = "image/*";
+    addPhotoInput.className = "known-face-add-photo";
+    addPhotoInput.dataset.tip = "Add another reference photo of this person, for better matching.";
+    addPhotoInput.addEventListener("change", async () => {
+      const file = addPhotoInput.files[0];
+      if (!file) return;
+      const form = new FormData();
+      form.append("image", file);
+      const response = await fetch(`/api/known-faces/${face.id}/enrollments`, { method: "POST", body: form });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showFieldErrors(sharedErrors, [payload.error || "Could not add that photo."]);
+      } else {
+        await onChange();
+      }
+    });
+
+    card.append(header, photos, addPhotoInput);
+    return card;
+  }
+
   function renderPromptProfilesSection(profiles) {
     const section = document.createElement("div");
     section.className = "settings-section";
@@ -1595,6 +1771,7 @@ window.GateWatchSettings = (function () {
       root.appendChild(renderSection(INTERNET_EXPOSED_SCHEMA, internetExposedData));
       root.appendChild(renderLicenseSection());
       root.appendChild(renderKnownVehiclesSection(data.knownVehicles));
+      root.appendChild(renderKnownFacesSection());
       root.appendChild(renderPromptProfilesSection(data.promptProfiles));
 
       // The hand-written sections don't go through renderSection, so tag them here by title.

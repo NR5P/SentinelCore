@@ -98,6 +98,8 @@ public sealed class DiscordAlertAction : IAlertAction
             description += $"\n\n{analysis.NotificationReason}";
         if (analysis is not null && AlertCategorizer.DescribeVehiclePlate(analysis.Vehicle) is { } plateLine)
             description += $"\n\n{plateLine}";
+        if (analysis is not null && AlertCategorizer.DescribeFaceMatch(analysis.Person) is { } faceLine)
+            description += $"\n\n{faceLine}";
 
         var embed = new Dictionary<string, object?>
         {

@@ -22,6 +22,8 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Sentinel Core connects to your camera security server and live video streams on your local network.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Sentinel Core uses the camera to take a reference photo when enrolling a known person for face recognition.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_http._tcp</string>

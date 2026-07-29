@@ -130,6 +130,17 @@ public static class AlertCategorizer
             ? $"Plate: {vehicle.LicensePlateText} (known: {label})"
             : $"Plate: {vehicle.LicensePlateText} (unrecognized)";
     }
+
+    // Null when face recognition wasn't enabled for this profile or no face was detected at all
+    // - most events, since it's opt-in per profile. Distinguishes a recognized face, a detected
+    // but unrecognized face, and no face at all, the same three-way distinction plate detection
+    // makes between known/unrecognized/not-read.
+    public static string? DescribeFaceMatch(PersonAnalysis person)
+    {
+        if (person.KnownFaceLabels.Count > 0) return $"Recognized: {string.Join(", ", person.KnownFaceLabels)}";
+        if (person.UnrecognizedFaceDetected) return "Face detected: unrecognized";
+        return null;
+    }
 }
 
 public sealed class TelegramAlertAction : IAlertAction
@@ -242,6 +253,8 @@ public sealed class TelegramAlertAction : IAlertAction
             caption.Append($"\n{WebUtility.HtmlEncode(analysis.NotificationReason)}");
         if (AlertCategorizer.DescribeVehiclePlate(analysis.Vehicle) is { } plateLine)
             caption.Append($"\n{WebUtility.HtmlEncode(plateLine)}");
+        if (AlertCategorizer.DescribeFaceMatch(analysis.Person) is { } faceLine)
+            caption.Append($"\n{WebUtility.HtmlEncode(faceLine)}");
 
         return caption.ToString();
     }
@@ -541,10 +554,13 @@ public sealed class EmailAlertAction : IAlertAction
         return AlertCategorizer.DescribeVehiclePlate(vehicle) is { } plateLine ? $"{text}; {plateLine}" : text;
     }
 
-    private static string BuildPersonText(PersonAnalysis person) =>
-        person.Visible
-            ? $"{(string.IsNullOrWhiteSpace(person.Description) ? "Person" : person.Description)}; location={person.Location}; activity={person.Activity}"
-            : "Not visible";
+    private static string BuildPersonText(PersonAnalysis person)
+    {
+        if (!person.Visible) return "Not visible";
+
+        var text = $"{(string.IsNullOrWhiteSpace(person.Description) ? "Person" : person.Description)}; location={person.Location}; activity={person.Activity}";
+        return AlertCategorizer.DescribeFaceMatch(person) is { } faceLine ? $"{text}; {faceLine}" : text;
+    }
 
     private static string BuildPackageText(PackageAnalysis package) =>
         package.Visible || !EqualsValue(package.Status, "none")

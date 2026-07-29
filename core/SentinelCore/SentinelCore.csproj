@@ -9,9 +9,12 @@
     <PublishSingleFile>false</PublishSingleFile>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="FaceAiSharp" Version="0.6.35" />
+    <PackageReference Include="FaceAiSharp.Bundle" Version="0.6.35" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.26.0" />
     <PackageReference Include="MQTTnet" Version="5.2.0.1603" />
     <PackageReference Include="MQTTnet.Server" Version="5.2.0.1603" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
