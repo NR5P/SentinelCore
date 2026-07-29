@@ -29,6 +29,12 @@ data class Camera(
     val name: String,
     val streamUrl: String?,
     val includeAudio: Boolean,
+    val ptzEnabled: Boolean,
+    // Carried along (not shown in any UI) purely so editing an existing camera without
+    // re-running Test Connection doesn't wipe these on save - the PUT endpoint overwrites the
+    // whole record, it doesn't merge, so these have to round-trip through every edit.
+    val onvifPtzServiceUrl: String?,
+    val onvifProfileToken: String?,
 )
 
 data class CameraInput(
@@ -37,6 +43,12 @@ data class CameraInput(
     val username: String?,
     val password: String?,
     val includeAudio: Boolean,
+    // onvifPtzServiceUrl/onvifProfileToken come from a discovery probe (see CameraProbeResult)
+    // and are just passed through here on save, the same way probeResult.streamUrl already
+    // flows into streamUrl - the client never makes these up itself.
+    val ptzEnabled: Boolean,
+    val onvifPtzServiceUrl: String?,
+    val onvifProfileToken: String?,
 )
 
 data class Point2D(val x: Double, val y: Double)
@@ -72,6 +84,11 @@ data class CameraProbeResult(
     val model: String?,
     val resolution: String?,
     val message: String?,
+    // Only ever populated when an ONVIF PTZ service was actually found - absent (null/false)
+    // just means this camera doesn't have one, which is the normal case, not a failure.
+    val supportsPtz: Boolean = false,
+    val onvifPtzServiceUrl: String? = null,
+    val onvifProfileToken: String? = null,
 )
 
 data class ScanInterface(

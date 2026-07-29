@@ -144,6 +144,12 @@ struct LivePlayerView: View {
             StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
                 .padding()
         }
+        .overlay(alignment: .bottomTrailing) {
+            if camera.ptzEnabled == true {
+                PtzControlsView(cameraId: camera.id)
+                    .padding()
+            }
+        }
         .navigationTitle(camera.name)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

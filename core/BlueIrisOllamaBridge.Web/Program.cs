@@ -204,6 +204,7 @@ app.UseAuthorization();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
 app.MapCameraDiscoveryEndpoints();
+app.MapCameraPtzEndpoints();
 app.MapTriggerEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();

@@ -64,6 +64,12 @@ fun CameraEditScreen(
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var includeAudio by remember { mutableStateOf(camera?.includeAudio ?: false) }
+    var ptzEnabled by remember { mutableStateOf(camera?.ptzEnabled ?: false) }
+    // Not shown directly - just carries whatever Test Connection last detected (or this camera's
+    // existing values, if editing) through to save(), the same way streamUrl/name get silently
+    // filled in from a probe result rather than the user typing them.
+    var onvifPtzServiceUrl by remember { mutableStateOf(camera?.onvifPtzServiceUrl) }
+    var onvifProfileToken by remember { mutableStateOf(camera?.onvifProfileToken) }
 
     var isTesting by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
@@ -91,6 +97,13 @@ fun CameraEditScreen(
                     if (name.isBlank() && result.suggestedName != null) {
                         name = result.suggestedName
                     }
+                    // Always carry through the latest detection, but only ever turn the switch
+                    // ON here, never off - a user who manually enabled PTZ for a camera this
+                    // particular test didn't detect it on shouldn't have that silently undone by
+                    // re-testing the connection.
+                    onvifPtzServiceUrl = result.onvifPtzServiceUrl
+                    onvifProfileToken = result.onvifProfileToken
+                    if (result.supportsPtz) ptzEnabled = true
                 }
             } catch (error: Exception) {
                 errorMessage = error.message ?: "Could not test this connection."
@@ -110,6 +123,9 @@ fun CameraEditScreen(
                 username = username.ifBlank { null },
                 password = password.ifBlank { null },
                 includeAudio = includeAudio,
+                ptzEnabled = ptzEnabled,
+                onvifPtzServiceUrl = onvifPtzServiceUrl,
+                onvifProfileToken = onvifProfileToken,
             )
             try {
                 if (camera != null) {
@@ -187,6 +203,20 @@ fun CameraEditScreen(
                             Text("Include Audio", modifier = Modifier.weight(1f))
                             Switch(checked = includeAudio, onCheckedChange = { includeAudio = it })
                         }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Pan/Tilt/Zoom (PTZ) Joystick", modifier = Modifier.weight(1f))
+                            Switch(checked = ptzEnabled, onCheckedChange = { ptzEnabled = it })
+                        }
+                        Text(
+                            "Shows on-screen directional controls in Live view for cameras that can physically move. " +
+                                "Turned on automatically when Test Connection detects an ONVIF PTZ service - you can " +
+                                "also turn it on by hand, but the controls won't do anything without one.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

@@ -11,6 +11,12 @@ struct CameraEditView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var includeAudio = false
+    @State private var ptzEnabled = false
+    // Not shown directly - just carries whatever Test Connection last detected (or this camera's
+    // existing values, if editing) through to save(), the same way streamUrl/name get silently
+    // filled in from a probe result rather than the user typing them.
+    @State private var onvifPtzServiceUrl: String?
+    @State private var onvifProfileToken: String?
 
     @State private var isTesting = false
     @State private var isSaving = false
@@ -42,6 +48,10 @@ struct CameraEditView: View {
                     #endif
                 SecureField("Password (optional)", text: $password)
                 Toggle("Include Audio", isOn: $includeAudio)
+                Toggle("Pan/Tilt/Zoom (PTZ) Joystick", isOn: $ptzEnabled)
+                Text("Shows on-screen directional controls in Live view for cameras that can physically move. Turned on automatically when Test Connection detects an ONVIF PTZ service - you can also turn it on by hand, but the controls won't do anything without one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -116,6 +126,9 @@ struct CameraEditView: View {
             name = camera.name
             streamUrl = camera.streamUrl ?? ""
             includeAudio = camera.includeAudio ?? false
+            ptzEnabled = camera.ptzEnabled ?? false
+            onvifPtzServiceUrl = camera.onvifPtzServiceUrl
+            onvifProfileToken = camera.onvifProfileToken
         }
     }
 
@@ -140,6 +153,12 @@ struct CameraEditView: View {
                 if name.trimmingCharacters(in: .whitespaces).isEmpty, let suggested = result.suggestedName {
                     name = suggested
                 }
+                // Always carry through the latest detection, but only ever turn the toggle ON
+                // here, never off - a user who manually enabled PTZ for a camera this particular
+                // test didn't detect it on shouldn't have that silently undone by re-testing.
+                onvifPtzServiceUrl = result.onvifPtzServiceUrl
+                onvifProfileToken = result.onvifProfileToken
+                if result.supportsPtz == true { ptzEnabled = true }
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -155,7 +174,10 @@ struct CameraEditView: View {
             streamUrl: streamUrl.trimmingCharacters(in: .whitespaces),
             username: username.isEmpty ? nil : username,
             password: password.isEmpty ? nil : password,
-            includeAudio: includeAudio
+            includeAudio: includeAudio,
+            ptzEnabled: ptzEnabled,
+            onvifPtzServiceUrl: onvifPtzServiceUrl,
+            onvifProfileToken: onvifProfileToken
         )
         do {
             if let camera {
@@ -165,7 +187,10 @@ struct CameraEditView: View {
                         id: camera.id,
                         name: input.name,
                         streamUrl: input.streamUrl,
-                        includeAudio: input.includeAudio
+                        includeAudio: input.includeAudio,
+                        ptzEnabled: input.ptzEnabled,
+                        onvifPtzServiceUrl: input.onvifPtzServiceUrl,
+                        onvifProfileToken: input.onvifProfileToken
                     )
                 }
             } else {

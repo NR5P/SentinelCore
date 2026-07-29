@@ -350,7 +350,14 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             current.copy(
                 cameras = current.cameras.map {
                     if (it.id == id) {
-                        it.copy(name = input.name, streamUrl = input.streamUrl, includeAudio = input.includeAudio)
+                        it.copy(
+                            name = input.name,
+                            streamUrl = input.streamUrl,
+                            includeAudio = input.includeAudio,
+                            ptzEnabled = input.ptzEnabled,
+                            onvifPtzServiceUrl = input.onvifPtzServiceUrl,
+                            onvifProfileToken = input.onvifProfileToken,
+                        )
                     } else {
                         it
                     }
@@ -358,6 +365,17 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             )
         }
     }
+
+    // Continuous-move semantics: the camera keeps moving at this velocity until stopPtz is
+    // called - there's no "move by this much and stop automatically" in this mode. Fire-and-
+    // forget by design (see the joystick UI, which swallows these exceptions) - a dropped PTZ
+    // command just means the camera didn't move that instant, not something worth an error over.
+    suspend fun movePtz(cameraId: String, pan: Double, tilt: Double, zoom: Double) =
+        repository.ptzMove(cameraId, pan, tilt, zoom)
+
+    suspend fun stopPtz(cameraId: String) = repository.ptzStop(cameraId)
+
+    suspend fun homePtz(cameraId: String) = repository.ptzHome(cameraId)
 
     // Optimistic remove with rollback on failure, rather than a full refetch.
     suspend fun deleteCamera(camera: Camera) {

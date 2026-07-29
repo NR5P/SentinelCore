@@ -1598,7 +1598,7 @@ public sealed class BasicTests
     {
         using var store = new SqliteCameraStore(Path.Combine(Path.GetTempPath(), $"cam-{Guid.NewGuid():N}"));
         var id = Guid.NewGuid();
-        var original = new Camera(id, "Front Gate", "rtsp://example/1", null, null, false, DateTimeOffset.UtcNow);
+        var original = new Camera(id, "Front Gate", "rtsp://example/1", null, null, false, false, null, null, DateTimeOffset.UtcNow);
 
         await store.RestoreAsync(original, CancellationToken.None);
         var restored = await store.GetAsync(id, CancellationToken.None);
@@ -2799,9 +2799,13 @@ public sealed class BasicTests
         public Task<IReadOnlyList<Camera>> GetAllAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Camera>>([]);
         public Task<Camera?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Camera?>(null);
-        public Task<Camera> AddAsync(string name, string streamUrl, string? username, string? password, bool includeAudio, CancellationToken cancellationToken) =>
+        public Task<Camera> AddAsync(
+            string name, string streamUrl, string? username, string? password, bool includeAudio,
+            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-        public Task<bool> UpdateAsync(Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio, CancellationToken cancellationToken) =>
+        public Task<bool> UpdateAsync(
+            Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio,
+            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task RestoreAsync(Camera camera, CancellationToken cancellationToken) => throw new NotSupportedException();

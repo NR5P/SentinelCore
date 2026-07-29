@@ -1168,6 +1168,65 @@ main {
   display: none;
 }
 
+.ptz-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  /* Above the native <video controls> transport bar, but low-opacity by default so it doesn't
+     block much of the frame - full opacity only while actually being interacted with. */
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.ptz-controls:hover,
+.ptz-controls:focus-within {
+  opacity: 1;
+}
+
+.ptz-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 26px);
+  grid-template-rows: repeat(3, 26px);
+  gap: 2px;
+}
+
+.ptz-zoom {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ptz-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 7, 10, 0.85);
+  border: 1px solid var(--border-bright);
+  border-radius: 3px;
+  color: var(--green);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  /* Prevents the browser's own touch-scroll/zoom gestures from hijacking a press-and-hold on
+     these buttons, which would otherwise fight with pointer capture on mobile Safari/Chrome. */
+  touch-action: none;
+  user-select: none;
+}
+
+.ptz-btn:active {
+  background: rgba(57, 255, 156, 0.25);
+}
+
+.ptz-home {
+  color: var(--cyan);
+}
+
 .zone-editor-panel {
   background: var(--bg-panel);
   border: 1px solid var(--border-bright);

@@ -27,6 +27,12 @@ struct Camera: Codable, Identifiable, Hashable {
     let name: String
     let streamUrl: String?
     let includeAudio: Bool?
+    let ptzEnabled: Bool?
+    // Carried along (not shown in any UI) purely so editing an existing camera without
+    // re-running Test Connection doesn't wipe these on save - the PUT endpoint overwrites the
+    // whole record, it doesn't merge, so these have to round-trip through every edit.
+    let onvifPtzServiceUrl: String?
+    let onvifProfileToken: String?
 }
 
 struct CameraInput: Encodable {
@@ -35,6 +41,12 @@ struct CameraInput: Encodable {
     var username: String?
     var password: String?
     var includeAudio: Bool
+    // onvifPtzServiceUrl/onvifProfileToken come from a discovery probe (see CameraProbeResult)
+    // and are just passed through here on save, the same way probeResult.streamUrl already
+    // flows into streamUrl - the client never makes these up itself.
+    var ptzEnabled: Bool
+    var onvifPtzServiceUrl: String?
+    var onvifProfileToken: String?
 }
 
 struct Point2D: Codable, Hashable {
@@ -77,6 +89,11 @@ struct CameraProbeResult: Codable {
     var model: String?
     var resolution: String?
     var message: String?
+    // Only ever populated when an ONVIF PTZ service was actually found - absent (nil/false) just
+    // means this camera doesn't have one, which is the normal case, not a failure.
+    var supportsPtz: Bool?
+    var onvifPtzServiceUrl: String?
+    var onvifProfileToken: String?
 }
 
 struct ScanInterface: Codable, Identifiable, Hashable {
@@ -228,6 +245,12 @@ struct TimelineSecurityEvent: Codable, Identifiable, Hashable {
 
 struct ReviewedBody: Encodable {
     let reviewed: Bool
+}
+
+struct PtzMoveBody: Encodable {
+    let pan: Double
+    let tilt: Double
+    let zoom: Double
 }
 
 extension JSONDecoder {

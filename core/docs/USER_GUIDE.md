@@ -12,6 +12,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
+5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
 6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
 7. [The SETTINGS tab](#7-the-settings-tab)
 8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
@@ -205,6 +206,28 @@ always has, whether or not you add any cameras here.
 
 Either way, this only ever probes addresses you asked about — a single IP for Test Connection,
 or the network segments you explicitly selected for Discover Cameras.
+
+## 5a. Pan/Tilt/Zoom (PTZ) — moving cameras that support it
+
+Some IP cameras can physically move — pan left/right, tilt up/down, zoom in/out — and this
+dashboard can control that, if the camera supports the ONVIF PTZ standard (most cameras with a
+motorized head do; ones with no moving parts at all simply don't have this).
+
+**Turning it on:** click **Test Connection** on the camera's add/edit form. If it finds a
+working ONVIF PTZ service, the **Pan/Tilt/Zoom (PTZ) Joystick** toggle turns on by itself — you
+don't need to do anything else. You can also flip it on by hand for a camera Test Connection
+didn't detect PTZ for, but the on-screen controls won't do anything without one; the toggle
+doesn't create PTZ support, it only shows controls for support that's already there.
+
+**Using it:** open the camera in the **LIVE** tab and tap it to go full-screen (or, on the web
+dashboard, look at the bottom-right corner of its tile directly) — a small joystick appears:
+eight directional arrows around a home button, plus separate zoom in/out buttons. Press and hold
+a direction to move the camera that way; release to stop. The camera keeps moving the whole time
+a button is held down, the same way a physical joystick would, rather than moving a fixed amount
+per tap. The home button (⌂) returns to the camera's saved home position, if it has one.
+
+PTZ movement is treated the same as adding/editing/deleting a camera — it requires an admin
+account when login is turned on, not just a viewer login.
 
 ## 6. The TRIGGERS tab — motion zones on your own cameras
 
