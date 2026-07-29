@@ -8,6 +8,15 @@ public static class AlertNotificationPolicy
         if (analysis?.NotificationRecommended != true)
             return false;
 
+        // Gate/door open checks (GateCheckAnalyzer) make their own state-transition-based notify
+        // decision (see GateCheckDecision) before a result with NotificationRecommended=true ever
+        // exists - by construction, if one reaches here it already decided to notify. The subject
+        // requirement below doesn't apply to an ambient state check: a gate left open with nobody
+        // around is exactly the case this feature exists to catch, and no person/vehicle/package/
+        // animal will ever be in frame for it.
+        if (string.Equals(result.Profile, GateCheckDecision.ProfileName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
         // Nothing in the frame means nothing to alert about, whatever the model recommended.
         //
         // This is deliberately the first check and deliberately profile-independent. The

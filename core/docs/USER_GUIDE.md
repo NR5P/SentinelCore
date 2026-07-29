@@ -13,6 +13,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
+5b. [Gate/door open check — a safety check independent of motion alerts](#5b-gatedoor-open-check--a-safety-check-independent-of-motion-alerts)
 6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
 6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
 7. [The SETTINGS tab](#7-the-settings-tab)
@@ -229,6 +230,34 @@ per tap. The home button (⌂) returns to the camera's saved home position, if i
 
 PTZ movement is treated the same as adding/editing/deleting a camera — it requires an admin
 account when login is turned on, not just a viewer login.
+
+## 5b. Gate/door open check — a safety check independent of motion alerts
+
+Every other alert in this app is reactive: something has to move in front of a camera before
+anything gets analyzed. A gate or door left open with nobody around never trips a motion alert,
+so nothing would ever notice — this feature closes that gap. On its own schedule, independent of
+Blue Iris and trigger zones, it grabs a snapshot from a camera and asks the AI whether whatever
+it's watching is open or closed, and only notifies when it actually changes from closed to open
+(not on every check, so a gate that's been open for hours doesn't spam you every few minutes).
+
+**Turning it on:** on the **CAMERAS** tab, click **gate check** on the camera watching your gate
+or door. Give it a short label describing what's in frame (e.g. "the front gate" or "the garage
+door" — be specific if the camera sees more than one thing), and how often to check. Each check
+is a real AI analysis, so shorter intervals mean more Ollama/cloud API load — every 10 minutes is
+a reasonable default for most gates.
+
+**Also check whether the camera's own view is blocked:** on by default alongside the open/closed
+check, using the same snapshot (no extra AI calls). Notifies once if the lens appears covered,
+spray-painted, badly out of focus, or physically moved — a normal dark nighttime frame doesn't
+count as blocked.
+
+**Reminders:** leave "remind again if still open" blank to only be notified once when it first
+opens. Set it to a number of hours to also get a reminder if it's still open after that long —
+useful for a gate that tends to get left open and forgotten rather than closed again quickly.
+
+Notifications from this feature go through the same Email/Telegram/MQTT/HomeKit/push channels as
+every other alert, and appear in the FEED tab like any other event — it's a different way of
+noticing something worth telling you about, not a separate notification system.
 
 ## 6. The TRIGGERS tab — motion zones on your own cameras
 

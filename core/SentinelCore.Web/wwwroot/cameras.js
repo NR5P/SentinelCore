@@ -3,11 +3,24 @@ window.GateWatchCameras = (function () {
   let editingId = null;
   const hlsInstances = new Map();
 
+  // Keyed by cameraId - a camera with no entry here just has the gate/door check off.
+  let gateChecks = new Map();
+  let gateCheckEditingCameraId = null;
+
   async function load() {
     try {
-      const response = await fetch("/api/cameras");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      cameras = await response.json();
+      const [camerasResponse, gateChecksResponse] = await Promise.all([
+        fetch("/api/cameras"),
+        fetch("/api/gate-checks")
+      ]);
+      if (!camerasResponse.ok) throw new Error(`HTTP ${camerasResponse.status}`);
+      cameras = await camerasResponse.json();
+
+      gateChecks = new Map();
+      if (gateChecksResponse.ok) {
+        const list = await gateChecksResponse.json();
+        for (const config of list) gateChecks.set(config.cameraId, config);
+      }
     } catch (err) {
       console.error("Failed to load cameras", err);
     }
@@ -38,6 +51,8 @@ window.GateWatchCameras = (function () {
     const card = document.createElement("div");
     card.className = "camera-card";
 
+    const gateCheck = gateChecks.get(camera.id);
+
     const info = document.createElement("div");
     info.className = "camera-card-info";
     info.innerHTML = `
@@ -45,6 +60,7 @@ window.GateWatchCameras = (function () {
       <span class="camera-card-meta">${escapeHtml(camera.streamUrl)}</span>
       <span class="camera-card-meta">${camera.includeAudio ? "video + audio" : "video only"}</span>
       ${camera.ptzEnabled ? `<span class="camera-card-meta">PTZ enabled</span>` : ""}
+      ${gateCheck?.enabled ? `<span class="camera-card-meta">gate check: every ${gateCheck.intervalMinutes} min${gateCheck.checkBlocked ? ", blocked-camera check on" : ""}</span>` : ""}
     `;
 
     const actions = document.createElement("div");
@@ -61,20 +77,123 @@ window.GateWatchCameras = (function () {
     zoneBtn.setAttribute("data-tip-right", "");
     zoneBtn.dataset.tip = "Draw an area to watch for motion, and choose whether to save a video clip when something moves in it.";
     zoneBtn.addEventListener("click", () => window.GateWatchTriggers.openZoneEditor(camera));
+    const gateCheckBtn = document.createElement("button");
+    gateCheckBtn.className = "btn";
+    gateCheckBtn.textContent = "gate check";
+    gateCheckBtn.setAttribute("data-tip-right", "");
+    gateCheckBtn.dataset.tip = "Periodically ask the AI whether a gate or door in view is open, and notify if it's been left open - independent of Blue Iris and trigger zones.";
+    gateCheckBtn.addEventListener("click", () => openGateCheckForm(camera));
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btn";
     deleteBtn.textContent = "delete";
     deleteBtn.setAttribute("data-tip-right", "");
     deleteBtn.dataset.tip = "Remove this camera from the dashboard. Does not touch Blue Iris or the camera itself.";
     deleteBtn.addEventListener("click", () => removeCamera(camera));
-    actions.append(editBtn, zoneBtn, deleteBtn);
+    actions.append(editBtn, zoneBtn, gateCheckBtn, deleteBtn);
 
     card.append(info, actions);
     return card;
   }
 
+  // ---------------- Gate/door open check ----------------
+
+  function openGateCheckForm(camera) {
+    closeForm();
+    closeDiscovery();
+    gateCheckEditingCameraId = camera.id;
+    const config = gateChecks.get(camera.id);
+
+    const wrap = document.getElementById("gate-check-form-wrap");
+    const fields = document.getElementById("gate-check-form-fields");
+    const errors = document.getElementById("gate-check-form-errors");
+    errors.innerHTML = "";
+    fields.innerHTML = "";
+
+    fields.appendChild(buildCheckboxField("gate-check-enabled", `Check ${camera.name} for an open gate/door`,
+      config?.enabled ?? false,
+      "When on, a snapshot from this camera is periodically sent to the AI to check whether a gate or door is open, and you're notified if it's been left open."));
+    fields.appendChild(buildTextField("gate-check-label", "What to check (e.g. \"the front gate\", \"the garage door\")",
+      config?.checkLabel ?? "the gate",
+      "Describes what's in this camera's view to the AI - be specific if the camera sees more than one thing."));
+    fields.appendChild(buildNumberField("gate-check-interval", "Check every (minutes)",
+      config?.intervalMinutes ?? 10, 1,
+      "How often to capture a snapshot and check it. Each check is a real AI analysis, so shorter intervals mean more API/Ollama load."));
+    fields.appendChild(buildCheckboxField("gate-check-blocked", "Also check whether the camera's own view is blocked or covered",
+      config?.checkBlocked ?? true,
+      "Notifies if the lens appears covered, obstructed, or physically moved - a normal dark nighttime frame doesn't count. Uses the same snapshot, no extra AI calls."));
+    fields.appendChild(buildNumberField("gate-check-remind", "Remind again if still open after (hours, optional)",
+      config?.remindIfStillOpenAfterHours ?? "", 1,
+      "Leave blank to only notify once when it first opens. Set this to also get a reminder if it's still open after this many hours."));
+
+    wrap.classList.remove("hidden");
+    wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function closeGateCheckForm() {
+    gateCheckEditingCameraId = null;
+    document.getElementById("gate-check-form-wrap").classList.add("hidden");
+  }
+
+  function buildNumberField(id, label, value, min, tip) {
+    const row = document.createElement("div");
+    row.className = "field-row field-row-wide";
+    if (tip) row.dataset.tip = tip;
+    row.innerHTML = `<label class="field-label" for="${id}">${label}</label>`;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "field-input";
+    input.id = id;
+    input.min = String(min);
+    input.value = value === null || value === undefined ? "" : String(value);
+    row.appendChild(input);
+    return row;
+  }
+
+  async function saveGateCheck() {
+    const cameraId = gateCheckEditingCameraId;
+    if (!cameraId) return;
+
+    const remindRaw = document.getElementById("gate-check-remind").value.trim();
+    const body = {
+      enabled: document.getElementById("gate-check-enabled").checked,
+      checkLabel: document.getElementById("gate-check-label").value.trim() || "the gate",
+      checkBlocked: document.getElementById("gate-check-blocked").checked,
+      intervalMinutes: parseInt(document.getElementById("gate-check-interval").value, 10) || 10,
+      remindIfStillOpenAfterHours: remindRaw === "" ? null : parseInt(remindRaw, 10)
+    };
+
+    const errorsEl = document.getElementById("gate-check-form-errors");
+    errorsEl.innerHTML = "";
+
+    try {
+      const response = await fetch(`/api/gate-checks/${cameraId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        for (const message of payload.errors || ["Save failed."]) {
+          const li = document.createElement("li");
+          li.textContent = message;
+          errorsEl.appendChild(li);
+        }
+        return;
+      }
+
+      closeGateCheckForm();
+      await load();
+      renderList();
+    } catch {
+      const li = document.createElement("li");
+      li.textContent = "Network error while saving.";
+      errorsEl.appendChild(li);
+    }
+  }
+
   function openForm(camera) {
     closeDiscovery();
+    closeGateCheckForm();
     editingId = camera ? camera.id : null;
     const wrap = document.getElementById("camera-form-wrap");
     const fields = document.getElementById("camera-form-fields");
@@ -320,6 +439,7 @@ window.GateWatchCameras = (function () {
 
   async function openDiscovery() {
     closeForm();
+    closeGateCheckForm();
     const wrap = document.getElementById("camera-discovery-wrap");
     const interfacesRoot = document.getElementById("discovery-interfaces-root");
     setDiscoveryStatus("", null);
@@ -681,6 +801,8 @@ window.GateWatchCameras = (function () {
   document.getElementById("discover-cameras-btn").addEventListener("click", openDiscovery);
   document.getElementById("discovery-cancel-btn").addEventListener("click", closeDiscovery);
   document.getElementById("discovery-scan-btn").addEventListener("click", startScan);
+  document.getElementById("gate-check-save-btn").addEventListener("click", saveGateCheck);
+  document.getElementById("gate-check-cancel-btn").addEventListener("click", closeGateCheckForm);
 
   return { load, renderList, showLive, hideLive };
 })();

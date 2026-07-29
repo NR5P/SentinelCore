@@ -182,6 +182,22 @@ builder.Services.AddHttpClient(nameof(HomeKitEndpoints), client => client.Timeou
 builder.Services.AddSingleton<AlertForwarder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
+// Gate/door open check - its own small table in the same cameras database, own periodic
+// snapshot loop, own forwarder to a dedicated main-app endpoint (not AlertForwarder's - see
+// GateCheckForwarder for why). Opt-in per camera, off unless a GateChecks row exists for it.
+//
+// Unlike AlertForwarder (which posts to the queue-based /api/blueiris/alert and gets an
+// immediate 202 back), this endpoint is synchronous - it waits out the full Ollama analysis
+// before responding, so it needs the same generous timeout as ChatEndpoints above, not the
+// default 100s. Missing this crashed the whole host the first time it ran live: the timeout's
+// TaskCanceledException is an OperationCanceledException, which GateCheckMonitor's own
+// "not OperationCanceledException" catch filters were (wrongly) written to let through as if it
+// meant the service was shutting down - see the fixed filters there for the other half of this.
+builder.Services.AddSingleton<IGateCheckStore>(new SqliteGateCheckStore(camerasRoot));
+builder.Services.AddHttpClient(nameof(GateCheckForwarder), client => client.Timeout = TimeSpan.FromSeconds(330));
+builder.Services.AddSingleton<GateCheckForwarder>();
+builder.Services.AddHostedService<GateCheckMonitor>();
+
 // Reads BugReports/Email straight from the main app's appsettings.json (this project has no
 // SMTP config of its own) - see WebBugReportSender.
 builder.Services.AddSingleton<IBugReportSender, WebBugReportSender>();
@@ -236,6 +252,7 @@ app.UseMiddleware<AuthGateMiddleware>();
 app.UseAuthorization();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
+app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();
 app.MapCameraPtzEndpoints();
 app.MapTriggerEndpoints();

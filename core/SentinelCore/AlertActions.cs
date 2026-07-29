@@ -294,7 +294,13 @@ public sealed class EmailAlertAction : IAlertAction
             return;
         }
 
-        var notification = BuildNotification(analysis);
+        // BuildNotification's categories are all person/vehicle/package/animal-based and would
+        // return null for a gate-check result (nothing in frame to categorize), silently dropping
+        // it even though ShouldNotify already let it through above - so it needs its own,
+        // simpler notification built straight from the summary GateCheckAnalyzer already wrote.
+        var notification = string.Equals(result.Profile, GateCheckDecision.ProfileName, StringComparison.OrdinalIgnoreCase)
+            ? new EmailNotification(GateCheckDecision.ProfileName, analysis.Summary)
+            : BuildNotification(analysis);
         if (notification is null) return;
 
         var cooldownKey = $"{result.Camera}|{notification.Category}";

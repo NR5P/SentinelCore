@@ -191,6 +191,12 @@ public sealed class PromptProfile
     // list. Every profile this ships with defaults to off - camera resolution and angle matter
     // a lot for this to work at all, so it's opt-in per camera/profile rather than global.
     public bool LicensePlateRecognitionEnabled { get; init; }
+
+    // Off by default. When on, the AI is additionally asked whether the camera's own view is
+    // blocked, covered, or obstructed. Only set on the ephemeral profile GateCheckAnalyzer builds
+    // for a gate/door check that has this enabled - not exposed on the saved PromptProfiles list,
+    // since every other alert path (Blue Iris, trigger zones) has no use for it.
+    public bool CameraBlockedCheckEnabled { get; init; }
 }
 
 public sealed class KnownVehicle

@@ -50,6 +50,12 @@ public sealed class VisionAnalysis
 
     [JsonPropertyName("notification_reason")]
     public string NotificationReason { get; init; } = string.Empty;
+
+    // Only requested from the model when the profile has PromptProfile.CameraBlockedCheckEnabled
+    // set - false otherwise, same opt-in shape as VehicleAnalysis.LicensePlateText. Used by the
+    // gate/door open check (GateCheckAnalyzer) to also catch a covered or obstructed lens.
+    [JsonPropertyName("camera_blocked")]
+    public bool CameraBlocked { get; init; }
 }
 
 public sealed class GateAnalysis

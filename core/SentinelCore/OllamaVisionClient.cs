@@ -220,6 +220,14 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             ? "\n- If a vehicle's license plate is clearly legible, transcribe it into vehicle.license_plate exactly as shown (letters and numbers only, uppercase, no state name or slogan text). If it is not clearly legible, leave vehicle.license_plate as an empty string - do not guess."
             : "";
 
+        var cameraBlockedField = profile.CameraBlockedCheckEnabled
+            ? ",\n          \"camera_blocked\": false"
+            : "";
+
+        var cameraBlockedRule = profile.CameraBlockedCheckEnabled
+            ? "\n- Set camera_blocked to true if the camera's own view is obstructed - covered, spray-painted, badly out of focus, or the lens is physically blocked or moved - as opposed to merely dark or a normal nighttime IR image. A dark but otherwise normal nighttime frame is not blocked."
+            : "";
+
         return $$"""
         Camera: {{alert.Camera}}
         Event time: {{alert.OccurredAt:O}}
@@ -265,7 +273,7 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
           },
           "confidence": 0.0,
           "notification_recommended": false,
-          "notification_reason": "brief reason"
+          "notification_reason": "brief reason"{{cameraBlockedField}}
         }
 
         Allowed event_type values:
@@ -341,7 +349,7 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
         - Describe only the important foreground event. Do not treat distant houses, parked vehicles across the road, or ordinary background objects as the alert subject.
         - Confidence values must be between 0.0 and 1.0.
         - Use unknown instead of guessing.
-        - Do not include markdown, code fences, or any text outside the JSON object.
+        - Do not include markdown, code fences, or any text outside the JSON object.{{cameraBlockedRule}}
         """;
     }
 

@@ -176,6 +176,12 @@ builder.Services.AddHostedService<AlertProcessor>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddHostedService<DailySummaryWorker>();
 builder.Services.AddSingleton<ChatAnswerService>();
+// Periodic per-camera gate/door open check (SentinelCore.Web's GateCheckMonitor forwards a
+// snapshot here). Deliberately not queued through IAlertQueue/AlertProcessor - the analysis
+// happens synchronously in the request, and its own notify decision (GateCheckDecision) bypasses
+// AlertNotificationPolicy's person/vehicle/package/animal requirement, which doesn't apply to an
+// ambient state check. See GateCheckAnalyzer.
+builder.Services.AddSingleton<GateCheckAnalyzer>();
 builder.Services.AddHostedService<TelegramChatWorker>();
 builder.Services.AddHostedService<SelfMonitoringWorker>();
 // Registered in the main app only - all three services would otherwise each report the same
@@ -373,6 +379,49 @@ app.MapPost("/api/blueiris/alert", async (
     }
 
     return Results.Accepted($"/api/results/{alert.Id}", new AcceptedAlertResponse(alert.Id, "queued", $"/api/results/{alert.Id}"));
+}).DisableAntiforgery();
+
+// Forwarded from SentinelCore.Web's GateCheckMonitor - a periodic per-camera snapshot, not a
+// Blue Iris alert, so this is deliberately synchronous (no queue) and returns the caller's own
+// last-known state back for it to persist (see GateCheckAnalyzer's own comment on the split).
+app.MapPost("/api/gate-check", async (HttpRequest request, GateCheckAnalyzer analyzer, IOptionsMonitor<BridgeOptions> bridgeOptions, CancellationToken ct) =>
+{
+    if (!request.HasFormContentType)
+        return Results.BadRequest(new { error = "Use multipart/form-data with an image field." });
+
+    var form = await request.ReadFormAsync(ct);
+    var image = form.Files.GetFile("image") ?? form.Files.FirstOrDefault();
+    if (image is null || image.Length == 0)
+        return Results.BadRequest(new { error = "No image was supplied." });
+
+    var settings = bridgeOptions.CurrentValue;
+    if (image.Length > settings.MaximumImageBytes)
+        return Results.Json(new { error = $"Image exceeds {settings.MaximumImageBytes} bytes." }, statusCode: 413);
+
+    var camera = form["camera"].ToString().Trim();
+    if (string.IsNullOrWhiteSpace(camera)) return Results.BadRequest(new { error = "camera is required." });
+
+    var checkLabel = form["checkLabel"].ToString().Trim();
+    if (string.IsNullOrWhiteSpace(checkLabel)) checkLabel = "the gate";
+
+    await using var memory = new MemoryStream((int)image.Length);
+    await image.CopyToAsync(memory, ct);
+
+    var gateRequest = new GateCheckRequest(
+        Camera: camera,
+        CheckLabel: checkLabel,
+        CheckBlocked: form["checkBlocked"] == "true",
+        ImageBytes: memory.ToArray(),
+        ContentType: image.ContentType,
+        FileName: Path.GetFileName(image.FileName),
+        PreviousState: string.IsNullOrWhiteSpace(form["previousState"]) ? "unknown" : form["previousState"].ToString(),
+        PreviousBlocked: form["previousBlocked"] == "true",
+        LastStateChangedAt: DateTimeOffset.TryParse(form["lastStateChangedAt"], out var changedAt) ? changedAt : null,
+        LastNotifiedAt: DateTimeOffset.TryParse(form["lastNotifiedAt"], out var notifiedAt) ? notifiedAt : null,
+        RemindIfStillOpenAfterHours: int.TryParse(form["remindIfStillOpenAfterHours"], out var hours) ? hours : null);
+
+    var outcome = await analyzer.AnalyzeAsync(gateRequest, ct);
+    return Results.Ok(outcome);
 }).DisableAntiforgery();
 
 app.MapGet("/api/results/{id:guid}", async (Guid id, IResultStore store, CancellationToken ct) =>

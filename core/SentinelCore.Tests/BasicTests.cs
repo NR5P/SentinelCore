@@ -2418,6 +2418,31 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void ShouldNotify_GateCheckProfile_BypassesTheSubjectRequirement()
+    {
+        // The whole reason GateCheckAnalyzer uses its own reserved profile: a gate left open
+        // with nobody around would never satisfy HasVisibleSubject, and that's exactly the event
+        // this feature exists to catch.
+        var result = NothingVisible("open", profile: GateCheckDecision.ProfileName);
+        Assert.True(AlertNotificationPolicy.ShouldNotify(result));
+    }
+
+    [Fact]
+    public void ShouldNotify_GateCheckProfile_StillRequiresNotificationRecommended()
+    {
+        // The reserved-profile bypass only skips the subject check below it - the top-level
+        // NotificationRecommended gate still applies, so GateCheckAnalyzer can't accidentally
+        // notify by forgetting to set it.
+        var notRecommended = new AlertResult
+        {
+            Camera = "front gate",
+            Profile = GateCheckDecision.ProfileName,
+            Analysis = new VisionAnalysis { NotificationRecommended = false, Gate = new GateAnalysis { State = "open" } }
+        };
+        Assert.False(AlertNotificationPolicy.ShouldNotify(notRecommended));
+    }
+
+    [Fact]
     public async Task HomeKitAlertAction_BelowTheConfidenceFloor_DoesNotTrigger()
     {
         // The channel that was waking the phone: Email and Telegram floored at 0.6, HomeKit had
@@ -3009,4 +3034,229 @@ public sealed class BasicTests
     private static IncomingAlert MakeAlert(string camera) => new(
         Guid.NewGuid(), camera, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
         "default", "image/jpeg", "shot.jpg", [1, 2, 3], null);
+
+    // --- Gate/door open check ------------------------------------------------------------
+
+    [Fact]
+    public async Task SqliteGateCheckStore_SaveAsync_RoundTripsConfigAndUpdateStateAsyncPatchesOnlyStateColumns()
+    {
+        using var store = new SqliteGateCheckStore(Path.Combine(Path.GetTempPath(), $"gatechk-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        var config = new GateCheckConfig(cameraId, true, "front gate", true, 10, 4, "unknown", null, null, false);
+
+        await store.SaveAsync(config, CancellationToken.None);
+        var saved = await store.GetAsync(cameraId, CancellationToken.None);
+        Assert.NotNull(saved);
+        Assert.Equal("front gate", saved!.CheckLabel);
+        Assert.Equal(10, saved.IntervalMinutes);
+        Assert.Equal(4, saved.RemindIfStillOpenAfterHours);
+        Assert.Equal("unknown", saved.LastKnownState);
+
+        var changedAt = DateTimeOffset.UtcNow;
+        await store.UpdateStateAsync(cameraId, "open", changedAt, changedAt, true, CancellationToken.None);
+        var updated = await store.GetAsync(cameraId, CancellationToken.None);
+        Assert.Equal("open", updated!.LastKnownState);
+        Assert.True(updated.LastKnownBlocked);
+        // The config columns (label, interval, reminder) must survive a state-only patch.
+        Assert.Equal("front gate", updated.CheckLabel);
+        Assert.Equal(10, updated.IntervalMinutes);
+    }
+
+    [Fact]
+    public async Task SqliteGateCheckStore_GetEnabledAsync_ExcludesDisabledChecks()
+    {
+        using var store = new SqliteGateCheckStore(Path.Combine(Path.GetTempPath(), $"gatechk-{Guid.NewGuid():N}"));
+        await store.SaveAsync(GateCheckConfig.Disabled(Guid.NewGuid()), CancellationToken.None);
+        var enabledId = Guid.NewGuid();
+        await store.SaveAsync(GateCheckConfig.Disabled(enabledId) with { Enabled = true }, CancellationToken.None);
+
+        var enabled = await store.GetEnabledAsync(CancellationToken.None);
+        var all = await store.GetAllAsync(CancellationToken.None);
+
+        Assert.Single(enabled);
+        Assert.Equal(enabledId, enabled[0].CameraId);
+        Assert.Equal(2, all.Count);
+    }
+
+    [Theory]
+    [InlineData("closed", "open", true)]
+    [InlineData("unknown", "open", true)]
+    [InlineData("closed", "closed", false)]
+    [InlineData("open", "closed", false)]
+    public void GateCheckDecision_ShouldNotifyOpen_TransitionCases(string previous, string next, bool expected)
+    {
+        var result = GateCheckDecision.ShouldNotifyOpen(previous, next, null, null, DateTimeOffset.UtcNow);
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void GateCheckDecision_ShouldNotifyOpen_UnknownReadingNeverNotifies()
+    {
+        // Neither direction - a single unreadable frame shouldn't fire on its own, whether the
+        // gate was previously open or closed.
+        Assert.False(GateCheckDecision.ShouldNotifyOpen("open", "unknown", null, null, DateTimeOffset.UtcNow));
+        Assert.False(GateCheckDecision.ShouldNotifyOpen("closed", "unknown", null, null, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void GateCheckDecision_ShouldNotifyOpen_StaysOpenWithoutReminderConfigured_DoesNotRenotify()
+    {
+        var lastNotified = DateTimeOffset.UtcNow.AddDays(-2);
+        var result = GateCheckDecision.ShouldNotifyOpen("open", "open", lastNotified, null, DateTimeOffset.UtcNow);
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void GateCheckDecision_ShouldNotifyOpen_StaysOpenWithReminderConfigured_RenotifiesOnlyOnceElapsed()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var tooSoon = GateCheckDecision.ShouldNotifyOpen("open", "open", now.AddHours(-2), 4, now);
+        var elapsed = GateCheckDecision.ShouldNotifyOpen("open", "open", now.AddHours(-5), 4, now);
+
+        Assert.False(tooSoon);
+        Assert.True(elapsed);
+    }
+
+    [Fact]
+    public void GateCheckDecision_ShouldNotifyOpen_StaysOpenWithReminderConfiguredButNeverNotified_Renotifies()
+    {
+        // Defensive: if a reminder is configured but LastNotifiedAt is somehow missing, don't
+        // silently stay quiet forever - treat it as due.
+        var result = GateCheckDecision.ShouldNotifyOpen("open", "open", null, 4, DateTimeOffset.UtcNow);
+        Assert.True(result);
+    }
+
+    [Theory]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, false, false)]
+    public void GateCheckDecision_ShouldNotifyBlocked_OnlyTheUnblockedToBlockedTransitionNotifies(bool previousBlocked, bool newBlocked, bool expected)
+    {
+        Assert.Equal(expected, GateCheckDecision.ShouldNotifyBlocked(previousBlocked, newBlocked));
+    }
+
+    // GateCheckAnalyzer end-to-end, without a real AI backend or a real gate to photograph -
+    // proves the full save-and-dispatch path (the one seam the unit tests above can't reach)
+    // fires correctly on a transition and stays silent otherwise.
+    private sealed class FakeGateStateVisionClient(string state, bool blocked) : IVisionAnalysisClient
+    {
+        public Task<(VisionAnalysis Analysis, string Raw, string Model)> AnalyzeAsync(
+            IncomingAlert alert, PromptProfile profile, CancellationToken cancellationToken) =>
+            Task.FromResult((
+                new VisionAnalysis { Gate = new GateAnalysis { State = state }, CameraBlocked = blocked, Confidence = 0.9 },
+                "{}",
+                "fake-model"));
+
+        public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+    }
+
+    private sealed class RecordingAlertAction : IAlertAction
+    {
+        public List<AlertResult> Calls { get; } = [];
+
+        public Task ExecuteAsync(AlertResult result, CancellationToken cancellationToken)
+        {
+            Calls.Add(result);
+            return Task.CompletedTask;
+        }
+    }
+
+    private static GateCheckRequest MakeGateCheckRequest(string previousState = "closed", bool previousBlocked = false, bool checkBlocked = true) => new(
+        Camera: "front gate camera",
+        CheckLabel: "the front gate",
+        CheckBlocked: checkBlocked,
+        ImageBytes: [1, 2, 3],
+        ContentType: "image/jpeg",
+        FileName: "snapshot.jpg",
+        PreviousState: previousState,
+        PreviousBlocked: previousBlocked,
+        LastStateChangedAt: null,
+        LastNotifiedAt: null,
+        RemindIfStillOpenAfterHours: null);
+
+    [Fact]
+    public async Task GateCheckAnalyzer_OnClosedToOpenTransition_SavesAGateCheckResultAndDispatchesActions()
+    {
+        var resultStore = new RecordingResultStore();
+        var action = new RecordingAlertAction();
+        var analyzer = new GateCheckAnalyzer(
+            new FakeGateStateVisionClient("open", blocked: false), resultStore, [action],
+            NullLogger<GateCheckAnalyzer>.Instance);
+
+        var outcome = await analyzer.AnalyzeAsync(MakeGateCheckRequest(previousState: "closed"), CancellationToken.None);
+
+        Assert.True(outcome.NotifiedOpen);
+        Assert.False(outcome.NotifiedBlocked);
+        Assert.Equal("open", outcome.State);
+        Assert.NotNull(outcome.NotifiedAt);
+
+        var saved = Assert.Single(resultStore.Saved);
+        Assert.Equal(GateCheckDecision.ProfileName, saved.Profile);
+        Assert.True(saved.Analysis!.NotificationRecommended);
+        Assert.Equal("front gate camera", saved.Camera);
+
+        var dispatched = Assert.Single(action.Calls);
+        Assert.Same(saved, dispatched);
+        // The whole point of the reserved profile - a real downstream policy check, not just
+        // trusting that GateCheckAnalyzer set NotificationRecommended correctly.
+        Assert.True(AlertNotificationPolicy.ShouldNotify(dispatched));
+    }
+
+    [Fact]
+    public async Task GateCheckAnalyzer_WhenStillClosed_NeitherSavesNorDispatchesAnything()
+    {
+        var resultStore = new RecordingResultStore();
+        var action = new RecordingAlertAction();
+        var analyzer = new GateCheckAnalyzer(
+            new FakeGateStateVisionClient("closed", blocked: false), resultStore, [action],
+            NullLogger<GateCheckAnalyzer>.Instance);
+
+        var outcome = await analyzer.AnalyzeAsync(MakeGateCheckRequest(previousState: "closed"), CancellationToken.None);
+
+        Assert.False(outcome.NotifiedOpen);
+        Assert.False(outcome.NotifiedBlocked);
+        Assert.Empty(resultStore.Saved);
+        Assert.Empty(action.Calls);
+    }
+
+    [Fact]
+    public async Task GateCheckAnalyzer_OnBlockedTransition_NotifiesEvenWhileGateStaysClosed()
+    {
+        var resultStore = new RecordingResultStore();
+        var action = new RecordingAlertAction();
+        var analyzer = new GateCheckAnalyzer(
+            new FakeGateStateVisionClient("closed", blocked: true), resultStore, [action],
+            NullLogger<GateCheckAnalyzer>.Instance);
+
+        var outcome = await analyzer.AnalyzeAsync(
+            MakeGateCheckRequest(previousState: "closed", previousBlocked: false), CancellationToken.None);
+
+        Assert.False(outcome.NotifiedOpen);
+        Assert.True(outcome.NotifiedBlocked);
+        Assert.True(outcome.Blocked);
+        Assert.Single(resultStore.Saved);
+        Assert.Single(action.Calls);
+    }
+
+    [Fact]
+    public async Task GateCheckAnalyzer_WhenCheckBlockedIsOff_IgnoresAModelBlockedReadingEntirely()
+    {
+        // The model might still report camera_blocked (the field is always present in the
+        // schema once requested), but a camera whose owner never turned this on shouldn't ever
+        // notify because of it.
+        var resultStore = new RecordingResultStore();
+        var action = new RecordingAlertAction();
+        var analyzer = new GateCheckAnalyzer(
+            new FakeGateStateVisionClient("closed", blocked: true), resultStore, [action],
+            NullLogger<GateCheckAnalyzer>.Instance);
+
+        var outcome = await analyzer.AnalyzeAsync(
+            MakeGateCheckRequest(previousState: "closed", previousBlocked: false, checkBlocked: false), CancellationToken.None);
+
+        Assert.False(outcome.NotifiedBlocked);
+        Assert.False(outcome.Blocked);
+        Assert.Empty(resultStore.Saved);
+    }
 }
