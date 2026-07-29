@@ -43,16 +43,42 @@ fi
 # Separate, fixed-argument sudo calls rather than one "restart a b c" invocation - the
 # NOPASSWD sudoers entries match on exact command lines, so this is what lets both the
 # per-service and combined restarts work under the same allowlisted commands.
+#
+# macOS (installed via install-macos.sh) uses launchd LaunchDaemons instead of systemd - same
+# job, different tool, so every restart_* function below branches on uname rather than existing
+# twice. launchctl kickstart -k forcibly restarts a running daemon in one step, same as
+# `systemctl restart`.
+IS_MACOS=0
+[[ "$(uname -s)" == "Darwin" ]] && IS_MACOS=1
+
 restart_main() {
   echo "==> Restarting sentinelcore"
-  sudo systemctl restart sentinelcore
+  if [[ "$IS_MACOS" == "1" ]]; then
+    sudo launchctl kickstart -k system/com.sentinelcore.bridge
+  else
+    sudo systemctl restart sentinelcore
+  fi
 }
 restart_web() {
   echo "==> Restarting sentinelcore-web"
-  sudo systemctl restart sentinelcore-web
+  if [[ "$IS_MACOS" == "1" ]]; then
+    sudo launchctl kickstart -k system/com.sentinelcore.web
+  else
+    sudo systemctl restart sentinelcore-web
+  fi
 }
 # Optional - only installed if HomeKit is being used, so a missing unit isn't an error.
 restart_homekit() {
+  if [[ "$IS_MACOS" == "1" ]]; then
+    if ! launchctl print system/com.sentinelcore.homekit >/dev/null 2>&1; then
+      echo "==> Skipping HomeKit sidecar (not installed)"
+      return
+    fi
+    echo "==> Restarting sentinelcore-homekit"
+    sudo launchctl kickstart -k system/com.sentinelcore.homekit
+    return
+  fi
+
   if ! systemctl list-unit-files sentinelcore-homekit.service >/dev/null 2>&1 ||
      ! systemctl cat sentinelcore-homekit >/dev/null 2>&1; then
     echo "==> Skipping HomeKit sidecar (not installed)"
@@ -72,7 +98,12 @@ esac
 sleep 2
 echo
 echo "==> Status"
-systemctl --no-pager --lines=0 status sentinelcore sentinelcore-web 2>/dev/null | grep -E "●|Active:" || true
+if [[ "$IS_MACOS" == "1" ]]; then
+  launchctl print system/com.sentinelcore.bridge 2>/dev/null | grep -E "state = |pid = " || true
+  launchctl print system/com.sentinelcore.web 2>/dev/null | grep -E "state = |pid = " || true
+else
+  systemctl --no-pager --lines=0 status sentinelcore sentinelcore-web 2>/dev/null | grep -E "●|Active:" || true
+fi
 
 echo
 echo "==> Health checks"

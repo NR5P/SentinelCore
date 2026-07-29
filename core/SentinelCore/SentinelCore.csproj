@@ -20,4 +20,12 @@
   <ItemGroup>
     <ProjectReference Include="../SentinelCore.Licensing/SentinelCore.Licensing.csproj" />
   </ItemGroup>
+  <!-- The SDK's default item globs otherwise sweep up whatever's sitting in the runtime data/
+       folder next to this project (events.db, images, push-devices.db, ...) as Content purely
+       because it's inside the project directory - confirmed accidentally shipping data/
+       heartbeat.json into a `dotnet publish` output. None of it belongs in a build output. -->
+  <ItemGroup>
+    <Content Remove="data/**" />
+    <None Remove="data/**" />
+  </ItemGroup>
 </Project>

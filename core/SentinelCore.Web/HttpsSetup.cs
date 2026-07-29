@@ -2,20 +2,22 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace SentinelCore.Web;
 
-// Optional HTTPS for the dashboard. Off unless a certificate is configured, and even then only
-// added alongside the plain HTTP listener rather than replacing it - see docs/DEPLOYMENT.md for
-// how to generate a certificate, and why a local authority is needed at all (no public CA will
-// issue for a private IP address).
+// HTTPS for the dashboard, on by default using a certificate generated automatically on this
+// machine (see AutoCertificateProvisioner) - added alongside the plain HTTP listener rather than
+// replacing it, never requiring a script or a hand-edit of this file. See docs/DEPLOYMENT.md for
+// why a local authority is needed at all (no public CA will issue for a private IP address) and
+// how to trust it on a device, or to point this at a real domain certificate instead.
 //
 // HTTP deliberately keeps listening. The iOS and Android apps both default to http:// when you
 // type a bare address, so silently forcing everything to HTTPS would break them the moment a
 // device hadn't yet trusted the authority.
-public sealed record HttpsSettings(string? CertificatePath, string? KeyPath, int Port)
+public sealed record HttpsSettings(bool Enabled, string? CertificatePath, string? KeyPath, int Port)
 {
     public static HttpsSettings FromConfiguration(IConfiguration configuration)
     {
         var section = configuration.GetSection("Https");
         return new HttpsSettings(
+            section["Enabled"] is { } raw ? bool.Parse(raw) : true,
             section["CertificatePath"],
             section["KeyPath"],
             int.TryParse(section["Port"], out var port) ? port : 3443);
@@ -73,15 +75,18 @@ public sealed record HttpsSettings(string? CertificatePath, string? KeyPath, int
     // the log says exactly what's wrong.
     public bool CanEnable(out string? reason)
     {
-        if (string.IsNullOrWhiteSpace(CertificatePath) && string.IsNullOrWhiteSpace(KeyPath))
+        if (!Enabled)
         {
-            reason = null; // Not configured at all - the normal case, nothing to report.
+            reason = null; // Turned off deliberately (Https:Enabled: false) - nothing to report.
             return false;
         }
 
         if (string.IsNullOrWhiteSpace(CertificatePath) || string.IsNullOrWhiteSpace(KeyPath))
         {
-            reason = "Https needs both CertificatePath and KeyPath - only one was set.";
+            // Program.cs auto-provisions a certificate before this ever runs when Enabled is
+            // true, so reaching this normally means that provisioning itself failed (e.g. an
+            // unwritable certs directory) rather than a missing config value.
+            reason = "Https is enabled but no certificate is available - check startup logs for why auto-provisioning failed.";
             return false;
         }
 

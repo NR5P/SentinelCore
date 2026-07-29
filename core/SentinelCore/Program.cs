@@ -10,6 +10,23 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseWindowsService();
 builder.Host.UseSystemd();
 
+// Self-provisions a real API key on first boot instead of crashing on BridgeOptions'
+// [Required] validation below - see AutoApiKeyProvisioner. Persisted to disk (not just this
+// process's config) because, unlike the HTTPS certificate, Blue Iris gets configured with this
+// value once and a key that changed on every restart would silently break that integration.
+var appSettingsPath = Path.Combine(builder.Environment.ContentRootPath, "appsettings.json");
+try
+{
+    var apiKey = AutoApiKeyProvisioner.EnsureApiKey(appSettingsPath, builder.Configuration["Bridge:ApiKey"]);
+    builder.Configuration["Bridge:ApiKey"] = apiKey;
+}
+catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+{
+    // Falls through to the [Required] validation below, which reports it clearly and stops
+    // the app rather than running with no authentication at all.
+    Console.WriteLine($"Could not auto-generate Bridge:ApiKey ({ex.Message}). Set it by hand in {appSettingsPath}.");
+}
+
 builder.Services.AddOptions<BridgeOptions>()
     .Bind(builder.Configuration.GetSection(BridgeOptions.SectionName))
     .ValidateDataAnnotations()

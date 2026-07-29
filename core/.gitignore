@@ -19,6 +19,11 @@ homekit-bridge/persist/
 
 # The local certificate authority and the server key it signs. The CA private key is the whole
 # security of this scheme - anyone holding it can issue certificates every trusting device will
-# accept. It is generated per install by scripts/setup-local-https.sh and must never be shared,
-# which is exactly why the product ships a generator instead of a bundled certificate.
+# accept. It is generated per install, automatically, by AutoCertificateProvisioner (see
+# SentinelCore.Web) and must never be shared, which is exactly why the product generates one
+# itself instead of shipping a bundled certificate.
 certs/
+
+# Self-contained per-OS release bundles built by scripts/publish-release.sh - regenerated from
+# source, never worth committing.
+dist/

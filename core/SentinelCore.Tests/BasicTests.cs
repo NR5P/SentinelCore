@@ -1708,13 +1708,25 @@ public sealed class BasicTests
     }
 
     [Fact]
-    public void HttpsSettings_NotConfigured_StaysOffSilently()
+    public void HttpsSettings_ExplicitlyDisabled_StaysOffSilently()
     {
-        // The shipped default. Must not warn - plain HTTP is a legitimate choice, not a fault.
-        var settings = new HttpsSettings(null, null, 3443);
+        // Https:Enabled: false is a deliberate user choice, not a fault - must not warn.
+        var settings = new HttpsSettings(Enabled: false, null, null, 3443);
 
         Assert.False(settings.CanEnable(out var reason));
         Assert.Null(reason);
+    }
+
+    [Fact]
+    public void HttpsSettings_EnabledButNoCertificateAvailable_StaysOffWithAReason()
+    {
+        // Shouldn't normally happen in production - Program.cs auto-provisions a certificate
+        // whenever Enabled is true (the shipped default) - but if that provisioning itself
+        // failed, this must not crash the dashboard, just explain why HTTPS didn't come up.
+        var settings = new HttpsSettings(Enabled: true, null, null, 3443);
+
+        Assert.False(settings.CanEnable(out var reason));
+        Assert.NotNull(reason);
     }
 
     [Fact]
@@ -1722,19 +1734,10 @@ public sealed class BasicTests
     {
         // The important case: a wrong path must not stop the dashboard booting, which is what
         // Kestrel's own certificate configuration would do.
-        var settings = new HttpsSettings("/nonexistent/server.crt", "/nonexistent/server.key", 3443);
+        var settings = new HttpsSettings(true, "/nonexistent/server.crt", "/nonexistent/server.key", 3443);
 
         Assert.False(settings.CanEnable(out var reason));
         Assert.Contains("not found", reason);
-    }
-
-    [Fact]
-    public void HttpsSettings_OnlyOneHalfConfigured_StaysOffWithAReason()
-    {
-        var settings = new HttpsSettings("/tmp/server.crt", null, 3443);
-
-        Assert.False(settings.CanEnable(out var reason));
-        Assert.Contains("both", reason);
     }
 
     [Fact]
@@ -1747,11 +1750,108 @@ public sealed class BasicTests
         File.WriteAllText(certificate, "x");
         File.WriteAllText(key, "x");
 
-        var settings = new HttpsSettings(certificate, key, 3443);
+        var settings = new HttpsSettings(true, certificate, key, 3443);
 
         Assert.True(settings.CanEnable(out var reason));
         Assert.Null(reason);
         Directory.Delete(directory, recursive: true);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("CHANGE-ME-this-is-a-placeholder")]
+    public void AutoApiKeyProvisioner_MissingOrPlaceholder_GeneratesAndPersistsAKey(string configured)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"apikey-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var settingsPath = Path.Combine(directory, "appsettings.json");
+        File.WriteAllText(settingsPath, """{ "Bridge": { "ApiKey": "will-be-replaced" } }""");
+        try
+        {
+            var generated = AutoApiKeyProvisioner.EnsureApiKey(settingsPath, configured);
+
+            Assert.True(generated.Length >= 16);
+            Assert.DoesNotContain("CHANGE-ME", generated, StringComparison.OrdinalIgnoreCase);
+
+            var persisted = JsonNode.Parse(File.ReadAllText(settingsPath))!["Bridge"]!["ApiKey"]!.GetValue<string>();
+            Assert.Equal(generated, persisted);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AutoApiKeyProvisioner_AlreadyConfigured_ReturnsItUnchangedAndLeavesFileAlone()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"apikey-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var settingsPath = Path.Combine(directory, "appsettings.json");
+        const string original = """{ "Bridge": { "ApiKey": "a-real-configured-key-1234567890" } }""";
+        File.WriteAllText(settingsPath, original);
+        try
+        {
+            var result = AutoApiKeyProvisioner.EnsureApiKey(settingsPath, "a-real-configured-key-1234567890");
+
+            Assert.Equal("a-real-configured-key-1234567890", result);
+            Assert.Equal(original, File.ReadAllText(settingsPath)); // untouched, not even reformatted
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AutoCertificateProvisioner_FirstRun_CreatesAUsableCertificateAndAuthority()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"autocert-{Guid.NewGuid():N}");
+        try
+        {
+            var result = AutoCertificateProvisioner.EnsureCertificate(directory);
+
+            Assert.True(result.Reissued);
+            Assert.True(File.Exists(result.CertificatePath));
+            Assert.True(File.Exists(result.KeyPath));
+            Assert.True(File.Exists(result.AuthorityCertificatePath));
+
+            var settings = new HttpsSettings(true, result.CertificatePath, result.KeyPath, 3443);
+            Assert.True(settings.CanEnable(out var reason));
+            Assert.Null(reason);
+
+            using var certificate = settings.LoadCertificate();
+            Assert.True(certificate.NotAfter > DateTime.UtcNow.AddDays(1));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AutoCertificateProvisioner_SecondRun_ReusesTheSameAuthorityAndSkipsReissue()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"autocert-{Guid.NewGuid():N}");
+        try
+        {
+            var first = AutoCertificateProvisioner.EnsureCertificate(directory);
+            var authorityBefore = File.ReadAllText(first.AuthorityCertificatePath);
+            var serverCertBefore = File.ReadAllText(first.CertificatePath);
+
+            // Re-running is what happens on every restart - devices that already trust the
+            // authority must stay trusted, and a certificate nowhere near expiry shouldn't churn.
+            var second = AutoCertificateProvisioner.EnsureCertificate(directory);
+
+            Assert.False(second.Reissued);
+            Assert.Equal(authorityBefore, File.ReadAllText(second.AuthorityCertificatePath));
+            Assert.Equal(serverCertBefore, File.ReadAllText(second.CertificatePath));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Theory]

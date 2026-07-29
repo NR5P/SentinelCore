@@ -1,8 +1,17 @@
 # Sentinel Core — Build & Deployment Guide
 
 This is a from-scratch, no-assistant-required guide to building, configuring, and running
-this system on a fresh Linux box, and to updating an existing install. For how to actually
-*use* the dashboard once it's running, see [USER_GUIDE.md](USER_GUIDE.md).
+this system on a fresh Linux, Windows, or macOS box, and to updating an existing install. For
+how to actually *use* the dashboard once it's running, see [USER_GUIDE.md](USER_GUIDE.md).
+
+**Two ways to install**, covered by different parts of this guide:
+
+- **Prebuilt release package** — download a .zip for your OS, unzip, run one install script.
+  No .NET SDK, no git, no build step. This is the fastest path if you just want it running; see
+  [section 17](#17-prebuilt-release-packages-no-sdk-required).
+- **Build from source** — clone the repo and build it yourself with the .NET SDK, either to
+  develop, to customize something, or because you're the one producing the release packages
+  above. Sections 1–16 below cover this path.
 
 ## Contents
 
@@ -22,6 +31,7 @@ this system on a fresh Linux box, and to updating an existing install. For how t
 14. [Firewall](#14-firewall)
 15. [Troubleshooting](#15-troubleshooting)
 16. [Stopping / uninstalling](#16-stopping--uninstalling)
+17. [Prebuilt release packages (no SDK required)](#17-prebuilt-release-packages-no-sdk-required)
 
 ---
 
@@ -64,13 +74,15 @@ by one `dotnet build` at the repo root.
 
 ## 2. Prerequisites
 
-**The installer handles all of these for you** — `./scripts/install-linux.sh` on Linux or
-`.\scripts\install-windows.ps1` on Windows detects what's missing and offers to install it. This
-list is what it's installing, for reference or if you'd rather do it by hand.
+**The installer handles all of these for you** — `./scripts/install-linux.sh` on Linux,
+`./scripts/install-macos.sh` on macOS, or `.\scripts\install-windows.ps1` on Windows detects
+what's missing and offers to install it. This list is what it's installing, for reference or if
+you'd rather do it by hand.
 
-- **Linux or Windows.** Most of this guide is written for Linux (Ubuntu/Debian-family). Windows
-  is supported too and is worth considering, since Blue Iris is Windows-only — running both on
-  one machine avoids needing a second box. See [section 8b](#8b-windows) for what differs.
+- **Linux, macOS, or Windows.** Most of this guide is written for Linux (Ubuntu/Debian-family).
+  Windows is supported too and is worth considering, since Blue Iris is Windows-only — running
+  both on one machine avoids needing a second box. See [section 8b](#8b-windows) for what
+  differs there, and [section 8c](#8c-macos) for macOS.
 - **.NET 10 SDK**
 - **Ollama**, running locally, with a vision-capable model pulled (default `gemma3:4b`) -
   required for the default configuration. An offsite Cloud Vision backend (OpenAI, Anthropic, or
@@ -432,6 +444,40 @@ Firewall rules are the one manual step, same as on Linux; the installer prints t
 > application code itself is the same on both platforms and is well covered, but if you hit a
 > problem with service registration specifically, that's the least-exercised part.
 
+### 8c. macOS
+
+Uses launchd `LaunchDaemon`s instead of systemd units - the macOS equivalent, giving the same
+"starts at boot, restarts if it crashes, no login session required" behavior.
+
+```bash
+sudo ./scripts/install-macos.sh
+```
+
+Must be run with `sudo` - `LaunchDaemons` live under `/Library/LaunchDaemons`, which only root
+can write to. Same job as the Linux installer — detects and offers to install missing
+dependencies (via [Homebrew](https://brew.sh)), builds, runs the tests, installs and starts the
+services, health-checks. Overrides work the same way:
+
+```bash
+sudo APP_USER=nathan WEB_PORT=8080 ASSUME_YES=1 ./scripts/install-macos.sh
+```
+
+What differs from Linux:
+
+| | Linux | macOS |
+|---|---|---|
+| Service manager | systemd units | launchd `LaunchDaemon`s |
+| Service names | `sentinelcore`, `-web`, `-homekit` | `com.sentinelcore.bridge`, `.web`, `.homekit` |
+| Dependencies | apt / NodeSource / Ollama script | Homebrew |
+| HomeKit mDNS | avahi over D-Bus | hap-nodejs's own responder (`ciao`) |
+| Logs | `journalctl -u <name>` | `logs/com.sentinelcore.<name>.log` under the install dir |
+| Restart a service | `sudo systemctl restart <name>` | `sudo launchctl kickstart -k system/com.sentinelcore.<name>` |
+| Status | `systemctl status <name>` | `sudo launchctl print system/com.sentinelcore.<name>` |
+
+`scripts/deploy.sh` already knows about both - it detects macOS via `uname` and uses `launchctl`
+instead of `systemctl` automatically, so `git pull && ./scripts/deploy.sh` works unchanged on
+either platform.
+
 ## 9. The deploy script
 
 `scripts/deploy.sh` automates build → test → restart for whichever service(s) changed:
@@ -575,53 +621,53 @@ at all — it's outbound only, from this host to a camera, so `ufw`'s default in
 don't affect it. Nothing listens for a reply on an open port; it only runs when you click one of
 those two buttons, never in the background.
 
-## 14a. HTTPS (optional)
+## 14a. HTTPS (on by default, no setup required)
 
-Plain HTTP is the shipped default and is fine on a home network you trust. Turn this on if the
-browser's "Not Secure" label bothers you, if you've enabled the dashboard login (the password
-crosses the wire in cleartext otherwise), or if you want Android's proper "Install app" prompt
-for the web app, which only appears over HTTPS.
+**Nothing to do here.** The dashboard generates its own certificate authority and server
+certificate the first time it starts, covering this machine's hostname, its `.local` name, and
+every LAN IP it currently has, and serves HTTPS on port 3443 alongside the existing plain-HTTP
+listener — see `AutoCertificateProvisioner` in `SentinelCore.Web` if you want to see how. There's
+no script to run and no `appsettings.json` field to hand-edit; this replaced an earlier version
+of this product that required both. `Https:Enabled: false` in `SentinelCore.Web/appsettings.json`
+turns it off if you'd rather not run HTTPS at all.
 
 **The awkward part, stated plainly:** no public certificate authority will issue a certificate
-for a private address like `192.168.50.8`. Let's Encrypt cannot help. That leaves two routes,
-and a trap:
+for a private address like `192.168.50.8`. Let's Encrypt cannot help, which is why this uses a
+*local* authority instead — one generated on and unique to your own machine.
 
-> **The trap:** a plain self-signed certificate makes things *worse*, not better. Browsers show a
-> full-page "your connection is not private" warning on every visit — far more alarming than the
-> small "Not Secure" label you started with. What follows is not that; it's a certificate signed
-> by an authority your devices are told to trust, which shows an ordinary padlock.
+> **Why not skip the authority and just self-sign the server certificate directly?** Because
+> that's actively worse, not better: browsers show a full-page "your connection is not private"
+> warning on every visit — far more alarming than the small "Not Secure" label plain HTTP gets.
+> A certificate signed by an authority your devices are told to trust shows an ordinary padlock
+> instead - which is what having a local CA sign it, rather than self-signing it, buys you.
 
-### Route A — your own certificate authority (no domain needed)
+### Trusting the authority on your devices
 
-```bash
-./scripts/setup-local-https.sh
+The certificate works immediately for any HTTP client that doesn't check who signed it (Blue
+Iris's calls into this app, curl with `-k`, etc.), but a browser will still show a warning until
+you install this install's authority certificate on each device you browse from:
+
+```
+core/certs/ca.crt   (source install)
+certs/ca.crt         (a prebuilt release - see section 17; top-level, alongside SentinelCore/
+                      and SentinelCore.Web/, not nested inside either one)
 ```
 
-This creates an authority **unique to your install** in `core/certs/`, then issues a server
-certificate covering this machine's hostname, its `.local` name, and every LAN IP. It's safe to
-re-run: it keeps the authority (so devices stay trusted) and reissues only the server
-certificate.
+The app prints the exact path in its startup log the first time it generates one. Per platform:
 
-Then point the dashboard at it in `SentinelCore.Web/appsettings.json`:
-
-```json
-"Https": {
-  "CertificatePath": "/full/path/to/core/certs/server.crt",
-  "KeyPath": "/full/path/to/core/certs/server.key",
-  "Port": 3443
-}
-```
-
-and restart: `sudo systemctl restart sentinelcore-web`
+- **Linux:** `sudo cp ca.crt /usr/local/share/ca-certificates/sentinel-core.crt && sudo update-ca-certificates`
+- **macOS:** double-click it, then in Keychain Access set it to "Always Trust"
+- **Windows:** double-click → Install Certificate → Local Machine → place in "Trusted Root
+  Certification Authorities"
+- **iOS:** email or AirDrop it to yourself, open it, install the profile, THEN go to
+  **Settings → General → About → Certificate Trust Settings** and switch it on. That last step
+  is easy to miss and nothing works without it.
+- **Android:** Settings → Security → Encryption & credentials → Install a certificate → CA
 
 **Plain HTTP keeps listening on 3320.** That's deliberate — both mobile apps default to `http://`
 when you type a bare address, so forcing everything to HTTPS would break them on any device that
-hadn't yet trusted the authority. Bookmark the `https://` address; nothing else changes.
-
-Finally, install `core/certs/ca.crt` on each device you browse from. The script prints
-per-platform instructions when it finishes. The one people get stuck on is iOS: installing the
-profile is **not** enough, you must then go to **Settings → General → About → Certificate Trust
-Settings** and switch it on.
+hadn't yet trusted the authority. Bookmark the `https://` address once you've trusted it;
+nothing else changes.
 
 Open the firewall for the HTTPS port the same way as the others:
 
@@ -630,19 +676,11 @@ sudo ufw allow from 192.168.50.0/24 to any port 3443 proto tcp
 ```
 
 **Renewal.** The certificate is capped at 825 days because Apple rejects anything longer, even
-from an authority you added yourself. Nobody remembers a two-year deadline, and an expired
-certificate means the dashboard won't load at all — worse than the warning it replaced. So
-install the timer, which checks monthly and reissues within 30 days of expiry:
-
-```bash
-sudo cp systemd/sentinelcore-cert-renew.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now sentinelcore-cert-renew.timer
-```
-
-(Edit the two `__INSTALL_DIR__`/`__APP_USER__` placeholders first, or let
-`install-linux.sh` fill them in.) The authority itself lasts ten years, so renewals never require
-touching a phone again.
+from an authority generated on your own machine. It's checked and reissued automatically (from
+the existing authority, so already-trusted devices stay trusted) whenever the app starts and the
+current one is within 30 days of expiring — which in practice means it renews itself across
+whatever restart happens next, the same as picking up any other code update. The authority
+itself lasts ten years, so this never requires touching a phone again.
 
 ### Route B — a real domain (no per-device setup)
 
@@ -650,16 +688,28 @@ If per-device trust is too much friction — likely if other people use the dash
 domain and get a genuinely trusted certificate via a **DNS-01** challenge, which works for a host
 that isn't reachable from the internet. Point `sentinel.yourdomain.com` at the LAN IP using your
 router's DNS, and every device just works with no installation at all. Caddy or certbot with a
-DNS plugin will automate issuance and renewal; feed the resulting files into the same `Https`
-block above.
+DNS plugin will automate issuance and renewal, then point the dashboard at the resulting files
+explicitly:
+
+```json
+"Https": {
+  "Enabled": true,
+  "CertificatePath": "/full/path/to/fullchain.pem",
+  "KeyPath": "/full/path/to/privkey.pem",
+  "Port": 3443
+}
+```
+
+Setting `CertificatePath`/`KeyPath` explicitly like this is the one case where auto-provisioning
+steps aside - it never overwrites a certificate you've configured yourself.
 
 ### A note if you're distributing this
 
-The authority is generated per install and deliberately **not** bundled with the product. Shipping
-one would mean every install shared a single private key, so anyone with a copy could issue
-certificates that every other customer's devices would trust. That's why this is a script rather
-than a file, and why HTTP remains the default — the same choice Home Assistant, Unifi and Proxmox
-all make.
+The authority is generated per install, in-process, and deliberately **not** bundled with the
+product. Shipping one would mean every install shared a single private key, so anyone with a
+copy could issue certificates that every other customer's devices would trust. That's why HTTP
+remains available at all rather than this being the only option — the same choice Home
+Assistant, Unifi and Proxmox all make.
 
 ## 14b. Internet Exposed Mode (optional)
 
@@ -762,3 +812,67 @@ sudo systemctl daemon-reload
 This does not delete the repo, its data (`data/`, `cameras.db`, `triggers.db`, images,
 clips), or the sudoers rule from [section 10](#10-passwordless-restarts-optional) — remove
 those separately if you want them gone too.
+
+## 17. Prebuilt release packages (no SDK required)
+
+Everything above assumes a git checkout and the .NET SDK. This section is the other path: a
+self-contained .zip someone can download and install without either - the thing to hand to a
+less-technical user, or to install on a machine you don't want to put a full dev toolchain on.
+
+### Building the packages (maintainer side)
+
+From a machine with the .NET SDK (any OS - .NET cross-compiles, so a single machine builds
+binaries for every target):
+
+```bash
+./scripts/publish-release.sh
+```
+
+This produces, under `core/dist/`:
+
+```
+SentinelCore-win-x64.zip      Windows (x64)
+SentinelCore-linux-x64.zip    Linux (x64)
+SentinelCore-linux-arm64.zip  Linux (ARM64 - Raspberry Pi 4/5 and similar)
+SentinelCore-osx-x64.zip      macOS (Intel)
+SentinelCore-osx-arm64.zip    macOS (Apple Silicon)
+```
+
+Each is a **self-contained, single-file publish** (`dotnet publish -r <rid> --self-contained
+-p:PublishSingleFile=true`) — the .NET runtime is built into the `SentinelCore` and
+`SentinelCore.Web` binaries themselves, so the target machine needs none of it installed. ffmpeg
+(and optionally Node.js for HomeKit, Ollama for local AI vision) are still separate, native
+tools that can't be bundled this way - the installer inside each .zip offers to install them,
+same as `install-linux.sh`/`install-macos.sh`/`install-windows.ps1` do for a source build.
+
+Before zipping, the script also replaces the repo's own `appsettings.json` files with a clean,
+secret-free copy for each bundle: `Bridge:ApiKey` blanked (the app generates and persists a
+fresh one on first boot - see `AutoApiKeyProvisioner` - so this isn't a manual step either),
+`Setup:Completed` set to false so the setup wizard runs, and every alert channel (Email,
+Telegram, Discord, Webhook, MQTT, Blue Iris, Cloud Vision) reset to `Enabled: false` with its
+credentials cleared. Otherwise a release built from a machine with a live, configured install
+would ship that maintainer's own API keys and personal settings to everyone who downloaded it.
+Build with `PLATFORMS="linux-x64 win-x64" ./scripts/publish-release.sh` to build a subset.
+
+### Installing a package (end-user side)
+
+1. Download and unzip the file for your OS.
+2. Run the install script inside it:
+   - Linux: `sudo ./install.sh`
+   - macOS: `sudo ./install.sh` (also clears Gatekeeper's quarantine flag on the bundle - macOS
+     otherwise refuses to run anything downloaded by a browser without it)
+   - Windows: right-click `install.ps1` → Run with PowerShell, from an elevated (Administrator)
+     prompt
+3. Open the dashboard at the address the installer prints when it finishes, and go through the
+   setup wizard (API key, vision backend, cameras, notifications).
+
+This installs the same three services (bridge, dashboard, optional HomeKit sidecar) under the
+same service manager as sections 8/8b/8c — systemd, Windows Services, or launchd — just pointed
+at the prebuilt binaries directly instead of `dotnet SomeProject.dll`. See
+`scripts/release/dist-install-*.{sh,ps1}` for exactly what each one does; they're deliberately
+self-contained (no shared template files) since they ship standalone inside the .zip.
+
+**Updating** isn't `git pull` here, since there's no git checkout - download the next release
+.zip and re-run its install script with the same install location. Your data
+(`SentinelCore/data`, `SentinelCore.Web/data`, and the HTTPS certificate authority in the
+top-level `certs/` folder) isn't part of the release archive, so it's untouched.

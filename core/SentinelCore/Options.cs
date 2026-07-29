@@ -348,10 +348,12 @@ public sealed class BlueIrisOptions
 
     public bool Enabled { get; init; }
 
-    [Required]
+    // Not [Required]: unlike CloudVisionOptions.BaseUrl/Model, this has no safe non-empty
+    // default to fall back to (there's no "the" Blue Iris server), and BlueIris is off by
+    // default. Program.cs's conditional .Validate(o => !o.Enabled || ...) below is what
+    // actually enforces this - a blanket [Required] here would reject the shipped
+    // Enabled: false, BaseUrl: "" default and make BlueIris impossible to leave unconfigured.
     public string BaseUrl { get; init; } = string.Empty;
-
-    [Required]
     public string Camera { get; init; } = string.Empty;
 
     // Blue Iris's direct image endpoint accepts these as query parameters. Leave both blank

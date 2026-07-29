@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using SentinelCore;
 using SentinelCore.Web;
@@ -17,9 +18,41 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =
 builder.Host.UseWindowsService();
 builder.Host.UseSystemd();
 
-// Optional HTTPS, added alongside the existing HTTP listener rather than replacing it. Whether
-// it's on is decided by whether a certificate is actually present on disk - see HttpsSettings.
+// HTTPS, added alongside the existing HTTP listener rather than replacing it. On by default -
+// see HttpsSettings. When no certificate has been explicitly configured (the shipped default),
+// one is generated automatically right here so nobody has to run a script or hand-edit this
+// file to get it; see AutoCertificateProvisioner for how and where. An explicit
+// CertificatePath/KeyPath (e.g. a real domain certificate - docs/DEPLOYMENT.md Route B) is
+// always left untouched.
 var httpsSettings = HttpsSettings.FromConfiguration(builder.Configuration);
+if (httpsSettings.Enabled && string.IsNullOrWhiteSpace(httpsSettings.CertificatePath) && string.IsNullOrWhiteSpace(httpsSettings.KeyPath))
+{
+    var certDirectory = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "certs"));
+    try
+    {
+        var provisioned = AutoCertificateProvisioner.EnsureCertificate(certDirectory);
+        httpsSettings = httpsSettings with { CertificatePath = provisioned.CertificatePath, KeyPath = provisioned.KeyPath };
+
+        // Written back into configuration (not just the local variable above) so every other
+        // place that re-reads Https via IConfiguration - e.g. the Internet Exposed Mode
+        // validation in SettingsEndpoints.cs - sees the same certificate this process is
+        // actually serving, without needing the change persisted to appsettings.json on disk.
+        builder.Configuration["Https:CertificatePath"] = provisioned.CertificatePath;
+        builder.Configuration["Https:KeyPath"] = provisioned.KeyPath;
+
+        if (provisioned.Reissued)
+        {
+            Console.WriteLine($"Generated a local HTTPS certificate authority and server certificate in {certDirectory}.");
+            Console.WriteLine($"To remove the browser warning, trust {provisioned.AuthorityCertificatePath} on each device you browse from - see docs/DEPLOYMENT.md section 14a.");
+        }
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
+    {
+        // Falls through to plain HTTP below rather than crashing the whole dashboard over a
+        // certificate problem - e.g. a read-only filesystem or a permissions issue on certDirectory.
+        Console.WriteLine($"Could not auto-generate an HTTPS certificate ({ex.Message}). Continuing on plain HTTP.");
+    }
+}
 var httpsEnabled = httpsSettings.CanEnable(out var httpsSkipReason);
 
 // A third, dedicated port for traffic reaching this server from outside the LAN (e.g. via a

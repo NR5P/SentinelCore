@@ -14,4 +14,29 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
   </ItemGroup>
+  <!-- The SDK's default item globs otherwise sweep up whatever's sitting in the runtime data/
+       folder next to this project (events.db, images, cameras.db, ...) as Content purely
+       because it's inside the project directory - confirmed accidentally shipping data/
+       heartbeat.json into a `dotnet publish` output. None of it belongs in a build output. -->
+  <ItemGroup>
+    <Content Remove="data/**" />
+    <None Remove="data/**" />
+  </ItemGroup>
+
+  <!-- The SentinelCore ProjectReference above is only for its C# types (EventStore,
+       PromptProfileProvider, ...) - not its content. But the SDK flows a referenced project's
+       own appsettings*.json into this project's publish output too, since it's an executable
+       with the same Sdk.Web-generated Content items as this one. That's silently harmless for a
+       normal multi-file publish (both projects publish to separate folders anyway - this file
+       never gets used), but scripts/publish-release.sh's single-file publish hard-fails on it
+       (NETSDK1152: two source files claiming the same output path). Drop SentinelCore's copy
+       here and keep only this project's own appsettings.json. -->
+  <Target Name="RemoveSentinelCoreAppSettingsFromPublishOutput" AfterTargets="ComputeFilesToPublish" BeforeTargets="_HandleFileConflictsForPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+        Condition="'%(ResolvedFileToPublish.RelativePath)' == 'appsettings.json' and '%(ResolvedFileToPublish.FullPath)' != '$(MSBuildProjectDirectory)\appsettings.json' and '%(ResolvedFileToPublish.FullPath)' != '$(MSBuildProjectDirectory)/appsettings.json'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+        Condition="'%(ResolvedFileToPublish.RelativePath)' == 'appsettings.Development.json'" />
+    </ItemGroup>
+  </Target>
 </Project>
