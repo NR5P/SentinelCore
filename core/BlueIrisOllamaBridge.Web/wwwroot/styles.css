@@ -456,6 +456,13 @@ main {
   display: none;
 }
 
+/* The login gate reuses .lightbox for its overlay/centering, but unlike the image/video
+   lightbox it should show nothing of the page behind it - the dashboard shell is harmless, but
+   a fully solid backdrop reads as more clearly "you are not in yet" than a 90%-opaque one. */
+#login-gate {
+  background: var(--bg);
+}
+
 .lightbox img,
 .lightbox video {
   max-width: 100%;
