@@ -1,4 +1,5 @@
 import AVKit
+import Combine
 import SwiftUI
 
 struct TriggerFeedView: View {
@@ -78,16 +79,26 @@ struct TriggerDetailView: View {
     @EnvironmentObject private var model: AppModel
     let trigger: TriggerEvent
     @State private var player: AVPlayer?
+    @State private var playerItem: AVPlayerItem?
+    // Starts at the common 16:9 guess so the layout isn't empty before the clip's metadata
+    // loads, then snaps to the clip's actual size once presentationSize reports it - cameras
+    // don't all record in 16:9, and forcing that ratio on a taller/narrower clip just adds a
+    // second layer of letterboxing on top of AVKit's own, wasting space that could be video.
+    @State private var videoAspectRatio: CGFloat = 16 / 9
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if trigger.hasClip {
-                    if let player {
+                    if let player, let playerItem {
                         VideoPlayer(player: player)
-                            .aspectRatio(16 / 9, contentMode: .fit)
+                            .aspectRatio(videoAspectRatio, contentMode: .fit)
                             .background(.black)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .onReceive(playerItem.publisher(for: \.presentationSize)) { size in
+                                guard size.width > 0, size.height > 0 else { return }
+                                videoAspectRatio = size.width / size.height
+                            }
                     } else {
                         ProgressView("Preparing clip…")
                             .frame(maxWidth: .infinity, minHeight: 240)
@@ -125,13 +136,16 @@ struct TriggerDetailView: View {
             guard trigger.hasClip,
                   let url = model.client.url(path: "/api/triggers/\(trigger.id.uuidString)/clip")
             else { return }
-            let player = AVPlayer(url: url)
+            let item = AVPlayerItem(url: url)
+            let player = AVPlayer(playerItem: item)
+            self.playerItem = item
             self.player = player
             player.play()
         }
         .onDisappear {
             player?.pause()
             player = nil
+            playerItem = nil
         }
     }
 }

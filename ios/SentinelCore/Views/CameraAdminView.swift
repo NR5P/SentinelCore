@@ -11,13 +11,17 @@ struct CameraAdminView: View {
                 Text(errorMessage).foregroundStyle(SentinelTheme.red)
             }
             Section {
-                NavigationLink(value: CameraAdminRoute.discover) {
+                NavigationLink {
+                    CameraDiscoveryView()
+                } label: {
                     Label("Discover Cameras", systemImage: "wifi")
                 }
             }
             Section {
                 ForEach(model.cameras) { camera in
-                    NavigationLink(value: CameraAdminRoute.edit(camera)) {
+                    NavigationLink {
+                        CameraEditView(camera: camera)
+                    } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(camera.name).bold()
                             if let streamUrl = camera.streamUrl {
@@ -46,19 +50,11 @@ struct CameraAdminView: View {
             }
         }
         .navigationTitle("Cameras")
-        .navigationDestination(for: CameraAdminRoute.self) { route in
-            switch route {
-            case .add:
-                CameraEditView(camera: nil)
-            case .edit(let camera):
-                CameraEditView(camera: camera)
-            case .discover:
-                CameraDiscoveryView()
-            }
-        }
         .toolbar {
             ToolbarItem {
-                NavigationLink(value: CameraAdminRoute.add) {
+                NavigationLink {
+                    CameraEditView(camera: nil)
+                } label: {
                     Label("Add Camera", systemImage: "plus")
                 }
             }
@@ -99,10 +95,4 @@ struct CameraAdminView: View {
             errorMessage = error.localizedDescription
         }
     }
-}
-
-enum CameraAdminRoute: Hashable {
-    case add
-    case edit(Camera)
-    case discover
 }
