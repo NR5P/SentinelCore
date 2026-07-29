@@ -157,6 +157,16 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "multiFrameAnalysis", title: "MULTI-FRAME ANALYSIS", endpoint: "/api/settings/multi-frame-analysis",
+      basic: false,
+      description: "Off by default. When on, a trigger zone that sends to the alert pipeline captures 2-3 frames a fraction of a second apart instead of one, and the AI is told to use consistency across them to ignore a shadow, reflection, headlight sweep, or insect near the lens that only shows up in a single frame. Only applies to your own added cameras' trigger zones - never Blue Iris alerts, which always send one image. This is a real cost, not just an extra option: it multiplies AI processing time per alert, and a single image can already be a meaningful load on modest local hardware - leave this off unless a single image already analyzes comfortably fast for you.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Capture and analyze multiple frames per trigger instead of one. Increases AI processing time/cost per alert." },
+        { name: "extraFrameCount", label: "Extra Frames (1-2)", type: "number", min: 1, max: 2, tip: "How many additional frames to capture beyond the one at the trigger moment. Total frames sent to the AI = 1 + this." },
+        { name: "frameIntervalMs", label: "Frame Interval (ms)", type: "number", min: 150, max: 1000, tip: "How far apart, in milliseconds, each captured frame is." }
+      ]
+    },
+    {
       key: "selfMonitoring", title: "SELF-MONITORING", endpoint: "/api/settings/self-monitoring",
       basic: false,
       description: "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive, or alerts backing up faster than they're processed. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
@@ -245,6 +255,7 @@ window.GateWatchSettings = (function () {
     telegramChat: "Lets you message the bot to ask questions about recent activity.",
     discord: "Post alert cards and trigger snapshots to a Discord channel through a webhook.",
     blueIris: "On-demand Blue Iris snapshots for the Telegram bot. Sentinel's Timeline uses its own local trigger clips instead.",
+    multiFrameAnalysis: "Analyze 2-3 frames per trigger instead of one, to reduce false alarms from shadows/reflections. Off by default - costs more AI processing time per alert.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
     quietHours: "Raise the bar for Email, Telegram, and Discord alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",

@@ -49,6 +49,12 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
             profile.Crop,
             cancellationToken);
 
+        // Empty for every alert except a burst-capturing trigger zone with MultiFrameAnalysis
+        // enabled - see OllamaVisionClient.AnalyzeAsync's identical handling.
+        var imageFrames = new List<byte[]> { optimizedImage.Bytes };
+        foreach (var frame in alert.ExtraFrames)
+            imageFrames.Add((await _imageOptimizer.OptimizeForInferenceAsync(frame, profile.Crop, cancellationToken)).Bytes);
+
         var prompt = OllamaVisionClient.BuildPrompt(alert, profile);
 
         _logger.LogInformation(
@@ -57,7 +63,7 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
             options.Model,
             prompt.Length);
 
-        var request = BuildRequest(options.Model, profile, prompt, optimizedImage.Bytes);
+        var request = BuildRequest(options.Model, profile, prompt, imageFrames);
 
         Exception? lastException = null;
         for (var attempt = 0; attempt <= options.MaximumRetries; attempt++)
@@ -135,9 +141,15 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
     // Public so tests can confirm the request shape without a live API call - particularly that
     // license_plate only appears in the schema when the profile opts in, mirroring
     // OllamaVisionClient.BuildPrompt's own conditional field.
-    public static object BuildRequest(string model, PromptProfile profile, string prompt, byte[] imageBytes)
+    public static object BuildRequest(string model, PromptProfile profile, string prompt, IReadOnlyList<byte[]> imageFrames)
     {
-        var dataUri = $"data:image/jpeg;base64,{Convert.ToBase64String(imageBytes)}";
+        var content = new List<object> { new { type = "text", text = prompt } };
+        foreach (var frame in imageFrames)
+        {
+            var dataUri = $"data:image/jpeg;base64,{Convert.ToBase64String(frame)}";
+            content.Add(new { type = "image_url", image_url = new { url = dataUri } });
+        }
+
         return new
         {
             model,
@@ -145,15 +157,7 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
             messages = new object[]
             {
                 new { role = "system", content = profile.SystemPrompt },
-                new
-                {
-                    role = "user",
-                    content = new object[]
-                    {
-                        new { type = "text", text = prompt },
-                        new { type = "image_url", image_url = new { url = dataUri } }
-                    }
-                }
+                new { role = "user", content }
             },
             response_format = new
             {

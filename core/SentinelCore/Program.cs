@@ -91,6 +91,10 @@ builder.Services.AddOptions<BlueIrisOptions>()
     .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Camera), "BlueIris:Camera is required when BlueIris is enabled.")
     .Validate(o => !o.Enabled || Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _), "BlueIris:BaseUrl must be a valid URL.")
     .ValidateOnStart();
+builder.Services.AddOptions<MultiFrameOptions>()
+    .Bind(builder.Configuration.GetSection(MultiFrameOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<SelfMonitoringOptions>()
     .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
     .ValidateDataAnnotations()
@@ -354,9 +358,29 @@ app.MapPost("/api/blueiris/alert", async (
     await using var memory = new MemoryStream((int)image.Length);
     await image.CopyToAsync(memory, ct);
 
+    // Optional extra frames from a burst-capturing trigger zone (see TriggerZoneMonitor,
+    // AlertForwarder) - Blue Iris's own alert action never sends these, so this is always empty
+    // for a Blue-Iris-sourced alert. A frame that fails the same size/content-type checks as the
+    // primary image is just dropped rather than failing the whole alert - it's purely additive.
+    var extraFrames = new List<byte[]>();
+    foreach (var fieldName in new[] { "frame1", "frame2" })
+    {
+        var frame = form.Files.GetFile(fieldName);
+        if (frame is null || frame.Length == 0) continue;
+        if (frame.Length > settings.MaximumImageBytes || !settings.AllowedImageContentTypes.Contains(frame.ContentType))
+            continue;
+
+        await using var frameStream = new MemoryStream((int)frame.Length);
+        await frame.CopyToAsync(frameStream, ct);
+        extraFrames.Add(frameStream.ToArray());
+    }
+
     var alert = new IncomingAlert(
         Guid.NewGuid(), camera, form["alertId"].ToString(), occurredAt,
-        DateTimeOffset.UtcNow, profile, image.ContentType, Path.GetFileName(image.FileName), memory.ToArray());
+        DateTimeOffset.UtcNow, profile, image.ContentType, Path.GetFileName(image.FileName), memory.ToArray())
+    {
+        ExtraFrames = extraFrames
+    };
 
     // Write the image and the queued row before handing the alert to the in-memory queue. The
     // queue doesn't survive a restart, so anything enqueued without a durable copy first is lost

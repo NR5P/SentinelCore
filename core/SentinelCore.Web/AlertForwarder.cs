@@ -11,7 +11,7 @@ public sealed class AlertForwarder(
     IConfiguration configuration,
     ILogger<AlertForwarder> logger)
 {
-    public async Task<bool> ForwardAsync(byte[] imageBytes, string cameraName, string profile, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    public async Task<bool> ForwardAsync(byte[] imageBytes, IReadOnlyList<byte[]> extraFrames, string cameraName, string profile, DateTimeOffset occurredAt, CancellationToken cancellationToken)
     {
         var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", cancellationToken);
         if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
@@ -26,6 +26,15 @@ public sealed class AlertForwarder(
         var imageContent = new ByteArrayContent(imageBytes);
         imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
         content.Add(imageContent, "image", "trigger.jpg");
+        // Extra burst frames, only present when MultiFrameAnalysis is on for this camera - see
+        // TriggerZoneMonitor.ForwardToAlertPipelineAsync. Field names match what
+        // /api/blueiris/alert optionally reads (frame1, frame2).
+        for (var i = 0; i < extraFrames.Count; i++)
+        {
+            var frameContent = new ByteArrayContent(extraFrames[i]);
+            frameContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            content.Add(frameContent, $"frame{i + 1}", $"trigger-frame{i + 1}.jpg");
+        }
         content.Add(new StringContent(cameraName), "camera");
         content.Add(new StringContent(string.IsNullOrWhiteSpace(profile) ? "default" : profile), "profile");
         content.Add(new StringContent(occurredAt.ToString("O")), "occurredAt");

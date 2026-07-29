@@ -47,6 +47,12 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
             profile.Crop,
             cancellationToken);
 
+        // Empty for every alert except a burst-capturing trigger zone with MultiFrameAnalysis
+        // enabled - see OllamaVisionClient.AnalyzeAsync's identical handling.
+        var imageFrames = new List<byte[]> { optimizedImage.Bytes };
+        foreach (var frame in alert.ExtraFrames)
+            imageFrames.Add((await _imageOptimizer.OptimizeForInferenceAsync(frame, profile.Crop, cancellationToken)).Bytes);
+
         var prompt = OllamaVisionClient.BuildPrompt(alert, profile);
 
         _logger.LogInformation(
@@ -55,7 +61,7 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
             options.Model,
             prompt.Length);
 
-        var request = BuildRequest(profile, prompt, optimizedImage.Bytes);
+        var request = BuildRequest(profile, prompt, imageFrames);
         var path = $"models/{Uri.EscapeDataString(options.Model)}:generateContent";
 
         Exception? lastException = null;
@@ -129,21 +135,18 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
     }
 
     // Public so tests can confirm the request shape without a live API call.
-    public static object BuildRequest(PromptProfile profile, string prompt, byte[] imageBytes)
+    public static object BuildRequest(PromptProfile profile, string prompt, IReadOnlyList<byte[]> imageFrames)
     {
+        var parts = new List<object> { new { text = prompt } };
+        foreach (var frame in imageFrames)
+            parts.Add(new { inlineData = new { mimeType = "image/jpeg", data = Convert.ToBase64String(frame) } });
+
         return new
         {
             systemInstruction = new { parts = new[] { new { text = profile.SystemPrompt } } },
             contents = new object[]
             {
-                new
-                {
-                    parts = new object[]
-                    {
-                        new { text = prompt },
-                        new { inlineData = new { mimeType = "image/jpeg", data = Convert.ToBase64String(imageBytes) } }
-                    }
-                }
+                new { parts }
             },
             generationConfig = new
             {

@@ -40,6 +40,13 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             profile.Crop,
             cancellationToken);
 
+        // Empty for every alert except a burst-capturing trigger zone with MultiFrameAnalysis
+        // enabled (see MultiFrameOptions) - each extra frame gets the same crop/resize treatment
+        // as the primary image before being sent to the model.
+        var optimizedExtraFrames = new List<OptimizedImage>(alert.ExtraFrames.Count);
+        foreach (var frame in alert.ExtraFrames)
+            optimizedExtraFrames.Add(await _imageOptimizer.OptimizeForInferenceAsync(frame, profile.Crop, cancellationToken));
+
         var prompt = BuildPrompt(alert, profile);
 
         _logger.LogInformation(
@@ -67,7 +74,9 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
                 {
                     role = "user",
                     content = prompt,
-                    images = new[] { Convert.ToBase64String(optimizedImage.Bytes) }
+                    images = new[] { optimizedImage.Bytes }.Concat(optimizedExtraFrames.Select(f => f.Bytes))
+                        .Select(Convert.ToBase64String)
+                        .ToArray()
                 }
             }
         };
@@ -228,11 +237,22 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             ? "\n- Set camera_blocked to true if the camera's own view is obstructed - covered, spray-painted, badly out of focus, or the lens is physically blocked or moved - as opposed to merely dark or a normal nighttime IR image. A dark but otherwise normal nighttime frame is not blocked."
             : "";
 
+        // Only non-empty when a burst-capturing trigger zone supplied extra frames (see
+        // TriggerZoneMonitor/MultiFrameOptions) - Blue Iris alerts never populate ExtraFrames, so
+        // this stays "" and the prompt is byte-identical to before this existed for them.
+        var frameCount = 1 + alert.ExtraFrames.Count;
+        var multiFrameNotice = frameCount > 1
+            ? $"\nYou are being shown {frameCount} frames from this alert, captured a fraction of a second apart, in chronological order (earliest first). A real person, vehicle, or animal should appear in a consistent, physically plausible position across the frames. If a candidate subject appears in only one frame and is absent or clearly different in the others, treat it as a shadow, reflection, headlight sweep, insect near the lens, or compression artifact rather than a genuine detection - do not report it as visible or recommend a notification for it.\n"
+            : "";
+        var analyzeLine = frameCount > 1
+            ? "Analyze the attached images together using the camera-layout rules from the system prompt."
+            : "Analyze the attached image using the camera-layout rules from the system prompt.";
+
         return $$"""
         Camera: {{alert.Camera}}
         Event time: {{alert.OccurredAt:O}}
-
-        Analyze the attached image using the camera-layout rules from the system prompt.
+        {{multiFrameNotice}}
+        {{analyzeLine}}
 
         Questions to consider:
         {{numbered}}

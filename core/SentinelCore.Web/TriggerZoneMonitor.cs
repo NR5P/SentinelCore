@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using SentinelCore;
 
 namespace SentinelCore.Web;
 
@@ -14,6 +15,7 @@ public sealed class TriggerZoneMonitor(
     HlsStreamManager streams,
     ClipRecorder clips,
     AlertForwarder alertForwarder,
+    AppSettingsFile mainAppSettings,
     IConfiguration configuration,
     IHostEnvironment environment,
     ILogger<TriggerZoneMonitor> logger) : BackgroundService
@@ -59,6 +61,11 @@ public sealed class TriggerZoneMonitor(
         var enabled = await configStore.GetEnabledAsync(stoppingToken);
         var enabledIds = enabled.Select(c => c.CameraId).ToHashSet();
 
+        // Read once per reconcile pass (every ~10s), not per camera - a change here takes effect
+        // the next time a camera's detection session (re)starts, same as any other setting that
+        // sizes something at process/session start (e.g. MQTT's embedded broker port).
+        var multiFrame = await mainAppSettings.GetSectionAsync<MultiFrameOptions>("MultiFrameAnalysis", stoppingToken) ?? new();
+
         foreach (var (cameraId, session) in _sessions)
         {
             if (!enabledIds.Contains(cameraId))
@@ -89,12 +96,12 @@ public sealed class TriggerZoneMonitor(
             var camera = await cameras.GetAsync(config.CameraId, stoppingToken);
             if (camera is null) continue;
 
-            var session = StartSession(camera, config);
+            var session = StartSession(camera, config, multiFrame);
             _sessions[config.CameraId] = session;
         }
     }
 
-    private DetectionSession StartSession(Camera camera, TriggerConfig config)
+    private DetectionSession StartSession(Camera camera, TriggerConfig config, MultiFrameOptions multiFrame)
     {
         var sourceUrl = HlsStreamManager.BuildAuthenticatedUrl(camera);
         var cameraDir = Path.Combine(_imagesRoot, camera.Id.ToString("N"));
@@ -115,6 +122,11 @@ public sealed class TriggerZoneMonitor(
         // negotiate and land on a frame taken well after the moment that caused the trigger.
         // When clips are enabled, output 3 rides the same RTSP pull too and copies the original
         // stream into a rolling segment buffer - no second connection to the camera either way.
+        // The snapshot output only runs faster than 1fps when this camera can actually use the
+        // extra frames (MultiFrameAnalysis on, and this zone forwards to the alert pipeline) -
+        // it's still a single lightweight JPEG encode, negligible next to the video decode
+        // already happening above, but there's no reason to pay it for cameras that can't use it.
+        var snapshotFps = multiFrame.Enabled && config.SendToAlerts ? 3 : 1;
         var args = new List<string>
         {
             "-rtsp_transport", "tcp",
@@ -125,7 +137,7 @@ public sealed class TriggerZoneMonitor(
             "-f", "rawvideo",
             "-",
             "-map", "0:v:0",
-            "-vf", "fps=1",
+            "-vf", $"fps={snapshotFps}",
             "-update", "1",
             "-y", LatestSnapshotPath(camera.Id)
         };
@@ -152,7 +164,7 @@ public sealed class TriggerZoneMonitor(
         logger.LogInformation("Started trigger zone detection for camera {CameraId} ({Name}), pid {Pid}", camera.Id, camera.Name, process.Id);
 
         var cts = new CancellationTokenSource();
-        var session = new DetectionSession(process, config, cts, new MotionDetector(config.ZonePolygon, config.ShadowSensitivity));
+        var session = new DetectionSession(process, config, cts, new MotionDetector(config.ZonePolygon, config.ShadowSensitivity), multiFrame);
         _ = RunDetectionLoopAsync(camera, session, cts.Token);
         _ = DrainAsync(process.StandardError);
 
@@ -223,7 +235,7 @@ public sealed class TriggerZoneMonitor(
                 _ = BuildClipAsync(camera, trigger, session.Config, now);
 
             if (session.Config.SendToAlerts)
-                _ = ForwardToAlertPipelineAsync(camera, bytes, session.Config.AlertProfile, now);
+                _ = ForwardToAlertPipelineAsync(camera, bytes, session.MultiFrame, session.Config.AlertProfile, now);
         }
         catch (Exception ex)
         {
@@ -233,12 +245,25 @@ public sealed class TriggerZoneMonitor(
 
     // Fire-and-forget like BuildClipAsync, and for the same reason: not tied to the detection
     // session's token, so a config change or the camera being disabled a moment later doesn't
-    // cancel an alert that's already in flight.
-    private async Task ForwardToAlertPipelineAsync(Camera camera, byte[] imageBytes, string profile, DateTimeOffset occurredAt)
+    // cancel an alert that's already in flight. Capturing extra frames here (rather than inline
+    // in MaybeTriggerAsync) keeps the ~0.5-1s of extra delay off the critical path that saves the
+    // trigger's primary image and records the TriggerEvent - the Feed/Timeline see no difference.
+    private async Task ForwardToAlertPipelineAsync(Camera camera, byte[] imageBytes, MultiFrameOptions multiFrame, string profile, DateTimeOffset occurredAt)
     {
         try
         {
-            await alertForwarder.ForwardAsync(imageBytes, camera.Name, profile, occurredAt, _stoppingToken);
+            var extraFrames = new List<byte[]>();
+            if (multiFrame.Enabled)
+            {
+                for (var i = 0; i < multiFrame.ExtraFrameCount; i++)
+                {
+                    await Task.Delay(multiFrame.FrameIntervalMs, _stoppingToken);
+                    var frame = await TryReadLatestSnapshotAsync(camera.Id, _stoppingToken);
+                    if (frame is not null) extraFrames.Add(frame);
+                }
+            }
+
+            await alertForwarder.ForwardAsync(imageBytes, extraFrames, camera.Name, profile, occurredAt, _stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -391,12 +416,13 @@ public sealed class TriggerZoneMonitor(
         return Path.Combine(root, "trigger-images");
     }
 
-    private sealed class DetectionSession(Process process, TriggerConfig config, CancellationTokenSource cts, MotionDetector detector)
+    private sealed class DetectionSession(Process process, TriggerConfig config, CancellationTokenSource cts, MotionDetector detector, MultiFrameOptions multiFrame)
     {
         public Process Process { get; } = process;
         public TriggerConfig Config { get; } = config;
         public CancellationTokenSource Cts { get; } = cts;
         public MotionDetector Detector { get; } = detector;
+        public MultiFrameOptions MultiFrame { get; } = multiFrame;
 
         public readonly object TriggerLock = new();
         public DateTimeOffset? LastTriggerAt;

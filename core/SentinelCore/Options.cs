@@ -412,6 +412,27 @@ public sealed class BlueIrisOptions
     public int TimeoutSeconds { get; init; } = 15;
 }
 
+public sealed class MultiFrameOptions
+{
+    public const string SectionName = "MultiFrameAnalysis";
+
+    // Off by default. Sends 2-3 frames captured a fraction of a second apart, instead of one, so
+    // the AI can use temporal consistency to ignore a shadow/reflection/headlight sweep that
+    // only appears in a single frame - see TriggerZoneMonitor for the capture side. Only ever
+    // applies to your own added cameras' trigger zones, never Blue Iris alerts. This is a real
+    // cost, not just a nice-to-have toggle: it multiplies AI processing time/cost per alert, and
+    // a single image is already a meaningful load on modest local hardware - leave this off
+    // unless you've confirmed single-image analysis is already comfortably fast.
+    public bool Enabled { get; init; }
+
+    // Total frames sent per alert = 1 (the frame captured at the trigger moment) + this.
+    [Range(1, 2)]
+    public int ExtraFrameCount { get; init; } = 1;
+
+    [Range(150, 1000)]
+    public int FrameIntervalMs { get; init; } = 350;
+}
+
 public sealed class TelegramOptions
 {
     public const string SectionName = "Telegram";

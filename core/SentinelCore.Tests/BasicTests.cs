@@ -311,6 +311,33 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void OllamaVisionClient_BuildPrompt_OnlyIncludesTemporalConsistencyNoticeWhenExtraFramesPresent()
+    {
+        var profile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
+        var occurredAt = DateTimeOffset.UtcNow;
+        var singleFrameAlert = new IncomingAlert(
+            Guid.NewGuid(), "gateCamera", null, occurredAt, occurredAt,
+            "gate", "image/jpeg", "alert.jpg", []);
+
+        var singleFramePrompt = OllamaVisionClient.BuildPrompt(singleFrameAlert, profile);
+        Assert.DoesNotContain("frames from this alert", singleFramePrompt);
+        Assert.Contains("Analyze the attached image using", singleFramePrompt);
+
+        // Blue Iris alerts never populate ExtraFrames (see IncomingAlert), so this - the vast
+        // majority of alerts - must be unaffected by this feature existing at all.
+        var otherSingleFrameAlert = new IncomingAlert(
+            Guid.NewGuid(), "gateCamera", null, occurredAt, occurredAt,
+            "gate", "image/jpeg", "alert.jpg", []);
+        Assert.Equal(singleFramePrompt, OllamaVisionClient.BuildPrompt(otherSingleFrameAlert, profile));
+
+        var burstAlert = singleFrameAlert with { ExtraFrames = [[1, 2, 3], [4, 5, 6]] };
+        var burstPrompt = OllamaVisionClient.BuildPrompt(burstAlert, profile);
+        Assert.Contains("You are being shown 3 frames from this alert", burstPrompt);
+        Assert.Contains("Analyze the attached images together using", burstPrompt);
+        Assert.DoesNotContain("Analyze the attached image using", burstPrompt);
+    }
+
+    [Fact]
     public void OpenAiVisionClient_BuildJsonSchema_OnlyIncludesLicensePlateWhenProfileOptsIn()
     {
         var disabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
@@ -426,7 +453,7 @@ public sealed class BasicTests
     public void AnthropicVisionClient_BuildRequest_UsesXApiKeyStyleFieldsNotBearerShape()
     {
         var profile = MakeProfile();
-        var request = AnthropicVisionClient.BuildRequest("claude-3-5-sonnet-latest", profile, "prompt text", [1, 2, 3]);
+        var request = AnthropicVisionClient.BuildRequest("claude-3-5-sonnet-latest", profile, "prompt text", [[1, 2, 3]]);
         var json = JsonSerializer.Serialize(request);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;

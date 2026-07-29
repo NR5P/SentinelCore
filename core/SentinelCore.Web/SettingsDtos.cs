@@ -187,6 +187,17 @@ public sealed class BlueIrisSettingsDto
     public string Password { get; set; } = string.Empty;
 }
 
+public sealed class MultiFrameAnalysisSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(1, 2)]
+    public int ExtraFrameCount { get; set; } = 1;
+
+    [Range(150, 1000)]
+    public int FrameIntervalMs { get; set; } = 350;
+}
+
 public sealed class SelfMonitoringSettingsDto
 {
     public bool Enabled { get; set; } = true;

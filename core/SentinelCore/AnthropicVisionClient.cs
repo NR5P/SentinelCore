@@ -50,6 +50,12 @@ public sealed class AnthropicVisionClient : IVisionAnalysisClient
             profile.Crop,
             cancellationToken);
 
+        // Empty for every alert except a burst-capturing trigger zone with MultiFrameAnalysis
+        // enabled - see OllamaVisionClient.AnalyzeAsync's identical handling.
+        var imageFrames = new List<byte[]> { optimizedImage.Bytes };
+        foreach (var frame in alert.ExtraFrames)
+            imageFrames.Add((await _imageOptimizer.OptimizeForInferenceAsync(frame, profile.Crop, cancellationToken)).Bytes);
+
         var prompt = OllamaVisionClient.BuildPrompt(alert, profile);
 
         _logger.LogInformation(
@@ -58,7 +64,7 @@ public sealed class AnthropicVisionClient : IVisionAnalysisClient
             options.Model,
             prompt.Length);
 
-        var request = BuildRequest(options.Model, profile, prompt, optimizedImage.Bytes);
+        var request = BuildRequest(options.Model, profile, prompt, imageFrames);
 
         Exception? lastException = null;
         for (var attempt = 0; attempt <= options.MaximumRetries; attempt++)
@@ -133,8 +139,23 @@ public sealed class AnthropicVisionClient : IVisionAnalysisClient
     }
 
     // Public so tests can confirm the request shape without a live API call.
-    public static object BuildRequest(string model, PromptProfile profile, string prompt, byte[] imageBytes)
+    public static object BuildRequest(string model, PromptProfile profile, string prompt, IReadOnlyList<byte[]> imageFrames)
     {
+        var content = new List<object> { new { type = "text", text = prompt } };
+        foreach (var frame in imageFrames)
+        {
+            content.Add(new
+            {
+                type = "image",
+                source = new
+                {
+                    type = "base64",
+                    media_type = "image/jpeg",
+                    data = Convert.ToBase64String(frame)
+                }
+            });
+        }
+
         return new
         {
             model,
@@ -145,24 +166,7 @@ public sealed class AnthropicVisionClient : IVisionAnalysisClient
             system = profile.SystemPrompt,
             messages = new object[]
             {
-                new
-                {
-                    role = "user",
-                    content = new object[]
-                    {
-                        new { type = "text", text = prompt },
-                        new
-                        {
-                            type = "image",
-                            source = new
-                            {
-                                type = "base64",
-                                media_type = "image/jpeg",
-                                data = Convert.ToBase64String(imageBytes)
-                            }
-                        }
-                    }
-                }
+                new { role = "user", content }
             }
         };
     }

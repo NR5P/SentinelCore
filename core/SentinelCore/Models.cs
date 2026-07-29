@@ -15,7 +15,16 @@ public sealed record IncomingAlert(
     // Where the image was written at ingest, before the alert ever reached the queue. This is
     // what makes an in-flight alert recoverable after a restart - see AlertRecoveryService.
     // Null only when Bridge:SaveImages is off, in which case there's nothing to recover from.
-    string? ImagePath = null);
+    string? ImagePath = null)
+{
+    // Extra frames captured a fraction of a second apart around the same trigger moment as
+    // ImageBytes, only ever populated for trigger-zone cameras with MultiFrameAnalysis enabled
+    // (see TriggerZoneMonitor/AlertForwarder) - Blue Iris alerts never populate this, since Blue
+    // Iris pushes exactly one image per alert and nothing here reaches back out to fetch more.
+    // Purely transient: sent to the vision client alongside ImageBytes, never persisted to disk
+    // or shown anywhere, unlike ImageBytes/ImagePath above.
+    public IReadOnlyList<byte[]> ExtraFrames { get; init; } = [];
+}
 
 public sealed record AcceptedAlertResponse(Guid Id, string Status, string StatusUrl);
 
