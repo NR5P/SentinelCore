@@ -581,10 +581,14 @@ class SentinelRepository(
         if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
 
     companion object {
-        fun normalizeAddress(value: String): String {
+        // Local addresses default to http:// (a bare LAN IP shouldn't force a scheme nobody
+        // configured). The remote address defaults to https:// instead: it's meant to reach a
+        // public internet-facing hostname (e.g. a Cloudflare Tunnel), and silently falling back
+        // to plain HTTP there would send credentials/cookies over the internet in the clear.
+        fun normalizeAddress(value: String, defaultScheme: String = "http"): String {
             val trimmed = value.trim()
             if (trimmed.isBlank()) return ""
-            val withScheme = if ("://" in trimmed) trimmed else "http://$trimmed"
+            val withScheme = if ("://" in trimmed) trimmed else "$defaultScheme://$trimmed"
             return withScheme.trimEnd('/')
         }
 

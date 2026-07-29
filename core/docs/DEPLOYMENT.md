@@ -661,6 +661,57 @@ certificates that every other customer's devices would trust. That's why this is
 than a file, and why HTTP remains the default — the same choice Home Assistant, Unifi and Proxmox
 all make.
 
+## 14b. Internet Exposed Mode (optional)
+
+For reaching the dashboard from outside your home network - e.g. through a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
+This adds a **second, dedicated port** that always requires login and only speaks HTTPS,
+regardless of how Login and HTTPS above are configured. The normal LAN port is completely
+unaffected - both mobile apps' existing "local address" / "remote address" split already
+prefers the LAN address when it's reachable and falls back to whatever remote address you give
+it, so point the remote address at your tunnel's hostname and nothing else changes there.
+
+**Prerequisites**, both enforced by the settings validation:
+
+- Local HTTPS must already be configured (Route A or B in §14a above) - this mode reuses that
+  certificate rather than needing its own.
+- At least one account must already exist (Settings → LOGIN → require login) - otherwise the new
+  port would require a login nobody could complete.
+
+Turn it on under Settings → INTERNET EXPOSED MODE (advanced mode), or edit
+`BlueIrisOllamaBridge.Web/appsettings.json` directly:
+
+```json
+"InternetExposed": {
+  "Enabled": true,
+  "Port": 3444
+}
+```
+
+Port must differ from the HTTPS port (3443 by default). Restart the web dashboard for it to
+take effect: `sudo systemctl restart blueiris-ollama-bridge-web`.
+
+Then point your Cloudflare Tunnel's ingress rule at this port over HTTPS, skipping certificate
+verification (the certificate is signed by your own local authority from §14a, not a public one
+cloudflared would recognize):
+
+```yaml
+ingress:
+  - hostname: sentinel.yourdomain.com
+    service: https://localhost:3444
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
+```
+
+Open the firewall for this port the same way as the others - but **only to `127.0.0.1`**, since
+only `cloudflared` running on this same machine should ever connect to it directly; nothing on
+your LAN needs to reach this port, and the tunnel is what actually exposes it to the internet.
+
+```bash
+sudo ufw allow from 127.0.0.1 to any port 3444 proto tcp
+```
+
 ## 15. Troubleshooting
 
 **Build fails with `Fatal error. Internal CLR error. (0x80131506)`.** Known MSBuild

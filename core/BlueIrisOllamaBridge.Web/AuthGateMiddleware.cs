@@ -8,7 +8,12 @@ namespace BlueIrisOllamaBridge.Web;
 // "disabled = fully open" exactly as before the multi-account refactor. Re-reads Auth:Enabled
 // fresh via AppSettingsFile on every request (same "no caching" approach LicenseEndpoints
 // already uses) so flipping the setting takes effect immediately, no restart needed.
-public sealed class AuthGateMiddleware(RequestDelegate next, AppSettingsFile settings)
+//
+// Login is also always required - regardless of Auth:Enabled - for any request that arrived on
+// the Internet Exposed Mode port (see InternetExposedSettings): that port only exists for
+// traffic reaching this server from outside the LAN, so it must never fall back to the
+// synthetic-Admin bypass no matter how the base Auth setting is configured.
+public sealed class AuthGateMiddleware(RequestDelegate next, AppSettingsFile settings, InternetExposedSettings internetExposed)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -18,8 +23,9 @@ public sealed class AuthGateMiddleware(RequestDelegate next, AppSettingsFile set
             return;
         }
 
+        var isExposedRequest = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port;
         var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", context.RequestAborted);
-        if (auth is not { Enabled: true })
+        if (!isExposedRequest && auth is not { Enabled: true })
             context.User = AccountPrincipal.CreateSyntheticAdmin();
 
         await next(context);

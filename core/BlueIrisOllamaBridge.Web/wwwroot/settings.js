@@ -249,7 +249,22 @@ window.GateWatchSettings = (function () {
     quietHours: "Raise the bar for Email, Telegram, and Discord alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",
     mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker.",
-    bugReports: "Email the developer when something breaks internally, using the Email account above."
+    bugReports: "Email the developer when something breaks internally, using the Email account above.",
+    internetExposed: "A second, dedicated port for reaching this dashboard from outside your home network (e.g. through a Cloudflare Tunnel) - always requires login and HTTPS, regardless of the Login/HTTPS settings above."
+  };
+
+  // Not part of the bulk /api/settings snapshot - it configures this project's own Kestrel
+  // binding (same reason LOGIN/HTTPS aren't either), so it fetches its own data. Rendered
+  // through the same generic renderSection() as the schema-driven sections above; only the data
+  // source differs.
+  const INTERNET_EXPOSED_SCHEMA = {
+    key: "internetExposed", title: "INTERNET EXPOSED MODE", endpoint: "/api/settings/internet-exposed",
+    basic: false,
+    description: "For reaching this dashboard from outside your home network - e.g. through a Cloudflare Tunnel. When enabled, this server listens on a SECOND port that always requires login and only accepts HTTPS connections, no matter how Login and HTTPS above are configured. The normal port for local network use is completely unaffected by this - point your tunnel or reverse proxy at the new port instead, not the regular one. Requires local HTTPS to already be configured (see docs/DEPLOYMENT.md §14a) and at least one account to already exist. Takes effect after a restart.",
+    fields: [
+      { name: "enabled", label: "Enabled", type: "checkbox", tip: "Turn on the dedicated internet-exposed port. Requires HTTPS to already be configured and at least one account to exist. Needs a restart to take effect." },
+      { name: "port", label: "Port", type: "number", min: 1, max: 65535, tip: "Port for internet-facing traffic. Point your Cloudflare Tunnel (or other reverse proxy) here instead of the normal port. Must be different from the HTTPS port. Needs a restart to take effect." }
+    ]
   };
 
   function buildField(field, value) {
@@ -1467,6 +1482,8 @@ window.GateWatchSettings = (function () {
       root.appendChild(renderHomeKitSection(data.homeKit));
       root.appendChild(renderBackupSection());
       root.appendChild(renderAuthSection());
+      const internetExposedData = await fetch("/api/settings/internet-exposed").then(r => r.ok ? r.json() : null).catch(() => null);
+      root.appendChild(renderSection(INTERNET_EXPOSED_SCHEMA, internetExposedData));
       root.appendChild(renderLicenseSection());
       root.appendChild(renderKnownVehiclesSection(data.knownVehicles));
       root.appendChild(renderPromptProfilesSection(data.promptProfiles));

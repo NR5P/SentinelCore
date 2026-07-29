@@ -261,7 +261,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     // racing against connect()'s own "already active" guard.
     fun saveServers(localAddress: String, remoteAddress: String) {
         val normalizedLocal = SentinelRepository.normalizeAddress(localAddress)
-        val normalizedRemote = if (remoteAddress.isBlank()) "" else SentinelRepository.normalizeAddress(remoteAddress)
+        val normalizedRemote = if (remoteAddress.isBlank()) "" else SentinelRepository.normalizeAddress(remoteAddress, defaultScheme = "https")
         connectionJob?.cancel()
         repository.clearAuthenticationSession()
         repository.baseUrl = normalizedLocal
