@@ -762,6 +762,31 @@ your LAN needs to reach this port, and the tunnel is what actually exposes it to
 sudo ufw allow from 127.0.0.1 to any port 3444 proto tcp
 ```
 
+## 14c. Local network discovery (optional)
+
+The web dashboard advertises itself over mDNS/DNS-SD (service type `_sentinelcore._tcp`) so the
+iOS and Android apps can find it on the LAN during first-time setup instead of the user typing an
+IP address. This is on by default and self-contained - unlike the HomeKit sidecar (§8a), it does
+**not** depend on `avahi-daemon`; it's a managed responder built into the dashboard process
+itself, so it works out of the box even on installs that never set up Avahi.
+
+The TXT record only ever carries the connection scheme, port, and a random, non-secret instance
+id - never an API key or certificate fingerprint. A client still goes through `/api/health` and
+the normal login flow after resolving an address this way.
+
+To turn it off (e.g. if you'd rather not have this host answer multicast queries at all), edit
+`SentinelCore.Web/appsettings.json`:
+
+```json
+"Discovery": {
+  "Enabled": false
+}
+```
+
+Restart the web dashboard for it to take effect: `sudo systemctl restart sentinelcore-web`. This
+only removes the auto-discovery convenience - manual server address entry in both apps is
+unaffected either way.
+
 ## 15. Troubleshooting
 
 **Build fails with `Fatal error. Internal CLR error. (0x80131506)`.** Known MSBuild

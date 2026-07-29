@@ -1,18 +1,22 @@
 package com.sentinelcore.android.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
@@ -29,12 +33,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.sentinelcore.android.net.DiscoveredServer
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.components.BrandedCard
 import com.sentinelcore.android.ui.components.ConnectionBadge
@@ -45,6 +51,7 @@ import com.sentinelcore.android.ui.theme.SentinelGreen
 @Composable
 fun ServerSetupScreen(
     initialAddress: String,
+    discoveredServers: List<DiscoveredServer> = emptyList(),
     onConnect: (String) -> Unit,
 ) {
     var address by rememberSaveable(initialAddress) { mutableStateOf(initialAddress) }
@@ -68,6 +75,56 @@ fun ServerSetupScreen(
                     fontFamily = FontFamily.Monospace,
                 )
                 Text("Connect this device to the Sentinel Core server on your local network.")
+
+                // An assist on top of manual entry below, which always stays visible - discovery
+                // can legitimately find nothing (client/AP isolation, a different VLAN, ...), and
+                // that must never block getting connected by typing the address instead.
+                if (discoveredServers.isEmpty()) {
+                    Text(
+                        "Searching your local network for a server…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Found on your network",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        discoveredServers.forEach { server ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(SentinelGreen.copy(alpha = 0.08f))
+                                    .clickable {
+                                        address = server.addressString
+                                        onConnect(server.addressString)
+                                    }
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column {
+                                    Text(server.name)
+                                    Text(
+                                        server.addressString,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text("Or enter the address manually:")
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },

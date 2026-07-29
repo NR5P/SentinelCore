@@ -74,6 +74,12 @@ fun SentinelApp(model: SentinelViewModel) {
             model.connect()
         }
     }
+    // Local-network discovery is only useful on the setup screen - stopped as soon as a server
+    // is configured so a background NSD listener doesn't keep running (and draining battery)
+    // for the rest of the app's lifetime.
+    LaunchedEffect(state.isConfigured) {
+        if (state.isConfigured) model.stopDiscovery() else model.startDiscovery()
+    }
 
     Box(
         modifier = Modifier.fillMaxSize().background(SentinelBackground),
@@ -81,6 +87,7 @@ fun SentinelApp(model: SentinelViewModel) {
         when {
             !state.isConfigured -> ServerSetupScreen(
                 initialAddress = state.serverUrl,
+                discoveredServers = state.discoveredServers,
                 onConnect = model::saveServer,
             )
             state.requiresLogin -> LoginScreen(

@@ -13,6 +13,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <!-- The "New" fork (jdomnitz/net-mdns) rather than the original Makaretu.Dns.Multicast: the
+         original hasn't published since 2019, while this fork ships an actively maintained
+         net8.0/net9.0-targeted build - used here to advertise this server over mDNS/DNS-SD so
+         the mobile apps can find it on the LAN instead of the user typing an IP address. -->
+    <PackageReference Include="Makaretu.Dns.Multicast.New" Version="0.38.0" />
   </ItemGroup>
   <!-- The SDK's default item globs otherwise sweep up whatever's sitting in the runtime data/
        folder next to this project (events.db, images, cameras.db, ...) as Content purely

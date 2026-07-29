@@ -3,6 +3,19 @@ import Foundation
 import Network
 import UserNotifications
 
+// A SentinelCore server found on the local network via Bonjour/mDNS - see
+// AppModel.startServerDiscovery(). Purely a convenience for prefilling ServerSetupView's manual
+// address field; nothing here is persisted directly.
+struct DiscoveredServer: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let host: String
+    let port: Int
+    let scheme: String
+
+    var addressString: String { "\(scheme)://\(host):\(port)" }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var serverURL: String {
@@ -30,6 +43,7 @@ final class AppModel: ObservableObject {
     @Published var pushAuthorization = "NOT REQUESTED"
     @Published var pushRegistrationEnabled: Bool
     @Published var pushMessage: String?
+    @Published private(set) var discoveredServers: [DiscoveredServer] = []
 
     private(set) lazy var client = SentinelClient(model: self)
     private var localNetworkBrowser: NWBrowser?
@@ -104,7 +118,7 @@ final class AppModel: ObservableObject {
         if resetNetworkSession || wasOffline {
             client.resetSession()
         }
-        startLocalNetworkPermissionProbe()
+        startServerDiscovery()
         // Give macOS a moment to present/register the local-network permission before the
         // first HTTP request. The browser stays alive for the app's lifetime.
         try? await Task.sleep(for: .milliseconds(500))
@@ -207,11 +221,18 @@ final class AppModel: ObservableObject {
         diagnostics.removeAll()
     }
 
-    private func startLocalNetworkPermissionProbe() {
+    // Browses for other SentinelCore servers on the LAN (used to populate ServerSetupView's
+    // discovered-server list) and, as a side effect, is also what makes iOS/macOS prompt for
+    // local-network permission in the first place - so this is started from ServerSetupView.onAppear
+    // as well as from connect(), rather than gated behind isConfigured like the rest of connect() is.
+    //
+    // "_sentinelcore._tcp" rather than "_http._tcp": a dedicated service type means every result
+    // this browser ever sees is actually a SentinelCore server, with no further filtering needed.
+    func startServerDiscovery() {
         guard localNetworkBrowser == nil else { return }
 
         let browser = NWBrowser(
-            for: .bonjour(type: "_http._tcp", domain: nil),
+            for: .bonjour(type: "_sentinelcore._tcp", domain: nil),
             using: .tcp
         )
         browser.stateUpdateHandler = { [weak self] state in
@@ -237,12 +258,70 @@ final class AppModel: ObservableObject {
             }
         }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
+            guard let self else { return }
+            let currentIds = Set(results.compactMap(Self.serviceName(for:)))
             Task { @MainActor in
-                self?.log("Local-network access active; discovered \(results.count) HTTP service(s)")
+                self.discoveredServers.removeAll { !currentIds.contains($0.id) }
+            }
+            for result in results {
+                guard let name = Self.serviceName(for: result),
+                      case let .bonjour(txtRecord) = result.metadata else { continue }
+                Task { @MainActor in
+                    guard !self.discoveredServers.contains(where: { $0.id == name }) else { return }
+                    self.resolveDiscoveredServer(endpoint: result.endpoint, name: name, txtRecord: txtRecord)
+                }
             }
         }
         localNetworkBrowser = browser
-        browser.start(queue: DispatchQueue(label: "com.sentinelcore.local-network-permission"))
+        browser.start(queue: DispatchQueue(label: "com.sentinelcore.local-network-discovery"))
+    }
+
+    // nonisolated: called from NWBrowser's browseResultsChangedHandler, which runs on the
+    // browser's own dispatch queue rather than the MainActor.
+    private nonisolated static func serviceName(for result: NWBrowser.Result) -> String? {
+        guard case let .service(name, _, _, _) = result.endpoint else { return nil }
+        return name
+    }
+
+    // A Bonjour NWBrowser.Result's endpoint identifies a service by name, not by host/port -
+    // briefly opening a connection to it and reading back currentPath.remoteEndpoint is the
+    // standard way to resolve the actual address, per Apple's Network framework guidance.
+    private func resolveDiscoveredServer(endpoint: NWEndpoint, name: String, txtRecord: NWTXTRecord) {
+        let scheme: String
+        if case let .string(value) = txtRecord.getEntry(for: "scheme") {
+            scheme = value
+        } else {
+            scheme = "http"
+        }
+
+        let connection = NWConnection(to: endpoint, using: .tcp)
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                defer { connection.cancel() }
+                guard let self,
+                      case let .hostPort(host, port) = connection.currentPath?.remoteEndpoint else { return }
+
+                let hostString: String
+                switch host {
+                case .ipv4(let address): hostString = "\(address)"
+                case .ipv6(let address): hostString = "\(address)"
+                case .name(let value, _): hostString = value
+                @unknown default: return
+                }
+
+                Task { @MainActor in
+                    guard !self.discoveredServers.contains(where: { $0.id == name }) else { return }
+                    self.discoveredServers.append(DiscoveredServer(
+                        id: name, name: name, host: hostString, port: Int(port.rawValue), scheme: scheme))
+                }
+            case .failed:
+                connection.cancel()
+            default:
+                break
+            }
+        }
+        connection.start(queue: DispatchQueue(label: "com.sentinelcore.local-network-discovery.resolve"))
     }
 
     func signIn(username: String, password: String) async throws {

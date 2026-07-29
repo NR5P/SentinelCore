@@ -11,7 +11,10 @@ struct ServerSetupView: View {
                 Text("Connect to your server")
                     .foregroundStyle(SentinelTheme.cyan)
                     .font(.headline)
-                Text("Enter the local-network address of the Sentinel Core dashboard.")
+
+                discoverySection
+
+                Text("Or enter the local-network address of the Sentinel Core dashboard.")
                     .foregroundStyle(.secondary)
                 TextField("http://192.168.1.50:3320", text: $address)
                     .textFieldStyle(.roundedBorder)
@@ -29,8 +32,50 @@ struct ServerSetupView: View {
             .frame(maxWidth: 500)
         }
         .padding()
-        .onAppear { address = model.serverURL }
+        .onAppear {
+            address = model.serverURL
+            model.startServerDiscovery()
+        }
         .onSubmit(connect)
+    }
+
+    // Purely an assist on top of manual entry below, which always stays visible - discovery can
+    // legitimately find nothing (client/AP isolation, a different VLAN, local-network permission
+    // denied, ...), and that must never block getting connected by typing the address instead.
+    @ViewBuilder
+    private var discoverySection: some View {
+        if model.discoveredServers.isEmpty {
+            Text("Searching your local network for a server…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Found on your network")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                ForEach(model.discoveredServers) { server in
+                    Button {
+                        address = server.addressString
+                        connect()
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(server.name).foregroundStyle(.primary)
+                                Text(server.addressString)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(10)
+                        .background(SentinelTheme.cyan.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     private func connect() {

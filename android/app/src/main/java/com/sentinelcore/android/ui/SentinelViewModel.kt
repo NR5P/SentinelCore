@@ -29,6 +29,8 @@ import com.sentinelcore.android.data.TriggerConfig
 import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.data.PushStatus
 import com.sentinelcore.android.data.RecordingTimelineDay
+import com.sentinelcore.android.net.DiscoveredServer
+import com.sentinelcore.android.net.ServerDiscovery
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.PushTokenStore
 import com.sentinelcore.android.push.PushTokenUpdates
@@ -71,6 +73,7 @@ data class SentinelUiState(
     val timelineLoading: Boolean = false,
     val timelineError: String? = null,
     val timelineCameras: List<String> = emptyList(),
+    val discoveredServers: List<DiscoveredServer> = emptyList(),
 ) {
     val isConfigured: Boolean
         get() = runCatching {
@@ -98,6 +101,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         application.getSharedPreferences("sentinel_core", Application.MODE_PRIVATE)
     private val logSequence = AtomicLong()
     private val repository = SentinelRepository(::log)
+    private val serverDiscovery = ServerDiscovery(application)
     private val _state = MutableStateFlow(
         SentinelUiState(
             serverUrl = preferences.getString(SERVER_URL_KEY, "").orEmpty(),
@@ -123,6 +127,22 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                 if (!eventId.isNullOrBlank()) openPushEvent(eventId)
             }
         }
+        viewModelScope.launch {
+            serverDiscovery.servers.collect { servers ->
+                _state.update { it.copy(discoveredServers = servers) }
+            }
+        }
+    }
+
+    // Local-network discovery is only useful before a server is configured - see ServerDiscovery
+    // and SentinelApp's LaunchedEffect(state.isConfigured) that drives these.
+    fun startDiscovery() = serverDiscovery.start()
+
+    fun stopDiscovery() = serverDiscovery.stop()
+
+    override fun onCleared() {
+        super.onCleared()
+        serverDiscovery.stop()
     }
 
     fun connect(resetNetworkSession: Boolean = false) {

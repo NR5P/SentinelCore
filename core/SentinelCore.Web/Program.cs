@@ -65,12 +65,15 @@ var internetExposedSettings = InternetExposedSettings.FromConfiguration(builder.
 // unassigned whenever httpsEnabled was false.
 var internetExposedEnabled = internetExposedSettings.CanEnable(httpsSettings, out var internetExposedSkipReason);
 
+// Read regardless of httpsEnabled - MdnsAdvertiserService needs a real listening port to
+// advertise even when HTTPS itself is off.
+var httpPort = HttpsSettings.ParseHttpPort(builder.Configuration["Urls"]);
+
 if (httpsEnabled)
 {
     // Calling Listen() at all makes Kestrel ignore the Urls setting entirely, so the existing
     // HTTP port has to be re-declared here explicitly or it would silently stop listening -
     // which would break Blue Iris, both mobile apps, and any existing bookmark at once.
-    var httpPort = HttpsSettings.ParseHttpPort(builder.Configuration["Urls"]);
 
     // Loaded once here rather than per-connection - see HttpsSettings.LoadCertificate for why
     // this can't just be UseHttps(certPath, keyPath).
@@ -84,6 +87,10 @@ if (httpsEnabled)
             kestrel.ListenAnyIP(internetExposedSettings.Port, listen => listen.UseHttps(certificate));
     });
 }
+
+// Steers discovered clients toward the HTTPS cert-trust flow (AutoCertificateProvisioner) when
+// it's available, rather than training them to expect plaintext by default.
+var discoveryEndpoint = new DiscoveryEndpoint(httpsEnabled, httpsEnabled ? httpsSettings.Port : httpPort);
 
 // Reflects whether the mode is *actually* active (certificate loadable, port valid) rather than
 // just requested - AuthGateMiddleware and /api/auth/status trust this, not the raw config.
@@ -108,6 +115,15 @@ builder.Services.AddSingleton(appSettingsFile);
 // project's own Kestrel binding (Internet Exposed Mode), which can't live in the shared file.
 var webAppSettingsPath = Path.Combine(builder.Environment.ContentRootPath, "appsettings.json");
 builder.Services.AddKeyedSingleton("web", new AppSettingsFile(webAppSettingsPath));
+
+// Local-network discovery (mDNS) - see DiscoverySettings/MdnsAdvertiserService. Unlike
+// Bridge:ApiKey (AutoApiKeyProvisioner), InstanceId is never written back to appsettings.json:
+// it's not a secret (only ever handed out over unauthenticated multicast, same as any other TXT
+// record here) and doesn't need to survive a restart to do its job of telling two same-hostname
+// boxes on one LAN apart, so MdnsAdvertiserService just generates one in memory when it's blank.
+builder.Services.AddSingleton(DiscoverySettings.FromConfiguration(builder.Configuration));
+builder.Services.AddSingleton(discoveryEndpoint);
+builder.Services.AddHostedService<MdnsAdvertiserService>();
 
 // Cameras added through the UI are stored separately from the main app's data entirely -
 // they're for live viewing only and the alert pipeline never sees them.
