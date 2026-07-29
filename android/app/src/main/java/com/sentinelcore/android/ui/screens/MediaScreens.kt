@@ -53,6 +53,7 @@ import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.components.EmptyState
+import com.sentinelcore.android.ui.components.PtzControls
 import com.sentinelcore.android.ui.components.SentinelRemoteImage
 import com.sentinelcore.android.ui.components.StatusChip
 import com.sentinelcore.android.ui.components.fullDateTime
@@ -294,6 +295,13 @@ fun LivePlayerScreen(
                 SentinelGreen,
                 Modifier.align(Alignment.TopStart).padding(16.dp),
             )
+            if (camera.ptzEnabled) {
+                PtzControls(
+                    cameraId = camera.id,
+                    model = model,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                )
+            }
         }
     }
 }

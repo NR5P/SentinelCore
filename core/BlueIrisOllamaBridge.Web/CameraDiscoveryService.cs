@@ -46,7 +46,13 @@ public sealed record CameraProbeResult(
     string? Manufacturer,
     string? Model,
     string? Resolution,
-    string Message);
+    string Message,
+    // Only ever populated on the ONVIF success path (TryOnvifAsync) - the RTSP-template fallback
+    // has no ONVIF service to ask, so PTZ simply isn't detectable for those cameras. A missing
+    // PTZ service is the normal case, not a failure - most cameras don't have one.
+    bool SupportsPtz = false,
+    string? OnvifPtzServiceUrl = null,
+    string? OnvifProfileToken = null);
 
 // Turns "an IP address, maybe with credentials" into a working camera StreamUrl, the same
 // information the manual Add Camera form asks the user to already know. Tries the real ONVIF
@@ -150,9 +156,17 @@ public sealed class CameraDiscoveryService
             ? $"Camera at {ip}"
             : $"{deviceInfo.Manufacturer} {deviceInfo.Model}".Trim();
 
+        // PTZ is optional and most cameras don't have it - a null service URL here just means
+        // "no PTZ," which is not treated as a probe failure.
+        var ptzServiceUrl = await _onvif.GetPtzServiceUrlAsync(deviceServiceUrl, username, password, cancellationToken);
+        var supportsPtz = !string.IsNullOrWhiteSpace(ptzServiceUrl);
+
         return new CameraProbeResult(
             CameraProbeStatus.Found, streamUrl, suggestedName, deviceInfo.Manufacturer, deviceInfo.Model,
-            verified.Resolution, "Found via ONVIF.");
+            verified.Resolution, "Found via ONVIF.",
+            SupportsPtz: supportsPtz,
+            OnvifPtzServiceUrl: supportsPtz ? ptzServiceUrl : null,
+            OnvifProfileToken: supportsPtz ? profiles[0] : null);
     }
 
     private async Task<CameraProbeResult> TryRtspTemplatesAsync(

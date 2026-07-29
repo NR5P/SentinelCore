@@ -158,8 +158,24 @@ class SentinelRepository(
                 model = json.nullableString("model"),
                 resolution = json.nullableString("resolution"),
                 message = json.nullableString("message"),
+                supportsPtz = json.optBoolean("supportsPtz"),
+                onvifPtzServiceUrl = json.nullableString("onvifPtzServiceUrl"),
+                onvifProfileToken = json.nullableString("onvifProfileToken"),
             )
         }
+
+    suspend fun ptzMove(cameraId: String, pan: Double, tilt: Double, zoom: Double) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("pan", pan).put("tilt", tilt).put("zoom", zoom)
+        request("/api/cameras/${queryValue(cameraId)}/ptz/move", method = "POST", body = body.toString())
+    }
+
+    suspend fun ptzStop(cameraId: String) = withContext(Dispatchers.IO) {
+        request("/api/cameras/${queryValue(cameraId)}/ptz/stop", method = "POST")
+    }
+
+    suspend fun ptzHome(cameraId: String) = withContext(Dispatchers.IO) {
+        request("/api/cameras/${queryValue(cameraId)}/ptz/home", method = "POST")
+    }
 
     suspend fun fetchScanInterfaces(): List<ScanInterface> = withContext(Dispatchers.IO) {
         val array = JSONArray(request("/api/cameras/discovery/interfaces"))
@@ -566,6 +582,9 @@ class SentinelRepository(
             name = json.optString("name", "Camera"),
             streamUrl = json.nullableString("streamUrl"),
             includeAudio = json.optBoolean("includeAudio"),
+            ptzEnabled = json.optBoolean("ptzEnabled"),
+            onvifPtzServiceUrl = json.nullableString("onvifPtzServiceUrl"),
+            onvifProfileToken = json.nullableString("onvifProfileToken"),
         )
 
     private fun parseAccount(json: JSONObject): Account =
@@ -607,6 +626,9 @@ class SentinelRepository(
             .put("username", username)
             .put("password", password)
             .put("includeAudio", includeAudio)
+            .put("ptzEnabled", ptzEnabled)
+            .put("onvifPtzServiceUrl", onvifPtzServiceUrl)
+            .put("onvifProfileToken", onvifProfileToken)
 
     private fun TriggerConfig.toJson(): JSONObject {
         val polygon = JSONArray()

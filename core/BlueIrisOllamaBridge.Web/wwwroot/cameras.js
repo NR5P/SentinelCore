@@ -44,6 +44,7 @@ window.GateWatchCameras = (function () {
       <span class="camera-card-name">${escapeHtml(camera.name)}</span>
       <span class="camera-card-meta">${escapeHtml(camera.streamUrl)}</span>
       <span class="camera-card-meta">${camera.includeAudio ? "video + audio" : "video only"}</span>
+      ${camera.ptzEnabled ? `<span class="camera-card-meta">PTZ enabled</span>` : ""}
     `;
 
     const actions = document.createElement("div");
@@ -92,6 +93,15 @@ window.GateWatchCameras = (function () {
       "Password that goes with the username above. Stored on this machine so the stream can be opened."));
     fields.appendChild(buildCheckboxField("cam-audio", "Include audio", camera?.includeAudio ?? false,
       "Include the camera's microphone in the live view and saved clips, if it has one."));
+    fields.appendChild(buildCheckboxField("cam-ptz", "Pan/Tilt/Zoom (PTZ) joystick", camera?.ptzEnabled ?? false,
+      "Shows on-screen directional controls in Live view for cameras that can physically move. " +
+      "Turned on automatically when Test Connection detects an ONVIF PTZ service - you can also " +
+      "turn it on by hand, but the controls won't do anything without one."));
+    // Not shown to the user directly - just carries whatever Test Connection last detected (or
+    // this camera's existing values, if editing) through to saveCamera(), the same way the
+    // Stream URL/Name fields get silently filled in above rather than the user typing them.
+    fields.appendChild(buildHiddenField("cam-ptz-service-url", camera?.onvifPtzServiceUrl ?? ""));
+    fields.appendChild(buildHiddenField("cam-ptz-token", camera?.onvifProfileToken ?? ""));
 
     wrap.classList.remove("hidden");
     wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -144,6 +154,14 @@ window.GateWatchCameras = (function () {
     return row;
   }
 
+  function buildHiddenField(id, value) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.id = id;
+    input.value = value;
+    return input;
+  }
+
   function buildCheckboxField(id, label, checked, tip) {
     const row = document.createElement("div");
     row.className = "field-row field-row-wide field-checkbox-row";
@@ -170,7 +188,10 @@ window.GateWatchCameras = (function () {
       streamUrl: document.getElementById("cam-url").value.trim(),
       username: document.getElementById("cam-username").value.trim() || null,
       password: document.getElementById("cam-password").value || null,
-      includeAudio: document.getElementById("cam-audio").checked
+      includeAudio: document.getElementById("cam-audio").checked,
+      ptzEnabled: document.getElementById("cam-ptz").checked,
+      onvifPtzServiceUrl: document.getElementById("cam-ptz-service-url").value || null,
+      onvifProfileToken: document.getElementById("cam-ptz-token").value || null
     };
 
     const errorsEl = document.getElementById("camera-form-errors");
@@ -276,6 +297,13 @@ window.GateWatchCameras = (function () {
         // already knows the real path for, only fills in a bare address or an empty name.
         if (payload.streamUrl && looksLikeABareAddress(urlField.value.trim())) urlField.value = payload.streamUrl;
         if (payload.suggestedName && !nameField.value.trim()) nameField.value = payload.suggestedName;
+
+        // Always carry through the latest detection, but only ever turn the checkbox ON here,
+        // never off - a user who manually enabled PTZ for a camera this particular test didn't
+        // detect it on shouldn't have that silently undone by re-testing the connection.
+        document.getElementById("cam-ptz-service-url").value = payload.onvifPtzServiceUrl || "";
+        document.getElementById("cam-ptz-token").value = payload.onvifProfileToken || "";
+        if (payload.supportsPtz) document.getElementById("cam-ptz").checked = true;
       } else if (payload.status === "NeedsCredentials") {
         setTestStatus(payload.message, "warn");
       } else {
@@ -444,7 +472,10 @@ window.GateWatchCameras = (function () {
           // Never write a real stream URL here - just the bare address. The manual form's own
           // Test Connection button (same probe endpoint) is what turns that into a verified,
           // working URL, especially once the user supplies credentials this scan never asked for.
-          openForm({ name: item.suggestedName, streamUrl: item.ipAddress, username: "", password: "", includeAudio: false });
+          openForm({
+            name: item.suggestedName, streamUrl: item.ipAddress, username: "", password: "", includeAudio: false,
+            ptzEnabled: false, onvifPtzServiceUrl: null, onvifProfileToken: null
+          });
         });
         actions.appendChild(addBtn);
       }
@@ -497,10 +528,109 @@ window.GateWatchCameras = (function () {
       status.textContent = "connecting…";
 
       tile.append(video, label, status);
+      if (camera.ptzEnabled) tile.appendChild(buildPtzControls(camera));
       root.appendChild(tile);
 
       attachPlayer(video, status, camera);
     }
+  }
+
+  // ---------------- PTZ (pan/tilt/zoom) joystick ----------------
+  //
+  // Fire-and-forget by design (errors are swallowed, not surfaced per-click) - a dropped PTZ
+  // command just means the camera didn't move that instant, which is self-evident from the video
+  // itself, not something worth an error toast over. Continuous-move semantics: pressing a
+  // direction starts the camera moving at a fixed moderate speed, and it keeps moving until
+  // released - there's no ONVIF "move this far and stop automatically" in this mode.
+  const PTZ_SPEED = 0.5;
+
+  function buildPtzControls(camera) {
+    const wrap = document.createElement("div");
+    wrap.className = "ptz-controls";
+    wrap.dataset.tip = "Press and hold a direction to move this camera. Release to stop.";
+
+    const pad = document.createElement("div");
+    pad.className = "ptz-pad";
+    const directions = [
+      [-1, 1, "↖"], [0, 1, "↑"], [1, 1, "↗"],
+      [-1, 0, "←"], null, [1, 0, "→"],
+      [-1, -1, "↙"], [0, -1, "↓"], [1, -1, "↘"]
+    ];
+    for (const dir of directions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ptz-btn";
+      if (dir === null) {
+        btn.classList.add("ptz-home");
+        btn.textContent = "⌂";
+        btn.dataset.tip = "Return to this camera's home position, if it has one set.";
+        btn.addEventListener("click", () => sendPtzCommand(camera.id, "home"));
+      } else {
+        const [pan, tilt, label] = dir;
+        btn.textContent = label;
+        bindHoldButton(btn, camera.id, () => sendPtzMove(camera.id, pan * PTZ_SPEED, tilt * PTZ_SPEED, 0));
+      }
+      pad.appendChild(btn);
+    }
+
+    const zoom = document.createElement("div");
+    zoom.className = "ptz-zoom";
+    const zoomIn = document.createElement("button");
+    zoomIn.type = "button";
+    zoomIn.className = "ptz-btn";
+    zoomIn.textContent = "+";
+    zoomIn.dataset.tip = "Zoom in.";
+    bindHoldButton(zoomIn, camera.id, () => sendPtzMove(camera.id, 0, 0, PTZ_SPEED));
+    const zoomOut = document.createElement("button");
+    zoomOut.type = "button";
+    zoomOut.className = "ptz-btn";
+    zoomOut.textContent = "−";
+    zoomOut.dataset.tip = "Zoom out.";
+    bindHoldButton(zoomOut, camera.id, () => sendPtzMove(camera.id, 0, 0, -PTZ_SPEED));
+    zoom.append(zoomIn, zoomOut);
+
+    wrap.append(pad, zoom);
+    return wrap;
+  }
+
+  // pointerdown/up/cancel rather than mouse+touch listeners separately - pointer events cover
+  // both with one code path. Pointer capture keeps the release firing on THIS button even if a
+  // touch drifts off it while held, which matters more here than for a normal button since
+  // missing the release would leave the camera moving indefinitely.
+  function bindHoldButton(button, cameraId, onPress) {
+    const release = (event) => {
+      if (event.pointerId !== undefined) {
+        try { button.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+      }
+      sendPtzStop(cameraId);
+    };
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      try { button.setPointerCapture(event.pointerId); } catch { /* not supported, still works without capture */ }
+      onPress();
+    });
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+  }
+
+  async function sendPtzMove(cameraId, pan, tilt, zoom) {
+    try {
+      await fetch(`/api/cameras/${cameraId}/ptz/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pan, tilt, zoom })
+      });
+    } catch { /* best effort - see comment above */ }
+  }
+
+  async function sendPtzStop(cameraId) {
+    await sendPtzCommand(cameraId, "stop");
+  }
+
+  async function sendPtzCommand(cameraId, action) {
+    try {
+      await fetch(`/api/cameras/${cameraId}/ptz/${action}`, { method: "POST" });
+    } catch { /* best effort - see comment above */ }
   }
 
   function attachPlayer(video, status, camera) {

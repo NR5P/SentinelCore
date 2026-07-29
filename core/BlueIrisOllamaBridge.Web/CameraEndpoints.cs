@@ -13,6 +13,16 @@ public sealed class CameraInputDto
     public string? Username { get; set; }
     public string? Password { get; set; }
     public bool IncludeAudio { get; set; }
+
+    // OnvifPtzServiceUrl/OnvifProfileToken come from a discovery probe (see
+    // CameraDiscoveryService/CameraProbeResult) and are just passed through here on save, the
+    // same way ProbeResult.StreamUrl already flows into StreamUrl above - the client never makes
+    // these up itself. PtzEnabled defaults to whatever the probe detected but can be flipped
+    // independently: turning it on without a detected service URL/token just means PTZ calls for
+    // this camera will fail with a clear error rather than silently doing nothing.
+    public bool PtzEnabled { get; set; }
+    public string? OnvifPtzServiceUrl { get; set; }
+    public string? OnvifProfileToken { get; set; }
 }
 
 public static class CameraEndpoints
@@ -29,7 +39,9 @@ public static class CameraEndpoints
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
-            var camera = await store.AddAsync(dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio, ct);
+            var camera = await store.AddAsync(
+                dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio,
+                dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, ct);
             return Results.Ok(camera);
         }).RequireAuthorization("AdminOnly");
 
@@ -38,7 +50,9 @@ public static class CameraEndpoints
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
-            var updated = await store.UpdateAsync(id, dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio, ct);
+            var updated = await store.UpdateAsync(
+                id, dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio,
+                dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, ct);
             if (!updated) return Results.NotFound();
 
             // Source may have changed - restart the stream on next view rather than serving stale settings.

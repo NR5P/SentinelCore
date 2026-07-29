@@ -73,6 +73,29 @@ final class SentinelClient {
         try await send("/api/cameras/discovery/probe", method: "POST", body: request)
     }
 
+    // Continuous-move semantics: the camera keeps moving at this velocity until ptzStop is
+    // called - there's no "move by this much and stop automatically" in this mode, so the
+    // joystick UI is expected to call ptzStop on release, not just ptzMove once.
+    func ptzMove(cameraId: UUID, pan: Double, tilt: Double, zoom: Double) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/cameras/\(cameraId.uuidString)/ptz/move",
+            method: "POST",
+            body: PtzMoveBody(pan: pan, tilt: tilt, zoom: zoom)
+        )
+    }
+
+    func ptzStop(cameraId: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/cameras/\(cameraId.uuidString)/ptz/stop", method: "POST", body: Optional<String>.none
+        )
+    }
+
+    func ptzHome(cameraId: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/cameras/\(cameraId.uuidString)/ptz/home", method: "POST", body: Optional<String>.none
+        )
+    }
+
     func fetchScanInterfaces() async throws -> [ScanInterface] {
         try await get("/api/cameras/discovery/interfaces")
     }
