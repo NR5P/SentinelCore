@@ -20,16 +20,21 @@ public sealed record PushDevice(
     string Platform,
     string Token,
     string? DeviceName,
+    string AppVariant,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
 public interface IPushDeviceStore
 {
+    // appVariant distinguishes which Apple app registered the token (e.g. "ios" vs "tvos") so
+    // PushNotificationDispatcher can pick the matching apns-topic - irrelevant for Android, where
+    // it's just carried along unused. Defaults to "ios" so existing callers keep compiling.
     Task<PushDevice> UpsertAsync(
         string platform,
         string token,
         string? deviceName,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string appVariant = "ios");
 
     Task<IReadOnlyList<PushDevice>> GetAllAsync(CancellationToken cancellationToken);
     Task<int> CountAsync(CancellationToken cancellationToken);
@@ -63,6 +68,7 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
                 Platform TEXT NOT NULL,
                 Token TEXT NOT NULL,
                 DeviceName TEXT,
+                AppVariant TEXT NOT NULL DEFAULT 'ios',
                 CreatedAt TEXT NOT NULL,
                 UpdatedAt TEXT NOT NULL,
                 UNIQUE (Platform, Token)
@@ -70,16 +76,22 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
             CREATE INDEX IF NOT EXISTS IX_PushDevices_UpdatedAt ON PushDevices(UpdatedAt);
             """;
         command.ExecuteNonQuery();
+        // Upgrade path for databases created before AppVariant existed.
+        using var addColumn = connection.CreateCommand();
+        addColumn.CommandText = "ALTER TABLE PushDevices ADD COLUMN AppVariant TEXT NOT NULL DEFAULT 'ios';";
+        try { addColumn.ExecuteNonQuery(); } catch (SqliteException) { /* column already exists */ }
     }
 
     public async Task<PushDevice> UpsertAsync(
         string platform,
         string token,
         string? deviceName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string appVariant = "ios")
     {
         var normalizedPlatform = PushPlatforms.Normalize(platform);
         var normalizedToken = token.Trim();
+        var normalizedVariant = string.IsNullOrWhiteSpace(appVariant) ? "ios" : appVariant.Trim().ToLowerInvariant();
         var now = DateTimeOffset.UtcNow;
         var id = Guid.NewGuid();
 
@@ -87,16 +99,18 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                INSERT INTO PushDevices (Id, Platform, Token, DeviceName, CreatedAt, UpdatedAt)
-                VALUES ($id, $platform, $token, $deviceName, $createdAt, $updatedAt)
+                INSERT INTO PushDevices (Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt)
+                VALUES ($id, $platform, $token, $deviceName, $appVariant, $createdAt, $updatedAt)
                 ON CONFLICT(Platform, Token) DO UPDATE SET
                     DeviceName = excluded.DeviceName,
+                    AppVariant = excluded.AppVariant,
                     UpdatedAt = excluded.UpdatedAt;
                 """;
             command.Parameters.AddWithValue("$id", id.ToString("N"));
             command.Parameters.AddWithValue("$platform", normalizedPlatform);
             command.Parameters.AddWithValue("$token", normalizedToken);
             command.Parameters.AddWithValue("$deviceName", (object?)deviceName ?? DBNull.Value);
+            command.Parameters.AddWithValue("$appVariant", normalizedVariant);
             command.Parameters.AddWithValue("$createdAt", now.ToString("O"));
             command.Parameters.AddWithValue("$updatedAt", now.ToString("O"));
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -104,7 +118,7 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
 
         await using var select = connection.CreateCommand();
         select.CommandText = """
-            SELECT Id, Platform, Token, DeviceName, CreatedAt, UpdatedAt
+            SELECT Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt
             FROM PushDevices
             WHERE Platform = $platform AND Token = $token;
             """;
@@ -121,7 +135,7 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Platform, Token, DeviceName, CreatedAt, UpdatedAt
+            SELECT Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt
             FROM PushDevices
             ORDER BY UpdatedAt DESC;
             """;
@@ -176,6 +190,7 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         reader.GetString(1),
         reader.GetString(2),
         reader.IsDBNull(3) ? null : reader.GetString(3),
-        DateTimeOffset.Parse(reader.GetString(4)),
-        DateTimeOffset.Parse(reader.GetString(5)));
+        reader.GetString(4),
+        DateTimeOffset.Parse(reader.GetString(5)),
+        DateTimeOffset.Parse(reader.GetString(6)));
 }

@@ -80,7 +80,7 @@ public sealed class PushNotificationDispatcher(
                 attempt = device.Platform switch
                 {
                     PushPlatforms.Apple when options.Apple.Enabled =>
-                        await SendAppleAsync(options.Apple, device.Token, message, cancellationToken),
+                        await SendAppleAsync(options.Apple, device.Token, device.AppVariant, message, cancellationToken),
                     PushPlatforms.Android when options.Firebase.Enabled =>
                         await SendFirebaseAsync(options.Firebase, device.Token, message, cancellationToken),
                     _ => PushAttempt.Skipped
@@ -118,6 +118,7 @@ public sealed class PushNotificationDispatcher(
     private async Task<PushAttempt> SendAppleAsync(
         ApplePushOptions options,
         string deviceToken,
+        string appVariant,
         PushMessage message,
         CancellationToken cancellationToken)
     {
@@ -129,6 +130,8 @@ public sealed class PushNotificationDispatcher(
             logger.LogWarning("Apple push is enabled but its provider credentials are incomplete.");
             return PushAttempt.Failed;
         }
+
+        var topic = options.ResolveApnsTopic(appVariant);
 
         var providerToken = await GetAppleProviderTokenAsync(options, cancellationToken);
         var host = options.UseSandbox
@@ -158,7 +161,7 @@ public sealed class PushNotificationDispatcher(
                 "application/json")
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("bearer", providerToken);
-        request.Headers.TryAddWithoutValidation("apns-topic", options.BundleId);
+        request.Headers.TryAddWithoutValidation("apns-topic", topic);
         request.Headers.TryAddWithoutValidation("apns-push-type", "alert");
         request.Headers.TryAddWithoutValidation("apns-priority", "10");
 

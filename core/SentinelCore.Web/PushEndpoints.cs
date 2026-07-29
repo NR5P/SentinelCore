@@ -2,7 +2,10 @@ using SentinelCore;
 
 namespace SentinelCore.Web;
 
-public sealed record RegisterPushDeviceRequest(string Platform, string Token, string? DeviceName);
+// AppVariant distinguishes which Apple app registered the token ("ios" or "tvos") so the
+// dispatcher can send with the matching apns-topic; ignored for Android. Defaults to "ios" so
+// existing (pre-tvOS) clients don't need to change anything.
+public sealed record RegisterPushDeviceRequest(string Platform, string Token, string? DeviceName, string? AppVariant = null);
 public sealed record UnregisterPushDeviceRequest(string Platform, string Token);
 
 public static class PushEndpoints
@@ -31,19 +34,21 @@ public static class PushEndpoints
             IPushDeviceStore devices,
             CancellationToken ct) =>
         {
-            var errors = Validate(request.Platform, request.Token, request.DeviceName);
+            var errors = Validate(request.Platform, request.Token, request.DeviceName, request.AppVariant);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
             var device = await devices.UpsertAsync(
                 request.Platform,
                 request.Token,
                 request.DeviceName?.Trim(),
-                ct);
+                ct,
+                appVariant: string.IsNullOrWhiteSpace(request.AppVariant) ? "ios" : request.AppVariant);
             return Results.Ok(new
             {
                 device.Id,
                 device.Platform,
                 device.DeviceName,
+                device.AppVariant,
                 device.UpdatedAt
             });
         }).RequireAuthorization();
@@ -78,7 +83,7 @@ public static class PushEndpoints
         }).RequireAuthorization("AdminOnly");
     }
 
-    private static List<string> Validate(string platform, string token, string? deviceName)
+    private static List<string> Validate(string platform, string token, string? deviceName, string? appVariant = null)
     {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(platform) || !PushPlatforms.IsSupported(platform))
@@ -89,6 +94,9 @@ public static class PushEndpoints
             errors.Add("The push token is too long.");
         if (deviceName?.Length > 120)
             errors.Add("The device name is too long.");
+        if (!string.IsNullOrWhiteSpace(appVariant) &&
+            appVariant is not ("ios" or "tvos"))
+            errors.Add("AppVariant must be 'ios' or 'tvos'.");
         return errors;
     }
 

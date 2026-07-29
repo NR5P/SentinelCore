@@ -63,6 +63,29 @@ device tokens are separate.
 Apple reference:
 [Communicating with APNs](https://developer.apple.com/documentation/usernotifications/setting_up_a_remote_notification_server/sending_notification_requests_to_apns)
 
+### Apple TV app
+
+The `appletv/` client is a separate App ID (`com.sentinelcore.client.tv` by default) from the
+iPhone/iPad/Mac app, so APNs pushes to it need their own `apns-topic`. Add `TvBundleId` next to
+`BundleId`:
+
+```json
+"Apple": {
+  "Enabled": true,
+  "TeamId": "YOUR_TEAM_ID",
+  "KeyId": "YOUR_KEY_ID",
+  "BundleId": "com.sentinelcore.client",
+  "TvBundleId": "com.sentinelcore.client.tv",
+  "PrivateKeyPath": "/absolute/path/to/AuthKey_YOUR_KEY_ID.p8",
+  "UseSandbox": true
+}
+```
+
+Same team, key, and `.p8` file work for both App IDs - just enable Push Notifications for the tv
+App ID too in the Apple Developer portal. Until `TvBundleId` is set, Apple TV device tokens are
+sent with the iPhone app's topic and APNs rejects them (the tvOS app still works over polling in
+that case - see `appletv/README.md` for what that degrades).
+
 ## Android setup
 
 1. Create a Firebase project and add an Android app with package name

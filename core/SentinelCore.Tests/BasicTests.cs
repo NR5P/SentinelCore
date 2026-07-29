@@ -2032,16 +2032,23 @@ public sealed class BasicTests
             var first = await store.UpsertAsync("ANDROID", "fid-123", "First name", CancellationToken.None);
             var updated = await store.UpsertAsync("android", "fid-123", "Updated name", CancellationToken.None);
             await store.UpsertAsync("apple", "apns-456", "iPhone", CancellationToken.None);
+            var tvDevice = await store.UpsertAsync("apple", "apns-789", "Living room Apple TV", CancellationToken.None, appVariant: "tvos");
 
             Assert.Equal(first.Id, updated.Id);
             Assert.Equal("android", updated.Platform);
             Assert.Equal("Updated name", updated.DeviceName);
-            Assert.Equal(2, await store.CountAsync(CancellationToken.None));
+            // Untouched callers never mention AppVariant - it must still default to "ios" rather
+            // than come back null/empty, since PushNotificationDispatcher's topic lookup assumes
+            // a value is always present.
+            Assert.Equal("ios", updated.AppVariant);
+            Assert.Equal("tvos", tvDevice.AppVariant);
+            Assert.Equal(3, await store.CountAsync(CancellationToken.None));
 
             await store.RemoveAsync("ANDROID", "fid-123", CancellationToken.None);
             var remaining = await store.GetAllAsync(CancellationToken.None);
-            Assert.Single(remaining);
-            Assert.Equal("apple", remaining[0].Platform);
+            Assert.Equal(2, remaining.Count);
+            Assert.Contains(remaining, d => d.Platform == "apple" && d.AppVariant == "ios");
+            Assert.Contains(remaining, d => d.Platform == "apple" && d.AppVariant == "tvos");
         }
         finally
         {
@@ -2070,6 +2077,21 @@ public sealed class BasicTests
         Assert.Equal(result.Id.ToString(), message.EventId);
         Assert.Equal("person", message.EventType);
         Assert.Contains("driveway", message.Body);
+    }
+
+    [Theory]
+    [InlineData("ios", "com.sentinelcore.client", "com.sentinelcore.client.tv", "com.sentinelcore.client")]
+    [InlineData("tvos", "com.sentinelcore.client", "com.sentinelcore.client.tv", "com.sentinelcore.client.tv")]
+    [InlineData("TVOS", "com.sentinelcore.client", "com.sentinelcore.client.tv", "com.sentinelcore.client.tv")]
+    // A tvOS device on a Core install that hasn't set TvBundleId yet must still get a push
+    // (even if APNs ultimately rejects the wrong topic) rather than the app silently dropping it.
+    [InlineData("tvos", "com.sentinelcore.client", "", "com.sentinelcore.client")]
+    public void ApplePushOptions_ResolveApnsTopic_PicksBundleIdByAppVariant(
+        string appVariant, string bundleId, string tvBundleId, string expectedTopic)
+    {
+        var options = new ApplePushOptions { BundleId = bundleId, TvBundleId = tvBundleId };
+
+        Assert.Equal(expectedTopic, options.ResolveApnsTopic(appVariant));
     }
 
     [Fact]
