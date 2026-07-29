@@ -1,0 +1,22 @@
+[Unit]
+Description=SentinelCore Web Dashboard
+Wants=network-online.target
+After=network-online.target sentinelcore.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__INSTALL_DIR__/SentinelCore.Web
+ExecStart=__DOTNET_PATH__ __INSTALL_DIR__/SentinelCore.Web/bin/Release/net10.0/SentinelCore.Web.dll
+
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://0.0.0.0:__WEB_PORT__
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+SyslogIdentifier=sentinelcore-web
+
+[Install]
+WantedBy=multi-user.target

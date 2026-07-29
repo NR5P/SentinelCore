@@ -43,7 +43,7 @@ const CAMERAS_FILE = path.join(PERSIST_DIR, "cameras.json");
 // The main app's config is the single source of truth for whether HomeKit is on - the dashboard
 // writes it there, same as every other setting.
 const MAIN_SETTINGS_PATH = process.env.HOMEKIT_MAIN_SETTINGS
-  || path.join(__dirname, "..", "BlueIrisOllamaBridge", "appsettings.json");
+  || path.join(__dirname, "..", "SentinelCore", "appsettings.json");
 
 const BRIDGE_NAME = "Sentinel Core";
 const CONTROL_PORT = Number(process.env.HOMEKIT_CONTROL_PORT || 3321);

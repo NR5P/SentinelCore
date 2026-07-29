@@ -229,10 +229,10 @@ function Install-AppService {
     }
 }
 
-$mainDll = Join-Path $InstallDir 'BlueIrisOllamaBridge\bin\Release\net10.0\BlueIrisOllamaBridge.dll'
-$webDll  = Join-Path $InstallDir 'BlueIrisOllamaBridge.Web\bin\Release\net10.0\BlueIrisOllamaBridge.Web.dll'
-$mainDir = Join-Path $InstallDir 'BlueIrisOllamaBridge'
-$webDir  = Join-Path $InstallDir 'BlueIrisOllamaBridge.Web'
+$mainDll = Join-Path $InstallDir 'SentinelCore\bin\Release\net10.0\SentinelCore.dll'
+$webDll  = Join-Path $InstallDir 'SentinelCore.Web\bin\Release\net10.0\SentinelCore.Web.dll'
+$mainDir = Join-Path $InstallDir 'SentinelCore'
+$webDir  = Join-Path $InstallDir 'SentinelCore.Web'
 
 foreach ($required in @($mainDll, $webDll)) {
     if (-not (Test-Path $required)) { throw "Expected build output missing: $required" }

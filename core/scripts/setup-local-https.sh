@@ -116,7 +116,7 @@ cat <<NEXT
 
 ==> Done. Certificate expires $EXPIRES
 
-    1. Point the dashboard at it - in BlueIrisOllamaBridge.Web/appsettings.json:
+    1. Point the dashboard at it - in SentinelCore.Web/appsettings.json:
 
          "Https": {
            "CertificatePath": "$SERVER_CERT",
@@ -124,7 +124,7 @@ cat <<NEXT
            "Port": 3443
          }
 
-       then restart it:  sudo systemctl restart blueiris-ollama-bridge-web
+       then restart it:  sudo systemctl restart sentinelcore-web
        Plain HTTP keeps working on its usual port - nothing breaks by doing this.
 
     2. Trust the authority on each device you browse from. The file to copy is:

@@ -33,12 +33,12 @@ nothing gets copied to `/opt` or anywhere else. This matters: if you only rebuil
 that detail, you might go looking for the running binary in the wrong place.
 
 ```
-Blue Iris (Windows) ──POST /api/blueiris/alert──▶ BlueIrisOllamaBridge (port 5080)
+Blue Iris (Windows) ──POST /api/blueiris/alert──▶ SentinelCore (port 5080)
                                                           │
                                                           ├──▶ Ollama (port 11434, local)
                                                           └──▶ Email / Telegram / Webhook
 
-BlueIrisOllamaBridge.Web (port 3320) ──reads/writes the main app's appsettings.json
+SentinelCore.Web (port 3320) ──reads/writes the main app's appsettings.json
                                        ──reads the main app's events.db directly
                                        ──owns its own cameras.db / triggers.db
                                        ──can itself POST into /api/blueiris/alert
@@ -49,12 +49,12 @@ The Web project has a `ProjectReference` back to the main app so it reuses its e
 and prompt-profile types directly, rather than duplicating them — the two are built together
 by one `dotnet build` at the repo root.
 
-| | Main app (`BlueIrisOllamaBridge`) | Web dashboard (`BlueIrisOllamaBridge.Web`) |
+| | Main app (`SentinelCore`) | Web dashboard (`SentinelCore.Web`) |
 |---|---|---|
 | Port | 5080 | 3320 |
-| systemd unit | `blueiris-ollama-bridge.service` | `blueiris-ollama-bridge-web.service` |
-| Working directory | `BlueIrisOllamaBridge/` | `BlueIrisOllamaBridge.Web/` |
-| Binary | `bin/Release/net10.0/BlueIrisOllamaBridge.dll` | `bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll` |
+| systemd unit | `sentinelcore.service` | `sentinelcore-web.service` |
+| Working directory | `SentinelCore/` | `SentinelCore.Web/` |
+| Binary | `bin/Release/net10.0/SentinelCore.dll` | `bin/Release/net10.0/SentinelCore.Web.dll` |
 
 > **Note on the `systemd/` folder in this repo:** those files are templates with
 > `__PLACEHOLDER__` values that `scripts/install-linux.sh` fills in, and they describe this
@@ -115,12 +115,12 @@ ollama pull gemma3:4b
 ## 3. Getting the code
 
 ```bash
-git clone <your-repo-url> BlueIrisOllamaBridge
-cd BlueIrisOllamaBridge/core
+git clone <your-repo-url> SentinelCore
+cd SentinelCore/core
 ```
 
 (If you're reading this on the box where it's already deployed, the working copy already
-lives at `/opt/sentinelcore` — the repo root holds `.git` plus a
+lives at `/home/sentinel/Desktop/SentinelCore` — the repo root holds `.git` plus a
 `core/` folder with all the .NET projects (and a sibling iOS app folder, if present).
 `cd` into `core/` and `git pull` for updates, covered in
 [section 11](#11-updating-to-a-new-version).)
@@ -168,7 +168,7 @@ covers the essentials below - API key, vision backend, a camera, notifications -
 hand-editing `appsettings.json`. The walkthrough here is the manual/advanced path, for anything
 the wizard doesn't cover or if you'd rather edit the file directly.
 
-### Main app — `BlueIrisOllamaBridge/appsettings.json`
+### Main app — `SentinelCore/appsettings.json`
 
 1. **Generate and set a real API key** (Blue Iris authenticates with this) - the setup wizard
    does this step for you automatically; only do it by hand if you're skipping the wizard:
@@ -205,15 +205,15 @@ for TLS on an untrusted network. The same applies to port 3320/the dashboard log
 username/password over plain HTTP unless you put a TLS-terminating reverse proxy in front of
 it yourself.
 
-### Web dashboard — `BlueIrisOllamaBridge.Web/appsettings.json`
+### Web dashboard — `SentinelCore.Web/appsettings.json`
 
 ```json
 {
   "Urls": "http://0.0.0.0:3320",
   "Bridge": {
-    "DataDirectory": "/absolute/path/to/BlueIrisOllamaBridge/BlueIrisOllamaBridge/data"
+    "DataDirectory": "/absolute/path/to/SentinelCore/SentinelCore/data"
   },
-  "MainAppSettingsPath": "/absolute/path/to/BlueIrisOllamaBridge/BlueIrisOllamaBridge/appsettings.json",
+  "MainAppSettingsPath": "/absolute/path/to/SentinelCore/SentinelCore/appsettings.json",
   "MainAppBaseUrl": "http://127.0.0.1:5080",
   "CamerasDataDirectory": "data",
   "FfmpegPath": "ffmpeg"
@@ -242,11 +242,11 @@ Also do not expose port 3320 to the internet — there's no login on the dashboa
 Useful for testing a change before installing it as a service:
 
 ```bash
-dotnet run --project BlueIrisOllamaBridge/BlueIrisOllamaBridge.csproj
+dotnet run --project SentinelCore/SentinelCore.csproj
 ```
 
 ```bash
-dotnet run --project BlueIrisOllamaBridge.Web/BlueIrisOllamaBridge.Web.csproj
+dotnet run --project SentinelCore.Web/SentinelCore.Web.csproj
 ```
 
 Run each in its own terminal. Stop with Ctrl+C.
@@ -278,13 +278,13 @@ the firewall rules ([section 14](#14-firewall)) and passwordless restarts
 The rest of this section is what the installer generates, for reference or if you'd rather do it
 by hand. The templates live in `systemd/` with `__PLACEHOLDER__` values the installer fills in;
 what follows is one worked example with those substituted for this machine (`media` /
-`/opt/sentinelcore/core`).
+`/home/sentinel/Desktop/SentinelCore/core`).
 
-**`/etc/systemd/system/blueiris-ollama-bridge.service`:**
+**`/etc/systemd/system/sentinelcore.service`:**
 
 ```ini
 [Unit]
-Description=Blue Iris Ollama Bridge
+Description=SentinelCore AI Vision Engine
 Wants=network-online.target
 After=network-online.target ollama.service
 
@@ -292,8 +292,8 @@ After=network-online.target ollama.service
 Type=simple
 User=media
 Group=media
-WorkingDirectory=/opt/sentinelcore/core/BlueIrisOllamaBridge
-ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/BlueIrisOllamaBridge/bin/Release/net10.0/BlueIrisOllamaBridge.dll
+WorkingDirectory=/home/sentinel/Desktop/SentinelCore/core/SentinelCore
+ExecStart=/usr/bin/dotnet /home/sentinel/Desktop/SentinelCore/core/SentinelCore/bin/Release/net10.0/SentinelCore.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://0.0.0.0:5080
@@ -301,26 +301,26 @@ Environment=ASPNETCORE_URLS=http://0.0.0.0:5080
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
-SyslogIdentifier=blueiris-ollama-bridge
+SyslogIdentifier=sentinelcore
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-**`/etc/systemd/system/blueiris-ollama-bridge-web.service`:**
+**`/etc/systemd/system/sentinelcore-web.service`:**
 
 ```ini
 [Unit]
-Description=Blue Iris Ollama Bridge Web UI
+Description=SentinelCore Web Dashboard
 Wants=network-online.target
-After=network-online.target blueiris-ollama-bridge.service
+After=network-online.target sentinelcore.service
 
 [Service]
 Type=simple
 User=media
 Group=media
-WorkingDirectory=/opt/sentinelcore/core/BlueIrisOllamaBridge.Web
-ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/BlueIrisOllamaBridge.Web/bin/Release/net10.0/BlueIrisOllamaBridge.Web.dll
+WorkingDirectory=/home/sentinel/Desktop/SentinelCore/core/SentinelCore.Web
+ExecStart=/usr/bin/dotnet /home/sentinel/Desktop/SentinelCore/core/SentinelCore.Web/bin/Release/net10.0/SentinelCore.Web.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://0.0.0.0:3320
@@ -328,7 +328,7 @@ Environment=ASPNETCORE_URLS=http://0.0.0.0:3320
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
-SyslogIdentifier=blueiris-ollama-bridge-web
+SyslogIdentifier=sentinelcore-web
 
 [Install]
 WantedBy=multi-user.target
@@ -338,9 +338,9 @@ Install and start them (the third line only if you're adding the HomeKit sidecar
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now blueiris-ollama-bridge
-sudo systemctl enable --now blueiris-ollama-bridge-web
-sudo systemctl enable --now blueiris-ollama-bridge-homekit
+sudo systemctl enable --now sentinelcore
+sudo systemctl enable --now sentinelcore-web
+sudo systemctl enable --now sentinelcore-homekit
 ```
 
 `Restart=always` means systemd brings a crashed service back up on its own after 5 seconds —
@@ -415,7 +415,7 @@ What differs from Linux:
 | | Linux | Windows |
 |---|---|---|
 | Service manager | systemd units | Windows Services |
-| Service names | `blueiris-ollama-bridge`, `-web`, `-homekit` | `SentinelCoreBridge`, `SentinelCoreWeb`, `SentinelCoreHomeKit` |
+| Service names | `sentinelcore`, `-web`, `-homekit` | `SentinelCoreBridge`, `SentinelCoreWeb`, `SentinelCoreHomeKit` |
 | Dependencies | apt / NodeSource / Ollama script | winget |
 | HomeKit mDNS | avahi over D-Bus | hap-nodejs's own responder (`ciao`) |
 | Logs | `journalctl -u <name>` | Event Viewer, or the console when run by hand |
@@ -438,8 +438,8 @@ Firewall rules are the one manual step, same as on Linux; the installer prints t
 
 ```bash
 ./scripts/deploy.sh          # build + restart all services
-./scripts/deploy.sh main     # build + restart only blueiris-ollama-bridge
-./scripts/deploy.sh web      # build + restart only blueiris-ollama-bridge-web
+./scripts/deploy.sh main     # build + restart only sentinelcore
+./scripts/deploy.sh web      # build + restart only sentinelcore-web
 ./scripts/deploy.sh homekit  # restart only the HomeKit sidecar (Node, nothing to build)
 ```
 
@@ -467,9 +467,9 @@ sudo visudo -f /etc/sudoers.d/blueiris-deploy
 Add (replace `media` with your actual deploy user if different):
 
 ```
-media ALL=(root) NOPASSWD: /usr/bin/systemctl restart blueiris-ollama-bridge
-media ALL=(root) NOPASSWD: /usr/bin/systemctl restart blueiris-ollama-bridge-web
-media ALL=(root) NOPASSWD: /usr/bin/systemctl restart blueiris-ollama-bridge-homekit
+media ALL=(root) NOPASSWD: /usr/bin/systemctl restart sentinelcore
+media ALL=(root) NOPASSWD: /usr/bin/systemctl restart sentinelcore-web
+media ALL=(root) NOPASSWD: /usr/bin/systemctl restart sentinelcore-homekit
 ```
 
 (The third line is only needed if you installed the optional HomeKit sidecar — see section 8a.)
@@ -489,7 +489,7 @@ allowlisted command lines regardless of whether you run `./deploy.sh`, `./deploy
 ## 11. Updating to a new version
 
 ```bash
-cd /opt/sentinelcore/core
+cd /home/sentinel/Desktop/SentinelCore/core
 git pull
 ./scripts/deploy.sh
 ```
@@ -501,8 +501,8 @@ git pull
 dotnet build-server shutdown
 dotnet build -c Release
 dotnet test
-sudo systemctl restart blueiris-ollama-bridge
-sudo systemctl restart blueiris-ollama-bridge-web
+sudo systemctl restart sentinelcore
+sudo systemctl restart sentinelcore-web
 ```
 
 Configuration changes to `appsettings.json` (most of them — see the note in
@@ -513,12 +513,12 @@ pulling new *code*.
 ## 12. Verifying health
 
 ```bash
-systemctl status blueiris-ollama-bridge blueiris-ollama-bridge-web --no-pager
+systemctl status sentinelcore sentinelcore-web --no-pager
 curl http://127.0.0.1:5080/health/live
 curl http://127.0.0.1:5080/health/ready   # also checks Ollama is reachable
 curl http://127.0.0.1:3320/api/health
-journalctl -u blueiris-ollama-bridge -f       # live tail
-journalctl -u blueiris-ollama-bridge-web -f
+journalctl -u sentinelcore -f       # live tail
+journalctl -u sentinelcore-web -f
 ```
 
 ## 13. Blue Iris-side configuration
@@ -602,7 +602,7 @@ certificate covering this machine's hostname, its `.local` name, and every LAN I
 re-run: it keeps the authority (so devices stay trusted) and reissues only the server
 certificate.
 
-Then point the dashboard at it in `BlueIrisOllamaBridge.Web/appsettings.json`:
+Then point the dashboard at it in `SentinelCore.Web/appsettings.json`:
 
 ```json
 "Https": {
@@ -612,7 +612,7 @@ Then point the dashboard at it in `BlueIrisOllamaBridge.Web/appsettings.json`:
 }
 ```
 
-and restart: `sudo systemctl restart blueiris-ollama-bridge-web`
+and restart: `sudo systemctl restart sentinelcore-web`
 
 **Plain HTTP keeps listening on 3320.** That's deliberate — both mobile apps default to `http://`
 when you type a bare address, so forcing everything to HTTPS would break them on any device that
@@ -635,9 +635,9 @@ certificate means the dashboard won't load at all — worse than the warning it 
 install the timer, which checks monthly and reissues within 30 days of expiry:
 
 ```bash
-sudo cp systemd/blueiris-ollama-bridge-cert-renew.{service,timer} /etc/systemd/system/
+sudo cp systemd/sentinelcore-cert-renew.{service,timer} /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now blueiris-ollama-bridge-cert-renew.timer
+sudo systemctl enable --now sentinelcore-cert-renew.timer
 ```
 
 (Edit the two `__INSTALL_DIR__`/`__APP_USER__` placeholders first, or let
@@ -679,7 +679,7 @@ it, so point the remote address at your tunnel's hostname and nothing else chang
   port would require a login nobody could complete.
 
 Turn it on under Settings → INTERNET EXPOSED MODE (advanced mode), or edit
-`BlueIrisOllamaBridge.Web/appsettings.json` directly:
+`SentinelCore.Web/appsettings.json` directly:
 
 ```json
 "InternetExposed": {
@@ -689,7 +689,7 @@ Turn it on under Settings → INTERNET EXPOSED MODE (advanced mode), or edit
 ```
 
 Port must differ from the HTTPS port (3443 by default). Restart the web dashboard for it to
-take effect: `sudo systemctl restart blueiris-ollama-bridge-web`.
+take effect: `sudo systemctl restart sentinelcore-web`.
 
 Then point your Cloudflare Tunnel's ingress rule at this port over HTTPS, skipping certificate
 verification (the certificate is signed by your own local authority from §14a, not a public one
@@ -731,13 +731,13 @@ for the actual exception. The most common causes are a missing/invalid required 
 pointing at a path that doesn't exist.
 
 **Web dashboard loads but Settings/Prompt Profiles is empty or errors.** Confirm
-`MainAppSettingsPath` in `BlueIrisOllamaBridge.Web/appsettings.json` is an absolute path that
+`MainAppSettingsPath` in `SentinelCore.Web/appsettings.json` is an absolute path that
 actually points at the main app's `appsettings.json` — a relative or wrong path will read
 nothing.
 
 **Cameras/Live/Triggers tabs don't work, or streams never start.** Confirm `ffmpeg` is
 installed and either on `PATH` or that `FfmpegPath` in the Web project's config is an
-absolute path to the binary. Check `journalctl -u blueiris-ollama-bridge-web -f` while
+absolute path to the binary. Check `journalctl -u sentinelcore-web -f` while
 opening the Live tab — ffmpeg errors show up there.
 
 **Health check passes but Blue Iris alerts never arrive.** Confirm the API key in Blue Iris's
@@ -752,10 +752,10 @@ VLANs are the usual causes).
 ## 16. Stopping / uninstalling
 
 ```bash
-sudo systemctl disable --now blueiris-ollama-bridge
-sudo systemctl disable --now blueiris-ollama-bridge-web
-sudo rm /etc/systemd/system/blueiris-ollama-bridge.service
-sudo rm /etc/systemd/system/blueiris-ollama-bridge-web.service
+sudo systemctl disable --now sentinelcore
+sudo systemctl disable --now sentinelcore-web
+sudo rm /etc/systemd/system/sentinelcore.service
+sudo rm /etc/systemd/system/sentinelcore-web.service
 sudo systemctl daemon-reload
 ```
 

@@ -675,11 +675,11 @@ persistent issue doesn't flood the inbox.
 
 ## 18. Where your data lives
 
-- `BlueIrisOllamaBridge/data/images/YYYY-MM-DD/` — saved Blue Iris alert snapshots (if
+- `SentinelCore/data/images/YYYY-MM-DD/` — saved Blue Iris alert snapshots (if
   **Save Images** is on)
-- `BlueIrisOllamaBridge/data/events.db` — SQLite history of every Blue Iris alert
-- `BlueIrisOllamaBridge.Web/data/cameras.db` — your added cameras
-- `BlueIrisOllamaBridge.Web/data/triggers.db` — trigger zone configs and trigger events
+- `SentinelCore/data/events.db` — SQLite history of every Blue Iris alert
+- `SentinelCore.Web/data/cameras.db` — your added cameras
+- `SentinelCore.Web/data/triggers.db` — trigger zone configs and trigger events
 - Recorded clips live alongside the trigger event data
 - `homekit-bridge/persist/` — HomeKit pairing keys and this bridge's identity, if you're using
   HomeKit. Deleting it unpairs every iPhone and forces re-pairing with a new code, so it's

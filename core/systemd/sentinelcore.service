@@ -1,0 +1,25 @@
+[Unit]
+Description=SentinelCore AI Vision Engine
+Wants=network-online.target
+# After, not Requires - Ollama may not be a systemd unit at all (Docker, remote host, or a
+# cloud vision backend instead), and the app already degrades gracefully when it's unreachable.
+After=network-online.target ollama.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__INSTALL_DIR__/SentinelCore
+ExecStart=__DOTNET_PATH__ __INSTALL_DIR__/SentinelCore/bin/Release/net10.0/SentinelCore.dll
+
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://0.0.0.0:__MAIN_PORT__
+Environment=DOTNET_NOLOGO=true
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+SyslogIdentifier=sentinelcore
+
+[Install]
+WantedBy=multi-user.target

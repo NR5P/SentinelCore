@@ -9,6 +9,6 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../BlueIrisOllamaBridge.Licensing/BlueIrisOllamaBridge.Licensing.csproj" />
+    <ProjectReference Include="../SentinelCore.Licensing/SentinelCore.Licensing.csproj" />
   </ItemGroup>
 </Project>

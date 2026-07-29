@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="SentinelCore/SentinelCore.csproj" />
+  <Project Path="SentinelCore.Web/SentinelCore.Web.csproj" />
+  <Project Path="SentinelCore.Tests/SentinelCore.Tests.csproj" />
+  <Project Path="SentinelCore.Licensing/SentinelCore.Licensing.csproj" />
+  <Project Path="LicenseGenerator/LicenseGenerator.csproj" />
+</Solution>

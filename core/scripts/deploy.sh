@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build and restart the BlueIrisOllamaBridge services in place - matching how they're
+# Build and restart the SentinelCore services in place - matching how they're
 # actually deployed (running directly from bin/Release/net10.0 via the systemd units in
 # ../systemd, not published anywhere else). See install-linux.sh for the separate initial
 # install flow, which is not what this script does.
 #
 # Usage:
 #   ./scripts/deploy.sh            # build + restart all services
-#   ./scripts/deploy.sh main       # build + restart only blueiris-ollama-bridge
-#   ./scripts/deploy.sh web        # build + restart only blueiris-ollama-bridge-web
+#   ./scripts/deploy.sh main       # build + restart only sentinelcore
+#   ./scripts/deploy.sh web        # build + restart only sentinelcore-web
 #   ./scripts/deploy.sh homekit    # restart only the HomeKit sidecar (Node, nothing to build)
 #
 # Set SKIP_TESTS=1 to skip the test run (not recommended - it's the one thing standing
@@ -44,22 +44,22 @@ fi
 # NOPASSWD sudoers entries match on exact command lines, so this is what lets both the
 # per-service and combined restarts work under the same allowlisted commands.
 restart_main() {
-  echo "==> Restarting blueiris-ollama-bridge"
-  sudo systemctl restart blueiris-ollama-bridge
+  echo "==> Restarting sentinelcore"
+  sudo systemctl restart sentinelcore
 }
 restart_web() {
-  echo "==> Restarting blueiris-ollama-bridge-web"
-  sudo systemctl restart blueiris-ollama-bridge-web
+  echo "==> Restarting sentinelcore-web"
+  sudo systemctl restart sentinelcore-web
 }
 # Optional - only installed if HomeKit is being used, so a missing unit isn't an error.
 restart_homekit() {
-  if ! systemctl list-unit-files blueiris-ollama-bridge-homekit.service >/dev/null 2>&1 ||
-     ! systemctl cat blueiris-ollama-bridge-homekit >/dev/null 2>&1; then
+  if ! systemctl list-unit-files sentinelcore-homekit.service >/dev/null 2>&1 ||
+     ! systemctl cat sentinelcore-homekit >/dev/null 2>&1; then
     echo "==> Skipping HomeKit sidecar (not installed)"
     return
   fi
-  echo "==> Restarting blueiris-ollama-bridge-homekit"
-  sudo systemctl restart blueiris-ollama-bridge-homekit
+  echo "==> Restarting sentinelcore-homekit"
+  sudo systemctl restart sentinelcore-homekit
 }
 
 case "$TARGET" in
@@ -72,7 +72,7 @@ esac
 sleep 2
 echo
 echo "==> Status"
-systemctl --no-pager --lines=0 status blueiris-ollama-bridge blueiris-ollama-bridge-web 2>/dev/null | grep -E "●|Active:" || true
+systemctl --no-pager --lines=0 status sentinelcore sentinelcore-web 2>/dev/null | grep -E "●|Active:" || true
 
 echo
 echo "==> Health checks"

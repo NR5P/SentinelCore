@@ -5,9 +5,9 @@
 #   ./scripts/install-linux.sh
 #
 # Services installed:
-#   blueiris-ollama-bridge          the alert pipeline           (port 5080)
-#   blueiris-ollama-bridge-web      the dashboard                (port 3320)
-#   blueiris-ollama-bridge-homekit  Apple Home sidecar, optional (needs Node.js)
+#   sentinelcore          the alert pipeline           (port 5080)
+#   sentinelcore-web      the dashboard                (port 3320)
+#   sentinelcore-homekit  Apple Home sidecar, optional (needs Node.js)
 #
 # The HomeKit sidecar is installed whenever Node.js is present, but it stays completely off the
 # network until HomeKit is switched on in the dashboard - installing this shouldn't put an
@@ -155,20 +155,20 @@ install_unit() {
       "$ROOT_DIR/systemd/$name.service" | sudo tee "/etc/systemd/system/$name.service" >/dev/null
 }
 
-install_unit blueiris-ollama-bridge
-install_unit blueiris-ollama-bridge-web
-[[ -n "$NODE_PATH" ]] && install_unit blueiris-ollama-bridge-homekit
+install_unit sentinelcore
+install_unit sentinelcore-web
+[[ -n "$NODE_PATH" ]] && install_unit sentinelcore-homekit
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now blueiris-ollama-bridge
-sudo systemctl enable --now blueiris-ollama-bridge-web
-[[ -n "$NODE_PATH" ]] && sudo systemctl enable --now blueiris-ollama-bridge-homekit
+sudo systemctl enable --now sentinelcore
+sudo systemctl enable --now sentinelcore-web
+[[ -n "$NODE_PATH" ]] && sudo systemctl enable --now sentinelcore-homekit
 
 sleep 3
 echo
 echo "==> Status"
-systemctl --no-pager --lines=0 status blueiris-ollama-bridge blueiris-ollama-bridge-web 2>/dev/null | grep -E "●|Active:" || true
-[[ -n "$NODE_PATH" ]] && (systemctl --no-pager --lines=0 status blueiris-ollama-bridge-homekit 2>/dev/null | grep -E "●|Active:" || true)
+systemctl --no-pager --lines=0 status sentinelcore sentinelcore-web 2>/dev/null | grep -E "●|Active:" || true
+[[ -n "$NODE_PATH" ]] && (systemctl --no-pager --lines=0 status sentinelcore-homekit 2>/dev/null | grep -E "●|Active:" || true)
 
 echo
 echo "==> Health checks"

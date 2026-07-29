@@ -1,5 +1,5 @@
 {
-  "name": "blueiris-homekit-bridge",
+  "name": "sentinelcore-homekit-bridge",
   "version": "1.0.0",
   "private": true,
   "description": "HomeKit sidecar for Sentinel Core - exposes each camera as a motion sensor in Apple Home.",

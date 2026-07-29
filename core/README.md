@@ -1,6 +1,6 @@
-# Blue Iris Ollama Bridge
+# SentinelCore
 
-A .NET 10 ASP.NET Core service that receives Blue Iris alert images over HTTP, queues them, asks a local Ollama vision model configurable questions, stores structured JSON results, and optionally posts completed analyses to a webhook.
+A .NET 10 ASP.NET Core service that receives camera alert images over HTTP (including from Blue Iris, still fully supported), queues them, asks a local Ollama vision model configurable questions, stores structured JSON results, and optionally posts completed analyses to a webhook. `SentinelCore.Web` layers a dashboard, live camera viewing, PTZ control, HomeKit, trigger zones, and account management on top of the same event store.
 
 **Full documentation:**
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — using the dashboard, trigger zones, prompt profiles, Telegram bot, and understanding why an alert did or didn't fire
@@ -10,16 +10,16 @@ The rest of this file is a shorter, more code-oriented overview of the main app 
 
 ## Architecture
 
-Blue Iris (Windows) -> multipart HTTP POST -> bridge on port 5080 -> background queue -> Ollama at localhost:11434 -> JSON result/webhook.
+Blue Iris (Windows), or any other alert source posting the same multipart shape, -> HTTP POST -> SentinelCore on port 5080 -> background queue -> Ollama at localhost:11434 -> JSON result/webhook.
 
-The queue lets Blue Iris receive `202 Accepted` immediately instead of waiting for CPU inference to finish.
+The queue lets the sender receive `202 Accepted` immediately instead of waiting for CPU inference to finish.
 
 ## Prerequisites
 
 - Ollama running on the Linux host
 - `gemma3:4b` installed: `ollama pull gemma3:4b`
 - .NET 10 SDK
-- Blue Iris can reach the Linux host over the LAN
+- Whatever is sending alerts (e.g. Blue Iris) can reach the Linux host over the LAN
 
 ## Install .NET 10
 
@@ -35,7 +35,7 @@ If `dotnet` installs somewhere other than `/usr/bin/dotnet`, run `command -v dot
 
 ## Configure
 
-Edit `BlueIrisOllamaBridge/appsettings.json`:
+Edit `SentinelCore/appsettings.json`:
 
 1. Replace `Bridge:ApiKey` with a long random value, for example:
    `openssl rand -hex 32`
@@ -48,7 +48,7 @@ Do not expose port 5080 directly to the Internet. The API key is intended for LA
 ## Run interactively
 
 ```bash
-dotnet run --project BlueIrisOllamaBridge/BlueIrisOllamaBridge.csproj
+dotnet run --project SentinelCore/SentinelCore.csproj
 ```
 
 Tests:
@@ -80,7 +80,7 @@ curl -H "X-Api-Key: $API_KEY" http://127.0.0.1:5080/api/results/REPLACE-WITH-ID
 
 ## Install as a service
 
-The installer detects the active `dotnet` path, including a Snap installation. It defaults to Linux user `media` and `/opt/blueiris-ollama-bridge`. Override those with `APP_USER` or `INSTALL_DIR` environment variables.
+The installer detects the active `dotnet` path, including a Snap installation. It defaults to Linux user `media` and `/opt/sentinelcore`. Override those with `APP_USER` or `INSTALL_DIR` environment variables.
 
 Then:
 
@@ -92,7 +92,7 @@ chmod +x scripts/install-linux.sh
 Logs:
 
 ```bash
-journalctl -u blueiris-ollama-bridge -f
+journalctl -u sentinelcore -f
 ```
 
 The service starts after and requires `ollama.service`.
@@ -209,9 +209,9 @@ Watches for the two ways this service can silently stop protecting the camera: O
 
 ## Web UI
 
-`BlueIrisOllamaBridge.Web` is a separate ASP.NET Core project (own subfolder, own process) that serves the event history from `events.db` - a dark, terminal-styled feed of recent events with thumbnails, click-to-zoom, auto-refresh, and a day-indexed trigger-clip timeline. The timeline overlays AI markers on short Blue Iris alert-linked clip windows, proxies timestamp frames for rapid review, and stores reviewed/unreviewed state in `timeline-reviews.db`. It does not save or expose continuous full-day video. It's a plain HTML/CSS/JS static site (no build step, no framework) served alongside a small JSON API.
+`SentinelCore.Web` is a separate ASP.NET Core project (own subfolder, own process) that serves the event history from `events.db` - a dark, terminal-styled feed of recent events with thumbnails, click-to-zoom, auto-refresh, and a day-indexed trigger-clip timeline. The timeline overlays AI markers on short Blue Iris alert-linked clip windows, proxies timestamp frames for rapid review, and stores reviewed/unreviewed state in `timeline-reviews.db`. It does not save or expose continuous full-day video. It's a plain HTML/CSS/JS static site (no build step, no framework) served alongside a small JSON API.
 
-It doesn't run the alert pipeline itself; it only reads the same SQLite database and image files the main service already writes, via a `ProjectReference` back to `BlueIrisOllamaBridge` so it reuses `IEventStore` directly rather than duplicating any logic.
+It doesn't run the alert pipeline itself; it only reads the same SQLite database and image files the main service already writes, via a `ProjectReference` back to `SentinelCore` so it reuses `IEventStore` directly rather than duplicating any logic.
 
 Trigger-clip review uses the main app's `BlueIris` URL and credentials. When an event's friendly
 camera name is different from the Blue Iris short name, map it explicitly:
@@ -231,22 +231,22 @@ camera name is different from the Blue Iris short name, map it explicitly:
 }
 ```
 
-Runs on port 3320 (port 332 itself is a privileged port on Linux and would need root or `setcap` to bind - 3320 avoids that). Configure `Bridge:DataDirectory` in `BlueIrisOllamaBridge.Web/appsettings.json` to point at the same `data/` directory the main service uses:
+Runs on port 3320 (port 332 itself is a privileged port on Linux and would need root or `setcap` to bind - 3320 avoids that). Configure `Bridge:DataDirectory` in `SentinelCore.Web/appsettings.json` to point at the same `data/` directory the main service uses:
 
 ```json
 "Urls": "http://0.0.0.0:3320",
 "Bridge": {
-  "DataDirectory": "/absolute/path/to/BlueIrisOllamaBridge/data"
+  "DataDirectory": "/absolute/path/to/SentinelCore/data"
 }
 ```
 
 ### Settings
 
-The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `BlueIrisOllamaBridge.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Discord alerts, Blue Iris, self-monitoring, quiet hours, and the webhook. Each section validates and saves independently.
+The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `SentinelCore.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Discord alerts, Blue Iris, self-monitoring, quiet hours, and the webhook. Each section validates and saves independently.
 
 Everything shown is picked up live via `IOptionsMonitor<T>` - .NET's built-in file-watch reload on `appsettings.json` - so saving a change takes effect within a couple seconds, no restart. Two things are deliberately left out of the UI because they can't be: `Bridge:QueueCapacity` and `Bridge:DataDirectory` size an in-memory queue and open a SQLite connection once at startup, so changing them always needs a restart regardless of how the value is stored. A few `*BaseUrl`/`*TimeoutSeconds` fields are similarly baked into an HTTP client at startup and are also left out rather than half-supported.
 
-Run it interactively with `dotnet run --project BlueIrisOllamaBridge.Web/BlueIrisOllamaBridge.Web.csproj`, or install it as a systemd service the same way as the main app - see `systemd/blueiris-ollama-bridge-web.service`. Meant for LAN-only access; nothing about it is designed to be exposed to the Internet.
+Run it interactively with `dotnet run --project SentinelCore.Web/SentinelCore.Web.csproj`, or install it as a systemd service the same way as the main app - see `systemd/sentinelcore-web.service`. Meant for LAN-only access; nothing about it is designed to be exposed to the Internet.
 
 ## The additional action
 

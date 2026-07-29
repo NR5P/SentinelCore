@@ -14,7 +14,7 @@ it's the root of trust for every license you'll ever issue, it must never be com
 leave your machine, and if it's lost you can't issue another valid license without shipping a
 new public key to every past customer.
 
-Paste the printed public key into `BlueIrisOllamaBridge/LicenseStatus.cs` (`PublicKeyPem`) once,
+Paste the printed public key into `SentinelCore/LicenseStatus.cs` (`PublicKeyPem`) once,
 then rebuild and deploy the app as normal. This only needs to happen once, ever.
 
 ## Per sale
