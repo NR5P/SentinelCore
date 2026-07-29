@@ -50,11 +50,16 @@ public static class AuthEndpoints
             });
         });
 
-        app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
+        app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AppSettingsFile settings, IAccountStore accounts, InternetExposedSettings internetExposed, ILogger<LoginRequest> logger, CancellationToken ct) =>
         {
-            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var ip = ClientIpResolver.Resolve(context, internetExposed);
+            var via = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port ? "internet-exposed" : "LAN";
+
             if (IsRateLimited(ip))
+            {
+                logger.LogWarning("Login rate-limited for {Username} from {Ip} ({Via}) after repeated failures", request.Username, ip, via);
                 return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+            }
 
             var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
             var account = auth is { Enabled: true } ? await accounts.GetByUsernameAsync(request.Username ?? "", ct) : null;
@@ -63,17 +68,26 @@ public static class AuthEndpoints
             if (!valid)
             {
                 RecordFailure(ip);
+                logger.LogWarning("Login failed for {Username} from {Ip} ({Via})", request.Username, ip, via);
                 return Results.Json(new { error = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
             }
 
             await SignInAsync(context, account!);
+            logger.LogInformation("Login succeeded for {Username} ({Role}) from {Ip} ({Via})", account!.Username, account.Role, ip, via);
             return Results.Ok(new { success = true });
         });
 
         // No RequireAuthorization here on purpose: signing out with an already-expired or
         // missing session should still succeed rather than 401 - it has nothing left to do.
-        app.MapPost("/api/auth/logout", async (HttpContext context) =>
+        app.MapPost("/api/auth/logout", async (HttpContext context, InternetExposedSettings internetExposed, ILogger<LoginRequest> logger) =>
         {
+            var username = context.User.Identity?.IsAuthenticated == true ? context.User.Identity.Name : null;
+            if (username is not null)
+            {
+                var ip = ClientIpResolver.Resolve(context, internetExposed);
+                logger.LogInformation("Logout for {Username} from {Ip}", username, ip);
+            }
+
             await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
             return Results.Ok(new { success = true });
         });
@@ -84,11 +98,14 @@ public static class AuthEndpoints
         // credentials. Once accounts exist, calling this again just flips Auth:Enabled back on
         // (e.g. after a prior disable) - no new account is created, so it can't be used to
         // sneak in a second admin, and a real Admin session is required to call it at all.
-        app.MapPost("/api/auth/enable", async (HttpContext context, EnableRequest request, AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
+        app.MapPost("/api/auth/enable", async (HttpContext context, EnableRequest request, AppSettingsFile settings, IAccountStore accounts, InternetExposedSettings internetExposed, ILogger<LoginRequest> logger, CancellationToken ct) =>
         {
+            var ip = ClientIpResolver.Resolve(context, internetExposed);
+
             if (await accounts.AnyAccountsExistAsync(ct))
             {
                 await settings.MergeSectionAsync("Auth", new AuthSettingsDto { Enabled = true }, ct);
+                logger.LogInformation("Login requirement turned on from {Ip}", ip);
                 return Results.Ok(new { success = true });
             }
 
@@ -100,13 +117,16 @@ public static class AuthEndpoints
             await settings.MergeSectionAsync("Auth", new AuthSettingsDto { Enabled = true }, ct);
 
             await SignInAsync(context, account);
+            logger.LogInformation("First admin account {Username} created and login turned on from {Ip}", account.Username, ip);
             return Results.Ok(new { success = true });
         }).RequireAuthorization("AdminOnly");
 
-        app.MapPost("/api/auth/disable", async (AppSettingsFile settings, IAccountStore accounts, CancellationToken ct) =>
+        app.MapPost("/api/auth/disable", async (HttpContext context, AppSettingsFile settings, IAccountStore accounts, InternetExposedSettings internetExposed, ILogger<LoginRequest> logger, CancellationToken ct) =>
         {
+            var ip = ClientIpResolver.Resolve(context, internetExposed);
             await settings.MergeSectionAsync("Auth", new AuthSettingsDto { Enabled = false }, ct);
             await accounts.InvalidateAllAsync(ct);
+            logger.LogWarning("Login requirement turned off from {Ip} - the dashboard is now open to anyone who can reach it", ip);
             return Results.Ok(new { success = true });
         }).RequireAuthorization("AdminOnly");
     }
