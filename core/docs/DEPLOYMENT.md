@@ -762,6 +762,22 @@ your LAN needs to reach this port, and the tunnel is what actually exposes it to
 sudo ufw allow from 127.0.0.1 to any port 3444 proto tcp
 ```
 
+**Client IP logging.** Every login attempt, logout, and change to the login requirement itself is
+logged with the resolved client IP. On the normal LAN port, that's always the raw TCP peer
+address — a forwarded-for header is never trusted there, since honoring one would let any LAN
+client spoof its own logged IP. On the Internet Exposed port specifically, `CF-Connecting-IP` is
+trusted first (the header `cloudflared` passes through from Cloudflare's edge unmodified), then
+`X-Forwarded-For` if that's absent, falling back to the raw TCP peer otherwise. This is only safe
+because this port is firewalled to `127.0.0.1` as shown above, so nothing except `cloudflared`
+itself running on this same host can ever be in a position to set that header before the app sees
+it — don't skip that firewall rule. None of this affects authorization, only what IP shows up in
+a log line; a misconfigured firewall would at worst mislabel who did something, not open a
+security hole. There's no separate audit-log file for any of this — it's ordinary `ILogger`
+output, so it lands wherever the rest of the web dashboard's logs do:
+`journalctl -u sentinelcore-web -f`. Repeated failed logins from the same resolved IP (10 within
+5 minutes) get a 429 rather than being logged forever; that counter is in-memory only and resets
+on every restart.
+
 ## 14c. Local network discovery (optional)
 
 The web dashboard advertises itself over mDNS/DNS-SD (service type `_sentinelcore._tcp`) so the

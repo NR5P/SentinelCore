@@ -8,18 +8,23 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 
 1. [What this system does](#1-what-this-system-does)
 2. [Opening the dashboard](#2-opening-the-dashboard)
+2a. [The iOS, Android, and Apple TV apps](#2a-the-ios-android-and-apple-tv-apps)
 3. [The FEED tab — Blue Iris alerts](#3-the-feed-tab--blue-iris-alerts)
 3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
 5b. [Gate/door open check — a safety check independent of motion alerts](#5b-gatedoor-open-check--a-safety-check-independent-of-motion-alerts)
+5c. [Camera Groups — cross-camera recording & incident correlation](#5c-camera-groups--cross-camera-recording--incident-correlation)
 6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
 6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
+6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
 7. [The SETTINGS tab](#7-the-settings-tab)
+7a. [System health — how hard the server is working](#7a-system-health--how-hard-the-server-is-working)
 8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
 9. [Prompt profiles — what the AI is told to look for](#9-prompt-profiles--what-the-ai-is-told-to-look-for)
 10. [License plate recognition & known vehicles](#10-license-plate-recognition--known-vehicles)
+10a. [Known Faces — local face recognition](#10a-known-faces--local-face-recognition)
 11. [The Telegram bot](#11-the-telegram-bot)
 11a. [Discord alerts](#11a-discord-alerts)
 12. [Email](#12-email)
@@ -92,6 +97,38 @@ live video, and trigger clips. Both are informational only - every feature, incl
 those images and video, keeps working exactly as normal either way, nothing is blocked. To clear
 it, open SETTINGS → LICENSE and upload the `.lic` file you were emailed - it's verified and
 written to disk immediately, no restart needed.
+
+## 2a. The iOS, Android, and Apple TV apps
+
+Everything above describes the web dashboard, but native apps exist for iPhone/iPad, Android,
+and Apple TV too. They talk to the same server over the same API — there's no separate account
+system, and turning login on or off in the dashboard (see above) applies to every app equally.
+
+**Finding your server.** The first time you open any of the apps, the setup screen searches
+your local network automatically and shows *"Found on your network"* with any server it locates
+by name — tap one to connect. This uses the same local-network discovery the server advertises
+by default (`Discovery: Enabled` in `SentinelCore.Web/appsettings.json` — see
+[DEPLOYMENT.md](DEPLOYMENT.md) section 14c); if that's been turned off, or the phone is on a
+different network/VLAN than the server, nothing will show up. Either way, a manual address field
+(`http://192.168.1.50:3320`) is always available right there too, so discovery is a convenience,
+never a requirement.
+
+**iOS and Android** are close to full parity with the web dashboard: the Feed, Timeline, Live
+view, adding/editing cameras, PTZ control, Triggers, Automations, and every Settings section
+including [Known Faces](#10a-known-faces--local-face-recognition) enrollment (with a direct
+camera-capture option the web UI doesn't have) and [System health](#7a-system-health--how-hard-the-server-is-working).
+
+**Apple TV** is deliberately smaller in scope — live camera viewing, the alert feed, trigger
+history, and settings, but no camera/account administration and no PTZ controls (those stay on
+iOS/Android/web, where they're easier to use anyway). Its one feature the other apps don't have:
+if a high-confidence alert fires while the Apple TV app itself is the one on screen, it
+automatically switches to a full-screen live view of the camera that triggered — no need to
+leave what you're doing and go find the right camera. If you're watching something else (Apple
+TV+, another app), you still get a normal system notification banner, just not the automatic
+full-screen switch — tvOS doesn't allow one app to draw over another app's video.
+
+Push notifications (a phone/TV alert even when the app itself isn't open) are configured
+separately — see [docs/PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md).
 
 ## 3. The FEED tab — Blue Iris alerts
 
@@ -259,6 +296,35 @@ Notifications from this feature go through the same Email/Telegram/MQTT/HomeKit/
 every other alert, and appear in the FEED tab like any other event — it's a different way of
 noticing something worth telling you about, not a separate notification system.
 
+## 5c. Camera Groups — cross-camera recording & incident correlation
+
+A trigger zone (see the next section) watches one camera in isolation. **Camera Groups** are for
+when several cameras cover the same physical path — a gate, then the driveway, then the front
+door — and you want a trigger on one of them to pull the others in too, instead of getting three
+separate, seemingly-unrelated events.
+
+**Turning it on:** on the **CAMERAS** tab, click **camera groups**, then **+ add group**. Give it
+a name, and pick at least two cameras to include — a camera can only belong to **one** group at
+a time. Three more settings:
+
+| Setting | What it does |
+|---|---|
+| Correlation window | How many seconds after one camera in the group fires count as "the same incident" for the others (default 45s — a rough walking-time estimate between typically-spaced cameras). |
+| Record companion clips | On by default. When one camera fires, grabs a snapshot from every other camera in the group too, and records a video clip for it if that camera's own trigger zone has clip recording turned on. |
+| Also analyze companion cameras with AI | Off by default. Sends every companion camera's snapshot through its own full AI analysis (using that camera's own prompt profile) and its own Feed entry/notification, rather than just a recorded clip. Costs proportionally more AI processing per trigger — leave it off unless you specifically want independent alerts from every camera in the group, not just the one that actually triggered. |
+
+**What happens:** when a camera in a group fires its trigger zone, the other members are pulled
+into the same incident — their current snapshot (and clip, if enabled) is captured immediately,
+tagged as part of the same event. A camera with no trigger zone of its own, or with its zone
+disabled, is simply skipped rather than causing an error. On the **TRIGGERS** tab, events that
+share an incident show a **🔗 +N cameras** badge — hover it to see which other cameras were part
+of the same incident. The triggering alert's notification also gets an extra line, *"Also
+recorded: CameraA, CameraB"*, listing what else was captured alongside it.
+
+**What it does not do:** grouping cameras never changes each camera's own trigger-zone settings
+(shape, sensitivity, rate limiting) — it only adds companion recording/analysis on top of
+whatever each camera was already going to do on its own.
+
 ## 6. The TRIGGERS tab — motion zones on your own cameras
 
 This is where you set up motion detection on cameras you added in the CAMERAS tab. Click a
@@ -335,6 +401,32 @@ Every rule card has a **test** button that fires it immediately against sample d
 for checking a topic/payload or URL/body actually work before waiting for a real detection. The
 result (published topic, or the HTTP status the endpoint returned) shows next to the button.
 
+## 6b. Multi-frame analysis — reducing false positives from a single frame
+
+A single still image is sometimes ambiguous — a shadow, a headlight sweep, a reflection, or an
+insect near the lens can look enough like a person or animal to fool a one-frame analysis. This
+feature asks the AI to look at a couple of frames from the same trigger, a fraction of a second
+apart, and reason about whether whatever it's looking at behaves like a real, physically
+consistent subject rather than a one-frame artifact.
+
+**Turning it on:** in **Settings → Advanced**, open **Multi-Frame Analysis** and enable it. Two
+settings: how many extra frames to capture beyond the first (1 or 2), and how many milliseconds
+apart to space them (150–1000ms, default 350ms).
+
+**What happens:** all frames from that trigger — the original plus the extras — are sent to the
+AI together in one combined analysis, in chronological order, with an instruction to only report
+a person/vehicle/animal if it appears consistently across the frames rather than in just one of
+them. This is one AI call per alert, not one call per frame, so it doesn't multiply notification
+latency the way running several separate analyses would — but it does still cost somewhat more
+processing time per alert than a single frame, since there's more image data to look at. Leave it
+off if single-frame analysis is already comfortably fast and accurate for your cameras.
+
+**What it applies to:** only your own added cameras' trigger zones that have **Send triggers to
+the AI and alert pipeline** turned on (see [section 6](#6-the-triggers-tab--motion-zones-on-your-own-cameras)).
+Blue Iris alerts always arrive as a single image and are unaffected either way. Camera Groups'
+optional companion-camera analysis (previous section) also always uses a single frame regardless
+of this setting, to keep its own added cost predictable.
+
 ## 7. The SETTINGS tab
 
 Every section below saves independently and applies live — no restart needed, except where
@@ -347,7 +439,8 @@ which is why the section paragraphs are there).
 shows only the settings most people actually change: Bridge, Email, Daily Summary, Telegram
 Alerts, Discord Alerts, Outage Alerts, Quiet Hours, Bug Reports, Apple HomeKit, Backup, Login
 and License. **Advanced** adds everything else: the AI tuning knobs, image processing,
-self-monitoring thresholds, webhooks, MQTT, known vehicles and prompt profiles.
+self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces, multi-frame analysis,
+and prompt profiles.
 
 Nothing is ever lost or reset by switching — advanced settings keep working exactly as
 configured while hidden, and the choice is remembered on that device only, so a phone can stay
@@ -397,6 +490,13 @@ The full list below covers both modes:
   fits with the other rate-limiting layers.
 - **Known Vehicles** — the list a transcribed license plate is checked against. Its own
   section below. See [section 10](#10-license-plate-recognition--known-vehicles).
+- **Known Faces** — enroll people so the system can note when it recognizes them. Its own
+  section below. See [section 10a](#10a-known-faces--local-face-recognition).
+- **Multi-Frame Analysis** — has the AI look at a couple of frames per trigger instead of one, to
+  cut down on shadow/reflection false positives. See
+  [section 6b](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame).
+- **System Health** — a read-only view of CPU, memory, disk, queue depth, and vision-backend
+  reachability. See [section 7a](#7a-system-health--how-hard-the-server-is-working).
 - **MQTT / Home Assistant** — publishes events over MQTT with Home Assistant auto-discovery,
   optionally using this app as its own broker. Its own section below. See
   [section 13](#13-mqtt--home-assistant).
@@ -418,6 +518,19 @@ startup no matter how they're stored: `Bridge:QueueCapacity`/`Bridge:DataDirecto
 in-memory queue and opens a database connection once), and a few `*BaseUrl`/`*TimeoutSeconds`
 fields that size an HTTP client. Changing those needs a restart regardless — see
 [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## 7a. System health — how hard the server is working
+
+A read-only panel in Settings (and in the iOS/Android apps' own Settings screen) showing how the
+server is doing right now: CPU usage (as a percentage of all cores), memory used, disk space
+free, how many alerts are currently queued waiting for AI analysis, whether the vision backend
+(Ollama or Cloud Vision, whichever is active) is currently reachable, and how long the server has
+been running since its last restart.
+
+There's nothing to configure here — it refreshes on its own every few seconds and never affects
+any setting. It's mainly useful for spotting a machine that's struggling (a queue that keeps
+growing, a vision backend that's gone unreachable) before it turns into missed alerts, or for a
+quick sanity check after a restart or update that everything actually came back up healthy.
 
 ## 8. Vision analysis backend — local, cloud, or both
 
@@ -540,6 +653,35 @@ from a general-purpose local vision model on a security-camera frame is inherent
 miss, especially at lower resolutions, so it isn't trustworthy enough to gate real security
 decisions on. Treat it as a helpful hint on top of an alert you'd already be getting, not as
 its own detection layer.
+
+## 10a. Known Faces — local face recognition
+
+Off by default, and — like license plate recognition — it's per prompt profile rather than a
+single global switch, so you turn it on only for the camera(s) where it's actually useful (a
+close-up front door or gate camera, say, not a wide field view where faces are too small or
+distant to match reliably).
+
+**Enrolling a person:** in **Settings → Known Faces**, click **+ add person**, give them a name,
+and provide one clear reference photo. On iOS and Android you can take the photo directly with
+the camera or choose one from your photo library; the web dashboard accepts a file upload only.
+You can add more reference photos to an existing person at any time — more angles/lighting
+generally improves matching. A person's name can't be edited after creation; delete and re-add
+if you need to fix a typo.
+
+**Turning it on for a camera:** open the relevant prompt profile (see
+[section 9](#9-prompt-profiles--what-the-ai-is-told-to-look-for)) and enable **Face recognition**.
+
+**What happens:** every alert image from a face-recognition-enabled profile is checked against
+your enrolled faces entirely on-device — this runs locally regardless of whether Ollama or a
+Cloud Vision provider is doing the descriptive analysis for that same alert, and no image or face
+data is ever sent anywhere for this specific check. A match is noted on the alert as *"Recognized:
+Name"*; a face that's detected but doesn't match anyone enrolled is noted as *"Face detected:
+unrecognized"*.
+
+**What it does not do:** exactly like license plate recognition, a known or unknown face never
+changes whether an alert fires or gets suppressed — it's informational only, appended after the
+AI has already decided the event was worth analyzing. Don't rely on it as its own security layer;
+treat it as a helpful label on top of an alert you'd already be getting.
 
 ## 11. The Telegram bot
 
