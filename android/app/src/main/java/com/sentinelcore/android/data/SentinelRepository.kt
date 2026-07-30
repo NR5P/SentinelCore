@@ -682,13 +682,7 @@ class SentinelRepository(
         }
     }
 
-    private fun normalizedBaseUrl(): String? {
-        val trimmed = baseUrl.trim().trimEnd('/')
-        if (trimmed.isBlank()) return null
-        val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
-        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return null
-        return trimmed
-    }
+    private fun normalizedBaseUrl(): String? = ServerAddress.normalize(baseUrl)
 
     private fun parseServerError(body: String): String? {
         if (body.isBlank()) return null
@@ -704,10 +698,7 @@ class SentinelRepository(
         }.getOrNull()
     }
 
-    private fun parseInstant(value: String): Instant =
-        runCatching { Instant.parse(value) }
-            .recoverCatching { OffsetDateTime.parse(value).toInstant() }
-            .getOrElse { throw IOException("Invalid server timestamp: $value") }
+    private fun parseInstant(value: String): Instant = ServerTimestamp.parse(value)
 
     private fun parseEvent(json: JSONObject): SecurityEvent =
         SecurityEvent(

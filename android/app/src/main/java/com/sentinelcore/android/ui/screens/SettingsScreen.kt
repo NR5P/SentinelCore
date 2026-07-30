@@ -125,7 +125,9 @@ fun SettingsScreen(
                     }
                     Text(
                         "A Cloudflare Tunnel (or any other externally-reachable) address to use " +
-                            "when the local address can't be reached, such as away from home on cellular.",
+                            "when the local address can't be reached, such as away from home on cellular. " +
+                            "Point it at the server's Internet Exposed port, not the normal dashboard port — " +
+                            "that port always requires a login, while the normal one trusts the local network.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

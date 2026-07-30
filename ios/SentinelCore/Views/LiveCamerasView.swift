@@ -1,13 +1,8 @@
 import AVKit
 import SwiftUI
 
-// AVPlayer's default buffering waits to build up a comfortable cushion before it'll start
-// playing, which is the right call for on-demand video but adds needless delay for a live feed
-// where "as current as possible, right away" matters more than smooth playback of a buffer.
-private func configureForFastStart(_ player: AVPlayer) {
-    player.automaticallyWaitsToMinimizeStalling = false
-    player.currentItem?.preferredForwardBufferDuration = 1
-}
+// Player lifetime, the poster-frame handoff, fast-start buffering, and reconnect-on-drop all
+// live in LiveStreamPlayer.
 
 struct LiveCamerasView: View {
     @EnvironmentObject private var model: AppModel
@@ -89,8 +84,7 @@ private struct LiveCameraPreview: View {
     @EnvironmentObject private var model: AppModel
     let camera: Camera
     let isActive: Bool
-    @State private var player: AVPlayer?
-    @State private var isVideoReady = false
+    @StateObject private var stream = LiveStreamPlayer(muted: true)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -102,65 +96,51 @@ private struct LiveCameraPreview: View {
                 AsyncImage(url: posterURL) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color.clear }
-                .opacity(isVideoReady ? 0 : 1)
+                .opacity(stream.isVideoReady ? 0 : 1)
             }
-            if let player {
-                VideoPlayer(player: player)
-                    // The whole tile opens the camera detail; playback controls live there.
-                    .allowsHitTesting(false)
-                    .opacity(isVideoReady ? 1 : 0)
-            }
-            StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
+            VideoPlayer(player: stream.player)
+                // The whole tile opens the camera detail; playback controls live there.
+                .allowsHitTesting(false)
+                .opacity(stream.isVideoReady ? 1 : 0)
+            LiveStatusChip(isVideoReady: stream.isVideoReady)
                 .padding(10)
         }
         .task(id: isActive) {
             if isActive {
-                startPlayback()
+                if let streamURL { stream.start(url: streamURL) }
             } else {
-                player?.pause()
-                isVideoReady = false
+                stream.pause()
                 try? await Task.sleep(for: Self.teardownGrace)
-                stopPlayback()
+                stream.stop()
             }
         }
-        .onDisappear(perform: stopPlayback)
+        .onDisappear { stream.stop() }
     }
 
     private var posterURL: URL? {
         model.client.url(path: "/api/cameras/\(camera.id.uuidString)/thumbnail.jpg")
     }
 
-    private func startPlayback() {
-        guard player == nil else {
-            player?.play()
-            return
-        }
-        guard let url = model.client.url(
-            path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8"
-        ) else { return }
-
-        let newPlayer = AVPlayer(url: url)
-        newPlayer.isMuted = true
-        configureForFastStart(newPlayer)
-        player = newPlayer
-        newPlayer.play()
-        observeFirstFrame(newPlayer)
+    private var streamURL: URL? {
+        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
     }
+}
 
-    private func stopPlayback() {
-        player?.pause()
-        player = nil
-        isVideoReady = false
-    }
+// A green "LIVE" badge over a tile that is actually frozen or reconnecting is worse than no
+// badge at all - it's the one thing on screen claiming the feed is current. Until the first
+// frame lands (and again after a drop, while LiveStreamPlayer backs off and retries) this says
+// so instead.
+private struct LiveStatusChip: View {
+    let isVideoReady: Bool
 
-    // Reveals the video (and hides the poster) only once the player has actually started
-    // advancing - readyToPlay alone still leaves a black frame up briefly.
-    private func observeFirstFrame(_ player: AVPlayer) {
-        var token: Any?
-        token = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 60), queue: .main) { time in
-            guard time.seconds > 0 else { return }
-            isVideoReady = true
-            if let token { player.removeTimeObserver(token) }
+    var body: some View {
+        if isVideoReady {
+            StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
+        } else {
+            // StatusChip tints its text with this colour, and it sits on the tile's black
+            // backdrop rather than the app background - .secondary would resolve to dark grey
+            // on black in light mode and be unreadable.
+            StatusChip("CONNECTING", systemImage: "circle.dotted", color: .white.opacity(0.7))
         }
     }
 }
@@ -168,8 +148,7 @@ private struct LiveCameraPreview: View {
 struct LivePlayerView: View {
     @EnvironmentObject private var model: AppModel
     let camera: Camera
-    @State private var player: AVPlayer?
-    @State private var isVideoReady = false
+    @StateObject private var stream = LiveStreamPlayer(muted: false)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -178,18 +157,17 @@ struct LivePlayerView: View {
                 AsyncImage(url: posterURL) { image in
                     image.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: { Color.clear }
-                .opacity(isVideoReady ? 0 : 1)
+                .opacity(stream.isVideoReady ? 0 : 1)
             }
-            if let player {
-                VideoPlayer(player: player)
-                    .opacity(isVideoReady ? 1 : 0)
-            } else {
+            VideoPlayer(player: stream.player)
+                .opacity(stream.isVideoReady ? 1 : 0)
+            if !stream.isVideoReady {
                 ProgressView("Starting stream…")
                     .tint(.white)
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
+            LiveStatusChip(isVideoReady: stream.isVideoReady)
                 .padding()
         }
         .overlay(alignment: .bottomTrailing) {
@@ -204,22 +182,8 @@ struct LivePlayerView: View {
         #endif
         .task {
             guard let url = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8") else { return }
-            let newPlayer = AVPlayer(url: url)
-            configureForFastStart(newPlayer)
-            player = newPlayer
-            newPlayer.play()
-
-            var token: Any?
-            token = newPlayer.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 60), queue: .main) { time in
-                guard time.seconds > 0 else { return }
-                isVideoReady = true
-                if let token { newPlayer.removeTimeObserver(token) }
-            }
+            stream.start(url: url)
         }
-        .onDisappear {
-            player?.pause()
-            player = nil
-            isVideoReady = false
-        }
+        .onDisappear { stream.stop() }
     }
 }

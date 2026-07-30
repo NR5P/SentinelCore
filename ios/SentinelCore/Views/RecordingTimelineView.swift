@@ -149,7 +149,10 @@ struct RecordingTimelineView: View {
                         systemImage: "video.slash",
                         description: Text(day?.recording.error ?? "Choose a highlighted trigger window on the timeline.")
                     )
-                    .foregroundStyle(.secondary)
+                    // The backdrop here is always the black video rectangle above, never the
+                    // app background, so .secondary resolves to dark-grey-on-black in light
+                    // mode and the message is effectively invisible. Pin it to a light tone.
+                    .foregroundStyle(.white.opacity(0.65))
                 }
             }
             .aspectRatio(16 / 9, contentMode: .fit)
@@ -244,7 +247,11 @@ struct RecordingTimelineView: View {
                         .frame(width: 112, height: 68)
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                         VStack(alignment: .leading, spacing: 5) {
-                            HStack {
+                            // Four short labels sharing what's left of the row after the 112pt
+                            // thumbnail. Left unconstrained they wrap and hyphenate mid-word on
+                            // a compact-width phone - "OTH-ER", "1:46 P / M". One line each,
+                            // shrinking a little before truncating, keeps them readable.
+                            HStack(spacing: 6) {
                                 Text(event.occurredAt.formatted(date: .omitted, time: .shortened))
                                     .foregroundStyle(SentinelTheme.cyan)
                                 Text(event.category.uppercased())
@@ -256,7 +263,13 @@ struct RecordingTimelineView: View {
                                         .foregroundStyle(.secondary)
                                 }
                             }
-                            .font(.caption)
+                            .font(.caption2)
+                            .lineLimit(1)
+                            // Shrink the whole row rather than truncate any one label: these are
+                            // already terse, and "OTH…" / "NO…" carry no meaning. Without this
+                            // they wrap and hyphenate mid-word on a compact-width phone -
+                            // "OTH-ER", "1:46 P / M".
+                            .minimumScaleFactor(0.65)
                             Text(event.summary.isEmpty ? event.eventType : event.summary)
                                 .lineLimit(2)
                         }
@@ -320,12 +333,17 @@ struct RecordingTimelineView: View {
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
             queue: .main
         ) { time in
-            guard isPlaying, let segment = loadedSegment else { return }
-            let updated = segment.start.addingTimeInterval(time.seconds)
-            if updated >= segment.end {
-                advancePastSegment()
-            } else {
-                cursor = updated
+            // addPeriodicTimeObserver(queue: .main) documents delivery on that queue, so this
+            // is already MainActor - assumeIsolated rather than hopping, which would land a
+            // quarter-second-stale cursor a frame late.
+            MainActor.assumeIsolated {
+                guard isPlaying, let segment = loadedSegment else { return }
+                let updated = segment.start.addingTimeInterval(time.seconds)
+                if updated >= segment.end {
+                    advancePastSegment()
+                } else {
+                    cursor = updated
+                }
             }
         }
     }

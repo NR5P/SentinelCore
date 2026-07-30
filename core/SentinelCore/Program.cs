@@ -335,10 +335,13 @@ app.MapGet("/health/live", (IAlertQueue queue) => Results.Ok(new
     timestamp = DateTimeOffset.UtcNow
 }));
 
+// "unavailable" rather than "unreachable": readiness now also fails when the backend answers
+// fine but the configured model isn't installed, which is not a reachability problem. The
+// specific cause (and the `ollama pull` to fix it) is logged by the client.
 app.MapGet("/health/ready", async (IVisionAnalysisClient vision, CancellationToken ct) =>
     await vision.IsReadyAsync(ct)
         ? Results.Ok(new { status = "ready", vision = "reachable" })
-        : Results.Json(new { status = "not-ready", vision = "unreachable" }, statusCode: 503));
+        : Results.Json(new { status = "not-ready", vision = "unavailable" }, statusCode: 503));
 
 app.MapPost("/api/blueiris/alert", async (
     HttpRequest request,

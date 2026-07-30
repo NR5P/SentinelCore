@@ -72,8 +72,8 @@ ever see the dashboard warn that it was reached from *outside* your network, tak
 seriously — that's a different thing entirely, and means the port is more exposed than intended.
 
 Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") showing
-whether the dashboard can currently reach its own backend, and six tabs: **feed**,
-**timeline**, **live**, **cameras**, **triggers**, **settings**.
+whether the dashboard can currently reach its own backend, and eight tabs: **feed**,
+**timeline**, **live**, **cameras**, **triggers**, **automations**, **docs**, **settings**.
 
 The first time you open the dashboard (or after clicking **Re-Run Setup Wizard** in
 Settings → Bridge), a short setup wizard walks through the essentials instead: an API key for

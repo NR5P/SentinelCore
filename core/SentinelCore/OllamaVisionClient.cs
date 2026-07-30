@@ -197,6 +197,11 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             lastException);
     }
 
+    // "Ollama answers on its port" is not the same as "this service can analyse an alert".
+    // Checking only reachability reported ready while the configured model wasn't pulled, so
+    // every alert failed with a 404 from Ollama and nothing - not the health endpoint, not
+    // SelfMonitoringWorker, not the dashboard's system status - noticed. Since api/tags already
+    // returns the installed model list, confirm the configured one is actually in it.
     public async Task<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
         try
@@ -205,13 +210,50 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
                 "api/tags",
                 cancellationToken);
 
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode)
+                return false;
+
+            var tags = await response.Content.ReadFromJsonAsync<OllamaTagsResponse>(
+                JsonOptions,
+                cancellationToken);
+
+            var configured = _optionsMonitor.CurrentValue.Model;
+            if (string.IsNullOrWhiteSpace(configured))
+                return false;
+
+            var installed = tags?.Models ?? [];
+            if (installed.Any(m => IsSameModel(m.Name, configured)))
+                return true;
+
+            _logger.LogWarning(
+                "Ollama is reachable but the configured model '{Model}' is not installed. Pull it with: ollama pull {Model}",
+                configured,
+                configured);
+            return false;
         }
         catch
         {
             return false;
         }
     }
+
+    // Ollama reports fully-qualified names ("gemma3:4b"), and an untagged configured value
+    // means the "latest" tag - so "gemma3" should match an installed "gemma3:latest".
+    private static bool IsSameModel(string? installed, string configured)
+    {
+        if (string.IsNullOrWhiteSpace(installed))
+            return false;
+
+        if (installed.Equals(configured, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return !configured.Contains(':', StringComparison.Ordinal)
+            && installed.Equals($"{configured}:latest", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record OllamaTagsResponse(IReadOnlyList<OllamaTag>? Models);
+
+    private sealed record OllamaTag(string? Name);
 
     // Public so tests can confirm the license-plate schema/rule only appear when a profile
     // opts in, and are otherwise byte-identical to the prompt every existing profile already gets.

@@ -330,6 +330,61 @@ public sealed class BasicTests
         Assert.True(AlertNotificationPolicy.ShouldNotify(result));
     }
 
+    // Regression: IsReadyAsync used to return true for any 200 from api/tags, so /health/ready
+    // (and SelfMonitoringWorker, and the dashboard's system status) reported healthy while the
+    // configured model wasn't pulled and every single alert was failing with a 404 from Ollama.
+    [Theory]
+    [InlineData("gemma3:4b", """{"models":[{"name":"gemma3:4b"}]}""", true)]
+    [InlineData("gemma3:4b", """{"models":[{"name":"gemma3:12b"},{"name":"llama3.1:8b"}]}""", false)]
+    [InlineData("gemma3:4b", """{"models":[]}""", false)]
+    // An untagged configured value means the "latest" tag to Ollama.
+    [InlineData("gemma3", """{"models":[{"name":"gemma3:latest"}]}""", true)]
+    [InlineData("gemma3:4b", """{"models":[{"name":"GEMMA3:4B"}]}""", true)]
+    public async Task OllamaVisionClient_IsReadyAsync_RequiresConfiguredModelToBeInstalled(
+        string configuredModel,
+        string tagsJson,
+        bool expectedReady)
+    {
+        using var handler = new StubTagsHandler(tagsJson);
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434/") };
+        var client = new OllamaVisionClient(
+            httpClient,
+            new StaticOptionsMonitor<OllamaOptions>(new OllamaOptions { Model = configuredModel }),
+            new ImageOptimizer(new StaticOptionsMonitor<ImageProcessingOptions>(new ImageProcessingOptions()), NullLogger<ImageOptimizer>.Instance),
+            NullLogger<OllamaVisionClient>.Instance);
+
+        Assert.Equal(expectedReady, await client.IsReadyAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task OllamaVisionClient_IsReadyAsync_FalseWhenOllamaIsUnreachable()
+    {
+        using var handler = new StubTagsHandler("") { Throw = new HttpRequestException("connection refused") };
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:11434/") };
+        var client = new OllamaVisionClient(
+            httpClient,
+            new StaticOptionsMonitor<OllamaOptions>(new OllamaOptions { Model = "gemma3:4b" }),
+            new ImageOptimizer(new StaticOptionsMonitor<ImageProcessingOptions>(new ImageProcessingOptions()), NullLogger<ImageOptimizer>.Instance),
+            NullLogger<OllamaVisionClient>.Instance);
+
+        Assert.False(await client.IsReadyAsync(TestContext.Current.CancellationToken));
+    }
+
+    private sealed class StubTagsHandler(string tagsJson) : HttpMessageHandler
+    {
+        public Exception? Throw { get; init; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Throw is not null) throw Throw;
+
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(tagsJson, System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
     [Fact]
     public void OllamaVisionClient_BuildPrompt_OnlyIncludesLicensePlateWhenProfileOptsIn()
     {

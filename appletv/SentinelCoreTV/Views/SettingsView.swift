@@ -17,7 +17,7 @@ struct SettingsView: View {
                 TextField("Remote address (optional)", text: $remoteAddress)
                 // Directly under the field it describes - it previously sat below Status, where
                 // it read as an explanation of the connection state instead.
-                Text("A Cloudflare Tunnel (or any other externally-reachable) address to use when the local address can't be reached.")
+                Text("A Cloudflare Tunnel (or any other externally-reachable) address to use when the local address can't be reached. Point it at the server's Internet Exposed port, not the normal dashboard port — that port always requires a login, while the normal one trusts the local network.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack {

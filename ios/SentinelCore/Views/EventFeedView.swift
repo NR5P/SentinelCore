@@ -152,7 +152,7 @@ struct EventCard: View {
             HStack {
                 Text(event.camera).foregroundStyle(SentinelTheme.green).bold()
                 Spacer()
-                Text(event.occurredAt, style: .relative)
+                Text(SentinelRelativeTime.string(for: event.occurredAt))
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }

@@ -74,6 +74,11 @@ private struct CameraCard: View {
             // .callout rather than .title3: at tvOS type sizes the camera name was competing
             // with the video for attention, and a long name pushed the audio icon off the tile.
             .font(.callout)
+            // The preview above is deliberately full-bleed, but the label underneath sits in
+            // the .card button's own chrome - with no inset it hugs the bottom-left corner and
+            // the descenders run into the card's rounded edge.
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
         }
     }
 }

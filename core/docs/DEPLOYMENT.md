@@ -754,6 +754,13 @@ ingress:
   - service: http_status:404
 ```
 
+> **Point the tunnel at this port, not 3320.** The forced-login behaviour is tied to the port
+> the request arrives on. A tunnel pointed at the ordinary dashboard port (3320) reaches a
+> listener that still trusts the local network, so with `Auth:Enabled` off — the shipped
+> default — the entire API would be reachable from the internet with no login at all. The same
+> applies to the "Remote address" field in the iOS, Android, and Apple TV apps: it should be the
+> hostname of a tunnel that terminates on the Internet Exposed port.
+
 Open the firewall for this port the same way as the others - but **only to `127.0.0.1`**, since
 only `cloudflared` running on this same machine should ever connect to it directly; nothing on
 your LAN needs to reach this port, and the tunnel is what actually exposes it to the internet.
