@@ -13,7 +13,10 @@ struct ServerSetupView: View {
                 Text("Connect to your server")
                     .foregroundStyle(SentinelTheme.cyan)
                     .font(.title2.bold())
-                Text("Enter the local-network address of the Sentinel Core dashboard, for example http://192.168.1.50:3320")
+
+                discoverySection
+
+                Text("Or enter the local-network address of the Sentinel Core dashboard, for example http://192.168.1.50:3320")
                     .foregroundStyle(.secondary)
                 TextField("http://192.168.1.50:3320", text: $address)
                 Button("Connect") {
@@ -26,8 +29,48 @@ struct ServerSetupView: View {
             .frame(maxWidth: 640)
         }
         .padding(80)
-        .onAppear { address = model.serverURL }
+        .onAppear {
+            address = model.serverURL
+            model.startServerDiscovery()
+        }
         .onSubmit(connect)
+    }
+
+    // Purely an assist on top of manual entry below, which always stays visible - discovery can
+    // legitimately find nothing (client/AP isolation, a different VLAN, local-network permission
+    // denied, ...), and that must never block getting connected by typing the address instead.
+    @ViewBuilder
+    private var discoverySection: some View {
+        if model.discoveredServers.isEmpty {
+            Label("Searching your local network for a server…", systemImage: "antenna.radiowaves.left.and.right")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Found on your network")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                ForEach(model.discoveredServers) { server in
+                    Button {
+                        address = server.addressString
+                        connect()
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(server.name).foregroundStyle(.primary)
+                                Text(server.addressString)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.card)
+                }
+            }
+        }
     }
 
     private func connect() {

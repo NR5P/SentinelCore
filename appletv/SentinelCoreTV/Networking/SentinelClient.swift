@@ -7,6 +7,7 @@ final class SentinelClient {
 
     init(model: AppModel) {
         self.model = model
+        SessionCookieStore.restore()
         session = Self.makeSession()
     }
 
@@ -205,6 +206,7 @@ final class SentinelClient {
     }
 
     func logout() async throws {
+        defer { SessionCookieStore.clear() }
         let _: EmptyResponse = try await send("/api/auth/logout", method: "POST", body: Optional<String>.none)
     }
 
@@ -284,6 +286,11 @@ final class SentinelClient {
 
         guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         model.log("\(method) \(http.statusCode) in \(elapsed(from: started))")
+        // Mirror the session cookie into UserDefaults whenever the server issues one - both at
+        // login and on each sliding-expiration renewal, so what's persisted never goes stale.
+        if http.value(forHTTPHeaderField: "Set-Cookie") != nil, let url = request.url {
+            SessionCookieStore.save(for: url)
+        }
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? JSONDecoder.sentinel.decode(APIError.self, from: data))
                 .flatMap { $0.error ?? $0.errors?.joined(separator: "\n") }
@@ -350,6 +357,55 @@ final class SentinelClient {
             return "URLError \(urlError.code.rawValue) (\(urlError.code)): \(urlError.localizedDescription)"
         }
         return "\(type(of: error)): \(error.localizedDescription)"
+    }
+}
+
+// Keeps a signed-in session alive across app restarts on an Apple TV.
+//
+// URLSession's cookie jar lives in the app container (Library/Cookies), which tvOS treats as
+// reclaimable - unlike iOS, the only storage tvOS guarantees to keep is UserDefaults (500KB).
+// When the system reclaims it the session cookie vanishes and the app drops back to the login
+// screen even though the server session is still perfectly valid. That never reproduces in the
+// Simulator, which reclaims nothing, so this mirrors the cookie somewhere tvOS won't take away.
+enum SessionCookieStore {
+    private static let defaultsKey = "sessionCookies"
+
+    private struct StoredCookie: Codable {
+        let name: String
+        let value: String
+        let domain: String
+        let path: String
+        let expiresAt: Date?
+    }
+
+    static func restore() {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+              let stored = try? JSONDecoder().decode([StoredCookie].self, from: data) else { return }
+        for cookie in stored {
+            var properties: [HTTPCookiePropertyKey: Any] = [
+                .name: cookie.name,
+                .value: cookie.value,
+                .domain: cookie.domain,
+                .path: cookie.path
+            ]
+            properties[.expires] = cookie.expiresAt
+            if let restored = HTTPCookie(properties: properties) {
+                HTTPCookieStorage.shared.setCookie(restored)
+            }
+        }
+    }
+
+    static func save(for url: URL) {
+        guard let cookies = HTTPCookieStorage.shared.cookies(for: url), !cookies.isEmpty else { return }
+        let stored = cookies.map {
+            StoredCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path, expiresAt: $0.expiresDate)
+        }
+        guard let data = try? JSONEncoder().encode(stored) else { return }
+        UserDefaults.standard.set(data, forKey: defaultsKey)
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
 }
 

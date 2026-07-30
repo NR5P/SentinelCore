@@ -1,0 +1,7 @@
+{
+  "images" : [
+    { "filename" : "topshelf_wide.png", "idiom" : "tv", "scale" : "1x" },
+    { "filename" : "topshelf_wide@2x.png", "idiom" : "tv", "scale" : "2x" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}

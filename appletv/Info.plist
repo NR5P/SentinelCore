@@ -24,7 +24,7 @@
     <string>Sentinel Core connects to your camera security server and live video streams on your local network.</string>
     <key>NSBonjourServices</key>
     <array>
-        <string>_http._tcp</string>
+        <string>_sentinelcore._tcp</string>
     </array>
     <key>NSAppTransportSecurity</key>
     <dict>

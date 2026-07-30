@@ -15,14 +15,14 @@ struct TriggerFeedView: View {
                     .buttonStyle(.card)
                 }
             }
-            .padding(60)
+            .padding(.horizontal, 60)
+            .padding(.bottom, 60)
         }
-        .navigationTitle("Triggers")
         .navigationDestination(for: TriggerEvent.self) { TriggerDetailView(trigger: $0) }
         .toolbar {
             ToolbarItem {
                 Button { Task { await model.connect(resetNetworkSession: true) } } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise").accessibilityLabel("Refresh")
                 }
                 .disabled(model.isLoading)
             }

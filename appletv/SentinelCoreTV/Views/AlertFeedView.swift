@@ -35,9 +35,9 @@ struct AlertFeedView: View {
                     }
                 }
             }
-            .padding(60)
+            .padding(.horizontal, 60)
+            .padding(.bottom, 60)
         }
-        .navigationTitle("Alerts")
         .toolbar {
             ToolbarItem {
                 // ToggleStyle.button isn't available on tvOS - a plain Button flipping the
@@ -45,12 +45,16 @@ struct AlertFeedView: View {
                 Button {
                     notifiedOnly.toggle()
                 } label: {
-                    Label("Notified only", systemImage: notifiedOnly ? "bell.fill" : "bell")
+                    // A bare Image rather than a Label: tvOS gives a toolbar item far less
+                    // width than these titles need and truncates them mid-word, and
+                    // .labelStyle(.iconOnly) doesn't survive the toolbar's own styling.
+                    Image(systemName: notifiedOnly ? "bell.fill" : "bell")
+                        .accessibilityLabel("Notified only")
                 }
             }
             ToolbarItem {
                 Button { Task { await model.connect(resetNetworkSession: true) } } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise").accessibilityLabel("Refresh")
                 }
                 .disabled(model.isLoading)
             }
@@ -105,7 +109,10 @@ private struct AlertCard: View {
                 HStack {
                     Text(event.camera).foregroundStyle(SentinelTheme.green).bold()
                     Spacer()
-                    Text(event.occurredAt, style: .relative)
+                    // "5 minutes ago" rather than style: .relative's "5 min, 24 sec", which
+                    // reads as a duration with no direction and puts second-level precision on
+                    // a screen being read from across the room.
+                    Text(event.occurredAt.formatted(.relative(presentation: .named)))
                         .foregroundStyle(.secondary)
                 }
                 Text(event.summary.isEmpty ? "No description" : event.summary)

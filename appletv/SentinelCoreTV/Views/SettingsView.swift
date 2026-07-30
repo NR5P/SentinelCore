@@ -15,6 +15,11 @@ struct SettingsView: View {
             Section("Server") {
                 TextField("Dashboard address", text: $address)
                 TextField("Remote address (optional)", text: $remoteAddress)
+                // Directly under the field it describes - it previously sat below Status, where
+                // it read as an explanation of the connection state instead.
+                Text("A Cloudflare Tunnel (or any other externally-reachable) address to use when the local address can't be reached.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 HStack {
                     Text("Status")
                     Spacer()
@@ -24,9 +29,6 @@ struct SettingsView: View {
                     }
                     ConnectionBadge()
                 }
-                Text("A Cloudflare Tunnel (or any other externally-reachable) address to use when the local address can't be reached.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Button("Save and Reconnect") {
                     Task {
                         model.serverURL = normalized(address)
@@ -137,7 +139,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Settings")
         .onAppear {
             address = model.serverURL
             remoteAddress = model.remoteServerURL

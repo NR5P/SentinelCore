@@ -70,16 +70,18 @@ enum AppSection: String, CaseIterable, Identifiable {
 }
 
 // The ">_" wordmark - same terminal-style monospace accent as the iOS app's BrandHeader.
+// .fixedSize() keeps it on one line - tvOS's larger type sizes made "SENTINEL_CORE" wrap and
+// hyphenate mid-word inside the narrower frame(maxWidth:) callers use to center it.
 struct BrandHeader: View {
     var body: some View {
         HStack(spacing: 10) {
             Text(">_").foregroundStyle(SentinelTheme.green)
             Text("SENTINEL_CORE").foregroundStyle(SentinelTheme.green).bold()
-            Spacer()
         }
         .font(.title3)
         .fontDesign(.monospaced)
         .shadow(color: SentinelTheme.green.opacity(0.5), radius: 6)
+        .fixedSize()
     }
 }
 

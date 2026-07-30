@@ -11,19 +11,21 @@ struct AlertTakeoverView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let event: SecurityEvent
-    @State private var player: AVPlayer?
+    @StateObject private var stream = LiveStreamPlayer(muted: false)
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if let player {
-                VideoPlayer(player: player)
-                    .ignoresSafeArea()
-            } else {
+            // The event's own snapshot stands in until the live feed has a frame, so the
+            // takeover shows what triggered it instantly rather than opening on black.
+            if !stream.isVideoReady {
                 SentinelRemoteImage(url: imageURL, contentMode: .fit)
                     .ignoresSafeArea()
             }
+            VideoPlayer(player: stream.player)
+                .ignoresSafeArea()
+                .opacity(stream.isVideoReady ? 1 : 0)
 
             VStack {
                 banner
@@ -33,10 +35,7 @@ struct AlertTakeoverView: View {
             .padding(50)
         }
         .task { startLivePlaybackIfAvailable() }
-        .onDisappear {
-            player?.pause()
-            player = nil
-        }
+        .onDisappear { stream.stop() }
         // Menu button on the Siri Remote dismisses the takeover, same as backing out of any
         // other tvOS full-screen presentation.
         .onExitCommand { dismiss() }
@@ -91,9 +90,7 @@ struct AlertTakeoverView: View {
         guard let camera = model.cameras.first(where: { $0.name == event.camera }),
               let url = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
         else { return }
-        let newPlayer = AVPlayer(url: url)
-        player = newPlayer
-        newPlayer.play()
+        stream.start(url: url)
     }
 
     private var imageURL: URL? {

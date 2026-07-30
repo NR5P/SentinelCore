@@ -3,15 +3,8 @@ import SwiftUI
 
 // tvOS port of ios/SentinelCore/Views/LiveCamerasView.swift - same grid-of-muted-previews ->
 // full-screen player pattern, just without the iOS-only navigation bar modifiers and using
-// tvOS's larger focus-friendly card sizing.
-
-// AVPlayer's default buffering waits to build up a comfortable cushion before it'll start
-// playing, which is the right call for on-demand video but adds needless delay for a live feed
-// where "as current as possible, right away" matters more than smooth playback of a buffer.
-private func configureForFastStart(_ player: AVPlayer) {
-    player.automaticallyWaitsToMinimizeStalling = false
-    player.currentItem?.preferredForwardBufferDuration = 1
-}
+// tvOS's larger focus-friendly card sizing. Player lifetime, the poster-frame handoff, and
+// reconnect-on-drop all live in LiveStreamPlayer.
 
 struct LiveCamerasView: View {
     @EnvironmentObject private var model: AppModel
@@ -27,14 +20,17 @@ struct LiveCamerasView: View {
                     .buttonStyle(.card)
                 }
             }
-            .padding(60)
+            .padding(.horizontal, 60)
+            .padding(.bottom, 60)
         }
-        .navigationTitle("Live")
         .navigationDestination(for: Camera.self) { LivePlayerView(camera: $0) }
         .toolbar {
             ToolbarItem {
                 Button { Task { await model.connect(resetNetworkSession: true) } } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    // A bare Image rather than a Label: tvOS gives a toolbar item far less
+                    // width than the title needs and truncates it to something like "R…sh",
+                    // and .labelStyle(.iconOnly) doesn't survive the toolbar's own styling.
+                    Image(systemName: "arrow.clockwise").accessibilityLabel("Refresh")
                 }
                 .disabled(model.isLoading)
             }
@@ -63,17 +59,21 @@ private struct CameraCard: View {
             LiveCameraPreview(camera: camera, isActive: isActive)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-            HStack {
-                Circle().fill(SentinelTheme.green).frame(width: 9, height: 9)
-                Text(camera.name).foregroundStyle(SentinelTheme.green).bold()
-                Spacer()
+            HStack(spacing: 12) {
+                Text(camera.name)
+                    .foregroundStyle(SentinelTheme.green)
+                    .bold()
+                    .lineLimit(1)
+                Spacer(minLength: 0)
                 if camera.includeAudio == true {
                     Image(systemName: "speaker.wave.2.fill")
                         .foregroundStyle(SentinelTheme.cyan)
                         .accessibilityLabel("Audio enabled")
                 }
             }
-            .font(.title3)
+            // .callout rather than .title3: at tvOS type sizes the camera name was competing
+            // with the video for attention, and a long name pushed the audio icon off the tile.
+            .font(.callout)
         }
     }
 }
@@ -87,8 +87,7 @@ private struct LiveCameraPreview: View {
     @EnvironmentObject private var model: AppModel
     let camera: Camera
     let isActive: Bool
-    @State private var player: AVPlayer?
-    @State private var isVideoReady = false
+    @StateObject private var stream = LiveStreamPlayer(muted: true)
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -100,73 +99,39 @@ private struct LiveCameraPreview: View {
                 AsyncImage(url: posterURL) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: { Color.clear }
-                .opacity(isVideoReady ? 0 : 1)
+                .opacity(stream.isVideoReady ? 0 : 1)
             }
-            if let player {
-                VideoPlayer(player: player)
-                    .allowsHitTesting(false)
-                    .opacity(isVideoReady ? 1 : 0)
-            }
+            VideoPlayer(player: stream.player)
+                .allowsHitTesting(false)
+                .opacity(stream.isVideoReady ? 1 : 0)
             StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
                 .padding(14)
         }
         .task(id: isActive) {
             if isActive {
-                startPlayback()
+                if let streamURL { stream.start(url: streamURL) }
             } else {
-                player?.pause()
-                isVideoReady = false
+                stream.pause()
                 try? await Task.sleep(for: Self.teardownGrace)
-                stopPlayback()
+                stream.stop()
             }
         }
-        .onDisappear(perform: stopPlayback)
+        .onDisappear { stream.stop() }
     }
 
     private var posterURL: URL? {
         model.client.url(path: "/api/cameras/\(camera.id.uuidString)/thumbnail.jpg")
     }
 
-    private func startPlayback() {
-        guard player == nil else {
-            player?.play()
-            return
-        }
-        guard let url = model.client.url(
-            path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8"
-        ) else { return }
-
-        let newPlayer = AVPlayer(url: url)
-        newPlayer.isMuted = true
-        configureForFastStart(newPlayer)
-        player = newPlayer
-        newPlayer.play()
-        observeFirstFrame(newPlayer)
-    }
-
-    private func stopPlayback() {
-        player?.pause()
-        player = nil
-        isVideoReady = false
-    }
-
-    // Reveals the video (and hides the poster) only once the player has actually started
-    // advancing - readyToPlay alone still leaves a black frame up briefly.
-    private func observeFirstFrame(_ player: AVPlayer) {
-        var token: Any?
-        token = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 60), queue: .main) { time in
-            guard time.seconds > 0 else { return }
-            isVideoReady = true
-            if let token { player.removeTimeObserver(token) }
-        }
+    private var streamURL: URL? {
+        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
     }
 }
 
 struct LivePlayerView: View {
     @EnvironmentObject private var model: AppModel
     let camera: Camera
-    @State private var player: AVPlayer?
-    @State private var isVideoReady = false
+    @StateObject private var stream = LiveStreamPlayer(muted: false)
 
     var body: some View {
         ZStack {
@@ -175,12 +140,11 @@ struct LivePlayerView: View {
                 AsyncImage(url: posterURL) { image in
                     image.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: { Color.clear }
-                .opacity(isVideoReady ? 0 : 1)
+                .opacity(stream.isVideoReady ? 0 : 1)
             }
-            if let player {
-                VideoPlayer(player: player)
-                    .opacity(isVideoReady ? 1 : 0)
-            } else {
+            VideoPlayer(player: stream.player)
+                .opacity(stream.isVideoReady ? 1 : 0)
+            if !stream.isVideoReady {
                 ProgressView("Starting stream…")
                     .tint(.white)
                     .foregroundStyle(.white)
@@ -190,22 +154,8 @@ struct LivePlayerView: View {
         .navigationTitle(camera.name)
         .task {
             guard let url = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8") else { return }
-            let newPlayer = AVPlayer(url: url)
-            configureForFastStart(newPlayer)
-            player = newPlayer
-            newPlayer.play()
-
-            var token: Any?
-            token = newPlayer.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 60), queue: .main) { time in
-                guard time.seconds > 0 else { return }
-                isVideoReady = true
-                if let token { newPlayer.removeTimeObserver(token) }
-            }
+            stream.start(url: url)
         }
-        .onDisappear {
-            player?.pause()
-            player = nil
-            isVideoReady = false
-        }
+        .onDisappear { stream.stop() }
     }
 }

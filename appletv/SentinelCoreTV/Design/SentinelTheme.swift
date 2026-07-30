@@ -57,10 +57,13 @@ struct StatusChip: View {
         }
         .font(.caption.bold())
         .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(color.opacity(0.12))
-        .clipShape(Capsule())
-        .overlay { Capsule().stroke(color.opacity(0.4)) }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        // A dark backing under the tint: these chips sit on top of live camera video as often
+        // as on the app's own surfaces, and a purely translucent fill disappears completely
+        // over a bright frame - the LIVE badge was unreadable against anything but a dark scene.
+        .background(.black.opacity(0.55), in: Capsule())
+        .background(color.opacity(0.18), in: Capsule())
+        .overlay { Capsule().stroke(color.opacity(0.55)) }
     }
 }

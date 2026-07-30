@@ -13,7 +13,8 @@ high-confidence event comes in.
 1. Open `SentinelCoreTV.xcodeproj` in Xcode.
 2. Select the `SentinelCoreTV` scheme.
 3. Choose an Apple TV Simulator (or a real Apple TV) destination.
-4. Run the app and enter the dashboard address, for example: `http://192.168.1.50:3320`
+4. Run the app. The setup screen lists any Sentinel Core server it finds on the LAN over
+   Bonjour - pick one, or enter the address manually, for example: `http://192.168.1.50:3320`
 
 The Apple TV and Sentinel Core server must be on the same local network (or reachable via the
 optional remote address in Settings).
@@ -21,11 +22,23 @@ optional remote address in Settings).
 ## Current foundation
 
 - Live camera grid with muted auto-preview tiles, full-screen playback on select
+- Bonjour server discovery (`_sentinelcore._tcp`) on the setup screen, alongside manual entry
 - AI-verified alert feed (`/api/events`) with a notified-only filter and a live-updating poll
 - Motion trigger history with snapshot/clip playback
 - Full-screen "AI Verified Alert" takeover, auto-starting the live feed for the alerted camera
-- Optional dashboard username/password login
+- Optional dashboard username/password login, persisted across restarts (see below)
 - Server connection settings, push registration, and a connection log
+
+## Why the session cookie is mirrored into UserDefaults
+
+tvOS only guarantees that `UserDefaults` (500KB) survives; everything else in the app container,
+including URLSession's cookie jar at `Library/Cookies`, is reclaimable at any time. When tvOS
+reclaims it the session cookie disappears and the app falls back to the login screen even though
+the server-side session is still valid - which is what made the app ask for a login on almost
+every launch. `SessionCookieStore` in `SentinelCoreTV/Networking/SentinelClient.swift` mirrors the
+cookie into UserDefaults and restores it before the first request. Note this never reproduces in
+the Simulator, which reclaims nothing - to test it, delete `Library/Cookies` from the app's data
+container between launches.
 
 ## The alert takeover ("interrupt while watching TV")
 
@@ -71,8 +84,9 @@ them; the app still works over polling, it just won't get the takeover from a co
 state. See [`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md) for the full
 provider setup.
 
-## Before shipping to TestFlight/App Store
+## App icon
 
-This project currently has no App Icon & Top Shelf Image asset set (`Assets.xcassets` is empty
-apart from `Contents.json`) - fine for Simulator/development builds, but required before an
-archive/App Store submission. Add one via Xcode's tvOS app icon editor.
+`Assets.xcassets/App Icon & Top Shelf Image.brandassets` holds the layered tvOS icon and both top
+shelf images, generated from the shared `branding/SentinelCoreAppIcon-1024.png` master. tvOS icons
+are parallax image stacks rather than the single square the other platforms use, and the App Store
+layer is a 1x-only 1280x768 with no alpha - `actool` rejects the catalog otherwise.
