@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using SentinelCore;
 using SentinelCore.Web;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -157,6 +158,16 @@ builder.Services.AddSingleton<CameraDiscoveryService>();
 // SqliteTriggerStore backs two interfaces at once).
 var accountStore = new SqliteAccountStore(camerasRoot);
 builder.Services.AddSingleton<IAccountStore>(accountStore);
+
+// The session store above only covers the ticket data - the cookie ASP.NET Core actually hands
+// the client is still encrypted/signed via Data Protection, which without an explicit key
+// location falls back to an ephemeral (in-memory) key ring on Linux/systemd. That silently
+// undoes the "redeploy shouldn't log people out" intent below: every restart would generate a
+// fresh key ring and invalidate every outstanding cookie even though its ticket was still sitting
+// in SqliteAccountStore. Persisting keys next to the other durable state fixes that.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(camerasRoot, "keys")))
+    .SetApplicationName("SentinelCore");
 
 // Real per-account cookie login, replacing the old single-shared-credential hand-rolled check.
 // Sessions persist in accountStore's Sessions table (SqliteAccountStore.SessionStore below), so
