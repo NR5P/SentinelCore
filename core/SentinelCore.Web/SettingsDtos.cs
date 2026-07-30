@@ -206,6 +206,14 @@ public sealed class PackageTheftWatchSettingsDto
     public int WatchWindowHours { get; set; } = 12;
 }
 
+public sealed class SemanticSearchSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(0.0, 1.0)]
+    public double MinimumSimilarity { get; set; } = 0.20;
+}
+
 public sealed class SelfMonitoringSettingsDto
 {
     public bool Enabled { get; set; } = true;

@@ -158,6 +158,7 @@ const filterEventTypeEl = document.getElementById("filter-event-type");
 const filterFromEl = document.getElementById("filter-from");
 const filterToEl = document.getElementById("filter-to");
 const filterNotifiedOnlyEl = document.getElementById("filter-notified-only");
+const filterVisualSearchEl = document.getElementById("filter-visual-search");
 const filterClearBtn = document.getElementById("filter-clear-btn");
 
 function prettifyEventType(value) {
@@ -204,6 +205,7 @@ function buildFilterQuery() {
   if (filterCameraEl.value) params.set("camera", filterCameraEl.value);
   if (filterEventTypeEl.value) params.set("eventType", filterEventTypeEl.value);
   if (filterNotifiedOnlyEl.checked) params.set("notifiedOnly", "true");
+  if (filterVisualSearchEl.checked && filterSearchEl.value.trim()) params.set("visualSearch", "true");
   const fromIso = dateInputToIso(filterFromEl.value, false);
   const toIso = dateInputToIso(filterToEl.value, true);
   if (fromIso) params.set("from", fromIso);
@@ -221,7 +223,7 @@ filterSearchEl.addEventListener("input", () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(loadEvents, 300);
 });
-for (const el of [filterCameraEl, filterEventTypeEl, filterFromEl, filterToEl, filterNotifiedOnlyEl]) {
+for (const el of [filterCameraEl, filterEventTypeEl, filterFromEl, filterToEl, filterNotifiedOnlyEl, filterVisualSearchEl]) {
   el.addEventListener("change", loadEvents);
 }
 filterClearBtn.addEventListener("click", () => {
@@ -231,6 +233,7 @@ filterClearBtn.addEventListener("click", () => {
   filterFromEl.value = "";
   filterToEl.value = "";
   filterNotifiedOnlyEl.checked = false;
+  filterVisualSearchEl.checked = false;
   loadEvents();
 });
 

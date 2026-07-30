@@ -451,6 +451,25 @@ public sealed class PackageTheftOptions
     public int WatchWindowHours { get; init; } = 12;
 }
 
+public sealed class SemanticSearchOptions
+{
+    public const string SectionName = "SemanticSearch";
+
+    // Off by default. When on, AlertProcessor encodes each saved alert image into a CLIP vector
+    // (ImageEmbeddingService) so the Feed's search box can later match by visual content instead
+    // of literal text. The CLIP model itself is a ~577MB one-time download on first use, and
+    // encoding adds a per-alert cost similar to Face Recognition - both real costs worth
+    // disclosing, not just an extra toggle.
+    public bool Enabled { get; init; }
+
+    // Empirically chosen from real CLIP score distributions (see the Step 0 smoke test): a
+    // correct image/caption match scored ~0.25-0.27, a wrong one ~0.17-0.24 - much lower and
+    // narrower than KnownFaceMatcher's face-embedding scores, so this needed its own threshold
+    // rather than reusing that one.
+    [Range(0.0, 1.0)]
+    public double MinimumSimilarity { get; init; } = 0.20;
+}
+
 public sealed class TelegramOptions
 {
     public const string SectionName = "Telegram";

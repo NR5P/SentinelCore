@@ -66,6 +66,10 @@
 
       <div class="feed-filters" id="feed-filters">
         <input type="text" id="filter-search" class="field-input" placeholder="search descriptions&hellip;" data-tip-below data-tip="Search the AI's description text, e.g. &quot;package&quot; or &quot;fox&quot;.">
+        <label class="switch" id="filter-visual-search-wrap" data-tip-below data-tip="Search by what's actually in the photo (e.g. &quot;red truck&quot;) instead of matching the saved text. Requires Semantic Search enabled in Settings.">
+          <input type="checkbox" id="filter-visual-search"><span class="switch-track"></span>
+        </label>
+        <span class="field-label" id="filter-visual-search-label">visual search</span>
         <select id="filter-camera" class="field-input" data-tip-below data-tip="Only show events from this camera.">
           <option value="">all cameras</option>
         </select>

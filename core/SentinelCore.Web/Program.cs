@@ -106,6 +106,11 @@ builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
 // from the main app, so enrollment (computing an embedding for an uploaded reference photo)
 // needs its own IFaceRecognitionService rather than sharing the main app's in-memory instance.
 builder.Services.AddSingleton<IFaceRecognitionService, FaceRecognitionService>();
+// Same reasoning as IFaceRecognitionService above: a separate process from the main app, so the
+// Feed's visual search box needs its own instance to encode search-query text. Model download/
+// load is deferred to first actual search (see ImageEmbeddingService.EnsureInitializedAsync), so
+// this line alone costs nothing until semantic search is both enabled and used.
+builder.Services.AddHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>();
 
@@ -316,12 +321,31 @@ app.MapGet("/api/exposure/status", async (ExposureTracker tracker, AppSettingsFi
 }).RequireAuthorization();
 
 app.MapGet("/api/events", async (
-    IEventStore store, CancellationToken ct, int limit = 50,
+    IEventStore store, IImageEmbeddingService imageEmbeddings, AppSettingsFile appSettings, CancellationToken ct, int limit = 50,
     string? camera = null, string? eventType = null, bool? notifiedOnly = null,
-    string? search = null, DateTimeOffset? from = null, DateTimeOffset? to = null) =>
+    string? search = null, DateTimeOffset? from = null, DateTimeOffset? to = null, bool visualSearch = false) =>
 {
     var filter = new EventFilter(camera, eventType, notifiedOnly, search, from, to, Math.Clamp(limit, 1, 500));
-    var events = await store.SearchEventsAsync(filter, ct);
+
+    IReadOnlyList<AlertEventRecord> events;
+    // Reads live from the shared settings file rather than a bound IOptionsMonitor - this
+    // project's own configuration doesn't include the main app's appsettings.json (see
+    // mainAppSettingsPath above), so an IOptionsMonitor here would never see Settings UI edits.
+    var semanticSearch = visualSearch && !string.IsNullOrWhiteSpace(search)
+        ? await appSettings.GetSectionAsync<SemanticSearchSettingsDto>("SemanticSearch", ct)
+        : null;
+    if (semanticSearch is { Enabled: true })
+    {
+        var queryEmbedding = await imageEmbeddings.EmbedTextAsync(search!, ct);
+        events = queryEmbedding is not null
+            ? await store.SearchBySimilarityAsync(filter, queryEmbedding, semanticSearch.MinimumSimilarity, ct)
+            : [];
+    }
+    else
+    {
+        events = await store.SearchEventsAsync(filter, ct);
+    }
+
     return Results.Ok(events.Select(e => new
     {
         e.Id,

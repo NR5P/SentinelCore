@@ -99,6 +99,10 @@ builder.Services.AddOptions<PackageTheftOptions>()
     .Bind(builder.Configuration.GetSection(PackageTheftOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<SemanticSearchOptions>()
+    .Bind(builder.Configuration.GetSection(SemanticSearchOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<SelfMonitoringOptions>()
     .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
     .ValidateDataAnnotations()
@@ -198,6 +202,12 @@ builder.Services.AddSingleton<GateCheckAnalyzer>();
 // for the same reason GateCheckAnalyzer and the vision clients are: expensive to construct,
 // safe to reuse across every alert for the process lifetime.
 builder.Services.AddSingleton<IFaceRecognitionService, FaceRecognitionService>();
+// Unlike FaceRecognitionService, model download/load is deferred to first actual use (see
+// ImageEmbeddingService.EnsureInitializedAsync) rather than done in this constructor - the CLIP
+// model is a ~577MB one-time download, and semantic search is opt-in, so a user who never enables
+// it shouldn't pay that cost just by starting the app. Still registered as a singleton so the
+// loaded ONNX sessions are reused once initialization does happen.
+builder.Services.AddHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
 builder.Services.AddHostedService<TelegramChatWorker>();
 builder.Services.AddHostedService<SelfMonitoringWorker>();
 // Registered in the main app only - all three services would otherwise each report the same

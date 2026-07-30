@@ -176,6 +176,15 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "semanticSearch", title: "SEMANTIC SEARCH", endpoint: "/api/settings/semantic-search",
+      basic: false,
+      description: "Off by default. When on, each alert's image is run through a local CLIP model that turns it into a vector capturing what's actually in the photo, so the Feed's search box can find events by visual content (\"red truck\", \"person in a blue jacket\") instead of only matching words already in the AI's saved description. This downloads a ~577MB model to this machine the first time it's used, and adds a per-alert cost similar to Face Recognition - a real cost on modest hardware, not just an extra toggle. Searching itself stays fast regardless of history size, since only the one-time-per-alert encoding is expensive.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Encode each alert's image for visual search. Downloads a one-time ~577MB model on first use and adds per-alert processing time." },
+        { name: "minimumSimilarity", label: "Minimum Similarity", type: "number", min: 0, max: 1, step: 0.01, tip: "How close a visual match must be to appear in results. Lower finds more (including weaker matches); higher shows only close matches." }
+      ]
+    },
+    {
       key: "selfMonitoring", title: "SELF-MONITORING", endpoint: "/api/settings/self-monitoring",
       basic: false,
       description: "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive, or alerts backing up faster than they're processed. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
@@ -266,6 +275,7 @@ window.GateWatchSettings = (function () {
     blueIris: "On-demand Blue Iris snapshots for the Telegram bot. Sentinel's Timeline uses its own local trigger clips instead.",
     multiFrameAnalysis: "Analyze 2-3 frames per trigger instead of one, to reduce false alarms from shadows/reflections. Off by default - costs more AI processing time per alert.",
     packageTheftWatch: "Flags a package that disappears without a recognized pickup, and forces a notification. Off by default - no extra AI cost, but a heuristic guess, not proof.",
+    semanticSearch: "Search the Feed by visual content (\"red truck\") instead of only saved text. Off by default - ~577MB one-time model download, plus per-alert processing time.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
     quietHours: "Raise the bar for Email, Telegram, and Discord alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",

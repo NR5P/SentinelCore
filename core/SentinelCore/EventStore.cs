@@ -19,6 +19,13 @@ public interface IEventStore
     // Newest first, with every filter field optional (null/empty means "don't filter on this").
     Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken);
 
+    // Ranks alerts that have a stored embedding (see ImageEmbeddingService) by cosine similarity
+    // to queryEmbedding, applying the same camera/date/notified filters as SearchEventsAsync -
+    // filter.SearchText is ignored here, since similarity search replaces literal text matching
+    // rather than combining with it. Results are similarity-ranked descending and capped at
+    // filter.Limit; rows scoring below minimumSimilarity are excluded entirely.
+    Task<IReadOnlyList<AlertEventRecord>> SearchBySimilarityAsync(EventFilter filter, float[] queryEmbedding, double minimumSimilarity, CancellationToken cancellationToken);
+
     // Distinct camera names and event types actually present in history, for populating
     // filter dropdowns - independent of whatever filter is currently applied.
     Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken);
@@ -116,6 +123,10 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         AddColumnIfMissing("AlertEvents", "LinkedCameras", "TEXT");
         AddColumnIfMissing("AlertEvents", "IncidentId", "TEXT");
         AddColumnIfMissing("AlertEvents", "PackageTheftReason", "TEXT");
+        // A 512-float CLIP vector stored as raw bytes via Buffer.BlockCopy, not base64 text - see
+        // ImageEmbeddingService. Only populated when Semantic Search is enabled; a row with no
+        // embedding just isn't a candidate for SearchBySimilarityAsync.
+        AddColumnIfMissing("AlertEvents", "Embedding", "BLOB");
 
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_AlertEvents_IncidentId ON AlertEvents(IncidentId);";
@@ -149,11 +160,11 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                 INSERT INTO AlertEvents
                     (Id, Camera, BlueIrisAlertId, OccurredAt, ReceivedAt, CompletedAt, Profile, Model, Status,
                      ImagePath, EventType, Summary, NotificationRecommended, NotificationReason, Confidence, Error,
-                     LinkedCameras, IncidentId, PackageTheftReason)
+                     LinkedCameras, IncidentId, PackageTheftReason, Embedding)
                 VALUES
                     ($id, $camera, $blueIrisAlertId, $occurredAt, $receivedAt, $completedAt, $profile, $model, $status,
                      $imagePath, $eventType, $summary, $notificationRecommended, $notificationReason, $confidence, $error,
-                     $linkedCameras, $incidentId, $packageTheftReason)
+                     $linkedCameras, $incidentId, $packageTheftReason, $embedding)
                 ON CONFLICT(Id) DO UPDATE SET
                     CompletedAt = excluded.CompletedAt,
                     Model = excluded.Model,
@@ -167,7 +178,8 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                     Error = excluded.Error,
                     LinkedCameras = excluded.LinkedCameras,
                     IncidentId = excluded.IncidentId,
-                    PackageTheftReason = excluded.PackageTheftReason;
+                    PackageTheftReason = excluded.PackageTheftReason,
+                    Embedding = excluded.Embedding;
                 """;
 
             command.Parameters.AddWithValue("$id", result.Id.ToString("N"));
@@ -191,6 +203,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.Parameters.AddWithValue("$linkedCameras", (object?)result.LinkedCameras ?? DBNull.Value);
             command.Parameters.AddWithValue("$incidentId", (object?)result.IncidentId ?? DBNull.Value);
             command.Parameters.AddWithValue("$packageTheftReason", (object?)result.Analysis?.PackageTheftReason ?? DBNull.Value);
+            command.Parameters.AddWithValue("$embedding", result.Embedding is { } embedding ? FloatsToBytes(embedding) : DBNull.Value);
 
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -353,6 +366,79 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         }
     }
 
+    // Bounds how many candidate rows get pulled into memory for ranking before ORDER BY OccurredAt
+    // even applies filter.Limit - similarity ranking can't happen in SQL, so this is the app-level
+    // stand-in for an index. A personal camera history fits well within this comfortably; a linear
+    // scan of a few thousand 512-float vectors is a few milliseconds of dot products, the same
+    // reasoning KnownFaceMatcher already relies on for face matching.
+    private const int SimilarityCandidatePoolSize = 5000;
+
+    public async Task<IReadOnlyList<AlertEventRecord>> SearchBySimilarityAsync(EventFilter filter, float[] queryEmbedding, double minimumSimilarity, CancellationToken cancellationToken)
+    {
+        await _connectionLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            var conditions = new List<string> { "Embedding IS NOT NULL" };
+
+            if (!string.IsNullOrWhiteSpace(filter.Camera))
+            {
+                conditions.Add("Camera = $camera");
+                command.Parameters.AddWithValue("$camera", filter.Camera);
+            }
+            if (!string.IsNullOrWhiteSpace(filter.EventType))
+            {
+                conditions.Add("EventType = $eventType");
+                command.Parameters.AddWithValue("$eventType", filter.EventType);
+            }
+            if (filter.NotifiedOnly == true)
+            {
+                conditions.Add("NotificationRecommended = 1");
+            }
+            if (filter.From.HasValue)
+            {
+                conditions.Add("OccurredAt >= $from");
+                command.Parameters.AddWithValue("$from", ToUtcSortable(filter.From.Value));
+            }
+            if (filter.To.HasValue)
+            {
+                conditions.Add("OccurredAt < $to");
+                command.Parameters.AddWithValue("$to", ToUtcSortable(filter.To.Value));
+            }
+
+            command.CommandText = $"""
+                SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
+                       NotificationRecommended, NotificationReason, Confidence, ImagePath,
+                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason, Embedding
+                FROM AlertEvents
+                WHERE {string.Join(" AND ", conditions)}
+                ORDER BY OccurredAt DESC
+                LIMIT $candidatePoolSize;
+                """;
+            command.Parameters.AddWithValue("$candidatePoolSize", SimilarityCandidatePoolSize);
+
+            var ranked = new List<(AlertEventRecord Record, double Similarity)>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var embedding = BytesToFloats((byte[])reader["Embedding"]);
+                var similarity = CosineSimilarity(embedding, queryEmbedding);
+                if (similarity < minimumSimilarity) continue;
+                ranked.Add((ReadRecord(reader), similarity));
+            }
+
+            return ranked
+                .OrderByDescending(r => r.Similarity)
+                .Take(Math.Clamp(filter.Limit, 1, 500))
+                .Select(r => r.Record)
+                .ToList();
+        }
+        finally
+        {
+            _connectionLock.Release();
+        }
+    }
+
     public async Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken)
     {
         await _connectionLock.WaitAsync(cancellationToken);
@@ -405,6 +491,40 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         reader.IsDBNull(13) ? null : reader.GetString(13));
 
     private static string ToUtcSortable(DateTimeOffset value) => value.UtcDateTime.ToString("O");
+
+    private static byte[] FloatsToBytes(float[] values)
+    {
+        var bytes = new byte[values.Length * sizeof(float)];
+        Buffer.BlockCopy(values, 0, bytes, 0, bytes.Length);
+        return bytes;
+    }
+
+    private static float[] BytesToFloats(byte[] bytes)
+    {
+        var values = new float[bytes.Length / sizeof(float)];
+        Buffer.BlockCopy(bytes, 0, values, 0, bytes.Length);
+        return values;
+    }
+
+    // Duplicated from KnownFaceMatcher's cosine similarity rather than shared - that one operates
+    // on float[] face embeddings with a face-specific similarity threshold baked into its own
+    // call sites; this one is float[] CLIP embeddings with entirely different score semantics.
+    // Keeping them separate avoids coupling two unrelated matching concerns to one signature.
+    private static double CosineSimilarity(float[] a, float[] b)
+    {
+        if (a.Length == 0 || a.Length != b.Length) return 0;
+
+        double dot = 0, normA = 0, normB = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+        }
+
+        if (normA == 0 || normB == 0) return 0;
+        return dot / (Math.Sqrt(normA) * Math.Sqrt(normB));
+    }
 
     public void Dispose()
     {

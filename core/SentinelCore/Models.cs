@@ -209,4 +209,8 @@ public sealed class AlertResult
     // See IncomingAlert.LinkedCameras/IncidentId - carried through unchanged from ingest.
     public string? LinkedCameras { get; init; }
     public string? IncidentId { get; init; }
+
+    // See ImageEmbeddingService - only populated when Semantic Search is enabled and encoding
+    // this alert's image succeeded.
+    public float[]? Embedding { get; init; }
 }

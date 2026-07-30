@@ -1266,6 +1266,9 @@ public sealed class BasicTests
         public Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
 
+        public Task<IReadOnlyList<AlertEventRecord>> SearchBySimilarityAsync(EventFilter filter, float[] queryEmbedding, double minimumSimilarity, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
+
         public Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new EventFilterOptions([], []));
     }
@@ -1640,6 +1643,9 @@ public sealed class BasicTests
             Task.FromResult<IReadOnlyList<PendingAlertRecord>>([]);
 
         public Task<IReadOnlyList<AlertEventRecord>> SearchEventsAsync(EventFilter filter, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
+
+        public Task<IReadOnlyList<AlertEventRecord>> SearchBySimilarityAsync(EventFilter filter, float[] queryEmbedding, double minimumSimilarity, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<AlertEventRecord>>([]);
 
         public Task<EventFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken) =>
@@ -2118,6 +2124,68 @@ public sealed class BasicTests
             // A resolved watch is no longer "active" - a later alert on this camera must not
             // resolve against a watch that's already been closed out.
             Assert.Null(await store.GetActiveAsync("front-door", CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EventStore_SearchBySimilarity_RanksByCosineSimilarityAndAppliesThreshold()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions
+            {
+                ApiKey = "test-key-1234567890",
+                DataDirectory = tempDir
+            });
+            using var store = new SqliteEventStore(options, new FakeHostEnvironment(tempDir));
+
+            var carResult = new AlertResult
+            {
+                Id = Guid.NewGuid(),
+                Camera = "driveway",
+                OccurredAt = DateTimeOffset.UtcNow,
+                Status = "completed",
+                Analysis = new VisionAnalysis { EventType = "vehicle", Summary = "a car" },
+                Embedding = [1f, 0f, 0f, 0f]
+            };
+            var catResult = new AlertResult
+            {
+                Id = Guid.NewGuid(),
+                Camera = "backyard",
+                OccurredAt = DateTimeOffset.UtcNow,
+                Status = "completed",
+                Analysis = new VisionAnalysis { EventType = "animal", Summary = "a cat" },
+                Embedding = [0f, 1f, 0f, 0f]
+            };
+            var unembeddedResult = new AlertResult
+            {
+                Id = Guid.NewGuid(),
+                Camera = "driveway",
+                OccurredAt = DateTimeOffset.UtcNow,
+                Status = "completed",
+                Analysis = new VisionAnalysis { EventType = "vehicle", Summary = "a truck, embedded before the feature was on" }
+            };
+
+            await store.RecordAsync(carResult, CancellationToken.None);
+            await store.RecordAsync(catResult, CancellationToken.None);
+            await store.RecordAsync(unembeddedResult, CancellationToken.None);
+
+            // Close to the car's embedding, far from the cat's - a stand-in for "car"'s CLIP text
+            // encoding scoring high against the car photo and low against the cat photo.
+            var queryEmbedding = new[] { 0.9f, 0.1f, 0f, 0f };
+            var results = await store.SearchBySimilarityAsync(
+                new EventFilter(Limit: 10), queryEmbedding, minimumSimilarity: 0.5, CancellationToken.None);
+
+            var resultIds = results.Select(r => r.Id).ToList();
+            Assert.Contains(carResult.Id, resultIds);
+            // Below the 0.5 threshold and never embedded at all - neither belongs in the results.
+            Assert.DoesNotContain(catResult.Id, resultIds);
+            Assert.DoesNotContain(unembeddedResult.Id, resultIds);
         }
         finally
         {

@@ -14,6 +14,8 @@ public sealed class AlertProcessor : BackgroundService
     private readonly IFaceRecognitionService _faceRecognition;
     private readonly IPackageWatchStore _packageWatches;
     private readonly IOptionsMonitor<PackageTheftOptions> _packageTheftOptions;
+    private readonly IImageEmbeddingService _imageEmbeddings;
+    private readonly IOptionsMonitor<SemanticSearchOptions> _semanticSearchOptions;
     private readonly ILogger<AlertProcessor> _logger;
 
     public AlertProcessor(
@@ -27,6 +29,8 @@ public sealed class AlertProcessor : BackgroundService
         IFaceRecognitionService faceRecognition,
         IPackageWatchStore packageWatches,
         IOptionsMonitor<PackageTheftOptions> packageTheftOptions,
+        IImageEmbeddingService imageEmbeddings,
+        IOptionsMonitor<SemanticSearchOptions> semanticSearchOptions,
         ILogger<AlertProcessor> logger)
     {
         _queue = queue;
@@ -38,6 +42,8 @@ public sealed class AlertProcessor : BackgroundService
         _faceRecognition = faceRecognition;
         _packageWatches = packageWatches;
         _packageTheftOptions = packageTheftOptions;
+        _imageEmbeddings = imageEmbeddings;
+        _semanticSearchOptions = semanticSearchOptions;
         _logger = logger;
         _profileProvider = profileProvider;
     }
@@ -93,6 +99,13 @@ public sealed class AlertProcessor : BackgroundService
             {
                 await ProcessPackageWatchAsync(alert.Camera, analysis, _packageTheftOptions.CurrentValue, cancellationToken);
             }
+            // Runs entirely locally, independent of the vision backend above - same shape as
+            // face recognition. Encoding failures return null (see ImageEmbeddingService) rather
+            // than throwing, so a bad frame just leaves this alert out of semantic search instead
+            // of failing the whole alert.
+            var embedding = _semanticSearchOptions.CurrentValue.Enabled
+                ? await _imageEmbeddings.EmbedImageAsync(alert.ImageBytes, cancellationToken)
+                : null;
             var result = new AlertResult
             {
                 Id = alert.Id,
@@ -108,7 +121,8 @@ public sealed class AlertProcessor : BackgroundService
                 Analysis = analysis,
                 RawModelResponse = raw,
                 LinkedCameras = alert.LinkedCameras,
-                IncidentId = alert.IncidentId
+                IncidentId = alert.IncidentId,
+                Embedding = embedding
             };
             await _store.SaveAsync(result, cancellationToken);
 
