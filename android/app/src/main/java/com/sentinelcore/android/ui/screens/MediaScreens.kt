@@ -33,9 +33,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -43,8 +47,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -236,6 +242,8 @@ fun LiveCamerasScreen(
                                     "/api/cameras/${camera.id}/stream/stream.m3u8",
                                 ),
                                 headers = model.mediaHeaders(),
+                                model = model,
+                                posterPath = "/api/cameras/${camera.id}/thumbnail.jpg",
                                 muted = true,
                                 showControls = false,
                                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
@@ -288,6 +296,8 @@ fun LivePlayerScreen(
             SentinelPlayer(
                 url = url,
                 headers = model.mediaHeaders(),
+                model = model,
+                posterPath = "/api/cameras/${camera.id}/thumbnail.jpg",
                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
             )
             StatusChip(
@@ -311,6 +321,8 @@ fun LivePlayerScreen(
 private fun SentinelPlayer(
     url: String?,
     headers: Map<String, String>,
+    model: SentinelViewModel? = null,
+    posterPath: String? = null,
     muted: Boolean = false,
     showControls: Boolean = true,
     modifier: Modifier = Modifier,
@@ -323,17 +335,32 @@ private fun SentinelPlayer(
     }
 
     val context = LocalContext.current
+    // Hides the poster (see below) only once a frame has actually rendered - readyToPlay alone
+    // still leaves a black view up briefly.
+    var isVideoReady by remember(url) { mutableStateOf(false) }
     val player = remember(url, headers, muted) {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(headers)
+        // ExoPlayer's defaults (2.5s/50s) build up a comfortable cushion before starting, which
+        // is the right call for on-demand video but adds needless delay for a live feed, where
+        // "as current as possible, right away" matters more than a deep buffer.
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(2_000, 10_000, 500, 1_000)
+            .build()
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
+            .setLoadControl(loadControl)
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(url))
                 volume = if (muted) 0f else 1f
                 playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onRenderedFirstFrame() {
+                        isVideoReady = true
+                    }
+                })
                 prepare()
             }
     }
@@ -342,17 +369,29 @@ private fun SentinelPlayer(
         onDispose { player.release() }
     }
 
-    AndroidView(
-        factory = { viewContext ->
-            PlayerView(viewContext).apply {
-                this.player = player
-                useController = showControls
-            }
-        },
-        update = {
-            it.player = player
-            it.useController = showControls
-        },
-        modifier = modifier.background(Color.Black),
-    )
+    Box(modifier.background(Color.Black)) {
+        // Poster frame from the server's cached thumbnail, shown until the live video actually
+        // has a frame to display - makes the tile feel instant instead of a blank tile while the
+        // stream connects and buffers.
+        if (posterPath != null && model != null) {
+            SentinelRemoteImage(
+                model = model,
+                path = posterPath,
+                modifier = Modifier.fillMaxSize().alpha(if (isVideoReady) 0f else 1f),
+            )
+        }
+        AndroidView(
+            factory = { viewContext ->
+                PlayerView(viewContext).apply {
+                    this.player = player
+                    useController = showControls
+                }
+            },
+            update = {
+                it.player = player
+                it.useController = showControls
+            },
+            modifier = Modifier.fillMaxSize().alpha(if (isVideoReady) 1f else 0f),
+        )
+    }
 }

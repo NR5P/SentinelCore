@@ -31,8 +31,25 @@ public static class CameraEndpoints
 
     public static void MapCameraEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/cameras", async (ICameraStore store, CancellationToken ct) =>
-            Results.Ok(await store.GetAllAsync(ct))).RequireAuthorization();
+        app.MapGet("/api/cameras", async (ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
+        {
+            var cameras = await store.GetAllAsync(ct);
+
+            // Fire-and-forget: warm up each camera's stream as soon as something asks for the
+            // camera list - app launch, pull-to-refresh, loading the web dashboard - rather than
+            // waiting for the Live tab to actually be opened, so ffmpeg has usually already
+            // produced segments by the time a viewer gets there. A no-op for cameras already
+            // warm (EnsureStreamStartedAsync reuses the running session). CancellationToken.None
+            // because this outlives the request that triggered it; failures are swallowed here
+            // since the real stream request surfaces them normally.
+            foreach (var camera in cameras)
+            {
+                _ = streams.EnsureStreamStartedAsync(camera, CancellationToken.None)
+                    .ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+            }
+
+            return Results.Ok(cameras);
+        }).RequireAuthorization();
 
         app.MapPost("/api/cameras", async (CameraInputDto dto, ICameraStore store, CancellationToken ct) =>
         {
@@ -92,6 +109,24 @@ public static class CameraEndpoints
             if (segmentPath is null || !File.Exists(segmentPath)) return Results.NotFound();
 
             return Results.File(segmentPath, "video/mp2t");
+        }).RequireAuthorization();
+
+        // Instant poster frame for a camera tile: if there's a warm stream, this is just a file
+        // read of the JPEG ffmpeg has been overwriting in the background (see
+        // HlsStreamManager.GetThumbnailPath). Only a cold camera nobody has looked at recently
+        // falls back to a one-off snapshot grab.
+        app.MapGet("/api/cameras/{id:guid}/thumbnail.jpg", async (Guid id, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
+        {
+            var thumbnailPath = streams.GetThumbnailPath(id);
+            if (thumbnailPath is not null) return Results.File(thumbnailPath, "image/jpeg");
+
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            var bytes = await streams.CaptureSnapshotAsync(camera, ct);
+            return bytes is null
+                ? Results.Problem("Could not grab a frame from this camera.", statusCode: 502)
+                : Results.File(bytes, "image/jpeg");
         }).RequireAuthorization();
     }
 

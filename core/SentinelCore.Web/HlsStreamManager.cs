@@ -10,7 +10,11 @@ namespace SentinelCore.Web;
 // killed after a short idle period so this doesn't burn CPU on cameras left unwatched.
 public sealed class HlsStreamManager : IDisposable
 {
-    private static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(30);
+    // Was 30s, but that meant switching away from the Live tab for half a minute (or the app
+    // backgrounding briefly) killed ffmpeg, so the next visit paid a full cold RTSP-reconnect +
+    // keyframe-wait every time. A few minutes covers normal tab-switching/app-backgrounding while
+    // still reclaiming genuinely-abandoned cameras.
+    private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(3);
 
     // ffmpeg can only start an HLS segment on a keyframe boundary when copying video
     // (not re-encoding), so startup latency depends on the camera's keyframe interval -
@@ -74,6 +78,18 @@ public sealed class HlsStreamManager : IDisposable
         if (!_sessions.TryGetValue(cameraId, out var session)) return null;
         var safeName = Path.GetFileName(fileName); // guards against path traversal
         return Path.Combine(session.OutputDirectory, safeName);
+    }
+
+    // Poster frame for a camera that already has a warm session - ffmpeg overwrites this file
+    // every few seconds as a side output of the same process (see BuildFfmpegArguments), so
+    // reading it is just a file read, not another camera round-trip. Null if there's no running
+    // session or it hasn't written a first frame yet; callers should fall back to
+    // CaptureSnapshotAsync in that case.
+    public string? GetThumbnailPath(Guid cameraId)
+    {
+        if (!_sessions.TryGetValue(cameraId, out var session)) return null;
+        var path = Path.Combine(session.OutputDirectory, ThumbnailFileName);
+        return File.Exists(path) ? path : null;
     }
 
     public void StopStream(Guid cameraId)
@@ -141,6 +157,8 @@ public sealed class HlsStreamManager : IDisposable
         }
     }
 
+    public const string ThumbnailFileName = "thumb.jpg";
+
     public static List<string> BuildFfmpegArguments(string sourceUrl, bool includeAudio, string outputDir)
     {
         var args = new List<string>();
@@ -148,20 +166,35 @@ public sealed class HlsStreamManager : IDisposable
         // if it's passed ahead of a non-RTSP input like an http:// MJPEG/snapshot URL.
         if (IsRtspUrl(sourceUrl))
             args.AddRange(["-rtsp_transport", "tcp"]);
-        args.AddRange(["-i", sourceUrl, "-c:v", "copy"]);
+        args.AddRange(["-i", sourceUrl]);
 
+        // Primary output: HLS segments, video copied untouched so this stays cheap. 1s segments
+        // (down from 2s) mean the first segment - and so the first thing a new viewer can play -
+        // is ready sooner, and players need less buffered before they'll start.
+        args.AddRange(["-map", "0:v:0", "-c:v", "copy"]);
         if (includeAudio)
-            args.AddRange(["-c:a", "aac", "-ac", "1"]);
+            args.AddRange(["-map", "0:a:0?", "-c:a", "aac", "-ac", "1"]);
         else
             args.Add("-an");
-
         args.AddRange([
             "-f", "hls",
-            "-hls_time", "2",
-            "-hls_list_size", "4",
+            "-hls_time", "1",
+            "-hls_list_size", "6",
             "-hls_flags", "delete_segments+omit_endlist",
             "-hls_segment_filename", Path.Combine(outputDir, "seg_%03d.ts"),
             Path.Combine(outputDir, "stream.m3u8")
+        ]);
+
+        // Secondary output: a small JPEG this same process overwrites every few seconds, so a
+        // viewer opening this camera gets an instant poster frame instead of a blank tile while
+        // the HLS player buffers - see GetThumbnailPath. -update rewrites one file in place
+        // instead of numbering a new one per frame.
+        args.AddRange([
+            "-map", "0:v:0",
+            "-vf", "fps=1/3,scale=480:-2",
+            "-update", "1",
+            "-y",
+            Path.Combine(outputDir, ThumbnailFileName)
         ]);
 
         return args;

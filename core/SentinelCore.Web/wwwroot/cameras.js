@@ -3,6 +3,14 @@ window.GateWatchCameras = (function () {
   let editingId = null;
   const hlsInstances = new Map();
 
+  // Leaving the Live tab pauses players instead of tearing them down immediately, so a quick
+  // flip to another tab and back doesn't force a full HLS reconnect. Only if you stay away
+  // longer than this do we actually release the players/connections.
+  const LIVE_TEARDOWN_GRACE_MS = 90 * 1000;
+  let liveTeardownTimer = null;
+  let liveBuilt = false;
+  let liveBuiltCameraIds = null;
+
   // Keyed by cameraId - a camera with no entry here just has the gate/door check off.
   let gateChecks = new Map();
   let gateCheckEditingCameraId = null;
@@ -793,6 +801,20 @@ window.GateWatchCameras = (function () {
   // ---------------- Live tab ----------------
 
   function showLive() {
+    if (liveTeardownTimer) {
+      clearTimeout(liveTeardownTimer);
+      liveTeardownTimer = null;
+    }
+
+    const currentIds = cameras.map(c => c.id).join(",");
+    if (liveBuilt && currentIds === liveBuiltCameraIds) {
+      // Still-warm from a recent visit within the grace period - resume rather than
+      // reconnecting every player from scratch.
+      document.querySelectorAll("#live-root video").forEach(video => video.play().catch(() => {}));
+      return;
+    }
+    if (liveBuilt) teardownLive(); // camera list changed since the last visit - rebuild clean
+
     const root = document.getElementById("live-root");
     root.innerHTML = "";
 
@@ -810,6 +832,9 @@ window.GateWatchCameras = (function () {
       video.autoplay = true;
       video.playsInline = true;
       video.controls = true;
+      // Shows immediately instead of a blank/black tile while the stream connects and buffers -
+      // see HlsStreamManager's thumbnail side-output on the server.
+      video.poster = `/api/cameras/${camera.id}/thumbnail.jpg`;
 
       const label = document.createElement("div");
       label.className = "live-tile-label";
@@ -826,6 +851,9 @@ window.GateWatchCameras = (function () {
 
       attachPlayer(video, status, camera);
     }
+
+    liveBuilt = true;
+    liveBuiltCameraIds = currentIds;
   }
 
   // ---------------- PTZ (pan/tilt/zoom) joystick ----------------
@@ -932,7 +960,11 @@ window.GateWatchCameras = (function () {
     video.addEventListener("playing", () => status.classList.add("hidden"), { once: true });
 
     if (window.Hls && Hls.isSupported()) {
-      const hls = new Hls({ liveSyncDurationCount: 2 });
+      // liveSyncDurationCount is how many segments behind the live edge hls.js targets - lower
+      // means less buffering (and so less delay) before it'll start playback. 1 pairs with the
+      // server's 1s segments for close-to-immediate start without being so tight it stalls on a
+      // slow network.
+      const hls = new Hls({ liveSyncDurationCount: 1 });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
           status.textContent = "stream unavailable";
@@ -955,6 +987,19 @@ window.GateWatchCameras = (function () {
   }
 
   function hideLive() {
+    // Pause now, but don't tear the players down yet - see LIVE_TEARDOWN_GRACE_MS. A quick flip
+    // to another tab and back should just resume, not pay for a full reconnect.
+    document.querySelectorAll("#live-root video").forEach(video => video.pause());
+
+    if (liveTeardownTimer) clearTimeout(liveTeardownTimer);
+    liveTeardownTimer = setTimeout(teardownLive, LIVE_TEARDOWN_GRACE_MS);
+  }
+
+  function teardownLive() {
+    liveTeardownTimer = null;
+    liveBuilt = false;
+    liveBuiltCameraIds = null;
+
     for (const hls of hlsInstances.values()) {
       try { hls.destroy(); } catch { /* already gone */ }
     }
