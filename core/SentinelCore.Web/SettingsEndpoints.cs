@@ -21,6 +21,7 @@ public sealed record SettingsSnapshot(
     TelegramChatSettingsDto? TelegramChat,
     BlueIrisSettingsDto? BlueIris,
     MultiFrameAnalysisSettingsDto? MultiFrameAnalysis,
+    PackageTheftWatchSettingsDto? PackageTheftWatch,
     SelfMonitoringSettingsDto? SelfMonitoring,
     StartupNotificationSettingsDto? StartupNotification,
     QuietHoursSettingsDto? QuietHours,
@@ -123,6 +124,9 @@ public static class SettingsEndpoints
 
         settings.MapPut("/multi-frame-analysis", async (MultiFrameAnalysisSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "MultiFrameAnalysis", ct));
+
+        settings.MapPut("/package-theft-watch", async (PackageTheftWatchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "PackageTheftWatch", ct));
 
         settings.MapPut("/startup-notification", async (StartupNotificationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "StartupNotification", ct));
@@ -257,6 +261,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<TelegramChatSettingsDto>("TelegramChat", cancellationToken),
         await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", cancellationToken),
         await settings.GetSectionAsync<MultiFrameAnalysisSettingsDto>("MultiFrameAnalysis", cancellationToken),
+        await settings.GetSectionAsync<PackageTheftWatchSettingsDto>("PackageTheftWatch", cancellationToken),
         await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", cancellationToken),
         await settings.GetSectionAsync<StartupNotificationSettingsDto>("StartupNotification", cancellationToken),
         await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", cancellationToken),
@@ -287,6 +292,7 @@ public static class SettingsEndpoints
         if (snapshot.TelegramChat is not null) await settings.MergeSectionAsync("TelegramChat", snapshot.TelegramChat, cancellationToken);
         if (snapshot.BlueIris is not null) await settings.MergeSectionAsync("BlueIris", snapshot.BlueIris, cancellationToken);
         if (snapshot.MultiFrameAnalysis is not null) await settings.MergeSectionAsync("MultiFrameAnalysis", snapshot.MultiFrameAnalysis, cancellationToken);
+        if (snapshot.PackageTheftWatch is not null) await settings.MergeSectionAsync("PackageTheftWatch", snapshot.PackageTheftWatch, cancellationToken);
         if (snapshot.SelfMonitoring is not null) await settings.MergeSectionAsync("SelfMonitoring", snapshot.SelfMonitoring, cancellationToken);
         if (snapshot.StartupNotification is not null) await settings.MergeSectionAsync("StartupNotification", snapshot.StartupNotification, cancellationToken);
         if (snapshot.QuietHours is not null) await settings.MergeSectionAsync("QuietHours", snapshot.QuietHours, cancellationToken);

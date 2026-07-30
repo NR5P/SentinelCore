@@ -300,6 +300,37 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void AlertCategorizer_DescribePackageTheft_OnlyMentionsWhenSuspected()
+    {
+        Assert.Null(AlertCategorizer.DescribePackageTheft(null));
+        Assert.Null(AlertCategorizer.DescribePackageTheft(new VisionAnalysis()));
+
+        var described = AlertCategorizer.DescribePackageTheft(
+            new VisionAnalysis { PackageTheftSuspected = true, PackageTheftReason = "gone without a recognized pickup" });
+        Assert.Equal("⚠ Possible package theft: gone without a recognized pickup", described);
+    }
+
+    [Fact]
+    public void AlertNotificationPolicy_PackageTheftSuspected_BypassesVisibleSubjectGuard()
+    {
+        var result = new AlertResult
+        {
+            Camera = "front-door",
+            Analysis = new VisionAnalysis
+            {
+                NotificationRecommended = true,
+                PackageTheftSuspected = true,
+                Person = new PersonAnalysis { Visible = false },
+                Vehicle = new VehicleAnalysis { Visible = false },
+                Package = new PackageAnalysis { Visible = false, Status = "none" },
+                Animal = new AnimalAnalysis { Visible = false }
+            }
+        };
+
+        Assert.True(AlertNotificationPolicy.ShouldNotify(result));
+    }
+
+    [Fact]
     public void OllamaVisionClient_BuildPrompt_OnlyIncludesLicensePlateWhenProfileOptsIn()
     {
         var alert = new IncomingAlert(
@@ -2052,6 +2083,46 @@ public sealed class BasicTests
         // The sidecar is a separate, optional process. A dead one must never break the alert
         // pipeline for the actions queued behind it.
         await action.ExecuteAsync(NotifiableResult("gate camera front door"), CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task PackageWatchStore_StartsExtendsAndResolvesWatches()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions
+            {
+                ApiKey = "test-key-1234567890",
+                DataDirectory = tempDir
+            });
+            var store = new SqlitePackageWatchStore(options, new FakeHostEnvironment(tempDir));
+
+            Assert.Null(await store.GetActiveAsync("front-door", CancellationToken.None));
+
+            var deliveredAt = DateTimeOffset.UtcNow;
+            var started = await store.StartOrExtendAsync("front-door", deliveredAt, TimeSpan.FromHours(12), CancellationToken.None);
+            Assert.Equal(PackageWatchStatus.Watching, started.Status);
+
+            // A second delivery-status alert on the same camera extends the same watch rather
+            // than creating a second open one.
+            var extended = await store.StartOrExtendAsync("front-door", deliveredAt.AddMinutes(5), TimeSpan.FromHours(12), CancellationToken.None);
+            Assert.Equal(started.Id, extended.Id);
+
+            var active = await store.GetActiveAsync("front-door", CancellationToken.None);
+            Assert.NotNull(active);
+            Assert.Equal(started.Id, active!.Id);
+
+            await store.SetStatusAsync(started.Id, PackageWatchStatus.TheftSuspected, CancellationToken.None);
+
+            // A resolved watch is no longer "active" - a later alert on this camera must not
+            // resolve against a watch that's already been closed out.
+            Assert.Null(await store.GetActiveAsync("front-door", CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]

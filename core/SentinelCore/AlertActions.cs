@@ -147,6 +147,14 @@ public static class AlertCategorizer
     // LinkedCameras is a plain display string, not a foreign key - no cross-row lookup needed.
     public static string? DescribeIncident(AlertResult result) =>
         string.IsNullOrWhiteSpace(result.LinkedCameras) ? null : $"Also recorded: {result.LinkedCameras}";
+
+    // Null unless Package Theft Watch (AlertProcessor) flagged this specific alert - see
+    // VisionAnalysis.PackageTheftSuspected. Heuristic, not a certainty - phrased as "possible"
+    // deliberately, same spirit as license plate reads never being treated as authoritative.
+    public static string? DescribePackageTheft(VisionAnalysis? analysis) =>
+        analysis is { PackageTheftSuspected: true }
+            ? $"⚠ Possible package theft: {analysis.PackageTheftReason}"
+            : null;
 }
 
 public sealed class TelegramAlertAction : IAlertAction
@@ -263,6 +271,8 @@ public sealed class TelegramAlertAction : IAlertAction
             caption.Append($"\n{WebUtility.HtmlEncode(faceLine)}");
         if (AlertCategorizer.DescribeIncident(result) is { } incidentLine)
             caption.Append($"\n{WebUtility.HtmlEncode(incidentLine)}");
+        if (AlertCategorizer.DescribePackageTheft(analysis) is { } theftLine)
+            caption.Append($"\n{WebUtility.HtmlEncode(theftLine)}");
 
         return caption.ToString();
     }
@@ -421,6 +431,10 @@ public sealed class EmailAlertAction : IAlertAction
             ? ""
             : $"""<tr><td style="padding:4px 12px 4px 0;"><strong>Also recorded</strong></td><td>{WebUtility.HtmlEncode(result.LinkedCameras)}</td></tr>""";
 
+        var theftRow = AlertCategorizer.DescribePackageTheft(analysis) is { } theftLine
+            ? $"""<tr><td style="padding:4px 12px 4px 0;"><strong>Package Theft</strong></td><td>{WebUtility.HtmlEncode(theftLine)}</td></tr>"""
+            : "";
+
         var html = $$"""
         <!doctype html>
         <html>
@@ -439,6 +453,7 @@ public sealed class EmailAlertAction : IAlertAction
             <tr><td style="padding:4px 12px 4px 0;"><strong>Confidence</strong></td><td>{{analysis.Confidence:P0}}</td></tr>
             <tr><td style="padding:4px 12px 4px 0;"><strong>Reason</strong></td><td>{{WebUtility.HtmlEncode(analysis.NotificationReason)}}</td></tr>
             {{incidentRow}}
+            {{theftRow}}
           </table>
         </body>
         </html>

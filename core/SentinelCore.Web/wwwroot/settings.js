@@ -167,6 +167,15 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "packageTheftWatch", title: "PACKAGE THEFT WATCH", endpoint: "/api/settings/package-theft-watch",
+      basic: false,
+      description: "Off by default. When on, an alert showing a package delivered or already present starts a watch on that camera. If a later alert on the same camera shows the package gone and whoever's there isn't a recognized household face or vehicle, it's flagged as suspected theft and forced to notify even if it otherwise wouldn't have. This adds no AI processing cost - it only reuses package/face/vehicle detection your other settings already produce - but it's a heuristic guess, not proof: a stranger picking it up isn't necessarily a thief, and this can only catch a removal that itself trips a new motion alert on that camera. A package taken with no interceding motion event won't be caught.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Watch for packages disappearing without a recognized pickup, and force a notification when suspected." },
+        { name: "watchWindowHours", label: "Watch Window (hours)", type: "number", min: 1, max: 72, tip: "How long after a package is seen delivered the watch stays open. Most legitimate pickups happen same-day." }
+      ]
+    },
+    {
       key: "selfMonitoring", title: "SELF-MONITORING", endpoint: "/api/settings/self-monitoring",
       basic: false,
       description: "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive, or alerts backing up faster than they're processed. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
@@ -256,6 +265,7 @@ window.GateWatchSettings = (function () {
     discord: "Post alert cards and trigger snapshots to a Discord channel through a webhook.",
     blueIris: "On-demand Blue Iris snapshots for the Telegram bot. Sentinel's Timeline uses its own local trigger clips instead.",
     multiFrameAnalysis: "Analyze 2-3 frames per trigger instead of one, to reduce false alarms from shadows/reflections. Off by default - costs more AI processing time per alert.",
+    packageTheftWatch: "Flags a package that disappears without a recognized pickup, and forces a notification. Off by default - no extra AI cost, but a heuristic guess, not proof.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",
     quietHours: "Raise the bar for Email, Telegram, and Discord alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",

@@ -433,6 +433,24 @@ public sealed class MultiFrameOptions
     public int FrameIntervalMs { get; init; } = 350;
 }
 
+public sealed class PackageTheftOptions
+{
+    public const string SectionName = "PackageTheftWatch";
+
+    // Off by default. When a package is marked delivered, watches for it to later show as gone
+    // on a subsequent alert from the same camera, and flags it if whoever's in that later alert
+    // isn't a recognized face/vehicle - see AlertProcessor and PackageWatchStore. Uses data
+    // already computed for every alert, so unlike Multi-Frame Analysis or Face Recognition this
+    // costs no extra AI calls - it's off by default because it's a heuristic judgment call that
+    // can force a notification, not because of processing cost. It can only catch a removal that
+    // itself trips a new motion alert on the camera; a package taken with no interceding alert
+    // at all won't be caught.
+    public bool Enabled { get; init; }
+
+    [Range(1, 72)]
+    public int WatchWindowHours { get; init; } = 12;
+}
+
 public sealed class TelegramOptions
 {
     public const string SectionName = "Telegram";

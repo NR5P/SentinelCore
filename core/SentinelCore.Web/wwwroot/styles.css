@@ -419,6 +419,11 @@ main {
   color: var(--cyan);
 }
 
+.card-warning {
+  color: var(--amber);
+  justify-content: flex-start;
+}
+
 .card-summary {
   font-size: 13px;
   line-height: 1.5;

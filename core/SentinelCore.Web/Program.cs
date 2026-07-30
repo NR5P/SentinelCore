@@ -335,7 +335,8 @@ app.MapGet("/api/events", async (
         confidence = e.Confidence ?? 0,
         hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath),
         linkedCameras = e.LinkedCameras,
-        incidentId = e.IncidentId
+        incidentId = e.IncidentId,
+        packageTheftReason = e.PackageTheftReason
     }));
 }).RequireAuthorization();
 
@@ -365,7 +366,8 @@ app.MapGet("/api/events/{id:guid}", async (Guid id, IEventStore store, Cancellat
             confidence = e.Confidence ?? 0,
             hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath),
             linkedCameras = e.LinkedCameras,
-            incidentId = e.IncidentId
+            incidentId = e.IncidentId,
+            packageTheftReason = e.PackageTheftReason
         });
 }).RequireAuthorization();
 

@@ -198,6 +198,14 @@ public sealed class MultiFrameAnalysisSettingsDto
     public int FrameIntervalMs { get; set; } = 350;
 }
 
+public sealed class PackageTheftWatchSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(1, 72)]
+    public int WatchWindowHours { get; set; } = 12;
+}
+
 public sealed class SelfMonitoringSettingsDto
 {
     public bool Enabled { get; set; } = true;

@@ -17,6 +17,15 @@ public static class AlertNotificationPolicy
         if (string.Equals(result.Profile, GateCheckDecision.ProfileName, StringComparison.OrdinalIgnoreCase))
             return true;
 
+        // Package Theft Watch (AlertProcessor) forces NotificationRecommended=true on the alert
+        // where a watched package is observed gone - that's exactly a frame where the package
+        // itself is no longer visible and whoever's there, if anyone, may not read as a
+        // conventional "subject" (e.g. someone at the edge of frame, already leaving). The watch
+        // logic already decided this is worth surfacing; don't let the subject check below
+        // second-guess it.
+        if (analysis.PackageTheftSuspected)
+            return true;
+
         // Nothing in the frame means nothing to alert about, whatever the model recommended.
         //
         // This is deliberately the first check and deliberately profile-independent. The

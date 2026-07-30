@@ -63,8 +63,11 @@ public sealed class VisionAnalysis
     [JsonPropertyName("confidence")]
     public double Confidence { get; init; }
 
+    // Not init-only: Package Theft Watch (AlertProcessor) forces this true after the model's own
+    // judgment when a watched package disappears with nobody recognized handling it, the same
+    // way KnownFaceLabels/KnownVehicleLabel below are filled in after the fact.
     [JsonPropertyName("notification_recommended")]
-    public bool NotificationRecommended { get; init; }
+    public bool NotificationRecommended { get; set; }
 
     [JsonPropertyName("notification_reason")]
     public string NotificationReason { get; init; } = string.Empty;
@@ -74,6 +77,17 @@ public sealed class VisionAnalysis
     // gate/door open check (GateCheckAnalyzer) to also catch a covered or obstructed lens.
     [JsonPropertyName("camera_blocked")]
     public bool CameraBlocked { get; init; }
+
+    // Not part of the model's JSON output - filled in afterward by AlertProcessor's Package
+    // Theft Watch (see PackageWatchStore) when a package it was watching on this camera
+    // disappears on a later alert without a recognized face/vehicle handling it. Off by default
+    // (feature is opt-in) and never set for the delivery event itself, only the later one where
+    // the package is observed gone.
+    [JsonPropertyName("package_theft_suspected")]
+    public bool PackageTheftSuspected { get; set; }
+
+    [JsonPropertyName("package_theft_reason")]
+    public string? PackageTheftReason { get; set; }
 }
 
 public sealed class GateAnalysis

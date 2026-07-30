@@ -53,6 +53,10 @@ function renderCard(event) {
     ? `<div class="card-meta" data-tip="A Camera Group also pulled in footage from these cameras when this one triggered.">🔗 Also recorded: ${escapeHtml(event.linkedCameras)}</div>`
     : "";
 
+  const packageTheftHtml = event.packageTheftReason
+    ? `<div class="card-meta card-warning" data-tip="Package Theft Watch flagged this alert.">📦 ${escapeHtml(event.packageTheftReason)}</div>`
+    : "";
+
   card.innerHTML = `
     <div class="card-image"${event.hasImage ? ` data-tip="Click to view the full-size snapshot."` : ""}>
       ${imageHtml}
@@ -65,6 +69,7 @@ function renderCard(event) {
       </div>
       <div class="card-summary" data-tip="The AI's description of what it saw in this snapshot.">${escapeHtml(event.summary) || "&mdash;"}</div>
       ${linkedCamerasHtml}
+      ${packageTheftHtml}
       <div class="card-footer">
         <span class="card-event-type" data-tip="What kind of event the AI classified this as.">${escapeHtml(event.eventType)}</span>
         <span>${formatClock(event.occurredAt)}</span>

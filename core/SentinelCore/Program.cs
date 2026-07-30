@@ -95,6 +95,10 @@ builder.Services.AddOptions<MultiFrameOptions>()
     .Bind(builder.Configuration.GetSection(MultiFrameOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<PackageTheftOptions>()
+    .Bind(builder.Configuration.GetSection(PackageTheftOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<SelfMonitoringOptions>()
     .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
     .ValidateDataAnnotations()
@@ -163,6 +167,7 @@ builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
 builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
+builder.Services.AddSingleton<IPackageWatchStore, SqlitePackageWatchStore>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddSingleton<IAlertAction, PushAlertAction>();

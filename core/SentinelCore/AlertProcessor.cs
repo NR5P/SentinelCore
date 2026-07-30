@@ -12,6 +12,8 @@ public sealed class AlertProcessor : BackgroundService
     private readonly IOptionsMonitor<List<KnownVehicle>> _knownVehicles;
     private readonly IOptionsMonitor<List<KnownFace>> _knownFaces;
     private readonly IFaceRecognitionService _faceRecognition;
+    private readonly IPackageWatchStore _packageWatches;
+    private readonly IOptionsMonitor<PackageTheftOptions> _packageTheftOptions;
     private readonly ILogger<AlertProcessor> _logger;
 
     public AlertProcessor(
@@ -23,6 +25,8 @@ public sealed class AlertProcessor : BackgroundService
         IOptionsMonitor<List<KnownVehicle>> knownVehicles,
         IOptionsMonitor<List<KnownFace>> knownFaces,
         IFaceRecognitionService faceRecognition,
+        IPackageWatchStore packageWatches,
+        IOptionsMonitor<PackageTheftOptions> packageTheftOptions,
         ILogger<AlertProcessor> logger)
     {
         _queue = queue;
@@ -32,6 +36,8 @@ public sealed class AlertProcessor : BackgroundService
         _knownVehicles = knownVehicles;
         _knownFaces = knownFaces;
         _faceRecognition = faceRecognition;
+        _packageWatches = packageWatches;
+        _packageTheftOptions = packageTheftOptions;
         _logger = logger;
         _profileProvider = profileProvider;
     }
@@ -82,6 +88,10 @@ public sealed class AlertProcessor : BackgroundService
                 var labels = embeddings.Select(e => KnownFaceMatcher.Match(_knownFaces.CurrentValue, e)).ToList();
                 analysis.Person.KnownFaceLabels = labels.OfType<string>().Distinct().ToList();
                 analysis.Person.UnrecognizedFaceDetected = labels.Any(l => l is null);
+            }
+            if (_packageTheftOptions.CurrentValue.Enabled)
+            {
+                await ProcessPackageWatchAsync(alert.Camera, analysis, _packageTheftOptions.CurrentValue, cancellationToken);
             }
             var result = new AlertResult
             {
@@ -142,6 +152,42 @@ public sealed class AlertProcessor : BackgroundService
             };
             await _store.SaveAsync(failed, cancellationToken);
             _logger.LogError(ex, "Analysis failed for alert {AlertId}", alert.Id);
+        }
+    }
+
+    // Reuses data already computed for every alert (Package.Status, and - if those profiles are
+    // enabled - KnownFaceLabels/KnownVehicleLabel) rather than issuing any extra AI call. A
+    // package showing as delivered/arriving (re)starts or extends a watch on this camera; a
+    // later alert on the same camera showing it carried/removed/gone resolves that watch -
+    // quietly if a recognized face/vehicle is in that alert, or by flagging suspected theft and
+    // forcing a notification if not. "unknown" readings are ignored entirely, the same
+    // never-overwrite-on-an-indefinite-reading philosophy GateCheckDecision already uses.
+    private async Task ProcessPackageWatchAsync(string camera, VisionAnalysis analysis, PackageTheftOptions options, CancellationToken cancellationToken)
+    {
+        switch (analysis.Package.Status)
+        {
+            case "delivered" or "already_present" or "being_delivered":
+                await _packageWatches.StartOrExtendAsync(camera, DateTimeOffset.UtcNow, TimeSpan.FromHours(options.WatchWindowHours), cancellationToken);
+                break;
+
+            case "being_carried" or "being_removed" or "none":
+                var watch = await _packageWatches.GetActiveAsync(camera, cancellationToken);
+                if (watch is null) break;
+
+                var recognized = analysis.Person.KnownFaceLabels.Count > 0 || analysis.Vehicle.KnownVehicleLabel is not null;
+                if (recognized)
+                {
+                    await _packageWatches.SetStatusAsync(watch.Id, PackageWatchStatus.PickedUp, cancellationToken);
+                }
+                else
+                {
+                    await _packageWatches.SetStatusAsync(watch.Id, PackageWatchStatus.TheftSuspected, cancellationToken);
+                    analysis.PackageTheftSuspected = true;
+                    analysis.PackageTheftReason =
+                        $"A package delivered around {watch.DeliveredAt.ToLocalTime():t} is no longer there, and whoever's in this alert isn't a recognized household member or vehicle.";
+                    analysis.NotificationRecommended = true;
+                }
+                break;
         }
     }
 }

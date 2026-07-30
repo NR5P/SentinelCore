@@ -102,6 +102,8 @@ public sealed class DiscordAlertAction : IAlertAction
             description += $"\n\n{faceLine}";
         if (AlertCategorizer.DescribeIncident(result) is { } incidentLine)
             description += $"\n\n{incidentLine}";
+        if (AlertCategorizer.DescribePackageTheft(analysis) is { } theftLine)
+            description += $"\n\n{theftLine}";
 
         var embed = new Dictionary<string, object?>
         {
