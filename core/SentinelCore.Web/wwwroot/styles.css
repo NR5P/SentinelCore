@@ -1725,4 +1725,74 @@ main {
   #view-settings .event-count {
     display: none;
   }
+  .docs-layout {
+    flex-direction: column;
+    height: auto;
+  }
+  .docs-list {
+    flex: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: none;
+  }
+  .docs-viewer {
+    height: 70vh;
+  }
+}
+
+.docs-layout {
+  display: flex;
+  gap: 14px;
+  height: calc(100vh - 220px);
+  min-height: 420px;
+}
+
+.docs-list {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 10px;
+}
+
+.docs-list-item {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.docs-list-item:hover {
+  border-color: var(--border-bright);
+}
+
+.docs-list-item.active {
+  border-color: var(--border-bright);
+  color: var(--green);
+  background: rgba(57, 255, 156, 0.08);
+}
+
+.docs-viewer {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  background: #2a2a2a;
+}
+
+.docs-viewer iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
 }

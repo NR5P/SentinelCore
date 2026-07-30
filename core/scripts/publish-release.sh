@@ -154,9 +154,11 @@ for platform in $PLATFORMS; do
   chmod +x "$stage/$install_dest" 2>/dev/null || true
 
   # The install scripts and README below point people at docs/DEPLOYMENT.md and USER_GUIDE.md -
-  # include them so that's actually true for someone who only has this .zip, not a git checkout.
+  # include them (and PUSH_NOTIFICATIONS.md, which the dashboard's own Docs tab also serves as a
+  # PDF - see DocsEndpoints.cs) so that's actually true for someone who only has this .zip, not a
+  # git checkout.
   mkdir -p "$stage/docs"
-  cp "$ROOT_DIR/docs/DEPLOYMENT.md" "$ROOT_DIR/docs/USER_GUIDE.md" "$stage/docs/"
+  cp "$ROOT_DIR/docs/DEPLOYMENT.md" "$ROOT_DIR/docs/USER_GUIDE.md" "$ROOT_DIR/docs/PUSH_NOTIFICATIONS.md" "$stage/docs/"
 
   # The appsettings.json files `dotnet publish` just copied are the ones checked into this repo
   # - which double as this maintainer's own live configuration for the in-place git-checkout

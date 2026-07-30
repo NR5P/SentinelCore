@@ -5,8 +5,25 @@ using SentinelCore.Web;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
+using QuestPDF.Drawing;
+using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Community license: this is personal/self-hosted software, well under QuestPDF's revenue
+// threshold for free use - see https://www.questpdf.com/license/. Registers the DejaVu fonts
+// shipped in Fonts/ so DocsPdfRenderer (Docs tab) renders consistently regardless of what fonts,
+// if any, happen to be installed on the host - not something to assume on a Raspberry Pi image.
+QuestPDF.Settings.License = LicenseType.Community;
+var fontsDirectory = Path.Combine(builder.Environment.ContentRootPath, "Fonts");
+if (Directory.Exists(fontsDirectory))
+{
+    foreach (var fontFile in Directory.GetFiles(fontsDirectory, "*.ttf"))
+    {
+        using var fontStream = File.OpenRead(fontFile);
+        FontManager.RegisterFont(fontStream);
+    }
+}
 
 // So enums like CameraProbeStatus serialize as readable strings ("Found", "NeedsCredentials")
 // rather than raw integers - the first enum this project has put on the wire.
@@ -309,6 +326,7 @@ app.MapAutomationRuleProxyEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();
 app.MapTimelineEndpoints();
+app.MapDocsEndpoints();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
 

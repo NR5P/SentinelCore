@@ -30,6 +30,7 @@
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones. Separate from Blue Iris.">cameras</button>
       <button class="tab" data-view="triggers" data-tip-below data-tip-right data-tip="Motion caught inside a trigger zone. Click a thumbnail to view the snapshot or play its clip.">triggers</button>
       <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
+      <button class="tab" data-view="docs" data-tip-below data-tip-right data-tip="The full User Guide, Deployment guide, and Push Notifications setup - viewable as PDFs without leaving the dashboard.">docs</button>
       <button class="tab" id="tab-settings" data-view="settings" data-tip-below data-tip-right data-tip="Configuration for the Blue Iris bridge, AI model, and alerts. Changes apply live.">settings</button>
       <button class="tab hidden" id="tab-accounts" data-view="accounts" data-tip-below data-tip-right data-tip="Your account, and (for admins) every account signed in to this dashboard.">accounts</button>
     </nav>
@@ -277,6 +278,21 @@
       </div>
     </section>
 
+    <section id="view-docs" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">DOCS</div>
+      </div>
+
+      <div class="docs-layout">
+        <div id="docs-list" class="docs-list">
+          <div class="empty-state">loading docs&hellip;</div>
+        </div>
+        <div class="docs-viewer">
+          <iframe id="docs-frame" title="Documentation"></iframe>
+        </div>
+      </div>
+    </section>
+
     <section id="view-settings" class="view hidden">
       <div class="toolbar">
         <div class="toolbar-label">SETTINGS</div>
@@ -438,5 +454,6 @@
   <script src="triggers.js"></script>
   <script src="automations.js"></script>
   <script src="timeline.js"></script>
+  <script src="docs.js"></script>
 </body>
 </html>

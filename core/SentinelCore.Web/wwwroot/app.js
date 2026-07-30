@@ -363,6 +363,7 @@ const views = {
   cameras: document.getElementById("view-cameras"),
   triggers: document.getElementById("view-triggers"),
   automations: document.getElementById("view-automations"),
+  docs: document.getElementById("view-docs"),
   settings: document.getElementById("view-settings"),
   accounts: document.getElementById("view-accounts")
 };
@@ -392,6 +393,7 @@ for (const tab of tabs) {
     if (target === "live") window.GateWatchCameras.showLive();
     if (target === "triggers") window.GateWatchTriggers.load();
     if (target === "automations") window.GateWatchAutomations.load();
+    if (target === "docs") window.GateWatchDocs.load();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;
       window.GateWatchTimeline.load();
