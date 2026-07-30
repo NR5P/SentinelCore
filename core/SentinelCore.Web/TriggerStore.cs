@@ -36,7 +36,10 @@ public sealed record TriggerEvent(
     DateTimeOffset OccurredAt,
     string ImagePath,
     double TriggerAreaFraction,
-    string? ClipPath);
+    string? ClipPath,
+    // Shared by every event (across one or more cameras) that belongs to the same camera-group
+    // incident - see TriggerZoneMonitor.MaybeTriggerAsync. Null for a camera with no group.
+    string? IncidentId = null);
 
 public interface ITriggerConfigStore
 {
@@ -51,7 +54,7 @@ public interface ITriggerConfigStore
 
 public interface ITriggerEventStore
 {
-    Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, CancellationToken cancellationToken);
+    Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, CancellationToken cancellationToken);
     Task<TriggerEvent?> GetAsync(Guid id, CancellationToken cancellationToken);
 
@@ -62,6 +65,11 @@ public interface ITriggerEventStore
     // Clips can only be cut once the post-roll has actually elapsed, so the event row is written
     // immediately (image first) and the clip path is patched in afterwards.
     Task SetClipPathAsync(Guid id, string clipPath, CancellationToken cancellationToken);
+
+    // Decides whether a fresh trigger should join an already-open incident: the most recent
+    // IncidentId among any of these camera ids triggered within the window, or null if none has.
+    // Used by TriggerZoneMonitor to reuse vs. mint an IncidentId when a group member fires.
+    Task<string?> GetMostRecentIncidentIdAsync(IReadOnlyList<Guid> cameraIds, DateTimeOffset since, CancellationToken cancellationToken);
 }
 
 public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore, IDisposable
@@ -108,6 +116,11 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         AddColumnIfMissing("TriggerEvents", "ClipPath", "TEXT");
         AddColumnIfMissing("TriggerConfigs", "SendToAlerts", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing("TriggerConfigs", "AlertProfile", "TEXT NOT NULL DEFAULT 'default'");
+        AddColumnIfMissing("TriggerEvents", "IncidentId", "TEXT");
+
+        using var incidentIndex = _connection.CreateCommand();
+        incidentIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_TriggerEvents_IncidentId ON TriggerEvents (IncidentId);";
+        incidentIndex.ExecuteNonQuery();
     }
 
     private void AddColumnIfMissing(string table, string column, string definition)
@@ -243,23 +256,24 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         }
     }
 
-    public async Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, CancellationToken cancellationToken)
+    public async Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId, CancellationToken cancellationToken)
     {
-        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null);
+        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null, incidentId);
 
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction)
-                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction);
+                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, IncidentId)
+                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction, $incidentId);
                 """;
             command.Parameters.AddWithValue("$id", trigger.Id.ToString("N"));
             command.Parameters.AddWithValue("$cameraId", trigger.CameraId.ToString("N"));
             command.Parameters.AddWithValue("$occurredAt", trigger.OccurredAt.UtcDateTime.ToString("O"));
             command.Parameters.AddWithValue("$imagePath", trigger.ImagePath);
             command.Parameters.AddWithValue("$triggerAreaFraction", trigger.TriggerAreaFraction);
+            command.Parameters.AddWithValue("$incidentId", (object?)trigger.IncidentId ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -277,8 +291,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = cameraId is null
-                ? "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath FROM TriggerEvents ORDER BY OccurredAt DESC LIMIT $limit;"
-                : "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath FROM TriggerEvents WHERE CameraId = $cameraId ORDER BY OccurredAt DESC LIMIT $limit;";
+                ? "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId FROM TriggerEvents ORDER BY OccurredAt DESC LIMIT $limit;"
+                : "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId FROM TriggerEvents WHERE CameraId = $cameraId ORDER BY OccurredAt DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$limit", limit);
             if (cameraId is not null) command.Parameters.AddWithValue("$cameraId", cameraId.Value.ToString("N"));
 
@@ -302,7 +316,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId
                 FROM TriggerEvents
                 WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end
                 ORDER BY OccurredAt ASC;
@@ -347,7 +361,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath FROM TriggerEvents WHERE Id = $id;";
+            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId FROM TriggerEvents WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -379,7 +393,35 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         DateTimeOffset.Parse(reader.GetString(2)),
         reader.GetString(3),
         reader.GetDouble(4),
-        reader.IsDBNull(5) ? null : reader.GetString(5));
+        reader.IsDBNull(5) ? null : reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetString(6));
+
+    public async Task<string?> GetMostRecentIncidentIdAsync(IReadOnlyList<Guid> cameraIds, DateTimeOffset since, CancellationToken cancellationToken)
+    {
+        if (cameraIds.Count == 0) return null;
+
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            var placeholders = string.Join(", ", cameraIds.Select((_, i) => $"$camera{i}"));
+            command.CommandText = $"""
+                SELECT IncidentId FROM TriggerEvents
+                WHERE CameraId IN ({placeholders}) AND OccurredAt >= $since AND IncidentId IS NOT NULL
+                ORDER BY OccurredAt DESC LIMIT 1;
+                """;
+            for (var i = 0; i < cameraIds.Count; i++)
+                command.Parameters.AddWithValue($"$camera{i}", cameraIds[i].ToString("N"));
+            command.Parameters.AddWithValue("$since", since.UtcDateTime.ToString("O"));
+
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result as string;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
 
     public void Dispose()
     {

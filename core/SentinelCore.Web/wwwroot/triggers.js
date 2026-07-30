@@ -270,20 +270,37 @@ window.GateWatchTriggers = (function () {
         return;
       }
 
-      for (const event of events) root.appendChild(buildTriggerCard(event));
+      // Camera groups (see cameras.js) tag every event in the same incident with a shared
+      // incidentId - group the cameras involved within this page of results, purely for the
+      // "linked" badge below. Not a global count; just what's visible right now.
+      const camerasByIncident = new Map();
+      for (const event of events) {
+        if (!event.incidentId) continue;
+        if (!camerasByIncident.has(event.incidentId)) camerasByIncident.set(event.incidentId, new Set());
+        camerasByIncident.get(event.incidentId).add(event.cameraName);
+      }
+
+      for (const event of events) root.appendChild(buildTriggerCard(event, camerasByIncident));
     } catch (err) {
       console.error("Failed to load triggers", err);
       root.innerHTML = `<div class="empty-state">failed to load triggers</div>`;
     }
   }
 
-  function buildTriggerCard(event) {
+  function buildTriggerCard(event, camerasByIncident) {
+    const incidentCameras = event.incidentId ? camerasByIncident.get(event.incidentId) : null;
+    const otherCameraCount = incidentCameras ? incidentCameras.size - 1 : 0;
+    const incidentTip = otherCameraCount > 0
+      ? `Part of the same incident as: ${[...incidentCameras].filter(name => name !== event.cameraName).join(", ")}.`
+      : "";
+
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
       <div class="card-image" data-tip="${event.hasClip ? "Click to play the video clip saved around this trigger." : "Click to view the full-size snapshot. No clip was saved for this one."}">
         <img src="/api/triggers/${event.id}/image" alt="trigger snapshot" />
         ${event.hasClip ? `<span class="clip-badge">&#9654; clip</span>` : ""}
+        ${otherCameraCount > 0 ? `<span class="clip-badge incident-badge" data-tip="${incidentTip}">&#128279; +${otherCameraCount} camera${otherCameraCount === 1 ? "" : "s"}</span>` : ""}
       </div>
       <div class="card-body">
         <div class="card-meta">

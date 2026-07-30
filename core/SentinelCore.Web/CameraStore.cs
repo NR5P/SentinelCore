@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace SentinelCore.Web;
@@ -46,7 +47,39 @@ public interface ICameraStore
     Task RestoreAsync(Camera camera, CancellationToken cancellationToken);
 }
 
-public sealed class SqliteCameraStore : ICameraStore, IDisposable
+// A named set of your own cameras that are physically/logically related (e.g. gate, driveway,
+// and front door covering one path onto the property). When a trigger zone on one member fires,
+// TriggerZoneMonitor uses this to also pull a synced clip from the others and tag every event
+// involved with a shared incident id - see TriggerZoneMonitor.MaybeTriggerAsync.
+public sealed record CameraGroup(
+    Guid Id,
+    string Name,
+    IReadOnlyList<Guid> CameraIds,
+    int CorrelationWindowSeconds,
+    bool RecordCompanionClips,
+    bool AnalyzeCompanionCaptures);
+
+public interface ICameraGroupStore
+{
+    Task<IReadOnlyList<CameraGroup>> GetAllAsync(CancellationToken cancellationToken);
+    Task<CameraGroup?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<CameraGroup> AddAsync(
+        string name, IReadOnlyList<Guid> cameraIds, int correlationWindowSeconds,
+        bool recordCompanionClips, bool analyzeCompanionCaptures, CancellationToken cancellationToken);
+
+    Task<bool> UpdateAsync(
+        Guid id, string name, IReadOnlyList<Guid> cameraIds, int correlationWindowSeconds,
+        bool recordCompanionClips, bool analyzeCompanionCaptures, CancellationToken cancellationToken);
+
+    Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken);
+
+    // The one group (if any) this camera belongs to - a camera can only be in one group at a
+    // time, keeping "which group fired" unambiguous at trigger time.
+    Task<CameraGroup?> GetGroupForCameraAsync(Guid cameraId, CancellationToken cancellationToken);
+}
+
+public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDisposable
 {
     private readonly SqliteConnection _connection;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -72,6 +105,19 @@ public sealed class SqliteCameraStore : ICameraStore, IDisposable
             );
             """;
         command.ExecuteNonQuery();
+
+        using var groupsCommand = _connection.CreateCommand();
+        groupsCommand.CommandText = """
+            CREATE TABLE IF NOT EXISTS CameraGroups (
+                Id TEXT PRIMARY KEY,
+                Name TEXT NOT NULL,
+                CameraIds TEXT NOT NULL,
+                CorrelationWindowSeconds INTEGER NOT NULL,
+                RecordCompanionClips INTEGER NOT NULL,
+                AnalyzeCompanionCaptures INTEGER NOT NULL
+            );
+            """;
+        groupsCommand.ExecuteNonQuery();
 
         // Added after the initial release - older databases won't have these columns yet.
         AddColumnIfMissing("Cameras", "PtzEnabled", "INTEGER NOT NULL DEFAULT 0");
@@ -241,6 +287,154 @@ public sealed class SqliteCameraStore : ICameraStore, IDisposable
             _lock.Release();
         }
     }
+
+    async Task<IReadOnlyList<CameraGroup>> ICameraGroupStore.GetAllAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = GroupSelectColumns + " FROM CameraGroups ORDER BY Name ASC;";
+
+            var results = new List<CameraGroup>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(ReadGroup(reader));
+
+            return results;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    async Task<CameraGroup?> ICameraGroupStore.GetAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = GroupSelectColumns + " FROM CameraGroups WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            return await reader.ReadAsync(cancellationToken) ? ReadGroup(reader) : null;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<CameraGroup> AddAsync(
+        string name, IReadOnlyList<Guid> cameraIds, int correlationWindowSeconds,
+        bool recordCompanionClips, bool analyzeCompanionCaptures, CancellationToken cancellationToken)
+    {
+        var group = new CameraGroup(
+            Guid.NewGuid(), name, cameraIds, correlationWindowSeconds, recordCompanionClips, analyzeCompanionCaptures);
+
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO CameraGroups
+                    (Id, Name, CameraIds, CorrelationWindowSeconds, RecordCompanionClips, AnalyzeCompanionCaptures)
+                VALUES
+                    ($id, $name, $cameraIds, $correlationWindowSeconds, $recordCompanionClips, $analyzeCompanionCaptures);
+                """;
+            AddGroupParameters(command, group);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        return group;
+    }
+
+    public async Task<bool> UpdateAsync(
+        Guid id, string name, IReadOnlyList<Guid> cameraIds, int correlationWindowSeconds,
+        bool recordCompanionClips, bool analyzeCompanionCaptures, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                UPDATE CameraGroups SET Name = $name, CameraIds = $cameraIds,
+                    CorrelationWindowSeconds = $correlationWindowSeconds,
+                    RecordCompanionClips = $recordCompanionClips,
+                    AnalyzeCompanionCaptures = $analyzeCompanionCaptures
+                WHERE Id = $id;
+                """;
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            command.Parameters.AddWithValue("$name", name);
+            command.Parameters.AddWithValue("$cameraIds", JsonSerializer.Serialize(cameraIds));
+            command.Parameters.AddWithValue("$correlationWindowSeconds", correlationWindowSeconds);
+            command.Parameters.AddWithValue("$recordCompanionClips", recordCompanionClips ? 1 : 0);
+            command.Parameters.AddWithValue("$analyzeCompanionCaptures", analyzeCompanionCaptures ? 1 : 0);
+
+            var rows = await command.ExecuteNonQueryAsync(cancellationToken);
+            return rows > 0;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    Task<bool> ICameraGroupStore.DeleteAsync(Guid id, CancellationToken cancellationToken) =>
+        DeleteGroupAsync(id, cancellationToken);
+
+    public async Task<bool> DeleteGroupAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "DELETE FROM CameraGroups WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            var rows = await command.ExecuteNonQueryAsync(cancellationToken);
+            return rows > 0;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    // Loads every group and filters in memory rather than a SQL LIKE on the serialized JSON
+    // column - groups are few and small (a handful of cameras each) on the hardware this app
+    // targets, so this is simpler and just as fast as anything clever here would be.
+    public async Task<CameraGroup?> GetGroupForCameraAsync(Guid cameraId, CancellationToken cancellationToken)
+    {
+        var groups = await ((ICameraGroupStore)this).GetAllAsync(cancellationToken);
+        return groups.FirstOrDefault(g => g.CameraIds.Contains(cameraId));
+    }
+
+    private const string GroupSelectColumns =
+        "SELECT Id, Name, CameraIds, CorrelationWindowSeconds, RecordCompanionClips, AnalyzeCompanionCaptures";
+
+    private static void AddGroupParameters(SqliteCommand command, CameraGroup group)
+    {
+        command.Parameters.AddWithValue("$id", group.Id.ToString("N"));
+        command.Parameters.AddWithValue("$name", group.Name);
+        command.Parameters.AddWithValue("$cameraIds", JsonSerializer.Serialize(group.CameraIds));
+        command.Parameters.AddWithValue("$correlationWindowSeconds", group.CorrelationWindowSeconds);
+        command.Parameters.AddWithValue("$recordCompanionClips", group.RecordCompanionClips ? 1 : 0);
+        command.Parameters.AddWithValue("$analyzeCompanionCaptures", group.AnalyzeCompanionCaptures ? 1 : 0);
+    }
+
+    private static CameraGroup ReadGroup(SqliteDataReader reader) => new(
+        Guid.ParseExact(reader.GetString(0), "N"),
+        reader.GetString(1),
+        JsonSerializer.Deserialize<IReadOnlyList<Guid>>(reader.GetString(2)) ?? [],
+        (int)reader.GetInt64(3),
+        reader.GetInt64(4) != 0,
+        reader.GetInt64(5) != 0);
 
     private const string SelectColumns =
         "SELECT Id, Name, StreamUrl, Username, Password, IncludeAudio, PtzEnabled, OnvifPtzServiceUrl, OnvifProfileToken, CreatedAt";

@@ -141,6 +141,12 @@ public static class AlertCategorizer
         if (person.UnrecognizedFaceDetected) return "Face detected: unrecognized";
         return null;
     }
+
+    // Null unless this alert came from a Camera Group and at least one companion camera was
+    // actually recorded alongside it (see TriggerZoneMonitor.RecordCompanionCamerasAsync).
+    // LinkedCameras is a plain display string, not a foreign key - no cross-row lookup needed.
+    public static string? DescribeIncident(AlertResult result) =>
+        string.IsNullOrWhiteSpace(result.LinkedCameras) ? null : $"Also recorded: {result.LinkedCameras}";
 }
 
 public sealed class TelegramAlertAction : IAlertAction
@@ -255,6 +261,8 @@ public sealed class TelegramAlertAction : IAlertAction
             caption.Append($"\n{WebUtility.HtmlEncode(plateLine)}");
         if (AlertCategorizer.DescribeFaceMatch(analysis.Person) is { } faceLine)
             caption.Append($"\n{WebUtility.HtmlEncode(faceLine)}");
+        if (AlertCategorizer.DescribeIncident(result) is { } incidentLine)
+            caption.Append($"\n{WebUtility.HtmlEncode(incidentLine)}");
 
         return caption.ToString();
     }
@@ -409,6 +417,10 @@ public sealed class EmailAlertAction : IAlertAction
               """
             : string.Empty;
 
+        var incidentRow = string.IsNullOrWhiteSpace(result.LinkedCameras)
+            ? ""
+            : $"""<tr><td style="padding:4px 12px 4px 0;"><strong>Also recorded</strong></td><td>{WebUtility.HtmlEncode(result.LinkedCameras)}</td></tr>""";
+
         var html = $$"""
         <!doctype html>
         <html>
@@ -426,6 +438,7 @@ public sealed class EmailAlertAction : IAlertAction
             <tr><td style="padding:4px 12px 4px 0;"><strong>Package</strong></td><td>{{WebUtility.HtmlEncode(BuildPackageText(analysis.Package))}}</td></tr>
             <tr><td style="padding:4px 12px 4px 0;"><strong>Confidence</strong></td><td>{{analysis.Confidence:P0}}</td></tr>
             <tr><td style="padding:4px 12px 4px 0;"><strong>Reason</strong></td><td>{{WebUtility.HtmlEncode(analysis.NotificationReason)}}</td></tr>
+            {{incidentRow}}
           </table>
         </body>
         </html>

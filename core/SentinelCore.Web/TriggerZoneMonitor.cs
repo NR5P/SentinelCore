@@ -10,6 +10,7 @@ namespace SentinelCore.Web;
 // full-res snapshot, subject to per-camera cooldown/rate-limit settings.
 public sealed class TriggerZoneMonitor(
     ICameraStore cameras,
+    ICameraGroupStore groupStore,
     ITriggerConfigStore configStore,
     ITriggerEventStore eventStore,
     HlsStreamManager streams,
@@ -228,14 +229,34 @@ public sealed class TriggerZoneMonitor(
             var imagePath = Path.Combine(cameraDir, $"{now:yyyyMMdd-HHmmss-fff}.jpg");
             await File.WriteAllBytesAsync(imagePath, bytes, cancellationToken);
 
-            var trigger = await eventStore.AddAsync(camera.Id, imagePath, areaFraction, cancellationToken);
+            // A camera belongs to at most one group (enforced at save time - see
+            // CameraGroupEndpoints). Reuse the group's already-open incident if another member
+            // triggered within its correlation window, otherwise this is the start of a new one.
+            var group = await groupStore.GetGroupForCameraAsync(camera.Id, cancellationToken);
+            string? incidentId = null;
+            if (group is not null)
+            {
+                var since = now.AddSeconds(-group.CorrelationWindowSeconds);
+                incidentId = await eventStore.GetMostRecentIncidentIdAsync(group.CameraIds, since, cancellationToken)
+                    ?? Guid.NewGuid().ToString("N");
+            }
+
+            var trigger = await eventStore.AddAsync(camera.Id, imagePath, areaFraction, incidentId, cancellationToken);
             logger.LogInformation("Trigger zone fired for camera {CameraId} ({Name}), area {Area:P1}", camera.Id, camera.Name, areaFraction);
 
             if (session.Config.RecordClips)
                 _ = BuildClipAsync(camera, trigger, session.Config, now);
 
+            // Fast (file reads/writes and SQLite inserts, no network/wait), so it's fine to await
+            // inline here like the rest of this method - only each companion's actual clip build
+            // (comparatively slow, waits out the post-roll) is fire-and-forget, same as the
+            // triggering camera's own clip above.
+            var linkedCameraNames = group is { RecordCompanionClips: true } or { AnalyzeCompanionCaptures: true }
+                ? await RecordCompanionCamerasAsync(camera, group, incidentId!, now, cancellationToken)
+                : [];
+
             if (session.Config.SendToAlerts)
-                _ = ForwardToAlertPipelineAsync(camera, bytes, session.MultiFrame, session.Config.AlertProfile, now);
+                _ = ForwardToAlertPipelineAsync(camera, bytes, session.MultiFrame, session.Config.AlertProfile, now, linkedCameraNames, incidentId);
         }
         catch (Exception ex)
         {
@@ -243,12 +264,72 @@ public sealed class TriggerZoneMonitor(
         }
     }
 
+    // Captures each OTHER group member's current frame and records it as its own TriggerEvent
+    // under the shared incident, so the Triggers tab shows footage from the whole group even
+    // though only one camera actually detected motion. A member with no active buffer (no
+    // enabled trigger zone of its own) is silently skipped - nothing to pull from. Returns the
+    // names of cameras actually recorded, for the "Also recorded: ..." notification annotation.
+    private async Task<List<string>> RecordCompanionCamerasAsync(
+        Camera triggeringCamera, CameraGroup group, string incidentId, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    {
+        var recorded = new List<string>();
+        foreach (var memberId in group.CameraIds)
+        {
+            if (memberId == triggeringCamera.Id) continue;
+
+            try
+            {
+                var memberCamera = await cameras.GetAsync(memberId, cancellationToken);
+                if (memberCamera is null) continue;
+
+                var snapshot = await TryReadLatestSnapshotAsync(memberId, cancellationToken);
+                if (snapshot is null) continue;
+
+                var memberDir = Path.Combine(_imagesRoot, memberId.ToString("N"));
+                Directory.CreateDirectory(memberDir);
+                var imagePath = Path.Combine(memberDir, $"{occurredAt:yyyyMMdd-HHmmss-fff}.jpg");
+                await File.WriteAllBytesAsync(imagePath, snapshot, cancellationToken);
+
+                // No self-detected motion area for a companion capture - 0 just means "not
+                // self-triggered", not "no motion visible".
+                var companionTrigger = await eventStore.AddAsync(memberId, imagePath, 0, incidentId, cancellationToken);
+                recorded.Add(memberCamera.Name);
+                logger.LogInformation(
+                    "Recorded companion capture for camera {CameraId} ({Name}), incident {IncidentId}",
+                    memberId, memberCamera.Name, incidentId);
+
+                var memberConfig = await configStore.GetAsync(memberId, cancellationToken);
+                if (group.RecordCompanionClips && memberConfig is { RecordClips: true })
+                    _ = BuildClipAsync(memberCamera, companionTrigger, memberConfig, occurredAt);
+
+                // Off by default (see CameraGroupInputDto) - every companion also gets its own
+                // full AI analysis/Feed entry/notification, tagged with the same incident id.
+                // Uses the companion's own prompt profile (already exists per-camera regardless
+                // of that camera's own SendToAlerts) - no burst/multi-frame capture for this
+                // secondary path, to keep the extra cost predictable at exactly one call.
+                if (group.AnalyzeCompanionCaptures)
+                {
+                    var alertProfile = memberConfig?.AlertProfile ?? "default";
+                    _ = ForwardToAlertPipelineAsync(memberCamera, snapshot, new MultiFrameOptions(), alertProfile, occurredAt, [], incidentId);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to record a companion capture for camera {CameraId} in incident {IncidentId}", memberId, incidentId);
+            }
+        }
+
+        return recorded;
+    }
+
     // Fire-and-forget like BuildClipAsync, and for the same reason: not tied to the detection
     // session's token, so a config change or the camera being disabled a moment later doesn't
     // cancel an alert that's already in flight. Capturing extra frames here (rather than inline
     // in MaybeTriggerAsync) keeps the ~0.5-1s of extra delay off the critical path that saves the
     // trigger's primary image and records the TriggerEvent - the Feed/Timeline see no difference.
-    private async Task ForwardToAlertPipelineAsync(Camera camera, byte[] imageBytes, MultiFrameOptions multiFrame, string profile, DateTimeOffset occurredAt)
+    private async Task ForwardToAlertPipelineAsync(
+        Camera camera, byte[] imageBytes, MultiFrameOptions multiFrame, string profile, DateTimeOffset occurredAt,
+        IReadOnlyList<string> linkedCameraNames, string? incidentId)
     {
         try
         {
@@ -263,7 +344,8 @@ public sealed class TriggerZoneMonitor(
                 }
             }
 
-            await alertForwarder.ForwardAsync(imageBytes, extraFrames, camera.Name, profile, occurredAt, _stoppingToken);
+            await alertForwarder.ForwardAsync(
+                imageBytes, extraFrames, camera.Name, profile, occurredAt, linkedCameraNames, incidentId, _stoppingToken);
         }
         catch (OperationCanceledException)
         {

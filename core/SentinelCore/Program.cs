@@ -375,11 +375,18 @@ app.MapPost("/api/blueiris/alert", async (
         extraFrames.Add(frameStream.ToArray());
     }
 
+    // Only ever sent by a trigger-zone camera that belongs to a Camera Group (see
+    // TriggerZoneMonitor/AlertForwarder) - Blue Iris's own alert action never sends these.
+    var linkedCameras = form["linkedCameras"].ToString().Trim();
+    var incidentId = form["incidentId"].ToString().Trim();
+
     var alert = new IncomingAlert(
         Guid.NewGuid(), camera, form["alertId"].ToString(), occurredAt,
         DateTimeOffset.UtcNow, profile, image.ContentType, Path.GetFileName(image.FileName), memory.ToArray())
     {
-        ExtraFrames = extraFrames
+        ExtraFrames = extraFrames,
+        LinkedCameras = string.IsNullOrWhiteSpace(linkedCameras) ? null : linkedCameras,
+        IncidentId = string.IsNullOrWhiteSpace(incidentId) ? null : incidentId
     };
 
     // Write the image and the queued row before handing the alert to the in-memory queue. The
@@ -395,7 +402,7 @@ app.MapPost("/api/blueiris/alert", async (
         Id = alert.Id, Camera = alert.Camera, BlueIrisAlertId = alert.BlueIrisAlertId,
         OccurredAt = alert.OccurredAt, ReceivedAt = alert.ReceivedAt,
         Profile = alert.Profile, Model = "pending", Status = "queued",
-        ImagePath = alert.ImagePath
+        ImagePath = alert.ImagePath, LinkedCameras = alert.LinkedCameras, IncidentId = alert.IncidentId
     };
     await store.SaveAsync(queuedResult, ct);
 
@@ -408,6 +415,7 @@ app.MapPost("/api/blueiris/alert", async (
             OccurredAt = alert.OccurredAt, ReceivedAt = alert.ReceivedAt,
             Profile = alert.Profile, Model = "unavailable",
             Status = "failed", CompletedAt = DateTimeOffset.UtcNow, ImagePath = alert.ImagePath,
+            LinkedCameras = alert.LinkedCameras, IncidentId = alert.IncidentId,
             Error = "The analysis queue was full when this alert arrived, so it was never analyzed."
         }, ct);
         return Results.Json(new { error = "The analysis queue is full. Retry later." }, statusCode: 503);

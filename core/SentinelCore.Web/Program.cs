@@ -135,7 +135,10 @@ var camerasDataDirectory = builder.Configuration["CamerasDataDirectory"] ?? "dat
 var camerasRoot = Path.IsPathRooted(camerasDataDirectory)
     ? camerasDataDirectory
     : Path.Combine(builder.Environment.ContentRootPath, camerasDataDirectory);
-builder.Services.AddSingleton<ICameraStore>(new SqliteCameraStore(camerasRoot));
+// SqliteCameraStore backs two interfaces at once, same reason SqliteTriggerStore below does.
+var cameraStore = new SqliteCameraStore(camerasRoot);
+builder.Services.AddSingleton<ICameraStore>(cameraStore);
+builder.Services.AddSingleton<ICameraGroupStore>(cameraStore);
 builder.Services.AddSingleton<HlsStreamManager>();
 
 // Short timeout on purpose - a camera being probed is either on the LAN and answers in
@@ -272,6 +275,7 @@ app.UseMiddleware<AuthGateMiddleware>();
 app.UseAuthorization();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
+app.MapCameraGroupEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();
@@ -329,7 +333,9 @@ app.MapGet("/api/events", async (
         notified = e.NotificationRecommended == true,
         notificationReason = e.NotificationReason ?? string.Empty,
         confidence = e.Confidence ?? 0,
-        hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath)
+        hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath),
+        linkedCameras = e.LinkedCameras,
+        incidentId = e.IncidentId
     }));
 }).RequireAuthorization();
 
@@ -357,7 +363,9 @@ app.MapGet("/api/events/{id:guid}", async (Guid id, IEventStore store, Cancellat
             notified = e.NotificationRecommended == true,
             notificationReason = e.NotificationReason ?? string.Empty,
             confidence = e.Confidence ?? 0,
-            hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath)
+            hasImage = !string.IsNullOrWhiteSpace(e.ImagePath) && File.Exists(e.ImagePath),
+            linkedCameras = e.LinkedCameras,
+            incidentId = e.IncidentId
         });
 }).RequireAuthorization();
 

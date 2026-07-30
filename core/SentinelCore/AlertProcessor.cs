@@ -96,7 +96,9 @@ public sealed class AlertProcessor : BackgroundService
                 Status = "completed",
                 ImagePath = imagePath,
                 Analysis = analysis,
-                RawModelResponse = raw
+                RawModelResponse = raw,
+                LinkedCameras = alert.LinkedCameras,
+                IncidentId = alert.IncidentId
             };
             await _store.SaveAsync(result, cancellationToken);
 
@@ -134,6 +136,8 @@ public sealed class AlertProcessor : BackgroundService
                 Model = "unavailable",
                 Status = "failed",
                 ImagePath = imagePath,
+                LinkedCameras = alert.LinkedCameras,
+                IncidentId = alert.IncidentId,
                 Error = ex.ToString()
             };
             await _store.SaveAsync(failed, cancellationToken);

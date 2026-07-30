@@ -75,7 +75,8 @@ public static class TriggerEndpoints
                 cameraName = names.GetValueOrDefault(e.CameraId, "deleted camera"),
                 occurredAt = e.OccurredAt,
                 triggerAreaFraction = e.TriggerAreaFraction,
-                hasClip = !string.IsNullOrWhiteSpace(e.ClipPath) && File.Exists(e.ClipPath)
+                hasClip = !string.IsNullOrWhiteSpace(e.ClipPath) && File.Exists(e.ClipPath),
+                incidentId = e.IncidentId
             }));
         }).RequireAuthorization();
 

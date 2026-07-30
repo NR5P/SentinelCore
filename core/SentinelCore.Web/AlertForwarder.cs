@@ -11,7 +11,9 @@ public sealed class AlertForwarder(
     IConfiguration configuration,
     ILogger<AlertForwarder> logger)
 {
-    public async Task<bool> ForwardAsync(byte[] imageBytes, IReadOnlyList<byte[]> extraFrames, string cameraName, string profile, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    public async Task<bool> ForwardAsync(
+        byte[] imageBytes, IReadOnlyList<byte[]> extraFrames, string cameraName, string profile, DateTimeOffset occurredAt,
+        IReadOnlyList<string>? linkedCameraNames, string? incidentId, CancellationToken cancellationToken)
     {
         var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", cancellationToken);
         if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
@@ -38,6 +40,14 @@ public sealed class AlertForwarder(
         content.Add(new StringContent(cameraName), "camera");
         content.Add(new StringContent(string.IsNullOrWhiteSpace(profile) ? "default" : profile), "profile");
         content.Add(new StringContent(occurredAt.ToString("O")), "occurredAt");
+        // Only present for a camera that belongs to a Camera Group - see
+        // TriggerZoneMonitor.RecordCompanionCamerasAsync/MaybeTriggerAsync. linkedCameras is a
+        // plain display string (comma-joined names), not a foreign key - the main app doesn't
+        // need to know anything about companion cameras beyond what to show in a notification.
+        if (linkedCameraNames is { Count: > 0 })
+            content.Add(new StringContent(string.Join(", ", linkedCameraNames)), "linkedCameras");
+        if (!string.IsNullOrWhiteSpace(incidentId))
+            content.Add(new StringContent(incidentId), "incidentId");
 
         var client = httpClientFactory.CreateClient(nameof(AlertForwarder));
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/blueiris/alert") { Content = content };

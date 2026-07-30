@@ -564,6 +564,13 @@ main {
   pointer-events: none;
 }
 
+.incident-badge {
+  left: auto;
+  right: 8px;
+  color: var(--green);
+  pointer-events: auto;
+}
+
 /* Tabs */
 
 .tabs {

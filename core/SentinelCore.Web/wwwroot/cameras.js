@@ -7,11 +7,15 @@ window.GateWatchCameras = (function () {
   let gateChecks = new Map();
   let gateCheckEditingCameraId = null;
 
+  let cameraGroups = [];
+  let groupEditingId = null;
+
   async function load() {
     try {
-      const [camerasResponse, gateChecksResponse] = await Promise.all([
+      const [camerasResponse, gateChecksResponse, groupsResponse] = await Promise.all([
         fetch("/api/cameras"),
-        fetch("/api/gate-checks")
+        fetch("/api/gate-checks"),
+        fetch("/api/camera-groups")
       ]);
       if (!camerasResponse.ok) throw new Error(`HTTP ${camerasResponse.status}`);
       cameras = await camerasResponse.json();
@@ -21,6 +25,8 @@ window.GateWatchCameras = (function () {
         const list = await gateChecksResponse.json();
         for (const config of list) gateChecks.set(config.cameraId, config);
       }
+
+      cameraGroups = groupsResponse.ok ? await groupsResponse.json() : [];
     } catch (err) {
       console.error("Failed to load cameras", err);
     }
@@ -617,6 +623,173 @@ window.GateWatchCameras = (function () {
     }
   }
 
+  // ---------------- Camera groups ----------------
+
+  function openCameraGroups() {
+    closeForm();
+    closeGateCheckForm();
+    closeDiscovery();
+    renderGroupsList();
+    document.getElementById("camera-groups-wrap").classList.remove("hidden");
+    document.getElementById("camera-groups-wrap").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function closeCameraGroups() {
+    closeGroupForm();
+    document.getElementById("camera-groups-wrap").classList.add("hidden");
+  }
+
+  function cameraName(id) {
+    return cameras.find(c => c.id === id)?.name ?? "deleted camera";
+  }
+
+  function renderGroupsList() {
+    const root = document.getElementById("camera-groups-list-root");
+    root.innerHTML = "";
+    if (cameraGroups.length === 0) {
+      root.innerHTML = `<div class="empty-state">No camera groups yet - a group links cameras that are physically related, e.g. a gate, driveway, and front door covering one path onto the property.</div>`;
+      return;
+    }
+
+    for (const group of cameraGroups) {
+      const card = document.createElement("div");
+      card.className = "camera-card";
+
+      const info = document.createElement("div");
+      info.className = "camera-card-info";
+      info.innerHTML = `
+        <span class="camera-card-name">${escapeHtml(group.name)}</span>
+        <span class="camera-card-meta">${group.cameraIds.map(id => escapeHtml(cameraName(id))).join(", ")}</span>
+        <span class="camera-card-meta">correlation window: ${group.correlationWindowSeconds}s${group.recordCompanionClips ? ", records companions" : ""}${group.analyzeCompanionCaptures ? ", analyzes companions" : ""}</span>
+      `;
+
+      const actions = document.createElement("div");
+      actions.className = "camera-card-actions";
+      const editBtn = document.createElement("button");
+      editBtn.className = "btn";
+      editBtn.textContent = "edit";
+      editBtn.addEventListener("click", () => openGroupForm(group));
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "btn";
+      deleteBtn.textContent = "delete";
+      deleteBtn.addEventListener("click", () => removeGroup(group));
+      actions.append(editBtn, deleteBtn);
+
+      card.append(info, actions);
+      root.appendChild(card);
+    }
+  }
+
+  function buildCameraMultiSelect(selectedIds) {
+    const row = document.createElement("div");
+    row.className = "field-row field-row-wide";
+    row.dataset.tip = "Which of your cameras belong to this group. A camera can only be in one group at a time.";
+    row.innerHTML = `<label class="field-label">Cameras in this group</label>`;
+
+    const list = document.createElement("div");
+    list.id = "camera-group-camera-list";
+    for (const camera of cameras) {
+      const optionRow = document.createElement("label");
+      optionRow.className = "field-checkbox-row";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = camera.id;
+      input.dataset.role = "camera-group-member";
+      input.checked = selectedIds.includes(camera.id);
+      const text = document.createElement("span");
+      text.textContent = camera.name;
+      optionRow.append(input, text);
+      list.appendChild(optionRow);
+    }
+    row.appendChild(list);
+    return row;
+  }
+
+  function openGroupForm(group) {
+    groupEditingId = group ? group.id : null;
+    const wrap = document.getElementById("camera-group-form-wrap");
+    const fields = document.getElementById("camera-group-form-fields");
+    const errors = document.getElementById("camera-group-form-errors");
+    errors.innerHTML = "";
+    fields.innerHTML = "";
+
+    fields.appendChild(buildTextField("camera-group-name", "Name", group?.name ?? "",
+      "A label for your own reference, e.g. \"Driveway path\"."));
+    fields.appendChild(buildCameraMultiSelect(group?.cameraIds ?? []));
+    fields.appendChild(buildNumberField("camera-group-window", "Correlation window (seconds)",
+      group?.correlationWindowSeconds ?? 45, 5,
+      "How many seconds apart counts as the same incident - roughly how long it takes to walk between these cameras."));
+    fields.appendChild(buildCheckboxField("camera-group-record", "Record companion clips",
+      group?.recordCompanionClips ?? true,
+      "When one camera in this group triggers, also save a clip from the others - as long as they have \"save a video clip\" turned on for their own trigger zone."));
+    fields.appendChild(buildCheckboxField("camera-group-analyze", "Also analyze companion cameras with AI",
+      group?.analyzeCompanionCaptures ?? false,
+      "Off by default. When on, every camera in the group gets its own full AI analysis and its own Feed entry/notification whenever any one of them triggers - not just a recorded clip. Costs proportionally more AI processing per trigger."));
+
+    wrap.classList.remove("hidden");
+  }
+
+  function closeGroupForm() {
+    groupEditingId = null;
+    document.getElementById("camera-group-form-wrap").classList.add("hidden");
+  }
+
+  async function saveGroup() {
+    const cameraIds = [...document.querySelectorAll('input[data-role="camera-group-member"]:checked')]
+      .map(input => input.value);
+
+    const body = {
+      name: document.getElementById("camera-group-name").value.trim(),
+      cameraIds,
+      correlationWindowSeconds: parseInt(document.getElementById("camera-group-window").value, 10) || 45,
+      recordCompanionClips: document.getElementById("camera-group-record").checked,
+      analyzeCompanionCaptures: document.getElementById("camera-group-analyze").checked
+    };
+
+    const errorsEl = document.getElementById("camera-group-form-errors");
+    errorsEl.innerHTML = "";
+
+    const endpoint = groupEditingId ? `/api/camera-groups/${groupEditingId}` : "/api/camera-groups";
+    const method = groupEditingId ? "PUT" : "POST";
+
+    try {
+      const response = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        for (const message of payload.errors || ["Save failed."]) {
+          const li = document.createElement("li");
+          li.textContent = message;
+          errorsEl.appendChild(li);
+        }
+        return;
+      }
+
+      closeGroupForm();
+      await load();
+      renderGroupsList();
+    } catch {
+      const li = document.createElement("li");
+      li.textContent = "Network error while saving.";
+      errorsEl.appendChild(li);
+    }
+  }
+
+  async function removeGroup(group) {
+    if (!confirm(`Remove the camera group "${group.name}"? The cameras themselves aren't affected.`)) return;
+
+    try {
+      await fetch(`/api/camera-groups/${group.id}`, { method: "DELETE" });
+      await load();
+      renderGroupsList();
+    } catch (err) {
+      console.error("Failed to delete camera group", err);
+    }
+  }
+
   // ---------------- Live tab ----------------
 
   function showLive() {
@@ -803,6 +976,11 @@ window.GateWatchCameras = (function () {
   document.getElementById("discovery-scan-btn").addEventListener("click", startScan);
   document.getElementById("gate-check-save-btn").addEventListener("click", saveGateCheck);
   document.getElementById("gate-check-cancel-btn").addEventListener("click", closeGateCheckForm);
+  document.getElementById("manage-camera-groups-btn").addEventListener("click", openCameraGroups);
+  document.getElementById("camera-groups-close-btn").addEventListener("click", closeCameraGroups);
+  document.getElementById("add-camera-group-btn").addEventListener("click", () => openGroupForm(null));
+  document.getElementById("camera-group-save-btn").addEventListener("click", saveGroup);
+  document.getElementById("camera-group-cancel-btn").addEventListener("click", closeGroupForm);
 
   return { load, renderList, showLive, hideLive };
 })();

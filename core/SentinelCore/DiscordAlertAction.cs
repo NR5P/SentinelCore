@@ -100,6 +100,8 @@ public sealed class DiscordAlertAction : IAlertAction
             description += $"\n\n{plateLine}";
         if (analysis is not null && AlertCategorizer.DescribeFaceMatch(analysis.Person) is { } faceLine)
             description += $"\n\n{faceLine}";
+        if (AlertCategorizer.DescribeIncident(result) is { } incidentLine)
+            description += $"\n\n{incidentLine}";
 
         var embed = new Dictionary<string, object?>
         {

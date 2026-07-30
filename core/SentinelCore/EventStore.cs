@@ -59,7 +59,11 @@ public sealed record AlertEventRecord(
     string? NotificationReason,
     double? Confidence,
     string? ImagePath,
-    string? BlueIrisAlertId = null);
+    string? BlueIrisAlertId = null,
+    // See IncomingAlert.LinkedCameras/IncidentId - only ever populated for a trigger-zone
+    // camera that belongs to a Camera Group.
+    string? LinkedCameras = null,
+    string? IncidentId = null);
 
 // SQLite-backed history of every alert (queued/completed/failed), one row per alert id,
 // updated in place as the alert progresses. This is a queryable companion to the JSON
@@ -103,6 +107,32 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             CREATE INDEX IF NOT EXISTS IX_AlertEvents_Camera ON AlertEvents(Camera);
             """;
         command.ExecuteNonQuery();
+
+        // Added after the initial release - older databases won't have these columns yet. Same
+        // AddColumnIfMissing/ColumnExists pattern already used in CameraStore.cs/TriggerStore.cs.
+        AddColumnIfMissing("AlertEvents", "LinkedCameras", "TEXT");
+        AddColumnIfMissing("AlertEvents", "IncidentId", "TEXT");
+
+        using var incidentIndex = _connection.CreateCommand();
+        incidentIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_AlertEvents_IncidentId ON AlertEvents(IncidentId);";
+        incidentIndex.ExecuteNonQuery();
+    }
+
+    private void AddColumnIfMissing(string table, string column, string definition)
+    {
+        if (ColumnExists(table, column)) return;
+
+        using var migrate = _connection.CreateCommand();
+        migrate.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
+        migrate.ExecuteNonQuery();
+    }
+
+    private bool ColumnExists(string table, string column)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $column;";
+        command.Parameters.AddWithValue("$column", column);
+        return Convert.ToInt64(command.ExecuteScalar()) > 0;
     }
 
     public async Task RecordAsync(AlertResult result, CancellationToken cancellationToken)
@@ -114,10 +144,12 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = """
                 INSERT INTO AlertEvents
                     (Id, Camera, BlueIrisAlertId, OccurredAt, ReceivedAt, CompletedAt, Profile, Model, Status,
-                     ImagePath, EventType, Summary, NotificationRecommended, NotificationReason, Confidence, Error)
+                     ImagePath, EventType, Summary, NotificationRecommended, NotificationReason, Confidence, Error,
+                     LinkedCameras, IncidentId)
                 VALUES
                     ($id, $camera, $blueIrisAlertId, $occurredAt, $receivedAt, $completedAt, $profile, $model, $status,
-                     $imagePath, $eventType, $summary, $notificationRecommended, $notificationReason, $confidence, $error)
+                     $imagePath, $eventType, $summary, $notificationRecommended, $notificationReason, $confidence, $error,
+                     $linkedCameras, $incidentId)
                 ON CONFLICT(Id) DO UPDATE SET
                     CompletedAt = excluded.CompletedAt,
                     Model = excluded.Model,
@@ -128,7 +160,9 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                     NotificationRecommended = excluded.NotificationRecommended,
                     NotificationReason = excluded.NotificationReason,
                     Confidence = excluded.Confidence,
-                    Error = excluded.Error;
+                    Error = excluded.Error,
+                    LinkedCameras = excluded.LinkedCameras,
+                    IncidentId = excluded.IncidentId;
                 """;
 
             command.Parameters.AddWithValue("$id", result.Id.ToString("N"));
@@ -149,6 +183,8 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.Parameters.AddWithValue("$notificationReason", (object?)result.Analysis?.NotificationReason ?? DBNull.Value);
             command.Parameters.AddWithValue("$confidence", result.Analysis is null ? DBNull.Value : result.Analysis.Confidence);
             command.Parameters.AddWithValue("$error", (object?)result.Error ?? DBNull.Value);
+            command.Parameters.AddWithValue("$linkedCameras", (object?)result.LinkedCameras ?? DBNull.Value);
+            command.Parameters.AddWithValue("$incidentId", (object?)result.IncidentId ?? DBNull.Value);
 
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -167,7 +203,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = """
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
                        NotificationRecommended, NotificationReason, Confidence, ImagePath,
-                       BlueIrisAlertId
+                       BlueIrisAlertId, LinkedCameras, IncidentId
                 FROM AlertEvents
                 WHERE OccurredAt >= $from AND OccurredAt < $to
                 ORDER BY OccurredAt ASC;
@@ -233,7 +269,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = """
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
                        NotificationRecommended, NotificationReason, Confidence, ImagePath,
-                       BlueIrisAlertId
+                       BlueIrisAlertId, LinkedCameras, IncidentId
                 FROM AlertEvents
                 WHERE Id = $id;
                 """;
@@ -290,7 +326,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = $"""
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
                        NotificationRecommended, NotificationReason, Confidence, ImagePath,
-                       BlueIrisAlertId
+                       BlueIrisAlertId, LinkedCameras, IncidentId
                 FROM AlertEvents
                 {whereClause}
                 ORDER BY OccurredAt DESC
@@ -357,7 +393,9 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         reader.IsDBNull(7) ? null : reader.GetString(7),
         reader.IsDBNull(8) ? null : reader.GetDouble(8),
         reader.IsDBNull(9) ? null : reader.GetString(9),
-        reader.IsDBNull(10) ? null : reader.GetString(10));
+        reader.IsDBNull(10) ? null : reader.GetString(10),
+        reader.IsDBNull(11) ? null : reader.GetString(11),
+        reader.IsDBNull(12) ? null : reader.GetString(12));
 
     private static string ToUtcSortable(DateTimeOffset value) => value.UtcDateTime.ToString("O");
 

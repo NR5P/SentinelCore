@@ -127,7 +127,9 @@ public static class TimelineEndpoints
                     notified = item.NotificationRecommended == true,
                     reviewed = reviewed.Contains(item.Id),
                     hasImage = !string.IsNullOrWhiteSpace(item.ImagePath) && File.Exists(item.ImagePath),
-                    hasClip = clipsByEvent.ContainsKey(item.Id)
+                    hasClip = clipsByEvent.ContainsKey(item.Id),
+                    linkedCameras = item.LinkedCameras,
+                    incidentId = item.IncidentId
                 })
             });
         }).RequireAuthorization();

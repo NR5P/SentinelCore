@@ -171,6 +171,25 @@
         <div class="toolbar-actions">
           <button id="add-camera-btn" class="btn" data-tip-below data-tip-right data-tip="Add a camera by its stream URL. Most IP cameras expose an rtsp:// address.">+ add camera</button>
           <button id="discover-cameras-btn" class="btn" data-tip-below data-tip-right data-tip="Scan your network for cameras that support ONVIF discovery - the standard most IP cameras speak. Sends one broadcast per network adapter you select; doesn't touch any camera you haven't chosen to scan for.">discover cameras</button>
+          <button id="manage-camera-groups-btn" class="btn" data-tip-below data-tip-right data-tip="Link cameras that are physically related (e.g. gate, driveway, front door). When one triggers, the others get pulled in too - recording alongside it and tagged as one connected incident.">camera groups</button>
+        </div>
+      </div>
+
+      <div id="camera-groups-wrap" class="settings-section hidden">
+        <div class="settings-section-body" style="display:flex; flex-direction:column; gap:12px;">
+          <div id="camera-groups-list-root"></div>
+          <div class="settings-section-footer">
+            <button id="add-camera-group-btn" class="btn" data-tip="Create a new camera group.">+ add group</button>
+            <button id="camera-groups-close-btn" class="btn" data-tip="Close this panel.">close</button>
+          </div>
+          <div id="camera-group-form-wrap" class="hidden">
+            <div class="field-grid" id="camera-group-form-fields"></div>
+            <div class="settings-section-footer">
+              <button id="camera-group-save-btn" class="btn" data-tip="Save this camera group.">save</button>
+              <button id="camera-group-cancel-btn" class="btn" data-tip="Close this form and discard any changes you have made.">cancel</button>
+              <ul class="field-errors" id="camera-group-form-errors"></ul>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -49,6 +49,10 @@ function renderCard(event) {
     ? `<span class="badge" data-tip="${escapeHtml(event.notificationReason) || "The AI judged this worth telling you about, so an alert was sent."}">notified</span>`
     : "";
 
+  const linkedCamerasHtml = event.linkedCameras
+    ? `<div class="card-meta" data-tip="A Camera Group also pulled in footage from these cameras when this one triggered.">🔗 Also recorded: ${escapeHtml(event.linkedCameras)}</div>`
+    : "";
+
   card.innerHTML = `
     <div class="card-image"${event.hasImage ? ` data-tip="Click to view the full-size snapshot."` : ""}>
       ${imageHtml}
@@ -60,6 +64,7 @@ function renderCard(event) {
         <span title="${escapeHtml(event.occurredAt)}">${timeAgo(event.occurredAt)}</span>
       </div>
       <div class="card-summary" data-tip="The AI's description of what it saw in this snapshot.">${escapeHtml(event.summary) || "&mdash;"}</div>
+      ${linkedCamerasHtml}
       <div class="card-footer">
         <span class="card-event-type" data-tip="What kind of event the AI classified this as.">${escapeHtml(event.eventType)}</span>
         <span>${formatClock(event.occurredAt)}</span>

@@ -289,6 +289,17 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void AlertCategorizer_DescribeIncident_OnlyMentionsLinkedCamerasWhenPresent()
+    {
+        Assert.Null(AlertCategorizer.DescribeIncident(new AlertResult { Camera = "gate" }));
+        Assert.Null(AlertCategorizer.DescribeIncident(new AlertResult { Camera = "gate", LinkedCameras = "" }));
+
+        var described = AlertCategorizer.DescribeIncident(
+            new AlertResult { Camera = "gate", LinkedCameras = "Driveway, Front Door" });
+        Assert.Equal("Also recorded: Driveway, Front Door", described);
+    }
+
+    [Fact]
     public void OllamaVisionClient_BuildPrompt_OnlyIncludesLicensePlateWhenProfileOptsIn()
     {
         var alert = new IncomingAlert(
@@ -1662,7 +1673,7 @@ public sealed class BasicTests
     {
         using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
         var cameraId = Guid.NewGuid();
-        var trigger = await store.AddAsync(cameraId, "image.jpg", 0.1, CancellationToken.None);
+        var trigger = await store.AddAsync(cameraId, "image.jpg", 0.1, null, CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
 
         var matched = await store.GetEventsInRangeAsync(

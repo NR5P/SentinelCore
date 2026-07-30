@@ -24,6 +24,15 @@ public sealed record IncomingAlert(
     // Purely transient: sent to the vision client alongside ImageBytes, never persisted to disk
     // or shown anywhere, unlike ImageBytes/ImagePath above.
     public IReadOnlyList<byte[]> ExtraFrames { get; init; } = [];
+
+    // Only populated for a trigger-zone camera that belongs to a Camera Group (see
+    // TriggerZoneMonitor/CameraGroup) - Blue Iris alerts never populate either of these.
+    // LinkedCameras is a plain display string (comma-joined companion camera names) shown
+    // verbatim in notifications/Feed, not a foreign key. IncidentId is an opaque correlation
+    // key shared by every alert (this camera's and, if AnalyzeCompanionCaptures is on for the
+    // group, its companions') that belongs to the same incident.
+    public string? LinkedCameras { get; init; }
+    public string? IncidentId { get; init; }
 }
 
 public sealed record AcceptedAlertResponse(Guid Id, string Status, string StatusUrl);
@@ -182,4 +191,8 @@ public sealed class AlertResult
     public VisionAnalysis? Analysis { get; init; }
     public string? RawModelResponse { get; init; }
     public string? Error { get; init; }
+
+    // See IncomingAlert.LinkedCameras/IncidentId - carried through unchanged from ingest.
+    public string? LinkedCameras { get; init; }
+    public string? IncidentId { get; init; }
 }
