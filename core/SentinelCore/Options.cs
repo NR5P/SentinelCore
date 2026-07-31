@@ -623,3 +623,45 @@ public sealed class StartupNotificationOptions
     [Range(10, 3600)]
     public int HeartbeatIntervalSeconds { get; init; } = 60;
 }
+
+public sealed class InternetOutageOptions
+{
+    public const string SectionName = "InternetOutage";
+
+    // Any answer at all from one of these proves packets are leaving the building, so the exact
+    // endpoints matter far less than their reliability. All three are the connectivity checks
+    // their own operating systems use, which is about as reliable as public endpoints get.
+    public static readonly IReadOnlyList<string> DefaultProbeUrls =
+    [
+        "https://www.gstatic.com/generate_204",
+        "https://cp.cloudflare.com/generate_204",
+        "https://captive.apple.com/hotspot-detect.html"
+    ];
+
+    // Off by default, deliberately: plenty of installs are LAN-only on purpose, and telling those
+    // owners hourly that their deliberately isolated network is broken would be worse than
+    // useless. Reports on recovery only - a machine with no route out can't tell anyone about it.
+    public bool Enabled { get; init; }
+
+    [Range(10, 3600)]
+    public int CheckIntervalSeconds { get; init; } = 60;
+
+    // How many checks in a row must fail before it counts. Domestic connections drop a packet or
+    // renegotiate often enough that one failure means nothing.
+    [Range(1, 20)]
+    public int ConsecutiveFailuresBeforeAlert { get; init; } = 3;
+
+    // Below this, the drop isn't worth telling anyone about after the fact.
+    [Range(1, 1440)]
+    public int MinimumOutageMinutes { get; init; } = 2;
+
+    // Per probe. Every probe has to time out before a check counts as failed, so the worst case
+    // for one cycle is this multiplied by the number of probes - keep the product well under
+    // CheckIntervalSeconds.
+    [Range(1, 60)]
+    public int ProbeTimeoutSeconds { get; init; } = 5;
+
+    // Empty falls back to DefaultProbeUrls rather than meaning "never check", so clearing the
+    // field can't silently disable the feature while it still reads as on.
+    public List<string> ProbeUrls { get; init; } = [];
+}

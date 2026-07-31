@@ -208,6 +208,19 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "internetOutage", title: "INTERNET OUTAGE ALERTS", endpoint: "/api/settings/internet-outage",
+      basic: true,
+      description: "Off by default. When on, the server checks every so often that it can still reach the internet, and tells you once the connection comes back — by email and Telegram, with how long you were offline. Like the outage alerts above, it can only report this afterwards: while the line is down nothing can be sent to anyone. Leave this off if this machine is deliberately kept off the internet.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Watch the internet connection and tell you, once it's back, how long it was down." },
+        { name: "checkIntervalSeconds", label: "Check Interval (s)", type: "number", min: 10, max: 3600, tip: "How often to check that the internet is reachable." },
+        { name: "consecutiveFailuresBeforeAlert", label: "Consecutive Failures Before Outage", type: "number", min: 1, max: 20, tip: "How many checks must fail in a row before it counts as a real outage, so a momentary blip is ignored." },
+        { name: "minimumOutageMinutes", label: "Minimum Outage (min)", type: "number", min: 1, max: 1440, tip: "Ignore outages shorter than this, so a brief drop while you were asleep doesn't notify you." },
+        { name: "probeTimeoutSeconds", label: "Probe Timeout (s)", type: "number", min: 1, max: 60, tip: "How long to wait for each address to answer before treating it as unreachable. Every address has to time out before a check counts as failed, so keep this times the number of addresses well under the check interval." },
+        { name: "probeUrls", label: "Probe Addresses (comma separated)", type: "csv", tip: "Addresses used to prove the connection is alive. Any reply at all counts, and only failing every one of them counts as an outage. Leave empty to use the built-in list." }
+      ]
+    },
+    {
       key: "quietHours", title: "QUIET HOURS", endpoint: "/api/settings/quiet-hours",
       basic: true,
       description: "During hours you choose, the AI has to be more confident before it wakes you. It never fully silences anything - something clearly worth knowing about still gets through at 3am - and it has no effect on the Feed or the daily summary.",

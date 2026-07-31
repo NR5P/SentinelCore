@@ -437,10 +437,10 @@ which is why the section paragraphs are there).
 
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
 shows only the settings most people actually change: Bridge, Email, Daily Summary, Telegram
-Alerts, Discord Alerts, Outage Alerts, Quiet Hours, Bug Reports, Apple HomeKit, Backup, Login
-and License. **Advanced** adds everything else: the AI tuning knobs, image processing,
-self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces, multi-frame analysis,
-and prompt profiles.
+Alerts, Discord Alerts, Outage Alerts, Internet Outage Alerts, Quiet Hours, Bug Reports, Apple
+HomeKit, Backup, Login and License. **Advanced** adds everything else: the AI tuning knobs,
+image processing, self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces,
+multi-frame analysis, and prompt profiles.
 
 Nothing is ever lost or reset by switching — advanced settings keep working exactly as
 configured while hidden, and the choice is remembered on that device only, so a phone can stay
@@ -480,6 +480,19 @@ The full list below covers both modes:
   often the server records that it's alive. Note the limit: this can only tell you the server
   *came back*. If the machine stays off, nothing is running to send the email — for that you'd
   need something outside the house watching.
+- **Internet Outage Alerts** — **off by default.** The same idea as Outage Alerts, but for the
+  line rather than the machine: every minute the server checks that it can still reach the
+  internet, and once the connection comes back it emails you *and* messages your Telegram chat
+  saying how long you were offline. Sentinel Core itself keeps running and recording throughout —
+  what stops is anything that has to leave the building, so alerts raised during an outage were
+  never delivered and are not re-sent afterwards. Check the Feed for what you missed. Settings:
+  how often to check, how many failed checks in a row count as a real outage (so a brief blip is
+  ignored), a minimum outage length worth telling you about, how long to wait for each address,
+  and which addresses to test against — leave that last one empty to use the built-in list. It
+  only ever counts as an outage if *every* address fails, so one website being down doesn't look
+  like your internet being down. Same limit as above, for the same reason: it can only tell you
+  the connection *came back*. Leave this off if the machine is deliberately kept off the
+  internet, or it will report your working setup as broken.
 - **Bug Reports** — emails the developer when something breaks internally. See
   [section 17](#17-bug-reports).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must

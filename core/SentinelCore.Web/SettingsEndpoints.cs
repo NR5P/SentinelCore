@@ -25,6 +25,7 @@ public sealed record SettingsSnapshot(
     SemanticSearchSettingsDto? SemanticSearch,
     SelfMonitoringSettingsDto? SelfMonitoring,
     StartupNotificationSettingsDto? StartupNotification,
+    InternetOutageSettingsDto? InternetOutage,
     QuietHoursSettingsDto? QuietHours,
     List<KnownVehicle>? KnownVehicles,
     List<KnownFace>? KnownFaces,
@@ -134,6 +135,28 @@ public static class SettingsEndpoints
 
         settings.MapPut("/startup-notification", async (StartupNotificationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "StartupNotification", ct));
+
+        settings.MapPut("/internet-outage", async (InternetOutageSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "InternetOutage", ct, extra =>
+            {
+                // A typo'd probe URL would fail every check forever and read as a permanent
+                // outage, so it's caught here rather than at 3am.
+                foreach (var url in dto.ProbeUrls)
+                {
+                    if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) ||
+                        (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+                        extra.Add($"Probe URL '{url}' must be a full http:// or https:// address.");
+                }
+
+                // Every probe has to time out before a check counts as failed, so a check cycle
+                // can otherwise outlast the interval it's meant to run on. Empty means the
+                // built-in list, so that's what gets counted.
+                var probeCount = dto.ProbeUrls.Count > 0 ? dto.ProbeUrls.Count : InternetOutageOptions.DefaultProbeUrls.Count;
+                var worstCaseSeconds = dto.ProbeTimeoutSeconds * probeCount;
+                if (worstCaseSeconds > dto.CheckIntervalSeconds)
+                    extra.Add(
+                        $"Probe Timeout x {probeCount} probe(s) is {worstCaseSeconds}s, which is longer than the {dto.CheckIntervalSeconds}s check interval. Lower the timeout, use fewer probes, or raise the interval.");
+            }));
 
         settings.MapPut("/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "QuietHours", ct));
@@ -269,6 +292,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<SemanticSearchSettingsDto>("SemanticSearch", cancellationToken),
         await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", cancellationToken),
         await settings.GetSectionAsync<StartupNotificationSettingsDto>("StartupNotification", cancellationToken),
+        await settings.GetSectionAsync<InternetOutageSettingsDto>("InternetOutage", cancellationToken),
         await settings.GetSectionAsync<QuietHoursSettingsDto>("QuietHours", cancellationToken),
         await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", cancellationToken) ?? [],
         await settings.GetSectionAsync<List<KnownFace>>("KnownFaces", cancellationToken) ?? [],
@@ -301,6 +325,7 @@ public static class SettingsEndpoints
         if (snapshot.SemanticSearch is not null) await settings.MergeSectionAsync("SemanticSearch", snapshot.SemanticSearch, cancellationToken);
         if (snapshot.SelfMonitoring is not null) await settings.MergeSectionAsync("SelfMonitoring", snapshot.SelfMonitoring, cancellationToken);
         if (snapshot.StartupNotification is not null) await settings.MergeSectionAsync("StartupNotification", snapshot.StartupNotification, cancellationToken);
+        if (snapshot.InternetOutage is not null) await settings.MergeSectionAsync("InternetOutage", snapshot.InternetOutage, cancellationToken);
         if (snapshot.QuietHours is not null) await settings.MergeSectionAsync("QuietHours", snapshot.QuietHours, cancellationToken);
         if (snapshot.KnownVehicles is not null) await settings.ReplaceSectionAsync("KnownVehicles", snapshot.KnownVehicles, cancellationToken);
         // Enrollment photos on disk aren't part of the backup file (same as alert images

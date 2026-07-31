@@ -2562,6 +2562,266 @@ public sealed class BasicTests
     public void OutageEmail_DescribesDurationsReadably(int seconds, string expected) =>
         Assert.Equal(expected, OutageEmail.Describe(TimeSpan.FromSeconds(seconds)));
 
+    // --- Internet outage alerts (InternetOutageWorker) ----------------------------------------
+    //
+    // The sibling of the outage alerts above: same retrospective shape, same pure decision
+    // function, so these need no network, clock, or SMTP server either. The debounce itself is
+    // DegradationTracker, already covered further up.
+
+    [Fact]
+    public void InternetOutageReport_WithNothingInProgress_ReportsNothing()
+    {
+        // The overwhelmingly common case - every check while the link is fine lands here.
+        Assert.Null(InternetOutageReport.Evaluate(null, DateTimeOffset.UtcNow, TwoMinutes));
+    }
+
+    [Fact]
+    public void InternetOutageReport_WhenTheDropWasBrief_ReportsNothing()
+    {
+        // Domestic lines renegotiate, and a 20-second blip at 3am is not worth an email.
+        var now = DateTimeOffset.UtcNow;
+        var outage = new InternetOutageState(now.AddSeconds(-20), now.AddSeconds(-20));
+
+        Assert.Null(InternetOutageReport.Evaluate(outage, now, TwoMinutes));
+    }
+
+    [Fact]
+    public void InternetOutageReport_WhenTheLinkWasDownLongEnough_Reports()
+    {
+        // The case the feature exists for: the ISP dropped for hours and nothing could be sent.
+        var now = DateTimeOffset.UtcNow;
+        var downSince = now.AddHours(-3);
+        var outage = new InternetOutageState(downSince, downSince.AddMinutes(3));
+
+        var report = InternetOutageReport.Evaluate(outage, now, TwoMinutes);
+
+        Assert.NotNull(report);
+        Assert.Equal(downSince, report!.DownSinceUtc);
+        // Measured from the first failed probe, not from the point the outage was declared -
+        // the debounce must not shave three minutes off the reported figure.
+        Assert.Equal(3, report.Downtime.TotalHours, precision: 3);
+    }
+
+    [Fact]
+    public void InternetOutageReport_AtExactlyTheThreshold_Reports()
+    {
+        // Pins the boundary so the comparison can't be loosened to > without a test noticing.
+        var now = DateTimeOffset.UtcNow;
+        var outage = new InternetOutageState(now - TwoMinutes, now - TwoMinutes);
+
+        Assert.NotNull(InternetOutageReport.Evaluate(outage, now, TwoMinutes));
+    }
+
+    [Fact]
+    public void InternetOutageReport_WithImplausibleDuration_ReportsNothing()
+    {
+        // A box that lost its clock catches up over NTP the moment the link returns - which is
+        // this exact instant. Without the guard that lands as a confident "offline for 2 years".
+        var now = DateTimeOffset.UtcNow;
+        var outage = new InternetOutageState(now.AddDays(-800), now.AddDays(-800));
+
+        Assert.Null(InternetOutageReport.Evaluate(outage, now, TwoMinutes));
+    }
+
+    [Fact]
+    public void InternetOutageNotification_EmailGoesToTheAlertAddressAndStatesTheDuration()
+    {
+        var email = new EmailOptions
+        {
+            Enabled = true,
+            Username = "sender@example.com",
+            AppPassword = "app-password",
+            ToAddress = "owner@example.com",
+            FromName = "Gate Camera"
+        };
+        var report = new InternetOutageReport(TimeSpan.FromHours(3), DateTimeOffset.UtcNow.AddHours(-3));
+
+        using var message = InternetOutageNotification.BuildEmail(email, report);
+
+        // Same inbox as the alerts, which is the whole point.
+        Assert.Equal("owner@example.com", Assert.Single(message.To).Address);
+        Assert.Contains("3 hours", message.Subject);
+        Assert.Contains("3 hours", message.Body);
+        // The one thing a reader must not be left guessing about: whether the alerts they never
+        // got are coming now.
+        Assert.Contains("not re-sent", message.Body);
+    }
+
+    [Fact]
+    public void InternetOutageNotification_TelegramTextStatesTheDurationAndThatNothingIsResent()
+    {
+        var report = new InternetOutageReport(TimeSpan.FromMinutes(90), DateTimeOffset.UtcNow.AddMinutes(-90));
+
+        var text = InternetOutageNotification.BuildTelegramText(report);
+
+        Assert.Contains("1 hour 30 minutes", text);
+        Assert.Contains("not re-sent", text);
+    }
+
+    [Fact]
+    public async Task InternetOutageWorker_WhenDisabled_ProbesNothingAndForgetsAnyOpenOutage()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"internet-outage-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        var statePath = Path.Combine(directory, "internet-outage.json");
+        File.WriteAllText(statePath, JsonSerializer.Serialize(
+            new InternetOutageState(DateTimeOffset.UtcNow.AddHours(-5), DateTimeOffset.UtcNow.AddHours(-5)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        var handler = new RecordingHandler();
+
+        try
+        {
+            // Default options: off. This is the state the vast majority of installs run in, so
+            // "off costs nothing and touches nothing" is the behaviour worth pinning.
+            var worker = BuildInternetOutageWorker(directory, handler, new InternetOutageOptions());
+            await worker.StartAsync(CancellationToken.None);
+            await WaitUntilAsync(() => !File.Exists(statePath));
+            await worker.StopAsync(CancellationToken.None);
+
+            // No probe may leave the machine while the feature is switched off.
+            Assert.Empty(handler.Requests);
+
+            // An outage left open from before must not survive being switched off, or turning it
+            // back on months later would immediately report a stale five-hour outage.
+            Assert.False(File.Exists(statePath));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task InternetOutageWorker_WithCorruptState_StartsWithoutThrowing()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"internet-outage-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "internet-outage.json"), "{ this is not json");
+
+        var handler = new RecordingHandler();
+
+        try
+        {
+            // A truncated state file is a plausible outcome of losing power mid-outage. It has to
+            // degrade to "no report", never to a crash loop on startup.
+            var worker = BuildInternetOutageWorker(directory, handler, new InternetOutageOptions());
+            await worker.StartAsync(CancellationToken.None);
+            await worker.StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task InternetOutageWorker_DeclaresAnOutageWhenEveryProbeFailsAndClearsItOnRecovery()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"internet-outage-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        var statePath = Path.Combine(directory, "internet-outage.json");
+        var handler = new SwitchableConnectivityHandler { IsOnline = false };
+        var before = DateTimeOffset.UtcNow;
+
+        try
+        {
+            // One failure is enough here, and a one-second interval keeps the test quick. The
+            // debounce itself is DegradationTracker's own tests; what's under test is the loop
+            // around it - declaring, persisting, and clearing.
+            var options = new InternetOutageOptions
+            {
+                Enabled = true,
+                CheckIntervalSeconds = 1,
+                ConsecutiveFailuresBeforeAlert = 1,
+                ProbeTimeoutSeconds = 1
+            };
+
+            var worker = BuildInternetOutageWorker(directory, handler, options);
+            await worker.StartAsync(CancellationToken.None);
+
+            await WaitUntilAsync(() => File.Exists(statePath));
+            Assert.True(File.Exists(statePath), "the outage should have been persisted while it's in progress");
+
+            var state = JsonSerializer.Deserialize<InternetOutageState>(
+                File.ReadAllText(statePath), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(state);
+            // Dated from the first failed probe, so an outage spanning a restart is still
+            // measured from when it actually started.
+            Assert.InRange(state!.DownSinceUtc, before, DateTimeOffset.UtcNow);
+
+            // Every probe URL has to fail before a check counts as failed, so all of them should
+            // have been tried rather than the worker giving up on the first.
+            Assert.True(handler.Requests.Count >= InternetOutageOptions.DefaultProbeUrls.Count);
+
+            handler.IsOnline = true;
+
+            // Email and Telegram are deliberately unconfigured, so recovery here means the outage
+            // is closed out and not left open to be re-reported forever.
+            await WaitUntilAsync(() => !File.Exists(statePath));
+            Assert.False(File.Exists(statePath), "the outage should have been cleared once the link returned");
+
+            await worker.StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    // Fails every request while offline, the way a dead link does, and answers while online.
+    private sealed class SwitchableConnectivityHandler : HttpMessageHandler
+    {
+        private readonly Lock _gate = new();
+        private readonly List<string> _requests = [];
+
+        public volatile bool IsOnline;
+
+        public IReadOnlyList<string> Requests
+        {
+            get { lock (_gate) return [.. _requests]; }
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            lock (_gate) _requests.Add(request.RequestUri!.ToString());
+
+            if (!IsOnline) throw new HttpRequestException("No such host is known.");
+
+            // 204 is what the real probe endpoints answer with.
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NoContent));
+        }
+    }
+
+    // Polls rather than sleeping a fixed span: the worker does its work on a background task, and
+    // a fixed delay is either flaky or slow.
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (!condition() && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(20);
+    }
+
+    private static InternetOutageWorker BuildInternetOutageWorker(
+        string dataDirectory, HttpMessageHandler handler, InternetOutageOptions options) =>
+        new(new StaticOptionsMonitor<InternetOutageOptions>(options),
+            // Deliberately unconfigured: these tests must never attempt a real SMTP connection.
+            new StaticOptionsMonitor<EmailOptions>(new EmailOptions()),
+            new StaticOptionsMonitor<TelegramOptions>(new TelegramOptions()),
+            new StaticOptionsMonitor<BridgeOptions>(new BridgeOptions { DataDirectory = dataDirectory }),
+            new SingleClientHttpClientFactory(handler),
+            new FakeHostEnvironment(dataDirectory),
+            NullLogger<InternetOutageWorker>.Instance);
+
+    // Hands every named client the same handler, so a test can assert on exactly what the worker
+    // would have put on the wire.
+    private sealed class SingleClientHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
     private static StartupNotificationWorker BuildStartupWorker(string dataDirectory) =>
         new(new StaticOptionsMonitor<StartupNotificationOptions>(new StartupNotificationOptions()),
             // Deliberately unconfigured: these tests exercise the heartbeat and the decision, and

@@ -111,6 +111,10 @@ builder.Services.AddOptions<StartupNotificationOptions>()
     .Bind(builder.Configuration.GetSection(StartupNotificationOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<InternetOutageOptions>()
+    .Bind(builder.Configuration.GetSection(InternetOutageOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<QuietHoursOptions>()
     .Bind(builder.Configuration.GetSection(QuietHoursOptions.SectionName))
     .ValidateDataAnnotations()
@@ -213,6 +217,8 @@ builder.Services.AddHostedService<SelfMonitoringWorker>();
 // Registered in the main app only - all three services would otherwise each report the same
 // reboot separately.
 builder.Services.AddHostedService<StartupNotificationWorker>();
+// Same reasoning, and the same one-report-per-outage argument.
+builder.Services.AddHostedService<InternetOutageWorker>();
 // Registered as both so the /api/system/status endpoint below can read Latest off the same
 // instance the background loop is updating, rather than standing up a second sampler.
 builder.Services.AddSingleton<SystemStatsSampler>();
@@ -304,6 +310,12 @@ builder.Services.AddHttpClient<IBlueIrisSnapshotClient, BlueIrisSnapshotClient>(
 builder.Services.AddHttpClient(nameof(SelfMonitoringWorker), client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
+});
+// Used for both the connectivity probes and the Telegram report. The per-probe timeout is
+// enforced separately and is shorter; this is the backstop for the Telegram call.
+builder.Services.AddHttpClient(nameof(InternetOutageWorker), client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
 });
 
 var app = builder.Build();

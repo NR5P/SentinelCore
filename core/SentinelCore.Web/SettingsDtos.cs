@@ -244,6 +244,27 @@ public sealed class StartupNotificationSettingsDto
     public int HeartbeatIntervalSeconds { get; set; } = 60;
 }
 
+public sealed class InternetOutageSettingsDto
+{
+    // Off unless the owner turns it on - LAN-only installs must not be told their network is
+    // broken. See InternetOutageOptions for the rest of the reasoning behind these defaults.
+    public bool Enabled { get; set; }
+
+    [Range(10, 3600)]
+    public int CheckIntervalSeconds { get; set; } = 60;
+
+    [Range(1, 20)]
+    public int ConsecutiveFailuresBeforeAlert { get; set; } = 3;
+
+    [Range(1, 1440)]
+    public int MinimumOutageMinutes { get; set; } = 2;
+
+    [Range(1, 60)]
+    public int ProbeTimeoutSeconds { get; set; } = 5;
+
+    public List<string> ProbeUrls { get; set; } = [];
+}
+
 public sealed class QuietHoursSettingsDto
 {
     public bool Enabled { get; set; }
