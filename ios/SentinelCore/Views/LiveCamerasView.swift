@@ -1,6 +1,14 @@
 import AVKit
 import SwiftUI
 
+// AVKit.framework is linked explicitly in the target's Frameworks phase - don't remove it as an
+// unused link. `import AVKit` only autolinks _AVKit_SwiftUI (the cross-import overlay that
+// defines VideoPlayer) and AVFoundation, not AVKit itself. On iOS/tvOS something else in the
+// process has AVKit loaded anyway, but in an AppKit process nothing does, so the first time
+// SwiftUI instantiates VideoPlayer's backing view the Swift runtime can't resolve its
+// superclass (AVPlayerView) and traps: "failed to demangle superclass of VideoPlayerView from
+// mangled name 'So12AVPlayerViewC'". That's an abort the moment the Live grid appears on macOS.
+
 // Player lifetime, the poster-frame handoff, fast-start buffering, and reconnect-on-drop all
 // live in LiveStreamPlayer.
 
