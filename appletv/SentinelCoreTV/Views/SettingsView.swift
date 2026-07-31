@@ -7,34 +7,20 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var address = ""
-    @State private var remoteAddress = ""
     @State private var showingDiagnostics = false
 
     var body: some View {
         Form {
             Section("Server") {
                 TextField("Dashboard address", text: $address)
-                TextField("Remote address (optional)", text: $remoteAddress)
-                // Directly under the field it describes - it previously sat below Status, where
-                // it read as an explanation of the connection state instead.
-                Text("A Cloudflare Tunnel (or any other externally-reachable) address to use when the local address can't be reached. Point it at the server's Internet Exposed port, not the normal dashboard port — that port always requires a login, while the normal one trusts the local network.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 HStack {
                     Text("Status")
                     Spacer()
-                    if model.hasRemoteServerURL {
-                        Text(model.isUsingRemote ? "via Remote" : "via Local")
-                            .foregroundStyle(.secondary)
-                    }
                     ConnectionBadge()
                 }
                 Button("Save and Reconnect") {
                     Task {
                         model.serverURL = normalized(address)
-                        model.remoteServerURL = remoteAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? ""
-                            : normalized(remoteAddress, defaultScheme: "https")
                         await model.connect(resetNetworkSession: true)
                     }
                 }
@@ -141,15 +127,13 @@ struct SettingsView: View {
         }
         .onAppear {
             address = model.serverURL
-            remoteAddress = model.remoteServerURL
         }
         .onChange(of: model.serverURL) { _, newValue in address = newValue }
-        .onChange(of: model.remoteServerURL) { _, newValue in remoteAddress = newValue }
     }
 
-    private func normalized(_ value: String, defaultScheme: String = "http") -> String {
+    private func normalized(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let withScheme = trimmed.contains("://") ? trimmed : "\(defaultScheme)://\(trimmed)"
+        let withScheme = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
     }
 }

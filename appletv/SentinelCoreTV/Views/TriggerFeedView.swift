@@ -84,6 +84,8 @@ private struct TriggerDetailView: View {
                     if let player, let playerItem {
                         VideoPlayer(player: player)
                             .aspectRatio(videoAspectRatio, contentMode: .fit)
+                            .frame(maxHeight: SentinelTheme.detailMediaMaxHeight)
+                            .frame(maxWidth: .infinity)
                             .background(.black)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .onReceive(playerItem.publisher(for: \.presentationSize)) { size in
@@ -99,7 +101,7 @@ private struct TriggerDetailView: View {
                         url: model.client.url(path: "/api/triggers/\(trigger.id.uuidString)/image"),
                         contentMode: .fit
                     )
-                    .frame(maxWidth: .infinity, minHeight: 360)
+                    .frame(maxWidth: .infinity, minHeight: 360, maxHeight: SentinelTheme.detailMediaMaxHeight)
                     .background(.black)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }

@@ -8,3 +8,15 @@ The icon was generated with the built-in image generation tool using this final 
 
 Platform-specific sizes are generated from the 1024px master. Keep the master free of alpha because Apple app icons do not accept transparent pixels.
 
+## tvOS
+
+tvOS is the exception to "just resize the master". Its app icon is a parallax stack of three layers that tvOS slides against each other as the icon takes focus, so each layer has to hold a *different* part of the picture — export the master into all three and the shield renders three times at three offsets, which reads as a smeared, copy-pasted icon.
+
+`make-tvos-icon.py` builds the stack correctly: background on Back, shield cut out of that background on Front, Middle empty. Run it after any change to the master:
+
+```bash
+python3 branding/make-tvos-icon.py
+```
+
+It needs Pillow (`pip install pillow`) and writes straight into `appletv/…/App Icon & Top Shelf Image.brandassets`. The top shelf images are separate flat artwork and are not touched by it.
+

@@ -328,25 +328,6 @@ final class SentinelClient {
         return url
     }
 
-    // Used to decide between the local and remote server addresses before a real connect -
-    // any HTTP response counts as "reachable" (even a 401 or 500), since the point is just to
-    // detect whether the host is reachable at all, not to validate the response itself. A
-    // per-request timeout override (rather than a whole separate URLSessionConfiguration) keeps
-    // this from disturbing the session's normal 10s/15s timeouts used for everything else.
-    func probeReachable(_ urlString: String, timeout: TimeInterval = 2.5) async -> Bool {
-        guard let url = URL(string: "\(urlString.trimmingCharacters(in: .whitespacesAndNewlines))/api/auth/status") else {
-            return false
-        }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = timeout
-        do {
-            _ = try await session.data(for: request)
-            return true
-        } catch {
-            return false
-        }
-    }
-
     private func elapsed(from start: ContinuousClock.Instant) -> String {
         let duration = start.duration(to: .now)
         return duration.formatted(.units(allowed: [.seconds, .milliseconds], width: .abbreviated))

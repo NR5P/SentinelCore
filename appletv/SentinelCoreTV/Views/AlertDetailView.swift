@@ -12,7 +12,7 @@ struct AlertDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 SentinelRemoteImage(url: imageURL, contentMode: .fit)
-                    .frame(maxWidth: .infinity, minHeight: 360)
+                    .frame(maxWidth: .infinity, minHeight: 360, maxHeight: SentinelTheme.detailMediaMaxHeight)
                     .background(.black)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 

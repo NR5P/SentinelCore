@@ -15,6 +15,14 @@ enum SentinelTheme {
                               dark: .init(red: 1.0, green: 0.71, blue: 0.27))
     static let red = Color(light: .init(red: 0.75, green: 0.11, blue: 0.17),
                             dark: .init(red: 1.0, green: 0.30, blue: 0.37))
+
+    // Ceiling on the clip/snapshot at the top of a detail screen. A detail screen is a ScrollView,
+    // so its height proposal is unbounded and a 16:9 image asked to fit the full 1800pt content
+    // width sizes itself to ~1010pt - taller than the 1080pt screen has left under the title,
+    // which pushes its own bottom edge and everything after it off the screen. It scrolls, but on
+    // tvOS scrolling means moving focus, and the media is the one thing up there that isn't
+    // focusable, so it reads as simply cut off. This leaves room for the detail card below it.
+    static let detailMediaMaxHeight: CGFloat = 560
 }
 
 struct SentinelCard: ViewModifier {
