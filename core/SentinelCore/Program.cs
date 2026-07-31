@@ -48,7 +48,12 @@ builder.Services.AddOptions<CloudVisionOptions>()
 builder.Services.AddOptions<VisionRoutingOptions>()
     .Bind(builder.Configuration.GetSection(VisionRoutingOptions.SectionName))
     .ValidateDataAnnotations()
-    .Validate(o => o.Primary is "ollama" or "cloud", "VisionRouting:Primary must be 'ollama' or 'cloud'.")
+    .Validate(o => o.Primary is "ollama" or "cloud" or "fastlocal", "VisionRouting:Primary must be 'ollama', 'cloud', or 'fastlocal'.")
+    .Validate(o => o.EscalationTarget is "auto" or "cloud" or "ollama", "VisionRouting:EscalationTarget must be 'auto', 'cloud', or 'ollama'.")
+    .ValidateOnStart();
+builder.Services.AddOptions<FastLocalOptions>()
+    .Bind(builder.Configuration.GetSection(FastLocalOptions.SectionName))
+    .ValidateDataAnnotations()
     .ValidateOnStart();
 builder.Services.AddOptions<WebhookOptions>()
     .Bind(builder.Configuration.GetSection(WebhookOptions.SectionName))
@@ -257,9 +262,18 @@ builder.Services.AddSingleton(sp => new CloudVisionClient(
     sp.GetRequiredService<GoogleVisionClient>(),
     sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
     sp.GetRequiredService<ILogger<CloudVisionClient>>()));
+// Same deferred-download singleton shape as ImageEmbeddingService: the detector's ~100MB ONNX
+// model is only fetched/loaded the first time an alert actually routes to the fastlocal backend,
+// so installs that never select it pay nothing at startup.
+builder.Services.AddHttpClient<IFastLocalDetector, FastLocalDetector>();
+builder.Services.AddSingleton(sp => new FastLocalVisionClient(
+    sp.GetRequiredService<IFastLocalDetector>(),
+    sp.GetRequiredService<IOptionsMonitor<FastLocalOptions>>(),
+    sp.GetRequiredService<ILogger<FastLocalVisionClient>>()));
 builder.Services.AddSingleton<IVisionAnalysisClient>(sp => new FailoverVisionClient(
     sp.GetRequiredService<OllamaVisionClient>(),
     sp.GetRequiredService<CloudVisionClient>(),
+    sp.GetRequiredService<FastLocalVisionClient>(),
     sp.GetRequiredService<IOptionsMonitor<VisionRoutingOptions>>(),
     sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
     sp.GetRequiredService<ILogger<FailoverVisionClient>>()));

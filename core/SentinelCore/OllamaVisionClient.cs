@@ -59,7 +59,13 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             model = _options.Model,
             stream = false,
             keep_alive = _options.KeepAlive,
-            format = "json",
+            // A full JSON schema, not the plain "json" mode: Ollama (0.5+) constrains generation
+            // to the schema, so malformed JSON, missing fields, and invented property names -
+            // previously a real retry cause on small local models - can't happen at all. The
+            // prompt still spells out the same structure; the schema enforces shape, the prompt
+            // explains meaning. Reuses the OpenAI builder because Ollama takes the same standard
+            // JSON Schema dialect (additionalProperties:false included).
+            format = OpenAiVisionClient.BuildJsonSchema(profile),
             options = new
             {
                 temperature = _options.Temperature,

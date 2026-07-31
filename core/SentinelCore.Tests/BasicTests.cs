@@ -452,6 +452,24 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void BuildJsonSchema_OnlyIncludesCameraBlockedWhenProfileOptsIn()
+    {
+        // Regression guard: additionalProperties:false previously forbade the model from
+        // returning the camera_blocked answer a gate check's prompt asks for, because the
+        // schema builders never declared the field.
+        var disabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Q"] };
+        var enabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Q"], CameraBlockedCheckEnabled = true };
+
+        Assert.Null(OpenAiVisionClient.BuildJsonSchema(disabledProfile)["properties"]!["camera_blocked"]);
+        Assert.Null(GoogleVisionClient.BuildJsonSchema(disabledProfile)["properties"]!["camera_blocked"]);
+
+        var openAi = OpenAiVisionClient.BuildJsonSchema(enabledProfile);
+        Assert.NotNull(openAi["properties"]!["camera_blocked"]);
+        Assert.Contains("camera_blocked", openAi["required"]!.AsArray().Select(n => n!.GetValue<string>()));
+        Assert.NotNull(GoogleVisionClient.BuildJsonSchema(enabledProfile)["properties"]!["camera_blocked"]);
+    }
+
+    [Fact]
     public void OpenAiVisionClient_BuildJsonSchema_MarksEveryPropertyRequiredAndForbidsExtras()
     {
         var schema = OpenAiVisionClient.BuildJsonSchema(new PromptProfile { SystemPrompt = "Test.", Questions = ["Q"] });
@@ -651,7 +669,7 @@ public sealed class BasicTests
         var ollama = new FakeVisionClient("gemma3:4b");
         var cloud = new FakeVisionClient("gpt-4o-mini");
         var client = new FailoverVisionClient(
-            ollama, cloud,
+            ollama, cloud, new FakeVisionClient("fastlocal/rf-detr-nano"),
             new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama", FallbackEnabled = true }),
             new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
             NullLogger<FailoverVisionClient>.Instance);
@@ -669,7 +687,7 @@ public sealed class BasicTests
         var cloud = new FakeVisionClient("gpt-4o-mini") { ThrowOnAnalyze = true };
         // Primary is cloud, which fails - fallback should land on Ollama.
         var client = new FailoverVisionClient(
-            ollama, cloud,
+            ollama, cloud, new FakeVisionClient("fastlocal/rf-detr-nano"),
             new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = true }),
             new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
             NullLogger<FailoverVisionClient>.Instance);
@@ -687,7 +705,7 @@ public sealed class BasicTests
         var ollama = new FakeVisionClient("gemma3:4b");
         var cloud = new FakeVisionClient("gpt-4o-mini") { ThrowOnAnalyze = true };
         var client = new FailoverVisionClient(
-            ollama, cloud,
+            ollama, cloud, new FakeVisionClient("fastlocal/rf-detr-nano"),
             new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = false }),
             new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
             NullLogger<FailoverVisionClient>.Instance);
@@ -704,7 +722,7 @@ public sealed class BasicTests
         var cloud = new FakeVisionClient("gpt-4o-mini");
         // Primary says cloud, but no API key - a settings mistake shouldn't fail every alert.
         var client = new FailoverVisionClient(
-            ollama, cloud,
+            ollama, cloud, new FakeVisionClient("fastlocal/rf-detr-nano"),
             new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = false }),
             new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = false, ApiKey = "" }),
             NullLogger<FailoverVisionClient>.Instance);
@@ -721,7 +739,7 @@ public sealed class BasicTests
         var ollama = new FakeVisionClient("gemma3:4b") { Ready = false };
         var cloud = new FakeVisionClient("gpt-4o-mini") { Ready = true };
         var client = new FailoverVisionClient(
-            ollama, cloud,
+            ollama, cloud, new FakeVisionClient("fastlocal/rf-detr-nano"),
             new StaticOptionsMonitor<VisionRoutingOptions>(new VisionRoutingOptions { Primary = "ollama", FallbackEnabled = true }),
             new StaticOptionsMonitor<CloudVisionOptions>(new CloudVisionOptions { Enabled = true, ApiKey = "key" }),
             NullLogger<FailoverVisionClient>.Instance);

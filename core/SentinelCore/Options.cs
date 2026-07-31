@@ -169,16 +169,70 @@ public sealed class VisionRoutingOptions
 {
     public const string SectionName = "VisionRouting";
 
-    // "ollama" or "cloud". Defaults to "ollama" so every existing install keeps behaving exactly
-    // as it always has with zero config changes - this is the only backend that has ever existed
-    // until now.
+    // "ollama", "cloud", or "fastlocal". Defaults to "ollama" so every existing install keeps
+    // behaving exactly as it always has with zero config changes.
     [Required]
     public string Primary { get; init; } = "ollama";
 
     // If the primary backend's own retries are exhausted, automatically retry once against
-    // whichever backend isn't primary before giving up on the alert entirely - e.g. cloud
-    // unreachable -> fall back to local Ollama, slower but still analyzed.
+    // another backend before giving up on the alert entirely - e.g. cloud unreachable -> fall
+    // back to local Ollama, slower but still analyzed. When primary is "fastlocal", the
+    // fallback is a VLM backend (cloud if configured, otherwise Ollama).
     public bool FallbackEnabled { get; init; }
+
+    // Only meaningful when Primary is "fastlocal": after the fast detector finds a person,
+    // vehicle, or animal, re-analyze the same alert with a VLM backend to get the full
+    // description (gate state, delivery company, species, prose summary). Alerts where the
+    // detector finds nothing - the large majority - never reach the expensive backend at all,
+    // which is the whole point of the fast tier. If escalation fails, the detector's own
+    // analysis still stands rather than failing the alert.
+    public bool EscalationEnabled { get; init; }
+
+    // Which backend escalation goes to: "auto" (cloud if configured, otherwise Ollama),
+    // "cloud", or "ollama".
+    [Required]
+    public string EscalationTarget { get; init; } = "auto";
+}
+
+public sealed class FastLocalOptions
+{
+    public const string SectionName = "FastLocal";
+
+    // Relative paths resolve under Bridge:DataDirectory, matching every other model this app
+    // stores (clip-model, known-faces). Changing this after the session has loaded needs a
+    // restart - the ONNX session is created once per process, like the CLIP encoders.
+    [Required]
+    public string ModelPath { get; init; } = "fastlocal-model/rf-detr-nano.onnx";
+
+    // Fetched once on first use if ModelPath doesn't exist yet - RF-DETR Nano (Apache 2.0),
+    // ~103MB. Clear this to require the model file to be provisioned manually instead.
+    public string DownloadUrl { get; init; } =
+        "https://huggingface.co/PierreMarieCurie/rf-detr-onnx/resolve/main/rf-detr-nano.onnx";
+
+    // SHA-256 of the file DownloadUrl serves, verified before the download is moved into place.
+    // Only applies to the download; a manually provisioned ModelPath is trusted as-is. Clear it
+    // to skip verification when pointing DownloadUrl somewhere else.
+    public string DownloadSha256 { get; init; } =
+        "3fcbba0f68bad4939fdf1c38f432783b95691e2869af3be369780aa5be67abb2";
+
+    // Fallback only: the model's own static input shape wins when it declares one (RF-DETR
+    // Nano is fixed 384x384), so this only matters for a substituted model with dynamic axes.
+    [Range(64, 1536)]
+    public int InputSize { get; init; } = 384;
+
+    // Minimum sigmoid score for a detection to count. 0.5 keeps essentially every real subject
+    // in daylight and most at night while dropping the sub-0.4 noise DETR queries emit for
+    // background texture; lower it if a camera is missing distant/night subjects, at the cost
+    // of more false alerts.
+    [Range(0, 1)]
+    public double ScoreThreshold { get; init; } = 0.5;
+
+    // Which detected subjects set notification_recommended. Animals default off, matching the
+    // VLM prompt's own stance that ordinary wildlife isn't alert-worthy - a detector can't tell
+    // a raccoon in the trash from a bird on the lawn, so it can't make that judgment call.
+    public bool NotifyOnPerson { get; init; } = true;
+    public bool NotifyOnVehicle { get; init; } = true;
+    public bool NotifyOnAnimal { get; init; }
 }
 
 public sealed class PromptProfile

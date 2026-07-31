@@ -547,12 +547,18 @@ quick sanity check after a restart or update that everything actually came back 
 
 ## 8. Vision analysis backend — local, cloud, or both
 
-Every alert (Blue Iris or your own trigger zones) gets analyzed by one of two kinds of AI
+Every alert (Blue Iris or your own trigger zones) gets analyzed by one of three kinds of AI
 vision backend:
 
 - **Ollama** — a model running on your own hardware. Free to run, keeps every image on your
   own network, but needs a machine capable of it (ideally a GPU) and can be slow on modest
   hardware.
+- **Fast Local Detection** — a small object detector, also running on your own hardware, that
+  answers only "is a person, vehicle, or animal there?" — but does it in well under a second
+  even on an older CPU-only machine where Ollama's full model would take minutes per alert.
+  The detector model (~100MB) downloads automatically the first time it's used. It can't
+  describe the scene, tell one animal species from another, read gate state, or spot packages;
+  the escalation option below exists to fill exactly that gap.
 - **Cloud Vision** — an offsite model, one of:
   - **OpenAI** (e.g. `gpt-4o-mini`)
   - **Anthropic** (e.g. `claude-3-5-sonnet-latest`)
@@ -575,11 +581,25 @@ endpoint, so there's no equivalent override for those.
 - **Primary Backend** — which one analyzes alerts first. If it's set to Cloud Vision but the
   Cloud Vision section above isn't enabled with a valid API key, Ollama is used instead
   automatically rather than every alert failing outright.
-- **Fall Back To The Other Backend** — if the primary fails (after its own retries), instead of
-  giving up on the alert, retry once against whichever backend isn't primary. This is what lets
-  you run Cloud Vision as your everyday backend with Ollama as a safety net if the internet or
-  OpenAI itself is briefly unavailable — or the reverse, Ollama as primary with Cloud Vision as
-  backup if your local machine occasionally struggles to keep up.
+- **Fall Back To Another Backend** — if the primary fails (after its own retries), instead of
+  giving up on the alert, retry once against another backend. This is what lets you run Cloud
+  Vision as your everyday backend with Ollama as a safety net if the internet or OpenAI itself
+  is briefly unavailable — or the reverse, Ollama as primary with Cloud Vision as backup if
+  your local machine occasionally struggles to keep up.
+- **Escalate Fast Detections For Full Analysis** — only applies when the primary is Fast Local
+  Detection: when the detector finds a person, vehicle, or animal, the same alert is
+  re-analyzed by a full AI (the **Escalation Target** — cloud if configured, or Ollama) to get
+  the detailed description. Empty alerts — shadows, headlights, rain, which are most of them —
+  never reach the expensive model at all. This is the recommended setup for a low-powered
+  server: sub-second local screening, with the full analysis reserved for alerts that actually
+  contain something. If escalation fails, the detector's own result still stands.
+
+Two notes on the fast detector's limits: gate/door open checks (section on Gate Checks) always
+use a full AI even when Fast Local Detection is primary, since a plain detector can't read
+whether a gate is open. And its vehicle notifications can't tell passing road traffic from a
+vehicle at your gate the way the full AI's prompt rules do — draw trigger zones that exclude
+the road, or turn **Notify On Vehicle** off in the Fast Local Detection section for
+road-facing cameras.
 
 Whichever backend actually analyzed a given alert is recorded with it as `model`, visible in
 the raw result at `/api/results/{id}` (not currently shown in the FEED tab itself). A `model`

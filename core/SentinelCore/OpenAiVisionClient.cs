@@ -187,7 +187,8 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
         if (profile.LicensePlateRecognitionEnabled)
             vehicleProps.Add(("license_plate", Str()));
 
-        return Obj(
+        var rootProps = new List<(string Name, JsonNode Type)>
+        {
             ("event_type", Str()),
             ("summary", Str()),
             ("gate", Obj(("state", Str()))),
@@ -199,7 +200,16 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
             ("animal", Obj(("visible", Bool()), ("description", Str()))),
             ("confidence", Num()),
             ("notification_recommended", Bool()),
-            ("notification_reason", Str()));
+            ("notification_reason", Str())
+        };
+
+        // Without this, strict mode's additionalProperties:false actively forbade the model
+        // from answering the camera-blocked question the prompt asks when a gate check has
+        // CheckBlocked on - the field just silently never came back through this backend.
+        if (profile.CameraBlockedCheckEnabled)
+            rootProps.Add(("camera_blocked", Bool()));
+
+        return Obj(rootProps.ToArray());
     }
 
     private static JsonObject Obj(params (string Name, JsonNode Type)[] properties)

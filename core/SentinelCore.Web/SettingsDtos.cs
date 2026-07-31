@@ -75,6 +75,24 @@ public sealed class VisionRoutingSettingsDto
     public string Primary { get; set; } = "ollama";
 
     public bool FallbackEnabled { get; set; }
+
+    public bool EscalationEnabled { get; set; }
+
+    [Required]
+    public string EscalationTarget { get; set; } = "auto";
+}
+
+// ModelPath/DownloadUrl/InputSize are deliberately absent: the ONNX session loads once per
+// process, so those only apply after a restart - appsettings.json remains the place for them,
+// matching this file's rule of only exposing fields that take effect live.
+public sealed class FastLocalSettingsDto
+{
+    [Range(0, 1)]
+    public double ScoreThreshold { get; set; } = 0.5;
+
+    public bool NotifyOnPerson { get; set; } = true;
+    public bool NotifyOnVehicle { get; set; } = true;
+    public bool NotifyOnAnimal { get; set; }
 }
 
 public sealed class ImageProcessingSettingsDto

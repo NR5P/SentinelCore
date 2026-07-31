@@ -12,6 +12,7 @@ public sealed record SettingsSnapshot(
     OllamaSettingsDto? Ollama,
     CloudVisionSettingsDto? CloudVision,
     VisionRoutingSettingsDto? VisionRouting,
+    FastLocalSettingsDto? FastLocal,
     ImageProcessingSettingsDto? ImageProcessing,
     Dictionary<string, PromptProfile>? PromptProfiles,
     EmailSettingsDto? Email,
@@ -68,9 +69,14 @@ public static class SettingsEndpoints
         settings.MapPut("/vision-routing", async (VisionRoutingSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "VisionRouting", ct, extra =>
             {
-                if (dto.Primary is not ("ollama" or "cloud"))
-                    extra.Add("Primary must be 'ollama' or 'cloud'.");
+                if (dto.Primary is not ("ollama" or "cloud" or "fastlocal"))
+                    extra.Add("Primary must be 'ollama', 'cloud', or 'fastlocal'.");
+                if (dto.EscalationTarget is not ("auto" or "cloud" or "ollama"))
+                    extra.Add("EscalationTarget must be 'auto', 'cloud', or 'ollama'.");
             }));
+
+        settings.MapPut("/fast-local", async (FastLocalSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "FastLocal", ct));
 
         settings.MapPut("/image-processing", async (ImageProcessingSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "ImageProcessing", ct));
@@ -283,6 +289,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<OllamaSettingsDto>("Ollama", cancellationToken),
         await settings.GetSectionAsync<CloudVisionSettingsDto>("CloudVision", cancellationToken),
         await settings.GetSectionAsync<VisionRoutingSettingsDto>("VisionRouting", cancellationToken),
+        await settings.GetSectionAsync<FastLocalSettingsDto>("FastLocal", cancellationToken),
         await settings.GetSectionAsync<ImageProcessingSettingsDto>("ImageProcessing", cancellationToken),
         await settings.GetSectionAsync<Dictionary<string, PromptProfile>>("PromptProfiles", cancellationToken),
         await settings.GetSectionAsync<EmailSettingsDto>("Email", cancellationToken),
@@ -317,6 +324,7 @@ public static class SettingsEndpoints
         if (snapshot.Ollama is not null) await settings.MergeSectionAsync("Ollama", snapshot.Ollama, cancellationToken);
         if (snapshot.CloudVision is not null) await settings.MergeSectionAsync("CloudVision", snapshot.CloudVision, cancellationToken);
         if (snapshot.VisionRouting is not null) await settings.MergeSectionAsync("VisionRouting", snapshot.VisionRouting, cancellationToken);
+        if (snapshot.FastLocal is not null) await settings.MergeSectionAsync("FastLocal", snapshot.FastLocal, cancellationToken);
         if (snapshot.ImageProcessing is not null) await settings.MergeSectionAsync("ImageProcessing", snapshot.ImageProcessing, cancellationToken);
         if (snapshot.PromptProfiles is not null) await settings.ReplaceSectionAsync("PromptProfiles", snapshot.PromptProfiles, cancellationToken);
         if (snapshot.Email is not null) await settings.MergeSectionAsync("Email", snapshot.Email, cancellationToken);

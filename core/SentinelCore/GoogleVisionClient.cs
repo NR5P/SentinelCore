@@ -172,7 +172,8 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
         if (profile.LicensePlateRecognitionEnabled)
             vehicleProps.Add(("license_plate", Str()));
 
-        return Obj(
+        var rootProps = new List<(string Name, JsonNode Type)>
+        {
             ("event_type", Str()),
             ("summary", Str()),
             ("gate", Obj(("state", Str()))),
@@ -184,7 +185,15 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
             ("animal", Obj(("visible", Bool()), ("description", Str()))),
             ("confidence", Num()),
             ("notification_recommended", Bool()),
-            ("notification_reason", Str()));
+            ("notification_reason", Str())
+        };
+
+        // Same conditional as OpenAiVisionClient.BuildJsonSchema: the camera-blocked answer a
+        // gate check's prompt asks for has to be declared here or the model can't return it.
+        if (profile.CameraBlockedCheckEnabled)
+            rootProps.Add(("camera_blocked", Bool()));
+
+        return Obj(rootProps.ToArray());
     }
 
     private static JsonObject Obj(params (string Name, JsonNode Type)[] properties)

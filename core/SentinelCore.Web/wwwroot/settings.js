@@ -53,15 +53,33 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "fastLocal", title: "FAST LOCAL DETECTION", endpoint: "/api/settings/fast-local",
+      basic: false,
+      description: "A small object detector that answers 'is a person, vehicle, or animal there?' in well under a second, even on a CPU-only machine that would take minutes to run Ollama's full model. It can't describe the scene, read gate state, or spot packages - pair it with escalation in VISION ROUTING below to get the full analysis only for alerts that actually contain something. The detector model (~100MB) downloads automatically the first time it's used.",
+      fields: [
+        { name: "scoreThreshold", label: "Score Threshold", type: "number", min: 0, max: 1, step: 0.05, tip: "Minimum detection confidence for a subject to count, 0-1. Lower it if the detector misses distant or nighttime subjects; raise it if shadows and headlights are causing false detections." },
+        { name: "notifyOnPerson", label: "Notify On Person", type: "checkbox", tip: "Recommend a notification when a person is detected." },
+        { name: "notifyOnVehicle", label: "Notify On Vehicle", type: "checkbox", tip: "Recommend a notification when a vehicle is detected. Unlike the full AI, the detector can't tell passing road traffic from a vehicle at your gate - draw your trigger zones so the road isn't included, or turn this off for road-facing cameras." },
+        { name: "notifyOnAnimal", label: "Notify On Animal", type: "checkbox", tip: "Recommend a notification when an animal is detected. Off by default - the detector can't judge which animals matter to you." }
+      ]
+    },
+    {
       key: "visionRouting", title: "VISION ROUTING", endpoint: "/api/settings/vision-routing",
       basic: false,
-      description: "Which AI analyses a snapshot first, and whether to fall back to the other one if it fails. This only does something once Cloud Vision above is set up - with Ollama alone there's nothing to route between.",
+      description: "Which AI analyses a snapshot first, whether to fall back to another one if it fails, and - when Fast Local Detection is primary - whether alerts with something in them get escalated to a full AI for the detailed description.",
       fields: [
         { name: "primary", label: "Primary Backend", type: "select", options: [
             { value: "ollama", label: "Ollama (local)" },
-            { value: "cloud", label: "Cloud Vision (OpenAI)" }
-          ], tip: "Which backend analyses alerts first. If it's Cloud Vision but CLOUD VISION above isn't enabled/configured, Ollama is used instead automatically." },
-        { name: "fallbackEnabled", label: "Fall Back To The Other Backend", type: "checkbox", tip: "If the primary backend fails after its own retries, automatically retry once against the other one before giving up - slower, but the alert still gets analyzed instead of being lost. Requires both backends to be usable (Ollama running, Cloud Vision enabled and configured)." }
+            { value: "cloud", label: "Cloud Vision (OpenAI)" },
+            { value: "fastlocal", label: "Fast Local Detection" }
+          ], tip: "Which backend analyses alerts first. Fast Local Detection is the right choice for hardware too slow to run Ollama's full model - pair it with escalation below so alerts with something in them still get a full description. If Cloud Vision is picked but not enabled/configured above, Ollama is used instead automatically. Gate/door open checks always use a full AI (cloud if configured, otherwise Ollama) - a plain detector can't read whether a gate is open." },
+        { name: "fallbackEnabled", label: "Fall Back To Another Backend", type: "checkbox", tip: "If the primary backend fails after its own retries, automatically retry once against another one before giving up - slower, but the alert still gets analyzed instead of being lost." },
+        { name: "escalationEnabled", label: "Escalate Fast Detections For Full Analysis", type: "checkbox", tip: "Only applies when the primary is Fast Local Detection: when the detector finds a person, vehicle, or animal, re-analyze that alert with a full AI to get the detailed description (delivery company, gate state, animal species). Empty alerts - the vast majority - never reach the expensive model at all. If escalation fails, the fast result still stands." },
+        { name: "escalationTarget", label: "Escalation Target", type: "select", options: [
+            { value: "auto", label: "Auto (cloud if configured, else Ollama)" },
+            { value: "cloud", label: "Cloud Vision only" },
+            { value: "ollama", label: "Ollama (local)" }
+          ], tip: "Which full AI escalated alerts go to. 'Cloud Vision only' never falls back to Ollama - the right choice on hardware where a surprise multi-minute local analysis is worse than a missing description." }
       ]
     },
     {
@@ -287,7 +305,8 @@ window.GateWatchSettings = (function () {
     bridge: "How alerts arrive from Blue Iris, and how long they're kept.",
     ollama: "The local AI model that looks at each snapshot, and how it's tuned.",
     cloudVision: "An offsite AI model (OpenAI, Anthropic, or Google) that can analyse alerts instead of, or as a backup for, the local Ollama model.",
-    visionRouting: "Which vision backend handles alerts first, and whether to fall back to the other one if it fails.",
+    fastLocal: "A lightweight person/vehicle/animal detector for hardware too slow to run a full AI model - sub-second answers on a plain CPU.",
+    visionRouting: "Which vision backend handles alerts first, plus fallback on failure and escalation of fast detections to a full AI.",
     imageProcessing: "Resizing snapshots before the AI sees them, to speed up analysis.",
     email: "Email alerts when something notable happens.",
     dailySummary: "A twice-daily digest of everything that happened, separate from individual alerts.",
