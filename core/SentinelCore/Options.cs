@@ -264,6 +264,23 @@ public sealed class BugReportOptions
     public bool Enabled { get; init; }
 }
 
+public sealed class LoginAlertOptions
+{
+    public const string SectionName = "LoginAlerts";
+
+    // Off by default, like every other outbound-notification feature here - nothing is sent
+    // anywhere until explicitly turned on. Sending itself still separately depends on Email
+    // and/or Telegram being configured; this only gates whether an invalid login attempts to
+    // use them at all.
+    public bool Enabled { get; init; }
+
+    // One alert per source IP per window, no matter how many usernames are tried against it -
+    // otherwise a brute-force burst would send one email/Telegram message per guess instead of
+    // one alert for the whole burst.
+    [Range(1, 1440)]
+    public int CooldownMinutes { get; init; } = 15;
+}
+
 public sealed class MqttOptions
 {
     public const string SectionName = "Mqtt";

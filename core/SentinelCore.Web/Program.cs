@@ -260,6 +260,12 @@ builder.Services.AddSingleton<IBugReportSender, WebBugReportSender>();
 builder.Services.AddSingleton<ILoggerProvider>(sp =>
     new BugReportLoggerProvider("SentinelCore.Web", sp));
 
+// Alerts the homeowner (not the developer) on a failed dashboard login - see LoginAlertSender.
+// Same reasoning as WebBugReportSender: no SMTP/Telegram config of its own, reads Email/Telegram
+// straight from the main app's appsettings.json.
+builder.Services.AddHttpClient(nameof(LoginAlertSender));
+builder.Services.AddSingleton<ILoginAlertSender, LoginAlertSender>();
+
 // Records whether anything has reached this dashboard from outside the LAN - see ExposureTracker.
 builder.Services.AddSingleton<ExposureTracker>();
 

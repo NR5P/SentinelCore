@@ -32,7 +32,8 @@ public sealed record SettingsSnapshot(
     MqttSettingsDto? Mqtt,
     HomeKitSettingsDto? HomeKit,
     BugReportSettingsDto? BugReports,
-    WebhookSettingsDto? Webhook);
+    WebhookSettingsDto? Webhook,
+    LoginAlertSettingsDto? LoginAlerts);
 
 public static class SettingsEndpoints
 {
@@ -179,6 +180,9 @@ public static class SettingsEndpoints
         settings.MapPut("/bug-reports", async (BugReportSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "BugReports", ct));
 
+        settings.MapPut("/login-alerts", async (LoginAlertSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "LoginAlerts", ct));
+
         settings.MapPut("/webhook", async (WebhookSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "Webhook", ct, extra =>
             {
@@ -299,7 +303,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", cancellationToken),
         await settings.GetSectionAsync<HomeKitSettingsDto>("HomeKit", cancellationToken),
         await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", cancellationToken),
-        await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", cancellationToken));
+        await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", cancellationToken),
+        await settings.GetSectionAsync<LoginAlertSettingsDto>("LoginAlerts", cancellationToken));
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -336,6 +341,7 @@ public static class SettingsEndpoints
         if (snapshot.HomeKit is not null) await settings.MergeSectionAsync("HomeKit", snapshot.HomeKit, cancellationToken);
         if (snapshot.BugReports is not null) await settings.MergeSectionAsync("BugReports", snapshot.BugReports, cancellationToken);
         if (snapshot.Webhook is not null) await settings.MergeSectionAsync("Webhook", snapshot.Webhook, cancellationToken);
+        if (snapshot.LoginAlerts is not null) await settings.MergeSectionAsync("LoginAlerts", snapshot.LoginAlerts, cancellationToken);
     }
 
     private static async Task<IResult> SaveSectionAsync<T>(

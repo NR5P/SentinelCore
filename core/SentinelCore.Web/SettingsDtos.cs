@@ -296,6 +296,14 @@ public sealed class BugReportSettingsDto
     public bool Enabled { get; set; }
 }
 
+public sealed class LoginAlertSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(1, 1440)]
+    public int CooldownMinutes { get; set; } = 15;
+}
+
 public sealed class HomeKitSettingsDto
 {
     public bool Enabled { get; set; }

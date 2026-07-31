@@ -50,7 +50,7 @@ public static class AuthEndpoints
             });
         });
 
-        app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AppSettingsFile settings, IAccountStore accounts, InternetExposedSettings internetExposed, ILogger<LoginRequest> logger, CancellationToken ct) =>
+        app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AppSettingsFile settings, IAccountStore accounts, InternetExposedSettings internetExposed, ILoginAlertSender loginAlerts, ILogger<LoginRequest> logger, CancellationToken ct) =>
         {
             var ip = ClientIpResolver.Resolve(context, internetExposed);
             var via = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port ? "internet-exposed" : "LAN";
@@ -67,8 +67,15 @@ public static class AuthEndpoints
 
             if (!valid)
             {
-                RecordFailure(ip);
+                var failures = RecordFailure(ip);
                 logger.LogWarning("Login failed for {Username} from {Ip} ({Via})", request.Username, ip, via);
+
+                // Fire-and-forget: LoginAlertSender swallows its own errors, and a mistyped
+                // password shouldn't make the caller wait out an SMTP/Telegram round trip.
+                // CancellationToken.None on purpose - the request's own token is tied to this
+                // response, which returns immediately, but the send should still complete.
+                _ = loginAlerts.NotifyInvalidLoginAsync(request.Username ?? "", ip, via, failures, CancellationToken.None);
+
                 return Results.Json(new { error = "Invalid username or password." }, statusCode: StatusCodes.Status401Unauthorized);
             }
 
@@ -157,12 +164,16 @@ public static class AuthEndpoints
         }
     }
 
-    private static void RecordFailure(string ip)
+    // Returns the number of failures still within the window after recording this one, so the
+    // login-alert email/Telegram message can say "this is attempt #N", not just "invalid login".
+    private static int RecordFailure(string ip)
     {
         var attempts = FailedAttempts.GetOrAdd(ip, static _ => []);
         lock (attempts)
         {
+            attempts.RemoveAll(t => t < DateTimeOffset.UtcNow - FailureWindow);
             attempts.Add(DateTimeOffset.UtcNow);
+            return attempts.Count;
         }
     }
 }

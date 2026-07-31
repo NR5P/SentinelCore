@@ -269,6 +269,15 @@ window.GateWatchSettings = (function () {
       fields: [
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Email the developer when something in the bridge or dashboard hits an internal error, using the same account configured under Email above. Goes to a fixed developer address, not one you set - there's nothing else to configure here." }
       ]
+    },
+    {
+      key: "loginAlerts", title: "LOGIN ALERTS", endpoint: "/api/settings/login-alerts",
+      basic: true,
+      description: "Emails and/or Telegrams you when someone enters the wrong password for this dashboard, using the accounts configured under Email and Telegram above. Off by default. One alert is sent per source IP per cooldown window, no matter how many usernames or passwords are tried against it, so a brute-force burst doesn't flood you.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Alert you by Email and/or Telegram when someone fails to log in to this dashboard, using the accounts configured under Email and Telegram above." },
+        { name: "cooldownMinutes", label: "Cooldown (min)", type: "number", min: 1, max: 1440, tip: "After alerting on a failed login from a given address, suppress further alerts from that same address for this many minutes - so one attacker hammering the login page sends one alert, not one per attempt." }
+      ]
     }
   ];
 
@@ -294,6 +303,7 @@ window.GateWatchSettings = (function () {
     webhook: "Forward each analysed event to another system.",
     mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker.",
     bugReports: "Email the developer when something breaks internally, using the Email account above.",
+    loginAlerts: "Email and/or Telegram you when someone enters the wrong password for this dashboard.",
     internetExposed: "A second, dedicated port for reaching this dashboard from outside your home network (e.g. through a Cloudflare Tunnel) - always requires login and HTTPS, regardless of the Login/HTTPS settings above."
   };
 

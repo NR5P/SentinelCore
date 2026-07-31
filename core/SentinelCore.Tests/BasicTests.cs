@@ -860,6 +860,42 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void LoginAlertNotification_EmailGoesToTheAlertAddressAndNamesTheAttempt()
+    {
+        var email = new EmailOptions
+        {
+            Username = "sender@example.com",
+            FromAddress = "",
+            ToAddress = "owner@example.com",
+            FromName = "Sentinel Core"
+        };
+        var report = new LoginAlertReport("admin", "203.0.113.9", "internet-exposed", 4, DateTimeOffset.UtcNow);
+
+        using var message = LoginAlertNotification.BuildEmail(email, report);
+
+        Assert.Equal("owner@example.com", Assert.Single(message.To).Address);
+        Assert.Equal("sender@example.com", message.From!.Address);
+        Assert.Contains("Invalid login", message.Subject);
+        Assert.Contains("admin", message.Body);
+        Assert.Contains("203.0.113.9", message.Body);
+        Assert.Contains("internet-exposed", message.Body);
+        Assert.Contains("4", message.Body);
+        Assert.False(message.IsBodyHtml);
+    }
+
+    [Fact]
+    public void LoginAlertNotification_TelegramTextNamesTheAttemptedUsernameAndSource()
+    {
+        var report = new LoginAlertReport("root", "10.0.0.5", "LAN", 1, DateTimeOffset.UtcNow);
+
+        var text = LoginAlertNotification.BuildTelegramText(report);
+
+        Assert.Contains("root", text);
+        Assert.Contains("10.0.0.5", text);
+        Assert.Contains("LAN", text);
+    }
+
+    [Fact]
     public async Task BugReportLoggerProvider_OnlyForwardsErrorLevelFromOurOwnNamespaces()
     {
         var sender = new RecordingBugReportSender();
