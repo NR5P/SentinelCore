@@ -84,8 +84,17 @@ public static class CameraEndpoints
             return deleted ? Results.Ok(new { deleted = true }) : Results.NotFound();
         }).RequireAuthorization("AdminOnly");
 
-        app.MapGet("/api/cameras/{id:guid}/stream/{file}", async (Guid id, string file, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
+        // Nothing here may be cached, by the client or by anything in front of the server. The
+        // playlist is rewritten every segment, so a cached copy hands the player an out-of-date
+        // segment list - it either plays that far behind live or asks for segments that have
+        // already rolled off. The segments are worse: their names restart at seg_000.ts every time
+        // a session does, so a cache holding one from a previous session would feed a viewer video
+        // from a completely different point in time. Relevant well beyond the browser, since
+        // Internet Exposed Mode puts a Cloudflare Tunnel in this path.
+        app.MapGet("/api/cameras/{id:guid}/stream/{file}", async (Guid id, string file, HttpContext http, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
         {
+            http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, private";
+
             if (file == "stream.m3u8")
             {
                 var camera = await store.GetAsync(id, ct);

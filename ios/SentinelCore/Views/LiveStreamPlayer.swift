@@ -37,6 +37,13 @@ final class LiveStreamPlayer: ObservableObject {
     // treat it as frozen and rebuild the item. Generous enough not to fight a slow network.
     private static let frozenPlaybackTimeout: TimeInterval = 6
 
+    // Where we aim to sit relative to the live edge, and how far behind we'll let the playhead
+    // drift before hauling it back. The floor on both is the camera's keyframe interval - the
+    // server can only cut an HLS segment on a keyframe while copying video, so a camera with a
+    // 4s GOP produces 4s segments and no amount of client-side seeking gets closer than that.
+    private static let targetOffsetFromLive: TimeInterval = 3
+    private static let maxDriftFromLive: TimeInterval = 6
+
     private var url: URL?
     private var timeObserver: Any?
     private var itemObservers: [NSObjectProtocol] = []
@@ -45,6 +52,7 @@ final class LiveStreamPlayer: ObservableObject {
     private var watchdogTask: Task<Void, Never>?
     private var lastObservedTime: Double = -1
     private var lastAdvanceAt = Date()
+    private var isSeekingToLive = false
 
     // The stream URL isn't known at init - it depends on the AppModel the view only reaches
     // through the environment - so it arrives with the first start(url:) instead.
@@ -73,6 +81,13 @@ final class LiveStreamPlayer: ObservableObject {
             loadItem()
         } else if player.currentItem == nil {
             loadItem()
+        } else {
+            // Resuming an item pause() kept warm. It is parked exactly where it stopped, which is
+            // by now however long the tile was away behind the live edge - up to the caller's full
+            // teardown grace window. A live stream has no catch-up gear; left alone the tile plays
+            // that stale video forward at 1x forever, looking perfectly healthy while showing the
+            // driveway as it was a minute ago.
+            seekToLiveEdge()
         }
         player.play()
     }
@@ -92,6 +107,7 @@ final class LiveStreamPlayer: ObservableObject {
         player.pause()
         player.replaceCurrentItem(with: nil)
         isVideoReady = false
+        isSeekingToLive = false
     }
 
     private func loadItem() {
@@ -100,6 +116,12 @@ final class LiveStreamPlayer: ObservableObject {
         isVideoReady = false
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 1
+        // Left to itself AVFoundation holds a plain (non-low-latency) live playlist back by three
+        // target durations before it will start playing, and after a stall it simply resumes from
+        // wherever the stall left the playhead. Ask for a tighter offset and for the player to
+        // re-establish it on its own; checkDriftFromLive below is the backstop for when it can't.
+        item.automaticallyPreservesTimeOffsetFromLive = true
+        item.configuredTimeOffsetFromLive = CMTime(seconds: Self.targetOffsetFromLive, preferredTimescale: 600)
         player.replaceCurrentItem(with: item)
         observe(item)
     }
@@ -150,7 +172,50 @@ final class LiveStreamPlayer: ObservableObject {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, let self else { return }
                 self.checkForFrozenPlayback()
+                self.checkDriftFromLive()
             }
+        }
+    }
+
+    // Playback that is advancing smoothly can still be minutes stale, and nothing above notices:
+    // the frozen-playback check only fires when the clock stops, and the failure notifications
+    // only fire when playback breaks outright. Anything that halts the clock for a while and then
+    // lets it run again - a resumed tile, a stall the player recovered from by itself, the phone's
+    // radio dropping out in a pocket - leaves the playhead that far behind the live edge for good.
+    // "Smooth but a minute old" is the worst failure a security feed has, because it is the one
+    // that still looks right, so the watchdog treats drift as seriously as it treats a freeze.
+    private func checkDriftFromLive() {
+        guard player.timeControlStatus == .playing,
+              secondsBehindLive() > Self.maxDriftFromLive else { return }
+        seekToLiveEdge()
+    }
+
+    private func secondsBehindLive() -> TimeInterval {
+        guard let live = liveEdge() else { return 0 }
+        let behind = live - player.currentTime().seconds
+        return behind.isFinite ? behind : 0
+    }
+
+    private func liveEdge() -> TimeInterval? {
+        guard let end = player.currentItem?.seekableTimeRanges.last?.timeRangeValue.end,
+              end.isValid, end.isNumeric else { return nil }
+        return end.seconds
+    }
+
+    // Aims a beat short of the live edge rather than at it. The edge is the newest sample the
+    // playlist mentions, which the player has not necessarily downloaded yet - landing exactly
+    // there stalls immediately, and the frozen-playback watchdog then tears the item down and
+    // rebuilds it, which is a far more expensive way to arrive at the same place.
+    private func seekToLiveEdge() {
+        guard !isSeekingToLive, let live = liveEdge() else { return }
+        isSeekingToLive = true
+        let target = CMTime(seconds: max(live - Self.targetOffsetFromLive, 0), preferredTimescale: 600)
+        // Tolerate landing early rather than late: everything before the target is already
+        // buffered, everything after it may not be.
+        player.seek(to: target, toleranceBefore: CMTime(seconds: 1, preferredTimescale: 600), toleranceAfter: .zero) { [weak self] _ in
+            // Documented as an arbitrary queue, unlike the periodic time observer above - hop
+            // rather than assume.
+            Task { @MainActor in self?.isSeekingToLive = false }
         }
     }
 

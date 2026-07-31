@@ -3513,4 +3513,29 @@ public sealed class BasicTests
         Assert.False(outcome.Blocked);
         Assert.Empty(resultStore.Saved);
     }
+
+    // These particular flags are what keep a live tile close to real time, and every one of them
+    // is the kind of thing that gets dropped by accident while editing an argument list nobody
+    // reads closely. Losing temp_file serves half-written segments; losing the delete threshold
+    // 404s viewers who fall a second behind; losing the probe limits puts five seconds back onto
+    // every cold start. None of those break a test that only checks the stream plays.
+    [Fact]
+    public void FfmpegArguments_KeepTheLowLatencyHlsSettings()
+    {
+        var args = HlsStreamManager.BuildFfmpegArguments("rtsp://cam/live", includeAudio: false, "/tmp/out");
+        var line = string.Join(' ', args);
+
+        // Input-side buffering and probing, which only count if they precede -i.
+        Assert.Contains("-fflags nobuffer", line);
+        Assert.True(args.IndexOf("-fflags") < args.IndexOf("-i"));
+        Assert.True(args.IndexOf("-probesize") < args.IndexOf("-i"));
+
+        var flags = args[args.IndexOf("-hls_flags") + 1].Split('+');
+        Assert.Contains("temp_file", flags);
+        Assert.Contains("independent_segments", flags);
+        Assert.Contains("delete_segments", flags);
+        Assert.Contains("omit_endlist", flags);
+        Assert.Equal("3", args[args.IndexOf("-hls_delete_threshold") + 1]);
+        Assert.Equal("1", args[args.IndexOf("-hls_time") + 1]);
+    }
 }

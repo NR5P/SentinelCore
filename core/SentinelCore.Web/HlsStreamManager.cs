@@ -166,11 +166,21 @@ public sealed class HlsStreamManager : IDisposable
         // if it's passed ahead of a non-RTSP input like an http:// MJPEG/snapshot URL.
         if (IsRtspUrl(sourceUrl))
             args.AddRange(["-rtsp_transport", "tcp"]);
+        // Every frame the demuxer holds onto is a frame the viewer sees late, and the default 5s
+        // analyze window before ffmpeg writes anything is pure startup latency on a camera whose
+        // format never changes between sessions. 1s is still ample to identify an H.264 stream.
+        args.AddRange(["-fflags", "nobuffer", "-analyzeduration", "1000000", "-probesize", "1000000"]);
         args.AddRange(["-i", sourceUrl]);
 
         // Primary output: HLS segments, video copied untouched so this stays cheap. 1s segments
         // (down from 2s) mean the first segment - and so the first thing a new viewer can play -
         // is ready sooner, and players need less buffered before they'll start.
+        //
+        // -hls_time is a ceiling ffmpeg can only honour on a keyframe while copying video, so the
+        // real segment length is the camera's GOP: ask a camera with a 4s keyframe interval for 1s
+        // segments and you get 4s ones. Since a player sits a small multiple of the segment length
+        // behind live, the camera's own I-frame-interval setting sets the floor on end-to-end
+        // latency for this whole pipeline - see docs/ for how to check and change it.
         args.AddRange(["-map", "0:v:0", "-c:v", "copy"]);
         if (includeAudio)
             args.AddRange(["-map", "0:a:0?", "-c:a", "aac", "-ac", "1"]);
@@ -180,7 +190,17 @@ public sealed class HlsStreamManager : IDisposable
             "-f", "hls",
             "-hls_time", "1",
             "-hls_list_size", "6",
-            "-hls_flags", "delete_segments+omit_endlist",
+            // temp_file: write each segment under a scratch name and rename it into place when
+            // it's complete, so a viewer can never fetch a half-written .ts and stall on it.
+            // independent_segments: every segment starts on a keyframe (guaranteed here, since
+            // copying video can only cut there), which lets a player start on any segment rather
+            // than hunting backwards for one it can decode from.
+            "-hls_flags", "delete_segments+omit_endlist+independent_segments+temp_file",
+            // Keep a few segments on disk past the point they roll off the playlist. A viewer
+            // that is momentarily behind - a phone coming back from a locked screen, a slow
+            // cellular fetch - then gets the segment it asks for instead of a 404 that costs it
+            // a full reconnect. Costs a few MB per camera.
+            "-hls_delete_threshold", "3",
             "-hls_segment_filename", Path.Combine(outputDir, "seg_%03d.ts"),
             Path.Combine(outputDir, "stream.m3u8")
         ]);
