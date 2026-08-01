@@ -308,6 +308,34 @@ final class SentinelClient {
         try await send("/api/devices/discover", method: "POST", body: Optional<String>.none)
     }
 
+    // MARK: Server settings (schema-driven, Admin-only server-side)
+
+    func settingsSchema() async throws -> [SettingsSectionSchema] {
+        try await get("/api/settings/schema")
+    }
+
+    // The full settings snapshot, untyped on purpose: its shape is described by the schema
+    // above, and hard-coding it here is exactly what the schema exists to avoid. Secrets arrive
+    // masked (••••••••) and are sent back unchanged to mean "keep the stored value".
+    func settingsSnapshot() async throws -> [String: SettingsValue] {
+        try await get("/api/settings")
+    }
+
+    func saveSettingsSection(endpoint: String, values: [String: SettingsValue]) async throws -> SettingsSaveResult {
+        try await send(endpoint, method: "PUT", body: values)
+    }
+
+    func runSettingsAction(_ action: SettingsActionSchema) async throws {
+        let _: EmptyResponse = try await send(action.endpoint, method: action.method, body: Optional<String>.none)
+    }
+
+    // service is "bridge" or "dashboard". The server answers 202 and restarts only when running
+    // under a supervisor (systemd etc.); otherwise it refuses with an explanation, which
+    // surfaces through ClientError.server like any other error message.
+    func restartServer(service: String) async throws {
+        let _: EmptyResponse = try await send("/api/system/restart", method: "POST", body: ["service": service])
+    }
+
     func deviceScanStatus(scanId: UUID) async throws -> DeviceScanSnapshot {
         try await get("/api/devices/discover/\(scanId.uuidString)")
     }

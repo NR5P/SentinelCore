@@ -610,6 +610,85 @@ class SentinelRepository(
         imageCache.evictAll()
     }
 
+    // ---------------- Server settings (schema-driven, Admin-only server-side) ----------------
+
+    suspend fun settingsSchema(): List<SettingsSection> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/settings/schema"))
+        buildList {
+            for (index in 0 until array.length()) add(parseSettingsSection(array.getJSONObject(index)))
+        }
+    }
+
+    // The full settings snapshot, kept as raw JSON on purpose: its shape is described by the
+    // schema above, and hard-coding it here is exactly what the schema exists to avoid. Secrets
+    // arrive masked (••••••••) and are sent back unchanged to mean "keep the stored value".
+    suspend fun settingsSnapshot(): JSONObject = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/settings"))
+    }
+
+    // Returns whether the saved section needs a restart to take effect (the Urls section).
+    suspend fun saveSettingsSection(endpoint: String, body: JSONObject): Boolean = withContext(Dispatchers.IO) {
+        val json = JSONObject(request(endpoint, method = "PUT", body = body.toString()))
+        json.optBoolean("restartRequired")
+    }
+
+    suspend fun runSettingsAction(action: SettingsAction): Unit = withContext(Dispatchers.IO) {
+        request(action.endpoint, method = action.method)
+        Unit
+    }
+
+    // service is "bridge" or "dashboard". The server answers 202 and restarts only when running
+    // under a supervisor (systemd etc.); otherwise it refuses with an explanation that surfaces
+    // through SentinelApiException like any other server error message.
+    suspend fun restartServer(service: String): Unit = withContext(Dispatchers.IO) {
+        request(
+            "/api/system/restart",
+            method = "POST",
+            body = JSONObject().put("service", service).toString(),
+        )
+        Unit
+    }
+
+    private fun parseSettingsSection(json: JSONObject): SettingsSection {
+        val fieldsArray = json.getJSONArray("fields")
+        return SettingsSection(
+            key = json.getString("key"),
+            title = json.getString("title"),
+            endpoint = json.getString("endpoint"),
+            description = json.optString("description"),
+            fields = buildList {
+                for (index in 0 until fieldsArray.length()) {
+                    val field = fieldsArray.getJSONObject(index)
+                    add(
+                        SettingsField(
+                            name = field.getString("name"),
+                            label = field.getString("label"),
+                            type = field.getString("type"),
+                            tip = field.optString("tip"),
+                            options = field.optJSONArray("options")?.let { options ->
+                                buildList {
+                                    for (o in 0 until options.length()) {
+                                        val option = options.getJSONObject(o)
+                                        add(SettingsFieldOption(option.getString("value"), option.getString("label")))
+                                    }
+                                }
+                            } ?: emptyList(),
+                            requiresRestart = field.optBoolean("requiresRestart"),
+                        ),
+                    )
+                }
+            },
+            extraAction = json.optJSONObject("extraAction")?.let {
+                SettingsAction(
+                    label = it.getString("label"),
+                    tip = it.optString("tip"),
+                    endpoint = it.getString("endpoint"),
+                    method = it.optString("method", "POST"),
+                )
+            },
+        )
+    }
+
     private fun request(path: String, method: String = "GET", body: String? = null): String {
         val connection = openValidated(path, method, body)
         return try {

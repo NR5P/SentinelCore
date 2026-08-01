@@ -19,6 +19,8 @@ public sealed class MqttPublisher : IMqttPublisher, IHostedService, IAsyncDispos
     private readonly IMqttClient _client;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private CancellationTokenSource? _lifetimeCts;
+    private IDisposable? _optionsSubscription;
+    private object? _connectionKey;
 
     public MqttPublisher(IOptionsMonitor<MqttOptions> options, ILogger<MqttPublisher> logger)
     {
@@ -31,13 +33,49 @@ public sealed class MqttPublisher : IMqttPublisher, IHostedService, IAsyncDispos
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _connectionKey = MqttConnection.ConnectionKey(_options.CurrentValue);
         if (_options.CurrentValue.Enabled)
             _ = EnsureConnectedAsync(_lifetimeCts.Token);
+
+        // Settings saved from the dashboard or apps land in appsettings.json and reload live;
+        // when the broker connection details actually changed, the open connection is stale and
+        // gets cycled so the next connect reads the new options. OnChange also fires for saves
+        // of unrelated sections, which is what the ConnectionKey comparison filters out.
+        _optionsSubscription = _options.OnChange((_, _) => _ = ApplyOptionsChangeAsync());
         return Task.CompletedTask;
+    }
+
+    private async Task ApplyOptionsChangeAsync()
+    {
+        var current = _options.CurrentValue;
+        var key = MqttConnection.ConnectionKey(current);
+        if (Equals(key, _connectionKey)) return;
+        _connectionKey = key;
+
+        var token = _lifetimeCts?.Token ?? CancellationToken.None;
+        try
+        {
+            if (_client.IsConnected)
+            {
+                // OnDisconnectedAsync reconnects with the new options - or stays down if the
+                // change was turning MQTT off, which is exactly what it checks.
+                await _client.DisconnectAsync(cancellationToken: token);
+            }
+            else if (current.Enabled)
+            {
+                await EnsureConnectedAsync(token);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Applying changed MQTT settings to the publisher connection failed; will retry on next publish.");
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        _optionsSubscription?.Dispose();
+        _optionsSubscription = null;
         _lifetimeCts?.Cancel();
         if (_client.IsConnected)
         {
@@ -135,6 +173,7 @@ public sealed class MqttPublisher : IMqttPublisher, IHostedService, IAsyncDispos
 
     public async ValueTask DisposeAsync()
     {
+        _optionsSubscription?.Dispose();
         _client.DisconnectedAsync -= OnDisconnectedAsync;
         _connectLock.Dispose();
         _lifetimeCts?.Dispose();

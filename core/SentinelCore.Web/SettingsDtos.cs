@@ -400,3 +400,64 @@ public sealed class WebhookSettingsDto
     public string ApiKey { get; set; } = string.Empty;
     public bool OnlyWhenNotificationRecommended { get; set; } = true;
 }
+
+// Mirrors PushNotificationOptions in the main app, nested Apple/Firebase blocks included.
+// MergeSectionAsync overlays whole top-level keys, so the sub-objects must carry every field
+// the Options classes have - a missing one (TvBundleId, say) wouldn't just be uneditable, it
+// would be silently wiped from the file on every save.
+//
+// The sub-types deliberately don't end in "SettingsDto": that suffix is what
+// SettingsSchemaTests sweeps for when checking every DTO has its own schema section, and these
+// two are halves of the PushNotifications section, not sections of their own.
+public sealed class PushNotificationsSettingsDto
+{
+    public bool Enabled { get; set; }
+    public bool OnlyWhenNotificationRecommended { get; set; } = true;
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; set; } = 0.60;
+
+    [Range(0, 1440)]
+    public int DuplicateCooldownMinutes { get; set; } = 5;
+
+    public ApplePushDto Apple { get; set; } = new();
+    public FirebasePushDto Firebase { get; set; } = new();
+}
+
+public sealed class ApplePushDto
+{
+    public bool Enabled { get; set; }
+    public string TeamId { get; set; } = string.Empty;
+    public string KeyId { get; set; } = string.Empty;
+    public string BundleId { get; set; } = "com.sentinelcore.client";
+    public string TvBundleId { get; set; } = string.Empty;
+    public string PrivateKeyPath { get; set; } = string.Empty;
+    public bool UseSandbox { get; set; } = true;
+}
+
+public sealed class FirebasePushDto
+{
+    public bool Enabled { get; set; }
+    public string ProjectId { get; set; } = string.Empty;
+    public string ServiceAccountPath { get; set; } = string.Empty;
+}
+
+// Flat on purpose, even though the file shape is Logging.LogLevel.{Default,Microsoft.AspNetCore}:
+// "Microsoft.AspNetCore" contains dots, so exposing the real nesting would make the flattened
+// field paths the schema uses ambiguous. The endpoint maps between this and the real shape - see
+// the /logging handler in SettingsEndpoints, which also preserves any extra LogLevel categories
+// someone added to the file by hand.
+public sealed class LoggingSettingsDto
+{
+    public string Default { get; set; } = "Information";
+    public string MicrosoftAspNetCore { get; set; } = "Warning";
+}
+
+// "Urls" is a bare string at the root of appsettings.json, not a section - the one setting in
+// the schema whose save handler writes a scalar. Restart-required: Kestrel binds it once at
+// startup.
+public sealed class ServerSettingsDto
+{
+    [Required]
+    public string Urls { get; set; } = string.Empty;
+}

@@ -25,6 +25,8 @@ import com.sentinelcore.android.data.DiagnosticLevel
 import com.sentinelcore.android.data.HubDevice
 import com.sentinelcore.android.data.HubDeviceInput
 import com.sentinelcore.android.data.KnownFace
+import com.sentinelcore.android.data.SettingsAction
+import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.data.PromptProfileName
 import com.sentinelcore.android.data.ScanInterface
 import com.sentinelcore.android.data.ScanJobSnapshot
@@ -448,6 +450,17 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             throw error
         }
     }
+
+    suspend fun settingsSchema(): List<SettingsSection> = repository.settingsSchema()
+
+    suspend fun settingsSnapshot(): org.json.JSONObject = repository.settingsSnapshot()
+
+    suspend fun saveSettingsSection(endpoint: String, body: org.json.JSONObject): Boolean =
+        repository.saveSettingsSection(endpoint, body)
+
+    suspend fun runSettingsAction(action: SettingsAction) = repository.runSettingsAction(action)
+
+    suspend fun restartServer(service: String) = repository.restartServer(service)
 
     suspend fun startDeviceScan(): DeviceScanStartResult = repository.startDeviceScan()
 

@@ -82,6 +82,15 @@ struct SettingsView: View {
                         KnownFacesAdminView()
                     }
                 }
+                Section {
+                    NavigationLink("Server Settings") {
+                        ServerSettingsView()
+                    }
+                } header: {
+                    Text("Server Configuration")
+                } footer: {
+                    Text("Every server setting the web dashboard has — alerts, AI backends, MQTT, Device Hub, and more — editable from here.")
+                }
             }
 
             Section("Server Health") {

@@ -65,6 +65,7 @@ fun SettingsScreen(
     onManageCameras: () -> Unit,
     onManageAccounts: () -> Unit,
     onManageKnownFaces: () -> Unit,
+    onServerSettings: () -> Unit,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
     var remoteAddress by rememberSaveable { mutableStateOf(state.remoteServerUrl) }
@@ -203,6 +204,21 @@ fun SettingsScreen(
                         ) {
                             Text("Manage Known Faces", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
+                    }
+                }
+                item {
+                    SettingsSection("Server Configuration") {
+                        TextButton(
+                            onClick = onServerSettings,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Server Settings", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            "Every server setting the web dashboard has — alerts, AI backends, MQTT, Device Hub, and more.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

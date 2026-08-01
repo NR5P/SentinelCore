@@ -393,3 +393,41 @@ class SentinelApiException(
     val statusCode: Int,
     override val message: String,
 ) : Exception(message)
+
+// The server-side settings schema - which sections exist and what fields they contain, served
+// by GET /api/settings/schema and shared verbatim with the web dashboard and the iOS/macOS app.
+// A settings section added on the server appears in this app with no update; these classes only
+// mirror the shapes, ServerSettingsScreen renders them.
+
+data class SettingsFieldOption(val value: String, val label: String)
+
+data class SettingsField(
+    val name: String,
+    val label: String,
+    // "text", "number", "checkbox", "password", "select", or "csv". Anything unrecognized is
+    // rendered read-only rather than guessed at.
+    val type: String,
+    val tip: String,
+    val options: List<SettingsFieldOption>,
+    val requiresRestart: Boolean,
+)
+
+// An extra button a section offers (currently just Bridge's "re-run setup wizard") - pure data,
+// an endpoint to call, so no client needs bespoke code per action.
+data class SettingsAction(
+    val label: String,
+    val tip: String,
+    val endpoint: String,
+    val method: String,
+)
+
+data class SettingsSection(
+    val key: String,
+    val title: String,
+    val endpoint: String,
+    val description: String,
+    val fields: List<SettingsField>,
+    val extraAction: SettingsAction?,
+) {
+    val needsRestart: Boolean get() = fields.any { it.requiresRestart }
+}

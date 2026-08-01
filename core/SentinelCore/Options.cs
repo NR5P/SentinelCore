@@ -365,8 +365,8 @@ public sealed class MqttOptions
     // (e.g. Mosquitto/Home Assistant's own broker add-on). Either way, this app's own client
     // still connects out to a broker to publish - when this is true it connects to its own
     // embedded one on 127.0.0.1; when false it connects to Host/Port below.
-    // Like Bridge:DataDirectory and other options that bind a socket at startup, this - and
-    // EmbeddedBrokerPort - need a restart to take effect if changed.
+    // Unlike Urls and the other startup socket bindings, this and EmbeddedBrokerPort apply
+    // live: EmbeddedMqttBrokerService reconciles on every options change.
     public bool RunEmbeddedBroker { get; init; }
 
     [Range(1, 65535)]

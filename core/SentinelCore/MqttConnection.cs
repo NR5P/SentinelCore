@@ -12,6 +12,15 @@ public static class MqttConnection
             ? ("127.0.0.1", options.EmbeddedBrokerPort)
             : (options.BrokerHost, options.BrokerPort);
 
+    // Everything about MqttOptions that affects an already-open connection, as one equatable
+    // value. IOptionsMonitor.OnChange fires on every configuration reload - including a save of
+    // some completely unrelated settings section - so the clients compare this before tearing
+    // down a healthy connection. TopicPrefix is included because the publisher's last-will
+    // (availability) topic is derived from it at connect time.
+    public static object ConnectionKey(MqttOptions options) =>
+        (options.Enabled, options.RunEmbeddedBroker, options.EmbeddedBrokerPort, options.BrokerHost,
+         options.BrokerPort, options.Username, options.Password, options.UseTls, options.TopicPrefix);
+
     public static MqttClientOptionsBuilder CreateBuilder(MqttOptions options, string clientId)
     {
         var (host, port) = ResolveBroker(options);

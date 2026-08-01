@@ -46,6 +46,9 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
     private HashSet<string> _subscribedTopics = new(StringComparer.Ordinal);
 
     private CancellationTokenSource? _lifetimeCts;
+    private IDisposable? _mqttSubscription;
+    private IDisposable? _hubSubscription;
+    private object? _connectionKey;
 
     private enum BindingKind { State, Availability, Brightness }
 
@@ -73,17 +76,60 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _connectionKey = CurrentConnectionKey();
         if (IsEnabled)
         {
             // Fire-and-forget like MqttPublisher's own startup connect: a broker that isn't up
             // yet must not hold up the rest of the host, and the reconnect loop covers it.
             _ = Task.Run(() => ConnectAndSubscribeAsync(_lifetimeCts.Token), CancellationToken.None);
         }
+
+        // Same live-settings contract as MqttPublisher: flipping the Device Hub or changing the
+        // broker connection from any settings screen takes effect here without a restart. The
+        // key comparison filters out the OnChange firings caused by saves of unrelated sections.
+        _mqttSubscription = _mqttOptions.OnChange((_, _) => _ = ApplyOptionsChangeAsync());
+        _hubSubscription = _hubOptions.OnChange((_, _) => _ = ApplyOptionsChangeAsync());
         return Task.CompletedTask;
+    }
+
+    // Hub enablement joins the broker details because it changes what this client should be
+    // doing at all, not just where it connects.
+    private object CurrentConnectionKey() =>
+        (MqttConnection.ConnectionKey(_mqttOptions.CurrentValue), _hubOptions.CurrentValue.Enabled);
+
+    private async Task ApplyOptionsChangeAsync()
+    {
+        var key = CurrentConnectionKey();
+        if (Equals(key, _connectionKey)) return;
+        _connectionKey = key;
+
+        var token = _lifetimeCts?.Token ?? CancellationToken.None;
+        try
+        {
+            if (_client.IsConnected)
+            {
+                // OnDisconnectedAsync brings the connection back up against the new options and
+                // resubscribes - or leaves it down if the change was a disable, which is what it
+                // checks IsEnabled for.
+                await _client.DisconnectAsync(cancellationToken: token);
+            }
+            else if (IsEnabled)
+            {
+                await ConnectAndSubscribeAsync(token);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Applying changed MQTT settings to the Device Hub connection failed; will retry on next command.");
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        _mqttSubscription?.Dispose();
+        _mqttSubscription = null;
+        _hubSubscription?.Dispose();
+        _hubSubscription = null;
         _lifetimeCts?.Cancel();
         if (!_client.IsConnected) return;
 
@@ -394,6 +440,8 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _mqttSubscription?.Dispose();
+        _hubSubscription?.Dispose();
         _client.ApplicationMessageReceivedAsync -= OnMessageReceivedAsync;
         _client.DisconnectedAsync -= OnDisconnectedAsync;
         _connectLock.Dispose();

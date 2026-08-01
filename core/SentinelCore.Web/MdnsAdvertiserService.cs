@@ -73,7 +73,19 @@ public sealed class MdnsAdvertiserService(
 
     public override Task StopAsync(CancellationToken cancellationToken)
     {
-        _serviceDiscovery?.Dispose();
+        try
+        {
+            _serviceDiscovery?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            // Makaretu.Dns's MulticastClient.Dispose intermittently throws "Collection was
+            // modified" when a receive loop races its own teardown. Nothing to clean up beyond
+            // what its Dispose already attempted, and an exception here would otherwise abort
+            // host shutdown - seen as spurious failures in whichever test happened to be
+            // disposing its WebApplicationFactory at the time.
+            logger.LogDebug(ex, "Ignoring mDNS teardown failure during shutdown.");
+        }
         return base.StopAsync(cancellationToken);
     }
 }

@@ -59,6 +59,7 @@ import com.sentinelcore.android.ui.screens.LivePlayerScreen
 import com.sentinelcore.android.ui.screens.RecordingTimelineScreen
 import com.sentinelcore.android.ui.screens.LoginScreen
 import com.sentinelcore.android.ui.screens.ServerSetupScreen
+import com.sentinelcore.android.ui.screens.ServerSettingsScreen
 import com.sentinelcore.android.ui.screens.SettingsScreen
 import com.sentinelcore.android.ui.screens.TriggerDetailScreen
 import com.sentinelcore.android.ui.screens.TriggerFeedScreen
@@ -311,6 +312,15 @@ private fun SentinelNavHost(
                 onManageCameras = { navController.navigate("settings/cameras") },
                 onManageAccounts = { navController.navigate("settings/accounts") },
                 onManageKnownFaces = { navController.navigate("settings/faces") },
+                onServerSettings = { navController.navigate("settings/server") },
+            )
+        }
+
+        composable("settings/server") {
+            ServerSettingsScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
             )
         }
 

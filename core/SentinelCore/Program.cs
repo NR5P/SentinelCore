@@ -538,6 +538,28 @@ app.MapGet("/api/system/status", (SystemStatsSampler sampler) =>
         ? Results.Ok(snapshot)
         : Results.Json(new { error = "System stats are not available yet." }, statusCode: 503));
 
+// Exits this process (gracefully, via host shutdown) so its supervisor starts a fresh one -
+// the last step that lets restart-required settings like Urls be applied from the dashboard or
+// a phone instead of a shell. Covered by ApiKeyMiddleware like every /api route; the dashboard
+// forwards to here from its own Admin-only /api/system/restart. Refused outright when nothing
+// is supervising this process - see RestartSupport.
+app.MapPost("/api/system/restart", (IConfiguration configuration, IHostApplicationLifetime lifetime, ILogger<Program> logger) =>
+{
+    if (!RestartSupport.IsSupervised(configuration))
+    {
+        return Results.Conflict(new
+        {
+            error = "This process isn't running under a supervisor that would restart it, so exiting would just take it down. " +
+                    "Run it as a service (the shipped systemd units restart automatically), or set Restart:ForceAllowed to true " +
+                    "if a supervisor this can't detect (Docker, launchd) is in charge."
+        });
+    }
+
+    logger.LogWarning("Restart requested via /api/system/restart - shutting down for the supervisor to bring us back.");
+    RestartSupport.StopSoon(lifetime);
+    return Results.Accepted(value: new { restarting = true });
+});
+
 // For when the queue has fallen so far behind that catching up isn't worth it - each alert here
 // takes as long as a real Ollama analysis does, so a backlog of a few hundred can mean hours.
 // Only discards what's still waiting; whatever's already being analyzed finishes normally.
