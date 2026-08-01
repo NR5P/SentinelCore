@@ -322,6 +322,18 @@ public sealed class LoginAlertSettingsDto
     public int CooldownMinutes { get; set; } = 15;
 }
 
+public sealed class TriggerApiSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    // Settable so it can be rotated (or pasted back from a backup), and auto-filled on first
+    // enable by the /trigger-api endpoint rather than being invented by the owner.
+    public string ApiKey { get; set; } = string.Empty;
+
+    [Range(0, 3600)]
+    public int CooldownSeconds { get; set; } = 15;
+}
+
 public sealed class HomeKitSettingsDto
 {
     public bool Enabled { get; set; }

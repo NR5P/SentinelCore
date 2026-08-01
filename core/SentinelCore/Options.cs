@@ -335,6 +335,26 @@ public sealed class LoginAlertOptions
     public int CooldownMinutes { get; init; } = 15;
 }
 
+public sealed class TriggerApiOptions
+{
+    public const string SectionName = "TriggerApi";
+
+    // Off by default. While it's off the endpoint answers 404 rather than 403 - a scanner that
+    // finds this dashboard shouldn't learn that a camera-triggering route exists here at all.
+    public bool Enabled { get; init; }
+
+    // Its own key rather than a share of Bridge:ApiKey, because this one gets pasted into
+    // whatever doorbell, NVR, or relay is doing the triggering, and that config is far more
+    // likely to leak than the one Blue Iris uses. Revoking it costs nothing but the devices
+    // configured with it. Generated when the feature is first turned on - see SettingsEndpoints.
+    public string ApiKey { get; init; } = string.Empty;
+
+    // Per camera, not per caller: the point is to stop one over-eager device from queueing a
+    // hundred analyses, and it doesn't matter which of them asked.
+    [Range(0, 3600)]
+    public int CooldownSeconds { get; init; } = 15;
+}
+
 public sealed class MqttOptions
 {
     public const string SectionName = "Mqtt";

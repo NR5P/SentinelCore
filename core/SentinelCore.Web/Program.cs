@@ -238,6 +238,13 @@ builder.Services.AddHttpClient(nameof(HomeKitEndpoints), client => client.Timeou
 builder.Services.AddSingleton<AlertForwarder>();
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
+// Triggering a camera from outside the motion detector - the key-authenticated HTTP endpoint and
+// a Device Hub sensor firing both land in CameraTriggerService. The watcher holds no broker
+// connection at all until some camera actually has a sensor bound to it.
+builder.Services.AddSingleton<CameraTriggerService>();
+builder.Services.AddHttpClient(nameof(SensorTriggerWatcher));
+builder.Services.AddHostedService<SensorTriggerWatcher>();
+
 // Gate/door open check - its own small table in the same cameras database, own periodic
 // snapshot loop, own forwarder to a dedicated main-app endpoint (not AlertForwarder's - see
 // GateCheckForwarder for why). Opt-in per camera, off unless a GateChecks row exists for it.
@@ -320,6 +327,7 @@ app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();
 app.MapCameraPtzEndpoints();
 app.MapTriggerEndpoints();
+app.MapCameraTriggerEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();
 app.MapAuthEndpoints();

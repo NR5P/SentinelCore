@@ -307,6 +307,16 @@ window.GateWatchSettings = (function () {
         { name: "enabled", label: "Enabled", type: "checkbox", tip: "Alert you by Email and/or Telegram when someone fails to log in to this dashboard, using the accounts configured under Email and Telegram above." },
         { name: "cooldownMinutes", label: "Cooldown (min)", type: "number", min: 1, max: 1440, tip: "After alerting on a failed login from a given address, suppress further alerts from that same address for this many minutes - so one attacker hammering the login page sends one alert, not one per attempt." }
       ]
+    },
+    {
+      key: "triggerApi", title: "TRIGGER API", endpoint: "/api/settings/trigger-api",
+      basic: true,
+      description: "Lets something else on your network tell a camera to take a look right now, by fetching a web address. Point a doorbell, an NVR's alert action, a home-automation script, or anything else that can open a URL at it, and that camera is captured and analysed exactly as if it had triggered itself. Off by default. The address for each camera is on that camera's trigger zone screen; the key below goes on the end of it.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Allow cameras to be triggered by a web request. Off by default - while off the address answers 'not found' rather than admitting it exists." },
+        { name: "apiKey", label: "Key", type: "text", tip: "Goes on the end of the trigger address as ?key=... - anything that knows it can trigger your cameras, so treat it like a password. Generated for you when you first turn this on; clear it and save to issue a new one, which stops every device using the old one." },
+        { name: "cooldownSeconds", label: "Cooldown (s)", type: "number", min: 0, max: 3600, tip: "Ignore repeat triggers for the same camera for this many seconds, so a device that fires ten times a second doesn't queue ten analyses. Applies per camera, whoever asked." }
+      ]
     }
   ];
 
@@ -335,6 +345,7 @@ window.GateWatchSettings = (function () {
     deviceHub: "Adds a DEVICE HUB tab for switching lights, plugs, and other MQTT devices on and off. Needs MQTT above turned on first.",
     bugReports: "Email the developer when something breaks internally, using the Email account above.",
     loginAlerts: "Email and/or Telegram you when someone enters the wrong password for this dashboard.",
+    triggerApi: "Let a doorbell, NVR, or script trigger a camera by fetching a web address.",
     internetExposed: "A second, dedicated port for reaching this dashboard from outside your home network (e.g. through a Cloudflare Tunnel) - always requires login and HTTPS, regardless of the Login/HTTPS settings above."
   };
 

@@ -3852,4 +3852,113 @@ public sealed class BasicTests
         Assert.Equal("3", args[args.IndexOf("-hls_delete_threshold") + 1]);
         Assert.Equal("1", args[args.IndexOf("-hls_time") + 1]);
     }
+
+    // --- Triggering a camera from outside the motion detector -----------------------------
+    //
+    // Two sources land in the same place (CameraTriggerService): the key-authenticated HTTP
+    // endpoint and a Device Hub sensor. What's worth pinning down here is the parts that decide
+    // whether a trigger happens at all - the key comparison, the sensor's state truth table, and
+    // the staleness rule that stops a switched-off zone's leftover frame being served as "now".
+
+    [Fact]
+    public void CameraTriggerEndpoints_KeyMatches_OnlyAcceptsTheExactKey()
+    {
+        const string key = "0123456789abcdef";
+
+        Assert.True(CameraTriggerEndpoints.KeyMatches(key, key));
+        Assert.False(CameraTriggerEndpoints.KeyMatches(key, null));
+        Assert.False(CameraTriggerEndpoints.KeyMatches(key, ""));
+        Assert.False(CameraTriggerEndpoints.KeyMatches(key, "0123456789abcde"));
+        Assert.False(CameraTriggerEndpoints.KeyMatches(key, "0123456789abcdef0"));
+        Assert.False(CameraTriggerEndpoints.KeyMatches(key, "0123456789ABCDEF"));
+    }
+
+    [Theory]
+    [InlineData("on", DevicePower.On, true)]
+    [InlineData("on", DevicePower.Off, false)]
+    [InlineData("off", DevicePower.Off, true)]
+    [InlineData("off", DevicePower.On, false)]
+    [InlineData("any", DevicePower.On, true)]
+    [InlineData("any", DevicePower.Off, true)]
+    // Anything unrecognised falls back to "on" rather than firing on everything - a binding
+    // saved by an older build, or hand-edited in the database, must not turn into a camera that
+    // fires on every state change.
+    [InlineData("", DevicePower.On, true)]
+    [InlineData("nonsense", DevicePower.Off, false)]
+    public void SensorTriggerWatcher_Fires_MatchesTheConfiguredState(string triggerOn, DevicePower power, bool expected) =>
+        Assert.Equal(expected, SensorTriggerWatcher.Fires(triggerOn, power));
+
+    [Fact]
+    public async Task TriggerImagePaths_TryReadLatestAsync_RejectsAFrameOlderThanMaxAge()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"trigimg-{Guid.NewGuid():N}");
+        var cameraId = Guid.NewGuid();
+        Directory.CreateDirectory(TriggerImagePaths.CameraDirectory(root, cameraId));
+        var path = TriggerImagePaths.LatestSnapshot(root, cameraId);
+        await File.WriteAllBytesAsync(path, JpegBytes(), CancellationToken.None);
+
+        var fresh = await TriggerImagePaths.TryReadLatestAsync(root, cameraId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.NotNull(fresh);
+
+        // A zone that was switched off leaves its last frame behind forever; answering a trigger
+        // with it would report a scene from whenever ffmpeg last ran.
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-10));
+        var stale = await TriggerImagePaths.TryReadLatestAsync(root, cameraId, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.Null(stale);
+
+        // TriggerZoneMonitor owns the ffmpeg process writing this file, so it passes no maxAge
+        // and still gets the frame.
+        var unaged = await TriggerImagePaths.TryReadLatestAsync(root, cameraId, maxAge: null, CancellationToken.None);
+        Assert.NotNull(unaged);
+
+        Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public async Task SqliteTriggerStore_SaveAsync_RoundTripsTheSensorBinding()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid().ToString();
+
+        // Deliberately a camera with no zone of its own: a sensor-triggered camera doesn't need
+        // one, and the binding has to survive alongside Enabled = false.
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId) with
+        {
+            SensorDeviceId = deviceId,
+            SensorTriggerOn = "any",
+            SensorCooldownSeconds = 90
+        }, CancellationToken.None);
+
+        var saved = await store.GetAsync(cameraId, CancellationToken.None);
+
+        Assert.NotNull(saved);
+        Assert.True(saved!.HasSensorBinding);
+        Assert.Equal(deviceId, saved.SensorDeviceId);
+        Assert.Equal("any", saved.SensorTriggerOn);
+        Assert.Equal(90, saved.SensorCooldownSeconds);
+        Assert.False(saved.Enabled);
+    }
+
+    [Fact]
+    public async Task SqliteTriggerStore_ConfigWithNoSensor_ReportsNoBinding()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId), CancellationToken.None);
+
+        var saved = await store.GetAsync(cameraId, CancellationToken.None);
+
+        Assert.NotNull(saved);
+        Assert.False(saved!.HasSensorBinding);
+        Assert.Equal("on", saved.SensorTriggerOn);
+    }
+
+    private static byte[] JpegBytes()
+    {
+        using var image = new Image<Rgb24>(4, 4);
+        using var buffer = new MemoryStream();
+        image.Save(buffer, new JpegEncoder());
+        return buffer.ToArray();
+    }
 }

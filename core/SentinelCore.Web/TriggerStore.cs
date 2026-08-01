@@ -24,10 +24,25 @@ public sealed record TriggerConfig(
     int ClipPreSeconds,
     int ClipPostSeconds,
     bool SendToAlerts,
-    string AlertProfile)
+    string AlertProfile,
+    // A Device Hub sensor (a proximity/motion/contact sensor on the MQTT broker) that fires this
+    // camera when it reports - see SensorTriggerWatcher. Empty means no sensor is bound, and it's
+    // deliberately independent of Enabled above: Enabled is about watching the video for motion,
+    // and a camera can perfectly well have no zone at all and still be fired by a sensor.
+    // Stored as the device's id in string form because the devices themselves live in the main
+    // app's database, not this one - there's no foreign key to point at from here.
+    string SensorDeviceId = "",
+    // Which reported state fires the camera: "on" (the usual - motion detected, contact opened),
+    // "off", or "any" for a sensor whose meaning is the change itself.
+    string SensorTriggerOn = "on",
+    // Separate from the zone's own CooldownSeconds: a sensor's sensible rate is a property of the
+    // sensor (a driveway loop trips once per car, a PIR trips constantly), not of the video.
+    int SensorCooldownSeconds = 30)
 {
     public static TriggerConfig Disabled(Guid cameraId) =>
         new(cameraId, false, [], 0.02, 5, 6, 50, false, 5, 10, false, "default");
+
+    public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
 }
 
 public sealed record TriggerEvent(
@@ -117,6 +132,9 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         AddColumnIfMissing("TriggerConfigs", "SendToAlerts", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing("TriggerConfigs", "AlertProfile", "TEXT NOT NULL DEFAULT 'default'");
         AddColumnIfMissing("TriggerEvents", "IncidentId", "TEXT");
+        AddColumnIfMissing("TriggerConfigs", "SensorDeviceId", "TEXT NOT NULL DEFAULT ''");
+        AddColumnIfMissing("TriggerConfigs", "SensorTriggerOn", "TEXT NOT NULL DEFAULT 'on'");
+        AddColumnIfMissing("TriggerConfigs", "SensorCooldownSeconds", "INTEGER NOT NULL DEFAULT 30");
 
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_TriggerEvents_IncidentId ON TriggerEvents (IncidentId);";
@@ -148,7 +166,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
-                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile
+                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
+                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds
                 FROM TriggerConfigs WHERE CameraId = $cameraId;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -170,7 +189,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
-                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile
+                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
+                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds
                 FROM TriggerConfigs WHERE Enabled = 1;
                 """;
 
@@ -195,7 +215,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
-                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile
+                       RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
+                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds
                 FROM TriggerConfigs;
                 """;
 
@@ -220,9 +241,11 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
-                                            RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile)
+                                            RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
+                                            SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds)
                 VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity,
-                        $recordClips, $clipPreSeconds, $clipPostSeconds, $sendToAlerts, $alertProfile)
+                        $recordClips, $clipPreSeconds, $clipPostSeconds, $sendToAlerts, $alertProfile,
+                        $sensorDeviceId, $sensorTriggerOn, $sensorCooldownSeconds)
                 ON CONFLICT(CameraId) DO UPDATE SET
                     Enabled = excluded.Enabled,
                     ZonePolygon = excluded.ZonePolygon,
@@ -234,7 +257,10 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                     ClipPreSeconds = excluded.ClipPreSeconds,
                     ClipPostSeconds = excluded.ClipPostSeconds,
                     SendToAlerts = excluded.SendToAlerts,
-                    AlertProfile = excluded.AlertProfile;
+                    AlertProfile = excluded.AlertProfile,
+                    SensorDeviceId = excluded.SensorDeviceId,
+                    SensorTriggerOn = excluded.SensorTriggerOn,
+                    SensorCooldownSeconds = excluded.SensorCooldownSeconds;
                 """;
             command.Parameters.AddWithValue("$cameraId", config.CameraId.ToString("N"));
             command.Parameters.AddWithValue("$enabled", config.Enabled ? 1 : 0);
@@ -248,6 +274,9 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$clipPostSeconds", config.ClipPostSeconds);
             command.Parameters.AddWithValue("$sendToAlerts", config.SendToAlerts ? 1 : 0);
             command.Parameters.AddWithValue("$alertProfile", config.AlertProfile);
+            command.Parameters.AddWithValue("$sensorDeviceId", config.SensorDeviceId);
+            command.Parameters.AddWithValue("$sensorTriggerOn", config.SensorTriggerOn);
+            command.Parameters.AddWithValue("$sensorCooldownSeconds", config.SensorCooldownSeconds);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -385,7 +414,10 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         (int)reader.GetInt64(8),
         (int)reader.GetInt64(9),
         reader.GetInt64(10) != 0,
-        reader.GetString(11));
+        reader.GetString(11),
+        reader.GetString(12),
+        reader.GetString(13),
+        (int)reader.GetInt64(14));
 
     private static TriggerEvent ReadEvent(SqliteDataReader reader) => new(
         Guid.ParseExact(reader.GetString(0), "N"),

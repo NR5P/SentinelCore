@@ -455,48 +455,15 @@ public sealed class TriggerZoneMonitor(
     }
 
     private string LatestSnapshotPath(Guid cameraId) =>
-        Path.Combine(_imagesRoot, cameraId.ToString("N"), "_latest.jpg");
+        TriggerImagePaths.LatestSnapshot(_imagesRoot, cameraId);
 
-    // Reads the continuously-updated full-resolution frame ffmpeg is already writing for this
-    // camera (see StartSession), rather than opening a brand-new RTSP connection per trigger.
-    // A couple of retries cover the rare case where a read lands mid-write; null (falling back
-    // to CaptureSnapshotAsync) covers the file not existing yet - e.g. a trigger in the first
-    // second after a session starts, before the first frame has been written.
-    private async Task<byte[]?> TryReadLatestSnapshotAsync(Guid cameraId, CancellationToken cancellationToken)
-    {
-        var path = LatestSnapshotPath(cameraId);
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                if (File.Exists(path))
-                {
-                    var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
-                    if (IsCompleteJpeg(bytes)) return bytes;
-                }
-            }
-            catch (IOException)
-            {
-                // ffmpeg may have the file open for writing at this exact instant; retry.
-            }
+    // No maxAge: this session is the thing writing the file, so it can't be reading a leftover
+    // from a zone that was switched off - see the note on TriggerImagePaths.TryReadLatestAsync.
+    private Task<byte[]?> TryReadLatestSnapshotAsync(Guid cameraId, CancellationToken cancellationToken) =>
+        TriggerImagePaths.TryReadLatestAsync(_imagesRoot, cameraId, maxAge: null, cancellationToken);
 
-            await Task.Delay(50, cancellationToken);
-        }
-
-        return null;
-    }
-
-    private static bool IsCompleteJpeg(byte[] bytes) =>
-        bytes.Length > 4 &&
-        bytes[0] == 0xFF && bytes[1] == 0xD8 &&
-        bytes[^2] == 0xFF && bytes[^1] == 0xD9;
-
-    private static string ResolveImagesRoot(IConfiguration configuration, IHostEnvironment environment)
-    {
-        var configured = configuration["CamerasDataDirectory"] ?? "data";
-        var root = Path.IsPathRooted(configured) ? configured : Path.Combine(environment.ContentRootPath, configured);
-        return Path.Combine(root, "trigger-images");
-    }
+    private static string ResolveImagesRoot(IConfiguration configuration, IHostEnvironment environment) =>
+        TriggerImagePaths.ResolveRoot(configuration, environment);
 
     private sealed class DetectionSession(Process process, TriggerConfig config, CancellationTokenSource cts, MotionDetector detector, MultiFrameOptions multiFrame)
     {

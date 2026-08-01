@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography;
 using SentinelCore;
 using Microsoft.AspNetCore.Mvc;
 
@@ -35,7 +36,8 @@ public sealed record SettingsSnapshot(
     HomeKitSettingsDto? HomeKit,
     BugReportSettingsDto? BugReports,
     WebhookSettingsDto? Webhook,
-    LoginAlertSettingsDto? LoginAlerts);
+    LoginAlertSettingsDto? LoginAlerts,
+    TriggerApiSettingsDto? TriggerApi);
 
 public static class SettingsEndpoints
 {
@@ -211,6 +213,18 @@ public static class SettingsEndpoints
         settings.MapPut("/login-alerts", async (LoginAlertSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "LoginAlerts", ct));
 
+        // Generates the key the first time this is switched on, rather than making the owner
+        // invent one - the same reasoning as AutoApiKeyProvisioner for Bridge:ApiKey, and it means
+        // a blank key field in the UI never silently saves a feature that can't authenticate
+        // anything. An existing key is left alone; clearing the field on purpose rotates it.
+        settings.MapPut("/trigger-api", async (TriggerApiSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            if (dto.Enabled && string.IsNullOrWhiteSpace(dto.ApiKey))
+                dto.ApiKey = RandomNumberGenerator.GetHexString(48);
+
+            return await SaveSectionAsync(dto, appSettings, "TriggerApi", ct);
+        });
+
         settings.MapPut("/webhook", async (WebhookSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "Webhook", ct, extra =>
             {
@@ -334,7 +348,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<HomeKitSettingsDto>("HomeKit", cancellationToken),
         await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", cancellationToken),
         await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", cancellationToken),
-        await settings.GetSectionAsync<LoginAlertSettingsDto>("LoginAlerts", cancellationToken));
+        await settings.GetSectionAsync<LoginAlertSettingsDto>("LoginAlerts", cancellationToken),
+        await settings.GetSectionAsync<TriggerApiSettingsDto>("TriggerApi", cancellationToken));
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -374,6 +389,9 @@ public static class SettingsEndpoints
         if (snapshot.BugReports is not null) await settings.MergeSectionAsync("BugReports", snapshot.BugReports, cancellationToken);
         if (snapshot.Webhook is not null) await settings.MergeSectionAsync("Webhook", snapshot.Webhook, cancellationToken);
         if (snapshot.LoginAlerts is not null) await settings.MergeSectionAsync("LoginAlerts", snapshot.LoginAlerts, cancellationToken);
+        // Carries its own key, so restoring a backup onto a rebuilt machine keeps whatever the
+        // doorbells and relays out there are already configured to send.
+        if (snapshot.TriggerApi is not null) await settings.MergeSectionAsync("TriggerApi", snapshot.TriggerApi, cancellationToken);
     }
 
     private static async Task<IResult> SaveSectionAsync<T>(

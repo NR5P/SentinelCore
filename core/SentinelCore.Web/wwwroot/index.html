@@ -426,6 +426,26 @@
               <label class="switch"><input type="checkbox" id="zone-enabled" /><span class="switch-track"></span></label>
               <span class="field-label">Enabled</span>
             </div>
+            <div class="field-row field-row-wide" data-tip="Have a sensor on your MQTT broker fire this camera - a proximity sensor at the gate, a PIR in a shed, a contact switch on a door. The camera is captured and analysed the moment the sensor reports, whether or not it has a zone of its own. Needs the Device Hub turned on; only sensors it knows about are listed.">
+              <label class="field-label" for="zone-sensor-device">Trigger from a sensor</label>
+              <select id="zone-sensor-device" class="field-input"></select>
+            </div>
+            <div class="field-row" data-tip="Which reading fires the camera. 'On' covers motion detected, contact opened, or presence - whatever that sensor calls its active state. Only a change fires it, so a sensor that repeats itself every few seconds still triggers once.">
+              <label class="field-label" for="zone-sensor-state">Fire when the sensor reads</label>
+              <select id="zone-sensor-state" class="field-input">
+                <option value="on">On</option>
+                <option value="off">Off</option>
+                <option value="any">Any change</option>
+              </select>
+            </div>
+            <div class="field-row" data-tip-right data-tip="Ignore repeat sensor triggers for this camera for this many seconds. Separate from the motion cooldown above, because how often a sensor should fire the camera depends on the sensor, not on the video.">
+              <label class="field-label" for="zone-sensor-cooldown">Sensor cooldown (s)</label>
+              <input type="number" id="zone-sensor-cooldown" class="field-input" min="0" max="3600" step="1" />
+            </div>
+            <div class="field-row field-row-wide" id="zone-trigger-url-row" data-tip="Fetching this address triggers this camera, for anything that can open a URL but can't log in - a doorbell, an NVR alert action, a script. Turn the Trigger API on under Settings first. Treat it like a password: the key is in the address.">
+              <label class="field-label" for="zone-trigger-url">Trigger address</label>
+              <input type="text" id="zone-trigger-url" class="field-input" readonly />
+            </div>
           </div>
           <div class="zone-editor-footer">
             <button id="zone-save-btn" class="btn" data-tip="Save the zone and settings. Detection picks up the change within about ten seconds.">save</button>

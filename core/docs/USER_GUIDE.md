@@ -352,6 +352,9 @@ Below that, the settings for this zone:
 | **Send triggers to the AI and alert pipeline** | Off by default. When on, a trigger from this zone is sent through the *same* AI analysis and the *same* alert actions (email, Telegram, webhook) that Blue Iris alerts already use — see below. |
 | Alert prompt profile | Which prompt profile (see [section 9](#9-prompt-profiles--what-the-ai-is-told-to-look-for)) analyzes this camera's triggers. Only shown/used when the toggle above is on. |
 | Enabled | Master switch for the whole zone. Off means nothing is watched or recorded, but your shape and settings are kept. |
+| Trigger from a sensor | Fires this camera when a Device Hub sensor reports — see below. |
+| Fire when the sensor reads / Sensor cooldown | Which sensor reading fires the camera, and how long to ignore repeats afterwards. |
+| Trigger address | The web address that fires this camera from outside — see below. |
 
 **About "send to alert pipeline":** Blue Iris images and your own trigger-zone cameras can
 both be active and both alert independently — nothing about turning this on for a camera
@@ -364,6 +367,36 @@ instance.
 The **TRIGGERS** tab itself (separate from the zone editor) shows a simple history of motion
 events caught by any zone, each with a thumbnail — click it to view the snapshot, or play the
 clip if one was recorded (marked with a ▶ clip badge).
+
+### Triggering a camera from something other than motion
+
+A zone watches the video. These two let something *else* decide the camera should look — and
+both work on a camera with no zone drawn at all. Either way the result is identical to a zone
+trigger: a snapshot, a row on the TRIGGERS tab, and the same AI analysis and alerts.
+
+**From a sensor.** Pick any sensor the [Device Hub](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices)
+knows about in **Trigger from a sensor** — a proximity sensor at the gate, a PIR in a shed, a
+contact switch on a door. The moment it reports, the camera is captured. Only a *change* fires
+it, so a sensor that republishes its state every few seconds still triggers once, and the state
+it holds when the server starts up is never treated as a fresh trigger. Requires MQTT and the
+Device Hub to be on; only devices saved with kind **sensor** are offered.
+
+**From a web address.** Turn on **TRIGGER API** under Settings and each camera's zone editor
+shows a **Trigger address** — fetching it fires that camera. This is for anything that can open
+a URL but can't log in: a doorbell, an NVR's alert action, a home-automation script, a cron
+line.
+
+```bash
+curl "http://your-server:3320/api/cameras/<camera-id>/trigger?key=<your-key>"
+```
+
+Add `&profile=gate` to analyze it with a specific [prompt profile](#9-prompt-profiles--what-the-ai-is-told-to-look-for)
+instead of the camera's usual one. You get `429` back while the camera is inside its cooldown.
+
+The key is in the address, which means it ends up in logs and browser history — so it is its
+own key, separate from the one Blue Iris uses, and clearing the field in Settings and saving
+issues a new one (which stops every device still using the old one). The trigger address is
+refused outright on the Internet Exposed port: it is for things on your own network.
 
 ## 6a. The AUTOMATIONS tab — custom MQTT & webhook rules
 
@@ -496,6 +529,10 @@ The full list below covers both modes:
   internet, or it will report your working setup as broken.
 - **Bug Reports** — emails the developer when something breaks internally. See
   [section 17](#17-bug-reports).
+- **Trigger API** — **off by default.** Lets anything on your network fire a camera by fetching
+  a web address, for hardware that can open a URL but can't log in. Turning it on generates the
+  key; each camera's own address is on its trigger zone screen. See
+  [section 6](#triggering-a-camera-from-something-other-than-motion).
 - **Quiet Hours** — during a window you set (e.g. overnight), raises how confident the AI must
   be before Email or Telegram will still ping you. It never fully mutes either channel — a
   confident detection still alerts you at 3am — and it has no effect on the Feed, the daily

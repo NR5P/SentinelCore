@@ -15,10 +15,17 @@ public sealed class TriggerConfigDto
     public int ClipPostSeconds { get; set; } = 10;
     public bool SendToAlerts { get; set; }
     public string AlertProfile { get; set; } = "default";
+    public string SensorDeviceId { get; set; } = "";
+    public string SensorTriggerOn { get; set; } = "on";
+    public int SensorCooldownSeconds { get; set; } = 30;
+
+    public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
 }
 
 public static class TriggerEndpoints
 {
+    internal static readonly string[] SensorTriggerOnValues = ["on", "off", "any"];
+
     public static void MapTriggerEndpoints(this WebApplication app)
     {
         app.MapGet("/api/cameras/{id:guid}/trigger-config", async (Guid id, ITriggerConfigStore store, CancellationToken ct) =>
@@ -34,7 +41,8 @@ public static class TriggerEndpoints
 
             var profile = string.IsNullOrWhiteSpace(dto.AlertProfile) ? "default" : dto.AlertProfile.Trim();
             var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
-                dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile);
+                dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile,
+                dto.SensorDeviceId.Trim(), dto.SensorTriggerOn.Trim().ToLowerInvariant(), dto.SensorCooldownSeconds);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         }).RequireAuthorization("AdminOnly");
@@ -121,6 +129,19 @@ public static class TriggerEndpoints
 
         if (dto.ShadowSensitivity < 0 || dto.ShadowSensitivity > 100)
             errors.Add("Shadow sensitivity must be between 0 and 100.");
+
+        // Not checked against the Device Hub's device list on purpose: the devices live in the
+        // main app's database, and refusing to save a camera because that app happens to be
+        // restarting would be worse than storing an id that SensorTriggerWatcher then reports as
+        // missing. A binding whose device is gone simply never fires.
+        if (dto.HasSensorBinding && !Guid.TryParse(dto.SensorDeviceId, out _))
+            errors.Add("The sensor device id isn't a valid device.");
+
+        if (dto.HasSensorBinding && !SensorTriggerOnValues.Contains(dto.SensorTriggerOn, StringComparer.OrdinalIgnoreCase))
+            errors.Add("Sensor trigger state must be 'on', 'off', or 'any'.");
+
+        if (dto.SensorCooldownSeconds is < 0 or > 3600)
+            errors.Add("Sensor cooldown must be between 0 and 3600 seconds.");
 
         // Pre-roll is served out of a rolling on-disk buffer, so a long one costs real disk space.
         if (dto.ClipPreSeconds < 0 || dto.ClipPreSeconds > 60)

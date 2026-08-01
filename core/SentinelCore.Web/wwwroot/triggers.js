@@ -25,10 +25,14 @@ window.GateWatchTriggers = (function () {
     revokeUrls();
 
     try {
-      const [frameResp, configResp, profilesResp] = await Promise.all([
+      // Devices and the trigger address are both allowed to fail quietly: the Device Hub is off
+      // on most installs, and neither one has any bearing on editing the zone itself.
+      const [frameResp, configResp, profilesResp, devicesResp, triggerUrlResp] = await Promise.all([
         fetch(`/api/cameras/${camera.id}/reference-frame`),
         fetch(`/api/cameras/${camera.id}/trigger-config`),
-        fetch(`/api/prompt-profile-names`)
+        fetch(`/api/prompt-profile-names`),
+        fetch(`/api/devices`).catch(() => null),
+        fetch(`/api/cameras/${camera.id}/trigger-url`).catch(() => null)
       ]);
 
       if (frameResp.ok) {
@@ -40,6 +44,7 @@ window.GateWatchTriggers = (function () {
       }
 
       let alertProfile = "default";
+      let sensorDeviceId = "";
       if (configResp.ok) {
         const config = await configResp.json();
         polygonPoints = (config.zonePolygon || []).map(p => ({ x: p.x, y: p.y }));
@@ -53,10 +58,19 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-clip-post").value = config.clipPostSeconds ?? 10;
         document.getElementById("zone-send-to-alerts").checked = !!config.sendToAlerts;
         alertProfile = config.alertProfile || "default";
+        sensorDeviceId = config.sensorDeviceId || "";
+        document.getElementById("zone-sensor-state").value = config.sensorTriggerOn || "on";
+        document.getElementById("zone-sensor-cooldown").value = config.sensorCooldownSeconds ?? 30;
       }
 
       const profileNames = profilesResp.ok ? await profilesResp.json() : [];
       populateProfileOptions(profileNames, alertProfile);
+
+      const devices = devicesResp && devicesResp.ok ? await devicesResp.json() : [];
+      populateSensorOptions(devices, sensorDeviceId);
+
+      const triggerUrl = triggerUrlResp && triggerUrlResp.ok ? await triggerUrlResp.json() : null;
+      showTriggerUrl(triggerUrl);
     } catch (err) {
       console.error("Failed to load trigger zone editor", err);
       showEditorError("Network error while loading.");
@@ -104,6 +118,36 @@ window.GateWatchTriggers = (function () {
       .map(p => `<option value="${escapeHtml(p.key)}">${escapeHtml(p.displayName)}</option>`)
       .join("");
     select.value = selected || "default";
+  }
+
+  // Sensors only - a light or a plug has a state topic too, but firing a camera off one is not
+  // what this is for. A bound device that has since been deleted or changed kind is still listed
+  // (as "no longer available") so it's visible rather than silently swapped to "none" on save.
+  function populateSensorOptions(devices, selected) {
+    const select = document.getElementById("zone-sensor-device");
+    const sensors = (devices || []).filter(d => d.kind === "sensor");
+    const options = [{ id: "", name: "None" }, ...sensors];
+    if (selected && !sensors.some(d => d.id === selected))
+      options.push({ id: selected, name: "(no longer available)" });
+
+    select.innerHTML = options
+      .map(d => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.room ? `${d.name} - ${d.room}` : d.name)}</option>`)
+      .join("");
+    select.value = selected || "";
+  }
+
+  function showTriggerUrl(info) {
+    const row = document.getElementById("zone-trigger-url-row");
+    const input = document.getElementById("zone-trigger-url");
+    if (!info) {
+      row.classList.add("hidden");
+      return;
+    }
+
+    row.classList.remove("hidden");
+    input.value = info.enabled
+      ? `${window.location.origin}${info.path}?key=${encodeURIComponent(info.key)}`
+      : "Turn the Trigger API on under Settings to get this camera's address.";
   }
 
   function svgNs(tag) {
@@ -233,7 +277,10 @@ window.GateWatchTriggers = (function () {
       clipPreSeconds: parseInt(document.getElementById("zone-clip-pre").value, 10) || 0,
       clipPostSeconds: parseInt(document.getElementById("zone-clip-post").value, 10) || 0,
       sendToAlerts: document.getElementById("zone-send-to-alerts").checked,
-      alertProfile: document.getElementById("zone-alert-profile").value || "default"
+      alertProfile: document.getElementById("zone-alert-profile").value || "default",
+      sensorDeviceId: document.getElementById("zone-sensor-device").value || "",
+      sensorTriggerOn: document.getElementById("zone-sensor-state").value || "on",
+      sensorCooldownSeconds: parseInt(document.getElementById("zone-sensor-cooldown").value, 10) || 0
     };
 
     try {
