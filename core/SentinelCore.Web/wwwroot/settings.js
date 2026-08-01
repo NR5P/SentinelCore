@@ -281,6 +281,17 @@ window.GateWatchSettings = (function () {
       ]
     },
     {
+      key: "deviceHub", title: "DEVICE HUB", endpoint: "/api/settings/device-hub",
+      basic: false,
+      description: "Turns the MQTT connection above into two-way control: a DEVICE HUB tab appears where you can switch lights, plugs, fans, and anything else on your broker on and off, from here or from the phone, Mac, and Apple TV apps. Requires the MQTT section above to be turned on first - that's where the broker is configured. Use the tab's discover button to find what's already on your broker rather than typing topics by hand.",
+      fields: [
+        { name: "enabled", label: "Enabled", type: "checkbox", tip: "Show the DEVICE HUB tab and start watching your devices' MQTT topics. Requires MQTT above to be enabled - saving this on with MQTT off is refused, since there'd be no broker to talk to." },
+        { name: "stateTimeoutSeconds", label: "State Timeout (s)", type: "number", min: 10, max: 86400, tip: "For devices with no Availability Topic only: how long one can go silent before it's shown as unavailable. A device that does have an Availability Topic ignores this entirely - what that topic says is trusted instead, so a lamp that's simply been on all day is never wrongly marked offline." },
+        { name: "discoverySeconds", label: "Discovery Scan Seconds", type: "number", min: 2, max: 60, tip: "How long the discover button listens to the broker. Devices that announce themselves for Home Assistant appear instantly; chattier ones need long enough to say something, so raise this if a device you know is there doesn't turn up." },
+        { name: "commandTimeoutSeconds", label: "Command Confirm Timeout (s)", type: "number", min: 1, max: 60, tip: "How long to wait for a device to confirm a command before the tile says 'not confirmed'. The command is still sent either way - this only affects how long the UI waits to hear back." }
+      ]
+    },
+    {
       key: "bugReports", title: "BUG REPORTS", endpoint: "/api/settings/bug-reports",
       basic: true,
       description: "Emails the developer when something breaks inside the app, using the email account configured above. Off by default - nothing is ever sent unless you turn it on.",
@@ -321,6 +332,7 @@ window.GateWatchSettings = (function () {
     quietHours: "Raise the bar for Email, Telegram, and Discord alerts during a window (e.g. overnight) without ever fully muting them.",
     webhook: "Forward each analysed event to another system.",
     mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker.",
+    deviceHub: "Adds a DEVICE HUB tab for switching lights, plugs, and other MQTT devices on and off. Needs MQTT above turned on first.",
     bugReports: "Email the developer when something breaks internally, using the Email account above.",
     loginAlerts: "Email and/or Telegram you when someone enters the wrong password for this dashboard.",
     internetExposed: "A second, dedicated port for reaching this dashboard from outside your home network (e.g. through a Cloudflare Tunnel) - always requires login and HTTPS, regardless of the Login/HTTPS settings above."

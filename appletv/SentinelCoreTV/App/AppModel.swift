@@ -35,6 +35,9 @@ final class AppModel: ObservableObject {
     @Published var events: [SecurityEvent] = []
     @Published var triggers: [TriggerEvent] = []
     @Published var cameras: [Camera] = []
+    // Whether the server has the Device Hub switched on - drives whether the tab exists at all.
+    @Published private(set) var deviceHubEnabled = false
+    @Published var devices: [HubDevice] = []
     @Published var isLoading = false
     @Published var lastError: String?
     @Published var diagnostics: [DiagnosticEntry] = []
@@ -170,6 +173,14 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             firstError = firstError ?? error
+        }
+        // Kept out of firstError: an older server has no such endpoint, and a 404 there means
+        // "no Device Hub", not a failed connection.
+        do {
+            deviceHubEnabled = try await client.deviceHubEnabled().enabled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            deviceHubEnabled = false
         }
 
         if let firstError {

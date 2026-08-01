@@ -286,6 +286,209 @@ struct PtzMoveBody: Encodable {
     let zoom: Double
 }
 
+// MARK: - Device Hub
+
+// A device in the Device Hub, as returned by /api/devices. Power/brightness/available are the
+// live MQTT state the server is tracking, folded into the same object as the configuration so
+// the list renders from one call; /api/devices/state re-fetches just those while the tab is open.
+struct HubDevice: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    var kind: String
+    var room: String
+    var enabled: Bool
+    var commandTopic: String
+    var stateTopic: String
+    var availabilityTopic: String
+    var payloadOn: String
+    var payloadOff: String
+    var payloadAvailable: String
+    var payloadNotAvailable: String
+    var schema: String
+    var stateValueTemplate: String
+    var optimistic: Bool
+    var supportsBrightness: Bool
+    var brightnessCommandTopic: String
+    var brightnessStateTopic: String
+    var brightnessScale: Int
+    var discoverySource: String
+    // "on", "off", or "unknown" - a string rather than a Bool because "we have never heard from
+    // this device" is a genuinely different state from "off", and the UI says so.
+    var power: String
+    var brightness: Int?
+    var available: Bool
+    var commandable: Bool
+
+    var isOn: Bool { power == "on" }
+
+    // SF Symbol per device kind, matching the icons the rest of the app uses for its sections.
+    var systemImage: String {
+        switch kind {
+        case "light": "lightbulb.fill"
+        case "switch", "outlet": "poweroutlet.type.b.fill"
+        case "fan": "fan.fill"
+        case "cover": "blinds.horizontal.closed"
+        case "lock": "lock.fill"
+        default: "sensor.fill"
+        }
+    }
+}
+
+struct HubDeviceState: Codable, Identifiable, Hashable {
+    let id: UUID
+    var power: String
+    var brightness: Int?
+    var available: Bool
+}
+
+struct HubDeviceStateSnapshot: Codable {
+    var connected: Bool
+    var devices: [HubDeviceState]
+}
+
+struct DeviceCommandResult: Codable {
+    var sent: Bool
+    var acknowledged: Bool
+    var power: String
+    var brightness: Int?
+}
+
+// What a discovery scan thinks is out there. Not a device until the user adds it - the fields
+// line up with HubDeviceInput so accepting one is a straight copy.
+struct DeviceCandidate: Codable, Identifiable, Hashable {
+    var id: String { commandTopic.isEmpty ? stateTopic : commandTopic }
+    var suggestedName: String
+    var kind: String
+    var commandTopic: String
+    var stateTopic: String
+    var availabilityTopic: String
+    var payloadOn: String
+    var payloadOff: String
+    var schema: String
+    var stateValueTemplate: String
+    var supportsBrightness: Bool
+    var brightnessCommandTopic: String
+    var brightnessStateTopic: String
+    var brightnessScale: Int
+    var source: String
+    var alreadyAdded: Bool
+}
+
+struct DeviceScanStartResult: Codable {
+    var scanId: UUID
+    var scanSeconds: Int
+}
+
+struct DeviceScanSnapshot: Codable {
+    var status: String // "running" | "completed"
+    var results: [DeviceCandidate]
+}
+
+struct DeviceHubEnabled: Codable {
+    let enabled: Bool
+}
+
+struct DeviceHubMetadata: Codable {
+    var kinds: [String]
+    var schemas: [String]
+    var discoverySeconds: Int
+}
+
+struct HubDeviceInput: Encodable {
+    var name: String
+    var kind: String
+    var room: String
+    var enabled: Bool
+    var commandTopic: String
+    var stateTopic: String
+    var availabilityTopic: String
+    var payloadOn: String
+    var payloadOff: String
+    var payloadAvailable: String
+    var payloadNotAvailable: String
+    var schema: String
+    var stateValueTemplate: String
+    var optimistic: Bool
+    var supportsBrightness: Bool
+    var brightnessCommandTopic: String
+    var brightnessStateTopic: String
+    var brightnessScale: Int
+    var discoverySource: String
+
+    init(device: HubDevice) {
+        name = device.name
+        kind = device.kind
+        room = device.room
+        enabled = device.enabled
+        commandTopic = device.commandTopic
+        stateTopic = device.stateTopic
+        availabilityTopic = device.availabilityTopic
+        payloadOn = device.payloadOn
+        payloadOff = device.payloadOff
+        payloadAvailable = device.payloadAvailable
+        payloadNotAvailable = device.payloadNotAvailable
+        schema = device.schema
+        stateValueTemplate = device.stateValueTemplate
+        optimistic = device.optimistic
+        supportsBrightness = device.supportsBrightness
+        brightnessCommandTopic = device.brightnessCommandTopic
+        brightnessStateTopic = device.brightnessStateTopic
+        brightnessScale = device.brightnessScale
+        discoverySource = device.discoverySource
+    }
+
+    init(candidate: DeviceCandidate) {
+        name = candidate.suggestedName
+        kind = candidate.kind
+        room = ""
+        enabled = true
+        commandTopic = candidate.commandTopic
+        stateTopic = candidate.stateTopic
+        availabilityTopic = candidate.availabilityTopic
+        payloadOn = candidate.payloadOn
+        payloadOff = candidate.payloadOff
+        payloadAvailable = "online"
+        payloadNotAvailable = "offline"
+        schema = candidate.schema
+        stateValueTemplate = candidate.stateValueTemplate
+        optimistic = false
+        supportsBrightness = candidate.supportsBrightness
+        brightnessCommandTopic = candidate.brightnessCommandTopic
+        brightnessStateTopic = candidate.brightnessStateTopic
+        brightnessScale = candidate.brightnessScale
+        discoverySource = candidate.source
+    }
+
+    // A blank device for the add form. Defaults match the most common case by a wide margin:
+    // a raw ON/OFF light, which is what Tasmota and ESPHome produce.
+    init() {
+        name = ""
+        kind = "light"
+        room = ""
+        enabled = true
+        commandTopic = ""
+        stateTopic = ""
+        availabilityTopic = ""
+        payloadOn = "ON"
+        payloadOff = "OFF"
+        payloadAvailable = "online"
+        payloadNotAvailable = "offline"
+        schema = "raw"
+        stateValueTemplate = ""
+        optimistic = false
+        supportsBrightness = false
+        brightnessCommandTopic = ""
+        brightnessStateTopic = ""
+        brightnessScale = 255
+        discoverySource = "manual"
+    }
+}
+
+struct DeviceCommandInput: Encodable {
+    var action: String?
+    var brightness: Int?
+}
+
 extension JSONDecoder {
     static let sentinel: JSONDecoder = {
         let decoder = JSONDecoder()

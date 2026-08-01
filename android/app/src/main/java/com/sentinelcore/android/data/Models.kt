@@ -219,6 +219,155 @@ data class TimelineSecurityEvent(
     val hasClip: Boolean,
 )
 
+// A device in the Device Hub. Power/brightness/available are the live MQTT state the server
+// tracks, carried on the same object as the configuration so the list renders from one call;
+// /api/devices/state re-fetches just those while the screen is open.
+data class HubDevice(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val room: String,
+    val enabled: Boolean,
+    val commandTopic: String,
+    val stateTopic: String,
+    val availabilityTopic: String,
+    val payloadOn: String,
+    val payloadOff: String,
+    val payloadAvailable: String,
+    val payloadNotAvailable: String,
+    val schema: String,
+    val stateValueTemplate: String,
+    val optimistic: Boolean,
+    val supportsBrightness: Boolean,
+    val brightnessCommandTopic: String,
+    val brightnessStateTopic: String,
+    val brightnessScale: Int,
+    val discoverySource: String,
+    // "on", "off", or "unknown" - a String rather than a Boolean because "never heard from this
+    // device" is a genuinely different state from "off", and the UI says so.
+    val power: String,
+    val brightness: Int?,
+    val available: Boolean,
+    val commandable: Boolean,
+) {
+    val isOn: Boolean get() = power == "on"
+}
+
+data class HubDeviceState(
+    val id: String,
+    val power: String,
+    val brightness: Int?,
+    val available: Boolean,
+)
+
+data class HubDeviceStateSnapshot(
+    val connected: Boolean,
+    val devices: List<HubDeviceState>,
+)
+
+data class DeviceCommandResult(
+    val sent: Boolean,
+    val acknowledged: Boolean,
+    val power: String,
+    val brightness: Int?,
+)
+
+// What a discovery scan believes is out there. Not a device until the user adds it.
+data class DeviceCandidate(
+    val suggestedName: String,
+    val kind: String,
+    val commandTopic: String,
+    val stateTopic: String,
+    val availabilityTopic: String,
+    val payloadOn: String,
+    val payloadOff: String,
+    val schema: String,
+    val stateValueTemplate: String,
+    val supportsBrightness: Boolean,
+    val brightnessCommandTopic: String,
+    val brightnessStateTopic: String,
+    val brightnessScale: Int,
+    val source: String,
+    val alreadyAdded: Boolean,
+)
+
+data class DeviceScanStartResult(
+    val scanId: String,
+    val scanSeconds: Int,
+)
+
+data class DeviceScanSnapshot(
+    val status: String, // "running" | "completed"
+    val results: List<DeviceCandidate>,
+)
+
+data class HubDeviceInput(
+    val name: String = "",
+    val kind: String = "light",
+    val room: String = "",
+    val enabled: Boolean = true,
+    val commandTopic: String = "",
+    val stateTopic: String = "",
+    val availabilityTopic: String = "",
+    val payloadOn: String = "ON",
+    val payloadOff: String = "OFF",
+    val payloadAvailable: String = "online",
+    val payloadNotAvailable: String = "offline",
+    val schema: String = "raw",
+    val stateValueTemplate: String = "",
+    val optimistic: Boolean = false,
+    val supportsBrightness: Boolean = false,
+    val brightnessCommandTopic: String = "",
+    val brightnessStateTopic: String = "",
+    val brightnessScale: Int = 255,
+    val discoverySource: String = "manual",
+) {
+    companion object {
+        fun from(device: HubDevice) = HubDeviceInput(
+            name = device.name,
+            kind = device.kind,
+            room = device.room,
+            enabled = device.enabled,
+            commandTopic = device.commandTopic,
+            stateTopic = device.stateTopic,
+            availabilityTopic = device.availabilityTopic,
+            payloadOn = device.payloadOn,
+            payloadOff = device.payloadOff,
+            payloadAvailable = device.payloadAvailable,
+            payloadNotAvailable = device.payloadNotAvailable,
+            schema = device.schema,
+            stateValueTemplate = device.stateValueTemplate,
+            optimistic = device.optimistic,
+            supportsBrightness = device.supportsBrightness,
+            brightnessCommandTopic = device.brightnessCommandTopic,
+            brightnessStateTopic = device.brightnessStateTopic,
+            brightnessScale = device.brightnessScale,
+            discoverySource = device.discoverySource,
+        )
+
+        fun from(candidate: DeviceCandidate) = HubDeviceInput(
+            name = candidate.suggestedName,
+            kind = candidate.kind,
+            commandTopic = candidate.commandTopic,
+            stateTopic = candidate.stateTopic,
+            availabilityTopic = candidate.availabilityTopic,
+            payloadOn = candidate.payloadOn,
+            payloadOff = candidate.payloadOff,
+            schema = candidate.schema,
+            // A JSON device found by discovery always keys its state off "state"; without this
+            // the server rejects the save for a missing template.
+            stateValueTemplate = candidate.stateValueTemplate.ifBlank {
+                if (candidate.schema == "json") "state" else ""
+            },
+            supportsBrightness = candidate.supportsBrightness,
+            brightnessCommandTopic = candidate.brightnessCommandTopic,
+            brightnessStateTopic = candidate.brightnessStateTopic,
+            brightnessScale = candidate.brightnessScale,
+            discoverySource = candidate.source,
+        )
+    }
+}
+
 data class DiagnosticEntry(
     val id: Long,
     val timestamp: Instant,

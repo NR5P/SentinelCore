@@ -86,6 +86,102 @@ class SentinelRepository(
         parseCamera(JSONObject(request("/api/cameras", method = "POST", body = input.toJson().toString())))
     }
 
+    // ---------------- Device Hub ----------------
+
+    // Whether the DEVICE HUB destination should exist at all. Its own endpoint rather than read
+    // from /api/settings, which is Admin-only - a Viewer gets the screen too, they just can't
+    // add or edit devices there.
+    suspend fun deviceHubEnabled(): Boolean = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/device-hub/enabled")).optBoolean("enabled")
+    }
+
+    suspend fun devices(): List<HubDevice> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/devices"))
+        buildList {
+            for (index in 0 until array.length()) {
+                add(parseDevice(array.getJSONObject(index)))
+            }
+        }
+    }
+
+    // The light poll while the Device Hub screen is open - no topics or payload strings, just
+    // what each device is currently doing.
+    suspend fun deviceStates(): HubDeviceStateSnapshot = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/devices/state"))
+        val array = json.optJSONArray("devices") ?: JSONArray()
+        HubDeviceStateSnapshot(
+            connected = json.optBoolean("connected"),
+            devices = buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.getJSONObject(index)
+                    add(
+                        HubDeviceState(
+                            id = item.getString("id"),
+                            power = item.optString("power", "unknown"),
+                            brightness = if (item.isNull("brightness")) null else item.optInt("brightness"),
+                            available = item.optBoolean("available", true),
+                        ),
+                    )
+                }
+            },
+        )
+    }
+
+    suspend fun sendDeviceCommand(id: String, action: String? = null, brightness: Int? = null): DeviceCommandResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().apply {
+                if (action != null) put("action", action)
+                if (brightness != null) put("brightness", brightness)
+            }
+            val json = JSONObject(
+                request("/api/devices/${queryValue(id)}/command", method = "POST", body = body.toString()),
+            )
+            DeviceCommandResult(
+                sent = json.optBoolean("sent"),
+                acknowledged = json.optBoolean("acknowledged"),
+                power = json.optString("power", "unknown"),
+                brightness = if (json.isNull("brightness")) null else json.optInt("brightness"),
+            )
+        }
+
+    suspend fun createDevice(input: HubDeviceInput): HubDevice = withContext(Dispatchers.IO) {
+        parseDevice(JSONObject(request("/api/devices", method = "POST", body = input.toJson().toString())))
+    }
+
+    suspend fun updateDevice(id: String, input: HubDeviceInput): HubDevice = withContext(Dispatchers.IO) {
+        parseDevice(
+            JSONObject(
+                request("/api/devices/${queryValue(id)}", method = "PUT", body = input.toJson().toString()),
+            ),
+        )
+    }
+
+    suspend fun deleteDevice(id: String) = withContext(Dispatchers.IO) {
+        request("/api/devices/${queryValue(id)}", method = "DELETE")
+        Unit
+    }
+
+    suspend fun startDeviceScan(): DeviceScanStartResult = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/devices/discover", method = "POST"))
+        DeviceScanStartResult(
+            scanId = json.getString("scanId"),
+            scanSeconds = json.optInt("scanSeconds", 10),
+        )
+    }
+
+    suspend fun deviceScanStatus(scanId: String): DeviceScanSnapshot = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/devices/discover/${queryValue(scanId)}"))
+        val array = json.optJSONArray("results") ?: JSONArray()
+        DeviceScanSnapshot(
+            status = json.optString("status", "running"),
+            results = buildList {
+                for (index in 0 until array.length()) {
+                    add(parseCandidate(array.getJSONObject(index)))
+                }
+            },
+        )
+    }
+
     suspend fun updateCamera(id: String, input: CameraInput) = withContext(Dispatchers.IO) {
         request(
             "/api/cameras/${queryValue(id)}",
@@ -724,6 +820,75 @@ class SentinelRepository(
             onvifPtzServiceUrl = json.nullableString("onvifPtzServiceUrl"),
             onvifProfileToken = json.nullableString("onvifProfileToken"),
         )
+
+    private fun parseDevice(json: JSONObject): HubDevice =
+        HubDevice(
+            id = json.getString("id"),
+            name = json.optString("name", "Device"),
+            kind = json.optString("kind", "light"),
+            room = json.optString("room", ""),
+            enabled = json.optBoolean("enabled", true),
+            commandTopic = json.optString("commandTopic", ""),
+            stateTopic = json.optString("stateTopic", ""),
+            availabilityTopic = json.optString("availabilityTopic", ""),
+            payloadOn = json.optString("payloadOn", "ON"),
+            payloadOff = json.optString("payloadOff", "OFF"),
+            payloadAvailable = json.optString("payloadAvailable", "online"),
+            payloadNotAvailable = json.optString("payloadNotAvailable", "offline"),
+            schema = json.optString("schema", "raw"),
+            stateValueTemplate = json.optString("stateValueTemplate", ""),
+            optimistic = json.optBoolean("optimistic"),
+            supportsBrightness = json.optBoolean("supportsBrightness"),
+            brightnessCommandTopic = json.optString("brightnessCommandTopic", ""),
+            brightnessStateTopic = json.optString("brightnessStateTopic", ""),
+            brightnessScale = json.optInt("brightnessScale", 255),
+            discoverySource = json.optString("discoverySource", "manual"),
+            power = json.optString("power", "unknown"),
+            brightness = if (json.isNull("brightness")) null else json.optInt("brightness"),
+            available = json.optBoolean("available", true),
+            commandable = json.optBoolean("commandable", true),
+        )
+
+    private fun parseCandidate(json: JSONObject): DeviceCandidate =
+        DeviceCandidate(
+            suggestedName = json.optString("suggestedName", "Device"),
+            kind = json.optString("kind", "light"),
+            commandTopic = json.optString("commandTopic", ""),
+            stateTopic = json.optString("stateTopic", ""),
+            availabilityTopic = json.optString("availabilityTopic", ""),
+            payloadOn = json.optString("payloadOn", "ON"),
+            payloadOff = json.optString("payloadOff", "OFF"),
+            schema = json.optString("schema", "raw"),
+            stateValueTemplate = json.optString("stateValueTemplate", ""),
+            supportsBrightness = json.optBoolean("supportsBrightness"),
+            brightnessCommandTopic = json.optString("brightnessCommandTopic", ""),
+            brightnessStateTopic = json.optString("brightnessStateTopic", ""),
+            brightnessScale = json.optInt("brightnessScale", 255),
+            source = json.optString("source", "manual"),
+            alreadyAdded = json.optBoolean("alreadyAdded"),
+        )
+
+    private fun HubDeviceInput.toJson(): JSONObject =
+        JSONObject()
+            .put("name", name)
+            .put("kind", kind)
+            .put("room", room)
+            .put("enabled", enabled)
+            .put("commandTopic", commandTopic)
+            .put("stateTopic", stateTopic)
+            .put("availabilityTopic", availabilityTopic)
+            .put("payloadOn", payloadOn)
+            .put("payloadOff", payloadOff)
+            .put("payloadAvailable", payloadAvailable)
+            .put("payloadNotAvailable", payloadNotAvailable)
+            .put("schema", schema)
+            .put("stateValueTemplate", stateValueTemplate)
+            .put("optimistic", optimistic)
+            .put("supportsBrightness", supportsBrightness)
+            .put("brightnessCommandTopic", brightnessCommandTopic)
+            .put("brightnessStateTopic", brightnessStateTopic)
+            .put("brightnessScale", brightnessScale)
+            .put("discoverySource", discoverySource)
 
     private fun parseKnownFace(json: JSONObject): KnownFace {
         val array = json.optJSONArray("enrollments") ?: JSONArray()

@@ -256,6 +256,66 @@ struct PtzMoveBody: Encodable {
     let zoom: Double
 }
 
+// MARK: - Device Hub
+
+// Apple TV is control-only for the Device Hub: devices are added and configured on the web
+// dashboard, iPhone, Mac, or Android, where entering an MQTT topic isn't a fight with an on-screen
+// keyboard. So there's no candidate/input type here, unlike the other clients - just what's needed
+// to show a device and switch it.
+struct HubDevice: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    var kind: String
+    var room: String
+    var enabled: Bool
+    var supportsBrightness: Bool
+    var power: String
+    var brightness: Int?
+    var available: Bool
+    var commandable: Bool
+
+    var isOn: Bool { power == "on" }
+
+    var systemImage: String {
+        switch kind {
+        case "light": "lightbulb.fill"
+        case "switch", "outlet": "poweroutlet.type.b.fill"
+        case "fan": "fan.fill"
+        case "cover": "blinds.horizontal.closed"
+        case "lock": "lock.fill"
+        default: "sensor.fill"
+        }
+    }
+}
+
+struct HubDeviceState: Codable, Identifiable, Hashable {
+    let id: UUID
+    var power: String
+    var brightness: Int?
+    var available: Bool
+}
+
+struct HubDeviceStateSnapshot: Codable {
+    var connected: Bool
+    var devices: [HubDeviceState]
+}
+
+struct DeviceCommandResult: Codable {
+    var sent: Bool
+    var acknowledged: Bool
+    var power: String
+    var brightness: Int?
+}
+
+struct DeviceHubEnabled: Codable {
+    let enabled: Bool
+}
+
+struct DeviceCommandInput: Encodable {
+    var action: String?
+    var brightness: Int?
+}
+
 extension JSONDecoder {
     static let sentinel: JSONDecoder = {
         let decoder = JSONDecoder()

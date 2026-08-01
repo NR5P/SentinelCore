@@ -37,7 +37,7 @@ struct RootView: View {
                 // On macOS, Settings lives in the app's Settings scene (Cmd+,) instead of a
                 // sidebar row - see SentinelCoreApp. iPadOS has no such scene, so it keeps all
                 // sections here.
-                List(AppSection.sidebarCases, selection: $selection) { section in
+                List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled), selection: $selection) { section in
                     Label(section.title, systemImage: section.icon).tag(section)
                 }
                 .listStyle(.sidebar)
@@ -58,7 +58,7 @@ struct RootView: View {
 
     private var compactNavigation: some View {
         TabView(selection: compactSelection) {
-            ForEach(AppSection.allCases) { section in
+            ForEach(AppSection.compactTabCases(deviceHubEnabled: model.deviceHubEnabled)) { section in
                 NavigationStack {
                     sectionView(section)
                         .navigationDestination(item: $model.selectedEvent) { event in
@@ -84,13 +84,14 @@ struct RootView: View {
         case .timeline: RecordingTimelineView()
         case .live: LiveCamerasView(isActive: selection == .live)
         case .triggers: TriggerFeedView()
+        case .devices: DeviceHubView(isActive: selection == .devices)
         case .settings: SettingsView()
         }
     }
 }
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case feed, timeline, live, triggers, settings
+    case feed, timeline, live, triggers, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
@@ -98,6 +99,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .timeline: "Timeline"
         case .live: "Live"
         case .triggers: "Triggers"
+        case .devices: "Device Hub"
         case .settings: "Settings"
         }
     }
@@ -107,16 +109,35 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .timeline: "clock.arrow.circlepath"
         case .live: "video.fill"
         case .triggers: "wave.3.right.circle.fill"
+        case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
     }
 
+    // The Device Hub is off by default and only appears once it's switched on server-side, so
+    // every list of sections is filtered rather than using allCases directly.
+    static func visibleCases(deviceHubEnabled: Bool) -> [AppSection] {
+        allCases.filter { $0 != .devices || deviceHubEnabled }
+    }
+
+    // An iPhone tab bar holds five items; a sixth makes UIKit collapse the overflow into its own
+    // "More" navigation controller, which cannot host these sections - a NavigationStack inside
+    // it crashes outright ("attempt to nest wrapped navigation controllers"), and without one
+    // the section renders blank. So the compact bar is capped at five, and enabling the Device
+    // Hub displaces Settings, which EventFeedView then offers as a toolbar button instead.
+    // With the Device Hub off - the default - this is the original five tabs, unchanged.
+    static func compactTabCases(deviceHubEnabled: Bool) -> [AppSection] {
+        visibleCases(deviceHubEnabled: deviceHubEnabled)
+            .filter { !(deviceHubEnabled && $0 == .settings) }
+    }
+
     // macOS gets a real Settings scene (Cmd+,) instead of a sidebar row - see SentinelCoreApp.
-    static var sidebarCases: [AppSection] {
+    // Device Hub is a normal section there and stays.
+    static func sidebarCases(deviceHubEnabled: Bool) -> [AppSection] {
         #if os(macOS)
-        allCases.filter { $0 != .settings }
+        visibleCases(deviceHubEnabled: deviceHubEnabled).filter { $0 != .settings }
         #else
-        allCases
+        visibleCases(deviceHubEnabled: deviceHubEnabled)
         #endif
     }
 }

@@ -58,6 +58,28 @@ final class SentinelClient {
         try await send("/api/cameras", method: "POST", body: input)
     }
 
+    // MARK: - Device Hub (control only - see the note on HubDevice)
+
+    func deviceHubEnabled() async throws -> DeviceHubEnabled {
+        try await get("/api/device-hub/enabled")
+    }
+
+    func devices() async throws -> [HubDevice] {
+        try await get("/api/devices")
+    }
+
+    func deviceStates() async throws -> HubDeviceStateSnapshot {
+        try await get("/api/devices/state")
+    }
+
+    func sendDeviceCommand(id: UUID, action: String? = nil, brightness: Int? = nil) async throws -> DeviceCommandResult {
+        try await send(
+            "/api/devices/\(id.uuidString)/command",
+            method: "POST",
+            body: DeviceCommandInput(action: action, brightness: brightness)
+        )
+    }
+
     func updateCamera(id: UUID, _ input: CameraInput) async throws {
         let _: EmptyResponse = try await send("/api/cameras/\(id.uuidString)", method: "PUT", body: input)
     }

@@ -258,6 +258,60 @@ final class SentinelClient {
         try await send("/api/push/test", method: "POST", body: Optional<String>.none)
     }
 
+    // MARK: - Device Hub
+
+    // Whether the DEVICE HUB section should exist at all. Deliberately its own endpoint rather
+    // than read from /api/settings, which is Admin-only - a Viewer gets the tab too.
+    func deviceHubEnabled() async throws -> DeviceHubEnabled {
+        try await get("/api/device-hub/enabled")
+    }
+
+    func devices() async throws -> [HubDevice] {
+        try await get("/api/devices")
+    }
+
+    func deviceMetadata() async throws -> DeviceHubMetadata {
+        try await get("/api/devices/metadata")
+    }
+
+    // The light poll while the Device Hub is on screen - no topics or payload strings, just what
+    // each device is currently doing.
+    func deviceStates() async throws -> HubDeviceStateSnapshot {
+        try await get("/api/devices/state")
+    }
+
+    func sendDeviceCommand(id: UUID, action: String? = nil, brightness: Int? = nil) async throws -> DeviceCommandResult {
+        try await send(
+            "/api/devices/\(id.uuidString)/command",
+            method: "POST",
+            body: DeviceCommandInput(action: action, brightness: brightness)
+        )
+    }
+
+    func createDevice(_ input: HubDeviceInput) async throws -> HubDevice {
+        try await send("/api/devices", method: "POST", body: input)
+    }
+
+    func updateDevice(id: UUID, _ input: HubDeviceInput) async throws -> HubDevice {
+        try await send("/api/devices/\(id.uuidString)", method: "PUT", body: input)
+    }
+
+    func deleteDevice(id: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/devices/\(id.uuidString)",
+            method: "DELETE",
+            body: Optional<String>.none
+        )
+    }
+
+    func startDeviceScan() async throws -> DeviceScanStartResult {
+        try await send("/api/devices/discover", method: "POST", body: Optional<String>.none)
+    }
+
+    func deviceScanStatus(scanId: UUID) async throws -> DeviceScanSnapshot {
+        try await get("/api/devices/discover/\(scanId.uuidString)")
+    }
+
     func url(path: String, query: [URLQueryItem] = []) -> URL? {
         guard var components = URLComponents(string: model.activeServerURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return nil

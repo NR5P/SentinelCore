@@ -29,6 +29,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 11a. [Discord alerts](#11a-discord-alerts)
 12. [Email](#12-email)
 13. [MQTT & Home Assistant](#13-mqtt--home-assistant)
+13a. [The DEVICE HUB tab — controlling lights & other MQTT devices](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices)
 14. [Apple HomeKit](#14-apple-homekit)
 15. [Why didn't I get an alert? (rate limiting & suppression, explained)](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
 16. [Self-monitoring](#16-self-monitoring)
@@ -513,6 +514,10 @@ The full list below covers both modes:
 - **MQTT / Home Assistant** — publishes events over MQTT with Home Assistant auto-discovery,
   optionally using this app as its own broker. Its own section below. See
   [section 13](#13-mqtt--home-assistant).
+- **Device Hub** — adds a DEVICE HUB tab for switching lights, plugs, and other MQTT devices on
+  and off from here and from the phone/Mac/Apple TV apps. Requires MQTT above to be on first.
+  Its own section below. See
+  [section 13a](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices).
 - **Apple HomeKit** — shows your cameras in Apple's Home app as motion sensors, for native
   iPhone notifications. Shows the pairing QR code here. Its own section below. See
   [section 14](#14-apple-homekit).
@@ -792,6 +797,78 @@ Assistant only hear about the same events Email/Telegram would alert on. Either 
 publishing never affects whether Email/Telegram/the Feed treat an event as alert-worthy — it's
 purely an additional output, not another suppression layer. See
 [section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained).
+
+## 13a. The DEVICE HUB tab — controlling lights & other MQTT devices
+
+Everything in section 13 is *outbound*: Sentinel telling your smart home what its cameras saw.
+The Device Hub is the other direction — it lets Sentinel **control** things on the same broker.
+Lights, plugs, fans, blinds, and locks appear on their own tab where you can switch them on and
+off, and dim the ones that support it.
+
+Off by default. Turn on **Settings → DEVICE HUB → Enabled**. It requires the **MQTT / Home
+Assistant** section above to be turned on first — that's where the broker is configured, and
+saving Device Hub with MQTT off is refused rather than leaving you with a tab whose every
+button fails. Once enabled, a **DEVICE HUB** tab appears here and in the iPhone, iPad, Mac,
+Apple TV, and Android apps. Nothing about your camera alerts changes.
+
+**Adding devices — use Discover first.** Click **discover** and Sentinel listens to your broker
+for a few seconds, then offers what it found. Two things turn up:
+
+- **Devices that announce themselves.** Zigbee2MQTT, Tasmota, ESPHome, and Shelly all publish
+  a Home Assistant discovery message describing themselves. These come back complete — name,
+  topics, payloads, brightness range — and are ready to add as-is. You do *not* need Home
+  Assistant installed for this; Sentinel just reads the same announcements.
+- **Devices found by their topics.** Anything that published something recognisable during the
+  scan (e.g. a Tasmota `stat/<name>/POWER`) is offered as a best guess.
+
+Nothing is added until you click **add** on it. **review** opens the add form pre-filled, so you
+can check or change anything before saving. Devices already in the hub are marked as such.
+
+**Adding a device by hand.** Click **+ add device** if you know the topics. The two that matter:
+
+| Field | What it is |
+|---|---|
+| **Command Topic** | Where the device listens for commands, e.g. `cmnd/kitchen/POWER` (Tasmota) or `zigbee2mqtt/kitchen/set` (Zigbee2MQTT). |
+| **State Topic** | Where it reports what it's currently doing, e.g. `stat/kitchen/POWER`. Leave blank only if the device never reports — and turn on **Optimistic** if so. |
+
+**Payload Schema** is `raw` when the payload is just the text `ON` or `OFF` (Tasmota, ESPHome),
+or `json` when it's an object like `{"state":"ON"}` (Zigbee2MQTT, Home Assistant's JSON light
+schema). For `json`, **State Value Key** names the key holding ON/OFF — `state` for
+Zigbee2MQTT, `POWER` for Tasmota. Dotted paths like `StatusSTS.POWER` work for nested payloads.
+
+**Brightness.** Turn on **Supports brightness** for a slider. JSON devices usually carry
+brightness on the same command topic, so leave the brightness topics blank. Tasmota-style
+devices need their own **Brightness Command Topic** (`cmnd/<name>/Dimmer`). **Brightness Scale**
+is the device's own value for full brightness — 255 for most Zigbee bulbs, 254 for Zigbee2MQTT,
+100 for Tasmota. The slider is always 0–100 and Sentinel converts for you.
+
+**Availability.** If a device publishes a last-will/availability topic (e.g. Tasmota's
+`tele/<name>/LWT`), fill it in — that's what Sentinel trusts to decide whether the device is
+reachable. A device *without* one is judged by silence instead, and **State Timeout** controls
+how long it can go quiet before showing as unavailable. Devices with an availability topic
+ignore that timeout entirely, so a lamp that's simply been on all day is never wrongly marked
+offline.
+
+**Who can do what.** Anyone signed in can switch and dim devices — that's the point of the tab
+for the rest of the household. Adding, editing, deleting, and running a discovery scan are
+**admin-only**, because those point a device at an arbitrary MQTT topic.
+
+**Apple TV is control-only.** Devices are added and configured from the dashboard, iPhone, Mac,
+or Android; the Apple TV app shows them as cards you click to switch, and adjusts brightness
+with left/right on the remote. Typing an MQTT topic with the Siri remote isn't worth it.
+
+**A note on broker security.** Device Hub commands travel over the same broker as everything
+else. If you're using the built-in broker, it listens on your whole LAN — set **Username** and
+**Password** under the MQTT section so switching your lights isn't open to anything else on the
+network. When those are blank the built-in broker stays open to anonymous connections, exactly
+as it always has. For an external broker reachable off-LAN, turn on **Use TLS** as well.
+
+**Troubleshooting.** If a tile says *not confirmed*, the command was published but the device
+never echoed its new state back — usually the Command Topic is right and the State Topic is
+wrong, or the device is unplugged. If a tile says *state unknown*, nothing has ever arrived on
+its State Topic: check the topic, or turn on **Optimistic** for a device that genuinely never
+reports. If the toolbar says *broker disconnected*, nothing can be controlled at all — check
+the MQTT section's broker settings first.
 
 ## 14. Apple HomeKit
 
