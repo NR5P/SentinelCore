@@ -21,7 +21,16 @@ public sealed class HlsStreamManager : IDisposable
     // some cameras/encoders use long GOPs, so this stays generous rather than flaky.
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 
+    // How long a session has to have survived before its death is treated as worth retrying
+    // rather than as a camera that simply isn't working - see GetOrStartLiveSession.
+    private static readonly TimeSpan RestartBackoff = TimeSpan.FromSeconds(10);
+
     private readonly ConcurrentDictionary<Guid, StreamSession> _sessions = new();
+
+    // Cameras whose stream died on startup, and when it becomes worth trying them again. Keeps a
+    // broken camera from having a fresh ffmpeg spawned for it on every request - see
+    // GetOrStartLiveSession.
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _restartBlockedUntil = new();
     private readonly string _ffmpegPath;
     private readonly string _workingRoot;
     private readonly ILogger<HlsStreamManager> _logger;
@@ -40,8 +49,7 @@ public sealed class HlsStreamManager : IDisposable
 
     public async Task<string> EnsureStreamStartedAsync(Camera camera, CancellationToken cancellationToken)
     {
-        var session = _sessions.GetOrAdd(camera.Id, _ => StartSession(camera));
-        session.LastAccessed = DateTimeOffset.UtcNow;
+        var session = GetOrStartLiveSession(camera);
 
         var playlistPath = Path.Combine(session.OutputDirectory, "stream.m3u8");
         var deadline = DateTimeOffset.UtcNow + StartupTimeout;
@@ -67,6 +75,64 @@ public sealed class HlsStreamManager : IDisposable
         return playlistPath;
     }
 
+    // A session whose ffmpeg has died is worse than having no session at all: its playlist and
+    // segments stay on disk, so EnsureStreamStartedAsync's "wait for the playlist to appear"
+    // loop is skipped entirely and every later request is answered 200 with a stream frozen at
+    // the instant ffmpeg died. Nothing recovers from that on its own either - each request
+    // refreshes LastAccessed, so the idle sweep never reclaims it - which makes a camera that
+    // drops out once (a reboot, a network blip, an RTSP connection limit reached because
+    // something else grabbed a snapshot) stay broken on every client until the server restarts.
+    //
+    // So the liveness check belongs here, before the playlist is trusted, rather than only
+    // inside that loop. A dead session is dropped and replaced with a fresh one; if the camera
+    // really is unreachable the new process exits too and the caller gets a real error with
+    // ffmpeg's log, which is the outcome that tells the owner something is wrong.
+    private StreamSession GetOrStartLiveSession(Camera camera)
+    {
+        // Reap a session whose ffmpeg has gone. Compare-and-remove, so that when two viewers
+        // arrive together only the one that actually takes this session out of the dictionary
+        // disposes it - neither can double-kill a process or tear down the other's replacement.
+        if (_sessions.TryGetValue(camera.Id, out var existing) && existing.Process.HasExited)
+        {
+            var log = existing.RecentLog;
+            var ranFor = DateTimeOffset.UtcNow - existing.StartedAt;
+            if (_sessions.TryRemove(new KeyValuePair<Guid, StreamSession>(camera.Id, existing)))
+                KillSession(existing);
+
+            // Dying almost immediately means the camera itself isn't working - wrong URL, wrong
+            // credentials, or refusing another connection because something already holds the one
+            // it allows. Restarting on sight would then spawn a doomed process per request, and
+            // /api/cameras warms every camera at once, so that could outpace the dying. Report it
+            // instead and hold off briefly: the owner gets a real error, and a player retrying on
+            // its own finds the camera again as soon as it recovers.
+            if (ranFor < RestartBackoff)
+            {
+                _restartBlockedUntil[camera.Id] = DateTimeOffset.UtcNow + RestartBackoff;
+                throw new InvalidOperationException(
+                    $"The stream for this camera keeps stopping - check its URL and credentials, and that it isn't refusing extra connections. Recent log:\n{log}");
+            }
+
+            _logger.LogWarning(
+                "HLS session for camera {CameraId} ({Name}) died after {Seconds:n0}s; starting a fresh one. Recent log:\n{Log}",
+                camera.Id, camera.Name, ranFor.TotalSeconds, log);
+        }
+
+        if (_restartBlockedUntil.TryGetValue(camera.Id, out var blockedUntil))
+        {
+            if (DateTimeOffset.UtcNow < blockedUntil)
+            {
+                throw new InvalidOperationException(
+                    "The stream for this camera keeps stopping - check its URL and credentials, and that it isn't refusing extra connections.");
+            }
+
+            _restartBlockedUntil.TryRemove(camera.Id, out _);
+        }
+
+        var session = _sessions.GetOrAdd(camera.Id, _ => StartSession(camera));
+        session.LastAccessed = DateTimeOffset.UtcNow;
+        return session;
+    }
+
     public void Touch(Guid cameraId)
     {
         if (_sessions.TryGetValue(cameraId, out var session))
@@ -77,7 +143,22 @@ public sealed class HlsStreamManager : IDisposable
     {
         if (!_sessions.TryGetValue(cameraId, out var session)) return null;
         var safeName = Path.GetFileName(fileName); // guards against path traversal
-        return Path.Combine(session.OutputDirectory, safeName);
+        var path = Path.Combine(session.OutputDirectory, safeName);
+
+        // An empty segment means ffmpeg created the file but hasn't finished writing it (or died
+        // mid-write). Serving that as a 200 hands the player zero bytes where it expects video,
+        // which most players treat as a fatal decode error rather than something to retry -
+        // reporting it as missing instead gets the segment refetched a moment later.
+        try
+        {
+            if (new FileInfo(path).Length == 0) return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+
+        return path;
     }
 
     // Poster frame for a camera that already has a warm session - ffmpeg overwrites this file
@@ -335,6 +416,10 @@ public sealed class HlsStreamManager : IDisposable
         public Process Process { get; } = process;
         public string OutputDirectory { get; } = outputDirectory;
         public DateTimeOffset LastAccessed { get; set; }
+
+        // When ffmpeg was launched, so a session that dies immediately can be told apart from one
+        // that ran for a while and then dropped - only the latter is worth restarting on sight.
+        public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
 
         public void AppendLog(string line)
         {
