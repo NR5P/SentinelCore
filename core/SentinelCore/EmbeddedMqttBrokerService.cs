@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.Options;
+using MQTTnet.Protocol;
 using MQTTnet.Server;
 
 namespace SentinelCore;
@@ -25,8 +26,31 @@ public sealed class EmbeddedMqttBrokerService(IOptionsMonitor<MqttOptions> optio
             .Build();
 
         _server = new MqttServerFactory().CreateMqttServer(serverOptions);
+
+        // This endpoint is bound to IPAddress.Any, so without this handler every machine on the
+        // LAN could connect anonymously. Credentials are only enforced when Mqtt:Username is
+        // actually set, which keeps an existing password-less Home Assistant setup working
+        // exactly as it did - but once Device Hub is switching real lights over this broker,
+        // setting a username/password is what makes that boundary real.
+        _server.ValidatingConnectionAsync += args =>
+        {
+            var expected = options.CurrentValue;
+            if (string.IsNullOrWhiteSpace(expected.Username)) return Task.CompletedTask;
+
+            var usernameMatches = string.Equals(args.UserName, expected.Username, StringComparison.Ordinal);
+            var passwordMatches = string.Equals(args.Password, expected.Password, StringComparison.Ordinal);
+            if (usernameMatches && passwordMatches) return Task.CompletedTask;
+
+            args.ReasonCode = MqttConnectReasonCode.BadUserNameOrPassword;
+            logger.LogWarning("Rejected MQTT client {ClientId} - bad broker credentials", args.ClientId);
+            return Task.CompletedTask;
+        };
+
         await _server.StartAsync();
-        logger.LogInformation("Embedded MQTT broker listening on port {Port}", current.EmbeddedBrokerPort);
+        logger.LogInformation(
+            "Embedded MQTT broker listening on port {Port} ({AuthMode})",
+            current.EmbeddedBrokerPort,
+            string.IsNullOrWhiteSpace(current.Username) ? "no authentication" : "username/password required");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)

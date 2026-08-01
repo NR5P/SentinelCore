@@ -93,23 +93,16 @@ public sealed class MqttPublisher : IMqttPublisher, IHostedService, IAsyncDispos
             if (_client.IsConnected) return;
 
             var options = _options.CurrentValue;
-            var host = options.RunEmbeddedBroker ? "127.0.0.1" : options.BrokerHost;
-            var port = options.RunEmbeddedBroker ? options.EmbeddedBrokerPort : options.BrokerPort;
+            var (host, port) = MqttConnection.ResolveBroker(options);
             var availabilityTopic = MqttTopics.Availability(options.TopicPrefix);
 
-            var builder = new MqttClientFactory().CreateClientOptionsBuilder()
-                .WithClientId($"sentinel-core-{Environment.MachineName}")
-                .WithTcpServer(host, port)
-                .WithCleanSession()
+            var clientOptions = MqttConnection
+                .CreateBuilder(options, $"sentinel-core-{Environment.MachineName}")
                 .WithWillTopic(availabilityTopic)
                 .WithWillPayload("offline")
                 .WithWillRetain(true)
-                .WithWillQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce);
-
-            if (!string.IsNullOrWhiteSpace(options.Username))
-                builder = builder.WithCredentials(options.Username, options.Password);
-
-            var clientOptions = builder.Build();
+                .WithWillQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                .Build();
             await _client.ConnectAsync(clientOptions, cancellationToken);
             await PublishInternalAsync(availabilityTopic, "online", true, cancellationToken);
             _logger.LogInformation("Connected to MQTT broker at {Host}:{Port}", host, port);
