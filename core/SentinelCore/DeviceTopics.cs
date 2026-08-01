@@ -26,6 +26,7 @@ public static class DeviceTopics
 
     public const string SourceManual = "manual";
     public const string SourceHomeAssistantDiscovery = "homeassistant-discovery";
+    public const string SourceTasmotaDiscovery = "tasmota-discovery";
     public const string SourceTopicSweep = "topic-sweep";
 
     public static readonly IReadOnlyList<string> KnownSchemas = [SchemaRaw, SchemaJson];

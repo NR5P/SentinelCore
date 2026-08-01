@@ -321,7 +321,7 @@ public sealed class DeviceHubTests
     public void BuildCandidates_SweepsTasmotaStatTopicsIntoCommandablePairs()
     {
         var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
-            homeAssistantConfigs: new Dictionary<string, string>(),
+            discoveryConfigs: new Dictionary<string, string>(),
             observedTopics: ["stat/kitchen_lamp/POWER", "tele/kitchen_lamp/STATE"],
             discoveryPrefix: "homeassistant",
             existingCommandTopics: new HashSet<string>(),
@@ -340,7 +340,7 @@ public sealed class DeviceHubTests
     public void BuildCandidates_SweepDetectsATasmotaDimmerAndCallsItALight()
     {
         var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
-            homeAssistantConfigs: new Dictionary<string, string>(),
+            discoveryConfigs: new Dictionary<string, string>(),
             observedTopics: ["stat/hall/POWER", "stat/hall/Dimmer"],
             discoveryPrefix: "homeassistant",
             existingCommandTopics: new HashSet<string>(),
@@ -379,6 +379,160 @@ public sealed class DeviceHubTests
 
         Assert.Empty(MqttDeviceDiscovery.BuildCandidates(
             new Dictionary<string, string> { ["someoneelse/switch/x/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+    }
+
+    // A real payload captured off the broker: a US-SS01 switch with a customised FullTopic, which
+    // is the case no other strategy can find - it never publishes a "stat/..." topic at all.
+    private const string TasmotaCustomFullTopicConfig = """
+        {"ip":"192.168.50.18","dn":"Mini Switch","fn":["Mini Switch",null,null,null,null,null,null,null],
+         "hn":"office-lights-7987","mac":"34AB95115F33","md":"US-SS01 Switch","ty":0,"if":0,
+         "ofln":"Offline","onln":"Online","state":["OFF","ON","TOGGLE","HOLD"],"sw":"12.4.0.3",
+         "t":"office-lights","ft":"office/%topic%/%prefix%/","tp":["cmnd","stat","tele"],
+         "rl":[1,0,0,0,0,0,0,0],"lk":0,"lt_st":0,"ver":1}
+        """;
+
+    [Fact]
+    public void BuildCandidates_ParsesTasmotaNativeDiscoveryWithACustomFullTopic()
+    {
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["tasmota/discovery/34AB95115F33/config"] = TasmotaCustomFullTopicConfig },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("Mini Switch", candidate.SuggestedName);
+        Assert.Equal("switch", candidate.Kind);
+        Assert.Equal("office/office-lights/cmnd/POWER", candidate.CommandTopic);
+        Assert.Equal("office/office-lights/stat/POWER", candidate.StateTopic);
+        Assert.Equal("office/office-lights/tele/LWT", candidate.AvailabilityTopic);
+        Assert.Equal("ON", candidate.PayloadOn);
+        Assert.Equal("OFF", candidate.PayloadOff);
+        Assert.Equal(DeviceTopics.SchemaRaw, candidate.Schema);
+        Assert.False(candidate.SupportsBrightness);
+        Assert.Equal(DeviceTopics.SourceTasmotaDiscovery, candidate.Source);
+        Assert.False(candidate.AlreadyAdded);
+    }
+
+    [Fact]
+    public void BuildCandidates_ParsesTasmotaNativeDiscoveryWithTheStockFullTopic()
+    {
+        // The other real capture: a Sonoff Basic left on Tasmota's default topic layout.
+        const string config = """
+            {"dn":"Tasmota","fn":["Tasmota",null],"hn":"fire-place-switch-3636","mac":"BCFF4D84EE34",
+             "state":["OFF","ON","TOGGLE","HOLD"],"t":"fire_place_switch","ft":"%prefix%/%topic%/",
+             "tp":["cmnd","stat","tele"],"rl":[1,0],"lt_st":0,"ver":1}
+            """;
+
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["tasmota/discovery/BCFF4D84EE34/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("cmnd/fire_place_switch/POWER", candidate.CommandTopic);
+        Assert.Equal("stat/fire_place_switch/POWER", candidate.StateTopic);
+        Assert.Equal("tele/fire_place_switch/LWT", candidate.AvailabilityTopic);
+    }
+
+    [Fact]
+    public void BuildCandidates_TasmotaMultiRelayBecomesOneCandidatePerRelay()
+    {
+        const string config = """
+            {"dn":"Dual","fn":["Left",null],"hn":"dual","mac":"AABBCCDDEEFF","state":["OFF","ON","TOGGLE","HOLD"],
+             "t":"dual","ft":"%prefix%/%topic%/","tp":["cmnd","stat","tele"],"rl":[1,1],"lt_st":0,"ver":1}
+            """;
+
+        var candidates = MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["tasmota/discovery/AABBCCDDEEFF/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>());
+
+        Assert.Equal(2, candidates.Count);
+
+        // Numbered POWER commands, and the unnamed second relay falls back to a numbered name.
+        var left = Assert.Single(candidates, c => c.CommandTopic == "cmnd/dual/POWER1");
+        Assert.Equal("Left", left.SuggestedName);
+        var right = Assert.Single(candidates, c => c.CommandTopic == "cmnd/dual/POWER2");
+        Assert.Equal("Dual 2", right.SuggestedName);
+        Assert.Equal("stat/dual/POWER2", right.StateTopic);
+    }
+
+    [Fact]
+    public void BuildCandidates_TasmotaDimmerBecomesALightWithBrightness()
+    {
+        const string config = """
+            {"dn":"Lamp","fn":["Lamp"],"hn":"lamp","mac":"AABBCCDDEEFF","state":["OFF","ON","TOGGLE","HOLD"],
+             "t":"lamp","ft":"%prefix%/%topic%/","tp":["cmnd","stat","tele"],"rl":[2],"lk":1,"lt_st":1,"ver":1}
+            """;
+
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["tasmota/discovery/AABBCCDDEEFF/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("light", candidate.Kind);
+        Assert.True(candidate.SupportsBrightness);
+        Assert.Equal("cmnd/lamp/Dimmer", candidate.BrightnessCommandTopic);
+        Assert.Equal(100, candidate.BrightnessScale);
+    }
+
+    [Fact]
+    public void BuildCandidates_TasmotaDiscoveryClaimsTopicsTheSweepWouldAlsoGuess()
+    {
+        // Both strategies can see the same relay when it happens to publish mid-scan. The native
+        // config is authoritative, so the sweep's guess must not become a second candidate.
+        const string config = """
+            {"dn":"Charger","fn":["Charger"],"hn":"charger","mac":"E868E7F33C71","state":["OFF","ON","TOGGLE","HOLD"],
+             "t":"battery_charger","ft":"%prefix%/%topic%/","tp":["cmnd","stat","tele"],"rl":[1],"lt_st":0,"ver":1}
+            """;
+
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["tasmota/discovery/E868E7F33C71/config"] = config },
+            observedTopics: ["stat/battery_charger/POWER"],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal(DeviceTopics.SourceTasmotaDiscovery, candidate.Source);
+    }
+
+    [Fact]
+    public void BuildCandidates_FlagsATasmotaDeviceAlreadyInTheHub()
+    {
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["tasmota/discovery/34AB95115F33/config"] = TasmotaCustomFullTopicConfig },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string> { "office/office-lights/cmnd/POWER" },
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.True(candidate.AlreadyAdded);
+    }
+
+    [Fact]
+    public void BuildCandidates_IgnoresTasmotaSensorAndMalformedDiscoveryPayloads()
+    {
+        Assert.Empty(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string>
+            {
+                // The sensors companion topic isn't a device description and has no relays.
+                ["tasmota/discovery/34AB95115F33/sensors"] = """{"sn":{"Time":"2026-08-01T23:46:13"},"ver":1}""",
+                ["tasmota/discovery/AABBCCDDEEFF/config"] = "not json at all",
+                // A device with no populated relay slot has nothing to command.
+                ["tasmota/discovery/BBBBBBBBBBBB/config"] = """
+                    {"dn":"Sensor Only","t":"probe","ft":"%prefix%/%topic%/","tp":["cmnd","stat","tele"],"rl":[0,0]}
+                    """
+            },
             observedTopics: [],
             discoveryPrefix: "homeassistant",
             existingCommandTopics: new HashSet<string>(),

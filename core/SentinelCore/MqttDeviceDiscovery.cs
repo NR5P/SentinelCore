@@ -31,9 +31,10 @@ public sealed record DeviceCandidate(
 public sealed record DeviceScanSnapshot(DeviceScanStatus Status, IReadOnlyList<DeviceCandidate> Results);
 
 // The "discover" button's engine: connects to the same broker, listens for a fixed window, and
-// reports what looks like a controllable device. Two strategies run in the one job because they
-// catch different populations - well-behaved devices announce themselves via Home Assistant
-// discovery, while older or hand-rolled ones only ever appear as bare topics.
+// reports what looks like a controllable device. Three strategies run in the one job because they
+// catch different populations - some devices announce themselves via Home Assistant discovery,
+// Tasmota's own firmware announces itself in a different format entirely, and older or
+// hand-rolled ones only ever appear as bare topics.
 //
 // Job/poll shape is lifted from CameraDiscoveryService so every client can reuse the polling it
 // already does for camera network scans.
@@ -93,7 +94,7 @@ public sealed class MqttDeviceDiscovery
                 .Where(topic => !string.IsNullOrWhiteSpace(topic))
                 .ToHashSet(StringComparer.Ordinal);
 
-            var haConfigs = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+            var discoveryConfigs = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
             var seenTopics = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
 
             client = new MqttClientFactory().CreateMqttClient();
@@ -103,7 +104,7 @@ public sealed class MqttDeviceDiscovery
                 if (topic.EndsWith("/config", StringComparison.Ordinal))
                 {
                     var payload = args.ApplicationMessage.ConvertPayloadToString() ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(payload)) haConfigs[topic] = payload;
+                    if (!string.IsNullOrWhiteSpace(payload)) discoveryConfigs[topic] = payload;
                 }
                 else
                 {
@@ -128,14 +129,14 @@ public sealed class MqttDeviceDiscovery
             await Task.Delay(window, CancellationToken.None);
 
             foreach (var candidate in BuildCandidates(
-                haConfigs, seenTopics.Keys, mqtt.HomeAssistantDiscoveryPrefix, existingCommandTopics, existingStateTopics))
+                discoveryConfigs, seenTopics.Keys, mqtt.HomeAssistantDiscoveryPrefix, existingCommandTopics, existingStateTopics))
             {
                 job.Results.Add(candidate);
             }
 
             _logger.LogInformation(
                 "MQTT device discovery found {CandidateCount} candidate(s) from {ConfigCount} discovery config(s) and {TopicCount} topic(s)",
-                job.Results.Count, haConfigs.Count, seenTopics.Count);
+                job.Results.Count, discoveryConfigs.Count, seenTopics.Count);
         }
         catch (Exception ex)
         {
@@ -163,7 +164,7 @@ public sealed class MqttDeviceDiscovery
     // Public and static so the whole heuristic is testable against captured payloads without a
     // broker anywhere in the picture - the same reason MqttTopics is split out of MqttPublisher.
     public static IReadOnlyList<DeviceCandidate> BuildCandidates(
-        IReadOnlyDictionary<string, string> homeAssistantConfigs,
+        IReadOnlyDictionary<string, string> discoveryConfigs,
         IEnumerable<string> observedTopics,
         string discoveryPrefix,
         IReadOnlySet<string> existingCommandTopics,
@@ -172,14 +173,27 @@ public sealed class MqttDeviceDiscovery
         var candidates = new List<DeviceCandidate>();
         var claimedTopics = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var (topic, payload) in homeAssistantConfigs)
+        void Claim(DeviceCandidate candidate)
         {
-            if (!IsDiscoveryConfigTopic(topic, discoveryPrefix)) continue;
-            if (ParseHomeAssistantConfig(topic, payload, existingCommandTopics) is not { } candidate) continue;
-
             candidates.Add(candidate);
             claimedTopics.Add(candidate.CommandTopic);
             claimedTopics.Add(candidate.StateTopic);
+        }
+
+        // Both formats land on a topic ending in /config, so which parser applies is decided by
+        // the rest of the topic rather than by asking the user which firmware they run.
+        foreach (var (topic, payload) in discoveryConfigs)
+        {
+            if (IsDiscoveryConfigTopic(topic, discoveryPrefix))
+            {
+                if (ParseHomeAssistantConfig(topic, payload, existingCommandTopics) is { } candidate)
+                    Claim(candidate);
+            }
+            else if (IsTasmotaDiscoveryTopic(topic))
+            {
+                foreach (var candidate in ParseTasmotaDiscoveryConfig(payload, existingCommandTopics))
+                    Claim(candidate);
+            }
         }
 
         // Anything already described by a discovery config is skipped here - a Tasmota device
@@ -263,6 +277,130 @@ public sealed class MqttDeviceDiscovery
             BrightnessScale: brightnessScale,
             Source: DeviceTopics.SourceHomeAssistantDiscovery,
             AlreadyAdded: commandTopic is not null && existingCommandTopics.Contains(commandTopic));
+    }
+
+    // tasmota/discovery/<mac>/config - a fixed prefix, unlike Home Assistant's configurable one,
+    // because Tasmota doesn't let it be changed.
+    private static bool IsTasmotaDiscoveryTopic(string topic)
+    {
+        var segments = topic.Split('/');
+        return segments.Length == 4 &&
+               string.Equals(segments[0], "tasmota", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(segments[1], "discovery", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(segments[3], "config", StringComparison.Ordinal);
+    }
+
+    // Tasmota's native discovery (SetOption19 0 - the default, and what a device that has never
+    // been paired with Home Assistant publishes). It describes the whole device rather than one
+    // entity, and crucially never states its topics outright: they have to be assembled from the
+    // FullTopic template. A switch with a customised FullTopic - "office/%topic%/%prefix%/"
+    // instead of the stock "%prefix%/%topic%/" - is invisible to every other strategy here,
+    // because the sweep's hardcoded "stat/" prefix will never match it.
+    private static List<DeviceCandidate> ParseTasmotaDiscoveryConfig(
+        string payload, IReadOnlySet<string> existingCommandTopics)
+    {
+        var candidates = new List<DeviceCandidate>();
+
+        JsonElement root;
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            root = document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return candidates;
+        }
+
+        if (root.ValueKind != JsonValueKind.Object) return candidates;
+
+        var topic = ReadString(root, "t");
+        var fullTopic = ReadString(root, "ft");
+        if (string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(fullTopic)) return candidates;
+
+        // tp is [cmnd, stat, tele]. All three are user-settable, so none can be assumed.
+        var prefixes = ReadStringArray(root, "tp");
+        if (prefixes.Count < 3 || prefixes.Take(3).Any(string.IsNullOrWhiteSpace)) return candidates;
+
+        var hostname = ReadString(root, "hn") ?? string.Empty;
+        var mac = ReadString(root, "mac") ?? string.Empty;
+        var commandBase = ExpandFullTopic(fullTopic!, prefixes[0]!, topic!, hostname, mac);
+        var stateBase = ExpandFullTopic(fullTopic!, prefixes[1]!, topic!, hostname, mac);
+        var telemetryBase = ExpandFullTopic(fullTopic!, prefixes[2]!, topic!, hostname, mac);
+
+        // state is [off, on, toggle, hold] - a device can be taught to answer to something other
+        // than ON/OFF, and it ignores any payload it wasn't taught.
+        var states = ReadStringArray(root, "state");
+        var payloadOff = states.Count > 0 && !string.IsNullOrWhiteSpace(states[0]) ? states[0]! : "OFF";
+        var payloadOn = states.Count > 1 && !string.IsNullOrWhiteSpace(states[1]) ? states[1]! : "ON";
+
+        // rl marks which of the 32 relay slots are populated, and a slot set to 2 drives a light
+        // rather than a plain relay. lt_st is the light subtype: non-zero means there's a Dimmer.
+        var relays = ReadIntArray(root, "rl");
+        var lightSubType = ReadInt(root, "lt_st") ?? 0;
+        var friendlyNames = ReadStringArray(root, "fn");
+        var deviceName = ReadString(root, "dn") ?? (string.IsNullOrWhiteSpace(hostname) ? "Tasmota" : hostname);
+
+        var activeRelays = relays
+            .Select((value, index) => (Value: value, Index: index))
+            .Where(relay => relay.Value != 0)
+            .ToList();
+
+        foreach (var (value, index) in activeRelays)
+        {
+            // A single-relay device answers on POWER; a multi-relay one on POWER1..POWERn.
+            var suffix = activeRelays.Count > 1
+                ? (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : string.Empty;
+            var command = "POWER" + suffix;
+
+            var friendlyName = friendlyNames.ElementAtOrDefault(index);
+            var name = !string.IsNullOrWhiteSpace(friendlyName) ? friendlyName! : deviceName;
+            if (activeRelays.Count > 1 && string.Equals(name, deviceName, StringComparison.Ordinal))
+                name = $"{deviceName} {index + 1}";
+
+            var isLight = lightSubType > 0 || value == 2;
+            var commandTopic = commandBase + command;
+
+            candidates.Add(new DeviceCandidate(
+                SuggestedName: name,
+                Kind: isLight ? "light" : "switch",
+                CommandTopic: commandTopic,
+                StateTopic: stateBase + command,
+                AvailabilityTopic: telemetryBase + "LWT",
+                PayloadOn: payloadOn,
+                PayloadOff: payloadOff,
+                Schema: DeviceTopics.SchemaRaw,
+                StateValueTemplate: string.Empty,
+                SupportsBrightness: lightSubType > 0,
+                BrightnessCommandTopic: lightSubType > 0 ? commandBase + "Dimmer" : string.Empty,
+                // Tasmota reports the dimmer level inside the stat/.../RESULT JSON blob rather
+                // than on a topic of its own, which is not a bare number and so nothing this app
+                // can read a level off. Commands still work; only the readback is missing.
+                BrightnessStateTopic: string.Empty,
+                // Tasmota's Dimmer is already a percentage, unlike Home Assistant's 0-255.
+                BrightnessScale: 100,
+                Source: DeviceTopics.SourceTasmotaDiscovery,
+                AlreadyAdded: existingCommandTopics.Contains(commandTopic)));
+        }
+
+        return candidates;
+    }
+
+    // Tasmota's FullTopic is a template, not a topic - "%prefix%/%topic%/" out of the box, but
+    // freely rearranged by the user. %id% is the last six digits of the MAC.
+    private static string ExpandFullTopic(
+        string fullTopic, string prefix, string topic, string hostname, string mac)
+    {
+        var expanded = fullTopic
+            .Replace("%prefix%", prefix, StringComparison.OrdinalIgnoreCase)
+            .Replace("%topic%", topic, StringComparison.OrdinalIgnoreCase)
+            .Replace("%hostname%", hostname, StringComparison.OrdinalIgnoreCase)
+            .Replace("%id%", mac.Length >= 6 ? mac[^6..] : mac, StringComparison.OrdinalIgnoreCase);
+
+        // Tasmota keeps a trailing separator so the command name can simply be appended, but a
+        // hand-edited FullTopic doesn't always have one.
+        return expanded.EndsWith('/') ? expanded : expanded + "/";
     }
 
     // The fallback for devices that never announce themselves: pair up the command and state
@@ -385,6 +523,28 @@ public sealed class MqttDeviceDiscovery
             }
         }
         return null;
+    }
+
+    // Position is meaningful in every array Tasmota publishes - fn[2] is the name of relay 3 -
+    // so entries that aren't strings become nulls in place rather than being skipped.
+    private static List<string?> ReadStringArray(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out var element) || element.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return element.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null)
+            .ToList();
+    }
+
+    private static List<int> ReadIntArray(JsonElement root, string key)
+    {
+        if (!root.TryGetProperty(key, out var element) || element.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return element.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var value) ? value : 0)
+            .ToList();
     }
 
     // "stat/kitchen_lamp/POWER" -> "Kitchen Lamp". Only ever a suggestion the user can edit.
