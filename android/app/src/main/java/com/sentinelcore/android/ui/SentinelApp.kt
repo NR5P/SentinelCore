@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
@@ -46,6 +47,9 @@ import com.sentinelcore.android.ui.screens.CameraDiscoveryScreen
 import com.sentinelcore.android.ui.screens.CameraEditScreen
 import com.sentinelcore.android.ui.screens.CameraZoneEditorScreen
 import com.sentinelcore.android.ui.screens.DetailHeader
+import com.sentinelcore.android.ui.screens.DeviceDiscoveryScreen
+import com.sentinelcore.android.ui.screens.DeviceEditScreen
+import com.sentinelcore.android.ui.screens.DeviceHubScreen
 import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.EventFeedScreen
 import com.sentinelcore.android.ui.screens.KnownFaceAdminScreen
@@ -156,7 +160,7 @@ private fun AppShell(
                 containerColor = SentinelBackground,
                 bottomBar = {
                     NavigationBar(containerColor = SentinelPanel) {
-                        AppSection.entries.forEach { item ->
+                        AppSection.visible(state.deviceHubEnabled).forEach { item ->
                             NavigationBarItem(
                                 selected = selectedSection == item,
                                 onClick = { onSelectSection(item) },
@@ -250,6 +254,56 @@ private fun SentinelNavHost(
             }
         }
 
+        composable(AppSection.DEVICES.route) {
+            DeviceHubScreen(
+                state = state,
+                model = model,
+                onAddDevice = { navController.navigate("devices/new") },
+                onEditDevice = { navController.navigate("devices/${it.id}") },
+                onDiscover = { navController.navigate("devices/discover") },
+            )
+        }
+        composable("devices/new") {
+            DeviceEditScreen(
+                model = model,
+                deviceId = null,
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() },
+            )
+        }
+        composable("devices/discover") {
+            DeviceDiscoveryScreen(
+                model = model,
+                onBack = { navController.popBackStack() },
+                // Review opens the add form pre-filled with what the scan found. The candidate is
+                // stashed on the ViewModel rather than serialised through the route, since a
+                // command topic can contain slashes that would break the path.
+                onReview = { candidate ->
+                    model.stageDiscoveredDevice(candidate)
+                    navController.navigate("devices/review")
+                },
+            )
+        }
+        composable("devices/review") {
+            DeviceEditScreen(
+                model = model,
+                deviceId = null,
+                prefill = model.stagedDiscoveredDevice(),
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack(AppSection.DEVICES.route, inclusive = false) },
+            )
+        }
+        composable(
+            route = "devices/{deviceId}",
+            arguments = listOf(navArgument("deviceId") { type = NavType.StringType }),
+        ) { entry ->
+            DeviceEditScreen(
+                model = model,
+                deviceId = entry.arguments?.getString("deviceId"),
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() },
+            )
+        }
         composable(AppSection.SETTINGS.route) {
             SettingsScreen(
                 state = state,
@@ -413,7 +467,7 @@ private fun SentinelNavigationRail(
             }
         },
     ) {
-        AppSection.entries.forEach { item ->
+        AppSection.visible(state.deviceHubEnabled).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { onSelected(item) },
@@ -438,5 +492,15 @@ private enum class AppSection(
     TIMELINE("Timeline", Icons.Default.History, "timeline"),
     LIVE("Live", Icons.Default.LiveTv, "live"),
     TRIGGERS("Triggers", Icons.Default.Radar, "triggers"),
+    DEVICES("Devices", Icons.Default.Lightbulb, "devices"),
     SETTINGS("Settings", Icons.Default.Settings, "settings"),
+    ;
+
+    companion object {
+        // The Device Hub is off by default and only appears once it's switched on server-side.
+        // Compose's NavigationBar has no five-item limit like an iPhone tab bar, so this is a
+        // plain filter with no other destination displaced.
+        fun visible(deviceHubEnabled: Boolean): List<AppSection> =
+            entries.filter { it != DEVICES || deviceHubEnabled }
+    }
 }

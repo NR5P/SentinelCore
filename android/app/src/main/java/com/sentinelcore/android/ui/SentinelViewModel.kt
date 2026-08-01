@@ -17,8 +17,13 @@ import com.sentinelcore.android.data.CameraInput
 import com.sentinelcore.android.data.CameraProbeRequest
 import com.sentinelcore.android.data.CameraProbeResult
 import com.sentinelcore.android.data.ConnectionState
+import com.sentinelcore.android.data.DeviceCandidate
+import com.sentinelcore.android.data.DeviceScanSnapshot
+import com.sentinelcore.android.data.DeviceScanStartResult
 import com.sentinelcore.android.data.DiagnosticEntry
 import com.sentinelcore.android.data.DiagnosticLevel
+import com.sentinelcore.android.data.HubDevice
+import com.sentinelcore.android.data.HubDeviceInput
 import com.sentinelcore.android.data.KnownFace
 import com.sentinelcore.android.data.PromptProfileName
 import com.sentinelcore.android.data.ScanInterface
@@ -63,6 +68,11 @@ data class SentinelUiState(
     val cameras: List<Camera> = emptyList(),
     val accounts: List<Account> = emptyList(),
     val knownFaces: List<KnownFace> = emptyList(),
+    // Whether the server has the Device Hub switched on - drives whether its bottom-bar
+    // destination exists at all.
+    val deviceHubEnabled: Boolean = false,
+    val devices: List<HubDevice> = emptyList(),
+    val deviceBrokerConnected: Boolean = true,
     val isLoading: Boolean = false,
     val lastError: String? = null,
     val diagnostics: List<DiagnosticEntry> = emptyList(),
@@ -244,6 +254,13 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                         .onSuccess { value -> _state.update { it.copy(cameras = value) } }
                         .onFailure(currentErrors::add)
                 },
+                // Deliberately not added to currentErrors: an older server has no such
+                // endpoint, and a 404 there means "no Device Hub", not a failed connection.
+                viewModelScope.async {
+                    runCatching { repository.deviceHubEnabled() }
+                        .onSuccess { value -> _state.update { it.copy(deviceHubEnabled = value) } }
+                        .onFailure { _state.update { it.copy(deviceHubEnabled = false) } }
+                },
             )
             requests.awaitAll()
 
@@ -361,6 +378,95 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         val value = repository.cameras()
         _state.update { it.copy(cameras = value) }
     }
+
+    // ---------------- Device Hub ----------------
+
+    suspend fun refreshDevices() {
+        val value = repository.devices()
+        _state.update { it.copy(devices = value) }
+    }
+
+    // The light poll while the Device Hub screen is open - only the live fields change, so the
+    // rest of each device is left alone rather than re-fetched.
+    suspend fun refreshDeviceStates() {
+        val snapshot = repository.deviceStates()
+        _state.update { current ->
+            current.copy(
+                deviceBrokerConnected = snapshot.connected,
+                devices = current.devices.map { device ->
+                    snapshot.devices.firstOrNull { it.id == device.id }?.let { state ->
+                        device.copy(
+                            power = state.power,
+                            brightness = state.brightness,
+                            available = state.available,
+                        )
+                    } ?: device
+                },
+            )
+        }
+    }
+
+    /** Returns null when the device confirmed the change, or a message when it didn't. */
+    suspend fun sendDeviceCommand(id: String, action: String? = null, brightness: Int? = null): String? {
+        val result = repository.sendDeviceCommand(id, action, brightness)
+        _state.update { current ->
+            current.copy(
+                devices = current.devices.map { device ->
+                    if (device.id == id) {
+                        device.copy(power = result.power, brightness = result.brightness ?: device.brightness)
+                    } else {
+                        device
+                    }
+                },
+            )
+        }
+        return if (result.acknowledged) null else "The device did not confirm the change."
+    }
+
+    suspend fun createDevice(input: HubDeviceInput): HubDevice {
+        val created = repository.createDevice(input)
+        _state.update { it.copy(devices = it.devices + created) }
+        return created
+    }
+
+    suspend fun updateDevice(id: String, input: HubDeviceInput): HubDevice {
+        val updated = repository.updateDevice(id, input)
+        _state.update { current ->
+            current.copy(devices = current.devices.map { if (it.id == id) updated else it })
+        }
+        return updated
+    }
+
+    // Optimistic remove with rollback on failure, matching deleteCamera below.
+    suspend fun deleteDevice(device: HubDevice) {
+        val previous = _state.value.devices
+        _state.update { it.copy(devices = it.devices.filterNot { existing -> existing.id == device.id }) }
+        try {
+            repository.deleteDevice(device.id)
+        } catch (error: Exception) {
+            _state.update { it.copy(devices = previous) }
+            throw error
+        }
+    }
+
+    suspend fun startDeviceScan(): DeviceScanStartResult = repository.startDeviceScan()
+
+    suspend fun deviceScanStatus(scanId: String): DeviceScanSnapshot = repository.deviceScanStatus(scanId)
+
+    suspend fun addDiscoveredDevice(candidate: DeviceCandidate): HubDevice =
+        createDevice(HubDeviceInput.from(candidate))
+
+    // Handed from the discovery screen to the edit screen. Kept here rather than serialised into
+    // the navigation route because a command topic contains slashes, which would break the path.
+    private var stagedDevice: HubDeviceInput? = null
+
+    fun stageDiscoveredDevice(candidate: DeviceCandidate) {
+        stagedDevice = HubDeviceInput.from(candidate)
+    }
+
+    fun stagedDiscoveredDevice(): HubDeviceInput? = stagedDevice
+
+    fun device(id: String): HubDevice? = _state.value.devices.firstOrNull { it.id == id }
 
     suspend fun createCamera(input: CameraInput): Camera {
         val created = repository.createCamera(input)

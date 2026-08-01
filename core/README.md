@@ -242,11 +242,19 @@ Runs on port 3320 (port 332 itself is a privileged port on Linux and would need 
 
 ### Settings
 
-The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `SentinelCore.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Discord alerts, Blue Iris, self-monitoring, quiet hours, and the webhook. Each section validates and saves independently.
+The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `SentinelCore.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Discord alerts, Blue Iris, self-monitoring, quiet hours, the webhook, and the Device Hub. Each section validates and saves independently.
 
 Everything shown is picked up live via `IOptionsMonitor<T>` - .NET's built-in file-watch reload on `appsettings.json` - so saving a change takes effect within a couple seconds, no restart. Two things are deliberately left out of the UI because they can't be: `Bridge:QueueCapacity` and `Bridge:DataDirectory` size an in-memory queue and open a SQLite connection once at startup, so changing them always needs a restart regardless of how the value is stored. A few `*BaseUrl`/`*TimeoutSeconds` fields are similarly baked into an HTTP client at startup and are also left out rather than half-supported.
 
 Run it interactively with `dotnet run --project SentinelCore.Web/SentinelCore.Web.csproj`, or install it as a systemd service the same way as the main app - see `systemd/sentinelcore-web.service`. Meant for LAN-only access; nothing about it is designed to be exposed to the Internet.
+
+## Device Hub
+
+Off by default. When `DeviceHub:Enabled` is on (and `Mqtt:Enabled` with it), a **DEVICE HUB** tab appears in the dashboard and in the iOS/macOS, Apple TV, and Android apps, for switching lights, plugs, fans, covers, and locks on the same MQTT broker the alert pipeline already publishes to. This is the only part of the app that *subscribes* to MQTT rather than only publishing: `MqttDeviceBus` runs its own client (separate from `MqttPublisher`, so device traffic can't disturb alert publishing), tracks each device's state, and sends commands. `MqttDeviceDiscovery` finds devices two ways - by reading the Home Assistant discovery configs that Zigbee2MQTT/Tasmota/ESPHome/Shelly publish, and by sweeping topics that look like a switch - and offers them as candidates the user chooses to add.
+
+Devices are stored in `devices.db` as raw topics and payloads rather than per-vendor integrations, so anything that speaks MQTT is describable. `DeviceTopics` holds all the payload building and parsing, deliberately connection-free so every vendor quirk is testable without a broker.
+
+Any signed-in account can switch a device; adding, editing, deleting, and discovery are admin-only. See `docs/USER_GUIDE.md` section 13a.
 
 ## The additional action
 

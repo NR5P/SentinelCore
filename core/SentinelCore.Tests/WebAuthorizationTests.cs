@@ -124,6 +124,73 @@ public sealed class WebAuthorizationTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, administering.StatusCode);
     }
 
+    // The Device Hub deliberately splits differently from every other feature: a Viewer can
+    // switch a light on (that's the point of the tab for a household member), but only an Admin
+    // can point a device at an arbitrary MQTT topic or sweep the whole broker.
+    [Fact]
+    public async Task AuthEnabled_ViewerSession_CanReadAndCommandDevicesButNotConfigureThem()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+            await accounts.CreateAsync("admin", SentinelCore.Web.PasswordHasher.Hash("correct horse battery"), AccountRole.Admin, null, ct);
+            await accounts.CreateAsync("viewer", SentinelCore.Web.PasswordHasher.Hash("watch-only-please"), AccountRole.Viewer, null, ct);
+        }
+        await EnableLoginAsync(ct);
+
+        using var client = factory.CreateClient();
+        using var login = await client.PostAsJsonAsync("/api/auth/login", new { Username = "viewer", Password = "watch-only-please" }, ct);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        // Allowed for a Viewer. These forward to the main app, which isn't running under this
+        // test host, so the proxy's own 502/503 is the success signal here - what matters is
+        // that authorization let the request through rather than short-circuiting to 403.
+        foreach (var path in new[] { "/api/device-hub/enabled", "/api/devices", "/api/devices/state" })
+        {
+            using var allowed = await client.GetAsync(path, ct);
+            Assert.NotEqual(HttpStatusCode.Forbidden, allowed.StatusCode);
+        }
+
+        using var command = await client.PostAsJsonAsync($"/api/devices/{Guid.NewGuid()}/command", new { Action = "on" }, ct);
+        Assert.NotEqual(HttpStatusCode.Forbidden, command.StatusCode);
+
+        // Refused for a Viewer.
+        using var create = await client.PostAsJsonAsync("/api/devices", new { Name = "Sneaky" }, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
+
+        using var update = await client.PutAsJsonAsync($"/api/devices/{Guid.NewGuid()}", new { Name = "Sneaky" }, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, update.StatusCode);
+
+        using var delete = await client.DeleteAsync($"/api/devices/{Guid.NewGuid()}", ct);
+        Assert.Equal(HttpStatusCode.Forbidden, delete.StatusCode);
+
+        using var discover = await client.PostAsync("/api/devices/discover", content: null, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, discover.StatusCode);
+
+        using var discoverStatus = await client.GetAsync($"/api/devices/discover/{Guid.NewGuid()}", ct);
+        Assert.Equal(HttpStatusCode.Forbidden, discoverStatus.StatusCode);
+    }
+
+    [Fact]
+    public async Task AuthEnabled_NoCookie_CannotCommandADevice()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+            await accounts.CreateAsync("admin", SentinelCore.Web.PasswordHasher.Hash("correct horse battery"), AccountRole.Admin, null, ct);
+        }
+        await EnableLoginAsync(ct);
+
+        using var client = factory.CreateClient();
+        using var response = await client.PostAsJsonAsync($"/api/devices/{Guid.NewGuid()}/command", new { Action = "on" }, ct);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     [Fact]
     public async Task AuthEnabled_SoleAdmin_CannotDemoteOrDeleteThemselves()
     {

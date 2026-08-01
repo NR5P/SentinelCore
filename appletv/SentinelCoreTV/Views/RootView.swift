@@ -12,7 +12,7 @@ struct RootView: View {
                 LoginView()
             } else {
                 TabView(selection: $selection) {
-                    ForEach(AppSection.allCases) { section in
+                    ForEach(AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled)) { section in
                         NavigationStack {
                             sectionView(section)
                                 .navigationDestination(item: $model.selectedEvent) { event in
@@ -43,19 +43,21 @@ struct RootView: View {
         case .live: LiveCamerasView(isActive: selection == .live)
         case .alerts: AlertFeedView()
         case .triggers: TriggerFeedView()
+        case .devices: DeviceHubView(isActive: selection == .devices)
         case .settings: SettingsView()
         }
     }
 }
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case live, alerts, triggers, settings
+    case live, alerts, triggers, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .live: "Live"
         case .alerts: "Alerts"
         case .triggers: "Triggers"
+        case .devices: "Device Hub"
         case .settings: "Settings"
         }
     }
@@ -64,8 +66,15 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .live: "video.fill"
         case .alerts: "shield.lefthalf.filled"
         case .triggers: "wave.3.right.circle.fill"
+        case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
+    }
+
+    // The Device Hub is off by default and only appears once it's switched on server-side.
+    // tvOS has no five-tab limit like the iPhone tab bar, so this is a plain filter.
+    static func visibleCases(deviceHubEnabled: Bool) -> [AppSection] {
+        allCases.filter { $0 != .devices || deviceHubEnabled }
     }
 }
 

@@ -363,6 +363,7 @@ const views = {
   cameras: document.getElementById("view-cameras"),
   triggers: document.getElementById("view-triggers"),
   automations: document.getElementById("view-automations"),
+  devices: document.getElementById("view-devices"),
   docs: document.getElementById("view-docs"),
   settings: document.getElementById("view-settings"),
   accounts: document.getElementById("view-accounts")
@@ -380,6 +381,8 @@ for (const tab of tabs) {
 
     if (currentView === "live" && target !== "live") window.GateWatchCameras.hideLive();
     if (currentView === "timeline" && target !== "timeline") window.GateWatchTimeline.stop();
+    // Device state polls every few seconds while the tab is open - stop it the moment it isn't.
+    if (currentView === "devices" && target !== "devices") window.GateWatchDevices.stop();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -393,6 +396,7 @@ for (const tab of tabs) {
     if (target === "live") window.GateWatchCameras.showLive();
     if (target === "triggers") window.GateWatchTriggers.load();
     if (target === "automations") window.GateWatchAutomations.load();
+    if (target === "devices") window.GateWatchDevices.load();
     if (target === "docs") window.GateWatchDocs.load();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;

@@ -7,6 +7,7 @@ window.GateWatchAuth = (function () {
   const logoutBtn = document.getElementById("logout-btn");
   const accountsTab = document.getElementById("tab-accounts");
   const settingsTab = document.getElementById("tab-settings");
+  const devicesTab = document.getElementById("tab-devices");
 
   function showErrors(messages) {
     errorsEl.innerHTML = "";
@@ -50,6 +51,18 @@ window.GateWatchAuth = (function () {
     window.location.reload();
   });
 
+  async function checkDeviceHub() {
+    try {
+      const response = await fetch("/api/device-hub/enabled");
+      if (!response.ok) return;
+      const { enabled } = await response.json();
+      devicesTab.classList.toggle("hidden", !enabled);
+    } catch {
+      // Leave the tab hidden - same fail-closed-on-a-feature-flag reasoning as check() below,
+      // which deliberately fails open only for the login overlay.
+    }
+  }
+
   async function check() {
     try {
       const response = await fetch("/api/auth/status");
@@ -61,6 +74,10 @@ window.GateWatchAuth = (function () {
       // /api/settings is Admin-only server-side once login is required - hide the tab for a
       // signed-in Viewer rather than let them click through to a raw 403.
       settingsTab.classList.toggle("hidden", payload.enabled && payload.role !== "Admin");
+      // The Device Hub tab only exists when it's switched on in Settings. Unlike the two above
+      // this isn't a role decision - a Viewer gets the tab too, they just can't add or edit
+      // devices there - so it needs its own (non-admin) endpoint to ask.
+      if (payload.authenticated || !payload.enabled) await checkDeviceHub();
       if (payload.authenticated) return;
 
       overlay.classList.remove("hidden");

@@ -35,6 +35,10 @@ final class AppModel: ObservableObject {
     @Published var cameras: [Camera] = []
     @Published var accounts: [Account] = []
     @Published var knownFaces: [KnownFace] = []
+    // Whether the server has the Device Hub switched on. Drives whether the section exists at
+    // all - see AppSection.visibleCases in RootView.
+    @Published private(set) var deviceHubEnabled = false
+    @Published var devices: [HubDevice] = []
     @Published var isLoading = false
     @Published var lastError: String?
     @Published var diagnostics: [DiagnosticEntry] = []
@@ -194,6 +198,14 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             firstError = firstError ?? error
+        }
+        // Not folded into firstError: an older server has no such endpoint, and a 404 there
+        // must not read as a failed connection - it just means no Device Hub.
+        do {
+            deviceHubEnabled = try await client.deviceHubEnabled().enabled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            deviceHubEnabled = false
         }
 
         if let firstError {

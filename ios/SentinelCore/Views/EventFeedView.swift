@@ -4,6 +4,11 @@ struct EventFeedView: View {
     @EnvironmentObject private var model: AppModel
     @State private var search = ""
     @State private var notifiedOnly = false
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    // Only used on iPhone, where enabling the Device Hub pushes Settings off the tab bar.
+    @State private var showingSettings = false
+    #endif
 
     private var filteredEvents: [SecurityEvent] {
         model.events.filter { event in
@@ -68,7 +73,32 @@ struct EventFeedView: View {
                 }
                 .disabled(model.isLoading)
             }
+            #if os(iOS)
+            // An iPhone tab bar only holds five items, and the Device Hub takes the fifth when
+            // it's enabled - see AppSection.compactTabCases. Settings then lives here instead so
+            // it stays one tap away. On iPad this whole toolbar sits beside a sidebar that still
+            // lists Settings, so the button would be a duplicate.
+            if model.deviceHubEnabled && horizontalSizeClass == .compact {
+                ToolbarItem {
+                    Button { showingSettings = true } label: {
+                        Label("Settings", systemImage: "gearshape.fill")
+                    }
+                }
+            }
+            #endif
         }
+        #if os(iOS)
+        .sheet(isPresented: $showingSettings) {
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingSettings = false }
+                        }
+                    }
+            }
+        }
+        #endif
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))

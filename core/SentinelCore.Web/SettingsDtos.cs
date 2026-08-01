@@ -364,6 +364,22 @@ public sealed class MqttSettingsDto
     public bool OnlyWhenNotificationRecommended { get; set; }
 }
 
+public sealed class DeviceHubSettingsDto
+{
+    // Strictly an add-on to MQTT - the settings endpoint refuses to turn this on while the Mqtt
+    // section is off, since there'd be no broker connection to command anything through.
+    public bool Enabled { get; set; }
+
+    [Range(10, 86400)]
+    public int StateTimeoutSeconds { get; set; } = 90;
+
+    [Range(2, 60)]
+    public int DiscoverySeconds { get; set; } = 10;
+
+    [Range(1, 60)]
+    public int CommandTimeoutSeconds { get; set; } = 5;
+}
+
 public sealed class WebhookSettingsDto
 {
     public bool Enabled { get; set; }

@@ -606,6 +606,15 @@ Not needed if you're pointing this app at a broker that already exists elsewhere
 Assistant's own Mosquitto add-on) - only the outbound connection from this app to that broker
 matters then, and outbound connections aren't affected by `ufw`'s default incoming-only rules.
 
+**Set broker credentials if you use the Device Hub.** The built-in broker binds to every
+interface, and with `Mqtt:Username` blank it accepts anonymous connections from anywhere the
+firewall rule above allows - which is fine when the only thing on it is camera event topics,
+but the Device Hub (USER_GUIDE section 13a) puts light and lock control on that same broker.
+Set `Mqtt:Username` and `Mqtt:Password` and the built-in broker will require them; leave them
+blank and it stays open exactly as before, so existing Home Assistant setups keep working
+untouched. For an external broker reached over an untrusted network, set `Mqtt:UseTls` as well -
+this app's outbound connections then use TLS.
+
 If you installed the HomeKit sidecar (section 8a), open its accessory port so iPhones on your
 LAN can reach it — they connect to it directly, mDNS only tells them where to look:
 

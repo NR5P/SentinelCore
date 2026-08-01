@@ -128,6 +128,10 @@ builder.Services.AddOptions<MqttOptions>()
     .Bind(builder.Configuration.GetSection(MqttOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<DeviceHubOptions>()
+    .Bind(builder.Configuration.GetSection(DeviceHubOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<HomeKitOptions>()
     .Bind(builder.Configuration.GetSection(HomeKitOptions.SectionName))
     .ValidateDataAnnotations()
@@ -192,6 +196,15 @@ builder.Services.AddSingleton<MqttPublisher>();
 builder.Services.AddSingleton<IMqttPublisher>(sp => sp.GetRequiredService<MqttPublisher>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttPublisher>());
 builder.Services.AddSingleton<IAlertAction, MqttAlertAction>();
+
+// The Device Hub's own MQTT client - separate from MqttPublisher's so device state traffic and
+// the resubscribes that follow every device edit can't disturb alert publishing. Registered as
+// a singleton the endpoints resolve directly as well as a hosted service, the same shape
+// MqttPublisher above already uses.
+builder.Services.AddSingleton<IDeviceStore, SqliteDeviceStore>();
+builder.Services.AddSingleton<MqttDeviceBus>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttDeviceBus>());
+builder.Services.AddSingleton<MqttDeviceDiscovery>();
 
 builder.Services.AddSingleton<IAutomationRuleStore, SqliteAutomationRuleStore>();
 
@@ -573,6 +586,7 @@ app.MapPost("/api/queue/clear", async (IAlertQueue queue, IEventStore eventStore
 // dashboard's own ask box (see SentinelCore.Web/ChatEndpoints.cs) doesn't need a
 // Telegram account. Already covered by ApiKeyMiddleware above like every other /api route.
 app.MapAutomationRuleEndpoints();
+app.MapDeviceHubEndpoints();
 
 app.MapPost("/api/chat/ask", async (ChatQuestionRequest request, ChatAnswerService chatAnswers, CancellationToken ct) =>
 {

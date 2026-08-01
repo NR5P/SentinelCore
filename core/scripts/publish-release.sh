@@ -94,6 +94,10 @@ credential_sections = {
     "BlueIris": ["BaseUrl", "Username", "Password"],
     "Telegram": ["BotToken", "ChatId"],
     "Discord": ["WebhookUrl"],
+    # No credentials of its own, but it's still this maintainer's own choice rather than a
+    # shipped default - and its devices.db isn't in the release, so leaving it on would greet a
+    # stranger with an empty Device Hub tab they never asked for.
+    "DeviceHub": [],
 }
 for section_name, fields in credential_sections.items():
     section = main_settings.get(section_name)

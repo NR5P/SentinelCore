@@ -378,6 +378,35 @@ public sealed class MqttOptions
     public bool OnlyWhenNotificationRecommended { get; init; }
 }
 
+// The Device Hub - controlling lights/switches/etc over the same broker MqttOptions above
+// configures, rather than only publishing camera events to it. Strictly an add-on to MQTT: with
+// Mqtt:Enabled off there's no broker connection to command anything through, so the settings
+// endpoint refuses to turn this on until MQTT itself is on (see SettingsEndpoints).
+public sealed class DeviceHubOptions
+{
+    public const string SectionName = "DeviceHub";
+
+    public bool Enabled { get; init; }
+
+    // How long a device with no availability topic can go silent before it's shown as
+    // unavailable. Devices that do publish availability are judged by that instead - see
+    // MqttDeviceBus.GetState - because most devices only publish when something changes, and a
+    // lamp that has simply been on all day would otherwise read as offline.
+    [Range(10, 86400)]
+    public int StateTimeoutSeconds { get; init; } = 90;
+
+    // How long a discovery scan listens to the broker before reporting what it found. Long
+    // enough for retained Home Assistant discovery configs (which arrive immediately) plus a
+    // window for chatty devices to announce themselves on their own schedule.
+    [Range(2, 60)]
+    public int DiscoverySeconds { get; init; } = 10;
+
+    // How long to wait for a non-optimistic device to echo its new state back before the command
+    // is reported as un-acknowledged. The publish itself has already happened either way.
+    [Range(1, 60)]
+    public int CommandTimeoutSeconds { get; init; } = 5;
+}
+
 public sealed class HomeKitOptions
 {
     public const string SectionName = "HomeKit";

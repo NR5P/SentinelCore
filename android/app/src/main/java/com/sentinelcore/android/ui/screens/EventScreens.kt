@@ -364,6 +364,10 @@ fun ScreenHeader(
     title: String,
     state: SentinelUiState,
     onRefresh: (() -> Unit)? = null,
+    // Extra buttons alongside Refresh, for top-level screens that have their own actions - the
+    // Device Hub's add/discover, for instance. Empty by default, so existing callers are
+    // unchanged.
+    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
 ) {
     TopAppBar(
         title = {
@@ -373,6 +377,7 @@ fun ScreenHeader(
             }
         },
         actions = {
+            actions()
             if (onRefresh != null) {
                 IconButton(onClick = onRefresh, enabled = !state.isLoading) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh")

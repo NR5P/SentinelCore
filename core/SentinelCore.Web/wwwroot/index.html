@@ -30,6 +30,7 @@
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones. Separate from Blue Iris.">cameras</button>
       <button class="tab" data-view="triggers" data-tip-below data-tip-right data-tip="Motion caught inside a trigger zone. Click a thumbnail to view the snapshot or play its clip.">triggers</button>
       <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
+      <button class="tab hidden" id="tab-devices" data-view="devices" data-tip-below data-tip-right data-tip="Switch lights, plugs, and other MQTT devices on and off. Only appears when the Device Hub is turned on in Settings.">device hub</button>
       <button class="tab" data-view="docs" data-tip-below data-tip-right data-tip="The full User Guide, Deployment guide, and Push Notifications setup - viewable as PDFs without leaving the dashboard.">docs</button>
       <button class="tab" id="tab-settings" data-view="settings" data-tip-below data-tip-right data-tip="Configuration for the Blue Iris bridge, AI model, and alerts. Changes apply live.">settings</button>
       <button class="tab hidden" id="tab-accounts" data-view="accounts" data-tip-below data-tip-right data-tip="Your account, and (for admins) every account signed in to this dashboard.">accounts</button>
@@ -278,6 +279,42 @@
       </div>
     </section>
 
+    <section id="view-devices" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">DEVICE_HUB</div>
+        <div class="toolbar-actions">
+          <span id="device-connection" class="event-count" data-tip-below data-tip-right data-tip="Whether this app is currently connected to your MQTT broker. Commands can't reach anything while this says disconnected."></span>
+          <button id="discover-devices-btn" class="btn" data-tip-below data-tip-right data-tip="Listen to the MQTT broker for devices that announce themselves, and for topics that look like a switch. Anything found is offered as a suggestion - nothing is added until you pick it.">discover</button>
+          <button id="add-device-btn" class="btn" data-tip-below data-tip-right data-tip="Add a device by hand, by entering the MQTT topics it listens and reports on.">+ add device</button>
+        </div>
+      </div>
+
+      <div id="device-form-wrap" class="settings-section hidden">
+        <div class="settings-section-body" style="display:flex;">
+          <div class="field-grid" id="device-form-fields"></div>
+          <div class="settings-section-footer">
+            <button id="device-save-btn" class="btn" data-tip="Save this device. It appears in the list below straight away.">save</button>
+            <button id="device-cancel-btn" class="btn" data-tip="Close this form and discard any changes you have made.">cancel</button>
+            <ul class="field-errors" id="device-form-errors"></ul>
+          </div>
+        </div>
+      </div>
+
+      <div id="device-discovery-wrap" class="settings-section hidden">
+        <div class="settings-section-body" style="display:flex;">
+          <div id="device-discovery-status" class="empty-state">scanning the broker&hellip;</div>
+          <div id="device-discovery-results"></div>
+          <div class="settings-section-footer">
+            <button id="device-discovery-close-btn" class="btn" data-tip="Close the scan results. Nothing is added unless you clicked add on it.">close</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="devices-root" class="device-grid">
+        <div class="empty-state">loading devices&hellip;</div>
+      </div>
+    </section>
+
     <section id="view-docs" class="view hidden">
       <div class="toolbar">
         <div class="toolbar-label">DOCS</div>
@@ -453,6 +490,7 @@
   <script src="cameras.js"></script>
   <script src="triggers.js"></script>
   <script src="automations.js"></script>
+  <script src="devices.js"></script>
   <script src="timeline.js"></script>
   <script src="docs.js"></script>
 </body>

@@ -31,6 +31,7 @@ public sealed record SettingsSnapshot(
     List<KnownVehicle>? KnownVehicles,
     List<KnownFace>? KnownFaces,
     MqttSettingsDto? Mqtt,
+    DeviceHubSettingsDto? DeviceHub,
     HomeKitSettingsDto? HomeKit,
     BugReportSettingsDto? BugReports,
     WebhookSettingsDto? Webhook,
@@ -176,6 +177,27 @@ public static class SettingsEndpoints
                     extra.Add("Broker Host is required when not running the embedded broker.");
             }));
 
+        // The one section whose validity depends on another one: the Device Hub controls devices
+        // over the MQTT connection the section above configures, so enabling it without MQTT
+        // would produce a tab whose every button fails. Checked here rather than in
+        // SaveSectionAsync's synchronous callback because it has to read the current Mqtt block.
+        settings.MapPut("/device-hub", async (DeviceHubSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            var errors = ValidateDataAnnotations(dto);
+
+            if (dto.Enabled)
+            {
+                var mqtt = await appSettings.GetSectionAsync<MqttSettingsDto>("Mqtt", ct);
+                if (mqtt is null || !mqtt.Enabled)
+                    errors.Add("Turn on the MQTT / Home Assistant section above first - the Device Hub controls devices over that same broker connection.");
+            }
+
+            if (errors.Count > 0) return Results.BadRequest(new { errors });
+
+            await appSettings.MergeSectionAsync("DeviceHub", dto, ct);
+            return Results.Ok(new { saved = true });
+        });
+
         settings.MapPut("/homekit", async (HomeKitSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "HomeKit", ct, extra =>
             {
@@ -308,6 +330,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<List<KnownVehicle>>("KnownVehicles", cancellationToken) ?? [],
         await settings.GetSectionAsync<List<KnownFace>>("KnownFaces", cancellationToken) ?? [],
         await settings.GetSectionAsync<MqttSettingsDto>("Mqtt", cancellationToken),
+        await settings.GetSectionAsync<DeviceHubSettingsDto>("DeviceHub", cancellationToken),
         await settings.GetSectionAsync<HomeKitSettingsDto>("HomeKit", cancellationToken),
         await settings.GetSectionAsync<BugReportSettingsDto>("BugReports", cancellationToken),
         await settings.GetSectionAsync<WebhookSettingsDto>("Webhook", cancellationToken),
@@ -346,6 +369,7 @@ public static class SettingsEndpoints
         // is needed if the photos themselves were lost.
         if (snapshot.KnownFaces is not null) await settings.ReplaceSectionAsync("KnownFaces", snapshot.KnownFaces, cancellationToken);
         if (snapshot.Mqtt is not null) await settings.MergeSectionAsync("Mqtt", snapshot.Mqtt, cancellationToken);
+        if (snapshot.DeviceHub is not null) await settings.MergeSectionAsync("DeviceHub", snapshot.DeviceHub, cancellationToken);
         if (snapshot.HomeKit is not null) await settings.MergeSectionAsync("HomeKit", snapshot.HomeKit, cancellationToken);
         if (snapshot.BugReports is not null) await settings.MergeSectionAsync("BugReports", snapshot.BugReports, cancellationToken);
         if (snapshot.Webhook is not null) await settings.MergeSectionAsync("Webhook", snapshot.Webhook, cancellationToken);
