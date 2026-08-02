@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using SentinelCore.Licensing;
@@ -2031,6 +2032,45 @@ public sealed class BasicTests
             Assert.False(second.Reissued);
             Assert.Equal(authorityBefore, File.ReadAllText(second.AuthorityCertificatePath));
             Assert.Equal(serverCertBefore, File.ReadAllText(second.CertificatePath));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AutoCertificateProvisioner_ReissuesWhenTheMachinesAddressesChanged()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"autocert-{Guid.NewGuid():N}");
+        try
+        {
+            var first = AutoCertificateProvisioner.EnsureCertificate(directory);
+            var authorityBefore = File.ReadAllText(first.AuthorityCertificatePath);
+
+            // Stand in for a certificate issued before a reboot/DHCP renewal moved the machine to
+            // a different address: nowhere near expiry, but its SANs cover none of the machine's
+            // current names or addresses.
+            using var staleKey = RSA.Create(2048);
+            var request = new CertificateRequest(
+                new X500DistinguishedName("CN=stale.example, O=Sentinel Core"),
+                staleKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            var sanBuilder = new SubjectAlternativeNameBuilder();
+            sanBuilder.AddDnsName("stale.example");
+            request.CertificateExtensions.Add(sanBuilder.Build());
+            using var stale = request.CreateSelfSigned(
+                DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(500));
+            File.WriteAllText(first.CertificatePath, stale.ExportCertificatePem());
+            File.WriteAllText(first.KeyPath, staleKey.ExportPkcs8PrivateKeyPem());
+
+            var second = AutoCertificateProvisioner.EnsureCertificate(directory);
+
+            Assert.True(second.Reissued);
+            // Reissued from the same authority - devices that already trust it stay trusted.
+            Assert.Equal(authorityBefore, File.ReadAllText(second.AuthorityCertificatePath));
+            using var reissued = X509Certificate2.CreateFromPem(File.ReadAllText(second.CertificatePath));
+            var san = reissued.Extensions.OfType<X509SubjectAlternativeNameExtension>().Single();
+            Assert.Contains("localhost", san.EnumerateDnsNames());
         }
         finally
         {

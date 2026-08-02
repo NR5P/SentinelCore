@@ -26,7 +26,7 @@
     <string>Sentinel Core uses the camera to take a reference photo when enrolling a known person for face recognition.</string>
     <key>NSBonjourServices</key>
     <array>
-        <string>_http._tcp</string>
+        <string>_sentinelcore._tcp</string>
     </array>
     <key>NSAppTransportSecurity</key>
     <dict>

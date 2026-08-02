@@ -496,7 +496,10 @@ final class SentinelClient {
             _ = try await session.data(for: request)
             return true
         } catch {
-            return false
+            // A rejected certificate still proves a server answered - it takes a completed-enough
+            // TLS handshake to have a certificate to reject. Treating it as unreachable here would
+            // wrongly send connect() to the remote address when the local server is fine.
+            return AppModel.isCertificateTrustFailure(error)
         }
     }
 

@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Network
+import OSLog
 import UserNotifications
 
 // A SentinelCore server found on the local network via Bonjour/mDNS - see
@@ -28,6 +29,10 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var activeServerURL: String = ""
     @Published private(set) var isUsingRemote = false
+    // True while this session is talking plain HTTP to an HTTPS-configured server because this
+    // device doesn't trust the server's self-generated certificate - see connect(). Surfaced in
+    // SettingsView so the downgrade is never silent.
+    @Published private(set) var usingHttpFallback = false
     @Published var connectionState: ConnectionState = .checking
     @Published var authStatus: AuthStatus?
     @Published var events: [SecurityEvent] = []
@@ -123,7 +128,10 @@ final class AppModel: ObservableObject {
 
         isConnecting = true
         defer { isConnecting = false }
-        log("Connecting to \(serverURL)")
+        // The configured address is logged rather than assumed. A field typed into but never
+        // saved leaves this pointing somewhere else entirely, and "which address did it actually
+        // use" turned out to be the single hardest thing to establish from outside the app.
+        log("Connecting to \(serverURL)\(hasRemoteServerURL ? " (remote fallback \(remoteServerURL))" : "")")
         let wasOffline = connectionState == .offline
         if connectionState != .online {
             connectionState = .checking
@@ -138,29 +146,101 @@ final class AppModel: ObservableObject {
         // Give macOS a moment to present/register the local-network permission before the
         // first HTTP request. The browser stays alive for the app's lifetime.
         try? await Task.sleep(for: .milliseconds(500))
+        usingHttpFallback = false
         await resolveActiveServerURL()
         do {
-            authStatus = try await client.authStatus()
-            if requiresLogin {
-                log("Server requires dashboard authentication")
-                connectionState = .authenticationRequired
-                return
-            }
-            try await refreshAll()
-            connectionState = .online
-            log("Connection established; loaded \(events.count) events")
-            await refreshPushStatus()
-            await syncPushRegistration()
-            selectPendingPushEvent()
+            try await establishSession()
         } catch {
             if Self.isCancellation(error) {
                 log("Connection task cancelled by the app lifecycle", level: .notice)
                 return
             }
-            connectionState = .offline
-            lastError = error.localizedDescription
-            log("Connection failed: \(error.localizedDescription)", level: .error)
+            // The server generates its own certificate authority, which no Apple device trusts
+            // out of the box - so a fresh install pointed at the https:// address (the default
+            // that server discovery advertises) would simply never connect. The server keeps its
+            // plain-HTTP listener open precisely for app clients in this position (the Android
+            // app uses nothing else), so fall back to it rather than stranding the user. Local
+            // address only: a remote address crosses the open Internet, where quietly dropping
+            // encryption is not an acceptable trade.
+            if !isUsingRemote, Self.isCertificateTrustFailure(error),
+               let fallback = Self.httpFallbackAddress(for: activeServerURL) {
+                log("This device does not trust the server's HTTPS certificate; trying the plain-HTTP port at \(fallback)", level: .notice)
+                if await client.probeReachable(fallback) {
+                    activeServerURL = fallback
+                    usingHttpFallback = true
+                    do {
+                        try await establishSession()
+                        log("Connected over plain HTTP. For an encrypted connection instead, trust the server's certificate authority (ca.crt) on this device - see DEPLOYMENT.md section 14a.", level: .notice)
+                    } catch {
+                        usingHttpFallback = false
+                        if Self.isCancellation(error) {
+                            log("Connection task cancelled by the app lifecycle", level: .notice)
+                            return
+                        }
+                        failConnection(with: error)
+                    }
+                    return
+                }
+                log("The plain-HTTP port at \(fallback) did not answer either", level: .notice)
+            }
+            failConnection(with: error)
         }
+    }
+
+    // The post-address-resolution half of connect(): everything from the first real request to
+    // fully online. Split out so the certificate-trust fallback in connect() can run it a second
+    // time against the plain-HTTP address.
+    private func establishSession() async throws {
+        authStatus = try await client.authStatus()
+        if requiresLogin {
+            log("Server requires dashboard authentication")
+            connectionState = .authenticationRequired
+            return
+        }
+        try await refreshAll()
+        connectionState = .online
+        log("Connection established; loaded \(events.count) events")
+        await refreshPushStatus()
+        await syncPushRegistration()
+        selectPendingPushEvent()
+    }
+
+    private func failConnection(with error: Error) {
+        connectionState = .offline
+        // The system's own wording for a distrusted certificate ("...may be pretending to be...")
+        // reads as an active attack and names no way out - replace it with what's actually going
+        // on and what to do about it.
+        lastError = Self.isCertificateTrustFailure(error)
+            ? "This device doesn't trust the certificate the server generated for itself. Use the http:// address, or install the server's ca.crt on this device to keep HTTPS."
+            : error.localizedDescription
+        log("Connection failed against \(activeServerURL): \(Self.describe(error))", level: .error)
+    }
+
+    // Everything URLSession reports when a TLS handshake completed enough to judge the server's
+    // certificate and the judgement was "no". Distinct from the host being unreachable: these
+    // mean the server is up and answering, just not trusted by this particular device.
+    static func isCertificateTrustFailure(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        switch code {
+        case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateHasBadDate, .serverCertificateNotYetValid, .secureConnectionFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    // https://host[:port] -> http://host:3320, the dashboard's shipped plain-HTTP port. A custom
+    // HTTP port can't be derived from the HTTPS address, so the default is the only sensible
+    // guess - and connect() probes the result before actually switching to it.
+    static func httpFallbackAddress(for address: String) -> String? {
+        guard var components = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
+              components.scheme == "https" else {
+            return nil
+        }
+        components.scheme = "http"
+        components.port = 3320
+        return components.string
     }
 
     // Prefers the local address whenever it's reachable at all (any HTTP response counts,
@@ -174,10 +254,11 @@ final class AppModel: ObservableObject {
             return
         }
         if await client.probeReachable(serverURL) {
+            log("Local address \(serverURL) answered; using it")
             activeServerURL = serverURL
             isUsingRemote = false
         } else {
-            log("Local address unreachable; using remote address")
+            log("Local address \(serverURL) unreachable; using remote address \(remoteServerURL)", level: .notice)
             activeServerURL = remoteServerURL
             isUsingRemote = true
         }
@@ -235,6 +316,9 @@ final class AppModel: ObservableObject {
 
         if let firstError {
             lastError = firstError.localizedDescription
+            // Logged even when it isn't rethrown: a partial refresh still leaves the app looking
+            // connected while quietly missing a resource, and without this that left no trace.
+            log("Refresh finished with an error: \(Self.describe(firstError))", level: .error)
             if events.isEmpty { throw firstError }
         } else {
             lastError = nil
@@ -288,12 +372,59 @@ final class AppModel: ObservableObject {
         return (error as? URLError)?.code == .cancelled
     }
 
+    // Mirrored into the unified log as well as the in-app Diagnostics screen. print() only reaches
+    // a terminal that launched the app, which an app launched from the Finder or /Applications
+    // never has - so when a connection problem had to be diagnosed, the only copy of the evidence
+    // was on a screen someone had to read out loud. With this, the same lines are available to
+    //   log show --predicate 'subsystem == "com.sentinelcore.client"' --last 10m
+    // from any terminal, on this Mac or over SSH.
     func log(_ message: String, level: DiagnosticLevel = .info) {
         diagnostics.insert(DiagnosticEntry(timestamp: .now, level: level, message: message), at: 0)
         if diagnostics.count > 100 {
             diagnostics.removeLast(diagnostics.count - 100)
         }
-        print("[SentinelCore] [\(level.rawValue)] \(message)")
+        // .public because none of this is personal data - it's server addresses and error codes,
+        // and redacted logs would defeat the entire point of having them.
+        Self.logger.log(level: level.osLogType, "\(message, privacy: .public)")
+    }
+
+    private static let logger = Logger(subsystem: "com.sentinelcore.client", category: "connection")
+
+    // localizedDescription alone is what produced "The Internet connection appears to be offline",
+    // a message that covers a genuinely dead network, a sandboxed app denied local-network access,
+    // and a server that isn't listening - three completely different problems with three
+    // completely different fixes. The domain and code tell those apart, so they get logged too.
+    static func describe(_ error: Error) -> String {
+        let nsError = error as NSError
+        var parts = ["\(error.localizedDescription) [\(nsError.domain) \(nsError.code)"]
+        if let urlError = error as? URLError {
+            parts.append(" \(Self.name(for: urlError.code))")
+            if let failing = urlError.failingURL {
+                parts.append(" url=\(failing.absoluteString)")
+            }
+        }
+        parts.append("]")
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append(" underlying=(\(underlying.domain) \(underlying.code))")
+        }
+        return parts.joined()
+    }
+
+    // The handful of URLError codes this app actually runs into, named rather than numbered. Every
+    // one of these has been mistaken for another at some point while debugging a connection.
+    private static func name(for code: URLError.Code) -> String {
+        switch code {
+        case .notConnectedToInternet: "notConnectedToInternet - no usable network path; on a sandboxed Mac app this is also what a denied Local Network permission looks like"
+        case .cannotConnectToHost: "cannotConnectToHost - reached the host, nothing listening on that port"
+        case .cannotFindHost: "cannotFindHost - name did not resolve"
+        case .timedOut: "timedOut - no response; typically a firewall dropping packets"
+        case .secureConnectionFailed: "secureConnectionFailed - TLS handshake rejected"
+        case .serverCertificateUntrusted: "serverCertificateUntrusted - the server's CA is not trusted on this device"
+        case .serverCertificateHasBadDate: "serverCertificateHasBadDate"
+        case .serverCertificateNotYetValid: "serverCertificateNotYetValid"
+        case .appTransportSecurityRequiresSecureConnection: "appTransportSecurityRequiresSecureConnection - plain HTTP blocked by ATS"
+        default: "URLError \(code.rawValue)"
+        }
     }
 
     func clearDiagnostics() {
@@ -540,6 +671,14 @@ enum DiagnosticLevel: String {
     case info = "INFO"
     case notice = "NOTICE"
     case error = "ERROR"
+
+    var osLogType: OSLogType {
+        switch self {
+        case .info: .info
+        case .notice: .default
+        case .error: .error
+        }
+    }
 }
 
 enum ConnectionState: Equatable {

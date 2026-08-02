@@ -50,12 +50,22 @@ struct SentinelCoreApp: App {
         #endif
 
         #if os(macOS)
-        // Cmd+, and the app-menu "Settings…" item, replacing the sidebar's Settings row
-        // (AppSection.sidebarCases filters it out on macOS) with the standard Mac convention.
+        // Cmd+, and the app-menu "Settings…" item. The same screen is also a sidebar row in the
+        // main window (see AppSection.sidebarCases) - this is the Mac convention on top of it,
+        // not instead of it.
+        //
+        // The NavigationStack is load-bearing, not decoration: SettingsView's Manage Cameras,
+        // Manage Accounts, Manage Known Faces and Server Settings rows are NavigationLinks, and a
+        // Settings scene provides no navigation container of its own. Without this they were dead
+        // rows - clicking them did nothing, which made it look as though the Mac app simply
+        // couldn't reach those screens.
         Settings {
-            SettingsView()
-                .environmentObject(appModel)
-                .frame(minWidth: 480, minHeight: 520)
+            NavigationStack {
+                SettingsView()
+            }
+            .environmentObject(appModel)
+            .environment(\.isLicensed, appModel.isLicensed)
+            .frame(minWidth: 480, minHeight: 520)
         }
         #endif
     }

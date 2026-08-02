@@ -34,9 +34,6 @@ struct RootView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 BrandHeader()
-                // On macOS, Settings lives in the app's Settings scene (Cmd+,) instead of a
-                // sidebar row - see SentinelCoreApp. iPadOS has no such scene, so it keeps all
-                // sections here.
                 List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled), selection: $selection) { section in
                     Label(section.title, systemImage: section.icon).tag(section)
                 }
@@ -131,14 +128,15 @@ enum AppSection: String, CaseIterable, Identifiable {
             .filter { !(deviceHubEnabled && $0 == .settings) }
     }
 
-    // macOS gets a real Settings scene (Cmd+,) instead of a sidebar row - see SentinelCoreApp.
-    // Device Hub is a normal section there and stays.
+    // Every section, on every platform with a sidebar. macOS also has a real Settings scene on
+    // Cmd+, (see SentinelCoreApp), and for a while that was the *only* way in - the row was
+    // filtered out here as "the Mac convention". In practice that made Settings hard to find, and
+    // worse, the Settings scene has no NavigationStack of its own, so the rows that push a screen
+    // (Manage Cameras, Manage Accounts, Manage Known Faces, Server Settings) did nothing at all
+    // when clicked. The sidebar row renders into the split view's detail column, which does have
+    // one, so those screens work from here. Both routes now lead to the same place.
     static func sidebarCases(deviceHubEnabled: Bool) -> [AppSection] {
-        #if os(macOS)
-        visibleCases(deviceHubEnabled: deviceHubEnabled).filter { $0 != .settings }
-        #else
         visibleCases(deviceHubEnabled: deviceHubEnabled)
-        #endif
     }
 }
 

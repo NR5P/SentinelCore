@@ -137,27 +137,91 @@ final class AppModel: ObservableObject {
         try? await Task.sleep(for: .milliseconds(500))
         activeServerURL = serverURL
         do {
-            authStatus = try await client.authStatus()
-            if requiresLogin {
-                log("Server requires dashboard authentication")
-                connectionState = .authenticationRequired
-                return
-            }
-            try await refreshAll()
-            connectionState = .online
-            log("Connection established; loaded \(events.count) events")
-            await refreshPushStatus()
-            await syncPushRegistration()
-            selectPendingPushEvent()
+            try await establishSession()
         } catch {
             if Self.isCancellation(error) {
                 log("Connection task cancelled by the app lifecycle", level: .notice)
                 return
             }
-            connectionState = .offline
-            lastError = error.localizedDescription
-            log("Connection failed: \(error.localizedDescription)", level: .error)
+            // The server generates its own certificate authority, which no Apple device trusts
+            // out of the box - so an https:// address (the default that server discovery
+            // advertises) would simply never connect on a fresh install. The server keeps its
+            // plain-HTTP listener open precisely for app clients in this position, so fall back
+            // to it rather than stranding the user. Mirrors the iOS/macOS app.
+            if Self.isCertificateTrustFailure(error),
+               let fallback = Self.httpFallbackAddress(for: activeServerURL) {
+                log("This device does not trust the server's HTTPS certificate; trying the plain-HTTP port at \(fallback)", level: .notice)
+                activeServerURL = fallback
+                do {
+                    try await establishSession()
+                    log("Connected over plain HTTP. For an encrypted connection instead, trust the server's certificate authority (ca.crt) on this device.", level: .notice)
+                    return
+                } catch {
+                    if Self.isCancellation(error) {
+                        log("Connection task cancelled by the app lifecycle", level: .notice)
+                        return
+                    }
+                    activeServerURL = serverURL
+                    failConnection(with: error)
+                    return
+                }
+            }
+            failConnection(with: error)
         }
+    }
+
+    // The post-address half of connect(), split out so the certificate-trust fallback above can
+    // run it a second time against the plain-HTTP address.
+    private func establishSession() async throws {
+        authStatus = try await client.authStatus()
+        if requiresLogin {
+            log("Server requires dashboard authentication")
+            connectionState = .authenticationRequired
+            return
+        }
+        try await refreshAll()
+        connectionState = .online
+        log("Connection established; loaded \(events.count) events")
+        await refreshPushStatus()
+        await syncPushRegistration()
+        selectPendingPushEvent()
+    }
+
+    private func failConnection(with error: Error) {
+        connectionState = .offline
+        // The system's own wording for a distrusted certificate ("...may be pretending to be...")
+        // reads as an active attack and names no way out - replace it with what's actually going
+        // on and what to do about it.
+        lastError = Self.isCertificateTrustFailure(error)
+            ? "This device doesn't trust the certificate the server generated for itself. Use the http:// address, or install the server's ca.crt on this device to keep HTTPS."
+            : error.localizedDescription
+        log("Connection failed: \(error.localizedDescription)", level: .error)
+    }
+
+    // Everything URLSession reports when a TLS handshake completed enough to judge the server's
+    // certificate and the judgement was "no". Distinct from the host being unreachable: these
+    // mean the server is up and answering, just not trusted by this particular device.
+    static func isCertificateTrustFailure(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        switch code {
+        case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateHasBadDate, .serverCertificateNotYetValid, .secureConnectionFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    // https://host[:port] -> http://host:3320, the dashboard's shipped plain-HTTP port. A custom
+    // HTTP port can't be derived from the HTTPS address, so the default is the only sensible guess.
+    static func httpFallbackAddress(for address: String) -> String? {
+        guard var components = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
+              components.scheme == "https" else {
+            return nil
+        }
+        components.scheme = "http"
+        components.port = 3320
+        return components.string
     }
 
     func refreshAll() async throws {

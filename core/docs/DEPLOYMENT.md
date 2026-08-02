@@ -678,6 +678,12 @@ when you type a bare address, so forcing everything to HTTPS would break them on
 hadn't yet trusted the authority. Bookmark the `https://` address once you've trusted it;
 nothing else changes.
 
+**The Apple apps fall back to plain HTTP on their own.** When an iPhone/iPad/Mac/Apple TV app is
+pointed at the `https://` address (which is what local-network discovery advertises) but the
+device hasn't trusted the authority yet, the app automatically retries on the plain-HTTP port
+above and says so in its Settings screen — so it works out of the box, and switches to HTTPS by
+itself once you trust `ca.crt` on that device.
+
 Open the firewall for the HTTPS port the same way as the others:
 
 ```bash
@@ -687,9 +693,12 @@ sudo ufw allow from 192.168.50.0/24 to any port 3443 proto tcp
 **Renewal.** The certificate is capped at 825 days because Apple rejects anything longer, even
 from an authority generated on your own machine. It's checked and reissued automatically (from
 the existing authority, so already-trusted devices stay trusted) whenever the app starts and the
-current one is within 30 days of expiring — which in practice means it renews itself across
-whatever restart happens next, the same as picking up any other code update. The authority
-itself lasts ten years, so this never requires touching a phone again.
+current one is within 30 days of expiring **or no longer covers this machine's current names and
+addresses** — a reboot or DHCP renewal that hands the server a different LAN IP used to leave the
+old certificate mismatched until it neared expiry; now it's reissued on the next start. In
+practice this means it fixes itself across whatever restart happens next, the same as picking up
+any other code update. The authority itself lasts ten years, so this never requires touching a
+phone again.
 
 ### Route B — a real domain (no per-device setup)
 

@@ -12,9 +12,10 @@ namespace SentinelCore.Web;
 // authority is unavoidable at all: no public CA will issue for a private LAN address.
 //
 // Safe to call on every startup. It reuses an existing authority (so devices that already
-// trust it stay trusted) and only reissues the server certificate when it's missing or close
-// to expiring - matching what the old setup-local-https.sh script plus its systemd renewal
-// timer did by hand, but now automatic and requiring no external tools.
+// trust it stay trusted) and only reissues the server certificate when it's missing, close
+// to expiring, or no longer covers the machine's current names/addresses (a reboot or DHCP
+// renewal can change the LAN IP) - matching what the old setup-local-https.sh script plus its
+// systemd renewal timer did by hand, but now automatic and requiring no external tools.
 public static class AutoCertificateProvisioner
 {
     private const int AuthorityValidityDays = 3650;
@@ -81,7 +82,34 @@ public static class AutoCertificateProvisioner
     {
         if (!File.Exists(certPath)) return true;
         using var certificate = X509Certificate2.CreateFromPem(File.ReadAllText(certPath));
-        return certificate.NotAfter <= DateTime.UtcNow.AddDays(RenewWithinDays);
+        if (certificate.NotAfter <= DateTime.UtcNow.AddDays(RenewWithinDays)) return true;
+        return !CoversCurrentAddresses(certificate);
+    }
+
+    // A reboot or DHCP renewal can hand the machine a different LAN address than the ones baked
+    // into the certificate when it was issued - after which every client connecting by IP sees a
+    // name mismatch until the next reissue, which used to mean "when it nears expiry, years from
+    // now". Reissuing whenever the current names/addresses aren't all covered keeps the
+    // certificate valid across address changes with no action from anyone; the authority stays
+    // the same, so devices that already trust it are unaffected.
+    //
+    // IPv4 only on the address side: IPv6 privacy addresses rotate by design (RFC 4941), so
+    // demanding they all be covered would reissue on nearly every startup. The issued
+    // certificate still includes every current IPv6 address - they just don't force a reissue.
+    private static bool CoversCurrentAddresses(X509Certificate2 certificate)
+    {
+        var extension = certificate.Extensions["2.5.29.17"];
+        if (extension is null) return false;
+        var san = extension as X509SubjectAlternativeNameExtension
+            ?? new X509SubjectAlternativeNameExtension(extension.RawData);
+
+        var coveredDnsNames = san.EnumerateDnsNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var coveredAddresses = san.EnumerateIPAddresses().ToHashSet();
+
+        return DiscoverLocalDnsNames().All(coveredDnsNames.Contains)
+            && DiscoverLocalIpAddresses()
+                .Where(address => address.AddressFamily == AddressFamily.InterNetwork)
+                .All(coveredAddresses.Contains);
     }
 
     private static void IssueServerCertificate(X509Certificate2 authorityCertificate, RSA authorityKey, string certPath, string keyPath)
