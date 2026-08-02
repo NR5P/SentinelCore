@@ -924,6 +924,18 @@ credentials cleared. Otherwise a release built from a machine with a live, confi
 would ship that maintainer's own API keys and personal settings to everyone who downloaded it.
 Build with `PLATFORMS="linux-x64 win-x64" ./scripts/publish-release.sh` to build a subset.
 
+Before zipping each bundle, the script **starts the binaries it just published** and fails the
+build if either doesn't answer its health endpoint. Only the bundle matching the build machine's
+own OS and architecture can be started this way — .NET cross-compiles the others but can't run
+them — so the others print `Skipping startup check` and are not verified here. It runs against a
+copy, so the archive never picks up the `appsettings.json`, `data/` or `certs/` a booting server
+creates.
+
+This is worth the minute it costs: "it compiles and the tests pass" says nothing about whether a
+*published* bundle can start, because publishing rearranges where everything lives. A release
+where the ONNX face-recognition models were no longer findable shipped exactly that way — every
+bundle died on startup while every git-checkout build was fine.
+
 That cleaned-up file is shipped as **`appsettings.defaults.json`**, and the archive contains no
 `appsettings.json` at all. This is what makes the .zip safe to unpack over an existing install:
 `appsettings.json` is the file the dashboard writes every camera, credential and channel setting

@@ -15,6 +15,12 @@ if (configSeed.Describe() is { } configSeedMessage) Console.WriteLine(configSeed
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Before anything reads the listening address: let ASPNETCORE_URLS outrank appsettings.json,
+// which the framework's own source ordering otherwise reverses - see HostUrls. This is what makes
+// the install scripts' MAIN_PORT option do anything.
+if (HostUrls.ResolveOverride(args, Environment.GetEnvironmentVariable(HostUrls.EnvironmentVariable)) is { } urlsOverride)
+    builder.Configuration[HostUrls.ConfigurationKey] = urlsOverride;
+
 // Lets the same binaries run as a Windows Service or a systemd unit without a separate build.
 // Both are no-ops when the process wasn't started by that service manager - including when it's
 // run straight from a terminal - so this is safe on every platform.

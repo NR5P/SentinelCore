@@ -142,6 +142,102 @@ write_defaults(f"{stage}/SentinelCore.Web", web_settings)
 PYEOF
 }
 
+# The RID this machine can actually execute. .NET cross-compiles every other target from here,
+# but it cannot run them, so only one of the bundles built by this script is ever startable.
+detect_host_rid() {
+  local os arch
+  case "$(uname -s)" in
+    Darwin) os=osx ;;
+    Linux)  os=linux ;;
+    *)      return ;;
+  esac
+  case "$(uname -m)" in
+    arm64|aarch64) arch=arm64 ;;
+    x86_64)        arch=x64 ;;
+    *)             return ;;
+  esac
+  echo "$os-$arch"
+}
+
+# Starts the published binaries and fails the build if they don't come up.
+#
+# This exists because of a bug it would have caught immediately: FaceAiSharp resolved its ONNX
+# models through Assembly.Location, which is an empty string in a single-file publish, so every
+# release .zip died on startup with an ArgumentNullException - while every git-checkout build, the
+# only kind anything ever ran, worked perfectly. "It compiles and the tests pass" says nothing
+# about whether a *published* bundle can start, because a publish rearranges where everything
+# lives. So: actually start it.
+#
+# Runs against a copy, never the staged directory itself. A booting server writes appsettings.json,
+# data/ and possibly certs/, and none of that belongs in the archive that is about to be zipped.
+smoke_test_bundle() {
+  local stage=$1 platform=$2
+  local host_rid
+  host_rid=$(detect_host_rid)
+
+  if [[ "$platform" != "$host_rid" ]]; then
+    echo "    Skipping startup check - $platform binaries cannot run on this ${host_rid:-unknown} machine"
+    return 0
+  fi
+
+  local work
+  work=$(mktemp -d)
+  cp -R "$stage" "$work/bundle"
+
+  local bridge_port=${SMOKE_MAIN_PORT:-59080}
+  local web_port=${SMOKE_WEB_PORT:-59081}
+  local failed=0
+
+  # --Urls on the command line rather than ASPNETCORE_URLS: command-line arguments outrank every
+  # other configuration source, so this binds where it is told no matter what the bundled
+  # appsettings says. Belt and braces for a check whose whole job is to be trustworthy.
+  (cd "$work/bundle/SentinelCore" && exec env \
+      ASPNETCORE_ENVIRONMENT=Production \
+      ./SentinelCore --Urls "http://127.0.0.1:$bridge_port") >"$work/bridge.log" 2>&1 &
+  local bridge_pid=$!
+
+  # HTTPS and discovery off: this is a throwaway process on a maintainer's machine, and it has no
+  # business generating a certificate authority or advertising itself to every phone on the LAN.
+  (cd "$work/bundle/SentinelCore.Web" && exec env \
+      ASPNETCORE_ENVIRONMENT=Production \
+      ./SentinelCore.Web \
+      --Urls "http://127.0.0.1:$web_port" \
+      --Https:Enabled false \
+      --Discovery:Enabled false) >"$work/web.log" 2>&1 &
+  local web_pid=$!
+
+  smoke_wait() {
+    local label=$1 url=$2 pid=$3 log=$4
+    for _ in $(seq 1 45); do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        echo "    $label EXITED before answering:" >&2
+        tail -n 15 "$log" >&2
+        return 1
+      fi
+      if [[ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "$url" || true)" == "200" ]]; then
+        echo "    $label started and answered $url"
+        return 0
+      fi
+      sleep 1
+    done
+    echo "    $label did not answer $url within 45s:" >&2
+    tail -n 15 "$log" >&2
+    return 1
+  }
+
+  smoke_wait "bridge   " "http://127.0.0.1:$bridge_port/health/live" "$bridge_pid" "$work/bridge.log" || failed=1
+  smoke_wait "dashboard" "http://127.0.0.1:$web_port/api/health" "$web_pid" "$work/web.log" || failed=1
+
+  kill "$bridge_pid" "$web_pid" 2>/dev/null || true
+  wait "$bridge_pid" "$web_pid" 2>/dev/null || true
+  rm -rf "$work"
+
+  if [[ "$failed" != "0" ]]; then
+    echo "The published $platform binaries do not start. Not shipping this." >&2
+    return 1
+  fi
+}
+
 for platform in $PLATFORMS; do
   case "$platform" in
     win-x64)     rid=win-x64;     install_script=dist-install-windows.ps1; install_dest=install.ps1 ;;
@@ -206,6 +302,9 @@ vision) are still installed separately - the installer offers to do that for you
 
 Full documentation: docs/DEPLOYMENT.md and docs/USER_GUIDE.md in the source repository.
 README
+
+  echo "==> Startup check for $platform"
+  smoke_test_bundle "$stage" "$platform"
 
   echo "==> Zipping $platform"
   (cd "$DIST_DIR" && zip -rq "SentinelCore-$platform.zip" "$platform")

@@ -17,6 +17,13 @@ if (configSeed.Describe() is { } configSeedMessage) Console.WriteLine(configSeed
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Before anything reads the listening address - and this project reads it early, to work out the
+// HTTP port Kestrel and mDNS should use. Lets ASPNETCORE_URLS outrank appsettings.json, which the
+// framework's own source ordering otherwise reverses; see HostUrls. This is what makes the install
+// scripts' WEB_PORT option do anything.
+if (HostUrls.ResolveOverride(args, Environment.GetEnvironmentVariable(HostUrls.EnvironmentVariable)) is { } urlsOverride)
+    builder.Configuration[HostUrls.ConfigurationKey] = urlsOverride;
+
 // Community license: this is personal/self-hosted software, well under QuestPDF's revenue
 // threshold for free use - see https://www.questpdf.com/license/. Registers the DejaVu fonts
 // shipped in Fonts/ so DocsPdfRenderer (Docs tab) renders consistently regardless of what fonts,

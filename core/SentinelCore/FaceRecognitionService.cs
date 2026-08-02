@@ -17,15 +17,48 @@ public interface IFaceRecognitionService
 // lifetime, the same way Ollama's model is kept loaded between alerts.
 public sealed class FaceRecognitionService : IFaceRecognitionService
 {
-    private readonly IFaceDetectorWithLandmarks _detector;
-    private readonly IFaceEmbeddingsGenerator _embedder;
+    // Deliberately not FaceAiSharpBundleFactory, which is otherwise exactly what this wants.
+    // That factory locates its bundled .onnx files relative to Assembly.Location, and in a
+    // single-file publish - which is how every release .zip is built, see
+    // scripts/publish-release.sh - Assembly.Location is an empty string, because the assemblies
+    // live inside the executable rather than on disk. Path.GetDirectoryName("") returns null, so
+    // constructing this threw ArgumentNullException and took the whole process down before it
+    // served a single request. AppContext.BaseDirectory is the executable's own directory in both
+    // layouts, and the models are published next to it either way.
+    private const string DetectorModel = "scrfd_2.5g_kps.onnx";
+    private const string EmbeddingModel = "arcfaceresnet100-11-int8.onnx";
+
+    // Lazy for the reason this bug was so damaging rather than merely annoying: these are
+    // registered as an eagerly-resolved singleton, so anything the constructor threw was fatal to
+    // a process whose actual job is watching cameras. Face recognition is opt-in and purely
+    // additive, so a model that won't load should cost exactly that feature - the failure now
+    // surfaces on first use, where DetectFaceEmbeddings already logs and degrades to no faces.
+    private readonly Lazy<IFaceDetectorWithLandmarks> _detector;
+    private readonly Lazy<IFaceEmbeddingsGenerator> _embedder;
     private readonly ILogger<FaceRecognitionService> _logger;
 
     public FaceRecognitionService(ILogger<FaceRecognitionService> logger)
     {
         _logger = logger;
-        _detector = FaceAiSharpBundleFactory.CreateFaceDetectorWithLandmarks();
-        _embedder = FaceAiSharpBundleFactory.CreateFaceEmbeddingsGenerator();
+        _detector = new Lazy<IFaceDetectorWithLandmarks>(() =>
+            new ScrfdDetector(new ScrfdDetectorOptions { ModelPath = ModelPath(DetectorModel) }));
+        _embedder = new Lazy<IFaceEmbeddingsGenerator>(() =>
+            new ArcFaceEmbeddingsGenerator(new ArcFaceEmbeddingsGeneratorOptions { ModelPath = ModelPath(EmbeddingModel) }));
+    }
+
+    // Names the file and where it was expected. The models ship as NuGet content files copied to
+    // onnx/ in the build output, so an absent one means a broken publish rather than anything the
+    // user did - and that is worth saying plainly in the log instead of an ONNX Runtime error
+    // about a path nobody chose.
+    private static string ModelPath(string fileName)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "onnx", fileName);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException(
+                $"Face recognition model '{fileName}' is missing from this install. Expected it at {path}.", path);
+        }
+        return path;
     }
 
     public IReadOnlyList<float[]> DetectFaceEmbeddings(byte[] imageBytes)
@@ -33,7 +66,7 @@ public sealed class FaceRecognitionService : IFaceRecognitionService
         try
         {
             using var image = Image.Load<Rgb24>(imageBytes);
-            var faces = _detector.DetectFaces(image);
+            var faces = _detector.Value.DetectFaces(image);
             if (faces.Count == 0) return [];
 
             var embeddings = new List<float[]>(faces.Count);
@@ -46,8 +79,8 @@ public sealed class FaceRecognitionService : IFaceRecognitionService
                 // reusing one image across multiple faces would align the second face into an
                 // image already cropped down to the first.
                 using var faceImage = image.Clone();
-                _embedder.AlignFaceUsingLandmarks(faceImage, landmarks);
-                embeddings.Add(_embedder.GenerateEmbedding(faceImage));
+                _embedder.Value.AlignFaceUsingLandmarks(faceImage, landmarks);
+                embeddings.Add(_embedder.Value.GenerateEmbedding(faceImage));
             }
 
             return embeddings;
