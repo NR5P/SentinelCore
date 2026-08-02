@@ -2,11 +2,34 @@ using SentinelCore;
 
 namespace SentinelCore.Web;
 
+public sealed class TriggerZoneDto
+{
+    public string Name { get; set; } = "";
+    public List<TriggerPoint> Polygon { get; set; } = [];
+    public double MinTriggerArea { get; set; }
+}
+
+// The wire contract here is deliberately ADDITIVE, and has to stay that way.
+//
+// The shipped iOS/tvOS builds decode this with Swift's synthesized Codable and the Android build
+// hand-parses it with org.json. Both ignore keys they don't know about, so adding `zones` is
+// invisible to them - but Swift THROWS on a missing key it declares as non-optional, so dropping
+// `zonePolygon` or `minTriggerArea` would hard-break every installed copy of the app. They stay,
+// mirroring the primary zone. See TriggerConfig.ResolvedZones.
+//
+// Those clients also WRITE this object, and an old build sends no `zones` key at all. That is why
+// Zones is nullable rather than defaulting to an empty list: absent (edit the primary zone, leave
+// the rest alone) has to be distinguishable from empty (the new editor really did delete them).
+// Get that wrong and someone editing the zone from their phone silently wipes every extra zone.
 public sealed class TriggerConfigDto
 {
     public bool Enabled { get; set; }
     public List<TriggerPoint> ZonePolygon { get; set; } = [];
     public double MinTriggerArea { get; set; }
+
+    // Null means "this client doesn't know about zones" - NOT "no zones". Never give this a
+    // default; see the note above.
+    public List<TriggerZoneDto>? Zones { get; set; }
     public int CooldownSeconds { get; set; }
     public int MaxTriggersPerMinute { get; set; }
     public int ShadowSensitivity { get; set; } = 50;
@@ -26,6 +49,35 @@ public static class TriggerEndpoints
 {
     internal static readonly string[] SensorTriggerOnValues = ["on", "off", "any"];
 
+    // Turns whatever the client sent into the zone list to persist, and is where the
+    // old-client-must-not-destroy-data rule actually lives.
+    //
+    // dto.Zones populated -> the caller understands zones, so it is authoritative.
+    // dto.Zones null      -> an older mobile build that only knows about the single legacy
+    //                        polygon. Update the primary zone in place from what it sent and keep
+    //                        every other zone exactly as it was.
+    // Public so the old-client merge rule can be tested directly - this project has no
+    // InternalsVisibleTo, same as CameraTriggerEndpoints.KeyMatches and SensorTriggerWatcher.
+    public static async Task<List<TriggerZone>> ResolveZonesAsync(
+        Guid cameraId, TriggerConfigDto dto, ITriggerConfigStore store, CancellationToken cancellationToken)
+    {
+        if (dto.Zones is { Count: > 0 })
+            return [.. dto.Zones.Select(z => new TriggerZone(
+                string.IsNullOrWhiteSpace(z.Name) ? TriggerConfig.DefaultZoneName : z.Name.Trim(),
+                z.Polygon,
+                z.MinTriggerArea))];
+
+        var existing = await store.GetAsync(cameraId, cancellationToken);
+        var primary = new TriggerZone(
+            existing?.ResolvedZones[0].Name ?? TriggerConfig.DefaultZoneName, dto.ZonePolygon, dto.MinTriggerArea);
+
+        // An explicitly empty list (as opposed to a missing one) still means "just the primary" -
+        // a camera always has at least one zone, so there is nothing sensible to save otherwise.
+        if (existing is null || dto.Zones is not null) return [primary];
+
+        return [primary, .. existing.ResolvedZones.Skip(1)];
+    }
+
     public static void MapTriggerEndpoints(this WebApplication app)
     {
         app.MapGet("/api/cameras/{id:guid}/trigger-config", async (Guid id, ITriggerConfigStore store, CancellationToken ct) =>
@@ -39,10 +91,12 @@ public static class TriggerEndpoints
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
+            var zones = await ResolveZonesAsync(id, dto, store, ct);
+
             var profile = string.IsNullOrWhiteSpace(dto.AlertProfile) ? "default" : dto.AlertProfile.Trim();
-            var config = new TriggerConfig(id, dto.Enabled, dto.ZonePolygon, dto.MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
+            var config = new TriggerConfig(id, dto.Enabled, zones[0].Polygon, zones[0].MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
                 dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile,
-                dto.SensorDeviceId.Trim(), dto.SensorTriggerOn.Trim().ToLowerInvariant(), dto.SensorCooldownSeconds);
+                dto.SensorDeviceId.Trim(), dto.SensorTriggerOn.Trim().ToLowerInvariant(), dto.SensorCooldownSeconds, zones);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         }).RequireAuthorization("AdminOnly");
@@ -89,7 +143,8 @@ public static class TriggerEndpoints
                 triggerAreaFraction = e.TriggerAreaFraction,
                 hasClip = !string.IsNullOrWhiteSpace(e.ClipPath) && File.Exists(e.ClipPath),
                 incidentId = e.IncidentId,
-                confirmation = e.Confirmation.ToString().ToLowerInvariant()
+                confirmation = e.Confirmation.ToString().ToLowerInvariant(),
+                zoneName = e.ZoneName
             }));
         }).RequireAuthorization();
 
@@ -125,6 +180,26 @@ public static class TriggerEndpoints
 
         if (dto.MinTriggerArea <= 0 || dto.MinTriggerArea > 1)
             errors.Add("Object size must be greater than 0 and no larger than the whole frame.");
+
+        // Same rules again per zone, reported with the zone's name so a message about the fourth
+        // zone doesn't read as though it were about the one on screen. Only runs for a client that
+        // sent zones at all - the legacy fields above already cover the older ones.
+        foreach (var (zone, index) in (dto.Zones ?? []).Select((z, i) => (z, i)))
+        {
+            var label = string.IsNullOrWhiteSpace(zone.Name) ? $"Zone {index + 1}" : zone.Name.Trim();
+
+            if (dto.Enabled && zone.Polygon.Count < 3)
+                errors.Add($"\"{label}\" needs at least 3 points before enabling.");
+
+            if (zone.Polygon.Any(p => p.X < 0 || p.X > 1 || p.Y < 0 || p.Y > 1))
+                errors.Add($"\"{label}\" has points outside the frame.");
+
+            if (zone.MinTriggerArea <= 0 || zone.MinTriggerArea > 1)
+                errors.Add($"\"{label}\" object size must be greater than 0 and no larger than the whole frame.");
+
+            if (zone.Name.Trim().Length > 50)
+                errors.Add($"\"{label}\" name is too long (50 characters max).");
+        }
 
         if (dto.CooldownSeconds < 0)
             errors.Add("Cooldown seconds can't be negative.");

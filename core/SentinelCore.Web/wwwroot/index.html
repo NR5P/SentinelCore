@@ -378,21 +378,26 @@
       <div class="zone-editor-body">
         <div class="zone-editor-draw">
           <div class="zone-editor-hint" data-tip-below data-tip="Only motion inside this shape can fire a trigger. Anything outside it is ignored, so you can leave out a road or a neighbour's yard.">click to outline the trigger area</div>
-          <div class="zone-image-wrap" id="zone-image-wrap" data-tip-below data-tip="Click to drop a point. Points join up in order to form the zone - three or more makes a shape.">
+          <div class="zone-tabs" id="zone-tabs" data-tip-below data-tip="Each zone has its own minimum object size. Draw one zone per distance: something far from the camera covers far fewer pixels than the same thing up close, so a single size can't work for the whole view."></div>
+          <div class="zone-image-wrap" id="zone-image-wrap" data-tip-below data-tip="Click to drop a point. Points join up in order to form the zone - three or more makes a shape. Points go into the selected zone.">
             <img id="zone-reference-img" src="" alt="camera reference frame" />
             <svg id="zone-svg" class="zone-svg"></svg>
           </div>
           <div class="zone-editor-draw-actions">
-            <button id="zone-undo-point" class="btn" data-tip="Remove the last point you placed.">undo point</button>
-            <button id="zone-clear-points" class="btn" data-tip="Delete every point and start the shape over.">clear zone</button>
+            <button id="zone-undo-point" class="btn" data-tip="Remove the last point you placed in the selected zone.">undo point</button>
+            <button id="zone-clear-points" class="btn" data-tip="Delete every point in the selected zone and start its shape over.">clear zone</button>
+            <button id="zone-add" class="btn" data-tip="Add another zone with its own minimum object size - for a different distance from the camera.">+ add zone</button>
+            <button id="zone-rename" class="btn" data-tip="Rename the selected zone. The name appears on trigger cards so you can tell which area fired.">rename</button>
+            <button id="zone-delete" class="btn" data-tip="Delete the selected zone. A camera always keeps at least one.">delete zone</button>
           </div>
         </div>
         <div class="zone-editor-side">
           <div class="zone-editor-hint" data-tip-below data-tip="Anything smaller than this circle is ignored, which filters out birds and swaying branches. Size it to roughly match a person or car at that spot.">drag the edge to size the smallest object that should trigger</div>
-          <div class="zone-image-wrap zone-size-wrap" id="zone-size-wrap" data-tip-below data-tip="Drag the small dot on the circle's edge to resize it.">
+          <div class="zone-image-wrap zone-size-wrap" id="zone-size-wrap" data-tip-below data-tip="Drag the small dot on the circle's edge to resize it. This size applies to the selected zone only.">
             <img id="zone-size-img" src="" alt="camera reference frame" />
             <svg id="zone-size-svg" class="zone-svg"></svg>
           </div>
+          <div class="zone-size-readout" id="zone-size-readout" data-tip-below data-tip="The same size in detector pixels - motion is measured on a 320x180 grid, so this is the number the detector actually compares against. For reference, a person standing at a gate roughly 30 feet away measures around 160.">&nbsp;</div>
           <div class="field-grid">
             <div class="field-row" data-tip="Quiet period after a trigger. One car pulling in fires once instead of over and over while it moves through the zone.">
               <label class="field-label" for="zone-cooldown">Seconds between triggers</label>

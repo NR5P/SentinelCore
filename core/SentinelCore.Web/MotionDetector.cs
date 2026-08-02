@@ -1,6 +1,6 @@
 namespace SentinelCore.Web;
 
-// Frame-diff motion detection, restricted to a zone polygon, sized by connected-component
+// Frame-diff motion detection, restricted to one or more zone polygons, sized by connected-component
 // analysis - no OpenCV/AI, just byte-array math over a small RGB grid. A changed pixel is
 // excluded from the diff if it looks like a shadow rather than a real object: shadows darken
 // a pixel while keeping its color ratios close to the background (grass in shadow still reads
@@ -31,24 +31,50 @@ public sealed class MotionDetector
     private const double MinChromaticityThreshold = 0.04;
     private const double MaxChromaticityThreshold = 0.24;
 
-    private readonly bool[] _zoneMask;
+    // One mask per zone, plus the union of them all. The union drives the per-pixel diff pass,
+    // which is by far the most expensive part of a frame and is identical for every zone - doing it
+    // once and then splitting only the (cheap) blob search per zone keeps N zones costing barely
+    // more than one.
+    private readonly bool[][] _zoneMasks;
+    private readonly int[][] _zonePixels;
+    private readonly bool[] _unionMask;
     private readonly double _shadowChromaticityThreshold;
     private byte[]? _previousFrame;
     private readonly bool[] _changedScratch = new bool[PixelCount];
     private readonly bool[] _visitedScratch = new bool[PixelCount];
     private readonly int[] _stackScratch = new int[PixelCount];
+    private readonly double[] _resultScratch;
 
-    public MotionDetector(IReadOnlyList<TriggerPoint> zonePolygon, int shadowSensitivity = 50)
+    public MotionDetector(IReadOnlyList<TriggerZone> zones, int shadowSensitivity = 50)
     {
-        _zoneMask = RasterizeZone(zonePolygon);
+        _zoneMasks = [.. zones.Select(z => RasterizeZone(z.Polygon))];
+        _zonePixels = [.. _zoneMasks.Select(mask =>
+            Enumerable.Range(0, PixelCount).Where(i => mask[i]).ToArray())];
+        _resultScratch = new double[_zoneMasks.Length];
+
+        _unionMask = new bool[PixelCount];
+        foreach (var mask in _zoneMasks)
+            for (var i = 0; i < PixelCount; i++)
+                if (mask[i]) _unionMask[i] = true;
+
         _shadowChromaticityThreshold = shadowSensitivity <= 0
             ? -1 // sentinel: never matches, so no pixel is ever excluded as shadow
             : MinChromaticityThreshold + Math.Clamp(shadowSensitivity, 1, 100) / 100.0 * (MaxChromaticityThreshold - MinChromaticityThreshold);
     }
 
-    // Feeds one RGB24 GridWidth*GridHeight frame. Returns the largest connected motion blob's
-    // area (as a fraction of the frame) found inside the zone, or null if there's no prior frame yet.
-    public double? ProcessFrame(byte[] frame)
+    // Convenience for a single unnamed zone - used by tests and by any caller that only has a
+    // polygon to hand.
+    public MotionDetector(IReadOnlyList<TriggerPoint> zonePolygon, int shadowSensitivity = 50)
+        : this([new TriggerZone(TriggerConfig.DefaultZoneName, zonePolygon, 0)], shadowSensitivity)
+    {
+    }
+
+    // Feeds one RGB24 GridWidth*GridHeight frame. Returns each zone's largest connected motion
+    // blob, as a fraction of the WHOLE frame (not of that zone), index-aligned to the zone list the
+    // detector was built with - or null if there's no prior frame to diff against yet.
+    //
+    // The returned array is reused between calls; copy it if you need to hold on to it.
+    public double[]? ProcessFrame(byte[] frame)
     {
         if (frame.Length != FrameSizeBytes)
             throw new ArgumentException($"Expected a {FrameSizeBytes}-byte RGB24 frame.", nameof(frame));
@@ -62,7 +88,7 @@ public sealed class MotionDetector
         Array.Clear(_changedScratch);
         for (var i = 0; i < PixelCount; i++)
         {
-            if (!_zoneMask[i]) continue;
+            if (!_unionMask[i]) continue;
 
             var o = i * 3;
             byte r = frame[o], g = frame[o + 1], b = frame[o + 2];
@@ -77,8 +103,10 @@ public sealed class MotionDetector
 
         _previousFrame = frame;
 
-        var largestBlob = LargestConnectedComponent(_changedScratch);
-        return (double)largestBlob / PixelCount;
+        for (var zone = 0; zone < _zoneMasks.Length; zone++)
+            _resultScratch[zone] = (double)LargestConnectedComponent(zone) / PixelCount;
+
+        return _resultScratch;
     }
 
     private static double Luma(byte r, byte g, byte b) => 0.299 * r + 0.587 * g + 0.114 * b;
@@ -99,14 +127,21 @@ public sealed class MotionDetector
         return chromaticityDistortion < _shadowChromaticityThreshold;
     }
 
-    private int LargestConnectedComponent(bool[] changed)
+    // Blobs are grown strictly inside one zone's mask, so a single object straddling the boundary
+    // between two zones counts separately in each - it's only ever big enough to trip the zone that
+    // actually contains most of it, which is the behaviour you want when the zones are drawn at
+    // different distances.
+    private int LargestConnectedComponent(int zone)
     {
+        var mask = _zoneMasks[zone];
+        var pixels = _zonePixels[zone];
+
         Array.Clear(_visitedScratch);
         var largest = 0;
 
-        for (var start = 0; start < PixelCount; start++)
+        foreach (var start in pixels)
         {
-            if (!changed[start] || _visitedScratch[start]) continue;
+            if (!_changedScratch[start] || _visitedScratch[start]) continue;
 
             var stackTop = 0;
             _stackScratch[stackTop++] = start;
@@ -121,10 +156,10 @@ public sealed class MotionDetector
                 var x = index % GridWidth;
                 var y = index / GridWidth;
 
-                TryPush(changed, x - 1, y, ref stackTop);
-                TryPush(changed, x + 1, y, ref stackTop);
-                TryPush(changed, x, y - 1, ref stackTop);
-                TryPush(changed, x, y + 1, ref stackTop);
+                TryPush(mask, x - 1, y, ref stackTop);
+                TryPush(mask, x + 1, y, ref stackTop);
+                TryPush(mask, x, y - 1, ref stackTop);
+                TryPush(mask, x, y + 1, ref stackTop);
             }
 
             if (size > largest) largest = size;
@@ -133,11 +168,11 @@ public sealed class MotionDetector
         return largest;
     }
 
-    private void TryPush(bool[] changed, int x, int y, ref int stackTop)
+    private void TryPush(bool[] mask, int x, int y, ref int stackTop)
     {
         if (x < 0 || x >= GridWidth || y < 0 || y >= GridHeight) return;
         var index = y * GridWidth + x;
-        if (!changed[index] || _visitedScratch[index]) return;
+        if (!mask[index] || !_changedScratch[index] || _visitedScratch[index]) return;
         _visitedScratch[index] = true;
         _stackScratch[stackTop++] = index;
     }

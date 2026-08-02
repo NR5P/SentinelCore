@@ -61,6 +61,9 @@ struct Point2D: Codable, Hashable {
 }
 
 // Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
+//
+// TODO: multi-zone - the server's additive `zones` array isn't modelled here yet.
+// See core/docs/MULTI_ZONE_CLIENT_HANDOFF.md.
 struct TriggerConfig: Codable, Equatable {
     var enabled: Bool
     var zonePolygon: [Point2D]

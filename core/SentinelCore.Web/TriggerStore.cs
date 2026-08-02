@@ -17,9 +17,23 @@ namespace SentinelCore.Web;
 // gets one, so its triggers are always shown.
 public sealed record TriggerPoint(double X, double Y);
 
+// One drawn area with its own minimum object size. Several of these per camera is the whole point:
+// perspective means the same person covers wildly different pixel counts depending on how far away
+// they are, so a single threshold can't serve a whole scene. On the gate camera a person at the
+// gate measures ~161px on the 320x180 detector grid while the same person in the near driveway is
+// several times that - set one floor low enough to see the gate and close-range noise trips it
+// constantly; set it high enough to ignore that noise and the gate goes blind.
+//
+// MinTriggerArea stays a fraction of the WHOLE frame (not of this zone), same as it always was, so
+// the numbers mean exactly what they used to and existing configs migrate unchanged.
+public sealed record TriggerZone(string Name, IReadOnlyList<TriggerPoint> Polygon, double MinTriggerArea);
+
 public sealed record TriggerConfig(
     Guid CameraId,
     bool Enabled,
+    // Legacy mirror of Zones[0] - see ResolvedZones. Kept in the record, the table, and the API
+    // payload because the shipped iOS/tvOS/Android builds decode these two fields as required and
+    // would throw without them.
     IReadOnlyList<TriggerPoint> ZonePolygon,
     double MinTriggerArea,
     int CooldownSeconds,
@@ -42,12 +56,29 @@ public sealed record TriggerConfig(
     string SensorTriggerOn = "on",
     // Separate from the zone's own CooldownSeconds: a sensor's sensible rate is a property of the
     // sensor (a driveway loop trips once per car, a PIR trips constantly), not of the video.
-    int SensorCooldownSeconds = 30)
+    int SensorCooldownSeconds = 30,
+    // The real zone list, and the source of truth once it's populated. Null on a row written before
+    // multi-zone existed (and on anything built by the positional constructors below, which stop
+    // short of this argument) - read it through ResolvedZones, never directly.
+    //
+    // Appended at the end with a default on purpose: this record is constructed positionally in
+    // several places and inserting a field mid-list shifts every later argument silently. The
+    // default also keeps older backup files deserializing - see BackupEndpoints.
+    IReadOnlyList<TriggerZone>? Zones = null)
 {
+    public const string DefaultZoneName = "Zone 1";
+
     public static TriggerConfig Disabled(Guid cameraId) =>
         new(cameraId, false, [], 0.02, 5, 6, 50, false, 5, 10, false, "default");
 
     public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
+
+    // Always at least one zone. A config from before multi-zone (Zones null/empty) reads as a
+    // single zone built from the legacy ZonePolygon/MinTriggerArea pair, so every consumer can just
+    // iterate and never special-case the migration. Idempotent: re-saving a synthesized zone writes
+    // the same polygon and area straight back into the legacy columns.
+    public IReadOnlyList<TriggerZone> ResolvedZones =>
+        Zones is { Count: > 0 } ? Zones : [new TriggerZone(DefaultZoneName, ZonePolygon, MinTriggerArea)];
 }
 
 // Whether the AI has agreed there was actually something here. Motion detection alone can't tell
@@ -86,7 +117,11 @@ public sealed record TriggerEvent(
     // Shared by every event (across one or more cameras) that belongs to the same camera-group
     // incident - see TriggerZoneMonitor.MaybeTriggerAsync. Null for a camera with no group.
     string? IncidentId = null,
-    TriggerConfirmation Confirmation = TriggerConfirmation.Confirmed);
+    TriggerConfirmation Confirmation = TriggerConfirmation.Confirmed,
+    // Which of the camera's zones detected this, for the Triggers tab. Null for a companion
+    // capture (no zone detected it - the camera was recorded because a group member fired), for a
+    // sensor or manual trigger, and for every row written before multi-zone existed.
+    string? ZoneName = null);
 
 public interface ITriggerConfigStore
 {
@@ -101,9 +136,11 @@ public interface ITriggerConfigStore
 
 public interface ITriggerEventStore
 {
+    // zoneName is trailing and optional so the callers that have no zone to name (companion
+    // captures, sensor and manual triggers) are unchanged.
     Task<TriggerEvent> AddAsync(
         Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId,
-        TriggerConfirmation confirmation, CancellationToken cancellationToken);
+        TriggerConfirmation confirmation, CancellationToken cancellationToken, string? zoneName = null);
 
     // includeUnconfirmed surfaces pending and rejected triggers too, for the Triggers tab's
     // "show unconfirmed" toggle - the only way to see what the AI filter is actually throwing
@@ -187,6 +224,12 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         // confirmation was recorded under the old always-visible rule, and migrating them to
         // pending would blank the Triggers tab and the timeline on the first run after upgrade.
         AddColumnIfMissing("TriggerEvents", "Confirmation", "TEXT NOT NULL DEFAULT 'confirmed'");
+        // Nullable rather than a JSON default: NULL is what marks a row as pre-multi-zone, and
+        // TriggerConfig.ResolvedZones turns that into a single zone built from the legacy
+        // ZonePolygon/MinTriggerArea columns. An empty-string default would just be a value the
+        // deserializer would then have to treat as null anyway.
+        AddColumnIfMissing("TriggerConfigs", "Zones", "TEXT");
+        AddColumnIfMissing("TriggerEvents", "ZoneName", "TEXT");
 
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = """
@@ -222,7 +265,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
-                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds
+                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones
                 FROM TriggerConfigs WHERE CameraId = $cameraId;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -245,7 +288,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
-                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds
+                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones
                 FROM TriggerConfigs WHERE Enabled = 1;
                 """;
 
@@ -271,7 +314,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.CommandText = """
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
-                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds
+                       SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones
                 FROM TriggerConfigs;
                 """;
 
@@ -297,10 +340,10 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.CommandText = """
                 INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                                             RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
-                                            SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds)
+                                            SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones)
                 VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity,
                         $recordClips, $clipPreSeconds, $clipPostSeconds, $sendToAlerts, $alertProfile,
-                        $sensorDeviceId, $sensorTriggerOn, $sensorCooldownSeconds)
+                        $sensorDeviceId, $sensorTriggerOn, $sensorCooldownSeconds, $zones)
                 ON CONFLICT(CameraId) DO UPDATE SET
                     Enabled = excluded.Enabled,
                     ZonePolygon = excluded.ZonePolygon,
@@ -315,12 +358,20 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                     AlertProfile = excluded.AlertProfile,
                     SensorDeviceId = excluded.SensorDeviceId,
                     SensorTriggerOn = excluded.SensorTriggerOn,
-                    SensorCooldownSeconds = excluded.SensorCooldownSeconds;
+                    SensorCooldownSeconds = excluded.SensorCooldownSeconds,
+                    Zones = excluded.Zones;
                 """;
+
+            // Zones is the source of truth; the legacy ZonePolygon/MinTriggerArea columns are
+            // written as a mirror of the primary zone so that the shipped mobile clients - which
+            // only know about those two fields - keep reading and editing something coherent.
+            var zones = config.ResolvedZones;
+            var primary = zones[0];
+
             command.Parameters.AddWithValue("$cameraId", config.CameraId.ToString("N"));
             command.Parameters.AddWithValue("$enabled", config.Enabled ? 1 : 0);
-            command.Parameters.AddWithValue("$zonePolygon", JsonSerializer.Serialize(config.ZonePolygon));
-            command.Parameters.AddWithValue("$minTriggerArea", config.MinTriggerArea);
+            command.Parameters.AddWithValue("$zonePolygon", JsonSerializer.Serialize(primary.Polygon));
+            command.Parameters.AddWithValue("$minTriggerArea", primary.MinTriggerArea);
             command.Parameters.AddWithValue("$cooldownSeconds", config.CooldownSeconds);
             command.Parameters.AddWithValue("$maxTriggersPerMinute", config.MaxTriggersPerMinute);
             command.Parameters.AddWithValue("$shadowSensitivity", config.ShadowSensitivity);
@@ -332,6 +383,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$sensorDeviceId", config.SensorDeviceId);
             command.Parameters.AddWithValue("$sensorTriggerOn", config.SensorTriggerOn);
             command.Parameters.AddWithValue("$sensorCooldownSeconds", config.SensorCooldownSeconds);
+            command.Parameters.AddWithValue("$zones", JsonSerializer.Serialize(zones));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -342,17 +394,17 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
     public async Task<TriggerEvent> AddAsync(
         Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId,
-        TriggerConfirmation confirmation, CancellationToken cancellationToken)
+        TriggerConfirmation confirmation, CancellationToken cancellationToken, string? zoneName = null)
     {
-        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null, incidentId, confirmation);
+        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null, incidentId, confirmation, zoneName);
 
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, IncidentId, Confirmation)
-                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction, $incidentId, $confirmation);
+                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, IncidentId, Confirmation, ZoneName)
+                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction, $incidentId, $confirmation, $zoneName);
                 """;
             command.Parameters.AddWithValue("$id", trigger.Id.ToString("N"));
             command.Parameters.AddWithValue("$cameraId", trigger.CameraId.ToString("N"));
@@ -361,6 +413,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$triggerAreaFraction", trigger.TriggerAreaFraction);
             command.Parameters.AddWithValue("$incidentId", (object?)trigger.IncidentId ?? DBNull.Value);
             command.Parameters.AddWithValue("$confirmation", ToStorage(confirmation));
+            command.Parameters.AddWithValue("$zoneName", (object?)trigger.ZoneName ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -422,7 +475,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
             using var command = _connection.CreateCommand();
             command.CommandText =
-                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation " +
+                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName " +
                 $"FROM TriggerEvents {where}ORDER BY OccurredAt DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$limit", limit);
             if (cameraId is not null) command.Parameters.AddWithValue("$cameraId", cameraId.Value.ToString("N"));
@@ -447,7 +500,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName
                 FROM TriggerEvents
                 WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end AND Confirmation = 'confirmed'
                 ORDER BY OccurredAt ASC;
@@ -492,7 +545,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation FROM TriggerEvents WHERE Id = $id;";
+            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName FROM TriggerEvents WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -519,7 +572,10 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         reader.GetString(11),
         reader.GetString(12),
         reader.GetString(13),
-        (int)reader.GetInt64(14));
+        (int)reader.GetInt64(14),
+        // NULL here is a row written before multi-zone existed - ResolvedZones synthesizes the
+        // single zone from the legacy columns above rather than this being a missing-data case.
+        reader.IsDBNull(15) ? null : JsonSerializer.Deserialize<IReadOnlyList<TriggerZone>>(reader.GetString(15)));
 
     private static TriggerEvent ReadEvent(SqliteDataReader reader) => new(
         Guid.ParseExact(reader.GetString(0), "N"),
@@ -529,7 +585,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         reader.GetDouble(4),
         reader.IsDBNull(5) ? null : reader.GetString(5),
         reader.IsDBNull(6) ? null : reader.GetString(6),
-        FromStorage(reader.GetString(7)));
+        FromStorage(reader.GetString(7)),
+        reader.IsDBNull(8) ? null : reader.GetString(8));
 
     private static string ToStorage(TriggerConfirmation confirmation) => confirmation switch
     {

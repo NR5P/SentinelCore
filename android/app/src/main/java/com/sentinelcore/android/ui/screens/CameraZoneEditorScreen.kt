@@ -1,3 +1,6 @@
+// TODO: multi-zone. This editor still edits a single zone; the server supports several per
+// camera, each with its own minimum object size. See core/docs/MULTI_ZONE_CLIENT_HANDOFF.md
+// for the wire format and the two rules that must not be broken.
 package com.sentinelcore.android.ui.screens
 
 import android.graphics.Bitmap

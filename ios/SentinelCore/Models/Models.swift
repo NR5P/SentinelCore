@@ -72,6 +72,16 @@ struct Point2D: Codable, Hashable {
 }
 
 // Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
+// TODO: multi-zone. The server now supports several trigger zones per camera, each with its own
+// minimum object size, in an additive `zones` array. This struct still models only the single
+// legacy zone, so this app edits the primary zone and the server preserves the rest.
+//
+// That preservation is load-bearing: because no `zones` key is sent, the server updates zone[0]
+// and leaves zones[1...] alone. Do NOT "helpfully" send `zones: []` - that means delete them.
+// And zonePolygon/minTriggerArea must keep being sent whatever else changes; they mirror zone[0]
+// and are declared non-optional here, so a server that stopped sending them would break decoding.
+//
+// See core/docs/MULTI_ZONE_CLIENT_HANDOFF.md before touching this or TriggerZoneEditorView.
 struct TriggerConfig: Codable, Equatable {
     var enabled: Bool
     var zonePolygon: [Point2D]

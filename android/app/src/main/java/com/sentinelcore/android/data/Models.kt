@@ -65,6 +65,12 @@ data class KnownFaceEnrollment(
 data class Point2D(val x: Double, val y: Double)
 
 // Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
+//
+// TODO: multi-zone. The server now supports several trigger zones per camera, each with its own
+// minimum object size, in an additive `zones` array that this class doesn't model yet - so this app
+// edits the primary zone and the server preserves the others. That only works because no `zones`
+// key is sent: sending an empty list instead would delete every zone but the primary.
+// See core/docs/MULTI_ZONE_CLIENT_HANDOFF.md before changing this or CameraZoneEditorScreen.
 data class TriggerConfig(
     val enabled: Boolean,
     val zonePolygon: List<Point2D>,

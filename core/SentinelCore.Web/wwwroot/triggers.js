@@ -1,9 +1,19 @@
 window.GateWatchTriggers = (function () {
   let currentCamera = null;
-  let polygonPoints = []; // fractions 0-1, drawn against the reference frame
-  let minTriggerArea = 0.02; // fraction of frame area
+  // One entry per zone: { name, polygon: [{x, y}] (fractions 0-1 against the reference frame),
+  // minTriggerArea (fraction of the whole frame's area) }. Always at least one - the server sends
+  // a synthesized one for cameras configured before zones could be split up.
+  let zones = [];
+  let activeZone = 0;
   let referenceUrl = null;
   let draggingCircle = false;
+
+  // The detector works on a fixed 320x180 grid (MotionDetector.GridWidth/GridHeight), so a size
+  // expressed as a fraction of the frame turns into this many pixels - the number the trigger
+  // threshold is actually compared against, and far easier to reason about than "0.0015".
+  const DETECTOR_PIXELS = 320 * 180;
+
+  const activeZoneOrNull = () => zones[activeZone] || null;
 
   const drawWrap = () => document.getElementById("zone-image-wrap");
   const drawImg = () => document.getElementById("zone-reference-img");
@@ -16,8 +26,8 @@ window.GateWatchTriggers = (function () {
 
   async function openZoneEditor(camera) {
     currentCamera = camera;
-    polygonPoints = [];
-    minTriggerArea = 0.02;
+    zones = [{ name: "Zone 1", polygon: [], minTriggerArea: 0.02 }];
+    activeZone = 0;
 
     document.getElementById("zone-editor-title").textContent = `TRIGGER ZONE — ${camera.name}`;
     document.getElementById("zone-editor-errors").innerHTML = "";
@@ -47,8 +57,20 @@ window.GateWatchTriggers = (function () {
       let sensorDeviceId = "";
       if (configResp.ok) {
         const config = await configResp.json();
-        polygonPoints = (config.zonePolygon || []).map(p => ({ x: p.x, y: p.y }));
-        minTriggerArea = config.minTriggerArea || 0.02;
+        // Prefer the zone list. Fall back to the legacy single-polygon fields for a server that
+        // predates multi-zone, so the editor still opens against an older backend.
+        zones = Array.isArray(config.zones) && config.zones.length > 0
+          ? config.zones.map((z, i) => ({
+              name: z.name || `Zone ${i + 1}`,
+              polygon: (z.polygon || []).map(p => ({ x: p.x, y: p.y })),
+              minTriggerArea: z.minTriggerArea || 0.02
+            }))
+          : [{
+              name: "Zone 1",
+              polygon: (config.zonePolygon || []).map(p => ({ x: p.x, y: p.y })),
+              minTriggerArea: config.minTriggerArea || 0.02
+            }];
+        activeZone = 0;
         document.getElementById("zone-cooldown").value = config.cooldownSeconds ?? 5;
         document.getElementById("zone-max-per-min").value = config.maxTriggersPerMinute ?? 6;
         document.getElementById("zone-enabled").checked = !!config.enabled;
@@ -162,25 +184,67 @@ window.GateWatchTriggers = (function () {
     return { w, h };
   }
 
+  // Every zone is drawn, but only the selected one is solid and shows its vertices - the others
+  // are dashed and faint so you can see how they line up without mistaking them for the shape your
+  // clicks are going into. The selected zone is drawn last so it sits on top.
   function renderPolygon() {
     const svg = drawSvg();
     const { w, h } = setViewBoxToWrap(svg, drawWrap());
     svg.innerHTML = "";
-    if (polygonPoints.length === 0) return;
 
-    const poly = svgNs("polygon");
-    poly.setAttribute("points", polygonPoints.map(p => `${p.x * w},${p.y * h}`).join(" "));
-    poly.setAttribute("class", "zone-polygon");
-    svg.appendChild(poly);
+    const order = zones.map((_, i) => i).filter(i => i !== activeZone).concat(
+      activeZone < zones.length ? [activeZone] : []);
 
-    for (const p of polygonPoints) {
-      const dot = svgNs("circle");
-      dot.setAttribute("cx", p.x * w);
-      dot.setAttribute("cy", p.y * h);
-      dot.setAttribute("r", 5);
-      dot.setAttribute("class", "zone-vertex");
-      svg.appendChild(dot);
+    for (const index of order) {
+      const zone = zones[index];
+      if (!zone || zone.polygon.length === 0) continue;
+
+      const isActive = index === activeZone;
+
+      const poly = svgNs("polygon");
+      poly.setAttribute("points", zone.polygon.map(p => `${p.x * w},${p.y * h}`).join(" "));
+      poly.setAttribute("class", isActive ? "zone-polygon" : "zone-polygon-inactive");
+      svg.appendChild(poly);
+
+      const label = svgNs("text");
+      label.setAttribute("x", zone.polygon[0].x * w + 6);
+      label.setAttribute("y", zone.polygon[0].y * h - 6);
+      label.setAttribute("class", isActive ? "zone-label" : "zone-label zone-label-inactive");
+      label.textContent = zone.name;
+      svg.appendChild(label);
+
+      if (!isActive) continue;
+
+      for (const p of zone.polygon) {
+        const dot = svgNs("circle");
+        dot.setAttribute("cx", p.x * w);
+        dot.setAttribute("cy", p.y * h);
+        dot.setAttribute("r", 5);
+        dot.setAttribute("class", "zone-vertex");
+        svg.appendChild(dot);
+      }
     }
+
+    renderZoneTabs();
+  }
+
+  function renderZoneTabs() {
+    const tabs = document.getElementById("zone-tabs");
+    tabs.innerHTML = "";
+
+    zones.forEach((zone, index) => {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = index === activeZone ? "zone-tab zone-tab-active" : "zone-tab";
+      tab.textContent = `${zone.name} · ${Math.round(zone.minTriggerArea * DETECTOR_PIXELS)}px`;
+      // Wired here rather than by delegation because these buttons are rebuilt on every render.
+      tab.addEventListener("click", () => {
+        activeZone = index;
+        renderPolygon();
+        renderCircle();
+      });
+      tabs.appendChild(tab);
+    });
   }
 
   function renderCircle() {
@@ -188,9 +252,17 @@ window.GateWatchTriggers = (function () {
     const { w, h } = setViewBoxToWrap(svg, sizeWrap());
     svg.innerHTML = "";
 
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+
+    const readout = document.getElementById("zone-size-readout");
+    if (readout)
+      readout.textContent =
+        `${zone.name}: ignores anything under ${Math.round(zone.minTriggerArea * DETECTOR_PIXELS)} detector pixels`;
+
     const cx = w / 2;
     const cy = h / 2;
-    const r = Math.sqrt((minTriggerArea * w * h) / Math.PI);
+    const r = Math.sqrt((zone.minTriggerArea * w * h) / Math.PI);
 
     const circle = svgNs("circle");
     circle.setAttribute("cx", cx);
@@ -212,15 +284,21 @@ window.GateWatchTriggers = (function () {
   }
 
   drawWrap().addEventListener("click", e => {
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+
     const rect = drawWrap().getBoundingClientRect();
     const x = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
-    polygonPoints.push({ x, y });
+    zone.polygon.push({ x, y });
     renderPolygon();
   });
 
   document.addEventListener("pointermove", e => {
     if (!draggingCircle) return;
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+
     const rect = sizeWrap().getBoundingClientRect();
     const cx = rect.width / 2;
     const cy = rect.height / 2;
@@ -228,8 +306,9 @@ window.GateWatchTriggers = (function () {
     const py = e.clientY - rect.top;
     const maxR = Math.min(rect.width, rect.height) / 2 - 4;
     const r = Math.max(8, Math.min(Math.hypot(px - cx, py - cy), maxR));
-    minTriggerArea = (Math.PI * r * r) / (rect.width * rect.height);
+    zone.minTriggerArea = (Math.PI * r * r) / (rect.width * rect.height);
     renderCircle();
+    renderZoneTabs(); // the tab shows this zone's pixel size
   });
 
   document.addEventListener("pointerup", () => {
@@ -246,13 +325,56 @@ window.GateWatchTriggers = (function () {
   });
 
   document.getElementById("zone-undo-point").addEventListener("click", () => {
-    polygonPoints.pop();
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+    zone.polygon.pop();
     renderPolygon();
   });
 
   document.getElementById("zone-clear-points").addEventListener("click", () => {
-    polygonPoints = [];
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+    zone.polygon = [];
     renderPolygon();
+  });
+
+  // A new zone starts empty and selected, and inherits the current zone's size as a starting point
+  // - you're usually adding a zone for a different distance, so it's a more useful default than
+  // the stock 2% would be.
+  document.getElementById("zone-add").addEventListener("click", () => {
+    const previous = activeZoneOrNull();
+    zones.push({
+      name: `Zone ${zones.length + 1}`,
+      polygon: [],
+      minTriggerArea: previous ? previous.minTriggerArea : 0.02
+    });
+    activeZone = zones.length - 1;
+    renderPolygon();
+    renderCircle();
+  });
+
+  document.getElementById("zone-rename").addEventListener("click", () => {
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+    const name = window.prompt("Zone name", zone.name);
+    if (name === null) return;
+    zone.name = name.trim().slice(0, 50) || zone.name;
+    renderPolygon();
+    renderCircle();
+  });
+
+  // A camera always keeps at least one zone: the legacy ZonePolygon/MinTriggerArea fields the
+  // mobile apps read are mirrored from the primary, so there has to be a primary to mirror.
+  document.getElementById("zone-delete").addEventListener("click", () => {
+    if (zones.length <= 1) {
+      showEditorError("A camera needs at least one zone - clear its points instead.");
+      return;
+    }
+
+    zones.splice(activeZone, 1);
+    activeZone = Math.max(0, activeZone - 1);
+    renderPolygon();
+    renderCircle();
   });
 
   document.getElementById("zone-editor-close").addEventListener("click", closeZoneEditor);
@@ -266,10 +388,15 @@ window.GateWatchTriggers = (function () {
     const errorsEl = document.getElementById("zone-editor-errors");
     errorsEl.innerHTML = "";
 
+    // zonePolygon/minTriggerArea are sent as well as zones, mirroring the primary zone: the shipped
+    // iOS/tvOS/Android builds decode those two as required fields, so the payload has to keep
+    // carrying them. The server treats zones as authoritative when it's present.
+    const primary = zones[0] || { polygon: [], minTriggerArea: 0.02 };
     const body = {
       enabled: document.getElementById("zone-enabled").checked,
-      zonePolygon: polygonPoints,
-      minTriggerArea,
+      zonePolygon: primary.polygon,
+      minTriggerArea: primary.minTriggerArea,
+      zones: zones.map(z => ({ name: z.name, polygon: z.polygon, minTriggerArea: z.minTriggerArea })),
       cooldownSeconds: parseInt(document.getElementById("zone-cooldown").value, 10) || 0,
       maxTriggersPerMinute: parseInt(document.getElementById("zone-max-per-min").value, 10) || 1,
       shadowSensitivity: parseInt(document.getElementById("zone-shadow-sensitivity").value, 10) || 0,
@@ -372,7 +499,7 @@ window.GateWatchTriggers = (function () {
           <span title="${escapeHtml(event.occurredAt)}">${timeAgo(event.occurredAt)}</span>
         </div>
         <div class="card-footer">
-          <span class="card-event-type">motion in zone</span>
+          <span class="card-event-type">${escapeHtml(event.zoneName || "motion in zone")}</span>
           <span>${formatClock(event.occurredAt)}</span>
         </div>
       </div>

@@ -166,7 +166,7 @@ public sealed class TriggerZoneMonitor(
         logger.LogInformation("Started trigger zone detection for camera {CameraId} ({Name}), pid {Pid}", camera.Id, camera.Name, process.Id);
 
         var cts = new CancellationTokenSource();
-        var session = new DetectionSession(process, config, cts, new MotionDetector(config.ZonePolygon, config.ShadowSensitivity), multiFrame);
+        var session = new DetectionSession(process, config, cts, new MotionDetector(config.ResolvedZones, config.ShadowSensitivity), multiFrame);
         _ = RunDetectionLoopAsync(camera, session, cts.Token);
         _ = DrainAsync(process.StandardError);
 
@@ -184,10 +184,29 @@ public sealed class TriggerZoneMonitor(
             {
                 if (!await ReadExactAsync(stream, buffer, cancellationToken)) break;
 
-                var blobFraction = session.Detector.ProcessFrame((byte[])buffer.Clone());
-                if (blobFraction is null || blobFraction < session.Config.MinTriggerArea) continue;
+                var blobFractions = session.Detector.ProcessFrame((byte[])buffer.Clone());
+                if (blobFractions is null) continue;
 
-                await MaybeTriggerAsync(camera, session, blobFraction.Value, cancellationToken);
+                // Each zone is judged against its own minimum size - that's the entire point of
+                // having several. When more than one is over its own floor (an object crossing a
+                // boundary, or overlapping zones), the one that cleared its threshold by the
+                // largest margin wins, so a frame records one trigger rather than one per zone.
+                var zones = session.Config.ResolvedZones;
+                var winner = -1;
+                var bestOvershoot = 0.0;
+                for (var i = 0; i < zones.Count && i < blobFractions.Length; i++)
+                {
+                    if (zones[i].MinTriggerArea <= 0 || blobFractions[i] < zones[i].MinTriggerArea) continue;
+
+                    var overshoot = blobFractions[i] / zones[i].MinTriggerArea;
+                    if (overshoot <= bestOvershoot) continue;
+                    bestOvershoot = overshoot;
+                    winner = i;
+                }
+
+                if (winner < 0) continue;
+
+                await MaybeTriggerAsync(camera, session, blobFractions[winner], zones[winner].Name, cancellationToken);
             }
         }
         catch (OperationCanceledException)
@@ -200,7 +219,7 @@ public sealed class TriggerZoneMonitor(
         }
     }
 
-    private async Task MaybeTriggerAsync(Camera camera, DetectionSession session, double areaFraction, CancellationToken cancellationToken)
+    private async Task MaybeTriggerAsync(Camera camera, DetectionSession session, double areaFraction, string zoneName, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
 
@@ -249,10 +268,10 @@ public sealed class TriggerZoneMonitor(
             var gated = await triggerConfirmation.ShouldGateAsync(session.Config.SendToAlerts, cancellationToken);
             var trigger = await eventStore.AddAsync(
                 camera.Id, imagePath, areaFraction, incidentId,
-                gated ? TriggerConfirmation.Pending : TriggerConfirmation.Confirmed, cancellationToken);
+                gated ? TriggerConfirmation.Pending : TriggerConfirmation.Confirmed, cancellationToken, zoneName);
             logger.LogInformation(
-                "Trigger zone fired for camera {CameraId} ({Name}), area {Area:P1}{Held}",
-                camera.Id, camera.Name, areaFraction, gated ? " - held for AI confirmation" : "");
+                "Trigger zone fired for camera {CameraId} ({Name}) in zone {Zone}, area {Area:P1}{Held}",
+                camera.Id, camera.Name, zoneName, areaFraction, gated ? " - held for AI confirmation" : "");
 
             if (session.Config.RecordClips)
                 _ = BuildClipAsync(camera, trigger, session.Config, now);
@@ -465,10 +484,11 @@ public sealed class TriggerZoneMonitor(
         }
     }
 
-    private static bool ConfigsEquivalent(TriggerConfig a, TriggerConfig b)
+    // Public so the zone comparison can be tested directly - this project has no
+    // InternalsVisibleTo, and a field missed in here is a silently ignored edit, not a crash.
+    public static bool ConfigsEquivalent(TriggerConfig a, TriggerConfig b)
     {
         if (a.Enabled != b.Enabled) return false;
-        if (Math.Abs(a.MinTriggerArea - b.MinTriggerArea) > 0.0001) return false;
         if (a.CooldownSeconds != b.CooldownSeconds) return false;
         if (a.MaxTriggersPerMinute != b.MaxTriggersPerMinute) return false;
         if (a.ShadowSensitivity != b.ShadowSensitivity) return false;
@@ -477,12 +497,29 @@ public sealed class TriggerZoneMonitor(
         if (a.ClipPostSeconds != b.ClipPostSeconds) return false;
         if (a.SendToAlerts != b.SendToAlerts) return false;
         if (a.AlertProfile != b.AlertProfile) return false;
-        if (a.ZonePolygon.Count != b.ZonePolygon.Count) return false;
 
-        for (var i = 0; i < a.ZonePolygon.Count; i++)
+        // The whole zone list, not just the primary polygon: this is what decides whether the
+        // reconcile loop tears down and rebuilds the detection session, so a field missed here is
+        // an edit the user makes in the UI that silently never takes effect until the next restart.
+        // ResolvedZones on both sides so a legacy config compares equal to its migrated self.
+        var zonesA = a.ResolvedZones;
+        var zonesB = b.ResolvedZones;
+        if (zonesA.Count != zonesB.Count) return false;
+
+        for (var zone = 0; zone < zonesA.Count; zone++)
         {
-            if (Math.Abs(a.ZonePolygon[i].X - b.ZonePolygon[i].X) > 0.0001) return false;
-            if (Math.Abs(a.ZonePolygon[i].Y - b.ZonePolygon[i].Y) > 0.0001) return false;
+            if (zonesA[zone].Name != zonesB[zone].Name) return false;
+            if (Math.Abs(zonesA[zone].MinTriggerArea - zonesB[zone].MinTriggerArea) > 0.0001) return false;
+
+            var polygonA = zonesA[zone].Polygon;
+            var polygonB = zonesB[zone].Polygon;
+            if (polygonA.Count != polygonB.Count) return false;
+
+            for (var i = 0; i < polygonA.Count; i++)
+            {
+                if (Math.Abs(polygonA[i].X - polygonB[i].X) > 0.0001) return false;
+                if (Math.Abs(polygonA[i].Y - polygonB[i].Y) > 0.0001) return false;
+            }
         }
 
         return true;
