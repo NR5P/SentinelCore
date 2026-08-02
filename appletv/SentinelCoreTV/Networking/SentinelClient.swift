@@ -53,7 +53,7 @@ final class SentinelClient {
     }
 
     func triggers() async throws -> [TriggerEvent] {
-        try await get("/api/triggers", query: [.init(name: "limit", value: "100")])
+        try await get("/api/triggers", query: [.init(name: "limit", value: "500")])
     }
 
     func cameras() async throws -> [Camera] {

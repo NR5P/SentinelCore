@@ -72,7 +72,9 @@ class SentinelRepository(
     }
 
     suspend fun triggers(): List<TriggerEvent> = withContext(Dispatchers.IO) {
-        val array = JSONArray(request("/api/triggers?limit=100"))
+        // Keep a busy camera's full day visible; the former 100-row cap made earlier same-day
+        // triggers look as if they had disappeared even though the server still retained them.
+        val array = JSONArray(request("/api/triggers?limit=500"))
         buildList {
             for (index in 0 until array.length()) {
                 val json = array.getJSONObject(index)

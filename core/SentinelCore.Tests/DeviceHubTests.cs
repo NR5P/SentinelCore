@@ -133,6 +133,37 @@ public sealed class DeviceHubTests
         Assert.Empty(DeviceTopics.BuildCommands(
             Device("Porch", "cmnd/porch/POWER", "stat/porch/POWER"), power: null, brightnessPercent: null));
 
+    [Fact]
+    public void BuildStateQueries_Tasmota_UsesEmptyPowerCommand()
+    {
+        var query = Assert.Single(DeviceTopics.BuildStateQueries(
+            Device("Porch", "cmnd/porch/POWER", "stat/porch/POWER")));
+
+        Assert.Equal("cmnd/porch/POWER", query.Topic);
+        Assert.Equal(string.Empty, query.Payload);
+        Assert.False(query.Retain);
+    }
+
+    [Fact]
+    public void BuildStateQueries_Zigbee2Mqtt_UsesGetTopicWithoutChangingState()
+    {
+        var device = Device("Lounge", "zigbee2mqtt/lounge/set", "zigbee2mqtt/lounge") with
+        {
+            Schema = DeviceTopics.SchemaJson
+        };
+
+        var query = Assert.Single(DeviceTopics.BuildStateQueries(device));
+        Assert.Equal("zigbee2mqtt/lounge/get", query.Topic);
+        Assert.Equal("{\"state\":\"\"}", query.Payload);
+    }
+
+    [Fact]
+    public void BuildStateQueries_UnknownProtocol_DoesNotGuessAtACommand()
+    {
+        var device = Device("Custom", "house/custom/control", "house/custom/state");
+        Assert.Empty(DeviceTopics.BuildStateQueries(device));
+    }
+
     // ---------------- State parsing ----------------
 
     [Fact]

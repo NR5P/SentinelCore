@@ -312,7 +312,7 @@ window.GateWatchTriggers = (function () {
     const root = document.getElementById("triggers-root");
     const countEl = document.getElementById("trigger-count");
     try {
-      const response = await fetch(`/api/triggers?limit=50${showHidden ? "&includeUnconfirmed=true" : ""}`);
+      const response = await fetch(`/api/triggers?limit=500${showHidden ? "&includeUnconfirmed=true" : ""}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const events = await response.json();
 

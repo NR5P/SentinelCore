@@ -56,13 +56,17 @@ public static class DeviceHubEndpoints
             }));
 
         group.MapGet("", async (IDeviceStore store, MqttDeviceBus bus, CancellationToken ct) =>
-            Results.Ok((await store.GetAllAsync(ct)).Select(device => ToResponse(device, bus))));
+        {
+            await bus.EnsureStateSubscriptionsReadyAsync(ct);
+            return Results.Ok((await store.GetAllAsync(ct)).Select(device => ToResponse(device, bus)));
+        });
 
         // Deliberately separate from the list above: the clients poll this every few seconds
         // while the Device Hub tab is open, and it doesn't need to carry every topic and payload
         // string along with it each time.
         group.MapGet("/state", async (IDeviceStore store, MqttDeviceBus bus, CancellationToken ct) =>
         {
+            await bus.EnsureStateSubscriptionsReadyAsync(ct);
             var devices = await store.GetAllAsync(ct);
             return Results.Ok(new
             {

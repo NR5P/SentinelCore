@@ -34,7 +34,10 @@ struct RootView: View {
         }
         .tint(SentinelTheme.green)
         .task(id: model.serverURL) {
-            await model.connect(resetNetworkSession: true)
+            // Connection setup may replace a certificate-rejected HTTPS URL with HTTP. Keep it
+            // alive when that state change invalidates this view task; connect owns its own
+            // request cancellation and the replacement task will reuse the in-flight work.
+            Task { await model.connect(resetNetworkSession: true) }
         }
         // The AI-verified alert interrupt: set whenever a push-worthy event arrives while this
         // app is foregrounded, or is opened from the system banner. Covers the whole screen
