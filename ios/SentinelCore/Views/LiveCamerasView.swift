@@ -19,14 +19,21 @@ struct LiveCamerasView: View {
     var body: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], spacing: 16) {
-                ForEach(model.cameras) { camera in
+                // Ordered as this account arranged it (see AppModel.liveCameras) - press and hold
+                // a tile to drag it somewhere else. `cameras` itself stays in the server's order
+                // for every other screen.
+                ForEach(model.liveCameras) { camera in
                     NavigationLink(value: camera) {
                         CameraCard(camera: camera, isActive: isActive)
                     }
                     .buttonStyle(.plain)
+                    // A single camera has nowhere to go, and starting a drag would only get in
+                    // the way of tapping through to it.
+                    .modifier(LiveTileReorder(camera: camera, isEnabled: model.cameras.count > 1))
                 }
             }
             .padding()
+            .animation(.snappy, value: model.liveCameraOrder)
         }
         .navigationTitle("Live")
         #if os(iOS)
@@ -53,6 +60,46 @@ struct LiveCamerasView: View {
             } else if model.cameras.isEmpty {
                 ProgressView("Loading cameras…")
             }
+        }
+    }
+}
+
+// Drag one live tile onto another to put it in that tile's place. The order is saved against the
+// signed-in account (see LiveOrderEndpoints on the server), so rearranging here doesn't move
+// anyone else's grid - and it's the same arrangement as that person's dashboard.
+//
+// The drag payload is the camera's id as a string rather than the Camera itself: a plain String
+// is already Transferable, and nothing outside this grid should be able to make sense of the
+// payload anyway. The preview is a name chip, not a snapshot of the tile - dragging a live video
+// frame around renders as a black rectangle.
+private struct LiveTileReorder: ViewModifier {
+    @EnvironmentObject private var model: AppModel
+    let camera: Camera
+    let isEnabled: Bool
+
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .overlay {
+                    if isTargeted {
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(SentinelTheme.green, lineWidth: 2)
+                    }
+                }
+                .draggable(camera.id.uuidString) {
+                    Label(camera.name, systemImage: "rectangle.grid.2x2")
+                        .padding(8)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .dropDestination(for: String.self) { items, _ in
+                    guard let dropped = items.first, let movingId = UUID(uuidString: dropped) else { return false }
+                    model.moveLiveCamera(movingId, toPositionOf: camera.id)
+                    return true
+                } isTargeted: { isTargeted = $0 }
+        } else {
+            content
         }
     }
 }

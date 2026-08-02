@@ -82,6 +82,24 @@ class SentinelRepository(
         }
     }
 
+    // The Live grid's tile order for the signed-in account. The server answers with a complete
+    // order covering every camera that currently exists, so this is a straight read - see
+    // LiveCameraOrder for why the merge rule is nevertheless mirrored on this side.
+    suspend fun liveOrder(): List<String> = withContext(Dispatchers.IO) {
+        val array = JSONObject(request("/api/live-order")).optJSONArray("cameraIds") ?: JSONArray()
+        buildList {
+            for (index in 0 until array.length()) add(array.getString(index))
+        }
+    }
+
+    suspend fun saveLiveOrder(cameraIds: List<String>) = withContext(Dispatchers.IO) {
+        request(
+            "/api/live-order",
+            method = "PUT",
+            body = JSONObject().put("cameraIds", JSONArray(cameraIds)).toString(),
+        )
+    }
+
     suspend fun createCamera(input: CameraInput): Camera = withContext(Dispatchers.IO) {
         parseCamera(JSONObject(request("/api/cameras", method = "POST", body = input.toJson().toString())))
     }

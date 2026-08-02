@@ -33,6 +33,10 @@ final class AppModel: ObservableObject {
     @Published var events: [SecurityEvent] = []
     @Published var triggers: [TriggerEvent] = []
     @Published var cameras: [Camera] = []
+    // How this account has arranged the Live grid, newest server answer first. Kept apart from
+    // `cameras` on purpose: that list stays the canonical, order-agnostic one every other screen
+    // reads, and only the Live grid cares where the tiles sit. See liveCameras.
+    @Published private(set) var liveCameraOrder: [UUID] = []
     @Published var accounts: [Account] = []
     @Published var knownFaces: [KnownFace] = []
     // Whether the server has the Device Hub switched on. Drives whether the section exists at
@@ -205,6 +209,14 @@ final class AppModel: ObservableObject {
             if Self.isCancellation(error) { throw error }
             firstError = firstError ?? error
         }
+        // Not folded into firstError, same reasoning as the Device Hub below: a server older than
+        // this feature has no such endpoint, and the Live grid falling back to the camera list's
+        // own order is a fine outcome - not a failed connection.
+        do {
+            liveCameraOrder = try await client.liveOrder()
+        } catch {
+            if Self.isCancellation(error) { throw error }
+        }
         // Not folded into firstError: an older server has no such endpoint, and a 404 there
         // must not read as a failed connection - it just means no Device Hub.
         do {
@@ -229,6 +241,46 @@ final class AppModel: ObservableObject {
         }
         lastUpdated = .now
         selectPendingPushEvent()
+    }
+
+    // MARK: - Live grid order
+
+    // The cameras as this account has arranged them: saved placements first (any pointing at a
+    // camera that no longer exists dropped), then anything the saved order has never seen - a
+    // camera added since - at the end. Same rule the server applies, repeated here because the
+    // local camera list can be ahead of the last order fetched from it.
+    var liveCameras: [Camera] {
+        var remaining = cameras
+        var ordered: [Camera] = []
+        for id in liveCameraOrder {
+            guard let index = remaining.firstIndex(where: { $0.id == id }) else { continue }
+            ordered.append(remaining.remove(at: index))
+        }
+        return ordered + remaining
+    }
+
+    // Drop a dragged tile onto another one: the dragged camera takes that tile's place and the
+    // rest close up behind it.
+    func moveLiveCamera(_ movingId: UUID, toPositionOf targetId: UUID) {
+        var ids = liveCameras.map(\.id)
+        guard let from = ids.firstIndex(of: movingId), let to = ids.firstIndex(of: targetId), from != to else { return }
+        ids.remove(at: from)
+        ids.insert(movingId, at: to)
+        applyLiveCameraOrder(ids)
+    }
+
+    private func applyLiveCameraOrder(_ ids: [UUID]) {
+        // Shown immediately and saved in the background: the arrangement is what the person just
+        // asked for, and a round trip to the server is no reason to make them watch a tile snap
+        // back before it moves.
+        liveCameraOrder = ids
+        Task {
+            do {
+                try await client.saveLiveOrder(ids)
+            } catch {
+                log("Could not save the live camera order: \(error.localizedDescription)", level: .error)
+            }
+        }
     }
 
     private static func isCancellation(_ error: Error) -> Bool {

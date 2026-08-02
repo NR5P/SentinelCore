@@ -122,6 +122,12 @@ view, adding/editing cameras, PTZ control, Triggers, Automations, and every Sett
 including [Known Faces](#10a-known-faces--local-face-recognition) enrollment (with a direct
 camera-capture option the web UI doesn't have) and [System health](#7a-system-health--how-hard-the-server-is-working).
 
+On both, the Live grid can be arranged the same way the dashboard's can: press and hold a tile,
+then drag it over the one whose place you want it to take. The arrangement is stored against
+your login on the server, not on the phone — so the order you set on your iPhone is the order
+you'll find on your Android tablet and in your browser, and nobody else's grid moves. (The Apple
+TV app doesn't follow this yet — its grid stays in the server's own order.)
+
 **Apple TV** is deliberately smaller in scope — live camera viewing, the alert feed, trigger
 history, and settings, but no camera/account administration and no PTZ controls (those stay on
 iOS/Android/web, where they're easier to use anyway). Its one feature the other apps don't have:

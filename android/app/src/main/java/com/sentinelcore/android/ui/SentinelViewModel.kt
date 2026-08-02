@@ -25,6 +25,7 @@ import com.sentinelcore.android.data.DiagnosticLevel
 import com.sentinelcore.android.data.HubDevice
 import com.sentinelcore.android.data.HubDeviceInput
 import com.sentinelcore.android.data.KnownFace
+import com.sentinelcore.android.data.LiveCameraOrder
 import com.sentinelcore.android.data.SettingsAction
 import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.data.PromptProfileName
@@ -68,6 +69,10 @@ data class SentinelUiState(
     val events: List<SecurityEvent> = emptyList(),
     val triggers: List<TriggerEvent> = emptyList(),
     val cameras: List<Camera> = emptyList(),
+    // How this account has arranged the Live grid, as last known from the server. Kept apart from
+    // `cameras` on purpose: that list stays the canonical, order-agnostic one every other screen
+    // reads, and only the Live grid cares where the tiles sit - see liveCameras below.
+    val liveOrder: List<String> = emptyList(),
     val accounts: List<Account> = emptyList(),
     val knownFaces: List<KnownFace> = emptyList(),
     // Whether the server has the Device Hub switched on - drives whether its bottom-bar
@@ -96,6 +101,11 @@ data class SentinelUiState(
     val timelineCameras: List<String> = emptyList(),
     val discoveredServers: List<DiscoveredServer> = emptyList(),
 ) {
+    // The cameras as this account arranged them - what the Live grid renders. Every other screen
+    // keeps reading `cameras`, which stays in the server's own order.
+    val liveCameras: List<Camera>
+        get() = LiveCameraOrder.arrange(liveOrder, cameras)
+
     val isConfigured: Boolean
         get() = runCatching {
             val uri = URI(serverUrl)
@@ -261,6 +271,13 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                         .onSuccess { value -> _state.update { it.copy(cameras = value) } }
                         .onFailure(currentErrors::add)
                 },
+                // Same treatment as the two below: a server older than this feature has no such
+                // endpoint, and the Live grid falling back to the camera list's own order is a
+                // fine outcome, not a failed connection.
+                viewModelScope.async {
+                    runCatching { repository.liveOrder() }
+                        .onSuccess { value -> _state.update { it.copy(liveOrder = value) } }
+                },
                 // Deliberately not added to currentErrors: an older server has no such
                 // endpoint, and a 404 there means "no Device Hub", not a failed connection.
                 viewModelScope.async {
@@ -386,6 +403,23 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     fun absoluteUrl(path: String): String? = repository.absoluteUrl(path)
 
     fun mediaHeaders(): Map<String, String> = repository.mediaHeaders()
+
+    // A live tile was dragged onto another one. Applied on screen immediately and saved in the
+    // background: the arrangement is what the person just asked for, and a round trip to the
+    // server is no reason to make them watch a tile snap back before it moves. A failed save is
+    // logged rather than rolled back - the grid they are looking at stays as they left it, and the
+    // next refresh simply comes back with the last order the server did store.
+    fun moveLiveCamera(movingId: String, targetId: String) {
+        val current = _state.value
+        val moved = LiveCameraOrder.move(current.liveCameras.map(Camera::id), movingId, targetId)
+        if (moved == current.liveOrder) return
+
+        _state.update { it.copy(liveOrder = moved) }
+        viewModelScope.launch {
+            runCatching { repository.saveLiveOrder(moved) }
+                .onFailure { error -> log("Could not save the live camera order: ${readableError(error)}", DiagnosticLevel.ERROR) }
+        }
+    }
 
     suspend fun refreshCameras() {
         val value = repository.cameras()

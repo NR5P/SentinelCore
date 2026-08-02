@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -68,6 +69,8 @@ import com.sentinelcore.android.ui.components.StatusChip
 import com.sentinelcore.android.ui.components.UnlicensedWatermark
 import com.sentinelcore.android.ui.components.fullDateTime
 import com.sentinelcore.android.ui.components.relativeTime
+import com.sentinelcore.android.ui.components.rememberGridReorderState
+import com.sentinelcore.android.ui.components.reorderableGridItem
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import kotlin.math.roundToInt
@@ -227,16 +230,34 @@ fun LiveCamerasScreen(
                 Modifier.fillMaxSize(),
             )
         } else {
+            val gridState = rememberLazyGridState()
+            val reorder = rememberGridReorderState(gridState) { movingId, targetId ->
+                model.moveLiveCamera(movingId, targetId)
+            }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(320.dp),
+                state = gridState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                items(state.cameras, key = Camera::id) { camera ->
+                // Ordered as this account arranged it (see SentinelUiState.liveCameras) - press
+                // and hold a tile to carry it somewhere else. The key is what lets a reorder move
+                // each tile's existing player rather than build a new one.
+                items(state.liveCameras, key = Camera::id) { camera ->
                     Card(
-                        modifier = Modifier.fillMaxWidth().clickable { onCamera(camera) },
+                        modifier = Modifier.fillMaxWidth()
+                            // Only worth arming with something to rearrange; on a single-camera
+                            // grid a long press would just get in the way of opening it.
+                            .then(
+                                if (state.liveCameras.size > 1) {
+                                    Modifier.reorderableGridItem(reorder, camera.id)
+                                } else {
+                                    Modifier
+                                },
+                            )
+                            .clickable { onCamera(camera) },
                     ) {
                         Column(
                             modifier = Modifier.padding(14.dp),

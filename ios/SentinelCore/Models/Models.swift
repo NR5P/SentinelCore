@@ -49,6 +49,12 @@ struct CameraInput: Encodable {
     var onvifProfileToken: String?
 }
 
+// The Live grid's tile order for the signed-in account - the same shape in both directions, so
+// one type covers the GET and the PUT.
+struct LiveOrder: Codable {
+    var cameraIds: [UUID]
+}
+
 struct KnownFace: Codable, Identifiable, Hashable {
     let id: String
     let label: String

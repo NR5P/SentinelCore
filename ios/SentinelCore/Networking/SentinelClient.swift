@@ -69,6 +69,18 @@ final class SentinelClient {
         )
     }
 
+    // How this account has arranged the Live grid. The server answers with a complete order
+    // covering every camera that currently exists - deleted ones dropped, ones it has never seen
+    // appended last - so there is nothing to merge here.
+    func liveOrder() async throws -> [UUID] {
+        let response: LiveOrder = try await get("/api/live-order")
+        return response.cameraIds
+    }
+
+    func saveLiveOrder(_ cameraIds: [UUID]) async throws {
+        let _: LiveOrder = try await send("/api/live-order", method: "PUT", body: LiveOrder(cameraIds: cameraIds))
+    }
+
     func knownFaces() async throws -> [KnownFace] {
         try await get("/api/known-faces")
     }
