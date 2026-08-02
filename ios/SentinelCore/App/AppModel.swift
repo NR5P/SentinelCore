@@ -195,6 +195,18 @@ final class AppModel: ObservableObject {
     // time against the plain-HTTP address.
     private func establishSession() async throws {
         authStatus = try await client.authStatus()
+        if requiresLogin, let credential = CredentialStore.load(for: serverURL) {
+            log("The saved server session expired; renewing it with the Keychain login", level: .notice)
+            do {
+                try await client.login(username: credential.username, password: credential.password)
+                authStatus = try await client.authStatus()
+            } catch ClientError.authenticationRequired {
+                // A password reset or deleted account must not cause a failed automatic login on
+                // every launch. Forget the stale secret and show the normal sign-in screen.
+                CredentialStore.delete(for: serverURL)
+                authStatus = try await client.authStatus()
+            }
+        }
         // Before the requiresLogin return below, so the advisory is already known at the login
         // screen. Never throws - see checkServerCompatibility.
         await checkServerCompatibility()
@@ -327,6 +339,26 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             deviceHubEnabled = false
+        }
+        // Prime the Device Hub at app startup rather than waiting until its tab is first opened.
+        // The server's state endpoint first makes sure its MQTT subscriptions are ready, so a
+        // retained device report can tell us whether each light is currently on or off.
+        if deviceHubEnabled {
+            do {
+                devices = try await client.devices()
+                let snapshot = try await client.deviceStates()
+                for state in snapshot.devices {
+                    guard let index = devices.firstIndex(where: { $0.id == state.id }) else { continue }
+                    devices[index].power = state.power
+                    devices[index].brightness = state.brightness
+                    devices[index].available = state.available
+                }
+            } catch {
+                if Self.isCancellation(error) { throw error }
+                log("Could not prime Device Hub state during startup: \(Self.describe(error))", level: .notice)
+            }
+        } else {
+            devices = []
         }
         // Same treatment, opposite default - see isLicensed.
         do {
@@ -558,6 +590,13 @@ final class AppModel: ObservableObject {
 
     func signIn(username: String, password: String) async throws {
         try await client.login(username: username, password: password)
+        // Save only after the server accepted the credentials. A Keychain write failure should
+        // not undo a valid login; it only means this session cannot renew itself automatically.
+        do {
+            try CredentialStore.save(StoredCredential(username: username, password: password), for: serverURL)
+        } catch {
+            log("Signed in, but could not save the login in Keychain: \(error.localizedDescription)", level: .error)
+        }
         authStatus = try await client.authStatus()
         try await refreshAll()
         connectionState = .online
@@ -566,6 +605,7 @@ final class AppModel: ObservableObject {
     }
 
     func signOut() async {
+        CredentialStore.delete(for: serverURL)
         try? await client.logout()
         authStatus = try? await client.authStatus()
         connectionState = requiresLogin ? .authenticationRequired : .online

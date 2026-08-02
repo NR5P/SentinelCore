@@ -52,7 +52,10 @@ final class SentinelClient {
     }
 
     func triggers() async throws -> [TriggerEvent] {
-        try await get("/api/triggers", query: [.init(name: "limit", value: "100")])
+        // The trigger screen is the day-level audit trail, not just a notification preview. Busy
+        // cameras can legitimately exceed 100 detections in a day, which made older same-day
+        // rows appear to have vanished even though they were still in the server database.
+        try await get("/api/triggers", query: [.init(name: "limit", value: "500")])
     }
 
     func cameras() async throws -> [Camera] {

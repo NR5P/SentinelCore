@@ -56,6 +56,16 @@ object PushTokenStore {
 }
 
 class SentinelFirebaseMessagingService : FirebaseMessagingService() {
+    // Firebase can rotate the FCM registration token independently of an explicit register()
+    // call (restore, app-data reset, security rotation). Without this callback Sentinel kept
+    // sending to the obsolete token until the person manually disabled and re-enabled push.
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onNewToken(token: String) {
+        PushTokenStore.save(this, token)
+    }
+
+    // Firebase Messaging 25's installation-id API uses these callbacks; keep onNewToken above
+    // as the compatibility path for token rotation reported by Android lint/older providers.
     override fun onRegistered(installationId: String) {
         PushTokenStore.save(this, installationId)
     }

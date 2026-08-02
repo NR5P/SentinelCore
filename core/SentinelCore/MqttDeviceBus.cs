@@ -44,6 +44,22 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
     // What we last told the broker we wanted, so the next rebuild knows which filters to
     // withdraw. Only ever touched under _connectLock.
     private HashSet<string> _subscribedTopics = new(StringComparer.Ordinal);
+    private volatile bool _subscriptionsReady;
+
+    // How long to wait for the broker to deliver what a SUBSCRIBE or a state query just asked
+    // for, before the endpoint snapshots the cache. Only ever waited out when one of those two
+    // things actually happened - see EnsureStateSubscriptionsReadyAsync.
+    private static readonly TimeSpan RetainedStateGrace = TimeSpan.FromMilliseconds(200);
+
+    // How often active state queries are worth sending, and how long to leave a broker alone
+    // after failing to reach it.
+    private static readonly TimeSpan StateQueryInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan SetupRetryBackoff = TimeSpan.FromSeconds(30);
+
+    // Guards both of the throttles below.
+    private readonly object _stateThrottleLock = new();
+    private DateTimeOffset _lastStateQueryAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _setupUnavailableUntil = DateTimeOffset.MinValue;
 
     private CancellationTokenSource? _lifetimeCts;
     private IDisposable? _mqttSubscription;
@@ -102,6 +118,7 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
         var key = CurrentConnectionKey();
         if (Equals(key, _connectionKey)) return;
         _connectionKey = key;
+        _subscriptionsReady = false;
 
         var token = _lifetimeCts?.Token ?? CancellationToken.None;
         try
@@ -243,6 +260,98 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
         }
     }
 
+    // Used by the first Device Hub read after server/app startup. The hosted-service connection
+    // is intentionally fire-and-forget, so an API request can otherwise race it and receive
+    // "unknown" immediately before retained MQTT state arrives. Serializing through the same
+    // connection lock guarantees subscription setup has completed; the short grace lets the
+    // broker deliver retained state messages queued by SUBSCRIBE.
+    public async Task EnsureStateSubscriptionsReadyAsync(CancellationToken cancellationToken)
+    {
+        if (!IsEnabled) return;
+
+        // A broker that isn't answering must not be re-dialled by every poll. Device Hub is polled
+        // every few seconds by every client that has the tab open, so without this one unreachable
+        // broker becomes a connection attempt and a warning line per client per poll, for as long
+        // as it stays down - the same reason Go2RtcManager keeps an _unavailableUntil.
+        lock (_stateThrottleLock)
+        {
+            if (DateTimeOffset.UtcNow < _setupUnavailableUntil) return;
+        }
+
+        try
+        {
+            var subscribed = false;
+            if (!_subscriptionsReady)
+            {
+                await ConnectAndSubscribeAsync(cancellationToken);
+                subscribed = true;
+            }
+
+            var queried = await RequestCurrentStatesAsync(cancellationToken);
+
+            // Only when something was actually just asked for. In the steady state - subscriptions
+            // long since ready, the query throttled out - nothing is in flight to wait for, and
+            // waiting anyway put a flat 200ms on every Device Hub read from every client.
+            if (subscribed || queried)
+                await Task.Delay(RetainedStateGrace, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            lock (_stateThrottleLock)
+            {
+                _setupUnavailableUntil = DateTimeOffset.UtcNow + SetupRetryBackoff;
+            }
+
+            // State reads still return their cached/unknown values when MQTT is down; losing the
+            // broker should not turn the whole Device Hub endpoint into HTTP 500.
+            _logger.LogWarning(
+                ex,
+                "Could not prepare Device Hub state subscriptions for a state read; leaving the broker alone for {BackoffSeconds}s",
+                (int)SetupRetryBackoff.TotalSeconds);
+        }
+    }
+
+    // True when queries were actually published, so the caller knows whether there is anything
+    // in flight worth waiting on.
+    private async Task<bool> RequestCurrentStatesAsync(CancellationToken cancellationToken)
+    {
+        // Checked before the throttle slot is claimed, not after: a disconnected client that
+        // burned the slot would then stay quiet for the next 30 seconds despite never having
+        // asked anything.
+        if (!_client.IsConnected) return false;
+
+        // The iPhone asks every five seconds while Device Hub is visible. Querying active state
+        // on every poll would be needless broker/device traffic; normal state subscriptions keep
+        // the cache current between these occasional reconciliations.
+        lock (_stateThrottleLock)
+        {
+            if (DateTimeOffset.UtcNow - _lastStateQueryAt < StateQueryInterval) return false;
+            _lastStateQueryAt = DateTimeOffset.UtcNow;
+        }
+
+        var devices = await _store.GetEnabledAsync(cancellationToken);
+        var queries = devices.SelectMany(DeviceTopics.BuildStateQueries).ToArray();
+        foreach (var query in queries)
+        {
+            var message = new MqttApplicationMessageBuilder()
+                .WithTopic(query.Topic)
+                .WithPayload(query.Payload)
+                .WithRetainFlag(false)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                .Build();
+            await _client.PublishAsync(message, cancellationToken);
+        }
+
+        if (queries.Length == 0) return false;
+
+        _logger.LogInformation("Device Hub requested fresh state from {QueryCount} MQTT device(s)", queries.Length);
+        return true;
+    }
+
     private async Task ConnectAndSubscribeAsync(CancellationToken cancellationToken)
     {
         await _connectLock.WaitAsync(cancellationToken);
@@ -340,6 +449,7 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
         }
 
         _subscribedTopics = wanted;
+        _subscriptionsReady = true;
         _logger.LogInformation("Device Hub subscribed to {TopicCount} device topic(s)", wanted.Count);
     }
 
@@ -420,6 +530,7 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
 
     private async Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs args)
     {
+        _subscriptionsReady = false;
         var token = _lifetimeCts?.Token ?? CancellationToken.None;
         if (token.IsCancellationRequested || !IsEnabled) return;
 

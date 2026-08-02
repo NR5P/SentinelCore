@@ -153,6 +153,9 @@ struct DeviceHubView: View {
         do {
             model.devices = try await model.client.devices()
             errorMessage = nil
+            // The list carries the server's latest cached values, then this asks the dedicated
+            // state endpoint immediately. Do not make startup wait for the first five-second poll.
+            await refreshStates()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -246,10 +249,20 @@ private struct DeviceRow: View {
                 if isBusy {
                     ProgressView()
                 } else if device.commandable {
+                    #if os(macOS)
+                    SlidingPowerSwitch(
+                        isOn: device.isOn,
+                        isEnabled: device.enabled,
+                        accessibilityName: device.name,
+                        onToggle: onToggle
+                    )
+                    #else
                     Toggle("", isOn: Binding(get: { device.isOn }, set: { _ in onToggle() }))
                         .labelsHidden()
+                        .toggleStyle(.switch)
                         .disabled(!device.enabled)
                         .accessibilityLabel("\(device.name) power")
+                    #endif
                 }
             }
 
@@ -297,3 +310,36 @@ private struct DeviceRow: View {
         return device.isOn ? SentinelTheme.green : .secondary
     }
 }
+
+#if os(macOS)
+// SwiftUI's default macOS Toggle can resolve to the AppKit checkbox style depending on its List
+// environment. Draw the familiar sliding control explicitly so this can never regress into a
+// checkbox while leaving iPhone's native switch untouched.
+private struct SlidingPowerSwitch: View {
+    let isOn: Bool
+    let isEnabled: Bool
+    let accessibilityName: String
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            Capsule()
+                .fill(isOn ? SentinelTheme.green : Color.secondary.opacity(0.35))
+                .frame(width: 42, height: 24)
+                .overlay {
+                    Circle()
+                        .fill(.white)
+                        .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
+                        .padding(2)
+                        .frame(maxWidth: .infinity, alignment: isOn ? .trailing : .leading)
+                }
+                .animation(.easeInOut(duration: 0.16), value: isOn)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityLabel("\(accessibilityName) power")
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+#endif

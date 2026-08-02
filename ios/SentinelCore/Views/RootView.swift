@@ -28,9 +28,14 @@ struct RootView: View {
         }
         .tint(SentinelTheme.green)
         // Reconnect whenever setup/settings changes the address. Keeping this task on the
-        // persistent root prevents SwiftUI from cancelling it when ServerSetupView disappears.
+        // persistent root normally prevents SwiftUI from cancelling it when a child disappears.
+        // macOS can still recreate this root modifier while switching split-view sections,
+        // though, which used to cancel an in-flight refresh after several successful requests
+        // and leave connectionState stuck offline/checking. The unstructured task deliberately
+        // outlives that transient view update; AppModel's isConnecting guard coalesces any
+        // duplicate trigger produced by the replacement view.
         .task(id: model.serverURL) {
-            await model.connect(resetNetworkSession: true)
+            Task { await model.connect(resetNetworkSession: true) }
         }
         .onChange(of: model.selectedEvent?.id) { _, eventId in
             if eventId != nil { selection = .feed }

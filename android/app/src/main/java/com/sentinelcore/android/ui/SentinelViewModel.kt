@@ -136,7 +136,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     private val preferences =
         application.getSharedPreferences("sentinel_core", Application.MODE_PRIVATE)
     private val logSequence = AtomicLong()
-    private val repository = SentinelRepository(::log)
+    private val repository = SentinelRepository(application, ::log)
     private val serverDiscovery = ServerDiscovery(application)
     private val _state = MutableStateFlow(
         SentinelUiState(
@@ -319,6 +319,16 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                 },
             )
             requests.awaitAll()
+
+            if (_state.value.deviceHubEnabled) {
+                runCatching {
+                    val devices = repository.devices()
+                    _state.update { it.copy(devices = devices) }
+                    refreshDeviceStates()
+                }.onFailure { error ->
+                    log("Could not prime Device Hub state during startup: ${readableError(error)}", DiagnosticLevel.NOTICE)
+                }
+            }
 
             val firstError = currentErrors.firstOrNull()
             _state.update {

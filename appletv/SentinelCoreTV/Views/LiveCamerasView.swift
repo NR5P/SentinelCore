@@ -85,6 +85,11 @@ private struct CameraCard: View {
     }
 }
 
+private struct LiveStreamRequest: Hashable {
+    let isActive: Bool
+    let url: URL?
+}
+
 private struct LiveCameraPreview: View {
     // How long a tile keeps its player paused-but-alive after the Live tab stops being active
     // before actually releasing it. Flipping to another tab and back within this window just
@@ -111,18 +116,24 @@ private struct LiveCameraPreview: View {
             VideoPlayer(player: stream.player)
                 .allowsHitTesting(false)
                 .opacity(stream.isVideoReady ? 1 : 0)
-            StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
+            LiveStatusChip(isVideoReady: stream.isVideoReady)
                 .padding(14)
         }
         // On the whole tile rather than the video alone, so the mark is there over the poster
         // frame too and doesn't blink in and out as playback starts.
         .unlicensedWatermark()
-        .task(id: isActive) {
-            if isActive {
-                if let streamURL { stream.start(url: streamURL) }
+        .task(id: streamRequest) {
+            let request = streamRequest
+            if request.isActive {
+                if let url = request.url { stream.start(url: url) }
             } else {
                 stream.pause()
-                try? await Task.sleep(for: Self.teardownGrace)
+                do {
+                    try await Task.sleep(for: Self.teardownGrace)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
                 stream.stop()
             }
         }
@@ -135,6 +146,22 @@ private struct LiveCameraPreview: View {
 
     private var streamURL: URL? {
         model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
+    }
+
+    private var streamRequest: LiveStreamRequest {
+        LiveStreamRequest(isActive: isActive, url: streamURL)
+    }
+}
+
+private struct LiveStatusChip: View {
+    let isVideoReady: Bool
+
+    var body: some View {
+        if isVideoReady {
+            StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
+        } else {
+            StatusChip("CONNECTING", systemImage: "circle.dotted", color: .white.opacity(0.7))
+        }
     }
 }
 
@@ -163,10 +190,14 @@ struct LivePlayerView: View {
         .unlicensedWatermark()
         .ignoresSafeArea()
         .navigationTitle(camera.name)
-        .task {
-            guard let url = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8") else { return }
+        .task(id: streamURL) {
+            guard let url = streamURL else { return }
             stream.start(url: url)
         }
         .onDisappear { stream.stop() }
+    }
+
+    private var streamURL: URL? {
+        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
     }
 }

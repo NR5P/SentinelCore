@@ -71,6 +71,7 @@ struct DeviceHubView: View {
         do {
             model.devices = try await model.client.devices()
             errorMessage = nil
+            await refreshStates()
         } catch {
             errorMessage = error.localizedDescription
         }

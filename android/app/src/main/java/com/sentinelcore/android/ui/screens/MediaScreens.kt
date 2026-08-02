@@ -272,6 +272,7 @@ fun LiveCamerasScreen(
                                 posterPath = "/api/cameras/${camera.id}/thumbnail.jpg",
                                 muted = true,
                                 showControls = false,
+                                showLiveStatus = true,
                                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                                     .clip(RoundedCornerShape(6.dp)),
                             )
@@ -324,12 +325,8 @@ fun LivePlayerScreen(
                 headers = model.mediaHeaders(),
                 model = model,
                 posterPath = "/api/cameras/${camera.id}/thumbnail.jpg",
+                showLiveStatus = true,
                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-            )
-            StatusChip(
-                "● LIVE",
-                SentinelGreen,
-                Modifier.align(Alignment.TopStart).padding(16.dp),
             )
             if (camera.ptzEnabled) {
                 PtzControls(
@@ -351,6 +348,7 @@ private fun SentinelPlayer(
     posterPath: String? = null,
     muted: Boolean = false,
     showControls: Boolean = true,
+    showLiveStatus: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     if (url == null) {
@@ -430,7 +428,9 @@ private fun SentinelPlayer(
     LaunchedEffect(player, playbackFailures) {
         if (playbackFailures == 0) return@LaunchedEffect
         delay(minOf(2_000L shl minOf(playbackFailures - 1, 4), 30_000L))
+        player.seekToDefaultPosition()
         player.prepare()
+        player.playWhenReady = true
     }
 
     DisposableEffect(player) {
@@ -464,5 +464,12 @@ private fun SentinelPlayer(
         // On the whole tile rather than the video view alone, so the mark is there over the poster
         // frame too and doesn't blink in and out as playback starts.
         UnlicensedWatermark()
+        if (showLiveStatus) {
+            StatusChip(
+                if (isVideoReady) "● LIVE" else "CONNECTING",
+                if (isVideoReady) SentinelGreen else Color.White.copy(alpha = 0.7f),
+                Modifier.align(Alignment.TopStart).padding(10.dp),
+            )
+        }
     }
 }

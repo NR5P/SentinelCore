@@ -125,6 +125,32 @@ public static class DeviceTopics
         return publishes;
     }
 
+    // Some MQTT ecosystems define a read command in addition to their retained state topic.
+    // Only infer protocols whose query is unambiguous: publishing an empty payload to Tasmota's
+    // POWER command asks for state, and Zigbee2MQTT's sibling /get topic accepts an empty state
+    // value. Unknown/manual topic layouts deliberately produce nothing—a guessed publish to an
+    // arbitrary command topic could change a real device instead of merely querying it.
+    public static IReadOnlyList<DevicePublish> BuildStateQueries(HubDevice device)
+    {
+        if (!device.Enabled || string.IsNullOrWhiteSpace(device.CommandTopic)) return [];
+
+        var command = device.CommandTopic;
+        var isTasmota = string.Equals(device.DiscoverySource, SourceTasmotaDiscovery, StringComparison.OrdinalIgnoreCase) ||
+                        (command.StartsWith("cmnd/", StringComparison.OrdinalIgnoreCase) &&
+                         command.EndsWith("/POWER", StringComparison.OrdinalIgnoreCase));
+        if (isTasmota)
+            return [new DevicePublish(command, string.Empty, Retain: false)];
+
+        if (command.StartsWith("zigbee2mqtt/", StringComparison.OrdinalIgnoreCase) &&
+            command.EndsWith("/set", StringComparison.OrdinalIgnoreCase))
+        {
+            var getTopic = command[..^"/set".Length] + "/get";
+            return [new DevicePublish(getTopic, "{\"state\":\"\"}", Retain: false)];
+        }
+
+        return [];
+    }
+
     // Only the top-level key matters for building a command - a device that reports state at a
     // nested path still takes commands at the leaf name.
     private static string StateKeyFor(HubDevice device)
