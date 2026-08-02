@@ -33,6 +33,9 @@ final class AppModel: ObservableObject {
     // device doesn't trust the server's self-generated certificate - see connect(). Surfaced in
     // SettingsView so the downgrade is never silent.
     @Published private(set) var usingHttpFallback = false
+    // Whether the server this app is talking to is older than it expects. Advisory: nothing in the
+    // app behaves differently, it just says so - see ServerCompatibility.
+    @Published private(set) var serverCompatibility: ServerCompatibility = .unknown
     @Published var connectionState: ConnectionState = .checking
     @Published var authStatus: AuthStatus?
     @Published var events: [SecurityEvent] = []
@@ -192,6 +195,9 @@ final class AppModel: ObservableObject {
     // time against the plain-HTTP address.
     private func establishSession() async throws {
         authStatus = try await client.authStatus()
+        // Before the requiresLogin return below, so the advisory is already known at the login
+        // screen. Never throws - see checkServerCompatibility.
+        await checkServerCompatibility()
         if requiresLogin {
             log("Server requires dashboard authentication")
             connectionState = .authenticationRequired
@@ -203,6 +209,22 @@ final class AppModel: ObservableObject {
         await refreshPushStatus()
         await syncPushRegistration()
         selectPendingPushEvent()
+    }
+
+    // Deliberately swallows every failure. This is a diagnostic nicety layered on top of a
+    // connection that has already succeeded - failing the connect() that called it, over a server
+    // that merely declined to describe itself, would turn a cosmetic feature into an outage.
+    private func checkServerCompatibility() async {
+        do {
+            serverCompatibility = ServerCompatibility.evaluate(try await client.serverHealth().build)
+        } catch {
+            serverCompatibility = .unknown
+            log("Could not read the server's version: \(Self.describe(error))", level: .info)
+            return
+        }
+        if let advisory = serverCompatibility.advisory {
+            log(advisory, level: .notice)
+        }
     }
 
     private func failConnection(with error: Error) {

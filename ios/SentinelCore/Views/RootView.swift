@@ -6,16 +6,23 @@ struct RootView: View {
     @State private var selection: AppSection? = .feed
 
     var body: some View {
-        Group {
-            if !model.isConfigured {
-                ServerSetupView()
-            } else if model.requiresLogin {
-                LoginView()
-            } else {
-                if horizontalSizeClass == .compact {
-                    compactNavigation
+        VStack(spacing: 0) {
+            // Above the login screen as well as the main UI: "this server is too old" explains a
+            // login that behaves oddly just as much as it explains an empty screen afterwards. It
+            // renders nothing at all unless there's something to say.
+            if model.isConfigured { ServerVersionBanner() }
+
+            Group {
+                if !model.isConfigured {
+                    ServerSetupView()
+                } else if model.requiresLogin {
+                    LoginView()
                 } else {
-                    splitNavigation
+                    if horizontalSizeClass == .compact {
+                        compactNavigation
+                    } else {
+                        splitNavigation
+                    }
                 }
             }
         }
@@ -153,6 +160,32 @@ struct BrandHeader: View {
         .fontDesign(.monospaced)
         .shadow(color: SentinelTheme.green.opacity(0.5), radius: 6)
         .padding()
+    }
+}
+
+// Advisory, never blocking - the app works normally behind it. Amber rather than red for that
+// reason: this is "you'll want to update the server soon", not "something is broken". Collapses to
+// nothing whenever the server is current, or when its version simply couldn't be read.
+struct ServerVersionBanner: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if let advisory = model.serverCompatibility.advisory {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(SentinelTheme.amber)
+                Text(advisory)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .background(SentinelTheme.amber.opacity(0.12))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Server version warning: \(advisory)")
+        }
     }
 }
 

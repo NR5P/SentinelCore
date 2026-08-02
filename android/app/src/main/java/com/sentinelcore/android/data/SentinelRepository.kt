@@ -43,6 +43,21 @@ class SentinelRepository(
         )
     }
 
+    // Unauthenticated on the server side, so this is readable at the login screen too - which is
+    // where knowing the server is too old is arguably most useful. A server old enough to predate
+    // version stamping answers this endpoint without a "build" object at all, which is exactly the
+    // null that ServerCompatibility.evaluate reads as "too old".
+    suspend fun serverHealth(): ServerBuild? = withContext(Dispatchers.IO) {
+        val build = JSONObject(request("/api/health")).optJSONObject("build")
+            ?: return@withContext null
+        ServerBuild(
+            version = build.optString("version"),
+            commit = build.optString("commit"),
+            isDirty = build.optBoolean("isDirty"),
+            display = build.optString("display"),
+        )
+    }
+
     suspend fun events(): List<SecurityEvent> = withContext(Dispatchers.IO) {
         val array = JSONArray(request("/api/events?limit=100"))
         buildList {

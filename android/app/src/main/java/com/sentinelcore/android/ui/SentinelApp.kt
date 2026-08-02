@@ -4,10 +4,13 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.History
@@ -15,8 +18,10 @@ import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -65,9 +70,12 @@ import com.sentinelcore.android.ui.screens.ServerSettingsScreen
 import com.sentinelcore.android.ui.screens.SettingsScreen
 import com.sentinelcore.android.ui.screens.TriggerDetailScreen
 import com.sentinelcore.android.ui.screens.TriggerFeedScreen
+import com.sentinelcore.android.data.ServerCompatibility
+import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelBackground
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelPanel
+import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlinx.coroutines.delay
 
 @Composable
@@ -94,22 +102,56 @@ fun SentinelApp(model: SentinelViewModel) {
     // live player - can read it without each one taking the whole view model. See
     // UnlicensedWatermark.
     CompositionLocalProvider(LocalIsLicensed provides state.isLicensed) {
-        Box(
+        Column(
             modifier = Modifier.fillMaxSize().background(SentinelBackground),
         ) {
-            when {
-                !state.isConfigured -> ServerSetupScreen(
-                    initialAddress = state.serverUrl,
-                    discoveredServers = state.discoveredServers,
-                    onConnect = model::saveServer,
-                )
-                state.requiresLogin -> LoginScreen(
-                    state = state,
-                    onLogin = model::signIn,
-                )
-                else -> AppShell(state = state, model = model)
+            // Above the login screen as well as the main UI: "this server is too old" explains a
+            // login that behaves oddly just as much as it explains an empty screen afterwards. It
+            // renders nothing at all unless there's something to say.
+            if (state.isConfigured) ServerVersionBanner(state.serverCompatibility)
+
+            Box(modifier = Modifier.weight(1f)) {
+                when {
+                    !state.isConfigured -> ServerSetupScreen(
+                        initialAddress = state.serverUrl,
+                        discoveredServers = state.discoveredServers,
+                        onConnect = model::saveServer,
+                    )
+                    state.requiresLogin -> LoginScreen(
+                        state = state,
+                        onLogin = model::signIn,
+                    )
+                    else -> AppShell(state = state, model = model)
+                }
             }
         }
+    }
+}
+
+// Advisory, never blocking - the app works normally behind it. Amber rather than red for that
+// reason: this is "you'll want to update the server soon", not "something is broken". Collapses to
+// nothing whenever the server is current, or when its version simply couldn't be read.
+@Composable
+private fun ServerVersionBanner(compatibility: ServerCompatibility) {
+    val advisory = compatibility.advisory ?: return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(SentinelAmber.copy(alpha = 0.12f))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Filled.Warning,
+            contentDescription = null,
+            tint = SentinelAmber,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = advisory,
+            style = MaterialTheme.typography.bodySmall,
+            color = SentinelTextDim,
+        )
     }
 }
 

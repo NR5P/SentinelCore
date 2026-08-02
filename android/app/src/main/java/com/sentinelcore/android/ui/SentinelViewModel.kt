@@ -34,6 +34,7 @@ import com.sentinelcore.android.data.ScanJobSnapshot
 import com.sentinelcore.android.data.SecurityEvent
 import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.SentinelRepository
+import com.sentinelcore.android.data.ServerCompatibility
 import com.sentinelcore.android.data.TriggerConfig
 import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.data.PushStatus
@@ -44,6 +45,7 @@ import com.sentinelcore.android.net.ServerDiscovery
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.PushTokenStore
 import com.sentinelcore.android.push.PushTokenUpdates
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -65,6 +67,9 @@ data class SentinelUiState(
     val activeServerUrl: String = "",
     val isUsingRemote: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.NOT_CONFIGURED,
+    // Whether the server this app is talking to is older than it expects. Advisory: nothing in the
+    // app behaves differently, it just says so - see ServerCompatibility.
+    val serverCompatibility: ServerCompatibility = ServerCompatibility.Unknown,
     val authStatus: AuthStatus? = null,
     val events: List<SecurityEvent> = emptyList(),
     val triggers: List<TriggerEvent> = emptyList(),
@@ -198,6 +203,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             try {
                 val auth = repository.authStatus()
                 _state.update { it.copy(authStatus = auth) }
+                // Before the authentication return below, so the advisory is already known at the
+                // login screen. Never throws - see checkServerCompatibility.
+                checkServerCompatibility()
                 if (auth.enabled && !auth.authenticated) {
                     log("Server requires dashboard authentication", DiagnosticLevel.INFO)
                     _state.update {
@@ -228,6 +236,24 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                 log("Connection failed: ${readableError(error)}", DiagnosticLevel.ERROR)
             }
         }
+    }
+
+    // Deliberately swallows every failure. This is a diagnostic nicety layered on top of a
+    // connection that has already succeeded - failing the connect() that called it, over a server
+    // that merely declined to describe itself, would turn a cosmetic feature into an outage.
+    // Cancellation is rethrown rather than reported: it means the connect job itself was torn
+    // down, which is the app working correctly and not something to log as a version problem.
+    private suspend fun checkServerCompatibility() {
+        val compatibility = try {
+            ServerCompatibility.evaluate(repository.serverHealth())
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            log("Could not read the server's version: ${readableError(error)}", DiagnosticLevel.INFO)
+            ServerCompatibility.Unknown
+        }
+        _state.update { it.copy(serverCompatibility = compatibility) }
+        compatibility.advisory?.let { log(it, DiagnosticLevel.NOTICE) }
     }
 
     // Prefers the local address whenever it's reachable at all (any HTTP response counts, not

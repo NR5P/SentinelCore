@@ -35,6 +35,12 @@ final class SentinelClient {
         try await get("/api/auth/status")
     }
 
+    // Unauthenticated on the server side, so this is readable at the login screen too - which is
+    // where knowing the server is too old is arguably most useful.
+    func serverHealth() async throws -> ServerHealth {
+        try await get("/api/health")
+    }
+
     func events(search: String? = nil, notifiedOnly: Bool = false) async throws -> [SecurityEvent] {
         var items = [URLQueryItem(name: "limit", value: "100")]
         if let search, !search.isEmpty { items.append(.init(name: "search", value: search)) }
