@@ -5,3 +5,8 @@
 **/google-services.json
 **/firebase-service-account*.json
 **/AuthKey_*.p8
+
+# Claude Code local state: settings.local.json is a machine-specific permission
+# allowlist, and launch.json points at per-session scratch directories. Neither
+# means anything on another machine.
+.claude/
