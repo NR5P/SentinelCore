@@ -17,6 +17,15 @@ window.GateWatchCameras = (function () {
   let liveBuilt = false;
   let liveBuiltCameraIds = null;
 
+  // Live tile order, as this signed-in person arranged it (see LiveOrderEndpoints - it's stored
+  // per account, so one household member rearranging their grid doesn't move anyone else's).
+  // liveVisibleIds is the order actually on screen right now; the server list is the last saved
+  // state of it.
+  let liveOrderIds = [];
+  let liveVisibleIds = [];
+  let liveOrderSaveTimer = null;
+  let draggingCameraId = null;
+
   // Keyed by cameraId - a camera with no entry here just has the gate/door check off.
   let gateChecks = new Map();
   let gateCheckEditingCameraId = null;
@@ -26,13 +35,19 @@ window.GateWatchCameras = (function () {
 
   async function load() {
     try {
-      const [camerasResponse, gateChecksResponse, groupsResponse] = await Promise.all([
+      const [camerasResponse, gateChecksResponse, groupsResponse, liveOrderResponse] = await Promise.all([
         fetch("/api/cameras"),
         fetch("/api/gate-checks"),
-        fetch("/api/camera-groups")
+        fetch("/api/camera-groups"),
+        fetch("/api/live-order")
       ]);
       if (!camerasResponse.ok) throw new Error(`HTTP ${camerasResponse.status}`);
       cameras = await camerasResponse.json();
+
+      // Failing to read the order is not worth failing the whole load over - an empty list just
+      // means the grid falls back to the camera store's own order, exactly as it did before this
+      // was a preference at all.
+      liveOrderIds = liveOrderResponse.ok ? (await liveOrderResponse.json()).cameraIds ?? [] : [];
 
       gateChecks = new Map();
       if (gateChecksResponse.ok) {
@@ -812,10 +827,14 @@ window.GateWatchCameras = (function () {
       liveTeardownTimer = null;
     }
 
-    const currentIds = cameras.map(c => c.id).join(",");
+    // Membership, not order: which cameras exist is what decides whether the players have to be
+    // rebuilt. Order is applied as a CSS property below, so a tile moving costs nothing and never
+    // forces a reconnect.
+    const currentIds = cameras.map(c => c.id).sort().join(",");
     if (liveBuilt && currentIds === liveBuiltCameraIds) {
       // Still-warm from a recent visit within the grace period - resume rather than
       // reconnecting every player from scratch.
+      applyLiveOrder(orderedCameraIds()); // may have been rearranged elsewhere while we were away
       document.querySelectorAll("#live-root video").forEach(video => video.play().catch(() => {}));
       return;
     }
@@ -832,6 +851,7 @@ window.GateWatchCameras = (function () {
     for (const camera of cameras) {
       const tile = document.createElement("div");
       tile.className = "live-tile";
+      tile.dataset.cameraId = camera.id;
 
       const video = document.createElement("video");
       video.muted = true;
@@ -852,14 +872,159 @@ window.GateWatchCameras = (function () {
       status.textContent = "connecting…";
 
       tile.append(video, label, status);
+      // Nothing to arrange with a single camera - the handle would just be clutter over the frame.
+      if (cameras.length > 1) tile.appendChild(buildDragHandle(camera));
       if (camera.ptzEnabled) tile.appendChild(buildPtzControls(camera));
       root.appendChild(tile);
 
       attachPlayer(video, status, camera);
     }
 
+    // Tiles are appended in the camera store's order above and then placed by CSS, so the DOM
+    // order and the on-screen order are deliberately independent - see applyLiveOrder.
+    applyLiveOrder(orderedCameraIds());
+
     liveBuilt = true;
     liveBuiltCameraIds = currentIds;
+  }
+
+  // ---------------- Live tab: per-account tile order ----------------
+  //
+  // The order is applied purely through the grid items' CSS `order` property, never by moving
+  // tiles in the DOM. Re-parenting a playing <video> risks tearing down what it's showing (an HLS
+  // media source, or a live WebRTC track), and a drag is precisely the moment the picture needs to
+  // keep running - so the players stay exactly where they were appended and only their placement
+  // changes.
+
+  function orderedCameraIds() {
+    const remaining = new Set(cameras.map(camera => camera.id));
+    const ordered = [];
+    for (const id of liveOrderIds) {
+      if (!remaining.has(id)) continue; // camera deleted since this order was saved
+      ordered.push(id);
+      remaining.delete(id);
+    }
+    // Cameras the saved order has never seen - added since - keep the camera list's own order, at
+    // the end, so adding a camera never shuffles tiles somebody has already placed.
+    ordered.push(...remaining);
+    return ordered;
+  }
+
+  function applyLiveOrder(ids) {
+    liveVisibleIds = ids;
+    for (const tile of document.querySelectorAll("#live-root .live-tile")) {
+      const position = ids.indexOf(tile.dataset.cameraId);
+      tile.style.order = position < 0 ? ids.length : position;
+    }
+  }
+
+  function buildDragHandle(camera) {
+    const handle = document.createElement("button");
+    handle.type = "button";
+    handle.className = "live-tile-drag";
+    handle.draggable = true;
+    handle.textContent = "⠿";
+    handle.setAttribute("aria-label", `Move ${camera.name} in the live grid`);
+    handle.dataset.tip = "Drag this to move the camera around the grid. Arrow keys work too. The order is saved to your own account - it doesn't change what anyone else sees.";
+
+    handle.addEventListener("dragstart", event => {
+      draggingCameraId = camera.id;
+      event.dataTransfer.effectAllowed = "move";
+      // Firefox ignores a drag that carries no data at all.
+      event.dataTransfer.setData("text/plain", camera.id);
+      // Drag the whole tile as the ghost image rather than the little handle button.
+      const tile = handle.closest(".live-tile");
+      if (tile) {
+        tile.classList.add("dragging");
+        event.dataTransfer.setDragImage(tile, tile.clientWidth / 2, tile.clientHeight / 2);
+      }
+    });
+
+    handle.addEventListener("dragend", () => {
+      draggingCameraId = null;
+      document.querySelectorAll("#live-root .live-tile.dragging").forEach(t => t.classList.remove("dragging"));
+      saveLiveOrder();
+    });
+
+    // Keyboard equivalent of the drag, and the fallback on touch, where HTML5 drag-and-drop
+    // doesn't fire at all. Both axes move by one position: on a wrapping grid "left" and "up" are
+    // the same request - put this camera one place earlier.
+    handle.addEventListener("keydown", event => {
+      const step = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1
+        : event.key === "ArrowRight" || event.key === "ArrowDown" ? 1
+        : 0;
+      if (step === 0) return;
+
+      event.preventDefault();
+      const from = liveVisibleIds.indexOf(camera.id);
+      const to = from + step;
+      if (from < 0 || to < 0 || to >= liveVisibleIds.length) return;
+
+      const next = liveVisibleIds.slice();
+      next.splice(to, 0, ...next.splice(from, 1));
+      applyLiveOrder(next);
+      saveLiveOrder();
+    });
+
+    return handle;
+  }
+
+  // Bound once, on the container, rather than per tile per rebuild - the grid is emptied and
+  // refilled whenever the camera list changes, and per-tile listeners would have to be rebound
+  // every time (or, worse, quietly stack up).
+  function bindLiveDragTargets(root) {
+    // dragover's only job is to say "a drop is allowed here"; the reordering itself hangs off
+    // dragenter, which fires once per tile crossed instead of continuously - continuous
+    // reordering makes tiles flip back and forth under a stationary cursor.
+    root.addEventListener("dragover", event => {
+      if (!draggingCameraId) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    });
+
+    root.addEventListener("dragenter", event => {
+      if (!draggingCameraId) return;
+      const tile = event.target.closest?.(".live-tile");
+      if (!tile || tile.dataset.cameraId === draggingCameraId) return;
+
+      const from = liveVisibleIds.indexOf(draggingCameraId);
+      const to = liveVisibleIds.indexOf(tile.dataset.cameraId);
+      if (from < 0 || to < 0) return;
+
+      const next = liveVisibleIds.slice();
+      next.splice(to, 0, ...next.splice(from, 1));
+      applyLiveOrder(next);
+    });
+
+    // The grid has already been rearranged live by then - the drop just ends the gesture. Handled
+    // anyway so the browser doesn't fall back to its default (navigating to the dragged text).
+    root.addEventListener("drop", event => {
+      if (!draggingCameraId) return;
+      event.preventDefault();
+    });
+  }
+
+  // Coalesced: a drag crossing several tiles, or a held-down arrow key, is one intent and should
+  // cost one write, not one per position.
+  function saveLiveOrder() {
+    if (liveOrderSaveTimer) clearTimeout(liveOrderSaveTimer);
+    liveOrderSaveTimer = setTimeout(async () => {
+      liveOrderSaveTimer = null;
+      const cameraIds = liveVisibleIds.slice();
+      try {
+        const response = await fetch("/api/live-order", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cameraIds })
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        liveOrderIds = (await response.json()).cameraIds ?? cameraIds;
+      } catch (err) {
+        // Keep the arrangement on screen - it's what the person just asked for - but don't
+        // pretend it survived. The next load falls back to the last order the server did save.
+        console.error("Failed to save the live order", err);
+      }
+    }, 400);
   }
 
   // ---------------- PTZ (pan/tilt/zoom) joystick ----------------
@@ -1266,6 +1431,8 @@ window.GateWatchCameras = (function () {
       video.load();
     });
   }
+
+  bindLiveDragTargets(document.getElementById("live-root"));
 
   document.getElementById("add-camera-btn").addEventListener("click", () => openForm(null));
   document.getElementById("camera-cancel-btn").addEventListener("click", closeForm);

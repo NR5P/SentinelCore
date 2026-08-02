@@ -223,6 +223,14 @@ Blue Iris cameras, and this view has nothing to do with alerts or the AI. Stream
 while you have this tab open and stop the moment you leave it, so it's not something you'd
 leave open all the time.
 
+**Arranging the tiles.** Grab the **⠿** handle in the top-right corner of any tile and drag it
+where you want it — the camera you care about most can sit first instead of wherever the
+alphabet put it. (Keyboard: focus a handle with Tab and use the arrow keys.) The order is saved
+against **your own login**, so everyone with an account arranges their own grid and nobody
+rearranges anyone else's. If login is turned off, there's only one arrangement, shared by
+everyone using the dashboard. Cameras added later join the end of the grid rather than pushing
+your tiles around, and deleting a camera leaves the rest where you put them.
+
 ### 4a. Making the live view real-time — install go2rtc
 
 Out of the box, live tiles play over HLS: dependable everywhere, but structurally a few seconds

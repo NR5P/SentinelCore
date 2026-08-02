@@ -163,6 +163,9 @@ var cameraStore = new SqliteCameraStore(camerasRoot);
 builder.Services.AddSingleton<ICameraStore>(cameraStore);
 builder.Services.AddSingleton<ICameraGroupStore>(cameraStore);
 builder.Services.AddSingleton<HlsStreamManager>();
+// How each person has dragged their Live tiles around - a per-account view preference, kept out
+// of cameras.db so the camera list itself stays the one canonical, order-agnostic answer.
+builder.Services.AddSingleton<ILiveOrderStore>(new SqliteLiveOrderStore(camerasRoot));
 // WebRTC live view via a go2rtc sidecar - see Go2RtcManager. Generous timeout: the SDP exchange
 // includes go2rtc gathering its ICE candidates, and the first request may also be paying the
 // sidecar's startup wait.
@@ -327,6 +330,7 @@ app.UseAuthorization();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
 app.MapCameraGroupEndpoints();
+app.MapLiveOrderEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();
