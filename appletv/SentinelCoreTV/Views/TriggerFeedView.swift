@@ -62,7 +62,9 @@ private struct TriggerCard: View {
             }
             Text(trigger.occurredAt.formatted(date: .abbreviated, time: .shortened))
                 .foregroundStyle(.secondary)
-            Text("Motion area \(trigger.triggerAreaFraction, format: .percent.precision(.fractionLength(1)))")
+            // Same fallback as the web build: zoneName is null for sensor/manual triggers,
+            // companion captures, and rows from before zones could be split up.
+            Text("\(trigger.zoneName ?? "Motion") · area \(trigger.triggerAreaFraction, format: .percent.precision(.fractionLength(1)))")
                 .foregroundStyle(.secondary)
                 .font(.caption)
         }
@@ -108,6 +110,9 @@ private struct TriggerDetailView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     LabeledContent("Camera", value: trigger.cameraName)
+                    if let zoneName = trigger.zoneName {
+                        LabeledContent("Zone", value: zoneName)
+                    }
                     LabeledContent("Time", value: trigger.occurredAt.formatted(date: .complete, time: .standard))
                     LabeledContent(
                         "Motion area",

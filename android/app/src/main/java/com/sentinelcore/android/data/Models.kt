@@ -22,6 +22,10 @@ data class TriggerEvent(
     val occurredAt: Instant,
     val triggerAreaFraction: Double,
     val hasClip: Boolean,
+    // Which trigger zone's polygon the motion fell inside. Null for companion captures, sensor
+    // and manual triggers, and anything recorded before zones could be split up - so it's a
+    // label to show when there is one, not something to depend on.
+    val zoneName: String?,
 )
 
 data class Camera(
@@ -64,17 +68,38 @@ data class KnownFaceEnrollment(
 
 data class Point2D(val x: Double, val y: Double)
 
+// One trigger zone: its own polygon and its own minimum object size, because perspective means the
+// same subject covers wildly different pixel counts near the camera and far from it.
+//
+// Zones have no server-side id and their names aren't unique, so the editor identifies them by
+// position in the list - same as the web build.
+data class TriggerZone(
+    val name: String,
+    val polygon: List<Point2D>,
+    val minTriggerArea: Double,
+) {
+    companion object {
+        // Matches the server's TriggerConfig.DefaultZoneName.
+        const val DEFAULT_NAME = "Zone 1"
+    }
+}
+
 // Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
 //
-// TODO: multi-zone. The server now supports several trigger zones per camera, each with its own
-// minimum object size, in an additive `zones` array that this class doesn't model yet - so this app
-// edits the primary zone and the server preserves the others. That only works because no `zones`
-// key is sent: sending an empty list instead would delete every zone but the primary.
-// See core/docs/MULTI_ZONE_CLIENT_HANDOFF.md before changing this or CameraZoneEditorScreen.
+// Two rules here are load-bearing; see core/docs/MULTI_ZONE_CLIENT_HANDOFF.md.
+//
+// 1. zonePolygon/minTriggerArea must keep being sent whatever else changes - they mirror zones[0],
+//    and the server keeps sending them for the benefit of clients that only read those.
+// 2. `zones` null and `zones` empty mean different things to the server. Null omits the key
+//    entirely, which reads as "this client doesn't know about zones - update the primary and leave
+//    the rest alone". An empty list reads as "the editor really did delete them". Never send an
+//    empty list as a placeholder; see TriggerConfig.toJson in SentinelRepository.
 data class TriggerConfig(
     val enabled: Boolean,
     val zonePolygon: List<Point2D>,
     val minTriggerArea: Double,
+    // Absent on a server older than multi-zone; read it through resolvedZones(), never directly.
+    val zones: List<TriggerZone>?,
     val cooldownSeconds: Int,
     val maxTriggersPerMinute: Int,
     val shadowSensitivity: Int,
@@ -83,7 +108,21 @@ data class TriggerConfig(
     val clipPostSeconds: Int,
     val sendToAlerts: Boolean,
     val alertProfile: String,
-)
+    // Not shown in any UI. Carried through every save purely so editing a zone from the phone
+    // doesn't unbind a Device Hub sensor that was set up on the web dashboard - the PUT overwrites
+    // the whole record rather than merging, so anything omitted reverts to its default (no sensor,
+    // "on", 30s).
+    val sensorDeviceId: String = "",
+    val sensorTriggerOn: String = "on",
+    val sensorCooldownSeconds: Int = 30,
+) {
+    // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
+    // written before multi-zone reads as a single zone built from the legacy pair, so the editor
+    // never has to special-case the migration.
+    fun resolvedZones(): List<TriggerZone> =
+        zones?.takeIf { it.isNotEmpty() }
+            ?: listOf(TriggerZone(TriggerZone.DEFAULT_NAME, zonePolygon, minTriggerArea))
+}
 
 data class PromptProfileName(val key: String, val displayName: String)
 
