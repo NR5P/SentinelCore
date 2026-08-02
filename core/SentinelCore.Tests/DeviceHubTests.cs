@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MQTTnet;
@@ -162,6 +164,99 @@ public sealed class DeviceHubTests
     {
         var device = Device("Custom", "house/custom/control", "house/custom/state");
         Assert.Empty(DeviceTopics.BuildStateQueries(device));
+    }
+
+    // ---------------- Readying state subscriptions for a Device Hub read ----------------
+
+    // Every Device Hub list/state request calls EnsureStateSubscriptionsReadyAsync, and every
+    // client polls those endpoints every few seconds while the tab is open. The grace period that
+    // lets retained state arrive is therefore only affordable when something was actually just
+    // asked for - a subscribe, or a state query that got past its throttle. Waiting it out
+    // unconditionally put a flat 200ms on every poll from every client forever.
+    [Fact]
+    public async Task EnsureStateSubscriptionsReady_WhenNothingWasAsked_DoesNotWaitForRepliesThatCannotCome()
+    {
+        var port = GetFreeTcpPort();
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var serverOptions = new MqttServerFactory().CreateServerOptionsBuilder()
+            .WithDefaultEndpoint()
+            .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback)
+            .WithDefaultEndpointPort(port)
+            .Build();
+        using var server = new MqttServerFactory().CreateMqttServer(serverOptions);
+        await server.StartAsync();
+
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var bridgeOptions = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteDeviceStore(bridgeOptions, new FakeHostEnvironment(tempDir));
+            await store.CreateAsync(Device("Kitchen Lamp", "cmnd/kitchen/POWER", "stat/kitchen/POWER"), cancellationToken);
+
+            await using var bus = new MqttDeviceBus(
+                new StaticOptionsMonitor<MqttOptions>(new MqttOptions { Enabled = true, BrokerHost = "127.0.0.1", BrokerPort = port }),
+                new StaticOptionsMonitor<DeviceHubOptions>(new DeviceHubOptions { Enabled = true, CommandTimeoutSeconds = 3 }),
+                store,
+                NullLogger<MqttDeviceBus>.Instance);
+
+            await bus.StartAsync(cancellationToken);
+            await WaitUntilAsync(() => bus.IsConnected, TimeSpan.FromSeconds(10));
+            Assert.True(bus.IsConnected);
+
+            // First read does the real work - subscribe, query - and is entitled to its grace.
+            await bus.EnsureStateSubscriptionsReadyAsync(cancellationToken);
+
+            // This is the poll two seconds later, and the one after that, and every one for the
+            // next half hour: subscriptions already up, query throttled out, nothing in flight.
+            var stopwatch = Stopwatch.StartNew();
+            await bus.EnsureStateSubscriptionsReadyAsync(cancellationToken);
+            stopwatch.Stop();
+
+            Assert.True(
+                stopwatch.Elapsed < TimeSpan.FromMilliseconds(100),
+                $"a steady-state Device Hub read took {stopwatch.ElapsedMilliseconds}ms - it is waiting out the retained-state grace with nothing to wait for");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    // A broker that is down stays down for a while, and every open client polls Device Hub every
+    // few seconds. Redialling on each of those polls means a connection attempt and a warning line
+    // per client per poll for the whole outage, which buries the log that would explain it.
+    [Fact]
+    public async Task EnsureStateSubscriptionsReady_WithAnUnreachableBroker_BacksOffInsteadOfRedialling()
+    {
+        var deadPort = GetFreeTcpPort();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var logger = new WarningRecorder();
+
+        await using var bus = new MqttDeviceBus(
+            new StaticOptionsMonitor<MqttOptions>(new MqttOptions { Enabled = true, BrokerHost = "127.0.0.1", BrokerPort = deadPort }),
+            new StaticOptionsMonitor<DeviceHubOptions>(new DeviceHubOptions { Enabled = true }),
+            new EmptyDeviceStore(),
+            logger);
+
+        // Five polls in a row, as several clients with the tab open would produce.
+        for (var i = 0; i < 5; i++)
+            await bus.EnsureStateSubscriptionsReadyAsync(cancellationToken);
+
+        Assert.Single(logger.Warnings);
+    }
+
+    private sealed class WarningRecorder : ILogger<MqttDeviceBus>
+    {
+        public List<Exception?> Warnings { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Warning) Warnings.Add(exception);
+        }
     }
 
     // ---------------- State parsing ----------------

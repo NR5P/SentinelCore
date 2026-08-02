@@ -6,6 +6,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.net.URL
 import java.security.KeyStore
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -17,18 +18,39 @@ import javax.crypto.spec.GCMParameterSpec
 class SessionCookieStore(context: Context) {
     private val preferences = context.getSharedPreferences("sentinel_core_sessions", Context.MODE_PRIVATE)
 
+    // What each key is already known to hold. Every HTTP response runs through save() - including
+    // every thumbnail fetch in SentinelRepository.loadImage - and the cookie is the same one
+    // virtually every time. Re-persisting it costs a hardware-backed AES encrypt (an IPC round
+    // trip to the Keystore daemon) plus a SharedPreferences write, so scrolling an event feed
+    // paid that per image. Comparing against this makes the unchanged case a map lookup.
+    private val known = ConcurrentHashMap<String, String>()
+
     fun load(url: URL): String? {
-        val encoded = preferences.getString(storageKey(url), null) ?: return null
-        return runCatching { decrypt(encoded) }.onFailure { clear(url) }.getOrNull()
+        val key = storageKey(url)
+        known[key]?.let { return it }
+        val encoded = preferences.getString(key, null) ?: return null
+        return runCatching { decrypt(encoded) }
+            .onSuccess { known[key] = it }
+            .onFailure { clear(url) }
+            .getOrNull()
     }
 
     fun save(url: URL, cookieHeader: String) {
+        val key = storageKey(url)
+        if (known[key] == cookieHeader) return
         runCatching { encrypt(cookieHeader) }
-            .onSuccess { preferences.edit().putString(storageKey(url), it).apply() }
+            .onSuccess {
+                preferences.edit().putString(key, it).apply()
+                known[key] = cookieHeader
+            }
     }
 
     fun clear(url: URL) {
-        preferences.edit().remove(storageKey(url)).apply()
+        val key = storageKey(url)
+        known.remove(key)
+        // Guarded for the same reason as save(): a signed-out session reaches this on every
+        // response, and removing a key that was never there is still a write.
+        if (preferences.contains(key)) preferences.edit().remove(key).apply()
     }
 
     private fun storageKey(url: URL): String {
