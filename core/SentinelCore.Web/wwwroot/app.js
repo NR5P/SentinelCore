@@ -12,6 +12,7 @@ const lightboxImg = document.getElementById("lightbox-img");
 const askInput = document.getElementById("ask-input");
 const askBtn = document.getElementById("ask-btn");
 const askAnswerEl = document.getElementById("ask-answer");
+const buildVersionEl = document.getElementById("build-version");
 
 function setStatus(online) {
   statusDotEl.classList.toggle("online", online);
@@ -282,6 +283,24 @@ async function loadQueueStatus() {
   }
 }
 
+// Fetched once at load, not polled: the version can't change without the server restarting,
+// which drops the connection and gets the page reloaded anyway. On failure the footer is left
+// blank rather than showing an error - the status indicator in the topbar is what tells you the
+// dashboard has lost the server, and a second complaint down here adds nothing.
+async function loadBuildVersion() {
+  try {
+    const response = await fetch("/api/health");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { build } = await response.json();
+    if (!build?.display) return;
+
+    buildVersionEl.textContent = `build ${build.display}`;
+    buildVersionEl.classList.toggle("dirty", build.isDirty === true);
+  } catch (err) {
+    console.error("Failed to load build version", err);
+  }
+}
+
 async function clearQueue() {
   if (!confirm("Discard everything waiting in the analysis queue? Whatever is already being analyzed finishes normally - this only clears what's still waiting behind it. This cannot be undone.")) {
     return;
@@ -346,6 +365,7 @@ clearQueueBtn.addEventListener("click", clearQueue);
 loadFilterOptions();
 loadEvents();
 loadQueueStatus();
+loadBuildVersion();
 setInterval(loadEvents, REFRESH_INTERVAL_MS);
 setInterval(loadQueueStatus, REFRESH_INTERVAL_MS);
 window.GateWatchWizard.checkAndMaybeShow();
