@@ -13,7 +13,9 @@ struct LiveCamerasView: View {
     var body: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 40)], spacing: 40) {
-                ForEach(model.cameras) { camera in
+                // In the order this account arranged on a phone or in the dashboard - there's no
+                // way to rearrange it from here, a remote being a poor drag device.
+                ForEach(model.liveCameras) { camera in
                     NavigationLink(value: camera) {
                         CameraCard(camera: camera, isActive: isActive)
                     }

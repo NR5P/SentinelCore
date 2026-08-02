@@ -54,6 +54,14 @@ final class SentinelClient {
         try await get("/api/cameras")
     }
 
+    // Read-only here, unlike the phone apps and the dashboard: an Apple TV shows the arrangement
+    // its viewer made elsewhere, but there's no sensible way to drag a tile with a remote, so
+    // nothing on this side ever writes it back.
+    func liveOrder() async throws -> [UUID] {
+        let response: LiveOrder = try await get("/api/live-order")
+        return response.cameraIds
+    }
+
     func createCamera(_ input: CameraInput) async throws -> Camera {
         try await send("/api/cameras", method: "POST", body: input)
     }

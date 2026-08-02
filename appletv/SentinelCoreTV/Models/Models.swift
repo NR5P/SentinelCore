@@ -49,6 +49,12 @@ struct CameraInput: Encodable {
     var onvifProfileToken: String?
 }
 
+// The Live grid's tile order for the signed-in account, as arranged on a phone or in the
+// dashboard. Decodable only - this app reads the arrangement, it never sets one.
+struct LiveOrder: Decodable {
+    var cameraIds: [UUID]
+}
+
 struct Point2D: Codable, Hashable {
     var x: Double
     var y: Double

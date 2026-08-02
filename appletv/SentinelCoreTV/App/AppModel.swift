@@ -35,6 +35,9 @@ final class AppModel: ObservableObject {
     @Published var events: [SecurityEvent] = []
     @Published var triggers: [TriggerEvent] = []
     @Published var cameras: [Camera] = []
+    // How the signed-in account has arranged the Live grid, set on a phone or in the dashboard.
+    // Read-only on this device - see liveCameras.
+    @Published private(set) var liveCameraOrder: [UUID] = []
     // Whether the server has the Device Hub switched on - drives whether the tab exists at all.
     @Published private(set) var deviceHubEnabled = false
 
@@ -180,6 +183,14 @@ final class AppModel: ObservableObject {
             if Self.isCancellation(error) { throw error }
             firstError = firstError ?? error
         }
+        // Kept out of firstError for the same reason as the two below: a server older than this
+        // feature has no such endpoint, and the grid falling back to the camera list's own order
+        // is a fine outcome, not a failed connection.
+        do {
+            liveCameraOrder = try await client.liveOrder()
+        } catch {
+            if Self.isCancellation(error) { throw error }
+        }
         // Kept out of firstError: an older server has no such endpoint, and a 404 there means
         // "no Device Hub", not a failed connection.
         do {
@@ -204,6 +215,20 @@ final class AppModel: ObservableObject {
         }
         lastUpdated = .now
         selectPendingPushEvent()
+    }
+
+    // The cameras in the order the signed-in account arranged them on a phone or in the dashboard:
+    // saved placements first (any pointing at a camera that no longer exists dropped), then
+    // anything that order has never seen - a camera added since - at the end. Same rule the server
+    // and the other apps apply.
+    var liveCameras: [Camera] {
+        var remaining = cameras
+        var ordered: [Camera] = []
+        for id in liveCameraOrder {
+            guard let index = remaining.firstIndex(where: { $0.id == id }) else { continue }
+            ordered.append(remaining.remove(at: index))
+        }
+        return ordered + remaining
     }
 
     private static func isCancellation(_ error: Error) -> Bool {

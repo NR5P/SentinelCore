@@ -125,8 +125,9 @@ camera-capture option the web UI doesn't have) and [System health](#7a-system-he
 On both, the Live grid can be arranged the same way the dashboard's can: press and hold a tile,
 then drag it over the one whose place you want it to take. The arrangement is stored against
 your login on the server, not on the phone — so the order you set on your iPhone is the order
-you'll find on your Android tablet and in your browser, and nobody else's grid moves. (The Apple
-TV app doesn't follow this yet — its grid stays in the server's own order.)
+you'll find on your Android tablet and in your browser, and nobody else's grid moves. The Apple
+TV app shows that same arrangement but can't change it — a remote is a poor drag device, so
+arrange it on a phone or in the dashboard and the TV follows.
 
 **Apple TV** is deliberately smaller in scope — live camera viewing, the alert feed, trigger
 history, and settings, but no camera/account administration and no PTZ controls (those stay on
