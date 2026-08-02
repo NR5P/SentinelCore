@@ -76,7 +76,14 @@ public static class AlertNotificationPolicy
 
     // A package can be the whole event without anything else in frame - a parcel left at the gate
     // and the courier already gone - so its status counts as a subject in its own right.
-    private static bool HasVisibleSubject(VisionAnalysis analysis) =>
+    //
+    // Public because SentinelCore.Web's trigger confirmation reuses exactly this rule to decide
+    // whether a motion trigger was real (see TriggerConfirmationService). Note it deliberately
+    // reuses *this* and not ShouldNotify above: the suppressions there are about whether to
+    // interrupt someone's evening, not about whether anything happened. A person standing in your
+    // own driveway with the gate shut is not worth a push notification and is absolutely worth
+    // having the video of.
+    public static bool HasVisibleSubject(VisionAnalysis analysis) =>
         analysis.Person.Visible ||
         analysis.Vehicle.Visible ||
         analysis.Package.Visible ||

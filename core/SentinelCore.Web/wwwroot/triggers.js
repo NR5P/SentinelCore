@@ -302,18 +302,26 @@ window.GateWatchTriggers = (function () {
 
   // ---------------- Triggers viewer tab ----------------
 
+  // Triggers the AI rejected (and any still waiting on a verdict) are filtered out server-side
+  // unless this is on - see TriggerConfirmationService. Deliberately not persisted across reloads:
+  // the confirmed-only list is the one to be looking at day to day, and this is for spot-checking
+  // what the filter threw away.
+  let showHidden = false;
+
   async function load() {
     const root = document.getElementById("triggers-root");
     const countEl = document.getElementById("trigger-count");
     try {
-      const response = await fetch("/api/triggers?limit=50");
+      const response = await fetch(`/api/triggers?limit=50${showHidden ? "&includeUnconfirmed=true" : ""}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const events = await response.json();
 
       countEl.textContent = `${events.length} alert${events.length === 1 ? "" : "s"}`;
       root.innerHTML = "";
       if (events.length === 0) {
-        root.innerHTML = `<div class="empty-state">no trigger zone alerts yet</div>`;
+        root.innerHTML = showHidden
+          ? `<div class="empty-state">no trigger zone alerts yet</div>`
+          : `<div class="empty-state">no confirmed triggers yet &mdash; try "show hidden"</div>`;
         return;
       }
 
@@ -341,6 +349,14 @@ window.GateWatchTriggers = (function () {
       ? `Part of the same incident as: ${[...incidentCameras].filter(name => name !== event.cameraName).join(", ")}.`
       : "";
 
+    // Only ever present with "show hidden" on - a confirmed trigger is the normal case and gets
+    // no badge, so the tab looks exactly as it did before this feature when the filter is doing
+    // its job quietly.
+    const confirmationBadge = {
+      rejected: `<span class="clip-badge confirmation-badge" data-tip="The AI looked at this frame and found no person, vehicle, package, or animal, so it's hidden from the normal list. The snapshot and clip are still on disk.">&#9888; nothing found</span>`,
+      pending: `<span class="clip-badge confirmation-badge" data-tip="Still waiting on the AI to say whether anything was really here. It'll appear in the normal list if confirmed.">&#8230; checking</span>`
+    }[event.confirmation] || "";
+
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
@@ -348,6 +364,7 @@ window.GateWatchTriggers = (function () {
         <img src="/api/triggers/${event.id}/image" alt="trigger snapshot" />
         ${event.hasClip ? `<span class="clip-badge">&#9654; clip</span>` : ""}
         ${otherCameraCount > 0 ? `<span class="clip-badge incident-badge" data-tip="${incidentTip}">&#128279; +${otherCameraCount} camera${otherCameraCount === 1 ? "" : "s"}</span>` : ""}
+        ${confirmationBadge}
       </div>
       <div class="card-body">
         <div class="card-meta">
@@ -369,6 +386,14 @@ window.GateWatchTriggers = (function () {
   }
 
   document.getElementById("triggers-refresh-btn").addEventListener("click", load);
+
+  const hiddenBtn = document.getElementById("triggers-hidden-btn");
+  hiddenBtn.addEventListener("click", () => {
+    showHidden = !showHidden;
+    hiddenBtn.classList.toggle("btn-on", showHidden);
+    hiddenBtn.textContent = showHidden ? "hide hidden" : "show hidden";
+    load();
+  });
 
   return { openZoneEditor, load };
 })();

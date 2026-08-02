@@ -1,4 +1,15 @@
+using System.Text.Json;
+
 namespace SentinelCore.Web;
+
+// What came of handing a trigger to the main app. AlertId is the queued alert's id (the main app
+// answers 202 with it) - the handle TriggerConfirmationService polls /api/results/{id} with to
+// find out what the AI made of the frame. Null whenever the alert never made it into the queue,
+// or the 202 body couldn't be read, in which case no verdict is ever coming.
+public sealed record AlertForwardResult(bool Accepted, Guid? AlertId)
+{
+    public static readonly AlertForwardResult Refused = new(false, null);
+}
 
 // Opt-in bridge from a trigger zone into the main app's own alert pipeline: same Ollama
 // analysis, the zone's chosen prompt profile, same email/Telegram/webhook dispatch Blue Iris
@@ -11,7 +22,7 @@ public sealed class AlertForwarder(
     IConfiguration configuration,
     ILogger<AlertForwarder> logger)
 {
-    public async Task<bool> ForwardAsync(
+    public async Task<AlertForwardResult> ForwardAsync(
         byte[] imageBytes, IReadOnlyList<byte[]> extraFrames, string cameraName, string profile, DateTimeOffset occurredAt,
         IReadOnlyList<string>? linkedCameraNames, string? incidentId, CancellationToken cancellationToken)
     {
@@ -19,7 +30,7 @@ public sealed class AlertForwarder(
         if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
         {
             logger.LogWarning("Cannot forward trigger to the alert pipeline - the main app's API key is not configured.");
-            return false;
+            return AlertForwardResult.Refused;
         }
 
         var baseUrl = (configuration["MainAppBaseUrl"] ?? "http://127.0.0.1:5080").TrimEnd('/');
@@ -60,16 +71,40 @@ public sealed class AlertForwarder(
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
                 logger.LogWarning("Forwarding trigger to the alert pipeline failed: {StatusCode} {Body}", (int)response.StatusCode, body);
-                return false;
+                return AlertForwardResult.Refused;
             }
 
-            logger.LogInformation("Forwarded trigger for camera {CameraName} to the alert pipeline", cameraName);
-            return true;
+            var alertId = await ReadAlertIdAsync(response, cancellationToken);
+            logger.LogInformation(
+                "Forwarded trigger for camera {CameraName} to the alert pipeline as alert {AlertId}", cameraName, alertId);
+            return new AlertForwardResult(true, alertId);
         }
         catch (HttpRequestException ex)
         {
             logger.LogWarning(ex, "Could not reach the main app at {BaseUrl} to forward a trigger", baseUrl);
-            return false;
+            return AlertForwardResult.Refused;
         }
     }
+
+    // The alert was accepted either way - a body this can't parse costs the caller its AI
+    // confirmation (the trigger stays visible, unjudged), not the alert itself, so this never
+    // turns a successful forward into a failed one.
+    private async Task<Guid?> ReadAlertIdAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var accepted = await JsonSerializer.DeserializeAsync<AcceptedAlertBody>(
+                stream, new JsonSerializerOptions(JsonSerializerDefaults.Web), cancellationToken);
+            return accepted?.Id;
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or HttpRequestException)
+        {
+            logger.LogWarning(ex, "Could not read the alert id out of the alert pipeline's reply; this trigger won't be AI-confirmed");
+            return null;
+        }
+    }
+
+    // Matches the main app's AcceptedAlertResponse - only the id matters here.
+    private sealed record AcceptedAlertBody(Guid Id);
 }

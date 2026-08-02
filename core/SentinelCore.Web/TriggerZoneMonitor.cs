@@ -16,6 +16,7 @@ public sealed class TriggerZoneMonitor(
     HlsStreamManager streams,
     ClipRecorder clips,
     AlertForwarder alertForwarder,
+    TriggerConfirmationService triggerConfirmation,
     AppSettingsFile mainAppSettings,
     IConfiguration configuration,
     IHostEnvironment environment,
@@ -241,8 +242,17 @@ public sealed class TriggerZoneMonitor(
                     ?? Guid.NewGuid().ToString("N");
             }
 
-            var trigger = await eventStore.AddAsync(camera.Id, imagePath, areaFraction, incidentId, cancellationToken);
-            logger.LogInformation("Trigger zone fired for camera {CameraId} ({Name}), area {Area:P1}", camera.Id, camera.Name, areaFraction);
+            // Held back from the Triggers tab until the analysis this is about to be forwarded for
+            // says there was really something in frame - see TriggerConfirmationService. Only ever
+            // gated when it's actually going to be analyzed; a camera that doesn't forward to
+            // alerts records Confirmed and shows up straight away, exactly as before.
+            var gated = await triggerConfirmation.ShouldGateAsync(session.Config.SendToAlerts, cancellationToken);
+            var trigger = await eventStore.AddAsync(
+                camera.Id, imagePath, areaFraction, incidentId,
+                gated ? TriggerConfirmation.Pending : TriggerConfirmation.Confirmed, cancellationToken);
+            logger.LogInformation(
+                "Trigger zone fired for camera {CameraId} ({Name}), area {Area:P1}{Held}",
+                camera.Id, camera.Name, areaFraction, gated ? " - held for AI confirmation" : "");
 
             if (session.Config.RecordClips)
                 _ = BuildClipAsync(camera, trigger, session.Config, now);
@@ -256,7 +266,9 @@ public sealed class TriggerZoneMonitor(
                 : [];
 
             if (session.Config.SendToAlerts)
-                _ = ForwardToAlertPipelineAsync(camera, bytes, session.MultiFrame, session.Config.AlertProfile, now, linkedCameraNames, incidentId);
+                _ = ForwardToAlertPipelineAsync(
+                    camera, bytes, session.MultiFrame, session.Config.AlertProfile, now, linkedCameraNames, incidentId,
+                    gated ? trigger.Id : null);
         }
         catch (Exception ex)
         {
@@ -290,9 +302,17 @@ public sealed class TriggerZoneMonitor(
                 var imagePath = Path.Combine(memberDir, $"{occurredAt:yyyyMMdd-HHmmss-fff}.jpg");
                 await File.WriteAllBytesAsync(imagePath, snapshot, cancellationToken);
 
+                // A companion is only ever analyzed when the group asks for it, so that's the only
+                // case where its capture can be AI-confirmed; otherwise it records Confirmed and
+                // stays visible alongside the rest of its incident.
+                var companionGated = group.AnalyzeCompanionCaptures &&
+                    await triggerConfirmation.ShouldGateAsync(true, cancellationToken);
+
                 // No self-detected motion area for a companion capture - 0 just means "not
                 // self-triggered", not "no motion visible".
-                var companionTrigger = await eventStore.AddAsync(memberId, imagePath, 0, incidentId, cancellationToken);
+                var companionTrigger = await eventStore.AddAsync(
+                    memberId, imagePath, 0, incidentId,
+                    companionGated ? TriggerConfirmation.Pending : TriggerConfirmation.Confirmed, cancellationToken);
                 recorded.Add(memberCamera.Name);
                 logger.LogInformation(
                     "Recorded companion capture for camera {CameraId} ({Name}), incident {IncidentId}",
@@ -310,7 +330,9 @@ public sealed class TriggerZoneMonitor(
                 if (group.AnalyzeCompanionCaptures)
                 {
                     var alertProfile = memberConfig?.AlertProfile ?? "default";
-                    _ = ForwardToAlertPipelineAsync(memberCamera, snapshot, new MultiFrameOptions(), alertProfile, occurredAt, [], incidentId);
+                    _ = ForwardToAlertPipelineAsync(
+                        memberCamera, snapshot, new MultiFrameOptions(), alertProfile, occurredAt, [], incidentId,
+                        companionGated ? companionTrigger.Id : null);
                 }
             }
             catch (Exception ex)
@@ -327,9 +349,13 @@ public sealed class TriggerZoneMonitor(
     // cancel an alert that's already in flight. Capturing extra frames here (rather than inline
     // in MaybeTriggerAsync) keeps the ~0.5-1s of extra delay off the critical path that saves the
     // trigger's primary image and records the TriggerEvent - the Feed/Timeline see no difference.
+    //
+    // confirmTriggerId is set when the trigger it came from is sitting Pending waiting on this
+    // analysis - the verdict is followed up (and the trigger released, one way or the other) once
+    // the alert has been queued. Null means nothing is waiting on it.
     private async Task ForwardToAlertPipelineAsync(
         Camera camera, byte[] imageBytes, MultiFrameOptions multiFrame, string profile, DateTimeOffset occurredAt,
-        IReadOnlyList<string> linkedCameraNames, string? incidentId)
+        IReadOnlyList<string> linkedCameraNames, string? incidentId, Guid? confirmTriggerId)
     {
         try
         {
@@ -344,8 +370,11 @@ public sealed class TriggerZoneMonitor(
                 }
             }
 
-            await alertForwarder.ForwardAsync(
+            var forwarded = await alertForwarder.ForwardAsync(
                 imageBytes, extraFrames, camera.Name, profile, occurredAt, linkedCameraNames, incidentId, _stoppingToken);
+
+            if (confirmTriggerId is { } triggerId)
+                await triggerConfirmation.ResolveAsync(triggerId, forwarded, _stoppingToken);
         }
         catch (OperationCanceledException)
         {
@@ -354,6 +383,11 @@ public sealed class TriggerZoneMonitor(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to forward trigger to the alert pipeline for camera {CameraId}", camera.Id);
+
+            // The forward itself blew up, so no verdict is coming for a trigger that's hidden
+            // waiting on one. Release it rather than let the startup sweep find it minutes later.
+            if (confirmTriggerId is { } strandedId)
+                await triggerConfirmation.ResolveAsync(strandedId, AlertForwardResult.Refused, CancellationToken.None);
         }
     }
 

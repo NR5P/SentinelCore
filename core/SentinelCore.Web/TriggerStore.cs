@@ -10,6 +10,11 @@ namespace SentinelCore.Web;
 // main app's own alert pipeline (same Ollama analysis, the chosen prompt profile, same
 // email/Telegram/webhook dispatch Blue Iris alerts already use) instead of just sitting in
 // the Triggers tab - see TriggerZoneMonitor.ForwardToAlertPipelineAsync.
+//
+// That forwarding is also what makes a trigger eligible for AI confirmation (see
+// TriggerConfirmation below and TriggerConfirmationService): the analysis it produces is what
+// decides whether the trigger was a person or a moth, and a camera that doesn't forward never
+// gets one, so its triggers are always shown.
 public sealed record TriggerPoint(double X, double Y);
 
 public sealed record TriggerConfig(
@@ -45,6 +50,32 @@ public sealed record TriggerConfig(
     public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
 }
 
+// Whether the AI has agreed there was actually something here. Motion detection alone can't tell
+// a person from a moth on the lens at 3am, so with TriggerConfirmation enabled a trigger stays out
+// of the Triggers tab until the alert pipeline's analysis has looked at the frame - see
+// TriggerConfirmationService.
+//
+// The image and the clip are written to disk either way. A rejected trigger is hidden, never
+// deleted: the whole point of a filter you can't inspect going wrong is that you don't find out,
+// so /api/triggers?includeUnconfirmed=true can still show what was filtered out.
+public enum TriggerConfirmation
+{
+    // Either the AI confirmed a subject, or no verdict was ever expected for this trigger -
+    // confirmation is switched off, the camera doesn't forward to the alert pipeline, or the
+    // analysis couldn't be reached. Always visible.
+    //
+    // This is the fail-open value on purpose, and it's the DEFAULT for the migrated column so
+    // that turning this feature on doesn't retroactively empty a year of trigger history.
+    Confirmed,
+
+    // Forwarded for analysis, no verdict yet. Hidden until it resolves - showing it and then
+    // yanking it away a minute later would be worse than a short delay.
+    Pending,
+
+    // The AI looked and found no person, vehicle, package, or animal in the frame.
+    Rejected
+}
+
 public sealed record TriggerEvent(
     Guid Id,
     Guid CameraId,
@@ -54,7 +85,8 @@ public sealed record TriggerEvent(
     string? ClipPath,
     // Shared by every event (across one or more cameras) that belongs to the same camera-group
     // incident - see TriggerZoneMonitor.MaybeTriggerAsync. Null for a camera with no group.
-    string? IncidentId = null);
+    string? IncidentId = null,
+    TriggerConfirmation Confirmation = TriggerConfirmation.Confirmed);
 
 public interface ITriggerConfigStore
 {
@@ -69,13 +101,29 @@ public interface ITriggerConfigStore
 
 public interface ITriggerEventStore
 {
-    Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId, CancellationToken cancellationToken);
-    Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, CancellationToken cancellationToken);
+    Task<TriggerEvent> AddAsync(
+        Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId,
+        TriggerConfirmation confirmation, CancellationToken cancellationToken);
+
+    // includeUnconfirmed surfaces pending and rejected triggers too, for the Triggers tab's
+    // "show unconfirmed" toggle - the only way to see what the AI filter is actually throwing
+    // away, and to notice when it's throwing away the wrong things.
+    Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, bool includeUnconfirmed, CancellationToken cancellationToken);
     Task<TriggerEvent?> GetAsync(Guid id, CancellationToken cancellationToken);
 
     // Powers the day timeline: this camera's local trigger events (and their clips, once built)
     // that fall within a specific day, so they can be matched up against AI-confirmed events.
+    // Confirmed-only, like the Triggers tab - a rejected trigger shouldn't clutter the timeline
+    // any more than it should the tab.
     Task<IReadOnlyList<TriggerEvent>> GetEventsInRangeAsync(Guid cameraId, DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken);
+
+    // Records the AI's verdict once the analysis for this trigger has finished.
+    Task SetConfirmationAsync(Guid id, TriggerConfirmation confirmation, CancellationToken cancellationToken);
+
+    // Triggers left Pending by a restart (the poll that was waiting on their verdict died with
+    // the process). Swept to Confirmed on startup rather than left invisible forever - see
+    // TriggerConfirmationSweeper.
+    Task<IReadOnlyList<Guid>> GetPendingBeforeAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
 
     // Clips can only be cut once the post-roll has actually elapsed, so the event row is written
     // immediately (image first) and the clip path is patched in afterwards.
@@ -135,9 +183,16 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         AddColumnIfMissing("TriggerConfigs", "SensorDeviceId", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing("TriggerConfigs", "SensorTriggerOn", "TEXT NOT NULL DEFAULT 'on'");
         AddColumnIfMissing("TriggerConfigs", "SensorCooldownSeconds", "INTEGER NOT NULL DEFAULT 30");
+        // 'confirmed' rather than 'pending' as the default: every row that predates AI
+        // confirmation was recorded under the old always-visible rule, and migrating them to
+        // pending would blank the Triggers tab and the timeline on the first run after upgrade.
+        AddColumnIfMissing("TriggerEvents", "Confirmation", "TEXT NOT NULL DEFAULT 'confirmed'");
 
         using var incidentIndex = _connection.CreateCommand();
-        incidentIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_TriggerEvents_IncidentId ON TriggerEvents (IncidentId);";
+        incidentIndex.CommandText = """
+            CREATE INDEX IF NOT EXISTS IX_TriggerEvents_IncidentId ON TriggerEvents (IncidentId);
+            CREATE INDEX IF NOT EXISTS IX_TriggerEvents_Confirmation ON TriggerEvents (Confirmation, OccurredAt DESC);
+            """;
         incidentIndex.ExecuteNonQuery();
     }
 
@@ -285,17 +340,19 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         }
     }
 
-    public async Task<TriggerEvent> AddAsync(Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId, CancellationToken cancellationToken)
+    public async Task<TriggerEvent> AddAsync(
+        Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId,
+        TriggerConfirmation confirmation, CancellationToken cancellationToken)
     {
-        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null, incidentId);
+        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null, incidentId, confirmation);
 
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, IncidentId)
-                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction, $incidentId);
+                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, IncidentId, Confirmation)
+                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction, $incidentId, $confirmation);
                 """;
             command.Parameters.AddWithValue("$id", trigger.Id.ToString("N"));
             command.Parameters.AddWithValue("$cameraId", trigger.CameraId.ToString("N"));
@@ -303,6 +360,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$imagePath", trigger.ImagePath);
             command.Parameters.AddWithValue("$triggerAreaFraction", trigger.TriggerAreaFraction);
             command.Parameters.AddWithValue("$incidentId", (object?)trigger.IncidentId ?? DBNull.Value);
+            command.Parameters.AddWithValue("$confirmation", ToStorage(confirmation));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -313,15 +371,59 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         return trigger;
     }
 
-    public async Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, CancellationToken cancellationToken)
+    public async Task SetConfirmationAsync(Guid id, TriggerConfirmation confirmation, CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = cameraId is null
-                ? "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId FROM TriggerEvents ORDER BY OccurredAt DESC LIMIT $limit;"
-                : "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId FROM TriggerEvents WHERE CameraId = $cameraId ORDER BY OccurredAt DESC LIMIT $limit;";
+            command.CommandText = "UPDATE TriggerEvents SET Confirmation = $confirmation WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            command.Parameters.AddWithValue("$confirmation", ToStorage(confirmation));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetPendingBeforeAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT Id FROM TriggerEvents WHERE Confirmation = 'pending' AND OccurredAt < $olderThan;";
+            command.Parameters.AddWithValue("$olderThan", olderThan.UtcDateTime.ToString("O"));
+
+            var results = new List<Guid>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(Guid.ParseExact(reader.GetString(0), "N"));
+
+            return results;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, bool includeUnconfirmed, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            var filters = new List<string>();
+            if (cameraId is not null) filters.Add("CameraId = $cameraId");
+            if (!includeUnconfirmed) filters.Add("Confirmation = 'confirmed'");
+            var where = filters.Count == 0 ? "" : $"WHERE {string.Join(" AND ", filters)} ";
+
+            using var command = _connection.CreateCommand();
+            command.CommandText =
+                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation " +
+                $"FROM TriggerEvents {where}ORDER BY OccurredAt DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$limit", limit);
             if (cameraId is not null) command.Parameters.AddWithValue("$cameraId", cameraId.Value.ToString("N"));
 
@@ -345,9 +447,9 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation
                 FROM TriggerEvents
-                WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end
+                WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end AND Confirmation = 'confirmed'
                 ORDER BY OccurredAt ASC;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -390,7 +492,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId FROM TriggerEvents WHERE Id = $id;";
+            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation FROM TriggerEvents WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -426,7 +528,24 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         reader.GetString(3),
         reader.GetDouble(4),
         reader.IsDBNull(5) ? null : reader.GetString(5),
-        reader.IsDBNull(6) ? null : reader.GetString(6));
+        reader.IsDBNull(6) ? null : reader.GetString(6),
+        FromStorage(reader.GetString(7)));
+
+    private static string ToStorage(TriggerConfirmation confirmation) => confirmation switch
+    {
+        TriggerConfirmation.Pending => "pending",
+        TriggerConfirmation.Rejected => "rejected",
+        _ => "confirmed"
+    };
+
+    // Anything unrecognised reads as Confirmed - a value this build doesn't know about (a
+    // downgrade, a hand-edited row) should leave the footage visible, not hide it.
+    private static TriggerConfirmation FromStorage(string value) => value switch
+    {
+        "pending" => TriggerConfirmation.Pending,
+        "rejected" => TriggerConfirmation.Rejected,
+        _ => TriggerConfirmation.Confirmed
+    };
 
     public async Task<string?> GetMostRecentIncidentIdAsync(IReadOnlyList<Guid> cameraIds, DateTimeOffset since, CancellationToken cancellationToken)
     {
