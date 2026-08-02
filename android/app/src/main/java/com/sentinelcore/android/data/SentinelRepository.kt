@@ -1,5 +1,6 @@
 package com.sentinelcore.android.data
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
@@ -19,12 +20,14 @@ import java.time.Instant
 import java.time.OffsetDateTime
 
 class SentinelRepository(
+    context: Context,
     private val logger: (String, DiagnosticLevel) -> Unit,
 ) {
     @Volatile
     var baseUrl: String = ""
 
     private val cookieManager = CookieManager(null, CookiePolicy.ACCEPT_ALL)
+    private val sessionCookieStore = SessionCookieStore(context.applicationContext)
     private val imageCache = object : LruCache<String, Bitmap>(
         minOf(32 * 1024, (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt()),
     ) {
@@ -649,6 +652,7 @@ class SentinelRepository(
 
     fun clearAuthenticationSession() {
         cookieManager.cookieStore.removeAll()
+        normalizedBaseUrl()?.let { runCatching { sessionCookieStore.clear(URL(it)) } }
         imageCache.evictAll()
     }
 
@@ -888,7 +892,17 @@ class SentinelRepository(
         connection.connectTimeout = 15_000
         connection.readTimeout = 30_000
         connection.instanceFollowRedirects = true
-        val cookies = cookieManager.get(url.toURI(), emptyMap())["Cookie"]?.joinToString("; ")
+        var cookies = cookieManager.get(url.toURI(), emptyMap())["Cookie"]?.joinToString("; ")
+            ?.takeIf(String::isNotBlank)
+        if (cookies == null) {
+            cookies = sessionCookieStore.load(url)
+            // Rehydrate CookieManager too. Otherwise the first successful response after an app
+            // restart (which normally has no Set-Cookie header) would look like an empty jar and
+            // incorrectly erase the persisted session in storeCookies().
+            if (!cookies.isNullOrBlank()) {
+                cookieManager.put(url.toURI(), mapOf("Set-Cookie" to listOf(cookies)))
+            }
+        }
         if (!cookies.isNullOrBlank()) connection.setRequestProperty("Cookie", cookies)
         return connection
     }
@@ -896,6 +910,9 @@ class SentinelRepository(
     private fun storeCookies(connection: HttpURLConnection) {
         runCatching {
             cookieManager.put(connection.url.toURI(), connection.headerFields)
+            val cookies = cookieManager.get(connection.url.toURI(), emptyMap())["Cookie"]?.joinToString("; ")
+            if (cookies.isNullOrBlank()) sessionCookieStore.clear(connection.url)
+            else sessionCookieStore.save(connection.url, cookies)
         }
     }
 

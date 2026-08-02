@@ -285,6 +285,23 @@ final class AppModel: ObservableObject {
             if Self.isCancellation(error) { throw error }
             deviceHubEnabled = false
         }
+        if deviceHubEnabled {
+            do {
+                devices = try await client.devices()
+                let snapshot = try await client.deviceStates()
+                for state in snapshot.devices {
+                    guard let index = devices.firstIndex(where: { $0.id == state.id }) else { continue }
+                    devices[index].power = state.power
+                    devices[index].brightness = state.brightness
+                    devices[index].available = state.available
+                }
+            } catch {
+                if Self.isCancellation(error) { throw error }
+                log("Could not prime Device Hub state during startup: \(error.localizedDescription)", level: .notice)
+            }
+        } else {
+            devices = []
+        }
         // Same treatment, opposite default - see isLicensed.
         do {
             isLicensed = try await client.licenseState().valid

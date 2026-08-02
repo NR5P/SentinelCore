@@ -61,7 +61,8 @@ struct AlertFeedView: View {
         }
         .task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                guard !Task.isCancelled else { return }
                 await model.connect()
             }
         }
