@@ -3866,6 +3866,51 @@ public sealed class BasicTests
         Assert.True(args.IndexOf("-skip_frame") < args.IndexOf("-i"));
     }
 
+    // --- WebRTC live view (go2rtc sidecar) ------------------------------------------------
+    //
+    // The config's security shape is the part worth pinning: go2rtc's API has no authentication
+    // of its own, so it must only ever listen on loopback - the dashboard reaches it exclusively
+    // through this server's authenticated /api/cameras/{id}/webrtc proxy. Same for the internal
+    // RTSP relay. Only the DTLS-SRTP media port may face the LAN. Someone "fixing" a
+    // can't-connect issue by widening a listen address would be quietly removing the auth gate.
+
+    [Fact]
+    public void Go2RtcConfig_OnlyExposesTheMediaPortBeyondLoopback()
+    {
+        var yaml = Go2RtcManager.BuildConfigYaml(apiPort: 11984, rtspPort: 18554, webRtcPort: 18555, ffmpegPath: "/usr/bin/ffmpeg");
+
+        Assert.Contains("listen: \"127.0.0.1:11984\"", yaml);
+        Assert.Contains("listen: \"127.0.0.1:18554\"", yaml);
+        Assert.Contains("listen: \":18555\"", yaml);
+        // The audio-transcode source (see BuildStreamSources) is run by go2rtc itself, so it has
+        // to be told where our ffmpeg lives rather than assuming one on the PATH.
+        Assert.Contains("bin: \"/usr/bin/ffmpeg\"", yaml);
+    }
+
+    [Fact]
+    public void Go2RtcStreamSources_PassVideoThroughAndOnlyTranscodeAudioWhenWanted()
+    {
+        var id = Guid.NewGuid();
+        Camera Make(bool includeAudio) => new(
+            id, "Gate", "rtsp://cam/live", "user", "secret", includeAudio,
+            PtzEnabled: false, OnvifPtzServiceUrl: null, OnvifProfileToken: null, DateTimeOffset.UtcNow);
+
+        // Video is never re-encoded: the first (and without audio, only) source is the camera's
+        // own stream with credentials embedded, exactly what the HLS pipeline connects to.
+        var videoOnly = Go2RtcManager.BuildStreamSources(Make(includeAudio: false));
+        var direct = Assert.Single(videoOnly);
+        Assert.Equal(HlsStreamManager.BuildAuthenticatedUrl(Make(includeAudio: false)), direct);
+        Assert.Contains("user:secret@cam", direct);
+
+        // With audio on, a second source adds an Opus transcode (browsers can't take the AAC most
+        // cameras produce) - referencing the stream by name rather than repeating the URL, so
+        // credentials appear exactly once in go2rtc's state.
+        var withAudio = Go2RtcManager.BuildStreamSources(Make(includeAudio: true));
+        Assert.Equal(2, withAudio.Count);
+        Assert.Equal(direct, withAudio[0]);
+        Assert.Equal($"ffmpeg:{id:N}#audio=opus", withAudio[1]);
+    }
+
     // --- Triggering a camera from outside the motion detector -----------------------------
     //
     // Two sources land in the same place (CameraTriggerService): the key-authenticated HTTP

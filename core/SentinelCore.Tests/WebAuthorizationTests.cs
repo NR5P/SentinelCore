@@ -77,6 +77,37 @@ public sealed class WebAuthorizationTests : IDisposable
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    // The WebRTC signaling endpoint is a new way to open a live media session, so it must sit
+    // behind exactly the same login as the HLS playlist it replaces - and stay reachable for a
+    // Viewer, since watching live video is the one thing a Viewer account is for.
+    [Fact]
+    public async Task WebRtcSignaling_IsGatedByLoginExactlyLikeTheStreamItReplaces()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+
+        // Shipped default (no login configured): open, like every other camera endpoint. 404 is
+        // the proof authorization let the request through - the camera genuinely doesn't exist.
+        using (var client = factory.CreateClient())
+        {
+            using var open = await client.PostAsync($"/api/cameras/{Guid.NewGuid()}/webrtc", new StringContent("v=0"), ct);
+            Assert.Equal(HttpStatusCode.NotFound, open.StatusCode);
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+            await accounts.CreateAsync("admin", SentinelCore.Web.PasswordHasher.Hash("correct horse battery"), AccountRole.Admin, null, ct);
+        }
+        await EnableLoginAsync(ct);
+
+        using (var client = factory.CreateClient())
+        {
+            using var anonymous = await client.PostAsync($"/api/cameras/{Guid.NewGuid()}/webrtc", new StringContent("v=0"), ct);
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        }
+    }
+
     [Fact]
     public async Task AuthEnabled_ViewerSession_CanMonitorButNotAdminister()
     {

@@ -223,6 +223,40 @@ Blue Iris cameras, and this view has nothing to do with alerts or the AI. Stream
 while you have this tab open and stop the moment you leave it, so it's not something you'd
 leave open all the time.
 
+### 4a. Making the live view real-time — install go2rtc
+
+Out of the box, live tiles play over HLS: dependable everywhere, but structurally a few seconds
+behind the camera — HLS downloads video in chunks, a chunk can't be downloaded until it has
+finished being recorded, and chunks can only start on a keyframe, so the camera's own keyframe
+interval sets a floor under the delay that no amount of tuning removes.
+
+Installing **[go2rtc](https://github.com/AlexxIT/go2rtc)** on the server lifts that floor: the
+dashboard automatically switches its live tiles to WebRTC, which pushes frames continuously and
+typically sits a few hundred milliseconds behind the camera. Nothing else changes — recording,
+motion detection, snapshots, and the phone/TV apps all keep working exactly as before, and any
+tile that can't establish WebRTC (older browser, or viewing through a Cloudflare Tunnel, which
+doesn't carry WebRTC's UDP traffic) quietly falls back to HLS on its own.
+
+Setup is: install the single binary, restart the server. On a Mac `brew install go2rtc`; on
+Linux download the binary for your architecture from the go2rtc releases page, `chmod +x` it,
+and put it somewhere on the PATH (e.g. `/usr/local/bin/go2rtc`). If you'd rather keep it
+elsewhere, set `Go2Rtc:Path` in `SentinelCore.Web/appsettings.json` to its full path. The
+server starts and supervises it by itself — there is no go2rtc config to write, and its own API
+is kept loopback-only (the dashboard always goes through the server's login). If another go2rtc
+already runs on the box (Frigate bundles one), that's fine — this one uses its own ports
+(11984/18554/18555, changeable under `Go2Rtc:` in `appsettings.json`).
+
+### 4b. If you're staying on HLS: check the camera's keyframe interval
+
+Without go2rtc, the one setting that genuinely reduces live delay is on the **camera itself**:
+the keyframe / I-frame interval (Reolink calls it **Interframe Space**). Set it to 1 second —
+or `1x` where it's expressed as a multiple of the frame rate. A camera sending a keyframe every
+4 seconds forces roughly 8–12 s of delay; every 1 second brings that to roughly 3–4 s.
+
+Do **not** lower the frame rate to chase latency: most cameras express the keyframe interval in
+frames, so fewer frames per second means keyframes arrive *further apart in time* — more delay,
+not less.
+
 ## 5. The CAMERAS tab — adding your own cameras
 
 Click **+ add camera** to add an IP camera by its stream URL (`rtsp://` or `http://`), with

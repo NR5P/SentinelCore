@@ -163,6 +163,11 @@ var cameraStore = new SqliteCameraStore(camerasRoot);
 builder.Services.AddSingleton<ICameraStore>(cameraStore);
 builder.Services.AddSingleton<ICameraGroupStore>(cameraStore);
 builder.Services.AddSingleton<HlsStreamManager>();
+// WebRTC live view via a go2rtc sidecar - see Go2RtcManager. Generous timeout: the SDP exchange
+// includes go2rtc gathering its ICE candidates, and the first request may also be paying the
+// sidecar's startup wait.
+builder.Services.AddHttpClient(nameof(Go2RtcManager), client => client.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddSingleton<Go2RtcManager>();
 
 // Short timeout on purpose - a camera being probed is either on the LAN and answers in
 // milliseconds, or it isn't there, and the whole point of the probe is to fail fast on the ones

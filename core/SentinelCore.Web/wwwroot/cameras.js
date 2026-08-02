@@ -2,6 +2,12 @@ window.GateWatchCameras = (function () {
   let cameras = [];
   let editingId = null;
   const hlsInstances = new Map();
+  const webrtcConnections = new Map();
+
+  // Set the first time the server answers 503 for a WebRTC offer - that's its "go2rtc isn't
+  // installed here" signal, which won't change until the server restarts, so every other tile
+  // (and every rebuild this page load) goes straight to HLS instead of re-asking.
+  let webrtcUnavailable = false;
 
   // Leaving the Live tab pauses players instead of tearing them down immediately, so a quick
   // flip to another tab and back doesn't force a full HLS reconnect. Only if you stay away
@@ -839,7 +845,7 @@ window.GateWatchCameras = (function () {
       const label = document.createElement("div");
       label.className = "live-tile-label";
       label.textContent = camera.name;
-      label.dataset.tip = "Live view, a few seconds behind real time. Use the player controls for fullscreen and volume.";
+      label.dataset.tip = "Live view. Use the player controls for fullscreen and volume.";
 
       const status = document.createElement("div");
       status.className = "live-tile-status";
@@ -955,8 +961,6 @@ window.GateWatchCameras = (function () {
   }
 
   function attachPlayer(video, status, camera) {
-    const src = `/api/cameras/${camera.id}/stream/stream.m3u8`;
-
     // Not { once: true }: a tile that recovers from a stall has to be able to clear this again,
     // and showStatus below puts it back up whenever playback actually stops.
     let hasPlayed = false;
@@ -970,6 +974,186 @@ window.GateWatchCameras = (function () {
     video.addEventListener("waiting", () => {
       if (hasPlayed) showStatus(status, "buffering…");
     });
+
+    // WebRTC first: frames are pushed continuously instead of downloaded in keyframe-aligned
+    // segments, so the tile sits a few hundred milliseconds behind the camera instead of the
+    // several seconds HLS structurally needs. HLS remains the fallback whenever the handshake
+    // can't happen - go2rtc not installed on the server (the one-time 503 above), a browser
+    // without WebRTC, or a network path that only forwards HTTP (e.g. a Cloudflare Tunnel, which
+    // carries the HLS segments fine but not WebRTC's UDP media).
+    if (webrtcUnavailable || typeof RTCPeerConnection === "undefined") {
+      attachHls(video, status, camera);
+    } else {
+      connectWebRtc(video, status, camera, 0);
+    }
+  }
+
+  // How long the whole WebRTC attempt gets - offer, answer, ICE, first media - before the tile
+  // gives up on this attempt. Generous because the first attempt after a server restart also
+  // pays for go2rtc's own startup and the camera's RTSP connect.
+  const WEBRTC_CONNECT_TIMEOUT_MS = 10000;
+
+  // Straight failures (never connected) before the tile stops burning time on WebRTC and falls
+  // back to HLS, which has its own recovery ladder.
+  const WEBRTC_MAX_FAILURES = 3;
+
+  async function connectWebRtc(video, status, camera, priorFailures) {
+    const pc = new RTCPeerConnection();
+    webrtcConnections.set(camera.id, pc);
+
+    // True while this pc is still the one the tile owns - teardownLive or a newer attempt
+    // replaces/removes the map entry, at which point every callback below must do nothing.
+    const isCurrent = () => webrtcConnections.get(camera.id) === pc;
+
+    let sawConnected = false;
+    let disconnectTimer = null;
+
+    // The peer connection's own state isn't enough to know the feed is alive: if the camera
+    // dies (reboot, network blip) while go2rtc stays up, the browser<->go2rtc connection remains
+    // happily "connected" and the tile freezes on the last frame it got - which looks exactly
+    // like a healthy still scene. So also watch whether decoded time is actually advancing, and
+    // treat a clock that has stopped as a dead stream. Reconnecting makes go2rtc pull the camera
+    // afresh, which is what recovers it once the camera is back. Paused doesn't count - leaving
+    // the Live tab pauses tiles on purpose.
+    let lastTime = -1;
+    let stalledSinceMs = null;
+    const stallWatchdog = setInterval(() => {
+      if (!isCurrent()) { clearInterval(stallWatchdog); return; }
+      if (!sawConnected || video.paused || !video.srcObject) { stalledSinceMs = null; return; }
+      if (video.currentTime !== lastTime) {
+        lastTime = video.currentTime;
+        stalledSinceMs = null;
+        return;
+      }
+      stalledSinceMs ??= Date.now();
+      if (Date.now() - stalledSinceMs > 8000) fail();
+    }, 2000);
+
+    const fail = () => {
+      if (!isCurrent()) return;
+      webrtcConnections.delete(camera.id);
+      clearInterval(stallWatchdog);
+      if (disconnectTimer) clearTimeout(disconnectTimer);
+      try { pc.close(); } catch { /* already closed */ }
+      video.srcObject = null;
+
+      // A connection that genuinely worked and then died resets the count - that's a camera or
+      // network hiccup worth retrying afresh, not evidence WebRTC doesn't work here.
+      const failures = (sawConnected ? 0 : priorFailures) + 1;
+      if (webrtcUnavailable || failures >= WEBRTC_MAX_FAILURES) {
+        attachHls(video, status, camera);
+        return;
+      }
+
+      showStatus(status, "reconnecting…");
+      setTimeout(() => {
+        // Only if the Live tab still exists and nothing else took this tile over meanwhile.
+        if (liveBuilt && !webrtcConnections.has(camera.id)) connectWebRtc(video, status, camera, failures);
+      }, 2000);
+    };
+
+    pc.addEventListener("track", (event) => {
+      if (!isCurrent()) return;
+      video.srcObject = event.streams[0];
+      video.play().catch(() => {});
+    });
+
+    pc.addEventListener("connectionstatechange", () => {
+      if (!isCurrent()) return;
+      switch (pc.connectionState) {
+        case "connected":
+          sawConnected = true;
+          if (disconnectTimer) {
+            clearTimeout(disconnectTimer);
+            disconnectTimer = null;
+          }
+          break;
+        case "disconnected":
+          // Often self-heals within a second or two - only a "disconnected" that persists is
+          // treated as dead. "failed" below is definitive and gets no such grace.
+          if (!disconnectTimer) disconnectTimer = setTimeout(fail, 4000);
+          break;
+        case "failed":
+          fail();
+          break;
+      }
+    });
+
+    try {
+      pc.addTransceiver("video", { direction: "recvonly" });
+      if (camera.includeAudio) pc.addTransceiver("audio", { direction: "recvonly" });
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      // The exchange is a single POST with no trickle channel, so give the browser a moment to
+      // put its candidates in the offer. Bounded: on a LAN gathering is near-instant, and even
+      // an offer without our candidates usually still connects (the server learns our address
+      // from the ICE checks we send it).
+      await waitForIceGathering(pc, 1000);
+
+      const response = await fetch(`/api/cameras/${camera.id}/webrtc`, {
+        method: "POST",
+        headers: { "Content-Type": "application/sdp" },
+        body: pc.localDescription.sdp
+      });
+      if (response.status === 503) {
+        webrtcUnavailable = true; // see declaration - go2rtc isn't on this server
+        throw new Error("WebRTC not available on this server");
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const answer = await response.text();
+
+      if (!isCurrent()) return;
+      await pc.setRemoteDescription({ type: "answer", sdp: answer });
+      await waitForConnection(pc, WEBRTC_CONNECT_TIMEOUT_MS);
+    } catch {
+      fail();
+    }
+  }
+
+  function waitForIceGathering(pc, timeoutMs) {
+    if (pc.iceGatheringState === "complete") return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        pc.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      };
+      const check = () => {
+        if (pc.iceGatheringState === "complete") finish();
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      pc.addEventListener("icegatheringstatechange", check);
+    });
+  }
+
+  function waitForConnection(pc, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        pc.removeEventListener("connectionstatechange", check);
+      };
+      const check = () => {
+        if (pc.connectionState === "connected") {
+          cleanup();
+          resolve();
+        } else if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+          cleanup();
+          reject(new Error(`WebRTC connection ${pc.connectionState}`));
+        }
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("WebRTC connection timed out"));
+      }, timeoutMs);
+      pc.addEventListener("connectionstatechange", check);
+      check();
+    });
+  }
+
+  function attachHls(video, status, camera) {
+    const src = `/api/cameras/${camera.id}/stream/stream.m3u8`;
+    video.srcObject = null; // in case a WebRTC attempt got as far as attaching a stream
 
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls(LIVE_HLS_CONFIG);
@@ -1068,8 +1252,16 @@ window.GateWatchCameras = (function () {
     }
     hlsInstances.clear();
 
+    // Closing the peer connection is what actually stops WebRTC media flowing - unlike HLS,
+    // a paused <video> still receives (and discards) every frame the server pushes.
+    for (const pc of webrtcConnections.values()) {
+      try { pc.close(); } catch { /* already closed */ }
+    }
+    webrtcConnections.clear();
+
     document.querySelectorAll("#live-root video").forEach(video => {
       video.pause();
+      video.srcObject = null;
       video.removeAttribute("src");
       video.load();
     });

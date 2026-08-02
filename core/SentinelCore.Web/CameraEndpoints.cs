@@ -62,7 +62,7 @@ public static class CameraEndpoints
             return Results.Ok(camera);
         }).RequireAuthorization("AdminOnly");
 
-        app.MapPut("/api/cameras/{id:guid}", async (Guid id, CameraInputDto dto, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
+        app.MapPut("/api/cameras/{id:guid}", async (Guid id, CameraInputDto dto, ICameraStore store, HlsStreamManager streams, Go2RtcManager webrtc, CancellationToken ct) =>
         {
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
@@ -74,12 +74,14 @@ public static class CameraEndpoints
 
             // Source may have changed - restart the stream on next view rather than serving stale settings.
             streams.StopStream(id);
+            webrtc.ForgetStream(id);
             return Results.Ok(new { saved = true });
         }).RequireAuthorization("AdminOnly");
 
-        app.MapDelete("/api/cameras/{id:guid}", async (Guid id, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
+        app.MapDelete("/api/cameras/{id:guid}", async (Guid id, ICameraStore store, HlsStreamManager streams, Go2RtcManager webrtc, CancellationToken ct) =>
         {
             streams.StopStream(id);
+            webrtc.ForgetStream(id);
             var deleted = await store.DeleteAsync(id, ct);
             return deleted ? Results.Ok(new { deleted = true }) : Results.NotFound();
         }).RequireAuthorization("AdminOnly");
@@ -118,6 +120,40 @@ public static class CameraEndpoints
             if (segmentPath is null || !File.Exists(segmentPath)) return Results.NotFound();
 
             return Results.File(segmentPath, "video/mp2t");
+        }).RequireAuthorization();
+
+        // WebRTC signaling for a live tile: the browser POSTs its SDP offer here and gets go2rtc's
+        // answer back, after which media flows browser<->go2rtc directly (DTLS-SRTP on the media
+        // port) and this server is out of the path. This is the whole reason the live grid can sit
+        // a few hundred milliseconds behind the camera instead of HLS's several seconds.
+        //
+        // 503 is the deliberate "not on this install" answer - go2rtc missing or unstartable - and
+        // the dashboard reacts by attaching the HLS player instead, so a plain install without
+        // go2rtc behaves exactly as it did before this endpoint existed.
+        app.MapPost("/api/cameras/{id:guid}/webrtc", async (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+        {
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            string offer;
+            using (var reader = new StreamReader(http.Request.Body))
+                offer = await reader.ReadToEndAsync(ct);
+            if (string.IsNullOrWhiteSpace(offer))
+                return Results.BadRequest(new { errors = new[] { "Expected an SDP offer in the request body." } });
+
+            try
+            {
+                var answer = await webrtc.ExchangeOfferAsync(camera, offer, ct);
+                return Results.Text(answer, "application/sdp");
+            }
+            catch (Go2RtcUnavailableException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: 503);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException or TaskCanceledException)
+            {
+                return Results.Problem(ex.Message, statusCode: 502);
+            }
         }).RequireAuthorization();
 
         // Instant poster frame for a camera tile: if there's a warm stream, this is just a file
