@@ -57,6 +57,11 @@ public sealed class Go2RtcManager : IDisposable
     private readonly object _logLock = new();
     private readonly Queue<string> _logLines = new();
 
+    // Bounds the sidecar's startup independently of whichever viewer's request happened to
+    // trigger it - see EnsureStartedAsync. Cancelled (deliberately not disposed, so that a late
+    // caller gets a cancelled token rather than ObjectDisposedException) when this manager is.
+    private readonly CancellationTokenSource _shutdown = new();
+
     public Go2RtcManager(IConfiguration configuration, IHostEnvironment environment,
         IHttpClientFactory httpClientFactory, ILogger<Go2RtcManager> logger)
     {
@@ -205,11 +210,23 @@ public sealed class Go2RtcManager : IDisposable
         var running = _process;
         if (running is { HasExited: false }) return;
 
+        // Queuing behind someone else's start still honours the caller's token - a viewer who
+        // gives up while waiting costs nothing. Past this point it deliberately does not: see
+        // startupToken below.
         await _startLock.WaitAsync(cancellationToken);
         try
         {
             running = _process;
             if (running is { HasExited: false }) return;
+
+            // The sidecar is a process-wide singleton serving every live tile, so one viewer
+            // closing a tab must not abort a start the others are waiting on - and, worse, must
+            // not abandon a go2rtc that is already running but not yet recorded in _process.
+            // That orphan would hold the API, RTSP and WebRTC ports, so every later start attempt
+            // would fail to bind and WebRTC would stay dead behind a 5-minute backoff until
+            // someone killed the stray process by hand. StartupTimeout below is what bounds this
+            // instead; _shutdown is what stops it outliving the app.
+            var startupToken = _shutdown.Token;
 
             if (DateTimeOffset.UtcNow < _unavailableUntil)
                 throw new Go2RtcUnavailableException(
@@ -220,7 +237,7 @@ public sealed class Go2RtcManager : IDisposable
             lock (_registeredSources) _registeredSources.Clear();
 
             var configPath = Path.Combine(_workingRoot, "go2rtc.yaml");
-            await File.WriteAllTextAsync(configPath, BuildConfigYaml(_apiPort, _rtspPort, _webRtcPort, _ffmpegPath), cancellationToken);
+            await File.WriteAllTextAsync(configPath, BuildConfigYaml(_apiPort, _rtspPort, _webRtcPort, _ffmpegPath), startupToken);
 
             var psi = new ProcessStartInfo
             {
@@ -250,43 +267,56 @@ public sealed class Go2RtcManager : IDisposable
                     "or set Go2Rtc:Path to its location. Live view is using HLS meanwhile.");
             }
 
-            _ = DrainAsync(process.StandardOutput);
-            _ = DrainAsync(process.StandardError);
-
-            // Wait for the API to answer before declaring the sidecar up - a process that starts
-            // and then dies binding a port would otherwise pass here and fail on the first real
-            // request with a much less useful error.
-            var deadline = DateTimeOffset.UtcNow + StartupTimeout;
-            var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
-            while (true)
+            // Everything from here to the _process assignment runs under a guard: until that
+            // assignment lands, this local is the only reference to a live process, so any way out
+            // of this block other than success has to take the process with it. Cancellation,
+            // startup timeout, the sidecar exiting on its own, an unexpected throw - all of them
+            // previously left go2rtc running with nothing able to reach it, including Dispose.
+            try
             {
-                if (process.HasExited)
-                {
-                    _unavailableUntil = DateTimeOffset.UtcNow + UnavailableRetry;
-                    _logger.LogWarning("go2rtc exited during startup. Recent log:\n{Log}", RecentLog);
-                    throw new Go2RtcUnavailableException(
-                        $"go2rtc exited during startup (often a port already in use - it needs {_apiPort}, {_rtspPort} and {_webRtcPort} free, " +
-                        $"all configurable under Go2Rtc: in appsettings.json). Recent log:\n{RecentLog}");
-                }
+                _ = DrainAsync(process.StandardOutput);
+                _ = DrainAsync(process.StandardError);
 
-                try
+                // Wait for the API to answer before declaring the sidecar up - a process that starts
+                // and then dies binding a port would otherwise pass here and fail on the first real
+                // request with a much less useful error.
+                var deadline = DateTimeOffset.UtcNow + StartupTimeout;
+                var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
+                while (true)
                 {
-                    using var response = await client.GetAsync($"http://127.0.0.1:{_apiPort}/api", cancellationToken);
-                    if (response.IsSuccessStatusCode) break;
-                }
-                catch (HttpRequestException)
-                {
-                    // Not listening yet.
-                }
+                    if (process.HasExited)
+                    {
+                        _unavailableUntil = DateTimeOffset.UtcNow + UnavailableRetry;
+                        _logger.LogWarning("go2rtc exited during startup. Recent log:\n{Log}", RecentLog);
+                        throw new Go2RtcUnavailableException(
+                            $"go2rtc exited during startup (often a port already in use - it needs {_apiPort}, {_rtspPort} and {_webRtcPort} free, " +
+                            $"all configurable under Go2Rtc: in appsettings.json). Recent log:\n{RecentLog}");
+                    }
 
-                if (DateTimeOffset.UtcNow >= deadline)
-                {
-                    try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                    _unavailableUntil = DateTimeOffset.UtcNow + UnavailableRetry;
-                    throw new Go2RtcUnavailableException($"go2rtc started but its API never came up. Recent log:\n{RecentLog}");
-                }
+                    try
+                    {
+                        using var response = await client.GetAsync($"http://127.0.0.1:{_apiPort}/api", startupToken);
+                        if (response.IsSuccessStatusCode) break;
+                    }
+                    catch (HttpRequestException)
+                    {
+                        // Not listening yet.
+                    }
 
-                await Task.Delay(200, cancellationToken);
+                    if (DateTimeOffset.UtcNow >= deadline)
+                    {
+                        _unavailableUntil = DateTimeOffset.UtcNow + UnavailableRetry;
+                        throw new Go2RtcUnavailableException($"go2rtc started but its API never came up. Recent log:\n{RecentLog}");
+                    }
+
+                    await Task.Delay(200, startupToken);
+                }
+            }
+            catch
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                process.Dispose();
+                throw;
             }
 
             _logger.LogInformation("Started go2rtc for WebRTC live view, pid {Pid} (api :{ApiPort}, media :{MediaPort})",
@@ -329,6 +359,11 @@ public sealed class Go2RtcManager : IDisposable
 
     public void Dispose()
     {
+        // First, so that a start still inside its wait loop unblocks and its guard kills the
+        // process it is holding. Without this the sidecar would survive the app that spawned it,
+        // and go on holding the ports the next run needs.
+        try { _shutdown.Cancel(); } catch { /* best effort */ }
+
         var process = _process;
         _process = null;
         if (process is null) return;
