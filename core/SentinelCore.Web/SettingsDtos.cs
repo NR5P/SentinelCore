@@ -334,6 +334,19 @@ public sealed class TriggerApiSettingsDto
     public int CooldownSeconds { get; set; } = 15;
 }
 
+// See TriggerConfirmationService. Enabled defaults true both here and when the section is absent
+// entirely, so an install upgrading into this feature gets the filtering without touching settings.
+public sealed class TriggerConfirmationSettingsDto
+{
+    public bool Enabled { get; set; } = true;
+
+    // How long to wait for the analysis before giving up and showing the trigger anyway. Ollama on
+    // a CPU-only box can take minutes per frame, and the cost of waiting too long is a delayed
+    // trigger card, while the cost of not waiting long enough is the filter quietly doing nothing.
+    [Range(30, 3600)]
+    public int TimeoutSeconds { get; set; } = 300;
+}
+
 public sealed class HomeKitSettingsDto
 {
     public bool Enabled { get; set; }

@@ -69,10 +69,14 @@ public static class TriggerEndpoints
             return Results.File(bytes, "image/jpeg");
         }).RequireAuthorization("AdminOnly");
 
-        app.MapGet("/api/triggers", async (ICameraStore cameraStore, ITriggerEventStore store, CancellationToken ct, int limit = 50, Guid? cameraId = null) =>
+        // includeUnconfirmed is what the Triggers tab's "show hidden" toggle sets - triggers the
+        // AI rejected, plus any still waiting on a verdict. Off by default, so the tab shows only
+        // what was confirmed (or never needed confirming) - see TriggerConfirmationService.
+        app.MapGet("/api/triggers", async (ICameraStore cameraStore, ITriggerEventStore store, CancellationToken ct,
+            int limit = 50, Guid? cameraId = null, bool includeUnconfirmed = false) =>
         {
             var capped = Math.Clamp(limit, 1, 500);
-            var events = await store.GetRecentAsync(capped, cameraId, ct);
+            var events = await store.GetRecentAsync(capped, cameraId, includeUnconfirmed, ct);
             var cameras = await cameraStore.GetAllAsync(ct);
             var names = cameras.ToDictionary(c => c.Id, c => c.Name);
 
@@ -84,7 +88,8 @@ public static class TriggerEndpoints
                 occurredAt = e.OccurredAt,
                 triggerAreaFraction = e.TriggerAreaFraction,
                 hasClip = !string.IsNullOrWhiteSpace(e.ClipPath) && File.Exists(e.ClipPath),
-                incidentId = e.IncidentId
+                incidentId = e.IncidentId,
+                confirmation = e.Confirmation.ToString().ToLowerInvariant()
             }));
         }).RequireAuthorization();
 

@@ -41,7 +41,8 @@ public sealed record SettingsSnapshot(
     TriggerApiSettingsDto? TriggerApi,
     PushNotificationsSettingsDto? PushNotifications = null,
     LoggingSettingsDto? Logging = null,
-    ServerSettingsDto? Server = null);
+    ServerSettingsDto? Server = null,
+    TriggerConfirmationSettingsDto? TriggerConfirmation = null);
 
 public static class SettingsEndpoints
 {
@@ -244,6 +245,9 @@ public static class SettingsEndpoints
             return await SaveSectionAsync(dto, appSettings, "TriggerApi", ct);
         });
 
+        settings.MapPut("/trigger-confirmation", async (TriggerConfirmationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "TriggerConfirmation", ct));
+
         settings.MapPut("/webhook", async (WebhookSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "Webhook", ct, extra =>
             {
@@ -422,7 +426,11 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<TriggerApiSettingsDto>("TriggerApi", cancellationToken),
         await settings.GetSectionAsync<PushNotificationsSettingsDto>("PushNotifications", cancellationToken),
         await ReadLoggingAsync(settings, cancellationToken),
-        await ReadServerAsync(settings, cancellationToken));
+        await ReadServerAsync(settings, cancellationToken),
+        // Defaulted rather than left null when the section is absent, so the settings form shows
+        // this on (which is what an install with no section actually does) instead of unchecked.
+        await settings.GetSectionAsync<TriggerConfirmationSettingsDto>("TriggerConfirmation", cancellationToken)
+            ?? new TriggerConfirmationSettingsDto());
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -468,6 +476,7 @@ public static class SettingsEndpoints
         // Carries its own key, so restoring a backup onto a rebuilt machine keeps whatever the
         // doorbells and relays out there are already configured to send.
         if (snapshot.TriggerApi is not null) await settings.MergeSectionAsync("TriggerApi", snapshot.TriggerApi, cancellationToken);
+        if (snapshot.TriggerConfirmation is not null) await settings.MergeSectionAsync("TriggerConfirmation", snapshot.TriggerConfirmation, cancellationToken);
         if (snapshot.PushNotifications is not null) await settings.MergeSectionAsync("PushNotifications", snapshot.PushNotifications, cancellationToken);
         if (snapshot.Logging is not null) await WriteLoggingAsync(snapshot.Logging, settings, cancellationToken);
         if (snapshot.Server is not null) await settings.ReplaceSectionAsync("Urls", snapshot.Server.Urls, cancellationToken);

@@ -639,6 +639,20 @@ public static class SettingsSchema
                 Text("apiKey", "Key", "Goes on the end of the trigger address as ?key=... - anything that knows it can trigger your cameras, so treat it like a password. Generated for you when you first turn this on; clear it and save to issue a new one, which stops every device using the old one."),
                 Number("cooldownSeconds", "Cooldown (s)", "Ignore repeat triggers for the same camera for this many seconds, so a device that fires ten times a second doesn't queue ten analyses. Applies per camera, whoever asked.", 0, 3600)
             ]
+        },
+        new()
+        {
+            Key = "triggerConfirmation",
+            Title = "AI-CONFIRMED TRIGGERS",
+            Endpoint = "/api/settings/trigger-confirmation",
+            Basic = true,
+            DtoType = typeof(TriggerConfirmationSettingsDto),
+            Description = "Keeps the Triggers tab to things that turned out to be real. Motion detection can't tell a person from a branch in the wind or a moth on the lens, so with this on a trigger is held back until the AI has looked at the frame, and only appears if it found a person, vehicle, package, or animal. On by default. Only applies to cameras with 'Send to alerts' switched on - the AI never sees the others, so their triggers show up immediately as before. Nothing is ever deleted: rejected triggers and their clips stay on disk, and 'show hidden' on the Triggers tab lists them.",
+            Fields =
+            [
+                Check("enabled", "Only show confirmed triggers", "Hold each trigger back until the AI confirms something was actually there. Turn this off to see every motion trigger the moment it fires, the way it worked before."),
+                Number("timeoutSeconds", "Give up after (s)", "How long to wait for the AI before showing the trigger anyway. A trigger is never hidden because the analysis was slow, crashed, or couldn't be reached - only because the AI looked and found nothing. Raise this if your analyses regularly take longer than this and unconfirmed triggers are slipping through.", 30, 3600)
+            ]
         }
     ];
 }

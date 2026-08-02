@@ -244,6 +244,15 @@ builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout =
 builder.Services.AddHttpClient(nameof(HomeKitEndpoints), client => client.Timeout = TimeSpan.FromSeconds(5))
     .RemoveAllLoggers();
 builder.Services.AddSingleton<AlertForwarder>();
+
+// Holds a trigger out of the Triggers tab until the main app's analysis confirms something was
+// really in frame (on by default - see TriggerConfirmationService). The client polls
+// /api/results/{id} on loopback while an analysis runs, which on a CPU-only box is minutes, so the
+// default 100s HttpClient timeout would cut individual polls off mid-wait.
+builder.Services.AddHttpClient(nameof(TriggerConfirmationService), client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<TriggerConfirmationService>();
+builder.Services.AddHostedService<TriggerConfirmationSweeper>();
+
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
 // Triggering a camera from outside the motion detector - the key-authenticated HTTP endpoint and

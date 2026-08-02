@@ -416,9 +416,35 @@ set to the `gate` profile), or for adding AI-backed alerting to a camera Blue Ir
 know about at all — a chicken coop camera on the `chicken-coop-predator` profile, for
 instance.
 
-The **TRIGGERS** tab itself (separate from the zone editor) shows a simple history of motion
-events caught by any zone, each with a thumbnail — click it to view the snapshot, or play the
-clip if one was recorded (marked with a ▶ clip badge).
+The **TRIGGERS** tab itself (separate from the zone editor) shows a history of motion events
+caught by any zone, each with a thumbnail — click it to view the snapshot, or play the clip if
+one was recorded (marked with a ▶ clip badge).
+
+### Only showing triggers that turned out to be real
+
+Motion detection is a frame comparison — it can tell that pixels changed, not what changed. On
+a windy or rainy night that means branches, rain, moths on the IR illuminator, and headlight
+sweep all land on the TRIGGERS tab looking exactly like a person would.
+
+**AI-confirmed triggers** (SETTINGS → AI-CONFIRMED TRIGGERS, **on by default**) fixes that. A
+trigger is held back until the AI has actually looked at the frame, and only appears on the tab
+if it found a person, vehicle, package, or animal. The video and snapshot are still recorded
+the moment motion fires — the AI decides whether you *see* it, never whether it's *kept*.
+
+A few things worth knowing:
+
+- **It only applies to cameras with "Send triggers to the AI and alert pipeline" on.** Nothing
+  ever analyzes the frames from the other cameras, so their triggers appear immediately, as
+  before. If you turn this on and a camera's triggers are still noisy, that camera's send-to-AI
+  toggle is the thing to check.
+- **Nothing is ever deleted.** Rejected triggers and their clips stay on disk. The **show
+  hidden** button on the TRIGGERS tab lists them, marked ⚠ nothing found, so you can check the
+  filter isn't hiding things it shouldn't.
+- **Triggers appear with a delay** — as long as the analysis takes, which on a CPU-only box can
+  be a minute or more. Until then they're marked "… checking" under **show hidden**.
+- **It fails toward showing you things.** If the analysis is slow, errors, or can't be reached,
+  the trigger is shown unjudged rather than hidden. Only the AI actually looking and finding
+  nothing hides a trigger. "Give up after" sets how long to wait before giving up that way.
 
 ### Triggering a camera from something other than motion
 
