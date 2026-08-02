@@ -8,6 +8,13 @@ using Microsoft.Extensions.Options;
 using QuestPDF.Drawing;
 using QuestPDF.Infrastructure;
 
+// Settings this version introduced that the installed appsettings.json predates - see
+// ConfigDefaultsSeeder, and the matching call at the top of the bridge's Program.cs. Only this
+// project's own directory: the bridge seeds its own, and this process already writes that file
+// through AppSettingsFile without needing to seed it too.
+var configSeed = ConfigDefaultsSeeder.Seed(AppContext.BaseDirectory);
+if (configSeed.Describe() is { } configSeedMessage) Console.WriteLine(configSeedMessage);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Community license: this is personal/self-hosted software, well under QuestPDF's revenue

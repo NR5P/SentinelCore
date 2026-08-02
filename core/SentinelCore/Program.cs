@@ -2,6 +2,17 @@ using SentinelCore;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
 
+// Before the host reads any configuration: pull in settings this version introduced that the
+// installed appsettings.json predates. Release bundles ship appsettings.defaults.json instead of
+// appsettings.json precisely so that unpacking an upgrade cannot overwrite a live configuration,
+// and this is the other half of that bargain - see ConfigDefaultsSeeder.
+//
+// Keyed off the binary's own directory rather than the content root because the defaults file is
+// deployed next to the executable; every shipped service unit sets WorkingDirectory to that same
+// folder, so the two agree in each configuration this actually ships in.
+var configSeed = ConfigDefaultsSeeder.Seed(AppContext.BaseDirectory);
+if (configSeed.Describe() is { } configSeedMessage) Console.WriteLine(configSeedMessage);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Lets the same binaries run as a Windows Service or a systemd unit without a separate build.

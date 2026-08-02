@@ -23,6 +23,12 @@
 # install-windows.ps1, which are for building from a git checkout with the SDK installed
 # instead (e.g. for development, or updating an existing source install via deploy.sh).
 #
+# The same .zip is also how an existing install is upgraded - unpack it over the previous one and
+# re-run the install script, which detects the existing install and takes an upgrade path instead
+# (see the dist-install-* scripts). Nothing carrying user state is in this archive: data/ is
+# excluded by both .csproj files, certs/ and homekit-bridge/persist/ are never staged, and the two
+# appsettings.json files are shipped under a different name - see sanitize_release_config.
+#
 # Override PLATFORMS to build a subset, e.g.:
 #   PLATFORMS="linux-x64 win-x64" ./scripts/publish-release.sh
 
@@ -69,9 +75,24 @@ sanitize_release_config() {
   local stage=$1
   python3 - "$stage" <<'PYEOF'
 import json
+import os
 import sys
 
 stage = sys.argv[1]
+
+# Both files are written as appsettings.defaults.json and the appsettings.json that `dotnet
+# publish` produced is deleted, so that nothing in this archive shares a name with the live
+# configuration of an existing install. Unpacking a new release over an old one therefore cannot
+# clobber someone's cameras, credentials or alert channels - and the install scripts create
+# appsettings.json from this file only when there isn't one already. ConfigDefaultsSeeder picks
+# up anything this version added on the next boot.
+DEFAULTS_NAME = "appsettings.defaults.json"
+
+def write_defaults(directory, settings):
+    with open(f"{directory}/{DEFAULTS_NAME}", "w") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    os.remove(f"{directory}/appsettings.json")
 
 main_path = f"{stage}/SentinelCore/appsettings.json"
 with open(main_path) as f:
@@ -108,9 +129,7 @@ for section_name, fields in credential_sections.items():
         if field in section:
             section[field] = ""
 
-with open(main_path, "w") as f:
-    json.dump(main_settings, f, indent=2)
-    f.write("\n")
+write_defaults(f"{stage}/SentinelCore", main_settings)
 
 web_path = f"{stage}/SentinelCore.Web/appsettings.json"
 with open(web_path) as f:
@@ -119,9 +138,7 @@ with open(web_path) as f:
 # unzipped, since SentinelCore/ and SentinelCore.Web/ are always installed as siblings.
 web_settings.setdefault("Bridge", {})["DataDirectory"] = "../SentinelCore/data"
 web_settings["MainAppSettingsPath"] = "../SentinelCore/appsettings.json"
-with open(web_path, "w") as f:
-    json.dump(web_settings, f, indent=2)
-    f.write("\n")
+write_defaults(f"{stage}/SentinelCore.Web", web_settings)
 PYEOF
 }
 
@@ -171,6 +188,10 @@ for platform in $PLATFORMS; do
   # maintainer's own machine - all wrong to hand to someone else. Replace both with a clean,
   # portable, secret-free starting point instead; every other shipped default (PromptProfiles,
   # ports, etc.) is left untouched.
+  #
+  # This also renames them to appsettings.defaults.json and drops the appsettings.json publish
+  # produced, so that no file in this archive can overwrite an existing install's live settings -
+  # the whole reason a release .zip can be unpacked over a previous version at all.
   sanitize_release_config "$stage"
 
   cat > "$stage/README.txt" <<README

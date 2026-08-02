@@ -8,6 +8,12 @@
 #
 #   sudo ./install.sh
 #
+# The same command upgrades an existing install: unpack the newer .zip over the old directory and
+# re-run this. It detects the existing install, backs the configuration up, and restarts onto the
+# new binaries rather than treating it as a first-time setup. Nothing in the archive shares a name
+# with a file that holds user state, so the unpack step itself cannot destroy anything - see
+# publish-release.sh.
+#
 # macOS quarantines anything downloaded by a browser - if the binaries refuse to run with an
 # "unidentified developer" message, either right-click each binary in Finder and choose Open
 # once, or clear the quarantine flag for the whole bundle before running this:
@@ -119,6 +125,57 @@ if command -v node >/dev/null 2>&1; then
 fi
 
 mkdir -p "$LOG_DIR"
+
+# ---------------------------------------------------------------------------
+# Fresh install or upgrade
+# ---------------------------------------------------------------------------
+# The archive ships its configuration as appsettings.defaults.json and contains no
+# appsettings.json at all, so unpacking a new release over an existing install leaves that
+# install's real settings - cameras, credentials, alert channels, whether setup is finished -
+# exactly as they were. All that's left for this script is to create appsettings.json from the
+# defaults when there genuinely isn't one, and never to touch it when there is. Settings a new
+# version introduced are merged into the existing file by the apps themselves on their next
+# start, add-only; see ConfigDefaultsSeeder.
+
+MAIN_SETTINGS="$INSTALL_DIR/SentinelCore/appsettings.json"
+WEB_SETTINGS="$INSTALL_DIR/SentinelCore.Web/appsettings.json"
+IS_UPGRADE=0
+[[ -f "$MAIN_SETTINGS" ]] && IS_UPGRADE=1
+
+seed_settings() {
+  local dir=$1 name=$2
+  if [[ -f "$dir/appsettings.json" ]]; then
+    echo "    $name/appsettings.json already exists - left untouched"
+    return
+  fi
+  if [[ ! -f "$dir/appsettings.defaults.json" ]]; then
+    echo "Expected $dir/appsettings.defaults.json in the release bundle - the .zip looks incomplete." >&2
+    exit 1
+  fi
+  cp "$dir/appsettings.defaults.json" "$dir/appsettings.json"
+  echo "    $name/appsettings.json created from the shipped defaults"
+}
+
+BACKUP_DIR=""
+if [[ "$IS_UPGRADE" == "1" ]]; then
+  BACKUP_DIR="$INSTALL_DIR/backups/$(date +%Y%m%d-%H%M%S)"
+  echo "==> Existing install found - upgrading"
+  # Only the configuration is copied. The databases and captured images under SentinelCore/data
+  # can run to gigabytes, and duplicating them on every upgrade would fill the disk - they are
+  # also never at risk here, since nothing in the archive is named like them. To capture cameras
+  # and settings in one portable file before upgrading, use Settings -> Backup in the dashboard.
+  mkdir -p "$BACKUP_DIR"
+  cp "$MAIN_SETTINGS" "$BACKUP_DIR/SentinelCore.appsettings.json"
+  [[ -f "$WEB_SETTINGS" ]] && cp "$WEB_SETTINGS" "$BACKUP_DIR/SentinelCore.Web.appsettings.json"
+  echo "    Configuration backed up to $BACKUP_DIR"
+else
+  echo "==> No existing install found - setting up from scratch"
+fi
+
+echo "==> Configuration"
+seed_settings "$INSTALL_DIR/SentinelCore" "SentinelCore"
+seed_settings "$INSTALL_DIR/SentinelCore.Web" "SentinelCore.Web"
+
 chown -R "$APP_USER" "$INSTALL_DIR"
 
 # ---------------------------------------------------------------------------
@@ -186,18 +243,68 @@ if [[ -n "$NODE_PATH" && -d "$INSTALL_DIR/homekit-bridge" ]]; then
   install_daemon com.sentinelcore.homekit
 fi
 
-sleep 3
 echo
 echo "==> Status"
 launchctl print system/com.sentinelcore.bridge 2>/dev/null | grep -E "state = |pid = " || true
 launchctl print system/com.sentinelcore.web 2>/dev/null | grep -E "state = |pid = " || true
 
+# Polled rather than a single check after a fixed sleep: first start after an upgrade can be
+# slower than a normal restart (the single-file binaries re-extract their native libraries), and
+# a spurious "unreachable" here is exactly the sort of thing that sends someone reinstalling a
+# working system.
+wait_for_health() {
+  local label=$1 url=$2 code=""
+  for _ in $(seq 1 30); do
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$url" || true)
+    if [[ "$code" == "200" ]]; then
+      echo "$label: 200"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "$label: ${code:-unreachable}"
+  return 1
+}
+
 echo
 echo "==> Health checks"
-curl -s -o /dev/null -w "main app     ($MAIN_PORT): %{http_code}\n" "http://127.0.0.1:$MAIN_PORT/health/live" || echo "main app     ($MAIN_PORT): unreachable"
-curl -s -o /dev/null -w "web dashboard($WEB_PORT): %{http_code}\n" "http://127.0.0.1:$WEB_PORT/api/health" || echo "web dashboard($WEB_PORT): unreachable"
+HEALTHY=1
+wait_for_health "main app     ($MAIN_PORT)" "http://127.0.0.1:$MAIN_PORT/health/live" || HEALTHY=0
+wait_for_health "web dashboard($WEB_PORT)" "http://127.0.0.1:$WEB_PORT/api/health" || HEALTHY=0
 
-cat <<NEXT
+if [[ "$HEALTHY" != "1" ]]; then
+  echo
+  echo "One or more services did not come up. Logs:" >&2
+  echo "  tail -n 50 $LOG_DIR/com.sentinelcore.bridge.err.log $LOG_DIR/com.sentinelcore.web.err.log" >&2
+  if [[ "$IS_UPGRADE" == "1" ]]; then
+    echo >&2
+    echo "This was an upgrade. To go back to the previous version, unpack the release .zip you" >&2
+    echo "were running before over this directory, re-run its install.sh, and then restore the" >&2
+    echo "configuration this script saved:" >&2
+    echo "  cp $BACKUP_DIR/SentinelCore.appsettings.json $MAIN_SETTINGS" >&2
+    echo "Your cameras, events and captured images were never modified." >&2
+  fi
+  exit 1
+fi
+
+if [[ "$IS_UPGRADE" == "1" ]]; then
+  cat <<NEXT
+
+==> Upgrade complete. The dashboard is at http://<this-machine's-LAN-IP>:$WEB_PORT
+    Your settings, cameras, events, captured images and HTTPS certificate all carried over -
+    no need to run the setup wizard again, and devices that already trust this server's
+    certificate stay trusted.
+
+    Logs: $LOG_DIR/com.sentinelcore.{bridge,web}.log (and .err.log for stderr)
+
+    Previous configuration saved at:
+      $BACKUP_DIR
+
+    Keep the .zip you were running before this one. It is what you would unpack to go back,
+    and it is the only copy of the previous binaries once this archive has replaced them.
+NEXT
+else
+  cat <<NEXT
 
 ==> Done. Open the dashboard at http://<this-machine's-LAN-IP>:$WEB_PORT
     The setup wizard walks through the rest (API key, vision backend, cameras, notifications).
@@ -207,7 +314,8 @@ cat <<NEXT
 
     Logs: $LOG_DIR/com.sentinelcore.{bridge,web}.log (and .err.log for stderr)
 
-    Updating: this isn't a git checkout - download the next release .zip and re-run this
-    script from inside it with the same INSTALL_DIR; your data in SentinelCore/data and
-    SentinelCore.Web/data is untouched since it isn't part of the release archive.
+    Updating: this isn't a git checkout - unpack the next release .zip over this directory and
+    re-run its install.sh. It will detect this install, keep your settings and data, back the
+    configuration up first, and restart onto the new binaries.
 NEXT
+fi
