@@ -1820,7 +1820,7 @@ public sealed class BasicTests
     {
         using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
         var cameraId = Guid.NewGuid();
-        var trigger = await store.AddAsync(cameraId, "image.jpg", 0.1, null, CancellationToken.None);
+        var trigger = await store.AddAsync(cameraId, "image.jpg", 0.1, null, TriggerConfirmation.Confirmed, CancellationToken.None);
         var now = DateTimeOffset.UtcNow;
 
         var matched = await store.GetEventsInRangeAsync(

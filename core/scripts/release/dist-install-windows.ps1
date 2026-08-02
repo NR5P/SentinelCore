@@ -14,6 +14,12 @@
       SentinelCoreWeb      the dashboard                (port 3320, and 3443 for HTTPS)
       SentinelCoreHomeKit  Apple Home sidecar, optional (needs Node.js)
 
+    The same command upgrades an existing install: unpack the newer .zip over the old directory
+    and re-run this. It detects the existing install, backs the configuration up, and restarts
+    onto the new binaries rather than treating it as a first-time setup. Nothing in the archive
+    shares a name with a file that holds user state, so the unpack step itself cannot destroy
+    anything - see publish-release.sh.
+
     Must be run from an elevated (Administrator) PowerShell.
 
 .PARAMETER InstallDir
@@ -177,6 +183,59 @@ function Install-AppService {
 $mainDir = Join-Path $InstallDir 'SentinelCore'
 $webDir  = Join-Path $InstallDir 'SentinelCore.Web'
 
+# ---------------------------------------------------------------------------
+# Fresh install or upgrade
+# ---------------------------------------------------------------------------
+# The archive ships its configuration as appsettings.defaults.json and contains no
+# appsettings.json at all, so unpacking a new release over an existing install leaves that
+# install's real settings - cameras, credentials, alert channels, whether setup is finished -
+# exactly as they were. All that's left for this script is to create appsettings.json from the
+# defaults when there genuinely isn't one, and never to touch it when there is. Settings a new
+# version introduced are merged into the existing file by the apps themselves on their next
+# start, add-only; see ConfigDefaultsSeeder.
+
+$mainSettings = Join-Path $mainDir 'appsettings.json'
+$webSettings  = Join-Path $webDir  'appsettings.json'
+$isUpgrade    = Test-Path $mainSettings
+
+function Initialize-Settings {
+    param([string] $Directory, [string] $Name)
+
+    $settings = Join-Path $Directory 'appsettings.json'
+    if (Test-Path $settings) {
+        Write-Host "    $Name\appsettings.json already exists - left untouched"
+        return
+    }
+
+    $defaults = Join-Path $Directory 'appsettings.defaults.json'
+    if (-not (Test-Path $defaults)) {
+        throw "Expected $defaults in the release bundle - the .zip looks incomplete."
+    }
+    Copy-Item $defaults $settings
+    Write-Host "    $Name\appsettings.json created from the shipped defaults"
+}
+
+$backupDir = $null
+if ($isUpgrade) {
+    $backupDir = Join-Path $InstallDir ("backups\" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    Write-Step "Existing install found - upgrading"
+    # Only the configuration is copied. The databases and captured images under SentinelCore\data
+    # can run to gigabytes, and duplicating them on every upgrade would fill the disk - they are
+    # also never at risk here, since nothing in the archive is named like them. To capture cameras
+    # and settings in one portable file before upgrading, use Settings -> Backup in the dashboard.
+    New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+    Copy-Item $mainSettings (Join-Path $backupDir 'SentinelCore.appsettings.json')
+    if (Test-Path $webSettings) { Copy-Item $webSettings (Join-Path $backupDir 'SentinelCore.Web.appsettings.json') }
+    Write-Host "    Configuration backed up to $backupDir"
+}
+else {
+    Write-Step "No existing install found - setting up from scratch"
+}
+
+Write-Step "Configuration"
+Initialize-Settings -Directory $mainDir -Name 'SentinelCore'
+Initialize-Settings -Directory $webDir  -Name 'SentinelCore.Web'
+
 Install-AppService -Name 'SentinelCoreBridge' `
     -DisplayName 'Sentinel Core - Alert Pipeline' `
     -Description 'Receives Blue Iris alerts, analyses them with AI, and sends notifications.' `
@@ -215,30 +274,72 @@ Start-Service -Name 'SentinelCoreBridge'
 Start-Service -Name 'SentinelCoreWeb'
 if ($nodePath) { Start-Service -Name 'SentinelCoreHomeKit' }
 
-Start-Sleep -Seconds 5
-
 Write-Host ""
 Write-Step "Status"
 $serviceNames = @('SentinelCoreBridge', 'SentinelCoreWeb')
 if ($nodePath) { $serviceNames += 'SentinelCoreHomeKit' }
 Get-Service -Name $serviceNames | Format-Table -AutoSize Name, Status, StartType
 
-Write-Host ""
-Write-Step "Health checks"
-foreach ($check in @(
-    @{ Label = "main app     ($MainPort)"; Url = "http://127.0.0.1:$MainPort/health/live" }
-    @{ Label = "web dashboard($WebPort)";  Url = "http://127.0.0.1:$WebPort/api/health" }
-)) {
-    try {
-        $response = Invoke-WebRequest -Uri $check.Url -UseBasicParsing -TimeoutSec 10
-        Write-Host "$($check.Label): $($response.StatusCode)"
+# Polled rather than a single check after a fixed sleep: first start after an upgrade can be
+# slower than a normal restart (the single-file binaries re-extract their native libraries), and
+# a spurious "unreachable" here is exactly the sort of thing that sends someone reinstalling a
+# working system.
+function Wait-ForHealth {
+    param([string] $Label, [string] $Url)
+
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3
+            if ($response.StatusCode -eq 200) {
+                Write-Host "${Label}: 200"
+                return $true
+            }
+        }
+        catch { }
+        Start-Sleep -Seconds 1
     }
-    catch {
-        Write-Host "$($check.Label): unreachable" -ForegroundColor Yellow
-    }
+    Write-Host "${Label}: unreachable" -ForegroundColor Yellow
+    return $false
 }
 
-Write-Host @"
+Write-Host ""
+Write-Step "Health checks"
+$healthy = $true
+if (-not (Wait-ForHealth -Label "main app     ($MainPort)" -Url "http://127.0.0.1:$MainPort/health/live")) { $healthy = $false }
+if (-not (Wait-ForHealth -Label "web dashboard($WebPort)"  -Url "http://127.0.0.1:$WebPort/api/health"))   { $healthy = $false }
+
+if (-not $healthy) {
+    Write-Host ""
+    Write-Warn "One or more services did not come up. Check the Windows event log, or run the .exe"
+    Write-Warn "directly from its folder to see the startup error."
+    if ($isUpgrade) {
+        Write-Host ""
+        Write-Host "This was an upgrade. To go back to the previous version, unpack the release .zip you"
+        Write-Host "were running before over this directory, re-run its install.ps1, and then restore the"
+        Write-Host "configuration this script saved:"
+        Write-Host "  Copy-Item '$backupDir\SentinelCore.appsettings.json' '$mainSettings' -Force"
+        Write-Host "Your cameras, events and captured images were never modified."
+    }
+    exit 1
+}
+
+if ($isUpgrade) {
+    Write-Host @"
+
+==> Upgrade complete. The dashboard is at http://<this-machine's-LAN-IP>:$WebPort
+    Your settings, cameras, events, captured images and HTTPS certificate all carried over -
+    no need to run the setup wizard again, and devices that already trust this server's
+    certificate stay trusted.
+
+    Previous configuration saved at:
+      $backupDir
+
+    Keep the .zip you were running before this one. It is what you would unpack to go back,
+    and it is the only copy of the previous binaries once this archive has replaced them.
+"@
+}
+else {
+    Write-Host @"
 
 ==> Done. Open the dashboard at http://<this-machine's-LAN-IP>:$WebPort
     The setup wizard walks through the rest (API key, vision backend, cameras, notifications).
@@ -250,7 +351,8 @@ Write-Host @"
       New-NetFirewallRule -DisplayName 'Sentinel Core alerts' -Direction Inbound -LocalPort $MainPort -Protocol TCP -Action Allow
       New-NetFirewallRule -DisplayName 'Sentinel Core dashboard' -Direction Inbound -LocalPort $WebPort -Protocol TCP -Action Allow
 
-    Updating: this isn't a git checkout - download the next release .zip and re-run this
-    script from inside it with the same InstallDir; your data in SentinelCore\data and
-    SentinelCore.Web\data is untouched since it isn't part of the release archive.
+    Updating: this isn't a git checkout - unpack the next release .zip over this directory and
+    re-run its install.ps1. It will detect this install, keep your settings and data, back the
+    configuration up first, and restart onto the new binaries.
 "@
+}

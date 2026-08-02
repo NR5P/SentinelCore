@@ -534,6 +534,10 @@ allowlisted command lines regardless of whether you run `./deploy.sh`, `./deploy
 
 ## 11. Updating to a new version
 
+This section is for a **git checkout** install. If you installed from a prebuilt release .zip
+instead, there's no checkout to pull - see
+[§ 17, Upgrading an existing install](#upgrading-an-existing-install).
+
 ```bash
 cd /home/sentinel/Desktop/SentinelCore/core
 git pull
@@ -920,6 +924,14 @@ credentials cleared. Otherwise a release built from a machine with a live, confi
 would ship that maintainer's own API keys and personal settings to everyone who downloaded it.
 Build with `PLATFORMS="linux-x64 win-x64" ./scripts/publish-release.sh` to build a subset.
 
+That cleaned-up file is shipped as **`appsettings.defaults.json`**, and the archive contains no
+`appsettings.json` at all. This is what makes the .zip safe to unpack over an existing install:
+`appsettings.json` is the file the dashboard writes every camera, credential and channel setting
+into, and an archive containing one would factory-reset a configured install the moment it was
+unpacked. Nothing else in the archive collides with user state either - `data/` is excluded from
+both projects' publish output by their `.csproj` files, and `certs/` and `homekit-bridge/persist/`
+are never staged.
+
 ### Installing a package (end-user side)
 
 1. Download and unzip the file for your OS.
@@ -938,7 +950,69 @@ at the prebuilt binaries directly instead of `dotnet SomeProject.dll`. See
 `scripts/release/dist-install-*.{sh,ps1}` for exactly what each one does; they're deliberately
 self-contained (no shared template files) since they ship standalone inside the .zip.
 
-**Updating** isn't `git pull` here, since there's no git checkout - download the next release
-.zip and re-run its install script with the same install location. Your data
-(`SentinelCore/data`, `SentinelCore.Web/data`, and the HTTPS certificate authority in the
-top-level `certs/` folder) isn't part of the release archive, so it's untouched.
+### Upgrading an existing install
+
+Updating isn't `git pull` here, since there's no git checkout. It's the same two steps as a
+first install, run over the top of the old one:
+
+```bash
+# from the directory the previous release was installed into
+unzip -o ~/Downloads/SentinelCore-linux-x64.zip
+sudo ./install.sh
+```
+
+On Windows, unzip over the folder and re-run `install.ps1` from an elevated prompt. The install
+script detects the existing install, prints `Existing install found - upgrading`, copies the
+current configuration into `backups/<timestamp>/`, and restarts the services onto the new
+binaries. It does not re-run the setup wizard.
+
+**What carries over, and why:**
+
+| | Where it lives | Why it survives |
+|---|---|---|
+| Settings, credentials, alert channels | `SentinelCore/appsettings.json` | Not in the archive - shipped as `appsettings.defaults.json` instead |
+| Cameras, trigger zones, accounts | `SentinelCore.Web/data/*.db` | `data/` is excluded from the publish output |
+| Events, captured images | `SentinelCore/data/` | Same |
+| HTTPS certificate authority | `certs/` | Never staged into the archive |
+| HomeKit pairings | `homekit-bridge/persist/` | Excluded when the sidecar is staged |
+
+The certificate authority surviving matters more than it looks: it's the one every phone, Mac and
+Apple TV was told to trust (§ 14a). Regenerating it on upgrade would silently break HTTPS on every
+device at once.
+
+**Settings that are new in the version you're upgrading to** are added to your existing
+`appsettings.json` on the next start, at their shipped defaults, and logged as
+`Added N new setting(s) introduced by this version`. The merge is strictly add-only - a key you
+have already set is never touched, whatever its value, including one you deliberately blanked.
+See `ConfigDefaultsSeeder` and `ConfigDefaultsSeederTests`.
+
+**Database schema changes** are applied in place on first start by the same `AddColumnIfMissing`
+pattern used in `EventStore`, `CameraStore`, `TriggerStore` and `PushDeviceStore`, so an event
+store written by an older version keeps its rows and gains the new columns.
+
+**Rolling back.** Keep the .zip you were running before - once the new archive has replaced the
+binaries, it's the only copy of the old ones. To go back: unpack the previous .zip over the
+directory, re-run its install script, and restore the configuration the upgrade saved:
+
+```bash
+cp backups/<timestamp>/SentinelCore.appsettings.json SentinelCore/appsettings.json
+```
+
+Your cameras, events and images are never modified by any of this, so a rollback doesn't lose
+them. For a portable copy of settings, cameras and trigger zones in one file, use **Settings →
+Backup** in the dashboard before upgrading - that export is also the only thing that survives
+losing the machine entirely.
+
+### Testing an upgrade before handing builds to testers
+
+A fresh install passing proves nothing about an upgrade - the two paths barely overlap. Before
+shipping a new release .zip, run this end to end at least once:
+
+1. Install the **previous** release from its .zip.
+2. Go through the setup wizard for real: set an API key, add a camera, enable one alert channel
+   with a credential in it, and trust the server's certificate on a phone.
+3. Let some events land so `SentinelCore/data/events.db` and `data/images/` are non-empty.
+4. Unpack the **new** .zip over that directory and re-run its install script.
+5. Confirm all five: the setup wizard does *not* reappear, the camera and alert channel are still
+   configured, old events are still listed, the phone still connects without a certificate
+   warning, and any HomeKit accessories are still paired.

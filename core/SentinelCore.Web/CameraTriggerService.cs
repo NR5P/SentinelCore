@@ -42,6 +42,7 @@ public sealed class CameraTriggerService(
     ITriggerEventStore eventStore,
     HlsStreamManager streams,
     AlertForwarder alertForwarder,
+    TriggerConfirmationService triggerConfirmation,
     IConfiguration configuration,
     IHostEnvironment environment,
     ILogger<CameraTriggerService> logger)
@@ -106,9 +107,15 @@ public sealed class CameraTriggerService(
                 ? null
                 : await eventStore.GetMostRecentIncidentIdAsync(group.CameraIds, now.AddSeconds(-group.CorrelationWindowSeconds), cancellationToken);
 
+            // Unlike a zone trigger there's no SendToAlerts to consult - an external trigger always
+            // goes for analysis - so this is gated whenever the setting is on.
+            var gated = await triggerConfirmation.ShouldGateAsync(true, cancellationToken);
+
             // Area 0 means "not self-detected", the same convention companion captures use - there
             // was no motion blob involved in deciding to fire this one.
-            var trigger = await eventStore.AddAsync(camera.Id, imagePath, 0, incidentId, cancellationToken);
+            var trigger = await eventStore.AddAsync(
+                camera.Id, imagePath, 0, incidentId,
+                gated ? TriggerConfirmation.Pending : TriggerConfirmation.Confirmed, cancellationToken);
 
             var profile = await ResolveProfileAsync(camera.Id, request.AlertProfile, cancellationToken);
             logger.LogInformation(
@@ -121,9 +128,16 @@ public sealed class CameraTriggerService(
             var forwarded = await alertForwarder.ForwardAsync(
                 bytes, [], camera.Name, profile, now, null, incidentId, cancellationToken);
 
+            // Waiting out the *analysis*, on the other hand, takes as long as the model takes -
+            // minutes on a CPU-only box - so the verdict is followed up in the background and
+            // whoever pulled the trigger URL gets their answer now. CancellationToken.None
+            // deliberately: this outlives the HTTP request that started it.
+            if (gated)
+                _ = triggerConfirmation.ResolveAsync(trigger.Id, forwarded, CancellationToken.None);
+
             return new CameraTriggerResult(
                 CameraTriggerStatus.Triggered,
-                forwarded
+                forwarded.Accepted
                     ? $"{camera.Name} captured and queued for analysis."
                     : $"{camera.Name} captured, but the alert pipeline refused it - check the log and the main app's API key.",
                 trigger.Id);

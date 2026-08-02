@@ -245,7 +245,8 @@
       <div class="toolbar">
         <div class="toolbar-label">TRIGGERS</div>
         <div class="toolbar-actions">
-          <span id="trigger-count" class="event-count" data-tip-below data-tip-right data-tip="How many trigger zone alerts are shown. These are motion only - no AI is involved.">0 alerts</span>
+          <span id="trigger-count" class="event-count" data-tip-below data-tip-right data-tip="How many triggers are shown. Motion detection fires these; with AI-confirmed triggers on (Settings), only the ones the AI agreed were real are listed.">0 alerts</span>
+          <button id="triggers-hidden-btn" class="btn" data-tip-below data-tip-right data-tip="Also list triggers the AI rejected as nothing (and any still waiting on it). Nothing is ever deleted - this is how you check the filter isn't hiding things it shouldn't.">show hidden</button>
           <button id="triggers-refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload the list. Clips appear a few seconds after their trigger, once the post-roll finishes recording.">refresh</button>
         </div>
       </div>
@@ -419,7 +420,7 @@
               <label class="field-label" for="zone-clip-post">Seconds after trigger</label>
               <input type="number" id="zone-clip-post" class="field-input" min="0" max="120" step="1" />
             </div>
-            <div class="field-row field-row-wide field-checkbox-row" data-tip="Sends the trigger snapshot to the same AI analysis and alert pipeline (email/Telegram/webhook) that Blue Iris alerts use. Off by default - with this off, triggers only show up in the Triggers tab.">
+            <div class="field-row field-row-wide field-checkbox-row" data-tip="Sends the trigger snapshot to the same AI analysis and alert pipeline (email/Telegram/webhook) that Blue Iris alerts use. Off by default - with this off, triggers only show up in the Triggers tab. This is also what lets AI-confirmed triggers filter this camera: with it off nothing ever analyses the frame, so every motion trigger from this camera is listed as before.">
               <label class="switch"><input type="checkbox" id="zone-send-to-alerts" /><span class="switch-track"></span></label>
               <span class="field-label">Send triggers to the AI and alert pipeline</span>
             </div>
