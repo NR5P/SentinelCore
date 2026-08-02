@@ -64,6 +64,12 @@ final class SentinelClient {
         try await get("/api/device-hub/enabled")
     }
 
+    // Readable by any signed-in account, not just an Admin, precisely so this app can ask - see
+    // the note on the endpoint in LicenseEndpoints.cs.
+    func licenseState() async throws -> LicenseState {
+        try await get("/api/license/status")
+    }
+
     func devices() async throws -> [HubDevice] {
         try await get("/api/devices")
     }

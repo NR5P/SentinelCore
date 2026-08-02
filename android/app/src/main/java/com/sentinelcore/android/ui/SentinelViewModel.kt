@@ -73,6 +73,11 @@ data class SentinelUiState(
     // Whether the server has the Device Hub switched on - drives whether its bottom-bar
     // destination exists at all.
     val deviceHubEnabled: Boolean = false,
+    // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
+    // true whenever the check can't be made: an older server has no such endpoint, and a request
+    // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
+    // request would be a worse bug than missing the nag.
+    val isLicensed: Boolean = true,
     val devices: List<HubDevice> = emptyList(),
     val deviceBrokerConnected: Boolean = true,
     val isLoading: Boolean = false,
@@ -262,6 +267,12 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                     runCatching { repository.deviceHubEnabled() }
                         .onSuccess { value -> _state.update { it.copy(deviceHubEnabled = value) } }
                         .onFailure { _state.update { it.copy(deviceHubEnabled = false) } }
+                },
+                // Same treatment, opposite default - see SentinelUiState.isLicensed.
+                viewModelScope.async {
+                    runCatching { repository.licenseValid() }
+                        .onSuccess { value -> _state.update { it.copy(isLicensed = value) } }
+                        .onFailure { _state.update { it.copy(isLicensed = true) } }
                 },
             )
             requests.awaitAll()

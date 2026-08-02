@@ -24,6 +24,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -40,6 +41,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sentinelcore.android.ui.components.ConnectionBadge
+import com.sentinelcore.android.ui.components.LocalIsLicensed
 import com.sentinelcore.android.ui.screens.AccountAdminScreen
 import com.sentinelcore.android.ui.screens.AccountEditScreen
 import com.sentinelcore.android.ui.screens.CameraAdminScreen
@@ -88,20 +90,25 @@ fun SentinelApp(model: SentinelViewModel) {
         if (state.isConfigured) model.stopDiscovery() else model.startDiscovery()
     }
 
-    Box(
-        modifier = Modifier.fillMaxSize().background(SentinelBackground),
-    ) {
-        when {
-            !state.isConfigured -> ServerSetupScreen(
-                initialAddress = state.serverUrl,
-                discoveredServers = state.discoveredServers,
-                onConnect = model::saveServer,
-            )
-            state.requiresLogin -> LoginScreen(
-                state = state,
-                onLogin = model::signIn,
-            )
-            else -> AppShell(state = state, model = model)
+    // Provided once here so the views that draw the UNLICENSED mark - SentinelRemoteImage, the
+    // live player - can read it without each one taking the whole view model. See
+    // UnlicensedWatermark.
+    CompositionLocalProvider(LocalIsLicensed provides state.isLicensed) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(SentinelBackground),
+        ) {
+            when {
+                !state.isConfigured -> ServerSetupScreen(
+                    initialAddress = state.serverUrl,
+                    discoveredServers = state.discoveredServers,
+                    onConnect = model::saveServer,
+                )
+                state.requiresLogin -> LoginScreen(
+                    state = state,
+                    onLogin = model::signIn,
+                )
+                else -> AppShell(state = state, model = model)
+            }
         }
     }
 }

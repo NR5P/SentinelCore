@@ -112,6 +112,9 @@ private struct LiveCameraPreview: View {
             StatusChip("LIVE", systemImage: "circle.fill", color: SentinelTheme.green)
                 .padding(14)
         }
+        // On the whole tile rather than the video alone, so the mark is there over the poster
+        // frame too and doesn't blink in and out as playback starts.
+        .unlicensedWatermark()
         .task(id: isActive) {
             if isActive {
                 if let streamURL { stream.start(url: streamURL) }
@@ -155,6 +158,7 @@ struct LivePlayerView: View {
                     .foregroundStyle(.white)
             }
         }
+        .unlicensedWatermark()
         .ignoresSafeArea()
         .navigationTitle(camera.name)
         .task {

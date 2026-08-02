@@ -38,6 +38,12 @@ final class AppModel: ObservableObject {
     // Whether the server has the Device Hub switched on. Drives whether the section exists at
     // all - see AppSection.visibleCases in RootView.
     @Published private(set) var deviceHubEnabled = false
+
+    // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
+    // true whenever the check can't be made: an older server has no such endpoint, and a request
+    // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
+    // request would be a worse bug than missing the nag.
+    @Published private(set) var isLicensed = true
     @Published var devices: [HubDevice] = []
     @Published var isLoading = false
     @Published var lastError: String?
@@ -206,6 +212,13 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             deviceHubEnabled = false
+        }
+        // Same treatment, opposite default - see isLicensed.
+        do {
+            isLicensed = try await client.licenseState().valid
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            isLicensed = true
         }
 
         if let firstError {

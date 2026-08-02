@@ -33,7 +33,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -62,11 +65,13 @@ import com.sentinelcore.android.ui.components.EmptyState
 import com.sentinelcore.android.ui.components.PtzControls
 import com.sentinelcore.android.ui.components.SentinelRemoteImage
 import com.sentinelcore.android.ui.components.StatusChip
+import com.sentinelcore.android.ui.components.UnlicensedWatermark
 import com.sentinelcore.android.ui.components.fullDateTime
 import com.sentinelcore.android.ui.components.relativeTime
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 @Composable
 fun TriggerFeedScreen(
@@ -338,31 +343,73 @@ private fun SentinelPlayer(
     // Hides the poster (see below) only once a frame has actually rendered - readyToPlay alone
     // still leaves a black view up briefly.
     var isVideoReady by remember(url) { mutableStateOf(false) }
+    // Bumped by the error listener below; the LaunchedEffect after this watches it and re-prepares
+    // on a backoff. Counting rather than flagging so a stream that is genuinely gone backs further
+    // off each time instead of being retried at a fixed rate forever.
+    var playbackFailures by remember(url) { mutableIntStateOf(0) }
     val player = remember(url, headers, muted) {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(headers)
-        // ExoPlayer's defaults (2.5s/50s) build up a comfortable cushion before starting, which
-        // is the right call for on-demand video but adds needless delay for a live feed, where
-        // "as current as possible, right away" matters more than a deep buffer.
+        // These were once trimmed hard (2s/10s/0.5s/1s) to start a live feed as promptly as
+        // possible. That backfired: the server copies video rather than re-encoding it, so it can
+        // only cut a segment on a keyframe and the real segment length is the camera's GOP -
+        // usually 2s, often 4s. A two-second minimum buffer is therefore under one segment, which
+        // means the player starts, drains, and rebuffers on a loop on a link with no problem at
+        // all. Five seconds keeps a couple of segments in hand while still being far below
+        // ExoPlayer's on-demand defaults.
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(2_000, 10_000, 500, 1_000)
+            .setBufferDurationsMs(5_000, 30_000, 1_500, 3_000)
+            .build()
+        // Tells ExoPlayer this is a live stream to be tracked at a target offset rather than
+        // simply played, and - the important part - lets it hold that offset by nudging playback
+        // speed a few percent either way. Without a live configuration its only tool for a tile
+        // that has fallen behind is to seek, and every seek is a visible stall.
+        val liveConfiguration = MediaItem.LiveConfiguration.Builder()
+            .setTargetOffsetMs(6_000)
+            .setMinPlaybackSpeed(0.97f)
+            .setMaxPlaybackSpeed(1.03f)
+            .build()
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setLiveConfiguration(liveConfiguration)
             .build()
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(httpFactory))
             .setLoadControl(loadControl)
             .build()
             .apply {
-                setMediaItem(MediaItem.fromUri(url))
+                setMediaItem(mediaItem)
                 volume = if (muted) 0f else 1f
                 playWhenReady = true
                 addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() {
                         isVideoReady = true
+                        // Frames are flowing again, so the next drop starts from a short backoff
+                        // rather than inheriting the one an hour-old outage had climbed to.
+                        playbackFailures = 0
+                    }
+
+                    // A live feed has no natural end, so any error here means the stream dropped -
+                    // the camera rebooted, the server restarted, Wi-Fi blipped. There was no
+                    // handler at all before, which left the tile dead until the whole screen was
+                    // rebuilt, even after the camera came back.
+                    override fun onPlayerError(error: PlaybackException) {
+                        isVideoReady = false
+                        playbackFailures++
                     }
                 })
                 prepare()
             }
+    }
+
+    // Reconnect after a drop. Skipped on the first pass (nothing has failed yet), then backs off
+    // 2s, 4s, 8s… to a 30s ceiling so a server that is actually down isn't hammered by every tile
+    // on the grid at once, while the ordinary transient case recovers within a couple of seconds.
+    LaunchedEffect(player, playbackFailures) {
+        if (playbackFailures == 0) return@LaunchedEffect
+        delay(minOf(2_000L shl minOf(playbackFailures - 1, 4), 30_000L))
+        player.prepare()
     }
 
     DisposableEffect(player) {
@@ -393,5 +440,8 @@ private fun SentinelPlayer(
             },
             modifier = Modifier.fillMaxSize().alpha(if (isVideoReady) 1f else 0f),
         )
+        // On the whole tile rather than the video view alone, so the mark is there over the poster
+        // frame too and doesn't blink in and out as playback starts.
+        UnlicensedWatermark()
     }
 }

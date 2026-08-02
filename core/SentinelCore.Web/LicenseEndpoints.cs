@@ -16,14 +16,21 @@ public static class LicenseEndpoints
     {
         var license = app.MapGroup("/api/license").RequireAuthorization("AdminOnly");
 
-        license.MapGet("/status", async (AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
+        // Any signed-in account, not just an Admin. Every client now draws the "UNLICENSED"
+        // watermark over camera images and live video, and a Viewer on a phone has to be able to
+        // find out whether to draw it - an Admin-only check would leave the nag showing on some
+        // people's devices and not others on the same server, which is the one thing worse than
+        // not showing it at all. Nothing here is privileged: whether the install is licensed is
+        // already stamped across the pictures, and the customer name is the licence holder's own.
+        // Installing a licence stays Admin-only, below.
+        app.MapGet("/api/license/status", async (AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
         {
             var licensePath = await ResolveLicensePathAsync(settings, configuration, ct);
             var status = LicenseStatus.Check(licensePath);
             return Results.Ok(status is null
                 ? new { valid = false }
                 : new { valid = true, customerName = status.CustomerName });
-        });
+        }).RequireAuthorization();
 
         // Takes the raw .lic file contents (uploaded from the browser, not a path - this app
         // has no way to know what's on the customer's own computer). Validated with the same

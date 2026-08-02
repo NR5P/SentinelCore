@@ -28,12 +28,17 @@ final class LiveStreamPlayer: ObservableObject {
     // treat it as frozen and rebuild the item. Generous enough not to fight a slow network.
     private static let frozenPlaybackTimeout: TimeInterval = 6
 
-    // Where we aim to sit relative to the live edge, and how far behind we'll let the playhead
-    // drift before hauling it back. The floor on both is the camera's keyframe interval - the
-    // server can only cut an HLS segment on a keyframe while copying video, so a camera with a
-    // 4s GOP produces 4s segments and no amount of client-side seeking gets closer than that.
-    private static let targetOffsetFromLive: TimeInterval = 3
-    private static let maxDriftFromLive: TimeInterval = 6
+    // Fallback for how far behind the live edge to sit, used only until the stream tells us its
+    // own recommendation - see targetOffsetFromLive(). The floor is the camera's keyframe
+    // interval: the server can only cut an HLS segment on a keyframe while copying video, so a
+    // camera with a 4s GOP produces 4s segments and no amount of client-side seeking gets closer
+    // than that.
+    private static let fallbackOffsetFromLive: TimeInterval = 6
+
+    // How much further behind than the target we tolerate before hauling the playhead back.
+    // Seeking is itself a rebuffer, so this wants to be wide enough that only real staleness
+    // trips it, not the ordinary breathing room a live player keeps.
+    private static let driftAllowance: TimeInterval = 6
 
     private var url: URL?
     private var timeObserver: Any?
@@ -62,8 +67,9 @@ final class LiveStreamPlayer: ObservableObject {
         //   buffer=1               -> clock advanced 5.50s / 6s, 12 frames decoded
         //   defaults               -> clock advanced 5.50s / 6s, 12 frames decoded
         //
-        // preferredForwardBufferDuration in loadItem() is the part that actually helps start
-        // sooner, and it's safe on its own.
+        // The buffer=1 row was once read as "safe, and starts sooner". It does start sooner, and
+        // it is not safe: see loadItem(), where a one-second forward buffer turned out to be less
+        // than one segment of these streams and left every tile rebuffering on a loop.
     }
 
     func start(url: URL) {
@@ -106,13 +112,21 @@ final class LiveStreamPlayer: ObservableObject {
         removeObservers()
         isVideoReady = false
         let item = AVPlayerItem(url: url)
-        item.preferredForwardBufferDuration = 1
-        // Left to itself AVFoundation holds a plain (non-low-latency) live playlist back by three
-        // target durations before it will start playing, and after a stall it simply resumes from
-        // wherever the stall left the playhead. Ask for a tighter offset and for the player to
-        // re-establish it on its own; checkDriftFromLive below is the backstop for when it can't.
+        // Deliberately left at 0 (automatic). This used to be 1, to start sooner, and that was the
+        // single biggest cause of tiles rebuffering every few seconds: one second of forward
+        // buffer is less than one segment of a stream whose segments are the camera's GOP - 2s,
+        // often 4s - so the player was structurally unable to hold even one segment ahead and ran
+        // dry on a loop. Automatic lets AVFoundation size the buffer against the target duration
+        // it actually parsed out of the playlist.
+        item.preferredForwardBufferDuration = 0
+        // configuredTimeOffsetFromLive is likewise left unset, so the player uses the stream's own
+        // recommendedTimeOffsetFromLive (three target durations for a plain, non-low-latency
+        // playlist - which this is). Pinning it to a hardcoded 3s asked to sit closer to the edge
+        // than a single segment in many cases, which no amount of buffering can sustain.
+        // automaticallyPreservesTimeOffsetFromLive keeps that offset across a stall rather than
+        // letting each one permanently push the tile further behind; checkDriftFromLive below is
+        // the backstop for when the player can't re-establish it on its own.
         item.automaticallyPreservesTimeOffsetFromLive = true
-        item.configuredTimeOffsetFromLive = CMTime(seconds: Self.targetOffsetFromLive, preferredTimescale: 600)
         player.replaceCurrentItem(with: item)
         observe(item)
     }
@@ -138,7 +152,6 @@ final class LiveStreamPlayer: ObservableObject {
         // server stopped producing segments, not that there is nothing left to watch.
         let failureNotifications: [Notification.Name] = [
             AVPlayerItem.failedToPlayToEndTimeNotification,
-            AVPlayerItem.playbackStalledNotification,
             AVPlayerItem.didPlayToEndTimeNotification
         ]
         for name in failureNotifications {
@@ -148,6 +161,20 @@ final class LiveStreamPlayer: ObservableObject {
                 }
             )
         }
+
+        // playbackStalled is pointedly NOT in that list any more. It fires on any buffer underrun,
+        // including the routine one-second kind a live stream has on a busy network, and treating
+        // each as a failure meant tearing down a working AVPlayerItem and paying a full HLS
+        // reconnect - which is precisely the "buffers, then starts again" the tiles were doing. A
+        // stall is a reason to make sure we are still trying, nothing more; if the clock really
+        // has stopped, the watchdog rebuilds the item a few seconds later.
+        itemObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.player.play() }
+            }
+        )
     }
 
     // Catches playback that has silently stopped advancing while the player still reports
@@ -177,8 +204,22 @@ final class LiveStreamPlayer: ObservableObject {
     // that still looks right, so the watchdog treats drift as seriously as it treats a freeze.
     private func checkDriftFromLive() {
         guard player.timeControlStatus == .playing,
-              secondsBehindLive() > Self.maxDriftFromLive else { return }
+              secondsBehindLive() > targetOffsetFromLive() + Self.driftAllowance else { return }
         seekToLiveEdge()
+    }
+
+    // Where this stream says a player should sit: three target durations back for a plain live
+    // playlist, so it tracks the camera's actual segment length instead of a number picked here.
+    // Comparing drift against a hardcoded 3s target - as this used to - meant that on any camera
+    // with a GOP of 2s or more the player's own healthy resting position already counted as
+    // "drifted", so the watchdog seeked to the live edge every two seconds, forever. Each of those
+    // seeks is a rebuffer, which made this watchdog a cause of the stuttering rather than a cure.
+    private func targetOffsetFromLive() -> TimeInterval {
+        guard let recommended = player.currentItem?.recommendedTimeOffsetFromLive,
+              recommended.isValid, recommended.isNumeric, recommended.seconds > 0 else {
+            return Self.fallbackOffsetFromLive
+        }
+        return max(recommended.seconds, Self.fallbackOffsetFromLive)
     }
 
     private func secondsBehindLive() -> TimeInterval {
@@ -200,7 +241,7 @@ final class LiveStreamPlayer: ObservableObject {
     private func seekToLiveEdge() {
         guard !isSeekingToLive, let live = liveEdge() else { return }
         isSeekingToLive = true
-        let target = CMTime(seconds: max(live - Self.targetOffsetFromLive, 0), preferredTimescale: 600)
+        let target = CMTime(seconds: max(live - targetOffsetFromLive(), 0), preferredTimescale: 600)
         // Tolerate landing early rather than late: everything before the target is already
         // buffered, everything after it may not be.
         player.seek(to: target, toleranceBefore: CMTime(seconds: 1, preferredTimescale: 600), toleranceAfter: .zero) { [weak self] _ in
@@ -211,9 +252,21 @@ final class LiveStreamPlayer: ObservableObject {
     }
 
     private func checkForFrozenPlayback() {
-        // Only meaningful while the player is actually trying to play; a deliberately paused
-        // tile (see pause()) is not frozen.
-        guard player.timeControlStatus == .playing else {
+        // Only meaningful while the player is trying to play; a deliberately paused tile (see
+        // pause()) is not frozen.
+        //
+        // waitingToPlayAtSpecifiedRate counts as trying. That is the state a player sits in while
+        // it waits for data it is never going to get, and it is now the only thing watching for
+        // that: a stall no longer rebuilds the item on sight (see observe(_:)), so if this checked
+        // only for .playing, a stream that stalled and stayed stalled would wait forever with the
+        // watchdog resetting its own timer every two seconds.
+        switch player.timeControlStatus {
+        case .playing, .waitingToPlayAtSpecifiedRate:
+            break
+        case .paused:
+            lastAdvanceAt = Date()
+            return
+        @unknown default:
             lastAdvanceAt = Date()
             return
         }

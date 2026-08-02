@@ -93,11 +93,14 @@ note that it lives only in the server's memory - restarting the service (which h
 update) signs everyone out.
 
 If a purchased install is missing its `license.lic` file (or it's been altered), a thin amber
-notice appears under the top bar, and an "UNLICENSED" watermark appears across snapshot images,
-live video, and trigger clips. Both are informational only - every feature, including viewing
-those images and video, keeps working exactly as normal either way, nothing is blocked. To clear
-it, open SETTINGS → LICENSE and upload the `.lic` file you were emailed - it's verified and
-written to disk immediately, no restart needed.
+notice appears under the dashboard's top bar, and an "UNLICENSED" watermark appears across
+snapshot images, live video, and trigger clips. The watermark shows everywhere you can see a
+camera, not just in the dashboard - the iPhone, iPad, Mac, Android and Apple TV apps all draw the
+same mark, for everyone signed in, whatever their account role. Both are informational only -
+every feature, including viewing those images and video, keeps working exactly as normal either
+way, nothing is blocked. To clear it, open SETTINGS → LICENSE and upload the `.lic` file you were
+emailed - it's verified and written to disk immediately, no restart needed. The apps pick the
+change up on their next refresh.
 
 ## 2a. The iOS, Android, and Apple TV apps
 

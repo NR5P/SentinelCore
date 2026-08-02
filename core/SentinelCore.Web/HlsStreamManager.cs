@@ -251,17 +251,32 @@ public sealed class HlsStreamManager : IDisposable
         // analyze window before ffmpeg writes anything is pure startup latency on a camera whose
         // format never changes between sessions. 1s is still ample to identify an H.264 stream.
         args.AddRange(["-fflags", "nobuffer", "-analyzeduration", "1000000", "-probesize", "1000000"]);
+        // The HLS output copies video, so it never touches the decoder - but the poster-frame
+        // output below is a filtered output, and a filter graph needs decoded frames. That alone
+        // used to make ffmpeg decode every single frame of every camera, full frame rate, around
+        // the clock, to produce one 480px JPEG every three seconds.
+        //
+        // -skip_frame is a decoder option, so it applies only to that path and leaves the copied
+        // segments byte-identical. nokey drops everything but keyframes, which is exactly what a
+        // poster frame wants anyway: one I-frame per GOP is already more often than fps=1/3 asks
+        // for. Measured on 30s of 1080p30 here: 1.38s of CPU before, 0.07s after, same JPEG out.
+        // That is per camera, continuously - on a small always-on box it was a large share of the
+        // budget ffmpeg needs to keep segments landing on time.
+        args.AddRange(["-skip_frame", "nokey"]);
         args.AddRange(["-i", sourceUrl]);
 
-        // Primary output: HLS segments, video copied untouched so this stays cheap. 1s segments
-        // (down from 2s) mean the first segment - and so the first thing a new viewer can play -
-        // is ready sooner, and players need less buffered before they'll start.
+        // Primary output: HLS segments, video copied untouched so this stays cheap.
         //
         // -hls_time is a ceiling ffmpeg can only honour on a keyframe while copying video, so the
         // real segment length is the camera's GOP: ask a camera with a 4s keyframe interval for 1s
         // segments and you get 4s ones. Since a player sits a small multiple of the segment length
         // behind live, the camera's own I-frame-interval setting sets the floor on end-to-end
         // latency for this whole pipeline - see docs/ for how to check and change it.
+        //
+        // Which is why this asks for 2s rather than the 1s it used to. On a camera with a GOP of
+        // 2s or more the number changes nothing at all (the GOP wins either way), and on a camera
+        // with a short GOP it stops us cutting needlessly tiny segments - every segment is an HTTP
+        // round trip per viewer per camera, and a live grid multiplies that by both.
         args.AddRange(["-map", "0:v:0", "-c:v", "copy"]);
         if (includeAudio)
             args.AddRange(["-map", "0:a:0?", "-c:a", "aac", "-ac", "1"]);
@@ -269,8 +284,14 @@ public sealed class HlsStreamManager : IDisposable
             args.Add("-an");
         args.AddRange([
             "-f", "hls",
-            "-hls_time", "1",
-            "-hls_list_size", "6",
+            "-hls_time", "2",
+            // The playlist window, in segments. This is the margin a viewer has to fall behind by
+            // before the segment it is asking for has rolled off the playlist entirely - at which
+            // point its only move is to jump back to the live edge, which is a visible rebuffer.
+            // Six segments was thin: on a camera with a 2s GOP that is a twelve-second window, and
+            // a player deliberately sitting near the live edge spends most of it already used up.
+            // Ten costs nothing but a little disk and absorbs the ordinary jitter instead.
+            "-hls_list_size", "10",
             // temp_file: write each segment under a scratch name and rename it into place when
             // it's complete, so a viewer can never fetch a half-written .ts and stall on it.
             // independent_segments: every segment starts on a keyframe (guaranteed here, since
@@ -281,7 +302,7 @@ public sealed class HlsStreamManager : IDisposable
             // that is momentarily behind - a phone coming back from a locked screen, a slow
             // cellular fetch - then gets the segment it asks for instead of a 404 that costs it
             // a full reconnect. Costs a few MB per camera.
-            "-hls_delete_threshold", "3",
+            "-hls_delete_threshold", "5",
             "-hls_segment_filename", Path.Combine(outputDir, "seg_%03d.ts"),
             Path.Combine(outputDir, "stream.m3u8")
         ]);
@@ -289,7 +310,9 @@ public sealed class HlsStreamManager : IDisposable
         // Secondary output: a small JPEG this same process overwrites every few seconds, so a
         // viewer opening this camera gets an instant poster frame instead of a blank tile while
         // the HLS player buffers - see GetThumbnailPath. -update rewrites one file in place
-        // instead of numbering a new one per frame.
+        // instead of numbering a new one per frame. The only output that needs decoded frames,
+        // hence -skip_frame nokey on the input above; on a camera whose GOP is longer than 3s
+        // this refreshes once per GOP rather than once per 3s, which is fine for a poster.
         args.AddRange([
             "-map", "0:v:0",
             "-vf", "fps=1/3,scale=480:-2",

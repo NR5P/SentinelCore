@@ -95,6 +95,13 @@ class SentinelRepository(
         JSONObject(request("/api/device-hub/enabled")).optBoolean("enabled")
     }
 
+    // Whether the server has a valid licence file, which is what decides the UNLICENSED watermark
+    // over camera images and live video. Readable by any signed-in account, not just an Admin,
+    // precisely so this app can ask - see the note on the endpoint in LicenseEndpoints.cs.
+    suspend fun licenseValid(): Boolean = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/license/status")).optBoolean("valid")
+    }
+
     suspend fun devices(): List<HubDevice> = withContext(Dispatchers.IO) {
         val array = JSONArray(request("/api/devices"))
         buildList {

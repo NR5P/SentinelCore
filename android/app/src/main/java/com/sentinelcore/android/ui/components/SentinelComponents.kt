@@ -167,6 +167,10 @@ fun SentinelRemoteImage(
                 tint = SentinelTextDim,
             )
         }
+        // Every camera still on any screen in this app goes through here - the alert feed, alert
+        // detail, the trigger feed, the recording timeline - so this is the one place the mark
+        // needs applying to cover all of them.
+        UnlicensedWatermark()
     }
 }
 

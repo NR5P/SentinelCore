@@ -113,6 +113,9 @@ private struct LiveCameraPreview: View {
             LiveStatusChip(isVideoReady: stream.isVideoReady)
                 .padding(10)
         }
+        // On the whole tile rather than the video alone, so the mark is there over the poster
+        // frame too and doesn't blink in and out as playback starts.
+        .unlicensedWatermark()
         .task(id: isActive) {
             if isActive {
                 if let streamURL { stream.start(url: streamURL) }
@@ -178,6 +181,9 @@ struct LivePlayerView: View {
             LiveStatusChip(isVideoReady: stream.isVideoReady)
                 .padding()
         }
+        // Applied before the PTZ overlay below so the joystick stays on top of the mark and fully
+        // usable - the watermark never gets in the way of operating a camera.
+        .unlicensedWatermark()
         .overlay(alignment: .bottomTrailing) {
             if camera.ptzEnabled == true {
                 PtzControlsView(cameraId: camera.id)

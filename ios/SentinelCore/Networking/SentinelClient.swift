@@ -258,6 +258,12 @@ final class SentinelClient {
         try await send("/api/push/test", method: "POST", body: Optional<String>.none)
     }
 
+    // Readable by any signed-in account, not just an Admin, precisely so this app can ask - see
+    // the note on the endpoint in LicenseEndpoints.cs.
+    func licenseState() async throws -> LicenseState {
+        try await get("/api/license/status")
+    }
+
     // MARK: - Device Hub
 
     // Whether the DEVICE HUB section should exist at all. Deliberately its own endpoint rather

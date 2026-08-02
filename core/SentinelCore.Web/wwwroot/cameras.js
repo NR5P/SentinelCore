@@ -957,20 +957,23 @@ window.GateWatchCameras = (function () {
   function attachPlayer(video, status, camera) {
     const src = `/api/cameras/${camera.id}/stream/stream.m3u8`;
 
-    video.addEventListener("playing", () => status.classList.add("hidden"), { once: true });
+    // Not { once: true }: a tile that recovers from a stall has to be able to clear this again,
+    // and showStatus below puts it back up whenever playback actually stops.
+    let hasPlayed = false;
+    video.addEventListener("playing", () => {
+      hasPlayed = true;
+      status.classList.add("hidden");
+    });
+    // Only once the tile has played something - "waiting" also fires while a stream is still
+    // starting up, and "buffering…" over a tile that has never shown a frame is just a worse way
+    // of saying "connecting…".
+    video.addEventListener("waiting", () => {
+      if (hasPlayed) showStatus(status, "buffering…");
+    });
 
     if (window.Hls && Hls.isSupported()) {
-      // liveSyncDurationCount is how many segments behind the live edge hls.js targets - lower
-      // means less buffering (and so less delay) before it'll start playback. 1 pairs with the
-      // server's 1s segments for close-to-immediate start without being so tight it stalls on a
-      // slow network.
-      const hls = new Hls({ liveSyncDurationCount: 1 });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          status.textContent = "stream unavailable";
-          status.classList.remove("hidden");
-        }
-      });
+      const hls = new Hls(LIVE_HLS_CONFIG);
+      hls.on(Hls.Events.ERROR, (_event, data) => handleHlsError(hls, status, data));
       // Only attempt playback once hls.js has actually parsed the manifest - calling play()
       // right after attachMedia (before there's anything to play) causes some browsers to
       // reject the play() promise and never retry, leaving the video stuck paused.
@@ -984,6 +987,66 @@ window.GateWatchCameras = (function () {
     } else {
       status.textContent = "this browser can't play HLS video";
     }
+  }
+
+  // How the live grid asks hls.js to sit relative to the live edge.
+  //
+  // This used to be { liveSyncDurationCount: 1 }, chasing the lowest possible delay, and that one
+  // number was the main reason tiles rebuffered every few seconds on a perfectly healthy LAN.
+  // Two things make 1 unworkable. The server copies video rather than re-encoding it, so it can
+  // only cut a segment on a keyframe and the real segment length is the camera's GOP - typically
+  // 2-4s, not the 1s the muxer is asked for. And hls.js derives liveMaxLatencyDurationCount from
+  // this value (3x by default), so "1 segment behind" also means "hard-seek back to the live edge
+  // the moment we're 3 segments behind". Sitting one segment from the edge with a three-segment
+  // tripwire means the tripwire fires constantly, and every trip is a visible stall-and-restart.
+  //
+  // 3 is the figure the HLS spec itself recommends a client start at, and it is expressed in
+  // segments rather than seconds so it scales with whatever GOP the camera actually uses. The
+  // cost is real - roughly one extra segment of delay - but the feed is steady, and a security
+  // camera that stutters every five seconds is worse to watch than one that is two seconds older.
+  const LIVE_HLS_CONFIG = {
+    liveSyncDurationCount: 3,
+    // Well clear of liveSyncDurationCount so ordinary jitter is absorbed by the catch-up below
+    // instead of by a seek. Only a genuinely stuck playhead should ever trip this.
+    liveMaxLatencyDurationCount: 10,
+    // The part that replaces most of those seeks: when the tile has drifted behind its target,
+    // hls.js plays slightly fast until it has caught up, instead of jumping. Imperceptible on a
+    // camera feed, where nobody knows what the real-time pace is meant to look like.
+    maxLiveSyncPlaybackRate: 1.5,
+    // A live tile is never scrubbed backwards, so buffered-but-played video is pure memory. Left
+    // unbounded a grid of tiles left open all day grows without limit.
+    backBufferLength: 30
+  };
+
+  // hls.js reports plenty of non-fatal errors in normal operation (a segment that 404s because it
+  // rolled off, a gap it skipped) and retries those itself - reacting to them would put a
+  // "buffering" badge over a tile that is fine. Only fatal errors need us, and of those, network
+  // and media errors are both recoverable in place: restarting the loader or flushing the decoder
+  // keeps the same player rather than tearing the tile down. Previously any fatal error left the
+  // tile reading "stream unavailable" until the whole Live tab was rebuilt, even after the camera
+  // came back.
+  function handleHlsError(hls, status, data) {
+    if (!data.fatal) return;
+
+    switch (data.type) {
+      case Hls.ErrorTypes.NETWORK_ERROR:
+        showStatus(status, "reconnecting…");
+        hls.startLoad();
+        break;
+      case Hls.ErrorTypes.MEDIA_ERROR:
+        showStatus(status, "recovering…");
+        hls.recoverMediaError();
+        break;
+      default:
+        showStatus(status, "stream unavailable");
+        hls.destroy();
+        break;
+    }
+  }
+
+  function showStatus(status, text) {
+    status.textContent = text;
+    status.classList.remove("hidden");
   }
 
   function hideLive() {

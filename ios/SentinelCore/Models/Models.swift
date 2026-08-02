@@ -388,6 +388,13 @@ struct DeviceHubEnabled: Codable {
     let enabled: Bool
 }
 
+// Whether the server has a valid licence file, which is what decides the UNLICENSED watermark
+// over camera images and live video - see UnlicensedWatermark.
+struct LicenseState: Codable {
+    let valid: Bool
+    var customerName: String?
+}
+
 struct DeviceHubMetadata: Codable {
     var kinds: [String]
     var schemas: [String]

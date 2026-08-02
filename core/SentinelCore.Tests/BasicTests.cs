@@ -3828,13 +3828,13 @@ public sealed class BasicTests
         Assert.Empty(resultStore.Saved);
     }
 
-    // These particular flags are what keep a live tile close to real time, and every one of them
-    // is the kind of thing that gets dropped by accident while editing an argument list nobody
-    // reads closely. Losing temp_file serves half-written segments; losing the delete threshold
-    // 404s viewers who fall a second behind; losing the probe limits puts five seconds back onto
-    // every cold start. None of those break a test that only checks the stream plays.
+    // These particular flags are what keep a live tile watchable, and every one of them is the
+    // kind of thing that gets dropped by accident while editing an argument list nobody reads
+    // closely. Losing temp_file serves half-written segments; losing the delete threshold 404s
+    // viewers who fall a second behind; losing the probe limits puts five seconds back onto every
+    // cold start. None of those break a test that only checks the stream plays.
     [Fact]
-    public void FfmpegArguments_KeepTheLowLatencyHlsSettings()
+    public void FfmpegArguments_KeepTheLiveStreamingSettings()
     {
         var args = HlsStreamManager.BuildFfmpegArguments("rtsp://cam/live", includeAudio: false, "/tmp/out");
         var line = string.Join(' ', args);
@@ -3849,8 +3849,21 @@ public sealed class BasicTests
         Assert.Contains("independent_segments", flags);
         Assert.Contains("delete_segments", flags);
         Assert.Contains("omit_endlist", flags);
-        Assert.Equal("3", args[args.IndexOf("-hls_delete_threshold") + 1]);
-        Assert.Equal("1", args[args.IndexOf("-hls_time") + 1]);
+        Assert.Equal("5", args[args.IndexOf("-hls_delete_threshold") + 1]);
+        Assert.Equal("2", args[args.IndexOf("-hls_time") + 1]);
+
+        // The playlist window a viewer has to fall behind by before its next segment has rolled
+        // off and its only recourse is a jump back to the live edge - which viewers see as the
+        // stream stopping and restarting. Ten segments is the margin that made the live grid stop
+        // stuttering; trimming it back is the change that would quietly undo that.
+        Assert.Equal("10", args[args.IndexOf("-hls_list_size") + 1]);
+
+        // A decoder option, so it has to precede -i to apply to the input. The HLS output copies
+        // video and never decodes; without this the poster-frame output alone made ffmpeg decode
+        // every frame of every camera around the clock, which is CPU the segments need to land on
+        // time. Measured at ~20x the decode cost of keyframes-only for the same JPEG.
+        Assert.Contains("-skip_frame nokey", line);
+        Assert.True(args.IndexOf("-skip_frame") < args.IndexOf("-i"));
     }
 
     // --- Triggering a camera from outside the motion detector -----------------------------

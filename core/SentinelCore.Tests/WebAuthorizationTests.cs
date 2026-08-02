@@ -173,6 +173,52 @@ public sealed class WebAuthorizationTests : IDisposable
         Assert.Equal(HttpStatusCode.Forbidden, discoverStatus.StatusCode);
     }
 
+    // Every client draws the UNLICENSED watermark over camera images and live video, so every
+    // signed-in account has to be able to read the licence state - otherwise the nag would appear
+    // on the Admin's devices and silently vanish on a household Viewer's phone. Installing a
+    // licence is a different matter and stays Admin-only.
+    [Fact]
+    public async Task AuthEnabled_ViewerSession_CanReadLicenseStatusButNotInstallALicense()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+            await accounts.CreateAsync("admin", SentinelCore.Web.PasswordHasher.Hash("correct horse battery"), AccountRole.Admin, null, ct);
+            await accounts.CreateAsync("viewer", SentinelCore.Web.PasswordHasher.Hash("watch-only-please"), AccountRole.Viewer, null, ct);
+        }
+        await EnableLoginAsync(ct);
+
+        using var client = factory.CreateClient();
+        using var login = await client.PostAsJsonAsync("/api/auth/login", new { Username = "viewer", Password = "watch-only-please" }, ct);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        using var status = await client.GetAsync("/api/license/status", ct);
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+
+        using var install = await client.PostAsync("/api/license/install", new StringContent("not a licence"), ct);
+        Assert.Equal(HttpStatusCode.Forbidden, install.StatusCode);
+    }
+
+    [Fact]
+    public async Task AuthEnabled_NoCookie_CannotReadLicenseStatus()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+            await accounts.CreateAsync("admin", SentinelCore.Web.PasswordHasher.Hash("correct horse battery"), AccountRole.Admin, null, ct);
+        }
+        await EnableLoginAsync(ct);
+
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/api/license/status", ct);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     [Fact]
     public async Task AuthEnabled_NoCookie_CannotCommandADevice()
     {
