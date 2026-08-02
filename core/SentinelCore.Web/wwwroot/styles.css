@@ -210,6 +210,32 @@ main {
   padding: 24px 28px 64px;
 }
 
+/* Build identity. Static rather than fixed - it's reference information you go and look for
+   when filing a report, not something worth permanently occupying a strip of a camera wall.
+   main's 64px bottom padding already leaves it room. */
+.app-footer {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 28px 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.build-version {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  /* Selectable on purpose: the whole point is that someone can copy it into a bug report. */
+  user-select: text;
+  cursor: default;
+}
+
+/* A build compiled from edited sources can't be traced back to the commit it names, so it gets
+   flagged rather than quietly reported as if it were that commit. */
+.build-version.dirty {
+  color: var(--amber);
+}
+
 .toolbar {
   display: flex;
   align-items: center;

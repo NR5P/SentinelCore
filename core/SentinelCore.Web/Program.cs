@@ -352,7 +352,17 @@ app.MapPushEndpoints();
 app.MapTimelineEndpoints();
 app.MapDocsEndpoints();
 
-app.MapGet("/api/health", () => Results.Ok(new { status = "ok", timestamp = DateTimeOffset.UtcNow }));
+// Reports this process's own build, which is not necessarily the bridge's - they're separate
+// executables and nothing stops one being updated without the other. The dashboard footer reads
+// this, and it stays unauthenticated like the rest of the endpoint: the version of software
+// already answering on the port isn't a secret, and requiring a login would make it useless for
+// the "is it even up, and what is it?" check this exists for.
+app.MapGet("/api/health", () => Results.Ok(new
+{
+    status = "ok",
+    build = BuildInfo.Current,
+    timestamp = DateTimeOffset.UtcNow
+}));
 
 // Drives the dashboard's exposure banner. Reports only what's actually been observed - it stays
 // quiet until something genuinely reaches this host from off-LAN.

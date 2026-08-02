@@ -64,8 +64,13 @@ public static class BugReportEmail
             From = new MailAddress(fromAddress, "Sentinel Core Bug Reports"),
             Subject = $"[Sentinel Core Bug Report] {report.Process}: {report.Category}",
             IsBodyHtml = false,
+            // Build line added here rather than on the BugReport record: the version is a
+            // constant of the process, so threading it through every place a report is
+            // constructed would be a lot of churn to say the same thing each time. Both
+            // processes build their mail through here, so each stamps its own version.
             Body = $"""
                 Process: {report.Process}
+                Build: {BuildInfo.Current.Display}
                 Category: {report.Category}
                 Level: {report.Level}
                 Occurred at: {report.OccurredAt.ToLocalTime():yyyy-MM-dd HH:mm:ss zzz}

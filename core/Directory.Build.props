@@ -1,0 +1,58 @@
+<Project>
+
+  <!-- One version for every project under core/. Bump VersionPrefix here and all five
+       assemblies move together - they are always shipped and installed as a set, so a
+       per-project version would only ever create confusion about which number to quote. -->
+  <PropertyGroup>
+    <VersionPrefix>1.0.0</VersionPrefix>
+  </PropertyGroup>
+
+  <!-- Stamps the git commit into AssemblyInformationalVersion, so a running install can say
+       exactly which source it was built from. The SDK does the appending itself: its
+       AddSourceRevisionToInformationalVersion target turns Version + SourceRevisionId into
+       "1.0.0+<sha>", which is what BuildInfo reads back at runtime.
+
+       Guarded on .git existing (it's a file, not a directory, inside a worktree - Exists()
+       accepts both) so building from an extracted source tarball stays silent rather than
+       warning on every build. Without it SourceRevisionId is simply never set and the version
+       reads as a bare "1.0.0", which BuildInfo reports as an unknown commit.
+
+       Deliberately overwrites rather than defers to any existing SourceRevisionId: the SDK's
+       bundled SourceLink sets it first, to the full 40-character SHA and with no indication of
+       whether the tree was clean. Twelve characters is unambiguous and actually readable in a
+       dashboard footer, and the dirty flag is the entire reason a stamped SHA can be trusted.
+       Only the informational version is affected - SourceLink maps sources through SourceRoot
+       items, which this leaves alone. -->
+  <Target Name="StampGitRevision"
+          BeforeTargets="AddSourceRevisionToInformationalVersion"
+          Condition="Exists('$(MSBuildThisFileDirectory)../.git')">
+
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory).&quot; rev-parse --short=12 HEAD"
+          ConsoleToMSBuild="true" StandardOutputImportance="low"
+          ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitCommit" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitCommitExitCode" />
+    </Exec>
+
+    <!-- Tracked modifications under core/ only, and untracked files deliberately ignored:
+         repo-root scratch directories and editor droppings would otherwise mark every single
+         build dirty, and a flag that is always on tells you nothing. This answers the narrower
+         but far more useful question - "was compiled source edited away from that commit?" -->
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory).&quot; status --porcelain --untracked-files=no -- ."
+          ConsoleToMSBuild="true" StandardOutputImportance="low"
+          ContinueOnError="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitStatus" />
+      <Output TaskParameter="ExitCode" PropertyName="_GitStatusExitCode" />
+    </Exec>
+
+    <PropertyGroup>
+      <_GitCommit Condition="'$(_GitCommitExitCode)' != '0'"></_GitCommit>
+      <!-- On failure this leaves whatever was already there (SourceLink's full SHA, or nothing)
+           rather than blanking it - a longer commit id beats no commit id. -->
+      <SourceRevisionId Condition="'$(_GitCommit)' != ''">$(_GitCommit.Trim())</SourceRevisionId>
+      <!-- SemVer build metadata: dots separate identifiers, so "+<sha>.dirty" stays valid. -->
+      <SourceRevisionId Condition="'$(SourceRevisionId)' != '' and '$(_GitStatusExitCode)' == '0' and '$(_GitStatus.Trim())' != ''">$(SourceRevisionId).dirty</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
+
+</Project>

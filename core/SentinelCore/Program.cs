@@ -363,7 +363,10 @@ app.UseMiddleware<ApiKeyMiddleware>();
 app.MapGet("/", () => Results.Ok(new
 {
     service = "Blue Iris Ollama Bridge",
-    version = typeof(Program).Assembly.GetName().Version?.ToString(),
+    // Was AssemblyName.Version, which is only ever the four-part "1.0.0.0" and carries no
+    // commit - useless for identifying what a tester is actually running. BuildInfo carries the
+    // git revision too.
+    build = BuildInfo.Current,
     endpoints = new[] { "/health/live", "/health/ready", "/api/blueiris/alert", "/api/results/{id}" }
 }));
 
@@ -371,16 +374,20 @@ app.MapGet("/health/live", (IAlertQueue queue) => Results.Ok(new
 {
     status = "healthy",
     queued = queue.ApproximateCount,
+    build = BuildInfo.Current,
     timestamp = DateTimeOffset.UtcNow
 }));
 
 // "unavailable" rather than "unreachable": readiness now also fails when the backend answers
 // fine but the configured model isn't installed, which is not a reachability problem. The
 // specific cause (and the `ollama pull` to fix it) is logged by the client.
+// The build is reported on the failure branch too, deliberately: "not ready" is precisely the
+// response someone will paste into a support thread, and it's worth nothing without knowing
+// which build produced it.
 app.MapGet("/health/ready", async (IVisionAnalysisClient vision, CancellationToken ct) =>
     await vision.IsReadyAsync(ct)
-        ? Results.Ok(new { status = "ready", vision = "reachable" })
-        : Results.Json(new { status = "not-ready", vision = "unavailable" }, statusCode: 503));
+        ? Results.Ok(new { status = "ready", vision = "reachable", build = BuildInfo.Current })
+        : Results.Json(new { status = "not-ready", vision = "unavailable", build = BuildInfo.Current }, statusCode: 503));
 
 app.MapPost("/api/blueiris/alert", async (
     HttpRequest request,
