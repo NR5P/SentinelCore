@@ -43,6 +43,8 @@ public sealed class MqttHotReloadTests
             Task.FromResult(device);
         public Task<HubDevice?> UpdateAsync(Guid id, HubDevice device, CancellationToken cancellationToken) =>
             Task.FromResult<HubDevice?>(device);
+        public Task UpdateOrderAsync(IReadOnlyList<Guid> orderedIds, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
         public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(false);
     }

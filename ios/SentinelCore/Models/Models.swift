@@ -354,6 +354,9 @@ struct HubDevice: Codable, Identifiable, Hashable {
     var availabilityTopic: String
     var payloadOn: String
     var payloadOff: String
+    // Optional on the wire so this app still decodes a server older than the gate/cover update.
+    var payloadStop: String?
+    var momentary: Bool?
     var payloadAvailable: String
     var payloadNotAvailable: String
     var schema: String
@@ -364,6 +367,7 @@ struct HubDevice: Codable, Identifiable, Hashable {
     var brightnessStateTopic: String
     var brightnessScale: Int
     var discoverySource: String
+    var sortOrder: Int?
     // "on", "off", or "unknown" - a string rather than a Bool because "we have never heard from
     // this device" is a genuinely different state from "off", and the UI says so.
     var power: String
@@ -373,6 +377,18 @@ struct HubDevice: Codable, Identifiable, Hashable {
 
     var isOn: Bool { power == "on" }
 
+    // A pulse device: one press, no on/off state afterwards. The server already folds the
+    // "button" kind into this flag, but the kind check keeps older servers honest too.
+    var isMomentary: Bool { (momentary ?? false) || kind == "button" }
+
+    // Kinds that speak open/close rather than on/off - their controls and status wording differ.
+    var isCoverLike: Bool { kind == "cover" || kind == "gate" || kind == "garage" }
+
+    var isLock: Bool { kind == "lock" }
+
+    // Whether this device has a third "stop" command its motor understands.
+    var hasStop: Bool { !(payloadStop ?? "").isEmpty }
+
     // SF Symbol per device kind, matching the icons the rest of the app uses for its sections.
     var systemImage: String {
         switch kind {
@@ -380,7 +396,10 @@ struct HubDevice: Codable, Identifiable, Hashable {
         case "switch", "outlet": "poweroutlet.type.b.fill"
         case "fan": "fan.fill"
         case "cover": "blinds.horizontal.closed"
+        case "gate": "door.sliding.left.hand.closed"
+        case "garage": "door.garage.closed"
         case "lock": "lock.fill"
+        case "button": "button.programmable"
         default: "sensor.fill"
         }
     }
@@ -416,6 +435,9 @@ struct DeviceCandidate: Codable, Identifiable, Hashable {
     var availabilityTopic: String
     var payloadOn: String
     var payloadOff: String
+    // Optional so scans against a server older than the gate/cover update still decode.
+    var payloadStop: String?
+    var momentary: Bool?
     var schema: String
     var stateValueTemplate: String
     var supportsBrightness: Bool
@@ -463,6 +485,8 @@ struct HubDeviceInput: Encodable {
     var availabilityTopic: String
     var payloadOn: String
     var payloadOff: String
+    var payloadStop: String
+    var momentary: Bool
     var payloadAvailable: String
     var payloadNotAvailable: String
     var schema: String
@@ -484,6 +508,8 @@ struct HubDeviceInput: Encodable {
         availabilityTopic = device.availabilityTopic
         payloadOn = device.payloadOn
         payloadOff = device.payloadOff
+        payloadStop = device.payloadStop ?? ""
+        momentary = device.momentary ?? false
         payloadAvailable = device.payloadAvailable
         payloadNotAvailable = device.payloadNotAvailable
         schema = device.schema
@@ -506,6 +532,8 @@ struct HubDeviceInput: Encodable {
         availabilityTopic = candidate.availabilityTopic
         payloadOn = candidate.payloadOn
         payloadOff = candidate.payloadOff
+        payloadStop = candidate.payloadStop ?? ""
+        momentary = candidate.momentary ?? false
         payloadAvailable = "online"
         payloadNotAvailable = "offline"
         schema = candidate.schema
@@ -530,6 +558,8 @@ struct HubDeviceInput: Encodable {
         availabilityTopic = ""
         payloadOn = "ON"
         payloadOff = "OFF"
+        payloadStop = ""
+        momentary = false
         payloadAvailable = "online"
         payloadNotAvailable = "offline"
         schema = "raw"
@@ -546,6 +576,12 @@ struct HubDeviceInput: Encodable {
 struct DeviceCommandInput: Encodable {
     var action: String?
     var brightness: Int?
+}
+
+// PUT /api/devices/order - the complete arrangement, first device first. Same shape as
+// LiveOrder is for camera tiles.
+struct DeviceOrderInput: Encodable {
+    var deviceIds: [UUID]
 }
 
 extension JSONDecoder {

@@ -201,6 +201,52 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
         if (publishes.Count == 0)
             return new DeviceCommandResult(false, false, "Nothing to send - no power or brightness change was requested.");
 
+        if (await PublishAllAsync(device, publishes, cancellationToken) is { } publishError)
+            return publishError;
+
+        // A momentary device is a pulse: the press is over the instant it's published, there's
+        // no ON state to wait for or to pretend the device is now in.
+        if (DeviceTopics.IsMomentary(device))
+            return new DeviceCommandResult(true, true, null);
+
+        // An optimistic device never echoes anything back, so its own reported state is what we
+        // just told it to be. Anything else gets a short window to confirm, and the UI shows the
+        // command as un-acknowledged if it doesn't - the publish itself still happened.
+        if (device.Optimistic)
+        {
+            ApplyOptimisticState(device, power, brightnessPercent);
+            return new DeviceCommandResult(true, true, null);
+        }
+
+        var acknowledged = await WaitForEchoAsync(device, power, brightnessPercent, cancellationToken);
+        return new DeviceCommandResult(true, acknowledged, null);
+    }
+
+    // "Stop" for a cover-like device. No echo wait: what a motor reports mid-travel varies too
+    // much between vendors for a stopped state to be recognisable, and the publish either
+    // happened or it didn't.
+    public async Task<DeviceCommandResult> SendStopAsync(HubDevice device, CancellationToken cancellationToken)
+    {
+        if (!IsEnabled)
+            return new DeviceCommandResult(false, false, "The Device Hub is turned off.");
+        if (!DeviceTopics.IsCommandable(device.Kind))
+            return new DeviceCommandResult(false, false, $"A {device.Kind} is read-only and cannot be commanded.");
+
+        var publishes = DeviceTopics.BuildStopCommand(device);
+        if (publishes.Count == 0)
+            return new DeviceCommandResult(false, false, $"{device.Name} has no stop payload configured.");
+
+        if (await PublishAllAsync(device, publishes, cancellationToken) is { } publishError)
+            return publishError;
+
+        return new DeviceCommandResult(true, true, null);
+    }
+
+    // Shared publish plumbing for commands. Null means every message went out; a result is the
+    // error to hand straight back to the endpoint.
+    private async Task<DeviceCommandResult?> PublishAllAsync(
+        HubDevice device, IReadOnlyList<DevicePublish> publishes, CancellationToken cancellationToken)
+    {
         try
         {
             if (!_client.IsConnected) await ConnectAndSubscribeAsync(cancellationToken);
@@ -226,18 +272,7 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
 
         _logger.LogInformation(
             "Sent {PublishCount} MQTT command message(s) to device {DeviceName}", publishes.Count, device.Name);
-
-        // An optimistic device never echoes anything back, so its own reported state is what we
-        // just told it to be. Anything else gets a short window to confirm, and the UI shows the
-        // command as un-acknowledged if it doesn't - the publish itself still happened.
-        if (device.Optimistic)
-        {
-            ApplyOptimisticState(device, power, brightnessPercent);
-            return new DeviceCommandResult(true, true, null);
-        }
-
-        var acknowledged = await WaitForEchoAsync(device, power, brightnessPercent, cancellationToken);
-        return new DeviceCommandResult(true, acknowledged, null);
+        return null;
     }
 
     // Called after any device is added, edited, enabled, or deleted - the subscription set is

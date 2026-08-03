@@ -902,15 +902,242 @@ public sealed class DeviceHubTests
         }
     }
 
+    // ---------------- Cover / gate / lock / button flexibility ----------------
+
+    [Fact]
+    public void BuildCandidates_ParsesAGateCoverConfigWithOpenCloseStopPayloads()
+    {
+        const string config = """
+            {"name":"Driveway Gate","dev_cla":"gate","cmd_t":"gate/cmd","stat_t":"gate/state",
+             "pl_open":"OPEN","pl_cls":"CLOSE","pl_stop":"STOP"}
+            """;
+
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["homeassistant/cover/driveway_gate/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("Driveway Gate", candidate.SuggestedName);
+        Assert.Equal("gate", candidate.Kind);
+        Assert.Equal("OPEN", candidate.PayloadOn);
+        Assert.Equal("CLOSE", candidate.PayloadOff);
+        Assert.Equal("STOP", candidate.PayloadStop);
+        Assert.False(candidate.Momentary);
+    }
+
+    [Fact]
+    public void BuildCandidates_CoverWithoutADeviceClassStaysACover()
+    {
+        const string config = """{"name":"Lounge Blinds","cmd_t":"blinds/cmd","stat_t":"blinds/state"}""";
+
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["homeassistant/cover/lounge_blinds/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("cover", candidate.Kind);
+        // Home Assistant's documented defaults when a cover config names no payloads.
+        Assert.Equal("OPEN", candidate.PayloadOn);
+        Assert.Equal("CLOSE", candidate.PayloadOff);
+        Assert.Equal("STOP", candidate.PayloadStop);
+    }
+
+    [Fact]
+    public void BuildCandidates_ParsesAButtonConfigAsMomentary()
+    {
+        const string config = """{"name":"Garage Remote","cmd_t":"garage/press","pl_prs":"PRESS"}""";
+
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["homeassistant/button/garage_remote/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("button", candidate.Kind);
+        Assert.True(candidate.Momentary);
+        Assert.Equal("PRESS", candidate.PayloadOn);
+    }
+
+    [Fact]
+    public void BuildCandidates_ParsesALockConfigWithLockUnlockPayloads()
+    {
+        const string config = """
+            {"name":"Front Door","cmd_t":"door/cmd","stat_t":"door/state","pl_lock":"LOCK","pl_unlk":"UNLOCK"}
+            """;
+
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string> { ["homeassistant/lock/front_door/config"] = config },
+            observedTopics: [],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("lock", candidate.Kind);
+        Assert.Equal("LOCK", candidate.PayloadOn);
+        Assert.Equal("UNLOCK", candidate.PayloadOff);
+    }
+
+    [Fact]
+    public void BuildCandidates_SweepSuggestsGateKindFromTheTopicName()
+    {
+        var candidate = Assert.Single(MqttDeviceDiscovery.BuildCandidates(
+            new Dictionary<string, string>(),
+            observedTopics: ["stat/front_gate/POWER"],
+            discoveryPrefix: "homeassistant",
+            existingCommandTopics: new HashSet<string>(),
+            existingStateTopics: new HashSet<string>()));
+
+        Assert.Equal("Front Gate", candidate.SuggestedName);
+        Assert.Equal("gate", candidate.Kind);
+        // Still a relay under the hood: the payloads stay ON/OFF even though the UI says
+        // Open/Close, because that's what the firmware answers to.
+        Assert.Equal("ON", candidate.PayloadOn);
+        Assert.Equal("OFF", candidate.PayloadOff);
+    }
+
+    [Theory]
+    [InlineData("Front Gate", "gate")]
+    [InlineData("Garage Door", "garage")]
+    [InlineData("Back Door Lock", "lock")]
+    [InlineData("Lounge Blinds", "cover")]
+    [InlineData("Kitchen Lamp", "switch")]
+    public void SuggestKindFromName_MapsCommonNamesOntoKinds(string name, string expected) =>
+        Assert.Equal(expected, MqttDeviceDiscovery.SuggestKindFromName(name, "switch"));
+
+    [Fact]
+    public void BuildStopCommand_RawSchema_PublishesTheStopPayloadBare()
+    {
+        var device = Device("Gate", "gate/cmd", "gate/state") with { Kind = "gate", PayloadStop = "STOP" };
+
+        var publish = Assert.Single(DeviceTopics.BuildStopCommand(device));
+        Assert.Equal("gate/cmd", publish.Topic);
+        Assert.Equal("STOP", publish.Payload);
+    }
+
+    [Fact]
+    public void BuildStopCommand_JsonSchema_WrapsTheStopPayloadInTheStateKey()
+    {
+        var device = Device("Blinds", "blinds/set", "blinds") with
+        {
+            Kind = "cover",
+            Schema = DeviceTopics.SchemaJson,
+            StateValueTemplate = "state",
+            PayloadStop = "STOP"
+        };
+
+        var publish = Assert.Single(DeviceTopics.BuildStopCommand(device));
+        Assert.Equal("blinds/set", publish.Topic);
+        Assert.Equal("""{"state":"STOP"}""", publish.Payload);
+    }
+
+    [Fact]
+    public void BuildStopCommand_WithoutAStopPayload_ProducesNothing() =>
+        Assert.Empty(DeviceTopics.BuildStopCommand(Device("Gate", "gate/cmd", "gate/state")));
+
+    [Theory]
+    [InlineData("cover", true)]
+    [InlineData("gate", true)]
+    [InlineData("garage", true)]
+    [InlineData("light", false)]
+    [InlineData("lock", false)]
+    public void IsCoverLike_KnowsWhichKindsSpeakOpenClose(string kind, bool expected) =>
+        Assert.Equal(expected, DeviceTopics.IsCoverLike(kind));
+
+    [Fact]
+    public void IsMomentary_ButtonKindIsAlwaysMomentary()
+    {
+        Assert.True(DeviceTopics.IsMomentary(Device("Bell", "bell/cmd", "") with { Kind = "button" }));
+        Assert.True(DeviceTopics.IsMomentary(Device("Gate", "gate/cmd", "") with { Momentary = true }));
+        Assert.False(DeviceTopics.IsMomentary(Device("Lamp", "lamp/cmd", "")));
+    }
+
+    // ---------------- Sort order ----------------
+
+    [Fact]
+    public async Task SqliteDeviceStore_UpdateOrder_RearrangesAndNewDevicesJoinAtTheEnd()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteDeviceStore(options, new FakeHostEnvironment(tempDir));
+            var ct = TestContext.Current.CancellationToken;
+
+            var first = await store.CreateAsync(Device("Alpha", "cmnd/a/POWER", "stat/a/POWER"), ct);
+            var second = await store.CreateAsync(Device("Beta", "cmnd/b/POWER", "stat/b/POWER"), ct);
+            var third = await store.CreateAsync(Device("Gamma", "cmnd/c/POWER", "stat/c/POWER"), ct);
+
+            // Creation order is the default order.
+            Assert.Equal(
+                new[] { "Alpha", "Beta", "Gamma" },
+                (await store.GetAllAsync(ct)).Select(d => d.Name).ToArray());
+
+            await store.UpdateOrderAsync([third.Id, first.Id, second.Id], ct);
+            Assert.Equal(
+                new[] { "Gamma", "Alpha", "Beta" },
+                (await store.GetAllAsync(ct)).Select(d => d.Name).ToArray());
+
+            // A device added after a reorder lands at the end, not on top.
+            await store.CreateAsync(Device("Delta", "cmnd/d/POWER", "stat/d/POWER"), ct);
+            Assert.Equal(
+                new[] { "Gamma", "Alpha", "Beta", "Delta" },
+                (await store.GetAllAsync(ct)).Select(d => d.Name).ToArray());
+
+            // Editing a device must not disturb where the user dragged it - the endpoint copies
+            // the stored SortOrder onto the update, mirrored here.
+            var current = await store.GetAsync(first.Id, ct);
+            Assert.NotNull(current);
+            await store.UpdateAsync(first.Id, current with { Name = "Alpha Renamed" }, ct);
+            Assert.Equal(
+                new[] { "Gamma", "Alpha Renamed", "Beta", "Delta" },
+                (await store.GetAllAsync(ct)).Select(d => d.Name).ToArray());
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SqliteDeviceStore_RoundTripsMomentaryAndStopPayload()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteDeviceStore(options, new FakeHostEnvironment(tempDir));
+            var ct = TestContext.Current.CancellationToken;
+
+            var created = await store.CreateAsync(
+                Device("Gate", "gate/cmd", "gate/state") with { Kind = "gate", Momentary = true, PayloadStop = "STOP" }, ct);
+
+            var fetched = await store.GetAsync(created.Id, ct);
+            Assert.NotNull(fetched);
+            Assert.Equal("gate", fetched.Kind);
+            Assert.True(fetched.Momentary);
+            Assert.Equal("STOP", fetched.PayloadStop);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     // ---------------- Helpers ----------------
 
     private static HubDevice Device(string name, string commandTopic, string stateTopic) => new(
         Guid.NewGuid(), name, "light", "Test Room", Enabled: true,
         commandTopic, stateTopic, AvailabilityTopic: "",
-        PayloadOn: "ON", PayloadOff: "OFF", PayloadAvailable: "online", PayloadNotAvailable: "offline",
+        PayloadOn: "ON", PayloadOff: "OFF", PayloadStop: "", Momentary: false,
+        PayloadAvailable: "online", PayloadNotAvailable: "offline",
         Schema: DeviceTopics.SchemaRaw, StateValueTemplate: "", Optimistic: false,
         SupportsBrightness: false, BrightnessCommandTopic: "", BrightnessStateTopic: "", BrightnessScale: 255,
-        DiscoverySource: DeviceTopics.SourceManual,
+        DiscoverySource: DeviceTopics.SourceManual, SortOrder: 0,
         CreatedAt: DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow);
 
     // A bus with no broker behind it - enough for the GetState rules, which are pure logic over
@@ -933,6 +1160,8 @@ public sealed class DeviceHubTests
             Task.FromResult(device);
         public Task<HubDevice?> UpdateAsync(Guid id, HubDevice device, CancellationToken cancellationToken) =>
             Task.FromResult<HubDevice?>(device);
+        public Task UpdateOrderAsync(IReadOnlyList<Guid> orderedIds, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
         public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(true);
     }

@@ -106,15 +106,78 @@ window.GateWatchDevices = (function () {
       case "switch": case "outlet": return "⏻";
       case "fan": return "❀";
       case "cover": return "▤";
+      case "gate": return "⌸";
+      case "garage": return "⌂";
       case "lock": return "⚿";
+      case "button": return "◎";
       default: return "◉";
     }
+  }
+
+  // Kind-flavoured behaviour, mirroring DeviceTopics on the server: cover-like kinds speak
+  // open/close (+stop when a stop payload exists), locks speak lock/unlock, and a momentary
+  // device is a single stateless press.
+  function isCoverLike(device) { return ["cover", "gate", "garage"].includes(device.kind); }
+  function isMomentary(device) { return !!device.momentary || device.kind === "button"; }
+  function hasStop(device) { return !!(device.payloadStop || "").trim(); }
+
+  // ---------------- Drag to reorder ----------------
+
+  let draggingTile = null;
+
+  // The whole arrangement in one PUT once the drop lands, mirroring the live grid: the DOM is
+  // the order the user just made, so it's read back from there. Admin-only server-side - a
+  // Viewer's attempt gets a 403 and the list reloads back to the stored order.
+  async function saveOrder() {
+    const ids = [...document.querySelectorAll(".device-tile")]
+      .map(tile => tile.id.replace("device-tile-", ""));
+    devices.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+
+    try {
+      const response = await fetch("/api/devices/order", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceIds: ids })
+      });
+      if (!response.ok) {
+        if (response.status === 403) alert("Only an admin account can rearrange devices.");
+        await load();
+      }
+    } catch {
+      await load();
+    }
+  }
+
+  function wireDragToReorder(tile, device) {
+    tile.draggable = true;
+    tile.addEventListener("dragstart", event => {
+      draggingTile = tile;
+      tile.classList.add("device-tile-dragging");
+      event.dataTransfer.effectAllowed = "move";
+      // Firefox refuses to start a drag without data attached.
+      event.dataTransfer.setData("text/plain", device.id);
+    });
+    tile.addEventListener("dragend", () => {
+      tile.classList.remove("device-tile-dragging");
+      if (draggingTile) saveOrder();
+      draggingTile = null;
+    });
+    tile.addEventListener("dragover", event => {
+      if (!draggingTile || draggingTile === tile) return;
+      event.preventDefault();
+      // Live preview: the dragged tile slots in before or after the one under the cursor.
+      const rect = tile.getBoundingClientRect();
+      const before = (event.clientY - rect.top) < rect.height / 2;
+      tile.parentNode.insertBefore(draggingTile, before ? tile : tile.nextSibling);
+    });
+    tile.addEventListener("drop", event => event.preventDefault());
   }
 
   function buildTile(device) {
     const tile = document.createElement("div");
     tile.className = "device-tile";
     tile.id = `device-tile-${device.id}`;
+    wireDragToReorder(tile, device);
 
     const header = document.createElement("div");
     header.className = "device-tile-header";
@@ -131,7 +194,35 @@ window.GateWatchDevices = (function () {
     const controls = document.createElement("div");
     controls.className = "device-tile-controls";
 
-    if (device.commandable) {
+    if (device.commandable && isMomentary(device)) {
+      // A pulse device gets a single press - a gate relay, a garage remote, a doorbell.
+      const pressBtn = document.createElement("button");
+      pressBtn.className = "btn";
+      pressBtn.textContent = "press";
+      pressBtn.disabled = !device.enabled;
+      pressBtn.dataset.tip = "Send this device its press payload. A momentary device is a pulse - there's no on or off to hold.";
+      pressBtn.addEventListener("click", () => sendCommand(device, { action: "press" }));
+      controls.appendChild(pressBtn);
+    } else if (device.commandable && isCoverLike(device)) {
+      const actions = hasStop(device) ? ["open", "stop", "close"] : ["open", "close"];
+      for (const action of actions) {
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = action;
+        btn.disabled = !device.enabled;
+        btn.addEventListener("click", () => sendCommand(device, { action }));
+        controls.appendChild(btn);
+      }
+    } else if (device.commandable && device.kind === "lock") {
+      for (const action of ["unlock", "lock"]) {
+        const btn = document.createElement("button");
+        btn.className = "btn";
+        btn.textContent = action;
+        btn.disabled = !device.enabled;
+        btn.addEventListener("click", () => sendCommand(device, { action }));
+        controls.appendChild(btn);
+      }
+    } else if (device.commandable) {
       const toggleLabel = document.createElement("label");
       toggleLabel.className = "switch";
       toggleLabel.dataset.tip = "Switch this device on or off.";
@@ -204,7 +295,11 @@ window.GateWatchDevices = (function () {
     if (status) {
       if (!device.enabled) status.textContent = "disabled";
       else if (!device.available) status.textContent = "unavailable";
+      // A momentary device has no on/off to report - reachable is the whole story.
+      else if (isMomentary(device)) status.textContent = "ready";
       else if (device.power === "unknown") status.textContent = "state unknown";
+      else if (isCoverLike(device)) status.textContent = device.power === "on" ? "open" : "closed";
+      else if (device.kind === "lock") status.textContent = device.power === "on" ? "locked" : "unlocked";
       else status.textContent = device.power === "on" ? "on" : "off";
 
       status.classList.toggle("device-status-on", device.enabled && device.available && device.power === "on");
@@ -360,7 +455,9 @@ window.GateWatchDevices = (function () {
     fields.innerHTML = "";
     document.getElementById("device-discovery-wrap").classList.add("hidden");
 
-    const kinds = metadata.kinds.length ? metadata.kinds : ["light", "switch", "outlet", "fan", "cover", "lock", "sensor"];
+    const kinds = metadata.kinds.length
+      ? metadata.kinds
+      : ["light", "switch", "outlet", "fan", "cover", "gate", "garage", "lock", "button", "sensor"];
     const schemas = metadata.schemas.length ? metadata.schemas : ["raw", "json"];
 
     fields.appendChild(buildTextField("device-name", "Name", device?.name ?? "",
@@ -368,9 +465,11 @@ window.GateWatchDevices = (function () {
     fields.appendChild(buildTextField("device-room", "Room", device?.room ?? "",
       "Optional grouping label, e.g. 'Kitchen'. Devices are listed by room, then name."));
     fields.appendChild(buildSelectField("device-kind", "Kind", device?.kind ?? "light", kinds,
-      "What sort of device this is. Everything except 'sensor' can be switched; a sensor is display-only."));
+      "What sort of device this is. Everything except 'sensor' can be switched. cover/gate/garage get open/close controls, lock gets lock/unlock, and button is a stateless press."));
     fields.appendChild(buildCheckboxField("device-enabled", "Enabled", device?.enabled ?? true,
       "Turn this device off in the hub without deleting it. A disabled device stops being watched or controlled."));
+    fields.appendChild(buildCheckboxField("device-momentary", "Momentary (press only)", device?.momentary ?? false,
+      "A pulse device: one press publishes the ON/Press payload and nothing more is expected back - a gate relay wired to pulse, a garage remote, a doorbell. The 'button' kind is always momentary."));
     fields.appendChild(buildTextField("device-command-topic", "Command Topic", device?.commandTopic ?? "",
       "The MQTT topic the device listens on for on/off commands, e.g. cmnd/kitchen/POWER or zigbee2mqtt/kitchen/set. No + or # wildcards."));
     fields.appendChild(buildTextField("device-state-topic", "State Topic", device?.stateTopic ?? "",
@@ -381,10 +480,12 @@ window.GateWatchDevices = (function () {
       "'raw' means the payload is just ON or OFF (Tasmota, ESPHome). 'json' means it's an object like {\"state\":\"ON\"} (Zigbee2MQTT, Home Assistant's JSON light schema)."));
     fields.appendChild(buildTextField("device-state-template", "State Value Key (json only)", device?.stateValueTemplate ?? "state",
       "For the json schema: which key holds ON/OFF. 'state' for Zigbee2MQTT, 'POWER' for Tasmota. Dotted paths like StatusSTS.POWER work for nested payloads."));
-    fields.appendChild(buildTextField("device-payload-on", "Payload for ON", device?.payloadOn ?? "ON",
-      "The exact text this device expects to be switched on. Almost always ON.", false));
-    fields.appendChild(buildTextField("device-payload-off", "Payload for OFF", device?.payloadOff ?? "OFF",
-      "The exact text this device expects to be switched off. Almost always OFF.", false));
+    fields.appendChild(buildTextField("device-payload-on", "Payload for ON / Open / Lock / Press", device?.payloadOn ?? "ON",
+      "The exact text that switches this device on - or opens a cover/gate (OPEN for a Home Assistant cover), locks a lock (LOCK), or fires a button's press (PRESS).", false));
+    fields.appendChild(buildTextField("device-payload-off", "Payload for OFF / Close / Unlock", device?.payloadOff ?? "OFF",
+      "The exact text that switches this device off - or closes a cover/gate (CLOSE), or unlocks a lock (UNLOCK).", false));
+    fields.appendChild(buildTextField("device-payload-stop", "Payload for Stop (covers, optional)", device?.payloadStop ?? "",
+      "Only for cover/gate/garage motors that take a third command to halt mid-travel - STOP for a Home Assistant cover. Leave blank and no stop button is shown.", false));
     fields.appendChild(buildTextField("device-payload-available", "Payload for online", device?.payloadAvailable ?? "online",
       "What the availability topic says when the device is reachable. Tasmota says 'Online'.", false));
     fields.appendChild(buildTextField("device-payload-not-available", "Payload for offline", device?.payloadNotAvailable ?? "offline",
@@ -424,6 +525,8 @@ window.GateWatchDevices = (function () {
       stateValueTemplate: value("device-state-template"),
       payloadOn: value("device-payload-on"),
       payloadOff: value("device-payload-off"),
+      payloadStop: value("device-payload-stop"),
+      momentary: document.getElementById("device-momentary").checked,
       payloadAvailable: value("device-payload-available"),
       payloadNotAvailable: value("device-payload-not-available"),
       optimistic: document.getElementById("device-optimistic").checked,
@@ -591,6 +694,8 @@ window.GateWatchDevices = (function () {
       stateValueTemplate: candidate.stateValueTemplate,
       payloadOn: candidate.payloadOn,
       payloadOff: candidate.payloadOff,
+      payloadStop: candidate.payloadStop ?? "",
+      momentary: candidate.momentary ?? false,
       payloadAvailable: "online",
       payloadNotAvailable: "offline",
       optimistic: false,

@@ -33,8 +33,10 @@ public static class DeviceTopics
 
     // "sensor" is display-only; everything else can be switched. Kept as data rather than an
     // enum so the metadata endpoint can hand the same list straight to every client's UI.
+    // gate/garage are cover-like (open/close/stop wording) and "button" is a stateless
+    // momentary press - a doorbell, a garage remote, a scene trigger.
     public static readonly IReadOnlyList<string> KnownKinds =
-        ["light", "switch", "outlet", "fan", "cover", "lock", "sensor"];
+        ["light", "switch", "outlet", "fan", "cover", "gate", "garage", "lock", "button", "sensor"];
 
     // Vendors disagree on what to call the brightness key inside a JSON payload, and it isn't
     // worth a settings field the user would have to know the answer to - Zigbee2MQTT and Home
@@ -43,6 +45,18 @@ public static class DeviceTopics
 
     public static bool IsCommandable(string kind) =>
         !string.Equals(kind, "sensor", StringComparison.OrdinalIgnoreCase);
+
+    // Kinds that speak open/close rather than on/off. Their PayloadOn/PayloadOff carry the open
+    // and close payloads (OPEN/CLOSE for a Home Assistant cover), and PayloadStop - when set -
+    // adds a third "stop" command for motors that can halt mid-travel.
+    public static bool IsCoverLike(string kind) =>
+        kind.ToLowerInvariant() is "cover" or "gate" or "garage";
+
+    // A "button" kind is momentary by nature; anything else can be marked Momentary explicitly
+    // (a gate relay wired to pulse, for instance). A momentary device has exactly one command -
+    // publish PayloadOn - and no meaningful on/off state to track afterwards.
+    public static bool IsMomentary(HubDevice device) =>
+        device.Momentary || string.Equals(device.Kind, "button", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsKnownKind(string kind) =>
         KnownKinds.Contains(kind, StringComparer.OrdinalIgnoreCase);
@@ -123,6 +137,25 @@ public static class DeviceTopics
         }
 
         return publishes;
+    }
+
+    // The third command a cover-like device can take: halt mid-travel. Only exists when the
+    // device was given a stop payload; the empty list tells the endpoint to refuse rather than
+    // guess at a payload the motor was never taught.
+    public static IReadOnlyList<DevicePublish> BuildStopCommand(HubDevice device)
+    {
+        if (string.IsNullOrWhiteSpace(device.PayloadStop) || string.IsNullOrWhiteSpace(device.CommandTopic))
+            return [];
+
+        var wantsJson = string.Equals(device.Schema, SchemaJson, StringComparison.OrdinalIgnoreCase);
+        var payload = wantsJson
+            ? JsonSerializer.Serialize(new Dictionary<string, object>(StringComparer.Ordinal)
+              {
+                  [StateKeyFor(device)] = device.PayloadStop
+              })
+            : device.PayloadStop;
+
+        return [new DevicePublish(device.CommandTopic, payload, Retain: false)];
     }
 
     // Some MQTT ecosystems define a read command in addition to their retained state topic.

@@ -30,6 +30,14 @@ struct DeviceHubView: View {
         }
         .navigationTitle("Device Hub")
         .toolbar {
+            #if os(iOS)
+            // Drag-to-reorder needs edit mode on iPhone; on the Mac rows drag directly.
+            if model.isAdmin && !model.devices.isEmpty {
+                ToolbarItem(placement: .topBarLeading) {
+                    EditButton()
+                }
+            }
+            #endif
             if model.isAdmin {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -54,16 +62,19 @@ struct DeviceHubView: View {
             NavigationStack {
                 DeviceEditView(device: nil) { Task { await reload() } }
             }
+            .deviceHubSheetFrame()
         }
         .sheet(item: $editingDevice) { device in
             NavigationStack {
                 DeviceEditView(device: device) { Task { await reload() } }
             }
+            .deviceHubSheetFrame()
         }
         .sheet(isPresented: $showingDiscoverySheet) {
             NavigationStack {
                 DeviceDiscoveryView { Task { await reload() } }
             }
+            .deviceHubSheetFrame()
         }
         .task(id: isActive) {
             guard isActive else { return }
@@ -105,6 +116,7 @@ struct DeviceHubView: View {
                             device: device,
                             isBusy: pendingCommandIds.contains(device.id),
                             onToggle: { Task { await toggle(device) } },
+                            onAction: { action in Task { await send(device, action: action) } },
                             onBrightness: { percent in Task { await setBrightness(device, percent: percent) } }
                         )
                         .swipeActions(edge: .trailing) {
@@ -123,6 +135,10 @@ struct DeviceHubView: View {
                             }
                         }
                     }
+                    .onMove { source, destination in
+                        move(inRoom: room, from: source, to: destination)
+                    }
+                    .moveDisabled(!model.isAdmin)
                 }
             }
         }
@@ -177,15 +193,48 @@ struct DeviceHubView: View {
     }
 
     private func toggle(_ device: HubDevice) async {
+        await send(device, action: "toggle")
+    }
+
+    // One path for every named action - toggle, open, close, stop, press, lock, unlock. The
+    // server maps the kind-flavoured names onto the device's own payloads.
+    private func send(_ device: HubDevice, action: String) async {
         pendingCommandIds.insert(device.id)
         defer { pendingCommandIds.remove(device.id) }
 
         do {
-            let result = try await model.client.sendDeviceCommand(id: device.id, action: "toggle")
+            let result = try await model.client.sendDeviceCommand(id: device.id, action: action)
             apply(result, to: device.id)
-            errorMessage = result.acknowledged ? nil : "\(device.name) did not confirm the change."
+            // A momentary press has no echoed state to wait for, so "unconfirmed" is its normal
+            // successful outcome, not something to warn about.
+            errorMessage = result.acknowledged || device.isMomentary
+                ? nil
+                : "\(device.name) did not confirm the change."
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // Reorder within one room section, then persist the complete flattened arrangement - the
+    // same optimistic pattern as AppModel.moveLiveCamera: the list moves now, the save happens
+    // in the background.
+    private func move(inRoom room: String, from source: IndexSet, to destination: Int) {
+        var roomDevices = devicesIn(room: room)
+        roomDevices.move(fromOffsets: source, toOffset: destination)
+
+        var reordered: [HubDevice] = []
+        for existingRoom in groupedRooms {
+            reordered.append(contentsOf: existingRoom == room ? roomDevices : devicesIn(room: existingRoom))
+        }
+        model.devices = reordered
+
+        let ids = reordered.map(\.id)
+        Task {
+            do {
+                try await model.client.saveDeviceOrder(ids)
+            } catch {
+                errorMessage = "Could not save the device order: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -218,12 +267,28 @@ struct DeviceHubView: View {
     }
 }
 
+// A macOS sheet sizes itself to its content's ideal size, and a List reports essentially none -
+// which collapsed the Discover Devices sheet to a bare title bar with no way to start a scan.
+// An explicit minimum keeps every Device Hub sheet usable; iPhone sheets size themselves and
+// need nothing.
+extension View {
+    @ViewBuilder
+    func deviceHubSheetFrame() -> some View {
+        #if os(macOS)
+        self.frame(minWidth: 560, minHeight: 560)
+        #else
+        self
+        #endif
+    }
+}
+
 // One device. The brightness slider is committed on release rather than continuously, so
 // dragging it doesn't publish an MQTT message per pixel to a real bulb.
 private struct DeviceRow: View {
     let device: HubDevice
     let isBusy: Bool
     let onToggle: () -> Void
+    let onAction: (String) -> Void
     let onBrightness: (Int) -> Void
 
     @State private var sliderValue: Double = 0
@@ -249,20 +314,7 @@ private struct DeviceRow: View {
                 if isBusy {
                     ProgressView()
                 } else if device.commandable {
-                    #if os(macOS)
-                    SlidingPowerSwitch(
-                        isOn: device.isOn,
-                        isEnabled: device.enabled,
-                        accessibilityName: device.name,
-                        onToggle: onToggle
-                    )
-                    #else
-                    Toggle("", isOn: Binding(get: { device.isOn }, set: { _ in onToggle() }))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .disabled(!device.enabled)
-                        .accessibilityLabel("\(device.name) power")
-                    #endif
+                    controls
                 }
             }
 
@@ -294,13 +346,63 @@ private struct DeviceRow: View {
         }
     }
 
+    // Per-kind controls: a gate gets Open/Close (and Stop when the motor takes one), a lock gets
+    // Lock/Unlock, a momentary device gets a single Press, everything else keeps the switch.
+    @ViewBuilder
+    private var controls: some View {
+        if device.isMomentary {
+            Button("Press") { onAction("press") }
+                .buttonStyle(.borderedProminent)
+                .disabled(!device.enabled)
+                .accessibilityLabel("Press \(device.name)")
+        } else if device.isCoverLike {
+            HStack(spacing: 8) {
+                Button("Open") { onAction("open") }.buttonStyle(.bordered)
+                if device.hasStop {
+                    Button("Stop") { onAction("stop") }.buttonStyle(.bordered)
+                }
+                Button("Close") { onAction("close") }.buttonStyle(.bordered)
+            }
+            .disabled(!device.enabled)
+        } else if device.isLock {
+            HStack(spacing: 8) {
+                Button("Unlock") { onAction("unlock") }.buttonStyle(.bordered)
+                Button("Lock") { onAction("lock") }.buttonStyle(.bordered)
+            }
+            .disabled(!device.enabled)
+        } else {
+            #if os(macOS)
+            SlidingPowerSwitch(
+                isOn: device.isOn,
+                isEnabled: device.enabled,
+                accessibilityName: device.name,
+                onToggle: onToggle
+            )
+            #else
+            Toggle("", isOn: Binding(get: { device.isOn }, set: { _ in onToggle() }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(!device.enabled)
+                .accessibilityLabel("\(device.name) power")
+            #endif
+        }
+    }
+
     private var statusText: String {
         if !device.enabled { return "Disabled" }
         if !device.available { return "Unavailable" }
         if !device.commandable { return "Sensor" }
+        // A pulse device has no on/off to report - reachable is the whole story.
+        if device.isMomentary { return "Ready" }
         switch device.power {
-        case "on": return device.supportsBrightness && device.brightness != nil ? "On · \(device.brightness!)%" : "On"
-        case "off": return "Off"
+        case "on":
+            if device.isCoverLike { return "Open" }
+            if device.isLock { return "Locked" }
+            return device.supportsBrightness && device.brightness != nil ? "On · \(device.brightness!)%" : "On"
+        case "off":
+            if device.isCoverLike { return "Closed" }
+            if device.isLock { return "Unlocked" }
+            return "Off"
         default: return "State unknown"
         }
     }

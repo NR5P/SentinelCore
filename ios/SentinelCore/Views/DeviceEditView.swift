@@ -25,7 +25,28 @@ struct DeviceEditView: View {
 
     private var isNew: Bool { device == nil }
 
-    private var kinds: [String] { ["light", "switch", "outlet", "fan", "cover", "lock", "sensor"] }
+    private var kinds: [String] { ["light", "switch", "outlet", "fan", "cover", "gate", "garage", "lock", "button", "sensor"] }
+
+    // Kind-flavoured wording so a gate's form says Open/Close and a lock's says Lock/Unlock -
+    // the payloads land in the same PayloadOn/PayloadOff either way.
+    private var isCoverLike: Bool { ["cover", "gate", "garage"].contains(input.kind) }
+    private var isButton: Bool { input.kind == "button" }
+    private var isMomentary: Bool { isButton || input.momentary }
+    private var onLabel: String {
+        if isCoverLike { return "Payload for Open" }
+        if input.kind == "lock" { return "Payload for Lock" }
+        if isMomentary { return "Payload for Press" }
+        return "Payload for ON"
+    }
+    private var offLabel: String {
+        if isCoverLike { return "Payload for Close" }
+        if input.kind == "lock" { return "Payload for Unlock" }
+        return "Payload for OFF"
+    }
+    // Brightness only makes sense for things that can hold a level.
+    private var supportsBrightnessAtAll: Bool {
+        !isMomentary && ["light", "switch", "outlet", "fan"].contains(input.kind)
+    }
 
     var body: some View {
         Form {
@@ -46,6 +67,14 @@ struct DeviceEditView: View {
                     }
                 }
                 Toggle("Enabled", isOn: $input.enabled)
+                if !isButton {
+                    Toggle("Momentary (press only)", isOn: $input.momentary)
+                }
+                if isMomentary {
+                    Text("A momentary device is a pulse: one press publishes the Press payload and nothing more is expected back - a gate relay wired to pulse, a garage remote, a doorbell.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {
@@ -59,6 +88,16 @@ struct DeviceEditView: View {
                 Text("The topic this device takes commands on, e.g. cmnd/kitchen/POWER or zigbee2mqtt/kitchen/set, and the one it reports its state on. No + or # wildcards.")
             }
 
+            if isCoverLike && !isMomentary {
+                Section {
+                    TextField("Payload for Stop (optional)", text: $input.payloadStop)
+                        .textFieldStyleForTopic()
+                } footer: {
+                    Text("Some motors take a third command to halt mid-travel - STOP for a Home Assistant cover. Leave blank if this one doesn't, and no Stop button is shown.")
+                }
+            }
+
+            if supportsBrightnessAtAll {
             Section("Brightness") {
                 Toggle("Supports brightness", isOn: $input.supportsBrightness)
                 if input.supportsBrightness {
@@ -72,6 +111,7 @@ struct DeviceEditView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            }
 
             Section(isExpanded: $showAdvanced) {
                 Picker("Payload Schema", selection: $input.schema) {
@@ -84,8 +124,10 @@ struct DeviceEditView: View {
                 }
                 TextField("Availability Topic", text: $input.availabilityTopic)
                     .textFieldStyleForTopic()
-                TextField("Payload for ON", text: $input.payloadOn).textFieldStyleForTopic()
-                TextField("Payload for OFF", text: $input.payloadOff).textFieldStyleForTopic()
+                TextField(onLabel, text: $input.payloadOn).textFieldStyleForTopic()
+                if !isMomentary {
+                    TextField(offLabel, text: $input.payloadOff).textFieldStyleForTopic()
+                }
                 TextField("Payload for online", text: $input.payloadAvailable).textFieldStyleForTopic()
                 TextField("Payload for offline", text: $input.payloadNotAvailable).textFieldStyleForTopic()
                 Toggle("Optimistic", isOn: $input.optimistic)
@@ -126,11 +168,16 @@ struct DeviceEditView: View {
         defer { isSaving = false }
         errors = []
 
+        // Brightness left switched on from an earlier kind choice would be rejected server-side
+        // for a momentary device - clear it rather than surface a confusing error.
+        var toSave = input
+        if isMomentary { toSave.supportsBrightness = false }
+
         do {
             if let device {
-                _ = try await model.client.updateDevice(id: device.id, input)
+                _ = try await model.client.updateDevice(id: device.id, toSave)
             } else {
-                _ = try await model.client.createDevice(input)
+                _ = try await model.client.createDevice(toSave)
             }
             onSaved()
             dismiss()

@@ -33,7 +33,7 @@ import com.sentinelcore.android.ui.theme.SentinelRed
 import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlinx.coroutines.launch
 
-private val DEVICE_KINDS = listOf("light", "switch", "outlet", "fan", "cover", "lock", "sensor")
+private val DEVICE_KINDS = listOf("light", "switch", "outlet", "fan", "cover", "gate", "garage", "lock", "button", "sensor")
 
 // Add or edit one Device Hub device. The advanced payload fields are behind a toggle because
 // discovery fills them in correctly for the overwhelming majority of devices - someone typing a
@@ -98,6 +98,24 @@ fun DeviceEditScreen(
 
             SwitchRow("Enabled", input.enabled) { input = input.copy(enabled = it) }
 
+            // Kind-flavoured wording, mirroring the server: cover/gate/garage speak open/close,
+            // lock speaks lock/unlock, and a momentary device is one stateless press.
+            val isCoverLike = input.kind in listOf("cover", "gate", "garage")
+            val isButton = input.kind == "button"
+            val isMomentary = isButton || input.momentary
+
+            if (!isButton) {
+                SwitchRow("Momentary (press only)", input.momentary) { input = input.copy(momentary = it) }
+            }
+            if (isMomentary) {
+                Text(
+                    "A momentary device is a pulse: one press publishes the Press payload and nothing " +
+                        "more is expected back - a gate relay wired to pulse, a garage remote, a doorbell.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SentinelTextDim,
+                )
+            }
+
             TopicField("Command Topic", input.commandTopic) { input = input.copy(commandTopic = it) }
             TopicField("State Topic", input.stateTopic) { input = input.copy(stateTopic = it) }
             Text(
@@ -107,10 +125,25 @@ fun DeviceEditScreen(
                 color = SentinelTextDim,
             )
 
+            if (isCoverLike && !isMomentary) {
+                TopicField("Payload for Stop (optional)", input.payloadStop) {
+                    input = input.copy(payloadStop = it)
+                }
+                Text(
+                    "Some motors take a third command to halt mid-travel - STOP for a Home Assistant " +
+                        "cover. Leave blank if this one doesn't, and no Stop button is shown.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SentinelTextDim,
+                )
+            }
+
+            val supportsBrightnessAtAll = !isMomentary && input.kind in listOf("light", "switch", "outlet", "fan")
+            if (supportsBrightnessAtAll) {
             SwitchRow("Supports brightness", input.supportsBrightness) {
                 input = input.copy(supportsBrightness = it)
             }
-            if (input.supportsBrightness) {
+            }
+            if (supportsBrightnessAtAll && input.supportsBrightness) {
                 TopicField("Brightness Command Topic", input.brightnessCommandTopic) {
                     input = input.copy(brightnessCommandTopic = it)
                 }
@@ -158,8 +191,21 @@ fun DeviceEditScreen(
                 TopicField("Availability Topic", input.availabilityTopic) {
                     input = input.copy(availabilityTopic = it)
                 }
-                TopicField("Payload for ON", input.payloadOn) { input = input.copy(payloadOn = it) }
-                TopicField("Payload for OFF", input.payloadOff) { input = input.copy(payloadOff = it) }
+                val onLabel = when {
+                    isCoverLike -> "Payload for Open"
+                    input.kind == "lock" -> "Payload for Lock"
+                    isMomentary -> "Payload for Press"
+                    else -> "Payload for ON"
+                }
+                val offLabel = when {
+                    isCoverLike -> "Payload for Close"
+                    input.kind == "lock" -> "Payload for Unlock"
+                    else -> "Payload for OFF"
+                }
+                TopicField(onLabel, input.payloadOn) { input = input.copy(payloadOn = it) }
+                if (!isMomentary) {
+                    TopicField(offLabel, input.payloadOff) { input = input.copy(payloadOff = it) }
+                }
                 TopicField("Payload for online", input.payloadAvailable) {
                     input = input.copy(payloadAvailable = it)
                 }
@@ -181,7 +227,14 @@ fun DeviceEditScreen(
                         isSaving = true
                         errorMessage = null
                         try {
-                            if (deviceId == null) model.createDevice(input) else model.updateDevice(deviceId, input)
+                            // Brightness left switched on from an earlier kind choice would be
+                            // rejected server-side for a momentary device.
+                            val toSave = if (input.kind == "button" || input.momentary) {
+                                input.copy(supportsBrightness = false)
+                            } else {
+                                input
+                            }
+                            if (deviceId == null) model.createDevice(toSave) else model.updateDevice(deviceId, toSave)
                             onSaved()
                         } catch (error: Exception) {
                             errorMessage = error.message ?: "Could not save this device."

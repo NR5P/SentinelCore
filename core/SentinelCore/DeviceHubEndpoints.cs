@@ -13,6 +13,11 @@ public sealed class HubDeviceDto
     public string AvailabilityTopic { get; set; } = string.Empty;
     public string PayloadOn { get; set; } = "ON";
     public string PayloadOff { get; set; } = "OFF";
+    // Optional third command for cover-like devices (cover/gate/garage) that can halt
+    // mid-travel. Empty means no Stop control is offered.
+    public string PayloadStop { get; set; } = string.Empty;
+    // A pulse device - one press publishes PayloadOn and nothing more is expected back.
+    public bool Momentary { get; set; }
     public string PayloadAvailable { get; set; } = "online";
     public string PayloadNotAvailable { get; set; } = "offline";
     public string Schema { get; set; } = DeviceTopics.SchemaRaw;
@@ -27,11 +32,19 @@ public sealed class HubDeviceDto
 
 public sealed class DeviceCommandDto
 {
-    // "on", "off", or "toggle". Optional - a brightness-only request leaves the switch alone.
+    // "on", "off", or "toggle", plus the kind-flavoured aliases every client speaks: "open",
+    // "press", "lock" mean on; "close" and "unlock" mean off; "stop" publishes PayloadStop.
+    // Optional - a brightness-only request leaves the switch alone.
     public string? Action { get; set; }
 
     // 0-100 regardless of what the device's own scale is; DeviceTopics does the conversion.
     public int? Brightness { get; set; }
+}
+
+// PUT /api/devices/order - the complete arrangement, first device first.
+public sealed class DeviceOrderDto
+{
+    public List<Guid> DeviceIds { get; set; } = [];
 }
 
 // /api/devices is protected the same way as every other /api/* route in this project - see
@@ -108,11 +121,27 @@ public static class DeviceHubEndpoints
             var existing = await store.GetAsync(id, ct);
             if (existing is null) return Results.NotFound();
 
-            var updated = await store.UpdateAsync(id, ToDevice(dto, id, existing.CreatedAt, DateTimeOffset.UtcNow), ct);
+            // The DTO doesn't carry SortOrder - editing a device must not throw away where the
+            // user dragged it.
+            var updated = await store.UpdateAsync(
+                id, ToDevice(dto, id, existing.CreatedAt, DateTimeOffset.UtcNow) with { SortOrder = existing.SortOrder }, ct);
             if (updated is null) return Results.NotFound();
 
             await bus.ResubscribeAsync(ct);
             return Results.Ok(ToResponse(updated, bus));
+        });
+
+        // The complete arrangement in one PUT, mirroring /api/live-order for cameras. Ids that
+        // don't exist are ignored by the UPDATE; devices left out keep their old position values.
+        group.MapPut("/order", async (DeviceOrderDto dto, IDeviceStore store, MqttDeviceBus bus, CancellationToken ct) =>
+        {
+            if (dto.DeviceIds.Count == 0)
+                return Results.BadRequest(new { error = "deviceIds must name at least one device." });
+            if (dto.DeviceIds.Count != dto.DeviceIds.Distinct().Count())
+                return Results.BadRequest(new { error = "deviceIds must not repeat a device." });
+
+            await store.UpdateOrderAsync(dto.DeviceIds, ct);
+            return Results.Ok((await store.GetAllAsync(ct)).Select(device => ToResponse(device, bus)));
         });
 
         group.MapDelete("/{id:guid}", async (Guid id, IDeviceStore store, MqttDeviceBus bus, CancellationToken ct) =>
@@ -130,16 +159,42 @@ public static class DeviceHubEndpoints
             if (device is null) return Results.NotFound();
             if (!device.Enabled) return Results.BadRequest(new { error = "This device is turned off in the Device Hub." });
 
-            DevicePower? power = dto.Action?.Trim().ToLowerInvariant() switch
+            var action = dto.Action?.Trim().ToLowerInvariant();
+
+            // Stop is its own path: it publishes PayloadStop rather than a power state, and only
+            // exists for devices that were given one.
+            if (action == "stop")
             {
-                "on" => DevicePower.On,
-                "off" => DevicePower.Off,
+                var stopResult = await bus.SendStopAsync(device, ct);
+                if (!stopResult.Published)
+                    return Results.Json(new { sent = false, error = stopResult.Error }, statusCode: 502);
+                var stopState = bus.GetState(device);
+                return Results.Ok(new
+                {
+                    sent = true,
+                    acknowledged = stopResult.Acknowledged,
+                    power = stopState.Power.ToString().ToLowerInvariant(),
+                    brightness = stopState.BrightnessPercent
+                });
+            }
+
+            // The kind-flavoured aliases all collapse onto the same two payloads - a gate's
+            // "open" is its PayloadOn, a lock's "unlock" is its PayloadOff - so any client can
+            // speak in the device's own vocabulary without the wire format growing.
+            DevicePower? power = action switch
+            {
+                "on" or "open" or "lock" or "press" => DevicePower.On,
+                "off" or "close" or "unlock" => DevicePower.Off,
                 // Toggling is resolved here rather than in DeviceTopics because this is the only
                 // layer that knows what the device is currently doing. An unknown state toggles
-                // to on, which is what someone pressing a light switch expects.
-                "toggle" => bus.GetState(device).Power == DevicePower.On ? DevicePower.Off : DevicePower.On,
+                // to on, which is what someone pressing a light switch expects. A momentary
+                // device has no state to toggle, so toggle means press.
+                "toggle" => DeviceTopics.IsMomentary(device) || bus.GetState(device).Power != DevicePower.On
+                    ? DevicePower.On
+                    : DevicePower.Off,
                 null or "" => null,
-                _ => throw new BadHttpRequestException("Action must be 'on', 'off', or 'toggle'.")
+                _ => throw new BadHttpRequestException(
+                    "Action must be one of: on, off, toggle, open, close, stop, press, lock, unlock.")
             };
 
             if (dto.Brightness is int brightness && brightness is < 0 or > 100)
@@ -199,6 +254,10 @@ public static class DeviceHubEndpoints
             device.AvailabilityTopic,
             device.PayloadOn,
             device.PayloadOff,
+            device.PayloadStop,
+            // The stored flag ORed with the kind rule, so clients render a button kind as
+            // momentary without re-implementing IsMomentary.
+            Momentary = DeviceTopics.IsMomentary(device),
             device.PayloadAvailable,
             device.PayloadNotAvailable,
             device.Schema,
@@ -209,6 +268,7 @@ public static class DeviceHubEndpoints
             device.BrightnessStateTopic,
             device.BrightnessScale,
             device.DiscoverySource,
+            device.SortOrder,
             device.CreatedAt,
             device.UpdatedAt,
             Power = state.Power.ToString().ToLowerInvariant(),
@@ -230,6 +290,8 @@ public static class DeviceHubEndpoints
         dto.AvailabilityTopic.Trim(),
         string.IsNullOrEmpty(dto.PayloadOn) ? "ON" : dto.PayloadOn,
         string.IsNullOrEmpty(dto.PayloadOff) ? "OFF" : dto.PayloadOff,
+        dto.PayloadStop.Trim(),
+        dto.Momentary,
         dto.PayloadAvailable,
         dto.PayloadNotAvailable,
         DeviceTopics.IsKnownSchema(dto.Schema) ? dto.Schema.Trim().ToLowerInvariant() : DeviceTopics.SchemaRaw,
@@ -240,6 +302,7 @@ public static class DeviceHubEndpoints
         dto.BrightnessStateTopic.Trim(),
         dto.BrightnessScale <= 0 ? 255 : dto.BrightnessScale,
         string.IsNullOrWhiteSpace(dto.DiscoverySource) ? DeviceTopics.SourceManual : dto.DiscoverySource.Trim(),
+        SortOrder: 0,
         createdAt,
         updatedAt);
 
@@ -273,6 +336,11 @@ public static class DeviceHubEndpoints
             if (!DeviceTopics.IsValidConcreteTopic(topic))
                 errors.Add($"{label} must name a single topic - no '+' or '#' wildcards, and no leading or trailing spaces.");
         }
+
+        // A pulse has no brightness to hold and no meaning for "off" - refusing here beats a
+        // slider that publishes to a gate relay.
+        if ((dto.Momentary || string.Equals(dto.Kind, "button", StringComparison.OrdinalIgnoreCase)) && dto.SupportsBrightness)
+            errors.Add("A momentary (press-only) device cannot support brightness.");
 
         if (dto.SupportsBrightness)
         {

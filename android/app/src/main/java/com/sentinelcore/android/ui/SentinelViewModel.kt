@@ -520,6 +520,23 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         return updated
     }
 
+    // Shown immediately, saved in the background with rollback - a round trip to the server is
+    // no reason to make the dragged card snap back before it moves.
+    fun moveDevice(fromIndex: Int, toIndex: Int) {
+        val current = _state.value.devices.toMutableList()
+        if (fromIndex !in current.indices || toIndex !in current.indices || fromIndex == toIndex) return
+        val previous = _state.value.devices
+        current.add(toIndex, current.removeAt(fromIndex))
+        _state.update { it.copy(devices = current) }
+        viewModelScope.launch {
+            try {
+                repository.saveDeviceOrder(current.map { it.id })
+            } catch (_: Exception) {
+                _state.update { it.copy(devices = previous) }
+            }
+        }
+    }
+
     // Optimistic remove with rollback on failure, matching deleteCamera below.
     suspend fun deleteDevice(device: HubDevice) {
         val previous = _state.value.devices

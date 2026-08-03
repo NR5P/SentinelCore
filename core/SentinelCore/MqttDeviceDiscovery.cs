@@ -19,6 +19,8 @@ public sealed record DeviceCandidate(
     string AvailabilityTopic,
     string PayloadOn,
     string PayloadOff,
+    string PayloadStop,
+    bool Momentary,
     string Schema,
     string StateValueTemplate,
     bool SupportsBrightness,
@@ -244,13 +246,26 @@ public sealed class MqttDeviceDiscovery
         var stateTopic = Expand(ReadString(root, "state_topic", "stat_t"), basePrefix);
         var availabilityTopic = Expand(ReadString(root, "availability_topic", "avty_t"), basePrefix);
 
+        // A cover announcing itself as a gate or garage door gets the kind whose controls
+        // actually match it - that's the whole reason those kinds exist.
+        var deviceClass = ReadString(root, "device_class", "dev_cla")?.ToLowerInvariant();
+        if (kind == "cover")
+        {
+            kind = deviceClass switch
+            {
+                "gate" => "gate",
+                "garage" or "garage_door" => "garage",
+                _ => "cover"
+            };
+        }
+
         // A sensor has no command topic and that's fine; anything else without one can't be
         // controlled, so there's nothing for the Device Hub to offer.
         var commandable = DeviceTopics.IsCommandable(kind);
         if (commandable && string.IsNullOrWhiteSpace(commandTopic)) return null;
         if (!commandable && string.IsNullOrWhiteSpace(stateTopic)) return null;
 
-        var name = ReadString(root, "name", "dev_cla") ?? DeriveNameFromTopic(commandTopic ?? stateTopic ?? topic);
+        var name = ReadString(root, "name") ?? deviceClass ?? DeriveNameFromTopic(commandTopic ?? stateTopic ?? topic);
         var schemaField = ReadString(root, "schema", "schema");
         var isJsonSchema = string.Equals(schemaField, "json", StringComparison.OrdinalIgnoreCase);
 
@@ -261,14 +276,43 @@ public sealed class MqttDeviceDiscovery
             ? string.Equals(kind, "light", StringComparison.Ordinal)
             : !string.IsNullOrWhiteSpace(brightnessCommandTopic);
 
+        // Each component names its two (or three) payloads differently; they all land on the
+        // same On/Off/Stop slots so one command path drives everything. Defaults per the Home
+        // Assistant MQTT documentation for each component.
+        var (payloadOn, payloadOff, payloadStop, momentary) = component.ToLowerInvariant() switch
+        {
+            "cover" => (
+                ReadString(root, "payload_open", "pl_open") ?? "OPEN",
+                ReadString(root, "payload_close", "pl_cls") ?? "CLOSE",
+                ReadString(root, "payload_stop", "pl_stop") ?? "STOP",
+                false),
+            "lock" => (
+                ReadString(root, "payload_lock", "pl_lock") ?? "LOCK",
+                ReadString(root, "payload_unlock", "pl_unlk") ?? "UNLOCK",
+                string.Empty,
+                false),
+            "button" => (
+                ReadString(root, "payload_press", "pl_prs") ?? "PRESS",
+                string.Empty,
+                string.Empty,
+                true),
+            _ => (
+                ReadString(root, "payload_on", "pl_on") ?? "ON",
+                ReadString(root, "payload_off", "pl_off") ?? "OFF",
+                string.Empty,
+                false)
+        };
+
         return new DeviceCandidate(
             SuggestedName: name,
             Kind: kind,
             CommandTopic: commandTopic ?? string.Empty,
             StateTopic: stateTopic ?? string.Empty,
             AvailabilityTopic: availabilityTopic ?? string.Empty,
-            PayloadOn: ReadString(root, "payload_on", "pl_on") ?? "ON",
-            PayloadOff: ReadString(root, "payload_off", "pl_off") ?? "OFF",
+            PayloadOn: payloadOn,
+            PayloadOff: payloadOff,
+            PayloadStop: payloadStop,
+            Momentary: momentary,
             Schema: isJsonSchema ? DeviceTopics.SchemaJson : DeviceTopics.SchemaRaw,
             StateValueTemplate: isJsonSchema ? "state" : string.Empty,
             SupportsBrightness: supportsBrightness,
@@ -364,12 +408,16 @@ public sealed class MqttDeviceDiscovery
 
             candidates.Add(new DeviceCandidate(
                 SuggestedName: name,
-                Kind: isLight ? "light" : "switch",
+                // A light is a light; a plain relay's name is the only hint at what it drives,
+                // so "Front Gate" suggests the gate kind (with its Open/Close wording) up front.
+                Kind: isLight ? "light" : SuggestKindFromName(name, "switch"),
                 CommandTopic: commandTopic,
                 StateTopic: stateBase + command,
                 AvailabilityTopic: telemetryBase + "LWT",
                 PayloadOn: payloadOn,
                 PayloadOff: payloadOff,
+                PayloadStop: string.Empty,
+                Momentary: false,
                 Schema: DeviceTopics.SchemaRaw,
                 StateValueTemplate: string.Empty,
                 SupportsBrightness: lightSubType > 0,
@@ -431,14 +479,19 @@ public sealed class MqttDeviceDiscovery
                 var dimmerStateTopic = topic[..^"POWER".Length] + "Dimmer";
                 var hasDimmer = topics.Contains(dimmerStateTopic);
 
+                var suggestedName = DeriveNameFromTopic(topic);
                 yield return new DeviceCandidate(
-                    SuggestedName: DeriveNameFromTopic(topic),
-                    Kind: hasDimmer ? "light" : "switch",
+                    SuggestedName: suggestedName,
+                    // Same name-based nudge as the Tasmota parser: stat/front_gate/POWER should
+                    // arrive as a gate, not a generic switch.
+                    Kind: hasDimmer ? "light" : SuggestKindFromName(suggestedName, "switch"),
                     CommandTopic: commandTopic,
                     StateTopic: topic,
                     AvailabilityTopic: "tele/" + topic["stat/".Length..^"/POWER".Length] + "/LWT",
                     PayloadOn: "ON",
                     PayloadOff: "OFF",
+                    PayloadStop: string.Empty,
+                    Momentary: false,
                     Schema: DeviceTopics.SchemaRaw,
                     StateValueTemplate: string.Empty,
                     SupportsBrightness: hasDimmer,
@@ -468,6 +521,8 @@ public sealed class MqttDeviceDiscovery
                     AvailabilityTopic: topic + "/availability",
                     PayloadOn: "ON",
                     PayloadOff: "OFF",
+                    PayloadStop: string.Empty,
+                    Momentary: false,
                     Schema: DeviceTopics.SchemaJson,
                     StateValueTemplate: "state",
                     SupportsBrightness: true,
@@ -487,9 +542,26 @@ public sealed class MqttDeviceDiscovery
         "fan" => "fan",
         "cover" => "cover",
         "lock" => "lock",
+        "button" => "button",
         "binary_sensor" or "sensor" => "sensor",
         _ => null
     };
+
+    // The sweep and Tasmota strategies only ever see a relay, so the name is the one clue to
+    // what's actually wired to it. Someone whose topic is cmnd/front_gate/POWER wants controls
+    // that say Open/Close, not On/Off - and this is only a suggestion the user can override.
+    public static string SuggestKindFromName(string name, string fallback)
+    {
+        var lowered = name.ToLowerInvariant();
+        if (lowered.Contains("garage")) return "garage";
+        if (lowered.Contains("gate")) return "gate";
+        if (lowered.Contains("lock")) return "lock";
+        if (lowered.Contains("blind") || lowered.Contains("shade") ||
+            lowered.Contains("curtain") || lowered.Contains("shutter") ||
+            lowered.Contains("awning")) return "cover";
+        if (lowered.Contains("doorbell") || lowered.Contains("buzzer")) return "button";
+        return fallback;
+    }
 
     private static string? Expand(string? topic, string basePrefix)
     {

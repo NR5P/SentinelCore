@@ -74,6 +74,14 @@ public static class DeviceHubProxyEndpoints
             ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, HttpMethod.Put, $"/api/devices/{id}", body, ct))
             .RequireAuthorization("AdminOnly");
 
+        // Rearranging the list is configuration the same way editing a device is - the order is
+        // stored on the devices themselves and shared by every account.
+        app.MapPut("/api/devices/order", (
+            JsonElement body, IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,
+            ILogger<DeviceHubProxyLog> logger, CancellationToken ct) =>
+            ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, HttpMethod.Put, "/api/devices/order", body, ct))
+            .RequireAuthorization("AdminOnly");
+
         app.MapDelete("/api/devices/{id:guid}", (
             Guid id, IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,
             ILogger<DeviceHubProxyLog> logger, CancellationToken ct) =>

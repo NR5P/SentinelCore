@@ -1290,6 +1290,16 @@ main {
   box-shadow: none;
 }
 
+/* Mid-drag ghost while rearranging the grid; cursor says the tiles are grabbable at all. */
+.device-tile {
+  cursor: grab;
+}
+
+.device-tile-dragging {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
 .device-tile-unavailable {
   opacity: 0.55;
 }

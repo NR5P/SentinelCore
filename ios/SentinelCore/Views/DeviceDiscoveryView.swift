@@ -68,6 +68,7 @@ struct DeviceDiscoveryView: View {
                     dismiss()
                 }
             }
+            .deviceHubSheetFrame()
         }
     }
 

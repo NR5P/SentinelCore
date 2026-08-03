@@ -331,6 +331,16 @@ final class SentinelClient {
         )
     }
 
+    // The whole arrangement in one PUT, like saveLiveOrder for camera tiles. The response is the
+    // reordered device list, which callers can ignore - the local move already happened.
+    func saveDeviceOrder(_ deviceIds: [UUID]) async throws {
+        let _: [HubDevice] = try await send(
+            "/api/devices/order",
+            method: "PUT",
+            body: DeviceOrderInput(deviceIds: deviceIds)
+        )
+    }
+
     func startDeviceScan() async throws -> DeviceScanStartResult {
         try await send("/api/devices/discover", method: "POST", body: Optional<String>.none)
     }

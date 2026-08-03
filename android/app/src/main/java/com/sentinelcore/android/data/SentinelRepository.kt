@@ -202,6 +202,16 @@ class SentinelRepository(
         )
     }
 
+    // The whole arrangement in one PUT, mirroring saveLiveOrder for camera tiles.
+    suspend fun saveDeviceOrder(deviceIds: List<String>) = withContext(Dispatchers.IO) {
+        request(
+            "/api/devices/order",
+            method = "PUT",
+            body = JSONObject().put("deviceIds", JSONArray(deviceIds)).toString(),
+        )
+        Unit
+    }
+
     suspend fun deleteDevice(id: String) = withContext(Dispatchers.IO) {
         request("/api/devices/${queryValue(id)}", method = "DELETE")
         Unit
@@ -972,6 +982,8 @@ class SentinelRepository(
             availabilityTopic = json.optString("availabilityTopic", ""),
             payloadOn = json.optString("payloadOn", "ON"),
             payloadOff = json.optString("payloadOff", "OFF"),
+            payloadStop = json.optString("payloadStop", ""),
+            momentary = json.optBoolean("momentary"),
             payloadAvailable = json.optString("payloadAvailable", "online"),
             payloadNotAvailable = json.optString("payloadNotAvailable", "offline"),
             schema = json.optString("schema", "raw"),
@@ -997,6 +1009,8 @@ class SentinelRepository(
             availabilityTopic = json.optString("availabilityTopic", ""),
             payloadOn = json.optString("payloadOn", "ON"),
             payloadOff = json.optString("payloadOff", "OFF"),
+            payloadStop = json.optString("payloadStop", ""),
+            momentary = json.optBoolean("momentary"),
             schema = json.optString("schema", "raw"),
             stateValueTemplate = json.optString("stateValueTemplate", ""),
             supportsBrightness = json.optBoolean("supportsBrightness"),
@@ -1018,6 +1032,8 @@ class SentinelRepository(
             .put("availabilityTopic", availabilityTopic)
             .put("payloadOn", payloadOn)
             .put("payloadOff", payloadOff)
+            .put("payloadStop", payloadStop)
+            .put("momentary", momentary)
             .put("payloadAvailable", payloadAvailable)
             .put("payloadNotAvailable", payloadNotAvailable)
             .put("schema", schema)

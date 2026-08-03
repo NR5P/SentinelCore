@@ -9,12 +9,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Fence
+import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Power
@@ -22,8 +26,10 @@ import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Toys
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WindPower
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -40,7 +46,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -136,12 +145,59 @@ fun DeviceHubScreen(
                 Modifier.fillMaxSize(),
             )
         } else {
+            // Long-press-and-drag to reorder (admins only - the order is saved server-side).
+            // Incremental swap: once the dragged card travels past most of a neighbour, the two
+            // trade places and the accumulated offset resets, so the card follows the finger.
+            val listState = rememberLazyListState()
+            var draggingId by remember { mutableStateOf<String?>(null) }
+            var dragOffset by remember { mutableStateOf(0f) }
+
             LazyColumn(
+                state = listState,
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(state.devices, key = { it.id }) { device ->
+                itemsIndexed(state.devices, key = { _, device -> device.id }) { _, device ->
+                    val isDragging = draggingId == device.id
+                    val dragModifier = Modifier
+                        .zIndex(if (isDragging) 1f else 0f)
+                        .graphicsLayer { translationY = if (isDragging) dragOffset else 0f }
+                        .pointerInput(device.id, isAdmin) {
+                            if (!isAdmin) return@pointerInput
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggingId = device.id
+                                    dragOffset = 0f
+                                },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragOffset += amount.y
+                                    val current = state.devices.indexOfFirst { it.id == device.id }
+                                    if (current < 0) return@detectDragGesturesAfterLongPress
+                                    val itemHeight = listState.layoutInfo.visibleItemsInfo
+                                        .firstOrNull { it.key == device.id }?.size ?: return@detectDragGesturesAfterLongPress
+                                    val step = itemHeight * 0.66f
+                                    if (dragOffset > step && current < state.devices.lastIndex) {
+                                        model.moveDevice(current, current + 1)
+                                        dragOffset -= itemHeight
+                                    } else if (dragOffset < -step && current > 0) {
+                                        model.moveDevice(current, current - 1)
+                                        dragOffset += itemHeight
+                                    }
+                                },
+                                onDragEnd = {
+                                    draggingId = null
+                                    dragOffset = 0f
+                                },
+                                onDragCancel = {
+                                    draggingId = null
+                                    dragOffset = 0f
+                                },
+                            )
+                        }
+
                     DeviceCard(
+                        modifier = dragModifier,
                         device = device,
                         isBusy = busyDeviceId == device.id,
                         isAdmin = isAdmin,
@@ -152,6 +208,21 @@ fun DeviceHubScreen(
                                     errorMessage = model.sendDeviceCommand(device.id, action = "toggle")
                                 } catch (error: Exception) {
                                     errorMessage = error.message ?: "Could not switch ${device.name}."
+                                } finally {
+                                    busyDeviceId = null
+                                }
+                            }
+                        },
+                        onAction = { action ->
+                            scope.launch {
+                                busyDeviceId = device.id
+                                try {
+                                    val warning = model.sendDeviceCommand(device.id, action = action)
+                                    // A momentary press has no echoed state to wait for, so
+                                    // "unconfirmed" is its normal successful outcome.
+                                    errorMessage = if (device.isMomentary) null else warning
+                                } catch (error: Exception) {
+                                    errorMessage = error.message ?: "Could not command ${device.name}."
                                 } finally {
                                     busyDeviceId = null
                                 }
@@ -188,10 +259,12 @@ fun DeviceHubScreen(
 
 @Composable
 private fun DeviceCard(
+    modifier: Modifier = Modifier,
     device: HubDevice,
     isBusy: Boolean,
     isAdmin: Boolean,
     onToggle: () -> Unit,
+    onAction: (String) -> Unit,
     onBrightness: (Int) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -205,7 +278,7 @@ private fun DeviceCard(
         if (!isDragging) device.brightness?.let { sliderValue = it.toFloat() }
     }
 
-    Card(Modifier.fillMaxWidth()) {
+    Card(modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -233,13 +306,32 @@ private fun DeviceCard(
                 }
                 if (isBusy) {
                     CircularProgressIndicator(Modifier.size(24.dp), color = SentinelGreen)
-                } else if (device.commandable) {
+                } else if (device.commandable && !device.isMomentary && !device.isCoverLike && !device.isLock) {
                     Switch(
                         checked = device.isOn,
                         onCheckedChange = { onToggle() },
                         enabled = device.enabled,
                         modifier = Modifier.semantics { contentDescription = "${device.name} power" },
                     )
+                }
+            }
+
+            // Kind-flavoured controls: a gate gets Open/Close (and Stop when the motor takes
+            // one), a lock gets Lock/Unlock, a momentary device gets a single Press.
+            if (!isBusy && device.commandable && (device.isMomentary || device.isCoverLike || device.isLock)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (device.isMomentary) {
+                        Button(onClick = { onAction("press") }, enabled = device.enabled) { Text("Press") }
+                    } else if (device.isCoverLike) {
+                        OutlinedButton(onClick = { onAction("open") }, enabled = device.enabled) { Text("Open") }
+                        if (device.hasStop) {
+                            OutlinedButton(onClick = { onAction("stop") }, enabled = device.enabled) { Text("Stop") }
+                        }
+                        OutlinedButton(onClick = { onAction("close") }, enabled = device.enabled) { Text("Close") }
+                    } else {
+                        OutlinedButton(onClick = { onAction("unlock") }, enabled = device.enabled) { Text("Unlock") }
+                        OutlinedButton(onClick = { onAction("lock") }, enabled = device.enabled) { Text("Lock") }
+                    }
                 }
             }
 
@@ -287,7 +379,9 @@ private fun HubDevice.kindIcon(): ImageVector = when (kind) {
     "switch", "outlet" -> Icons.Default.Power
     "fan" -> Icons.Default.WindPower
     "cover" -> Icons.Default.Toys
+    "gate", "garage" -> Icons.Default.Fence
     "lock" -> Icons.Default.Lock
+    "button" -> Icons.Default.RadioButtonChecked
     else -> Icons.Default.Sensors
 }
 
@@ -295,6 +389,12 @@ private fun HubDevice.statusText(): String = when {
     !enabled -> "Disabled"
     !available -> "Unavailable"
     !commandable -> "Sensor"
+    // A pulse device has no on/off to report - reachable is the whole story.
+    isMomentary -> "Ready"
+    power == "on" && isCoverLike -> "Open"
+    power == "off" && isCoverLike -> "Closed"
+    power == "on" && isLock -> "Locked"
+    power == "off" && isLock -> "Unlocked"
     power == "on" && supportsBrightness && brightness != null -> "On · $brightness%"
     power == "on" -> "On"
     power == "off" -> "Off"

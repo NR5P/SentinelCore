@@ -278,6 +278,12 @@ data class HubDevice(
     val availabilityTopic: String,
     val payloadOn: String,
     val payloadOff: String,
+    // Optional third command for cover-like devices whose motor can halt mid-travel. Empty
+    // means no Stop control is offered.
+    val payloadStop: String = "",
+    // A pulse device: one press publishes payloadOn and nothing more is expected back - a gate
+    // relay wired to pulse, a garage remote, a doorbell. The "button" kind is always momentary.
+    val momentary: Boolean = false,
     val payloadAvailable: String,
     val payloadNotAvailable: String,
     val schema: String,
@@ -288,6 +294,7 @@ data class HubDevice(
     val brightnessStateTopic: String,
     val brightnessScale: Int,
     val discoverySource: String,
+    val sortOrder: Int = 0,
     // "on", "off", or "unknown" - a String rather than a Boolean because "never heard from this
     // device" is a genuinely different state from "off", and the UI says so.
     val power: String,
@@ -296,6 +303,12 @@ data class HubDevice(
     val commandable: Boolean,
 ) {
     val isOn: Boolean get() = power == "on"
+
+    // Kind-flavoured behaviour, mirroring DeviceTopics on the server.
+    val isMomentary: Boolean get() = momentary || kind == "button"
+    val isCoverLike: Boolean get() = kind == "cover" || kind == "gate" || kind == "garage"
+    val isLock: Boolean get() = kind == "lock"
+    val hasStop: Boolean get() = payloadStop.isNotBlank()
 }
 
 data class HubDeviceState(
@@ -326,6 +339,8 @@ data class DeviceCandidate(
     val availabilityTopic: String,
     val payloadOn: String,
     val payloadOff: String,
+    val payloadStop: String = "",
+    val momentary: Boolean = false,
     val schema: String,
     val stateValueTemplate: String,
     val supportsBrightness: Boolean,
@@ -356,6 +371,8 @@ data class HubDeviceInput(
     val availabilityTopic: String = "",
     val payloadOn: String = "ON",
     val payloadOff: String = "OFF",
+    val payloadStop: String = "",
+    val momentary: Boolean = false,
     val payloadAvailable: String = "online",
     val payloadNotAvailable: String = "offline",
     val schema: String = "raw",
@@ -378,6 +395,8 @@ data class HubDeviceInput(
             availabilityTopic = device.availabilityTopic,
             payloadOn = device.payloadOn,
             payloadOff = device.payloadOff,
+            payloadStop = device.payloadStop,
+            momentary = device.momentary,
             payloadAvailable = device.payloadAvailable,
             payloadNotAvailable = device.payloadNotAvailable,
             schema = device.schema,
@@ -398,6 +417,8 @@ data class HubDeviceInput(
             availabilityTopic = candidate.availabilityTopic,
             payloadOn = candidate.payloadOn,
             payloadOff = candidate.payloadOff,
+            payloadStop = candidate.payloadStop,
+            momentary = candidate.momentary,
             schema = candidate.schema,
             // A JSON device found by discovery always keys its state off "state"; without this
             // the server rejects the save for a missing template.
