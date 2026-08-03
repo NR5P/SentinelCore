@@ -82,13 +82,23 @@ public sealed class TriggerZoneMonitor(
         {
             if (_sessions.TryGetValue(config.CameraId, out var existing))
             {
-                if (ConfigsEquivalent(existing.Config, config))
+                // A dead ffmpeg means no detection, no fresh _latest.jpg and no clip segments for
+                // this camera until something restarts it - and nothing else does: this reconcile
+                // pass used to only restart on config changes, so a camera dropping the connection
+                // once (reboot, encoder settings applied, network blip) silently disabled its
+                // trigger zones until the whole service was restarted.
+                if (ConfigsEquivalent(existing.Config, config) && !existing.Process.HasExited)
                 {
                     // Nothing to restart, but the rolling buffer still needs trimming back to the
                     // pre-roll window or it would grow without bound.
                     if (config.RecordClips) clips.PruneBuffer(config.CameraId, config.ClipPreSeconds);
                     continue;
                 }
+
+                if (existing.Process.HasExited)
+                    logger.LogWarning(
+                        "Trigger zone detection ffmpeg for camera {CameraId} had exited; starting a fresh session.",
+                        config.CameraId);
 
                 _sessions.TryRemove(config.CameraId, out _);
                 StopSession(existing);
@@ -129,9 +139,12 @@ public sealed class TriggerZoneMonitor(
         // it's still a single lightweight JPEG encode, negligible next to the video decode
         // already happening above, but there's no reason to pay it for cameras that can't use it.
         var snapshotFps = multiFrame.Enabled && config.SendToAlerts ? 3 : 1;
-        var args = new List<string>
-        {
-            "-rtsp_transport", "tcp",
+        var args = new List<string>();
+        // RTSP-only option: passing it ahead of an http:// source (a Reolink's FLV stream, say)
+        // makes ffmpeg exit immediately with "Option not found" - same guard as HlsStreamManager.
+        if (HlsStreamManager.IsRtspUrl(sourceUrl))
+            args.AddRange(["-rtsp_transport", "tcp"]);
+        args.AddRange([
             "-i", sourceUrl,
             "-map", "0:v:0",
             "-an",
@@ -142,7 +155,7 @@ public sealed class TriggerZoneMonitor(
             "-vf", $"fps={snapshotFps}",
             "-update", "1",
             "-y", LatestSnapshotPath(camera.Id)
-        };
+        ]);
 
         if (config.RecordClips)
         {

@@ -324,7 +324,10 @@ public sealed class HlsStreamManager : IDisposable
         return args;
     }
 
-    private static bool IsRtspUrl(string url) =>
+    // Public because every ffmpeg launch site that might feed a camera URL needs the same guard:
+    // -rtsp_transport is an RTSP-demuxer-only option, and ffmpeg refuses to start at all if it's
+    // passed ahead of an http:// input (e.g. a Reolink's FLV stream - see TriggerZoneMonitor).
+    public static bool IsRtspUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme.Equals("rtsp", StringComparison.OrdinalIgnoreCase);
 
     public static string BuildAuthenticatedUrl(Camera camera)
