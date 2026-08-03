@@ -156,6 +156,56 @@ public static class CameraEndpoints
             }
         }).RequireAuthorization();
 
+        // MSE live view: the dashboard opens a WebSocket here and this server bridges it to
+        // go2rtc's MSE endpoint on loopback (go2rtc's own API carries no auth, so it is never
+        // exposed - this endpoint authenticates and then pumps bytes). The browser sends one
+        // JSON message naming the codecs it supports; go2rtc answers with the chosen MIME type
+        // and then streams fMP4 segments as binary messages.
+        //
+        // This exists alongside WebRTC because they fail differently: WebRTC needs its own
+        // media port reachable from the viewer (blocked by tunnels, VPNs and strict firewalls),
+        // while MSE rides this very HTTP connection - if the dashboard loads, MSE streams. The
+        // dashboard tries WebRTC first (lower latency), then this, then HLS.
+        app.Map("/api/cameras/{id:guid}/mse", async (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+        {
+            if (!http.WebSockets.IsWebSocketRequest)
+                return Results.BadRequest(new { errors = new[] { "Expected a WebSocket request." } });
+
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            System.Net.WebSockets.ClientWebSocket upstream;
+            try
+            {
+                upstream = await webrtc.ConnectMseAsync(camera, ct);
+            }
+            catch (Go2RtcUnavailableException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: 503);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or HttpRequestException or System.Net.WebSockets.WebSocketException)
+            {
+                return Results.Problem(ex.Message, statusCode: 502);
+            }
+
+            using (upstream)
+            {
+                using var browser = await http.WebSockets.AcceptWebSocketAsync();
+                // Both directions run until either side closes; the other is then closed too.
+                // Browser->go2rtc carries only the small codec-negotiation JSON, go2rtc->browser
+                // carries the media, but the pump is symmetric because go2rtc may also send JSON
+                // (codec answer) and a future protocol message shouldn't break this bridge.
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var toBrowser = PumpWebSocketAsync(upstream, browser, linked.Token);
+                var toUpstream = PumpWebSocketAsync(browser, upstream, linked.Token);
+                await Task.WhenAny(toBrowser, toUpstream);
+                linked.Cancel();
+                try { await Task.WhenAll(toBrowser, toUpstream); } catch { /* one side went away - expected */ }
+            }
+
+            return Results.Empty;
+        }).RequireAuthorization();
+
         // Instant poster frame for a camera tile: if there's a warm stream, this is just a file
         // read of the JPEG ffmpeg has been overwriting in the background (see
         // HlsStreamManager.GetThumbnailPath). Only a cold camera nobody has looked at recently
@@ -173,6 +223,36 @@ public static class CameraEndpoints
                 ? Results.Problem("Could not grab a frame from this camera.", statusCode: 502)
                 : Results.File(bytes, "image/jpeg");
         }).RequireAuthorization();
+    }
+
+    // One direction of the MSE bridge: copy messages (type and message boundaries preserved)
+    // until the source closes or errors. 64KB fits go2rtc's fMP4 segments comfortably; larger
+    // messages arrive in parts and are forwarded part by part with EndOfMessage carried through.
+    private static async Task PumpWebSocketAsync(
+        System.Net.WebSockets.WebSocket from, System.Net.WebSockets.WebSocket to, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[64 * 1024];
+        try
+        {
+            while (from.State == System.Net.WebSockets.WebSocketState.Open)
+            {
+                var result = await from.ReceiveAsync(buffer, cancellationToken);
+                if (result.MessageType == System.Net.WebSockets.WebSocketMessageType.Close)
+                {
+                    await to.CloseOutputAsync(
+                        System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, null, cancellationToken);
+                    return;
+                }
+
+                await to.SendAsync(
+                    new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, cancellationToken);
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or System.Net.WebSockets.WebSocketException)
+        {
+            // Either peer vanishing mid-stream is the normal way an MSE session ends - a closed
+            // tab doesn't say goodbye. The caller closes the other side.
+        }
     }
 
     private static List<string> Validate(CameraInputDto dto)

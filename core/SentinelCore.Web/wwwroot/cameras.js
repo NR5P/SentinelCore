@@ -3,11 +3,19 @@ window.GateWatchCameras = (function () {
   let editingId = null;
   const hlsInstances = new Map();
   const webrtcConnections = new Map();
+  const mseConnections = new Map();
 
   // Set the first time the server answers 503 for a WebRTC offer - that's its "go2rtc isn't
   // installed here" signal, which won't change until the server restarts, so every other tile
-  // (and every rebuild this page load) goes straight to HLS instead of re-asking.
+  // (and every rebuild this page load) goes straight to HLS instead of re-asking. MSE runs
+  // through the same go2rtc, so it's skipped too, straight to HLS.
   let webrtcUnavailable = false;
+
+  // Set when the MSE endpoint itself is missing or refused (older server, go2rtc gone) so other
+  // tiles skip the doomed WebSocket attempt this page load. Distinct from webrtcUnavailable:
+  // WebRTC can be dead (media port unreachable) while MSE works fine - that's its whole reason
+  // to exist.
+  let mseUnavailable = false;
 
   // Leaving the Live tab pauses players instead of tearing them down immediately, so a quick
   // flip to another tab and back doesn't force a full HLS reconnect. Only if you stay away
@@ -1147,20 +1155,40 @@ window.GateWatchCameras = (function () {
     // without WebRTC, or a network path that only forwards HTTP (e.g. a Cloudflare Tunnel, which
     // carries the HLS segments fine but not WebRTC's UDP media).
     if (webrtcUnavailable || typeof RTCPeerConnection === "undefined") {
-      attachHls(video, status, camera);
+      attachHls(video, status, camera); // no go2rtc on the server - MSE would 503 too
+    } else if (webrtcKnownDead()) {
+      connectMse(video, status, camera); // WebRTC media can't flow here, but MSE may well work
     } else {
       connectWebRtc(video, status, camera, 0);
     }
   }
 
   // How long the whole WebRTC attempt gets - offer, answer, ICE, first media - before the tile
-  // gives up on this attempt. Generous because the first attempt after a server restart also
-  // pays for go2rtc's own startup and the camera's RTSP connect.
-  const WEBRTC_CONNECT_TIMEOUT_MS = 10000;
+  // gives up on this attempt. Long enough that the first attempt after a server restart can pay
+  // for go2rtc's own startup and the camera connect; short enough that an environment where the
+  // media port is simply unreachable (VPN, tunnel, client firewall) doesn't hold a black tile
+  // for tens of seconds before the HLS fallback gets its turn.
+  const WEBRTC_CONNECT_TIMEOUT_MS = 6000;
 
-  // Straight failures (never connected) before the tile stops burning time on WebRTC and falls
-  // back to HLS, which has its own recovery ladder.
-  const WEBRTC_MAX_FAILURES = 3;
+  // Straight failures (never showed a frame) before the tile stops burning time on WebRTC and
+  // falls back to HLS, which has its own recovery ladder.
+  const WEBRTC_MAX_FAILURES = 2;
+
+  // Set (per tab) once a tile has run the whole WebRTC ladder without ever rendering a frame,
+  // so reloads and later tiles in this tab go straight to HLS instead of re-proving that the
+  // media port is unreachable, one 6-second attempt at a time. Cleared implicitly by opening a
+  // new tab - environments change (VPN off, different network), and a fresh tab is the natural
+  // point to give WebRTC another shot.
+  const WEBRTC_NO_MEDIA_KEY = "webrtcNoMedia";
+  const webrtcKnownDead = () => {
+    try { return sessionStorage.getItem(WEBRTC_NO_MEDIA_KEY) === "1"; } catch { return false; }
+  };
+  const rememberWebrtcDead = () => {
+    try { sessionStorage.setItem(WEBRTC_NO_MEDIA_KEY, "1"); } catch { /* storage off - skip */ }
+  };
+  const rememberWebrtcAlive = () => {
+    try { sessionStorage.removeItem(WEBRTC_NO_MEDIA_KEY); } catch { /* storage off - skip */ }
+  };
 
   async function connectWebRtc(video, status, camera, priorFailures) {
     const pc = new RTCPeerConnection();
@@ -1181,11 +1209,16 @@ window.GateWatchCameras = (function () {
     // afresh, which is what recovers it once the camera is back. Paused doesn't count - leaving
     // the Live tab pauses tiles on purpose.
     let lastTime = -1;
+    let sawMedia = false;
     let stalledSinceMs = null;
     const stallWatchdog = setInterval(() => {
       if (!isCurrent()) { clearInterval(stallWatchdog); return; }
       if (!sawConnected || video.paused || !video.srcObject) { stalledSinceMs = null; return; }
       if (video.currentTime !== lastTime) {
+        if (lastTime >= 0 && !sawMedia) {
+          sawMedia = true; // the clock moved between ticks - real frames arrived
+          rememberWebrtcAlive();
+        }
         lastTime = video.currentTime;
         stalledSinceMs = null;
         return;
@@ -1203,10 +1236,21 @@ window.GateWatchCameras = (function () {
       video.srcObject = null;
 
       // A connection that genuinely worked and then died resets the count - that's a camera or
-      // network hiccup worth retrying afresh, not evidence WebRTC doesn't work here.
-      const failures = (sawConnected ? 0 : priorFailures) + 1;
+      // network hiccup worth retrying afresh, not evidence WebRTC doesn't work here. "Worked"
+      // means frames actually rendered, not merely that ICE reached "connected": a handshake
+      // that succeeds but never delivers a frame (e.g. the server was too overloaded to start
+      // the camera pull inside the window) used to reset the count here, so the tile re-ran
+      // that doomed handshake forever and never reached the HLS fallback below.
+      const failures = (sawMedia ? 0 : priorFailures) + 1;
       if (webrtcUnavailable || failures >= WEBRTC_MAX_FAILURES) {
-        attachHls(video, status, camera);
+        // A ladder that ends with zero frames ever rendered means this environment can't do
+        // WebRTC media at all right now - remember that for the rest of the tab so the next
+        // reload doesn't sit through the whole ladder again before showing video. MSE is the
+        // next rung: same go2rtc stream, but the media rides the dashboard's own HTTP
+        // connection instead of a separate port, so it survives the tunnels/VPNs/firewalls
+        // that break WebRTC. It falls through to HLS itself if it can't run either.
+        if (!sawMedia) rememberWebrtcDead();
+        connectMse(video, status, camera);
         return;
       }
 
@@ -1314,6 +1358,169 @@ window.GateWatchCameras = (function () {
       pc.addEventListener("connectionstatechange", check);
       check();
     });
+  }
+
+  // Middle rung of the live ladder: go2rtc streams fMP4 over a WebSocket on the dashboard's own
+  // origin (see /api/cameras/{id}/mse server-side), the browser feeds it to MediaSource. Latency
+  // sits around a second - more than WebRTC's few hundred ms, far less than HLS's several
+  // seconds - and because the media rides the same HTTP connection as the dashboard itself, it
+  // works in every environment where the page loads at all. Any failure lands on attachHls.
+  function connectMse(video, status, camera) {
+    if (webrtcUnavailable || mseUnavailable || !("MediaSource" in window)) {
+      attachHls(video, status, camera);
+      return;
+    }
+
+    const session = { ws: null, timers: [], objectUrl: null, done: false };
+    mseConnections.set(camera.id, session);
+    const isCurrent = () => mseConnections.get(camera.id) === session;
+
+    const cleanup = () => {
+      session.done = true;
+      for (const t of session.timers) clearInterval(t);
+      session.timers = [];
+      if (session.ws) { try { session.ws.close(); } catch { /* already closed */ } }
+      if (session.objectUrl) { try { URL.revokeObjectURL(session.objectUrl); } catch { /* fine */ } }
+      if (isCurrent()) mseConnections.delete(camera.id);
+    };
+
+    const fail = () => {
+      if (session.done) return;
+      const owned = isCurrent();
+      cleanup();
+      if (!owned) return;
+      video.removeAttribute("src");
+      video.load();
+      attachHls(video, status, camera);
+    };
+
+    // Codecs this browser can decode from fMP4, offered to go2rtc so it picks what to send.
+    // H.264 profiles cover every camera this app supports; AAC (mp4a) covers camera audio
+    // without transcoding; opus in case go2rtc already has a transcoded track running.
+    const candidates = ["avc1.640033", "avc1.64002A", "avc1.640029", "avc1.4D4029", "avc1.42E01F", "mp4a.40.2", "mp4a.40.5", "opus"];
+    const supported = candidates.filter(c =>
+      MediaSource.isTypeSupported(`${c.startsWith("avc1") ? "video" : "audio"}/mp4; codecs="${c}"`));
+
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    let ws;
+    try {
+      ws = new WebSocket(`${scheme}://${location.host}/api/cameras/${camera.id}/mse`);
+    } catch {
+      mseUnavailable = true;
+      fail();
+      return;
+    }
+    session.ws = ws;
+    ws.binaryType = "arraybuffer";
+    showStatus(status, "connecting…");
+
+    let mediaSource = null;
+    let sourceBuffer = null;
+    let pendingMime = null;
+    let sourceOpen = false;
+    const chunks = [];
+    let receivedAnyMedia = false;
+
+    // One watchdog covers both "never got a first byte" and "bytes stopped rendering": if the
+    // playhead hasn't moved between ticks (and the tile isn't deliberately paused), give up and
+    // let HLS take over. Generous first deadline - the server may be starting go2rtc.
+    let lastTime = -1;
+    let stalledSinceMs = null;
+    session.timers.push(setInterval(() => {
+      if (session.done || !isCurrent()) { cleanup(); return; }
+      if (video.paused && receivedAnyMedia) { stalledSinceMs = null; return; }
+      if (video.currentTime !== lastTime) {
+        lastTime = video.currentTime;
+        stalledSinceMs = null;
+        return;
+      }
+      stalledSinceMs ??= Date.now();
+      if (Date.now() - stalledSinceMs > 10000) fail();
+    }, 2000));
+
+    // Keep the tile pinned near the live edge: fMP4 keeps arriving while a tab is throttled or
+    // a fetch hiccups, so after a pause the playhead can be many seconds behind what's already
+    // buffered. Jump rather than fast-forward - this is a security feed, freshness wins.
+    session.timers.push(setInterval(() => {
+      if (session.done || !sourceBuffer || video.paused) return;
+      try {
+        const buffered = sourceBuffer.buffered;
+        if (buffered.length === 0) return;
+        const end = buffered.end(buffered.length - 1);
+        if (end - video.currentTime > 3) video.currentTime = end - 0.5;
+      } catch { /* buffered can throw while the source is closing */ }
+    }, 2000));
+
+    const pump = () => {
+      if (session.done || !sourceBuffer || sourceBuffer.updating) return;
+      // Trim watched video so an all-day tile doesn't grow without bound; only when idle so it
+      // never competes with an append.
+      try {
+        const buffered = sourceBuffer.buffered;
+        if (chunks.length === 0 && buffered.length > 0 && video.currentTime - buffered.start(0) > 30) {
+          sourceBuffer.remove(buffered.start(0), video.currentTime - 15);
+          return; // updateend re-enters pump
+        }
+      } catch { /* fine - trim is best effort */ }
+
+      const next = chunks.shift();
+      if (!next) return;
+      try {
+        sourceBuffer.appendBuffer(next);
+      } catch {
+        // QuotaExceeded or a closed source - either way this player is wedged.
+        fail();
+      }
+    };
+
+    const openSourceBuffer = () => {
+      if (!sourceOpen || !pendingMime || sourceBuffer || session.done) return;
+      try {
+        sourceBuffer = mediaSource.addSourceBuffer(pendingMime);
+      } catch {
+        fail(); // codec string this browser can't actually handle
+        return;
+      }
+      sourceBuffer.mode = "segments";
+      sourceBuffer.addEventListener("updateend", pump);
+      sourceBuffer.addEventListener("error", fail);
+      pump();
+    };
+
+    ws.addEventListener("open", () => {
+      if (session.done) { cleanup(); return; }
+      ws.send(JSON.stringify({ type: "mse", value: supported.join(",") }));
+      mediaSource = new MediaSource();
+      session.objectUrl = URL.createObjectURL(mediaSource);
+      mediaSource.addEventListener("sourceopen", () => { sourceOpen = true; openSourceBuffer(); });
+      video.srcObject = null;
+      video.src = session.objectUrl;
+      video.play().catch(() => {});
+    });
+
+    ws.addEventListener("message", (event) => {
+      if (session.done) return;
+      if (typeof event.data === "string") {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "mse" && msg.value) {
+            pendingMime = msg.value;
+            openSourceBuffer();
+          }
+        } catch { /* not for us */ }
+        return;
+      }
+      receivedAnyMedia = true;
+      chunks.push(event.data);
+      pump();
+    });
+
+    // A refused handshake (older server without the endpoint, go2rtc gone) shows up as an error
+    // or an immediate close before any media - mark MSE off for this page load in that case so
+    // other tiles don't repeat the attempt. A close after media flowed is just a dropped
+    // connection: fail this tile over to HLS but leave MSE available for retries elsewhere.
+    ws.addEventListener("error", () => { if (!receivedAnyMedia) mseUnavailable = true; fail(); });
+    ws.addEventListener("close", () => { if (!session.done) fail(); });
   }
 
   function attachHls(video, status, camera) {
@@ -1431,6 +1638,15 @@ window.GateWatchCameras = (function () {
       try { pc.close(); } catch { /* already closed */ }
     }
     webrtcConnections.clear();
+
+    // Same for MSE: the WebSocket keeps delivering fMP4 to a paused tile until it's closed.
+    for (const session of mseConnections.values()) {
+      session.done = true;
+      for (const t of session.timers) clearInterval(t);
+      if (session.ws) { try { session.ws.close(); } catch { /* already closed */ } }
+      if (session.objectUrl) { try { URL.revokeObjectURL(session.objectUrl); } catch { /* fine */ } }
+    }
+    mseConnections.clear();
 
     document.querySelectorAll("#live-root video").forEach(video => {
       video.pause();

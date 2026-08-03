@@ -102,6 +102,31 @@ public sealed class Go2RtcManager : IDisposable
         return body;
     }
 
+    // The MSE counterpart of ExchangeOfferAsync: make sure the sidecar is up and the camera
+    // registered, then open a WebSocket to go2rtc's MSE endpoint for this stream. The caller
+    // (CameraEndpoints) pumps frames between this socket and the browser's; unlike WebRTC the
+    // media itself flows through this server, which is exactly the point - it rides the same
+    // origin and port as the dashboard, so it works wherever the dashboard itself is reachable
+    // (VPNs, tunnels, proxies) where WebRTC's separate media port often isn't.
+    public async Task<System.Net.WebSockets.ClientWebSocket> ConnectMseAsync(Camera camera, CancellationToken cancellationToken)
+    {
+        await EnsureStartedAsync(cancellationToken);
+        await RegisterStreamAsync(camera, cancellationToken);
+
+        var socket = new System.Net.WebSockets.ClientWebSocket();
+        try
+        {
+            await socket.ConnectAsync(
+                new Uri($"ws://127.0.0.1:{_apiPort}/api/ws?src={StreamName(camera.Id)}"), cancellationToken);
+            return socket;
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
     // Called alongside HlsStreamManager.StopStream when a camera is edited or deleted, so the
     // next viewer registers the new URL instead of streaming from the old one.
     public void ForgetStream(Guid cameraId)
