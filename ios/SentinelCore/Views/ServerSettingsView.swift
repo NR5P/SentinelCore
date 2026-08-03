@@ -135,6 +135,7 @@ struct ServerSettingsSectionView: View {
                 }
             }
         }
+        .formStyle(.grouped)
         .navigationTitle(Text(section.title).font(.body.smallCaps()))
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
