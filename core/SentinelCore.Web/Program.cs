@@ -350,6 +350,10 @@ app.UseStaticFiles();
 app.UseAuthentication();
 app.UseMiddleware<AuthGateMiddleware>();
 app.UseAuthorization();
+// For the MSE live-view path: the dashboard opens a WebSocket to /api/cameras/{id}/mse, which
+// this server bridges to go2rtc's loopback API. Same-origin, so the session cookie rides the
+// handshake and RequireAuthorization applies as usual.
+app.UseWebSockets();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
 app.MapCameraGroupEndpoints();

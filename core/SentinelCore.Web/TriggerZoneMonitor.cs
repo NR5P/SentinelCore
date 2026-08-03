@@ -82,13 +82,23 @@ public sealed class TriggerZoneMonitor(
         {
             if (_sessions.TryGetValue(config.CameraId, out var existing))
             {
-                if (ConfigsEquivalent(existing.Config, config))
+                // A dead ffmpeg means no detection, no fresh _latest.jpg and no clip segments for
+                // this camera until something restarts it - and nothing else does: this reconcile
+                // pass used to only restart on config changes, so a camera dropping the connection
+                // once (reboot, encoder settings applied, network blip) silently disabled its
+                // trigger zones until the whole service was restarted.
+                if (ConfigsEquivalent(existing.Config, config) && !existing.Process.HasExited)
                 {
                     // Nothing to restart, but the rolling buffer still needs trimming back to the
                     // pre-roll window or it would grow without bound.
                     if (config.RecordClips) clips.PruneBuffer(config.CameraId, config.ClipPreSeconds);
                     continue;
                 }
+
+                if (existing.Process.HasExited)
+                    logger.LogWarning(
+                        "Trigger zone detection ffmpeg for camera {CameraId} had exited; starting a fresh session.",
+                        config.CameraId);
 
                 _sessions.TryRemove(config.CameraId, out _);
                 StopSession(existing);
@@ -101,6 +111,21 @@ public sealed class TriggerZoneMonitor(
             var session = StartSession(camera, config, multiFrame);
             _sessions[config.CameraId] = session;
         }
+    }
+
+    // The camera's low-resolution companion stream for a known main-stream URL, or null when no
+    // safe derivation exists (a camera whose URL doesn't follow a recognized pattern simply
+    // keeps decoding its main stream for detection, exactly as before). Reolink's FLV naming:
+    // channel0_main.bcs / channel0_ext.bcs (mid) / channel0_sub.bcs (low) - ext is preferred
+    // because detection downscales to a 320-wide grid either way and ext keeps a little more
+    // detail for it. Reolink RTSP naming: h264Preview_01_main / h264Preview_01_sub.
+    public static string? TryDeriveDetectionUrl(string mainUrl)
+    {
+        if (mainUrl.Contains("_main.bcs", StringComparison.OrdinalIgnoreCase))
+            return mainUrl.Replace("_main.bcs", "_ext.bcs", StringComparison.OrdinalIgnoreCase);
+        if (mainUrl.Contains("Preview_01_main", StringComparison.OrdinalIgnoreCase))
+            return mainUrl.Replace("Preview_01_main", "Preview_01_sub", StringComparison.OrdinalIgnoreCase);
+        return null;
     }
 
     private DetectionSession StartSession(Camera camera, TriggerConfig config, MultiFrameOptions multiFrame)
@@ -117,39 +142,70 @@ public sealed class TriggerZoneMonitor(
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        // Output 1 is the downscaled raw feed the detector reads. Output 2 continuously
-        // overwrites a single full-resolution JPEG from the same already-open connection, so a
-        // trigger can grab an up-to-date frame instantly (see MaybeTriggerAsync) instead of
-        // paying for a brand-new RTSP connection per trigger - which can take several seconds to
-        // negotiate and land on a frame taken well after the moment that caused the trigger.
-        // When clips are enabled, output 3 rides the same RTSP pull too and copies the original
-        // stream into a rolling segment buffer - no second connection to the camera either way.
+        // The detector reads a downscaled raw feed; a second output continuously overwrites a
+        // full-resolution JPEG from an already-open connection, so a trigger can grab an
+        // up-to-date frame instantly (see MaybeTriggerAsync) instead of paying for a brand-new
+        // camera connection per trigger; and when clips are enabled a third output copies the
+        // original stream into a rolling segment buffer.
+        //
+        // When the camera offers a substream, detection decodes THAT and the main stream is
+        // decoded keyframes-only for the snapshot. Decoding 5MP at full frame rate around the
+        // clock isn't just wasted CPU - it's what made triggers save empty images: any moment
+        // the box falls behind real time (a trigger being handled, the vision model pegging the
+        // CPU) backs up into the camera's TCP send buffer, and a reliable transport like
+        // Reolink's HTTP-FLV never drops a frame, so the backlog becomes STANDING latency on
+        // the detection feed. The detector then sees a car seconds after it was really there,
+        // and the (perfectly live) snapshot it grabs shows an empty road - which the vision
+        // model then rightly rejects. A substream decodes an order of magnitude faster than
+        // real time, so the pipeline reabsorbs any hiccup in moments instead of never.
         // The snapshot output only runs faster than 1fps when this camera can actually use the
         // extra frames (MultiFrameAnalysis on, and this zone forwards to the alert pipeline) -
-        // it's still a single lightweight JPEG encode, negligible next to the video decode
-        // already happening above, but there's no reason to pay it for cameras that can't use it.
+        // in that case the main stream is decoded in full, since keyframes alone can't provide
+        // 3fps; detection still rides the substream either way.
         var snapshotFps = multiFrame.Enabled && config.SendToAlerts ? 3 : 1;
-        var args = new List<string>
+        var detectUrl = TryDeriveDetectionUrl(sourceUrl);
+        var args = new List<string>();
+
+        // RTSP-only option: passing it ahead of an http:// source (a Reolink's FLV stream, say)
+        // makes ffmpeg exit immediately with "Option not found" - same guard as HlsStreamManager.
+        if (detectUrl is not null)
         {
-            "-rtsp_transport", "tcp",
-            "-i", sourceUrl,
+            if (HlsStreamManager.IsRtspUrl(detectUrl))
+                args.AddRange(["-rtsp_transport", "tcp"]);
+            args.AddRange(["-i", detectUrl]);
+        }
+
+        if (HlsStreamManager.IsRtspUrl(sourceUrl))
+            args.AddRange(["-rtsp_transport", "tcp"]);
+        // Keyframes-only is a decoder option scoped to this input; the copied clip output below
+        // is untouched by it, and with a substream carrying detection the snapshot is the only
+        // consumer of decoded main-stream frames. Not applicable when multi-frame needs real
+        // snapshot cadence (see snapshotFps above).
+        if (detectUrl is not null && snapshotFps == 1)
+            args.AddRange(["-skip_frame", "nokey"]);
+        args.AddRange(["-i", sourceUrl]);
+
+        // Input 0 feeds detection and input 1 the snapshot when a substream exists; with a
+        // single connection both come from input 0, exactly as before substreams were used.
+        var mainInput = detectUrl is null ? "0" : "1";
+        args.AddRange([
             "-map", "0:v:0",
             "-an",
             "-filter:v", $"fps=2,scale={MotionDetector.GridWidth}:{MotionDetector.GridHeight},format=rgb24",
             "-f", "rawvideo",
             "-",
-            "-map", "0:v:0",
+            "-map", $"{mainInput}:v:0",
             "-vf", $"fps={snapshotFps}",
             "-update", "1",
             "-y", LatestSnapshotPath(camera.Id)
-        };
+        ]);
 
         if (config.RecordClips)
         {
             clips.PruneBuffer(camera.Id, config.ClipPreSeconds);
             args.AddRange([
-                "-map", "0:v:0",
-                "-map", "0:a?",
+                "-map", $"{mainInput}:v:0",
+                "-map", $"{mainInput}:a?",
                 "-c", "copy",
                 "-f", "segment",
                 "-segment_time", ClipRecorder.SegmentSeconds.ToString(),
