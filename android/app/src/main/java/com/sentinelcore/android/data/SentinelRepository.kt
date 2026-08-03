@@ -89,6 +89,7 @@ class SentinelRepository(
                         occurredAt = parseInstant(json.getString("occurredAt")),
                         triggerAreaFraction = json.optDouble("triggerAreaFraction", 0.0),
                         hasClip = json.optBoolean("hasClip"),
+                        zoneName = json.nullableString("zoneName"),
                     ),
                 )
             }
@@ -1048,18 +1049,38 @@ class SentinelRepository(
             createdAt = parseInstant(json.getString("createdAt")),
         )
 
+    private fun parsePolygon(array: JSONArray?): List<Point2D> = buildList {
+        val points = array ?: JSONArray()
+        for (index in 0 until points.length()) {
+            val point = points.getJSONObject(index)
+            add(Point2D(x = point.getDouble("x"), y = point.getDouble("y")))
+        }
+    }
+
     private fun parseTriggerConfig(json: JSONObject): TriggerConfig {
-        val polygonArray = json.optJSONArray("zonePolygon") ?: JSONArray()
-        val polygon = buildList {
-            for (index in 0 until polygonArray.length()) {
-                val point = polygonArray.getJSONObject(index)
-                add(Point2D(x = point.getDouble("x"), y = point.getDouble("y")))
+        // Left null rather than defaulted when the server didn't send it, so the distinction
+        // between "no zones key" and "an empty list" survives a round-trip - see TriggerConfig.
+        val zonesArray = json.optJSONArray("zones")
+        val zones = zonesArray?.let { array ->
+            buildList {
+                for (index in 0 until array.length()) {
+                    val zone = array.getJSONObject(index)
+                    add(
+                        TriggerZone(
+                            name = zone.optString("name").takeIf { it.isNotBlank() }
+                                ?: "Zone ${index + 1}",
+                            polygon = parsePolygon(zone.optJSONArray("polygon")),
+                            minTriggerArea = zone.optDouble("minTriggerArea", 0.02),
+                        ),
+                    )
+                }
             }
         }
         return TriggerConfig(
             enabled = json.optBoolean("enabled"),
-            zonePolygon = polygon,
+            zonePolygon = parsePolygon(json.optJSONArray("zonePolygon")),
             minTriggerArea = json.optDouble("minTriggerArea", 0.02),
+            zones = zones,
             cooldownSeconds = json.optInt("cooldownSeconds", 5),
             maxTriggersPerMinute = json.optInt("maxTriggersPerMinute", 6),
             shadowSensitivity = json.optInt("shadowSensitivity", 50),
@@ -1068,6 +1089,9 @@ class SentinelRepository(
             clipPostSeconds = json.optInt("clipPostSeconds", 10),
             sendToAlerts = json.optBoolean("sendToAlerts"),
             alertProfile = json.optString("alertProfile", "default"),
+            sensorDeviceId = json.optString("sensorDeviceId", ""),
+            sensorTriggerOn = json.optString("sensorTriggerOn", "on"),
+            sensorCooldownSeconds = json.optInt("sensorCooldownSeconds", 30),
         )
     }
 
@@ -1082,14 +1106,18 @@ class SentinelRepository(
             .put("onvifPtzServiceUrl", onvifPtzServiceUrl)
             .put("onvifProfileToken", onvifProfileToken)
 
-    private fun TriggerConfig.toJson(): JSONObject {
-        val polygon = JSONArray()
-        zonePolygon.forEach { point ->
-            polygon.put(JSONObject().put("x", point.x).put("y", point.y))
+    private fun polygonJson(points: List<Point2D>): JSONArray {
+        val array = JSONArray()
+        points.forEach { point ->
+            array.put(JSONObject().put("x", point.x).put("y", point.y))
         }
-        return JSONObject()
+        return array
+    }
+
+    private fun TriggerConfig.toJson(): JSONObject {
+        val json = JSONObject()
             .put("enabled", enabled)
-            .put("zonePolygon", polygon)
+            .put("zonePolygon", polygonJson(zonePolygon))
             .put("minTriggerArea", minTriggerArea)
             .put("cooldownSeconds", cooldownSeconds)
             .put("maxTriggersPerMinute", maxTriggersPerMinute)
@@ -1099,6 +1127,28 @@ class SentinelRepository(
             .put("clipPostSeconds", clipPostSeconds)
             .put("sendToAlerts", sendToAlerts)
             .put("alertProfile", alertProfile)
+            // Round-tripped untouched so saving a zone doesn't unbind the camera's sensor.
+            .put("sensorDeviceId", sensorDeviceId)
+            .put("sensorTriggerOn", sensorTriggerOn)
+            .put("sensorCooldownSeconds", sensorCooldownSeconds)
+
+        // Only when we actually have a list. The key must stay absent otherwise: an empty array
+        // tells the server to delete every zone but the primary. JSONObject.put(String, null)
+        // would remove the key, but going through it at all invites someone to "simplify" this
+        // into always putting a possibly-empty list, which is the bug this guards against.
+        zones?.let { list ->
+            val array = JSONArray()
+            list.forEach { zone ->
+                array.put(
+                    JSONObject()
+                        .put("name", zone.name)
+                        .put("polygon", polygonJson(zone.polygon))
+                        .put("minTriggerArea", zone.minTriggerArea),
+                )
+            }
+            json.put("zones", array)
+        }
+        return json
     }
 
     private fun elapsedMilliseconds(started: Long): Long =

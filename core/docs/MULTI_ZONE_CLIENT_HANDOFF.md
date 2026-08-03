@@ -1,10 +1,8 @@
-# Multi-zone trigger zones — native client handoff
+# Multi-zone trigger zones — client notes
 
-The server and the web dashboard support **several trigger zones per camera**, each with its own
-minimum object size. The iOS, tvOS and Android apps do **not** yet — they still edit a single zone.
-
-Nothing is broken in the meantime: the API is deliberately additive, and an unmodified app keeps
-working against a multi-zone server. This document is what a future client change needs to know.
+The server, the web dashboard, and the iOS/macOS and Android editors all support **several trigger
+zones per camera**, each with its own minimum object size. tvOS has no zone editor (it never did) —
+it models the full wire format and shows the zone name on trigger cards, nothing more.
 
 ## Why the feature exists
 
@@ -46,12 +44,12 @@ what makes both work at once.
 
 `minTriggerArea` is a fraction of the **whole frame**, not of the zone — unchanged from before.
 Multiply by `320 * 180 = 57600` to get the detector pixels the threshold is actually compared
-against. The web editor shows that number next to the size control, and it is far easier to reason
-about than the fraction; the native editors should show it too.
+against. Every editor shows that number next to the size control, because it is far easier to
+reason about than the fraction.
 
-`GET /api/triggers` now also returns `zoneName` on each event (null for companion captures, sensor
-and manual triggers, and anything recorded before this feature). The web Triggers tab shows it in
-place of the old hardcoded "motion in zone" label.
+`GET /api/triggers` returns `zoneName` on each event (null for companion captures, sensor and
+manual triggers, and anything recorded before this feature). All clients show it on trigger cards
+in place of the old hardcoded "motion in zone" label, falling back to the old wording when null.
 
 ## Two rules that must not be broken
 
@@ -69,29 +67,36 @@ Server-side (`TriggerEndpoints.ResolveZonesAsync`):
   deleting someone's extra zones when they nudge the polygon from their phone.
 - `zones` **present** → authoritative, replaces the whole list.
 
-So a client that adds multi-zone editing must send the full list every time. A client that hasn't
-been updated must keep omitting the key entirely — do **not** send `"zones": []` as a placeholder,
-that reads as "delete all but the primary".
+So the updated editors send the full list every time, and an installed pre-multi-zone build keeps
+omitting the key entirely. Do **not** send `"zones": []` as a placeholder — that reads as "delete
+all but the primary". The Swift models keep `zones` optional (nil omits the key via
+`encodeIfPresent`) and the Android `toJson` only writes the key when the list is non-null, for
+exactly this reason.
 
 Regression test for this: `MultiZoneTriggerTests.PutFromAnOlderClient_UpdatesThePrimaryZoneAndKeepsTheRest`.
 
-## What a native editor needs
+## How the editors behave (kept consistent across web, iOS/macOS, Android)
 
-Roughly what `wwwroot/triggers.js` does now:
+- A zone selector row labelled `name · NNNpx`, where the pixel figure is
+  `minTriggerArea * 57600` on the detector grid.
+- Add / rename (50-char cap, matching server validation) / delete. **A camera always keeps at
+  least one zone** — the legacy mirror needs a primary to mirror. Every editor refuses the last
+  delete with an explanatory message.
+- All zones drawn over the reference frame; the selected one solid with vertices, the others
+  dashed and faint, each labelled at its first vertex. Points append to the selected zone.
+- The minimum-size control applies to the selected zone only, with a detector-pixel readout.
+- A new zone inherits the current zone's size rather than the stock 2% — you're usually adding a
+  zone for a different distance, so it's a more useful starting point.
 
-- A zone selector (the web build uses a row of tabs labelled `name · NNNpx`).
-- Add / rename / delete. **A camera must always keep at least one zone** — the legacy mirror needs a
-  primary to mirror. The web build refuses the last delete with an explanatory message.
-- Draw all zones over the reference frame, with the selected one emphasised and the others dimmed,
-  so their relative placement is visible while editing one.
-- The minimum-size control applies to the **selected zone only**.
-- Points are appended to the selected zone.
+## Sensor binding round-trip
+
+The native `TriggerConfig` models also carry `sensorDeviceId` / `sensorTriggerOn` /
+`sensorCooldownSeconds` untouched through every save. They're configured on the web dashboard
+only, and the PUT overwrites the whole record rather than merging — a client that omitted them
+would silently unbind the camera's Device Hub sensor on every zone edit (which is exactly what the
+pre-multi-zone mobile builds did).
 
 Files: `ios/SentinelCore/Views/TriggerZoneEditorView.swift`, `ios/SentinelCore/Models/Models.swift`
-(`TriggerConfig`), the tvOS mirror in `appletv/SentinelCoreTV/Models/Models.swift`, and
-`android/app/src/main/java/com/sentinelcore/android/ui/screens/CameraZoneEditorScreen.kt` +
-`data/Models.kt`.
-
-Adding an optional `zones` field to the Swift/Kotlin models is safe on its own and can land before
-any UI work — decoding it and echoing it back unchanged would already be an improvement over the
-current behaviour, which relies on the server-side preservation rule above.
+(`TriggerConfig`), the tvOS mirror in `appletv/SentinelCoreTV/Models/Models.swift`,
+`android/app/src/main/java/com/sentinelcore/android/ui/screens/CameraZoneEditorScreen.kt`,
+`data/Models.kt`, and the JSON layer in `data/SentinelRepository.kt`.

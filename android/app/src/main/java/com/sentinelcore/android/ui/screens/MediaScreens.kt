@@ -149,8 +149,10 @@ private fun TriggerCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Same fallback as the web build: zoneName is null for sensor/manual triggers,
+            // companion captures, and rows from before zones could be split up.
             Text(
-                "Motion area ${(trigger.triggerAreaFraction * 1000).roundToInt() / 10.0}%",
+                "${trigger.zoneName ?: "Motion"} · area ${(trigger.triggerAreaFraction * 1000).roundToInt() / 10.0}%",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -197,6 +199,7 @@ fun TriggerDetailScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             MetadataRow("Camera", trigger.cameraName)
+                            trigger.zoneName?.let { MetadataRow("Zone", it) }
                             MetadataRow("Time", trigger.occurredAt.fullDateTime())
                             MetadataRow(
                                 "Motion area",

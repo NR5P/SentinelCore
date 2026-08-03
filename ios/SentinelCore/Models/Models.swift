@@ -20,6 +20,10 @@ struct TriggerEvent: Codable, Identifiable, Hashable {
     let occurredAt: Date
     let triggerAreaFraction: Double
     let hasClip: Bool
+    // Which trigger zone's polygon the motion fell inside. Null for companion captures, sensor
+    // and manual triggers, and anything recorded before zones could be split up - so it's a
+    // label to show when there is one, not something to depend on.
+    let zoneName: String?
 }
 
 struct Camera: Codable, Identifiable, Hashable {
@@ -71,21 +75,33 @@ struct Point2D: Codable, Hashable {
     var y: Double
 }
 
+// One trigger zone: its own polygon and its own minimum object size, because perspective means
+// the same subject covers wildly different pixel counts near the camera and far from it.
+// Zones have no server-side id and their names aren't unique, so the editor identifies them by
+// position in the list - same as the web build.
+struct TriggerZone: Codable, Equatable, Hashable {
+    var name: String
+    var polygon: [Point2D]
+    var minTriggerArea: Double
+}
+
 // Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
-// TODO: multi-zone. The server now supports several trigger zones per camera, each with its own
-// minimum object size, in an additive `zones` array. This struct still models only the single
-// legacy zone, so this app edits the primary zone and the server preserves the rest.
 //
-// That preservation is load-bearing: because no `zones` key is sent, the server updates zone[0]
-// and leaves zones[1...] alone. Do NOT "helpfully" send `zones: []` - that means delete them.
-// And zonePolygon/minTriggerArea must keep being sent whatever else changes; they mirror zone[0]
-// and are declared non-optional here, so a server that stopped sending them would break decoding.
+// Two rules here are load-bearing; see core/docs/MULTI_ZONE_CLIENT_HANDOFF.md.
 //
-// See core/docs/MULTI_ZONE_CLIENT_HANDOFF.md before touching this or TriggerZoneEditorView.
+// 1. zonePolygon/minTriggerArea must keep being sent whatever else changes. They mirror zones[0],
+//    and they're declared non-optional here, so a server that stopped sending them would break
+//    decoding on every installed copy of this app.
+// 2. `zones` nil and `zones` empty mean different things to the server. Nil omits the key
+//    entirely (Swift's synthesized encoder uses encodeIfPresent), which the server reads as "this
+//    client doesn't know about zones - update the primary and leave the rest alone". An empty
+//    array reads as "the editor really did delete them". Never send [] as a placeholder.
 struct TriggerConfig: Codable, Equatable {
     var enabled: Bool
     var zonePolygon: [Point2D]
     var minTriggerArea: Double
+    // Absent on a server older than multi-zone; read it through `resolvedZones`, never directly.
+    var zones: [TriggerZone]?
     var cooldownSeconds: Int
     var maxTriggersPerMinute: Int
     var shadowSensitivity: Int
@@ -94,6 +110,26 @@ struct TriggerConfig: Codable, Equatable {
     var clipPostSeconds: Int
     var sendToAlerts: Bool
     var alertProfile: String
+    // Not shown in any UI. Carried through every save purely so editing a zone from the phone
+    // doesn't unbind a Device Hub sensor that was set up on the web dashboard - the PUT
+    // overwrites the whole record rather than merging, so anything omitted reverts to its
+    // default (no sensor, "on", 30s).
+    var sensorDeviceId: String = ""
+    var sensorTriggerOn: String = "on"
+    var sensorCooldownSeconds: Int = 30
+
+    // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
+    // written before multi-zone reads as a single zone built from the legacy pair, so the editor
+    // never has to special-case the migration.
+    var resolvedZones: [TriggerZone] {
+        if let zones, !zones.isEmpty { return zones }
+        return [TriggerZone(name: TriggerZone.defaultName, polygon: zonePolygon, minTriggerArea: minTriggerArea)]
+    }
+}
+
+extension TriggerZone {
+    // Matches the server's TriggerConfig.DefaultZoneName.
+    static let defaultName = "Zone 1"
 }
 
 struct PromptProfileName: Codable, Identifiable, Hashable {
