@@ -1,8 +1,8 @@
 extern alias WebHost;
 
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace SentinelCore.Tests;
 
@@ -33,5 +33,21 @@ internal static class WebHostTestSettings
             // whatever that machine has switched on. Requests arriving on the Internet Exposed
             // port always require login, and pinning it off here keeps these tests measuring the
             // endpoint's own policy rather than the host's deployment settings.
-            .UseSetting("InternetExposed:Enabled", "false");
+            .UseSetting("InternetExposed:Enabled", "false")
+            // Several tests assert that a forward to the main app fails as unreachable. The
+            // default main app address is 127.0.0.1:5080, which is unreachable on a development
+            // machine and very much reachable on a server that is actually running SentinelCore -
+            // there the forward succeeded, the real main app rejected the test's fake API key, and
+            // the proxy passed that 401 back, so the tests failed on the one machine that matters.
+            .UseSetting("MainAppBaseUrl", $"http://127.0.0.1:{ClosedPort()}");
+
+    // A port nothing is listening on: bound briefly to have the OS name a free one, then released.
+    private static int ClosedPort()
+    {
+        using var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        return port;
+    }
 }
