@@ -296,10 +296,7 @@ public sealed class HostRebootProxyTests : IDisposable
     }
 
     private WebApplicationFactory<WebProgram> CreateFactory() => new WebApplicationFactory<WebProgram>()
-        .WithWebHostBuilder(builder => builder
-            .UseSetting("MainAppSettingsPath", _settingsPath)
-            .UseSetting("CamerasDataDirectory", _dataDirectory)
-            .UseSetting("Bridge:DataDirectory", _dataDirectory));
+        .WithWebHostBuilder(builder => builder.UseTestSettings(_settingsPath, _dataDirectory));
 
     [Fact]
     public async Task TheProbe_ReportsTheMainAppUnreachable_RatherThanPretending()
@@ -325,6 +322,38 @@ public sealed class HostRebootProxyTests : IDisposable
 
         using var cancel = await client.PostAsync("/api/system/host-reboot/cancel", content: null, ct);
         Assert.Equal(HttpStatusCode.BadGateway, cancel.StatusCode);
+    }
+
+    // These three routes are AdminOnly, but on an install with the dashboard login switched off -
+    // the shipped default - AuthGateMiddleware hands every caller a synthetic Admin, which is what
+    // the tests above run under. So the policy being real is a separate fact needing its own test:
+    // with login on and no session, rebooting the machine must be refused outright.
+    //
+    // This was found the hard way. The same tests passed here and failed on the deployed server,
+    // because the server's config has Auth enabled and the test host was reading it - see
+    // WebHostTestSettings.
+    [Fact]
+    public async Task WithLoginOn_AnUnauthenticatedCaller_CannotReachAnyOfThem()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await File.WriteAllTextAsync(_settingsPath, """
+            {
+              "Bridge": { "ApiKey": "a-long-enough-stored-api-key" },
+              "Auth": { "Enabled": true, "Username": "someone", "PasswordHash": "irrelevant" }
+            }
+            """, ct);
+
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var probe = await client.GetAsync("/api/system/host-reboot", ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, probe.StatusCode);
+
+        using var reboot = await client.PostAsync("/api/system/host-reboot", content: null, ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, reboot.StatusCode);
+
+        using var cancel = await client.PostAsync("/api/system/host-reboot/cancel", content: null, ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, cancel.StatusCode);
     }
 
     // The settings half round-trips like every other section - and comes back off by default on an

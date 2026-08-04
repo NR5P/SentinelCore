@@ -36,10 +36,7 @@ public sealed class RestartEndpointTests : IDisposable
         var factory = new WebApplicationFactory<WebProgram>()
             .WithWebHostBuilder(builder =>
             {
-                builder
-                    .UseSetting("MainAppSettingsPath", _settingsPath)
-                    .UseSetting("CamerasDataDirectory", _dataDirectory)
-                    .UseSetting("Bridge:DataDirectory", _dataDirectory);
+                builder.UseTestSettings(_settingsPath, _dataDirectory);
                 if (forceAllowed) builder.UseSetting("Restart:ForceAllowed", "true");
             });
         return factory;
