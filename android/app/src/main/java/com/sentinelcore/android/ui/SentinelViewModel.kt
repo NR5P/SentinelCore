@@ -577,6 +577,12 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun restartServer(service: String) = repository.restartServer(service)
 
+    suspend fun hostRebootProbe() = repository.hostRebootProbe()
+
+    suspend fun rebootHost() = repository.rebootHost()
+
+    suspend fun cancelHostReboot() = repository.cancelHostReboot()
+
     suspend fun startDeviceScan(): DeviceScanStartResult = repository.startDeviceScan()
 
     suspend fun deviceScanStatus(scanId: String): DeviceScanSnapshot = repository.deviceScanStatus(scanId)

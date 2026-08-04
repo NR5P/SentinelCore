@@ -694,6 +694,44 @@ class SentinelRepository(
         Unit
     }
 
+    // Rebooting the machine itself, rather than bouncing a service. The probe is a side-effect-
+    // free GET and is the only trustworthy answer to "will the button work" - the permission it
+    // reports on lives in the server's operating system and can vanish without this app hearing
+    // about it, so it is asked again every time the screen is opened.
+    suspend fun hostRebootProbe(): HostRebootProbe = withContext(Dispatchers.IO) {
+        parseHostRebootProbe(JSONObject(request("/api/system/host-reboot")))
+    }
+
+    suspend fun rebootHost(): HostRebootOutcome = withContext(Dispatchers.IO) {
+        parseHostRebootOutcome(JSONObject(request("/api/system/host-reboot", method = "POST", body = "{}")))
+    }
+
+    suspend fun cancelHostReboot(): HostRebootOutcome = withContext(Dispatchers.IO) {
+        parseHostRebootOutcome(JSONObject(request("/api/system/host-reboot/cancel", method = "POST", body = "{}")))
+    }
+
+    private fun parseHostRebootProbe(json: JSONObject): HostRebootProbe = HostRebootProbe(
+        platform = json.optString("platform"),
+        platformLabel = json.optString("platformLabel"),
+        readiness = json.optString("readiness"),
+        enabled = json.optBoolean("enabled"),
+        runningAs = json.optString("runningAs"),
+        summary = json.optString("summary"),
+        delaySeconds = json.optInt("delaySeconds", 60),
+        // optString would turn an absent value into "", which reads as "there is a setup script,
+        // and it is empty" - the UI needs to tell those two apart to know whether to show the
+        // command block at all.
+        setupScript = if (json.isNull("setupScript")) null else json.optString("setupScript").ifBlank { null },
+        setupNote = if (json.isNull("setupNote")) null else json.optString("setupNote").ifBlank { null },
+        secondsRemaining = if (json.isNull("secondsRemaining")) null else json.optInt("secondsRemaining"),
+    )
+
+    private fun parseHostRebootOutcome(json: JSONObject): HostRebootOutcome = HostRebootOutcome(
+        ok = json.optBoolean("ok"),
+        message = json.optString("message"),
+        secondsRemaining = if (json.isNull("secondsRemaining")) null else json.optInt("secondsRemaining"),
+    )
+
     private fun parseSettingsSection(json: JSONObject): SettingsSection {
         val fieldsArray = json.getJSONArray("fields")
         return SettingsSection(

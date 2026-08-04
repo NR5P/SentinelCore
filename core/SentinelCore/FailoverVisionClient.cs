@@ -52,8 +52,24 @@ public sealed class FailoverVisionClient(
         if (primary == fastLocal && routingOptions.CurrentValue.EscalationEnabled && HasDetectedSubject(result.Analysis))
         {
             var escalated = await TryEscalateAsync(alert, profile, result.Model, cancellationToken);
-            if (escalated is not null)
-                return escalated.Value;
+
+            // Escalation exists to put better prose around a subject the detector already found -
+            // it is not a second opinion on whether the subject is there. Letting it replace a
+            // positive detection with an empty one is how real footage disappears: downstream,
+            // "no visible subject" is what marks a motion trigger Rejected (see
+            // AlertNotificationPolicy.HasVisibleSubject and TriggerConfirmationService), so one
+            // VLM shrugging at a dark IR frame hides a person the object detector was confident
+            // about. When the two disagree in that direction the detector wins, and the
+            // disagreement is logged rather than buried.
+            if (escalated is { } better)
+            {
+                if (HasDetectedSubject(better.Analysis)) return better;
+
+                logger.LogInformation(
+                    "Escalation reported nothing in frame for alert {AlertId} although the fast detector found a " +
+                    "subject; keeping the detector's result so the event isn't filtered away.",
+                    alert.Id);
+            }
         }
 
         return result;

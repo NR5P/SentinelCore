@@ -620,6 +620,35 @@ main {
   pointer-events: auto;
 }
 
+/* Sits one row below .confirmation-badge rather than on top of it: with "show hidden" on, a
+   rejected row from a camera whose AI analysis has since been switched off carries both. */
+.ai-off-badge {
+  left: auto;
+  right: 8px;
+  top: 32px;
+  bottom: auto;
+  color: var(--text-dim);
+  pointer-events: auto;
+}
+
+/* Clip states other than "ready" (see clipBadgeHtml in app.js). Every card on the Events tab is
+   supposed to have video, so these say which way it doesn't: still being written (amber, resolves
+   on its own), expected but absent (red, a real fault), or never asked for (dim, a setting). */
+.clip-badge-waiting {
+  color: var(--amber);
+  pointer-events: auto;
+}
+
+.clip-badge-warning {
+  color: var(--red, #ff5c5c);
+  pointer-events: auto;
+}
+
+.clip-badge-muted {
+  color: var(--text-dim, #7a8794);
+  pointer-events: auto;
+}
+
 /* A toolbar button that's currently on, e.g. "show hidden". */
 .btn.btn-on {
   background: rgba(57, 255, 156, 0.15);
@@ -2050,4 +2079,65 @@ main {
   width: 100%;
   height: 100%;
   border: 0;
+}
+
+/* Rebooting the machine, under the REBOOT SERVER settings section. The state line carries a
+   colour because it is the one thing in this panel a person needs to read correctly at a
+   glance: amber means "you have a command to run", green means the button below will work. */
+.host-reboot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-card);
+}
+
+.host-reboot-status {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.host-reboot-status[data-state="ready"] { color: var(--green); }
+.host-reboot-status[data-state="setupRequired"] { color: var(--amber); }
+.host-reboot-status[data-state="unsupported"] { color: var(--text-dim); }
+.host-reboot-status[data-state="pending"] { color: var(--red); }
+.host-reboot-status[data-state="off"] { color: var(--text-dim); }
+
+/* Meant to be selected and pasted, so it wraps rather than scrolls - a command that runs off
+   the right edge is one a person copies half of. */
+.host-reboot-script {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: all;
+}
+
+.host-reboot-note { margin: 0; }
+
+.host-reboot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.host-reboot-actions .btn.danger {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.host-reboot-actions .btn.danger:hover:not(:disabled) {
+  background: var(--red);
+  color: var(--bg);
 }

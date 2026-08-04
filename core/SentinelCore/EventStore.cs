@@ -73,7 +73,16 @@ public sealed record AlertEventRecord(
     string? IncidentId = null,
     // See VisionAnalysis.PackageTheftReason - only ever populated by Package Theft Watch on the
     // alert where a watched package was observed gone with nobody recognized handling it.
-    string? PackageTheftReason = null);
+    string? PackageTheftReason = null,
+    // Whether the AI actually found something in this frame - the same
+    // AlertNotificationPolicy.HasVisibleSubject rule that decides a motion trigger's fate, stored
+    // here so the dashboard can apply it to an alert that has no trigger behind it (Blue Iris, a
+    // gate check, the trigger API) without re-reading the analysis JSON off disk.
+    //
+    // Three-valued on purpose: true = the AI looked and found a subject, false = the AI looked and
+    // found nothing, null = no verdict exists (still queued, the analysis failed, or the row was
+    // written before this column). Only true is treated as "passed the AI check".
+    bool? SubjectConfirmed = null);
 
 // SQLite-backed history of every alert (queued/completed/failed), one row per alert id,
 // updated in place as the alert progresses. This is a queryable companion to the JSON
@@ -128,6 +137,20 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         // embedding just isn't a candidate for SearchBySimilarityAsync.
         AddColumnIfMissing("AlertEvents", "Embedding", "BLOB");
 
+        // See AlertEventRecord.SubjectConfirmed. Existing completed rows are backfilled to 1 rather
+        // than left NULL: the Events tab now hides anything without a positive verdict, and the
+        // analyses behind old rows aren't re-readable from here, so leaving them NULL would empty
+        // the tab of all history the moment this ships. Fail-open for the past, real verdicts from
+        // here on - the same trade TriggerConfirmation.Confirmed already makes for its own column.
+        var backfillSubjectConfirmed = !ColumnExists("AlertEvents", "SubjectConfirmed");
+        AddColumnIfMissing("AlertEvents", "SubjectConfirmed", "INTEGER");
+        if (backfillSubjectConfirmed)
+        {
+            using var backfill = _connection.CreateCommand();
+            backfill.CommandText = "UPDATE AlertEvents SET SubjectConfirmed = 1 WHERE Status = 'completed';";
+            backfill.ExecuteNonQuery();
+        }
+
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = "CREATE INDEX IF NOT EXISTS IX_AlertEvents_IncidentId ON AlertEvents(IncidentId);";
         incidentIndex.ExecuteNonQuery();
@@ -160,11 +183,11 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                 INSERT INTO AlertEvents
                     (Id, Camera, BlueIrisAlertId, OccurredAt, ReceivedAt, CompletedAt, Profile, Model, Status,
                      ImagePath, EventType, Summary, NotificationRecommended, NotificationReason, Confidence, Error,
-                     LinkedCameras, IncidentId, PackageTheftReason, Embedding)
+                     LinkedCameras, IncidentId, PackageTheftReason, Embedding, SubjectConfirmed)
                 VALUES
                     ($id, $camera, $blueIrisAlertId, $occurredAt, $receivedAt, $completedAt, $profile, $model, $status,
                      $imagePath, $eventType, $summary, $notificationRecommended, $notificationReason, $confidence, $error,
-                     $linkedCameras, $incidentId, $packageTheftReason, $embedding)
+                     $linkedCameras, $incidentId, $packageTheftReason, $embedding, $subjectConfirmed)
                 ON CONFLICT(Id) DO UPDATE SET
                     CompletedAt = excluded.CompletedAt,
                     Model = excluded.Model,
@@ -176,10 +199,17 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                     NotificationReason = excluded.NotificationReason,
                     Confidence = excluded.Confidence,
                     Error = excluded.Error,
-                    LinkedCameras = excluded.LinkedCameras,
-                    IncidentId = excluded.IncidentId,
+                    -- COALESCE, not a straight overwrite: these three describe where the alert came
+                    -- from, and several writers re-save a row without them. AlertRecoveryService
+                    -- rebuilds an IncomingAlert from PendingAlertRecord (which carries neither
+                    -- LinkedCameras nor IncidentId), and /api/queue/clear marks rows cancelled the
+                    -- same way - so a plain overwrite silently unlinked a camera-group incident
+                    -- from its members every time the service restarted mid-analysis.
+                    LinkedCameras = COALESCE(excluded.LinkedCameras, AlertEvents.LinkedCameras),
+                    IncidentId = COALESCE(excluded.IncidentId, AlertEvents.IncidentId),
                     PackageTheftReason = excluded.PackageTheftReason,
-                    Embedding = excluded.Embedding;
+                    Embedding = COALESCE(excluded.Embedding, AlertEvents.Embedding),
+                    SubjectConfirmed = excluded.SubjectConfirmed;
                 """;
 
             command.Parameters.AddWithValue("$id", result.Id.ToString("N"));
@@ -204,6 +234,9 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.Parameters.AddWithValue("$incidentId", (object?)result.IncidentId ?? DBNull.Value);
             command.Parameters.AddWithValue("$packageTheftReason", (object?)result.Analysis?.PackageTheftReason ?? DBNull.Value);
             command.Parameters.AddWithValue("$embedding", result.Embedding is { } embedding ? FloatsToBytes(embedding) : DBNull.Value);
+            command.Parameters.AddWithValue(
+                "$subjectConfirmed",
+                AlertNotificationPolicy.AnalysisFoundSubject(result) is { } found ? found ? 1 : 0 : DBNull.Value);
 
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -222,7 +255,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = """
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
                        NotificationRecommended, NotificationReason, Confidence, ImagePath,
-                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason
+                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason, SubjectConfirmed
                 FROM AlertEvents
                 WHERE OccurredAt >= $from AND OccurredAt < $to
                 ORDER BY OccurredAt ASC;
@@ -288,7 +321,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = """
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
                        NotificationRecommended, NotificationReason, Confidence, ImagePath,
-                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason
+                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason, SubjectConfirmed
                 FROM AlertEvents
                 WHERE Id = $id;
                 """;
@@ -345,7 +378,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = $"""
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
                        NotificationRecommended, NotificationReason, Confidence, ImagePath,
-                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason
+                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason, SubjectConfirmed
                 FROM AlertEvents
                 {whereClause}
                 ORDER BY OccurredAt DESC
@@ -409,7 +442,7 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             command.CommandText = $"""
                 SELECT Id, Camera, OccurredAt, Status, EventType, Summary,
                        NotificationRecommended, NotificationReason, Confidence, ImagePath,
-                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason, Embedding
+                       BlueIrisAlertId, LinkedCameras, IncidentId, PackageTheftReason, SubjectConfirmed, Embedding
                 FROM AlertEvents
                 WHERE {string.Join(" AND ", conditions)}
                 ORDER BY OccurredAt DESC
@@ -488,7 +521,8 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
         reader.IsDBNull(10) ? null : reader.GetString(10),
         reader.IsDBNull(11) ? null : reader.GetString(11),
         reader.IsDBNull(12) ? null : reader.GetString(12),
-        reader.IsDBNull(13) ? null : reader.GetString(13));
+        reader.IsDBNull(13) ? null : reader.GetString(13),
+        reader.IsDBNull(14) ? null : reader.GetInt64(14) != 0);
 
     private static string ToUtcSortable(DateTimeOffset value) => value.UtcDateTime.ToString("O");
 

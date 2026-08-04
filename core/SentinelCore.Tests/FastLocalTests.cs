@@ -111,7 +111,7 @@ public sealed class FastLocalTests
     {
         var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
         var ollama = new FakeVisionClient("gemma3:4b");
-        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var cloud = new FakeVisionClient("gpt-4o-mini") { Analysis = SubjectAnalysis() };
         var client = MakeClient(ollama, cloud, fastLocal,
             new VisionRoutingOptions { Primary = "fastlocal", EscalationEnabled = true },
             new CloudVisionOptions { Enabled = true, ApiKey = "key" });
@@ -121,6 +121,27 @@ public sealed class FastLocalTests
         Assert.Equal("gpt-4o-mini", model);
         Assert.Equal(1, fastLocal.CallCount);
         Assert.Equal(0, ollama.CallCount);
+    }
+
+    // Escalation writes better prose about a subject the detector already found - it is not a
+    // second opinion on whether the subject is there. A VLM shrugging at a dark IR frame must not
+    // overwrite a confident detection with an empty one, because "no visible subject" is what
+    // files the motion trigger as Rejected and hides the footage.
+    [Fact]
+    public async Task Escalation_FindingNothing_DoesNotOverwriteTheDetectorsSubject()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini"); // empty analysis: sees nothing
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", EscalationEnabled = true },
+            new CloudVisionOptions { Enabled = true, ApiKey = "key" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.True(analysis.Person.Visible);
+        Assert.Equal(1, cloud.CallCount);
     }
 
     [Fact]
@@ -180,7 +201,7 @@ public sealed class FastLocalTests
     public async Task EscalationTargetAuto_UsesOllama_WhenCloudNotConfigured()
     {
         var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
-        var ollama = new FakeVisionClient("gemma3:4b");
+        var ollama = new FakeVisionClient("gemma3:4b") { Analysis = SubjectAnalysis() };
         var cloud = new FakeVisionClient("gpt-4o-mini");
         var client = MakeClient(ollama, cloud, fastLocal,
             new VisionRoutingOptions { Primary = "fastlocal", EscalationEnabled = true },

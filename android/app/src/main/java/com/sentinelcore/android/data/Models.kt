@@ -542,3 +542,34 @@ data class SettingsSection(
 ) {
     val needsRestart: Boolean get() = fields.any { it.requiresRestart }
 }
+
+// Rebooting the machine the server runs on - mirrors HostRebootProbe in HostReboot.cs.
+//
+// setupScript is the server's own answer for its own operating system, user and paths, and is
+// shown verbatim rather than rebuilt here. An app that composed that sudoers line itself would
+// eventually compose the wrong one for somebody's install and be believed.
+data class HostRebootProbe(
+    val platform: String,
+    val platformLabel: String,
+    val readiness: String,
+    val enabled: Boolean,
+    val runningAs: String,
+    val summary: String,
+    val delaySeconds: Int,
+    val setupScript: String?,
+    val setupNote: String?,
+    val secondsRemaining: Int?,
+) {
+    val isReady: Boolean get() = readiness == "ready"
+    val needsSetup: Boolean get() = readiness == "setupRequired"
+
+    // Two separate facts, and the gap between them is the point of the whole screen: one is
+    // fixed by the checkbox above, the other only at a shell on the server.
+    val canReboot: Boolean get() = isReady && enabled
+}
+
+data class HostRebootOutcome(
+    val ok: Boolean,
+    val message: String,
+    val secondsRemaining: Int?,
+)

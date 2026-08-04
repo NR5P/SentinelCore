@@ -38,6 +38,32 @@ function formatClock(iso) {
   });
 }
 
+function plural(seconds) {
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
+// What the clip badge says, and whether it plays. Everything on this tab passed the AI check, so
+// it should have video to go with it - the states that aren't "ready" each say why it doesn't yet
+// or won't, rather than leaving a card that silently refuses to play.
+function clipBadgeHtml(event) {
+  const window = event.clipPreSeconds != null && event.clipPostSeconds != null
+    ? ` The clip covers ${plural(event.clipPreSeconds)} before the trigger and ${plural(event.clipPostSeconds)} after, as set on this camera's trigger zone.`
+    : "";
+
+  switch (event.clipState) {
+    case "ready":
+      return `<span class="clip-badge" data-tip="A clip was recorded around this event. Click to play it.${window}">&#9654; clip</span>`;
+    case "recording":
+      return `<span class="clip-badge clip-badge-waiting" data-tip="Still recording the tail of this clip.${window} It'll be playable here within a few seconds - the list refreshes on its own.">&#9679; recording&hellip;</span>`;
+    case "missing":
+      return `<span class="clip-badge clip-badge-warning" data-tip="No clip was saved for this event, though this camera is set to record them. Usually means the rolling buffer had a gap - check the logs around this time.">&#9888; no clip</span>`;
+    case "off":
+      return `<span class="clip-badge clip-badge-muted" data-tip="Clip recording is off for this camera - turn on 'record clips' on its trigger zone to save video around events like this one.">no clip &mdash; recording off</span>`;
+    default:
+      return "";
+  }
+}
+
 // One card per real-world moment, whatever records back it. An "analyzed" item has an AI summary
 // and a notify decision; a "motion" item has neither and never will - nothing looked at it,
 // because the camera doesn't forward to the alert pipeline or the forward was refused. Either can
@@ -56,16 +82,22 @@ function renderCard(event) {
     ? `<span class="badge" data-tip="${escapeHtml(event.notificationReason) || "The AI judged this worth telling you about, so an alert was sent."}">notified</span>`
     : "";
 
-  const clipHtml = event.clipUrl
-    ? `<span class="clip-badge" data-tip="A clip was recorded around this event. Click to play it.">&#9654; clip</span>`
-    : "";
+  const clipHtml = clipBadgeHtml(event);
 
   // Only ever present with "show hidden" on - a confirmed event is the normal case and gets no
   // badge, so the list looks the same as it does with the filter doing its job quietly.
   const confirmationHtml = {
     rejected: `<span class="clip-badge confirmation-badge" data-tip="The AI looked at this frame and found no person, vehicle, package, or animal, so it's hidden from the normal list. The snapshot and clip are still on disk.">&#9888; nothing found</span>`,
-    pending: `<span class="clip-badge confirmation-badge" data-tip="Still waiting on the AI to say whether anything was really here. It'll appear in the normal list if confirmed.">&#8230; checking</span>`
+    pending: `<span class="clip-badge confirmation-badge" data-tip="Still waiting on the AI to say whether anything was really here. It'll appear in the normal list if confirmed.">&#8230; checking</span>`,
+    unverified: `<span class="clip-badge confirmation-badge" data-tip="Nothing ever judged this frame - the analysis failed, or the forward to it was refused. It's hidden from the normal list because it never passed the AI check, not because it failed one. The snapshot and clip are still on disk.">&#9888; never checked</span>`
   }[event.confirmation] || "";
+
+  // A camera with AI analysis switched off never gets a verdict, so its motion is kept here rather
+  // than filtered out - but flagged, because a camera quietly dropping out of the AI filter looks
+  // exactly like a camera that has stopped seeing anything.
+  const aiOffHtml = event.aiAnalysisOff
+    ? `<span class="clip-badge ai-off-badge" data-tip="AI analysis is off for this camera, so nothing looked at this frame. Turn on 'send to AI analysis' on its trigger zone to have events from this camera checked and described.">AI off</span>`
+    : "";
 
   const linkedCamerasHtml = event.linkedCameras
     ? `<div class="card-meta" data-tip="A Camera Group also pulled in footage from these cameras when this one triggered.">🔗 Also recorded: ${escapeHtml(event.linkedCameras)}</div>`
@@ -87,7 +119,9 @@ function renderCard(event) {
 
   const imageTip = event.clipUrl
     ? "Click to play the clip recorded around this event."
-    : event.imageUrl ? "Click to view the full-size snapshot. No clip was saved for this one." : "";
+    : event.clipState === "recording"
+      ? "Click to view the full-size snapshot. The clip is still recording and will be playable here shortly."
+      : event.imageUrl ? "Click to view the full-size snapshot. No clip was saved for this one." : "";
 
   card.innerHTML = `
     <div class="card-image"${imageTip ? ` data-tip="${imageTip}"` : ""}>
@@ -95,6 +129,7 @@ function renderCard(event) {
       ${badgeHtml}
       ${clipHtml}
       ${confirmationHtml}
+      ${aiOffHtml}
     </div>
     <div class="card-body">
       <div class="card-meta">
@@ -293,10 +328,10 @@ async function loadEvents() {
     feedEl.innerHTML = "";
     if (events.length === 0) {
       feedEl.innerHTML = hasActiveFilters()
-        ? `<div class="empty-state">no events match these filters</div>`
+        ? `<div class="empty-state">no confirmed events match these filters</div>`
         : showHidden
           ? `<div class="empty-state">no events recorded yet</div>`
-          : `<div class="empty-state">no events recorded yet &mdash; try "show hidden"</div>`;
+          : `<div class="empty-state">no confirmed events yet &mdash; this tab only lists what the AI agreed was really there. Use "show hidden" to see what was filtered out and why.</div>`;
       return;
     }
 

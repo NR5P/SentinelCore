@@ -157,6 +157,10 @@ builder.Services.AddOptions<BugReportOptions>()
     .Bind(builder.Configuration.GetSection(BugReportOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<HostRebootOptions>()
+    .Bind(builder.Configuration.GetSection(HostRebootOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<PushNotificationOptions>()
     .Bind(builder.Configuration.GetSection(PushNotificationOptions.SectionName))
     .ValidateDataAnnotations()
@@ -258,6 +262,13 @@ builder.Services.AddHostedService<InternetOutageWorker>();
 // instance the background loop is updating, rather than standing up a second sampler.
 builder.Services.AddSingleton<SystemStatsSampler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SystemStatsSampler>());
+
+// Which of the three operating systems this is running on is settled once, at startup - the
+// answer cannot change while the process lives, and resolving it per-request would mean every
+// caller repeating the same three checks.
+builder.Services.AddSingleton<IHostRebootController>(sp =>
+    HostRebootControllerFactory.Create(sp.GetRequiredService<IOptionsMonitor<HostRebootOptions>>()));
+builder.Services.AddSingleton<HostRebootScheduler>();
 
 var ollamaSettings = builder.Configuration.GetSection(OllamaOptions.SectionName).Get<OllamaOptions>() ?? new();
 builder.Services.AddHttpClient<OllamaVisionClient>(client =>
@@ -582,6 +593,41 @@ app.MapPost("/api/system/restart", (IConfiguration configuration, IHostApplicati
     logger.LogWarning("Restart requested via /api/system/restart - shutting down for the supervisor to bring us back.");
     RestartSupport.StopSoon(lifetime);
     return Results.Accepted(value: new { restarting = true });
+});
+
+// Rebooting the machine itself, as opposed to bouncing this process. See HostReboot.cs for why
+// this is off by default and why turning it on is only half of what it needs.
+//
+// The probe is a GET with no side effects on purpose: a client should be able to open the
+// settings screen and show the true state - including "the sudoers rule you added in March is
+// gone" - without anything happening to the machine.
+app.MapGet("/api/system/host-reboot", async (
+    IHostRebootController controller,
+    HostRebootScheduler scheduler,
+    CancellationToken ct) =>
+{
+    var probe = await controller.ProbeAsync(ct);
+    return Results.Ok(probe with { ScheduledFor = scheduler.ScheduledFor });
+});
+
+app.MapPost("/api/system/host-reboot", async (HostRebootScheduler scheduler, CancellationToken ct) =>
+{
+    var outcome = await scheduler.ScheduleAsync(ct);
+
+    // Conflict rather than BadRequest: nothing about the request was wrong, the machine simply
+    // isn't in a state where this can be honoured - the feature is off, or the OS never granted
+    // the privilege, or the grant has since disappeared.
+    return outcome.Ok
+        ? Results.Accepted(value: outcome)
+        : Results.Json(outcome, statusCode: StatusCodes.Status409Conflict);
+});
+
+app.MapPost("/api/system/host-reboot/cancel", (HostRebootScheduler scheduler) =>
+{
+    var outcome = scheduler.Cancel();
+    return outcome.Ok
+        ? Results.Ok(outcome)
+        : Results.Json(outcome, statusCode: StatusCodes.Status409Conflict);
 });
 
 // For when the queue has fallen so far behind that catching up isn't worth it - each alert here

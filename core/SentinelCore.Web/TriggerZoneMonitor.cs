@@ -24,9 +24,25 @@ public sealed class TriggerZoneMonitor(
 {
     private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(10);
 
+    // Detection frames arrive twice a second (fps=2 below). Anything approaching this long without
+    // one means the feed is gone, whatever the ffmpeg process claims - see ReconcileCameraAsync.
+    // Generous enough that a camera stuttering under load isn't torn down for it.
+    private static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(30);
+
+    // Motion that reached at least this share of a zone's minimum size is worth telling the user
+    // about (see LogNearMiss); below it, it's ordinary scene noise.
+    private const double NearMissRatio = 0.4;
+    private static readonly TimeSpan NearMissLogInterval = TimeSpan.FromMinutes(1);
+
     private readonly string _ffmpegPath = configuration["FfmpegPath"] ?? "ffmpeg";
     private readonly string _imagesRoot = ResolveImagesRoot(configuration, environment);
     private readonly ConcurrentDictionary<Guid, DetectionSession> _sessions = new();
+
+    // Cameras whose derived low-resolution stream turned out not to exist. Learned the only way
+    // available without probing every camera on every start - by watching a session die without
+    // ever producing a frame - and remembered for the life of the process so the restart doesn't
+    // make the same guess again.
+    private readonly ConcurrentDictionary<Guid, bool> _noSubstream = new();
     private CancellationToken _stoppingToken = CancellationToken.None;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -80,37 +96,91 @@ public sealed class TriggerZoneMonitor(
 
         foreach (var config in enabled)
         {
-            if (_sessions.TryGetValue(config.CameraId, out var existing))
+            // Per camera, so one camera that can't be reconciled - a permissions error creating its
+            // buffer directory, a camera row that's mid-delete, ffmpeg refusing to start - doesn't
+            // abort the pass and leave every camera after it in the list unstarted. That failure
+            // was invisible and permanent: the enabled list comes back in a stable order, so the
+            // same camera threw on every pass and the same cameras stayed dark forever.
+            try
             {
-                // A dead ffmpeg means no detection, no fresh _latest.jpg and no clip segments for
-                // this camera until something restarts it - and nothing else does: this reconcile
-                // pass used to only restart on config changes, so a camera dropping the connection
-                // once (reboot, encoder settings applied, network blip) silently disabled its
-                // trigger zones until the whole service was restarted.
-                if (ConfigsEquivalent(existing.Config, config) && !existing.Process.HasExited)
-                {
-                    // Nothing to restart, but the rolling buffer still needs trimming back to the
-                    // pre-roll window or it would grow without bound.
-                    if (config.RecordClips) clips.PruneBuffer(config.CameraId, config.ClipPreSeconds);
-                    continue;
-                }
+                await ReconcileCameraAsync(config, multiFrame, stoppingToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogError(ex, "Could not reconcile trigger zone detection for camera {CameraId}", config.CameraId);
+            }
+        }
+    }
 
-                if (existing.Process.HasExited)
-                    logger.LogWarning(
-                        "Trigger zone detection ffmpeg for camera {CameraId} had exited; starting a fresh session.",
-                        config.CameraId);
+    private async Task ReconcileCameraAsync(TriggerConfig config, MultiFrameOptions multiFrame, CancellationToken stoppingToken)
+    {
+        if (_sessions.TryGetValue(config.CameraId, out var existing))
+        {
+            // A dead ffmpeg means no detection, no fresh _latest.jpg and no clip segments for
+            // this camera until something restarts it - and nothing else does: this reconcile
+            // pass used to only restart on config changes, so a camera dropping the connection
+            // once (reboot, encoder settings applied, network blip) silently disabled its
+            // trigger zones until the whole service was restarted.
+            //
+            // HasExited alone isn't enough, though. The worse failure is an ffmpeg that is very
+            // much alive and simply never delivers another frame: a half-open TCP connection (the
+            // AP roamed, the router dropped the NAT entry, the camera's firmware hiccuped) leaves
+            // it blocked in read() indefinitely. Nothing exits, no config changed, so this pass hit
+            // `continue` every ten seconds forever while the camera was silently blind - no
+            // triggers, no snapshots, no clips, and not one log line to say so. Frames are expected
+            // twice a second, so a gap of StallTimeout means the feed is gone whatever the process
+            // says about itself.
+            var stalledFor = existing.SinceLastFrame(DateTimeOffset.UtcNow);
+            var stalled = stalledFor > StallTimeout;
 
-                _sessions.TryRemove(config.CameraId, out _);
-                StopSession(existing);
-                if (!config.RecordClips) clips.DiscardBuffer(config.CameraId);
+            if (ConfigsEquivalent(existing.Config, config) && !existing.Process.HasExited && !stalled)
+            {
+                // Nothing to restart, but the rolling buffer still needs trimming back to the
+                // pre-roll window or it would grow without bound.
+                if (config.RecordClips) clips.PruneBuffer(config.CameraId, config.ClipPreSeconds, config.ClipPostSeconds);
+                return;
             }
 
-            var camera = await cameras.GetAsync(config.CameraId, stoppingToken);
-            if (camera is null) continue;
+            if (existing.Process.HasExited)
+                logger.LogWarning(
+                    "Trigger zone detection ffmpeg for camera {CameraId} had exited; starting a fresh session.",
+                    config.CameraId);
+            else if (stalled)
+                logger.LogWarning(
+                    "Trigger zone detection for camera {CameraId} has delivered no frames for {Seconds:F0}s " +
+                    "even though ffmpeg is still running - the stream has most likely gone half-open. " +
+                    "Restarting the session.",
+                    config.CameraId, stalledFor.TotalSeconds);
 
-            var session = StartSession(camera, config, multiFrame);
-            _sessions[config.CameraId] = session;
+            _sessions.TryRemove(config.CameraId, out _);
+            StopSession(existing);
+            if (!config.RecordClips) clips.DiscardBuffer(config.CameraId);
+
+            // A session that EXITED without ever producing a frame is the signature of a detection
+            // URL this camera doesn't actually serve - see TryDeriveDetectionUrl - because ffmpeg
+            // refuses an input it can't open and quits immediately. Remember that so the restart
+            // decodes the main stream instead of crash-looping on the same guess.
+            //
+            // HasExited is load-bearing here, not decoration: a camera that is merely unreachable
+            // at startup leaves ffmpeg alive and connecting, and the stall watchdog above restarts
+            // it after 30s having learned nothing about its substream. Latching on that would
+            // condemn a perfectly good camera to decoding its main stream at full rate for the life
+            // of the process - exactly the standing-latency problem the substream exists to avoid.
+            if (existing.Process.HasExited && existing.UsedDerivedDetectionUrl && !existing.EverDeliveredAFrame)
+            {
+                if (_noSubstream.TryAdd(config.CameraId, true))
+                    logger.LogWarning(
+                        "Camera {CameraId} never delivered a frame on its derived low-resolution stream, so that " +
+                        "stream probably isn't enabled on the camera. Falling back to the main stream for detection.",
+                        config.CameraId);
+            }
         }
+
+        var camera = await cameras.GetAsync(config.CameraId, stoppingToken);
+        if (camera is null) return;
+
+        var session = StartSession(camera, config, multiFrame);
+        _sessions[config.CameraId] = session;
     }
 
     // The camera's low-resolution companion stream for a known main-stream URL, or null when no
@@ -149,7 +219,7 @@ public sealed class TriggerZoneMonitor(
         // original stream into a rolling segment buffer.
         //
         // When the camera offers a substream, detection decodes THAT and the main stream is
-        // decoded keyframes-only for the snapshot. Decoding 5MP at full frame rate around the
+        // decoded at snapshot rate only. Decoding 5MP at full frame rate around the
         // clock isn't just wasted CPU - it's what made triggers save empty images: any moment
         // the box falls behind real time (a trigger being handled, the vision model pegging the
         // CPU) backs up into the camera's TCP send buffer, and a reliable transport like
@@ -159,11 +229,10 @@ public sealed class TriggerZoneMonitor(
         // model then rightly rejects. A substream decodes an order of magnitude faster than
         // real time, so the pipeline reabsorbs any hiccup in moments instead of never.
         // The snapshot output only runs faster than 1fps when this camera can actually use the
-        // extra frames (MultiFrameAnalysis on, and this zone forwards to the alert pipeline) -
-        // in that case the main stream is decoded in full, since keyframes alone can't provide
-        // 3fps; detection still rides the substream either way.
+        // extra frames (MultiFrameAnalysis on, and this zone forwards to the alert pipeline);
+        // detection rides the substream either way.
         var snapshotFps = multiFrame.Enabled && config.SendToAlerts ? 3 : 1;
-        var detectUrl = TryDeriveDetectionUrl(sourceUrl);
+        var detectUrl = _noSubstream.ContainsKey(camera.Id) ? null : TryDeriveDetectionUrl(sourceUrl);
         var args = new List<string>();
 
         // RTSP-only option: passing it ahead of an http:// source (a Reolink's FLV stream, say)
@@ -177,14 +246,20 @@ public sealed class TriggerZoneMonitor(
 
         if (HlsStreamManager.IsRtspUrl(sourceUrl))
             args.AddRange(["-rtsp_transport", "tcp"]);
-        // Keyframes-only is a decoder option scoped to this input; the copied clip output below
-        // is untouched by it, and with a substream carrying detection the snapshot is the only
-        // consumer of decoded main-stream frames. Not applicable when multi-frame needs real
-        // snapshot cadence (see snapshotFps above).
-        if (detectUrl is not null && snapshotFps == 1)
-            args.AddRange(["-skip_frame", "nokey"]);
         args.AddRange(["-i", sourceUrl]);
 
+        // -skip_frame nokey used to be applied to the main input whenever a substream carried
+        // detection, on the reasoning that the snapshot only needs 1fps so keyframes would do. It
+        // doesn't: the decoder then emits nothing but I-frames and -vf fps=1 pads the gaps by
+        // repeating the last one, so _latest.jpg holds content up to a whole GOP old - commonly
+        // 2-4 seconds, more on long-GOP encoders - while its mtime updates every second, which is
+        // the only staleness signal anything downstream has. A person crossing the gate in three
+        // seconds could therefore be detected correctly and still be handed to the AI as a
+        // photograph of an empty driveway taken before they arrived, which the model then rightly
+        // rejects. The trigger lands in the database as Rejected and never appears. Decoding the
+        // main stream at 1fps costs a fraction of a core; a snapshot that doesn't match the moment
+        // costs the entire event.
+        //
         // Input 0 feeds detection and input 1 the snapshot when a substream exists; with a
         // single connection both come from input 0, exactly as before substreams were used.
         var mainInput = detectUrl is null ? "0" : "1";
@@ -202,7 +277,7 @@ public sealed class TriggerZoneMonitor(
 
         if (config.RecordClips)
         {
-            clips.PruneBuffer(camera.Id, config.ClipPreSeconds);
+            clips.PruneBuffer(camera.Id, config.ClipPreSeconds, config.ClipPostSeconds);
             args.AddRange([
                 "-map", $"{mainInput}:v:0",
                 "-map", $"{mainInput}:a?",
@@ -222,7 +297,21 @@ public sealed class TriggerZoneMonitor(
         logger.LogInformation("Started trigger zone detection for camera {CameraId} ({Name}), pid {Pid}", camera.Id, camera.Name, process.Id);
 
         var cts = new CancellationTokenSource();
-        var session = new DetectionSession(process, config, cts, new MotionDetector(config.ResolvedZones, config.ShadowSensitivity), multiFrame);
+        var session = new DetectionSession(
+            process, config, cts, new MotionDetector(config.ResolvedZones, config.ShadowSensitivity), multiFrame,
+            detectUrl is not null);
+
+        // A zone whose polygon has fewer than three points rasterizes to an empty mask, and an
+        // empty mask can never contain a blob - that camera is silently blind for as long as the
+        // config stands. It shouldn't get past validation, but a legacy row or a partially
+        // migrated config can carry one, and the symptom (nothing ever triggers) looks identical
+        // to a camera pointed at a quiet wall.
+        foreach (var zone in config.ResolvedZones.Where(z => z.Polygon.Count < 3))
+            logger.LogWarning(
+                "Zone '{Zone}' on camera {CameraId} ({Name}) has fewer than 3 points, so it covers no pixels and " +
+                "can never trigger. Redraw it in the trigger zone editor.",
+                zone.Name, camera.Id, camera.Name);
+
         _ = RunDetectionLoopAsync(camera, session, cts.Token);
         _ = DrainAsync(process.StandardError);
 
@@ -240,29 +329,65 @@ public sealed class TriggerZoneMonitor(
             {
                 if (!await ReadExactAsync(stream, buffer, cancellationToken)) break;
 
-                var blobFractions = session.Detector.ProcessFrame((byte[])buffer.Clone());
+                // Stamped before anything else is done with the frame: this is what tells the
+                // reconcile pass the feed is alive (see ReconcileCameraAsync), and it has to mean
+                // "ffmpeg is still delivering", not "the last frame was fully handled".
+                session.MarkFrameReceived(DateTimeOffset.UtcNow);
+
+                var blobFractions = session.Detector.ProcessFrame(buffer);
                 if (blobFractions is null) continue;
 
                 // Each zone is judged against its own minimum size - that's the entire point of
                 // having several. When more than one is over its own floor (an object crossing a
                 // boundary, or overlapping zones), the one that cleared its threshold by the
                 // largest margin wins, so a frame records one trigger rather than one per zone.
-                var zones = session.Config.ResolvedZones;
+                var zones = session.Zones;
                 var winner = -1;
                 var bestOvershoot = 0.0;
+                var bestNearMiss = 0.0;
+                var nearMissZone = -1;
                 for (var i = 0; i < zones.Count && i < blobFractions.Length; i++)
                 {
-                    if (zones[i].MinTriggerArea <= 0 || blobFractions[i] < zones[i].MinTriggerArea) continue;
+                    if (zones[i].MinTriggerArea <= 0) continue;
 
                     var overshoot = blobFractions[i] / zones[i].MinTriggerArea;
+                    if (blobFractions[i] < zones[i].MinTriggerArea)
+                    {
+                        // Remember the closest thing to a trigger this frame produced, for the
+                        // near-miss log below.
+                        if (overshoot > bestNearMiss) { bestNearMiss = overshoot; nearMissZone = i; }
+                        continue;
+                    }
+
                     if (overshoot <= bestOvershoot) continue;
                     bestOvershoot = overshoot;
                     winner = i;
                 }
 
-                if (winner < 0) continue;
+                if (winner < 0)
+                {
+                    LogNearMiss(camera, session, zones, blobFractions, nearMissZone, bestNearMiss);
+                    continue;
+                }
 
-                await MaybeTriggerAsync(camera, session, blobFractions[winner], zones[winner].Name, cancellationToken);
+                // Read out before the hand-off below: ProcessFrame returns a scratch array it reuses
+                // on the next frame, so anything running after this iteration must not be holding
+                // a reference to it.
+                var triggerArea = blobFractions[winner];
+                var triggerZoneName = zones[winner].Name;
+
+                // Deliberately NOT awaited. This loop is the only reader of ffmpeg's stdout, and a
+                // raw frame is 172KB against a 64KB pipe buffer, so the moment it stops reading
+                // ffmpeg blocks on write - and because ffmpeg muxes all of its outputs from one
+                // thread, that also stops _latest.jpg being refreshed and stops clip segments being
+                // written for this camera. Handling a trigger inline could hold that up for ten
+                // seconds or more (a snapshot fallback that opens a fresh camera connection, a
+                // companion capture per group member, SQLite writes behind a shared semaphore),
+                // which starves the very snapshot the trigger is about to read and backs latency up
+                // into the camera's send buffer. Handing it off keeps the reader loop tight; the
+                // per-session gate below is what stops a slow handler from piling up.
+                session.HandleTriggerInBackground(() =>
+                    MaybeTriggerAsync(camera, session, triggerArea, triggerZoneName, cancellationToken));
             }
         }
         catch (OperationCanceledException)
@@ -273,6 +398,64 @@ public sealed class TriggerZoneMonitor(
         {
             logger.LogWarning(ex, "Trigger zone detection loop ended for camera {CameraId}", camera.Id);
         }
+    }
+
+    // Hands back the cooldown and the per-minute slot that MaybeTriggerAsync reserved before it
+    // knew whether it could actually capture anything. Only ever called when nothing was recorded,
+    // so there is no event for either limit to be protecting against.
+    private static void ReleaseTriggerSlot(DetectionSession session, DateTimeOffset reservedAt)
+    {
+        lock (session.TriggerLock)
+        {
+            // Only if nothing else has triggered since - otherwise this would clear a cooldown that
+            // a later, successful trigger is legitimately holding.
+            if (session.LastTriggerAt == reservedAt) session.LastTriggerAt = null;
+
+            // The queue is FIFO and this reservation was the most recent enqueue, so the last item
+            // is ours if it's still there at all.
+            if (session.RecentTriggers.Count > 0)
+            {
+                var kept = session.RecentTriggers.Where(t => t != reservedAt).ToList();
+                if (kept.Count != session.RecentTriggers.Count)
+                {
+                    session.RecentTriggers.Clear();
+                    foreach (var stamp in kept) session.RecentTriggers.Enqueue(stamp);
+                }
+            }
+        }
+    }
+
+    // The single hardest thing to diagnose about this pipeline is a zone whose minimum size is set
+    // just above what real subjects actually measure: nothing triggers, nothing is logged, and the
+    // camera looks broken rather than mis-tuned. That threshold is genuinely hard to set by eye,
+    // because the editor asks you to size the OBJECT while the detector measures the CHANGED
+    // pixels between two frames half a second apart - which for a person walking is a good deal
+    // smaller than their silhouette, and smaller again once shadow suppression has had its say.
+    //
+    // So: when motion gets close to a zone's floor without clearing it, say so, in the same units
+    // the editor shows. Rate-limited to once a minute per camera because at 2fps an unlucky
+    // afternoon would otherwise write thousands of lines.
+    private void LogNearMiss(
+        Camera camera, DetectionSession session, IReadOnlyList<TriggerZone> zones,
+        double[] blobFractions, int zoneIndex, double ratio)
+    {
+        if (zoneIndex < 0 || ratio < NearMissRatio) return;
+        if (!logger.IsEnabled(LogLevel.Information)) return;
+
+        var now = DateTimeOffset.UtcNow;
+        lock (session.TriggerLock)
+        {
+            if (session.LastNearMissLogAt is { } last && now - last < NearMissLogInterval) return;
+            session.LastNearMissLogAt = now;
+        }
+
+        var measured = blobFractions[zoneIndex] * MotionDetector.PixelCount;
+        var threshold = zones[zoneIndex].MinTriggerArea * MotionDetector.PixelCount;
+        logger.LogInformation(
+            "Camera {CameraId} ({Name}): motion in zone '{Zone}' measured {Measured:F0} detector pixels against a " +
+            "minimum of {Threshold:F0} ({Ratio:P0} of the way there), so it did not trigger. If real subjects keep " +
+            "landing here, lower this zone's minimum object size.",
+            camera.Id, camera.Name, zones[zoneIndex].Name, measured, threshold, ratio);
     }
 
     private async Task MaybeTriggerAsync(Camera camera, DetectionSession session, double areaFraction, string zoneName, CancellationToken cancellationToken)
@@ -298,7 +481,21 @@ public sealed class TriggerZoneMonitor(
         {
             var bytes = await TryReadLatestSnapshotAsync(camera.Id, cancellationToken)
                 ?? await streams.CaptureSnapshotAsync(camera, cancellationToken);
-            if (bytes is null) return;
+            if (bytes is null)
+            {
+                // Nothing threw, so the catch below never sees this - and before it was logged,
+                // a camera that had stopped handing over frames produced no trigger, no row and
+                // not one line anywhere saying why. Give the cooldown and rate-limit slots back
+                // too: they were reserved for a trigger that never happened, and holding them
+                // means the next few seconds of genuine motion are suppressed on the strength of
+                // a failure.
+                logger.LogWarning(
+                    "Motion fired for camera {CameraId} ({Name}) in zone {Zone}, but no snapshot could be captured, " +
+                    "so no event was recorded.",
+                    camera.Id, camera.Name, zoneName);
+                ReleaseTriggerSlot(session, now);
+                return;
+            }
 
             var cameraDir = Path.Combine(_imagesRoot, camera.Id.ToString("N"));
             Directory.CreateDirectory(cameraDir);
@@ -599,7 +796,9 @@ public sealed class TriggerZoneMonitor(
     private static string ResolveImagesRoot(IConfiguration configuration, IHostEnvironment environment) =>
         TriggerImagePaths.ResolveRoot(configuration, environment);
 
-    private sealed class DetectionSession(Process process, TriggerConfig config, CancellationTokenSource cts, MotionDetector detector, MultiFrameOptions multiFrame)
+    private sealed class DetectionSession(
+        Process process, TriggerConfig config, CancellationTokenSource cts, MotionDetector detector,
+        MultiFrameOptions multiFrame, bool usedDerivedDetectionUrl)
     {
         public Process Process { get; } = process;
         public TriggerConfig Config { get; } = config;
@@ -607,8 +806,54 @@ public sealed class TriggerZoneMonitor(
         public MotionDetector Detector { get; } = detector;
         public MultiFrameOptions MultiFrame { get; } = multiFrame;
 
+        // Whether this session's detection input was guessed from the main stream URL rather than
+        // being the URL itself - see TryDeriveDetectionUrl and the fallback in ReconcileCameraAsync.
+        public bool UsedDerivedDetectionUrl { get; } = usedDerivedDetectionUrl;
+
+        // Resolved once rather than per frame: for a config predating multi-zone, ResolvedZones
+        // builds a fresh list every time it's read, and the detection loop reads it twice a second
+        // for the life of the session.
+        public IReadOnlyList<TriggerZone> Zones { get; } = config.ResolvedZones;
+
         public readonly object TriggerLock = new();
         public DateTimeOffset? LastTriggerAt;
+        public DateTimeOffset? LastNearMissLogAt;
         public readonly Queue<DateTimeOffset> RecentTriggers = new();
+
+        // Ticks rather than a DateTimeOffset field so the reconcile pass can read it without taking
+        // a lock the detection loop would then contend on twice a second. Seeded at construction so
+        // a session that has not yet produced its first frame gets the full stall timeout to
+        // connect before the watchdog judges it.
+        private long _lastFrameAtTicks = DateTimeOffset.UtcNow.UtcTicks;
+        private int _framesDelivered;
+        private int _triggerHandlerBusy;
+
+        public void MarkFrameReceived(DateTimeOffset at)
+        {
+            Interlocked.Exchange(ref _lastFrameAtTicks, at.UtcTicks);
+            if (_framesDelivered == 0) Interlocked.Exchange(ref _framesDelivered, 1);
+        }
+
+        public bool EverDeliveredAFrame => Volatile.Read(ref _framesDelivered) != 0;
+
+        public TimeSpan SinceLastFrame(DateTimeOffset now) =>
+            now - new DateTimeOffset(Interlocked.Read(ref _lastFrameAtTicks), TimeSpan.Zero);
+
+        // One trigger handler at a time per camera. Dropping a trigger that arrives while the
+        // previous one is still being handled is the right call rather than queueing it: the
+        // cooldown and per-minute limit already say roughly one event per few seconds is what this
+        // camera wants, and an unbounded queue of handlers each opening camera connections is how a
+        // busy scene turns into an outage. Whatever is dropped here is the same motion the handler
+        // in flight is already recording.
+        public void HandleTriggerInBackground(Func<Task> handler)
+        {
+            if (Interlocked.CompareExchange(ref _triggerHandlerBusy, 1, 0) != 0) return;
+
+            _ = Task.Run(async () =>
+            {
+                try { await handler(); }
+                finally { Interlocked.Exchange(ref _triggerHandlerBusy, 0); }
+            });
+        }
     }
 }

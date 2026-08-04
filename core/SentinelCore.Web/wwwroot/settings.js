@@ -253,6 +253,11 @@ window.GateWatchSettings = (function () {
     }
     body.appendChild(grid);
 
+    // The one section whose usefulness lives outside its own fields: the toggle above only says
+    // the buttons may appear, and the server is the only thing that knows whether the operating
+    // system will actually permit a reboot. So this section grows a live panel underneath it.
+    if (schema.key === "hostReboot") body.appendChild(buildHostRebootPanel());
+
     const needsRestart = schema.fields.some(f => f.requiresRestart);
 
     const footer = document.createElement("div");
@@ -290,6 +295,205 @@ window.GateWatchSettings = (function () {
 
     section.append(header, body);
     return section;
+  }
+
+  // Rebooting the machine itself. Three states, and the whole design rests on never conflating
+  // them: the feature can be switched off, switched on but not yet permitted by the operating
+  // system, or genuinely ready. A green light that turns out to be wrong at the moment you need
+  // it is worse than no button at all, so the state shown here always comes from a fresh probe
+  // on the server rather than from what the checkbox above happens to say.
+  function buildHostRebootPanel() {
+    const panel = document.createElement("div");
+    panel.className = "host-reboot";
+
+    const status = document.createElement("div");
+    status.className = "host-reboot-status";
+    status.textContent = "checking…";
+
+    const script = document.createElement("pre");
+    script.className = "host-reboot-script";
+    script.hidden = true;
+
+    const note = document.createElement("div");
+    note.className = "settings-hint host-reboot-note";
+    note.hidden = true;
+
+    const actions = document.createElement("div");
+    actions.className = "host-reboot-actions";
+
+    const checkBtn = document.createElement("button");
+    checkBtn.type = "button";
+    checkBtn.className = "btn";
+    checkBtn.textContent = "check again";
+    checkBtn.dataset.tip = "Ask the server what it can do right now. Nothing is rebooted - this only looks.";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "btn";
+    copyBtn.textContent = "copy commands";
+    copyBtn.hidden = true;
+
+    const rebootBtn = document.createElement("button");
+    rebootBtn.type = "button";
+    rebootBtn.className = "btn danger";
+    rebootBtn.textContent = "reboot server";
+    rebootBtn.hidden = true;
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "btn";
+    cancelBtn.textContent = "cancel reboot";
+    cancelBtn.hidden = true;
+
+    actions.append(checkBtn, copyBtn, rebootBtn, cancelBtn);
+    panel.append(status, script, note, actions);
+
+    let countdownTimer = null;
+
+    function stopCountdown() {
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    }
+
+    // Seeded from the server's own seconds-remaining rather than an absolute timestamp, so a
+    // browser with a skewed clock still counts down truthfully.
+    function showCountdown(seconds) {
+      stopCountdown();
+      const due = Date.now() + (Number(seconds) || 0) * 1000;
+      const tick = () => {
+        const left = Math.round((due - Date.now()) / 1000);
+        if (left > 0) {
+          status.textContent = `Rebooting in ${left}s. Cancel now to call it off.`;
+          status.dataset.state = "pending";
+        } else {
+          // Past the window the machine is on its way down, and the cancel button would be
+          // promising something it cannot deliver - the server refuses it at this point too.
+          status.textContent = "Rebooting now - this page will go away for a minute or two.";
+          status.dataset.state = "pending";
+          cancelBtn.hidden = true;
+          stopCountdown();
+        }
+      };
+      // Visibility first, then the interval, then the first tick - seeded with 0 seconds (an
+      // install with no undo window, or a screen opened after the window elapsed) tick() hides
+      // the cancel button and stops the timer, and doing that before these lines would let them
+      // put both straight back for a second while the machine is already going down.
+      cancelBtn.hidden = false;
+      rebootBtn.hidden = true;
+      copyBtn.hidden = true;
+      script.hidden = true;
+      note.hidden = true;
+      countdownTimer = setInterval(tick, 1000);
+      tick();
+    }
+
+    function render(probe) {
+      if (probe.secondsRemaining !== null && probe.secondsRemaining !== undefined) {
+        showCountdown(probe.secondsRemaining);
+        return;
+      }
+
+      stopCountdown();
+      cancelBtn.hidden = true;
+      status.dataset.state = probe.readiness === "ready" ? (probe.enabled ? "ready" : "off") : probe.readiness;
+
+      const prefix = probe.readiness === "ready" && !probe.enabled
+        ? "Ready, but switched off above. Tick Enabled and save to use it. "
+        : "";
+      status.textContent = `${prefix}${probe.summary} (${probe.platformLabel}, running as ${probe.runningAs})`;
+
+      script.hidden = !probe.setupScript;
+      script.textContent = probe.setupScript || "";
+      copyBtn.hidden = !probe.setupScript;
+
+      note.hidden = !probe.setupNote;
+      note.textContent = probe.setupNote || "";
+
+      // Only offered when it will actually work. An enabled-but-unpermitted install gets the
+      // commands instead, which is the thing that moves it forward.
+      rebootBtn.hidden = !(probe.enabled && probe.readiness === "ready");
+    }
+
+    async function probe() {
+      checkBtn.disabled = true;
+      try {
+        const response = await fetch("/api/system/host-reboot");
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          status.dataset.state = "unsupported";
+          status.textContent = payload.error || "Could not ask the server about rebooting.";
+          return;
+        }
+        render(await response.json());
+      } catch {
+        status.dataset.state = "unsupported";
+        status.textContent = "Could not reach the server.";
+      } finally {
+        checkBtn.disabled = false;
+      }
+    }
+
+    checkBtn.addEventListener("click", probe);
+
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(script.textContent);
+        showToast("Commands copied - run them on the server, then check again", true);
+      } catch {
+        // Clipboard access is refused on plain HTTP in some browsers, which is exactly how a
+        // LAN dashboard is usually reached. Selecting the text is a workable fallback.
+        const range = document.createRange();
+        range.selectNodeContents(script);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        showToast("Couldn't copy automatically - the commands are selected, press Ctrl+C", false);
+      }
+    });
+
+    rebootBtn.addEventListener("click", async () => {
+      if (!confirm(
+        "Reboot the whole server machine now?\n\nEverything stops for a minute or two - analysis, " +
+        "this dashboard, notifications. If your recorder is a separate machine it keeps recording " +
+        "throughout.")) return;
+      rebootBtn.disabled = true;
+      try {
+        const response = await fetch("/api/system/host-reboot", { method: "POST" });
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 202) {
+          showToast(payload.message || "Rebooting", true);
+          if (payload.secondsRemaining !== null && payload.secondsRemaining !== undefined) {
+            showCountdown(payload.secondsRemaining);
+          } else {
+            probe();
+          }
+        } else {
+          showToast(payload.message || "Could not reboot the server.", false);
+          probe();
+        }
+      } catch {
+        showToast("Could not reach the server to reboot it.", false);
+      } finally {
+        rebootBtn.disabled = false;
+      }
+    });
+
+    cancelBtn.addEventListener("click", async () => {
+      cancelBtn.disabled = true;
+      try {
+        const response = await fetch("/api/system/host-reboot/cancel", { method: "POST" });
+        const payload = await response.json().catch(() => ({}));
+        showToast(payload.message || (response.ok ? "Reboot cancelled." : "Could not cancel."), response.ok);
+      } catch {
+        showToast("Could not reach the server to cancel.", false);
+      } finally {
+        cancelBtn.disabled = false;
+        stopCountdown();
+        probe();
+      }
+    });
+
+    probe();
+    return panel;
   }
 
   // Sections whose fields only bind at startup get this next to save - the step that used to

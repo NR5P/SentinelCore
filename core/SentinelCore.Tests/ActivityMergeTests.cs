@@ -15,6 +15,10 @@ namespace SentinelCore.Tests;
 // twice as often as they do. Get it wrong in the other and clips stop appearing on the cards
 // that have them, which is indistinguishable from clip recording being broken. Neither throws,
 // and neither shows up in a build.
+//
+// The confirmed-only filter has the same shape of risk in a sharper form: too strict and real
+// events silently vanish from the only list anyone looks at, too loose and the tab goes back to
+// being a list of moths. Both directions are asserted below.
 public sealed class ActivityMergeTests
 {
     private static readonly Guid CameraId = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -22,8 +26,19 @@ public sealed class ActivityMergeTests
     private static IReadOnlyDictionary<Guid, string> Cameras() =>
         new Dictionary<Guid, string> { [CameraId] = "Driveway" };
 
-    private static AlertEventRecord Alert(Guid id, DateTimeOffset occurredAt, string summary = "a person at the gate") =>
-        new(id, "Driveway", occurredAt, "completed", "person", summary, true, "someone is here", 0.9, null);
+    // A camera that forwards to AI analysis and records clips - the ordinary configuration, and
+    // the one the confirmed-only rules are written against.
+    private static IReadOnlyDictionary<Guid, CameraActivityInfo> AnalyzedCamera(bool recordClips = true) =>
+        new Dictionary<Guid, CameraActivityInfo> { [CameraId] = new(true, recordClips, 5, 10) };
+
+    private static IReadOnlyDictionary<Guid, CameraActivityInfo> UnanalyzedCamera() =>
+        new Dictionary<Guid, CameraActivityInfo> { [CameraId] = new(false, true, 5, 10) };
+
+    private static AlertEventRecord Alert(
+        Guid id, DateTimeOffset occurredAt, string summary = "a person at the gate",
+        bool? subjectConfirmed = true, string status = "completed") =>
+        new(id, "Driveway", occurredAt, status, "person", summary, true, "someone is here", 0.9, null,
+            SubjectConfirmed: subjectConfirmed);
 
     private static TriggerEvent Trigger(
         DateTimeOffset occurredAt, Guid? alertId = null, string? clipPath = null,
@@ -38,7 +53,7 @@ public sealed class ActivityMergeTests
         var alertId = Guid.NewGuid();
 
         var items = ActivityEndpoints.BuildActivity(
-            [Alert(alertId, now)], [Trigger(now, alertId)], Cameras(), false, null, null, 50);
+            [Alert(alertId, now)], [Trigger(now, alertId)], Cameras(), false, null, null, 50, AnalyzedCamera());
 
         var item = Assert.Single(items);
         Assert.Equal("analyzed", item.Kind);
@@ -55,7 +70,7 @@ public sealed class ActivityMergeTests
         var alertId = Guid.NewGuid();
 
         var items = ActivityEndpoints.BuildActivity(
-            [Alert(alertId, now)], [Trigger(now, alertId)], Cameras(), false, null, null, 50);
+            [Alert(alertId, now)], [Trigger(now, alertId)], Cameras(), false, null, null, 50, AnalyzedCamera());
 
         Assert.DoesNotContain(items, i => i.Kind == "motion");
     }
@@ -68,25 +83,204 @@ public sealed class ActivityMergeTests
         var now = DateTimeOffset.UtcNow;
 
         var items = ActivityEndpoints.BuildActivity(
-            [], [Trigger(now, Guid.NewGuid())], Cameras(), false, null, null, 50);
+            [], [Trigger(now, Guid.NewGuid())], Cameras(), false, null, null, 50, AnalyzedCamera());
 
         Assert.Empty(items);
     }
 
+    // ---------------- The confirmed-only rule ----------------
+
+    // The tab's promise. An alert the AI looked at and found nothing in is exactly what the user
+    // does not want to scroll past, and it is what the previous version of this list showed.
     [Fact]
-    public void BuildActivity_ATriggerThatWasNeverForwarded_IsListedAsMotionOnly()
+    public void BuildActivity_AnAlertTheAiFoundNothingIn_IsNotListed()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var items = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: false)], [Trigger(now, alertId)],
+            Cameras(), false, null, null, 50, AnalyzedCamera());
+
+        Assert.Empty(items);
+    }
+
+    // Rejected is the AI saying no. Unverified is nobody having asked. Both are held back from the
+    // default list, but they have to stay distinguishable or "show hidden" can't explain itself.
+    [Fact]
+    public void BuildActivity_AnAlertWhoseAnalysisNeverRan_IsHeldBackAsUnverifiedRatherThanRejected()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var hidden = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: null, status: "failed")], [Trigger(now, alertId)],
+            Cameras(), false, null, null, 50, AnalyzedCamera());
+        Assert.Empty(hidden);
+
+        var shown = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: null, status: "failed")], [Trigger(now, alertId)],
+            Cameras(), false, null, null, 50, AnalyzedCamera(), includeUnconfirmed: true);
+        Assert.Equal("unverified", Assert.Single(shown).Confirmation);
+    }
+
+    // The trigger's own verdict is fail-open by design - it says "confirmed" when the poll timed
+    // out or the main app was unreachable. That's right for the Triggers tab and not good enough
+    // here, so the alert's own verdict overrules it.
+    [Fact]
+    public void BuildActivity_WhenTheTriggerFailedOpenButTheAiFoundNothing_TheAiWins()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var items = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: false)],
+            [Trigger(now, alertId, confirmation: TriggerConfirmation.Confirmed)],
+            Cameras(), false, null, null, 50, AnalyzedCamera(), includeUnconfirmed: true);
+
+        Assert.Equal("rejected", Assert.Single(items).Confirmation);
+    }
+
+    // A camera with AI analysis switched off never gets a verdict, so gating it on one would hide
+    // that camera entirely and forever. Those rows stay, flagged.
+    [Fact]
+    public void BuildActivity_MotionFromACameraWithAiOff_IsListedAndFlagged()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [], [Trigger(now)], Cameras(), false, null, null, 50, UnanalyzedCamera()));
+
+        Assert.Equal("motion", item.Kind);
+        Assert.True(item.AiAnalysisOff);
+        Assert.Equal("confirmed", item.Confirmation);
+    }
+
+    // ...but a camera that IS meant to forward and produced a motion row anyway means the forward
+    // never happened, so nothing judged that frame. It doesn't belong in a confirmed-only list.
+    [Fact]
+    public void BuildActivity_MotionFromACameraThatShouldHaveForwarded_IsHeldBack()
     {
         var now = DateTimeOffset.UtcNow;
 
         var items = ActivityEndpoints.BuildActivity(
-            [], [Trigger(now)], Cameras(), false, null, null, 50);
+            [], [Trigger(now)], Cameras(), false, null, null, 50, AnalyzedCamera());
 
-        var item = Assert.Single(items);
-        Assert.Equal("motion", item.Kind);
-        Assert.Equal("Driveway", item.Camera);
-        Assert.Null(item.Summary);
-        Assert.Equal("front zone", item.ZoneName);
+        Assert.Empty(items);
     }
+
+    // A Camera Group companion capture has no zone (nothing detected it - a sibling camera fired)
+    // and normally no alert of its own, on a camera that does forward. Judging it by the same rule
+    // as a self-detected trigger would delete the other half of every multi-camera incident from
+    // this tab, which is the opposite of why groups exist.
+    [Fact]
+    public void BuildActivity_ACompanionCapture_IsNotMistakenForAnUnjudgedTrigger()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var companion = new TriggerEvent(
+            Guid.NewGuid(), CameraId, now, "/tmp/does-not-exist.jpg", 0, ClipPath: null,
+            IncidentId: "incident-1", Confirmation: TriggerConfirmation.Confirmed,
+            ZoneName: null, AlertId: null);
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [], [companion], Cameras(), false, null, null, 50, AnalyzedCamera()));
+
+        Assert.Equal("confirmed", item.Confirmation);
+        Assert.False(item.AiAnalysisOff);
+    }
+
+    // No trigger config to consult is not evidence that the frame was analyzed. Showing it flagged
+    // beats hiding a row we can't explain.
+    [Fact]
+    public void BuildActivity_MotionFromACameraWithNoConfig_IsListedAsUnanalyzed()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [], [Trigger(now)], Cameras(), false, null, null, 50));
+
+        Assert.True(item.AiAnalysisOff);
+    }
+
+    [Fact]
+    public void BuildActivity_WithShowHidden_KeepsEveryVerdictAndBadgesIt()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var items = ActivityEndpoints.BuildActivity(
+            [],
+            [Trigger(now, confirmation: TriggerConfirmation.Rejected),
+             Trigger(now.AddSeconds(-1), confirmation: TriggerConfirmation.Pending)],
+            Cameras(), false, null, null, 50, AnalyzedCamera(), includeUnconfirmed: true);
+
+        Assert.Equal(2, items.Count);
+        Assert.Contains(items, i => i.Confirmation == "rejected");
+        Assert.Contains(items, i => i.Confirmation == "pending");
+    }
+
+    // ---------------- Clip state ----------------
+
+    // A clip isn't written until the post-roll has elapsed, so for the first several seconds of an
+    // event's life there is genuinely no video. Saying "recording" is the difference between a card
+    // that explains itself and a card that looks broken.
+    [Fact]
+    public void BuildActivity_WithinThePostRollWindow_ReportsTheClipAsStillRecording()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now)], [Trigger(now, alertId)], Cameras(), false, null, null, 50,
+            AnalyzedCamera(), asOf: now.AddSeconds(3)));
+
+        Assert.Equal("recording", item.ClipState);
+        Assert.Equal(5, item.ClipPreSeconds);
+        Assert.Equal(10, item.ClipPostSeconds);
+    }
+
+    // Once that window has passed with nothing on disk, the clip is not coming. That's a fault
+    // worth surfacing rather than a spinner that never resolves.
+    [Fact]
+    public void BuildActivity_LongAfterThePostRollWithNoClip_ReportsItMissing()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now)], [Trigger(now, alertId)], Cameras(), false, null, null, 50,
+            AnalyzedCamera(), asOf: now.AddMinutes(10)));
+
+        Assert.Equal("missing", item.ClipState);
+    }
+
+    [Fact]
+    public void BuildActivity_WhenTheCameraDoesNotRecordClips_SaysSoRatherThanReportingAFault()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now)], [Trigger(now, alertId)], Cameras(), false, null, null, 50,
+            AnalyzedCamera(recordClips: false), asOf: now.AddMinutes(10)));
+
+        Assert.Equal("off", item.ClipState);
+    }
+
+    // An alert with no trigger behind it - Blue Iris, a gate check - never had a camera buffer to
+    // cut from, so there is no clip to be missing.
+    [Fact]
+    public void BuildActivity_AnAlertWithNoTriggerBehindIt_ReportsNoClipRatherThanAMissingOne()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [Alert(Guid.NewGuid(), now)], [], Cameras(), false, null, null, 50,
+            AnalyzedCamera(), asOf: now.AddMinutes(10)));
+
+        Assert.Equal("none", item.ClipState);
+    }
+
+    // ---------------- Filters, ordering and paging ----------------
 
     // A filter on the AI's own output can't be satisfied by a frame nothing analyzed, so those
     // rows drop out entirely rather than appearing to match.
@@ -99,7 +293,7 @@ public sealed class ActivityMergeTests
         var items = ActivityEndpoints.BuildActivity(
             [Alert(alertId, now)],
             [Trigger(now, alertId), Trigger(now.AddSeconds(-5))],
-            Cameras(), true, null, null, 50);
+            Cameras(), true, null, null, 50, UnanalyzedCamera());
 
         Assert.Single(items);
         Assert.DoesNotContain(items, i => i.Kind == "motion");
@@ -114,7 +308,7 @@ public sealed class ActivityMergeTests
         var items = ActivityEndpoints.BuildActivity(
             [Alert(alertId, now.AddMinutes(-1))],
             [Trigger(now, alertId: null), Trigger(now.AddMinutes(-2))],
-            Cameras(), false, null, null, 50);
+            Cameras(), false, null, null, 50, UnanalyzedCamera());
 
         Assert.Equal(3, items.Count);
         Assert.Equal(now, items[0].OccurredAt);
@@ -129,7 +323,7 @@ public sealed class ActivityMergeTests
 
         var items = ActivityEndpoints.BuildActivity(
             [], [Trigger(now), Trigger(now.AddDays(-3))], Cameras(),
-            false, now.AddDays(-1), null, 50);
+            false, now.AddDays(-1), null, 50, UnanalyzedCamera());
 
         Assert.Single(items);
     }
@@ -142,9 +336,30 @@ public sealed class ActivityMergeTests
         var items = ActivityEndpoints.BuildActivity(
             [Alert(Guid.NewGuid(), now), Alert(Guid.NewGuid(), now.AddMinutes(-1))],
             [Trigger(now.AddMinutes(-2)), Trigger(now.AddMinutes(-3))],
-            Cameras(), false, null, null, 3);
+            Cameras(), false, null, null, 3, UnanalyzedCamera());
 
         Assert.Equal(3, items.Count);
+    }
+
+    // The cap is applied AFTER the confirmed-only filter, so a page whose rows were mostly
+    // rejected still comes back full rather than mostly empty.
+    [Fact]
+    public void BuildActivity_FiltersBeforeCapping()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var keep = Guid.NewGuid();
+
+        var alerts = new List<AlertEventRecord>
+        {
+            Alert(Guid.NewGuid(), now, subjectConfirmed: false),
+            Alert(Guid.NewGuid(), now.AddSeconds(-1), subjectConfirmed: false),
+            Alert(keep, now.AddSeconds(-2))
+        };
+
+        var items = ActivityEndpoints.BuildActivity(
+            alerts, [], Cameras(), false, null, null, 2, AnalyzedCamera());
+
+        Assert.Equal(keep.ToString("D"), Assert.Single(items).Id);
     }
 
     // The clip lives on the trigger row, so an analyzed card can only offer playback through the
@@ -160,11 +375,13 @@ public sealed class ActivityMergeTests
         try
         {
             var items = ActivityEndpoints.BuildActivity(
-                [Alert(alertId, now)], [Trigger(now, alertId, clipPath)], Cameras(), false, null, null, 50);
+                [Alert(alertId, now)], [Trigger(now, alertId, clipPath)], Cameras(), false, null, null, 50,
+                AnalyzedCamera());
 
             var item = Assert.Single(items);
             Assert.NotNull(item.ClipUrl);
             Assert.Contains("/clip", item.ClipUrl);
+            Assert.Equal("ready", item.ClipState);
         }
         finally
         {
@@ -182,7 +399,7 @@ public sealed class ActivityMergeTests
         var items = ActivityEndpoints.BuildActivity(
             [Alert(alertId, now)],
             [Trigger(now, alertId, "/tmp/never-written.mp4")],
-            Cameras(), false, null, null, 50);
+            Cameras(), false, null, null, 50, AnalyzedCamera());
 
         Assert.Null(Assert.Single(items).ClipUrl);
     }
@@ -193,7 +410,8 @@ public sealed class ActivityMergeTests
         var now = DateTimeOffset.UtcNow;
 
         var items = ActivityEndpoints.BuildActivity(
-            [], [Trigger(now, confirmation: TriggerConfirmation.Rejected)], Cameras(), false, null, null, 50);
+            [], [Trigger(now, confirmation: TriggerConfirmation.Rejected)], Cameras(), false, null, null, 50,
+            UnanalyzedCamera(), includeUnconfirmed: true);
 
         Assert.Equal("rejected", Assert.Single(items).Confirmation);
     }

@@ -117,35 +117,55 @@ public sealed class CameraTriggerService(
                 camera.Id, imagePath, 0, incidentId,
                 gated ? TriggerConfirmation.Pending : TriggerConfirmation.Confirmed, cancellationToken);
 
-            var profile = await ResolveProfileAsync(camera.Id, request.AlertProfile, cancellationToken);
-            logger.LogInformation(
-                "Trigger fired for camera {CameraId} ({Name}) from {Source}, profile {Profile}",
-                camera.Id, camera.Name, request.Source, profile);
+            // From here on the row exists and, if gated, is Pending - which means invisible. Every
+            // exit has to resolve it one way or another. It used to resolve only on the happy path,
+            // so a forward that threw (an HttpClient timeout escapes AlertForwarder's catch, which
+            // only handles HttpRequestException) left the trigger and its clip hidden until someone
+            // restarted the service, since TriggerConfirmationSweeper only runs at startup. The
+            // zone path has always released on failure; this one now matches it.
+            var released = false;
+            try
+            {
+                var profile = await ResolveProfileAsync(camera.Id, request.AlertProfile, cancellationToken);
+                logger.LogInformation(
+                    "Trigger fired for camera {CameraId} ({Name}) from {Source}, profile {Profile}",
+                    camera.Id, camera.Name, request.Source, profile);
 
-            // Awaited, not fire-and-forget: /api/blueiris/alert only queues the alert and answers
-            // immediately, so this costs a loopback round-trip and lets the caller be told the
-            // difference between "queued for analysis" and "the pipeline refused it".
-            var forwarded = await alertForwarder.ForwardAsync(
-                bytes, [], camera.Name, profile, now, null, incidentId, cancellationToken);
+                // Awaited, not fire-and-forget: /api/blueiris/alert only queues the alert and answers
+                // immediately, so this costs a loopback round-trip and lets the caller be told the
+                // difference between "queued for analysis" and "the pipeline refused it".
+                var forwarded = await alertForwarder.ForwardAsync(
+                    bytes, [], camera.Name, profile, now, null, incidentId, cancellationToken);
 
-            // Same as the zone-trigger path: record which alert this became so the Events tab can
-            // show one card for the moment rather than a motion row beside an analysis row.
-            if (forwarded.AlertId is { } alertId)
-                await eventStore.SetAlertIdAsync(trigger.Id, alertId, cancellationToken);
+                // Same as the zone-trigger path: record which alert this became so the Events tab can
+                // show one card for the moment rather than a motion row beside an analysis row.
+                if (forwarded.AlertId is { } alertId)
+                    await eventStore.SetAlertIdAsync(trigger.Id, alertId, cancellationToken);
 
-            // Waiting out the *analysis*, on the other hand, takes as long as the model takes -
-            // minutes on a CPU-only box - so the verdict is followed up in the background and
-            // whoever pulled the trigger URL gets their answer now. CancellationToken.None
-            // deliberately: this outlives the HTTP request that started it.
-            if (gated)
-                _ = triggerConfirmation.ResolveAsync(trigger.Id, forwarded, CancellationToken.None);
+                // Waiting out the *analysis*, on the other hand, takes as long as the model takes -
+                // minutes on a CPU-only box - so the verdict is followed up in the background and
+                // whoever pulled the trigger URL gets their answer now. CancellationToken.None
+                // deliberately: this outlives the HTTP request that started it.
+                if (gated)
+                {
+                    released = true;
+                    _ = triggerConfirmation.ResolveAsync(trigger.Id, forwarded, CancellationToken.None);
+                }
 
-            return new CameraTriggerResult(
-                CameraTriggerStatus.Triggered,
-                forwarded.Accepted
-                    ? $"{camera.Name} captured and queued for analysis."
-                    : $"{camera.Name} captured, but the alert pipeline refused it - check the log and the main app's API key.",
-                trigger.Id);
+                return new CameraTriggerResult(
+                    CameraTriggerStatus.Triggered,
+                    forwarded.Accepted
+                        ? $"{camera.Name} captured and queued for analysis."
+                        : $"{camera.Name} captured, but the alert pipeline refused it - check the log and the main app's API key.",
+                    trigger.Id);
+            }
+            finally
+            {
+                // Covers cancellation as well as ordinary failure - a cancelled request would
+                // otherwise slip past the catch below, which excludes OperationCanceledException.
+                if (gated && !released)
+                    await triggerConfirmation.ResolveAsync(trigger.Id, AlertForwardResult.Refused, CancellationToken.None);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

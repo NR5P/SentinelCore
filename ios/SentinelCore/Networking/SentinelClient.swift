@@ -376,6 +376,22 @@ final class SentinelClient {
         let _: EmptyResponse = try await send("/api/system/restart", method: "POST", body: ["service": service])
     }
 
+    // Rebooting the machine itself, as opposed to the two service restarts above. The probe is a
+    // plain GET with no side effects - it is safe to call every time this screen appears, and is
+    // the only trustworthy answer to "will the reboot button work", since the permission it
+    // depends on lives in the operating system and can disappear without this app knowing.
+    func hostRebootProbe() async throws -> HostRebootProbe {
+        try await get("/api/system/host-reboot")
+    }
+
+    func rebootHost() async throws -> HostRebootOutcome {
+        try await send("/api/system/host-reboot", method: "POST", body: [String: String]())
+    }
+
+    func cancelHostReboot() async throws -> HostRebootOutcome {
+        try await send("/api/system/host-reboot/cancel", method: "POST", body: [String: String]())
+    }
+
     func deviceScanStatus(scanId: UUID) async throws -> DeviceScanSnapshot {
         try await get("/api/devices/discover/\(scanId.uuidString)")
     }

@@ -114,6 +114,80 @@ public static class SystemStatusEndpoints
                 return Results.Json(new { error = "Could not reach the main app." }, statusCode: 502);
             }
         }).RequireAuthorization();
+
+        // Rebooting the machine the server runs on, as opposed to bouncing a process. All three
+        // live in the main app - it is the one that knows which operating system this is and what
+        // it is allowed to do there - so these are pure forwards, the same shape as the status
+        // proxy above.
+        //
+        // Admin-only including the GET: the probe names the account the service runs as and the
+        // exact paths involved, which is a map of the box rather than a status readout.
+        var hostReboot = app.MapGroup("/api/system/host-reboot").RequireAuthorization("AdminOnly");
+
+        hostReboot.MapGet("", async (
+            IHttpClientFactory httpClientFactory,
+            AppSettingsFile mainAppSettings,
+            IConfiguration configuration,
+            ILogger<HostRebootForward> logger,
+            CancellationToken ct) =>
+            await ForwardAsync(HttpMethod.Get, "/api/system/host-reboot", httpClientFactory, mainAppSettings, configuration, logger, ct));
+
+        hostReboot.MapPost("", async (
+            IHttpClientFactory httpClientFactory,
+            AppSettingsFile mainAppSettings,
+            IConfiguration configuration,
+            ILogger<HostRebootForward> logger,
+            CancellationToken ct) =>
+            await ForwardAsync(HttpMethod.Post, "/api/system/host-reboot", httpClientFactory, mainAppSettings, configuration, logger, ct));
+
+        hostReboot.MapPost("/cancel", async (
+            IHttpClientFactory httpClientFactory,
+            AppSettingsFile mainAppSettings,
+            IConfiguration configuration,
+            ILogger<HostRebootForward> logger,
+            CancellationToken ct) =>
+            await ForwardAsync(HttpMethod.Post, "/api/system/host-reboot/cancel", httpClientFactory, mainAppSettings, configuration, logger, ct));
+    }
+
+    // Marker for ILogger<T> only - a static class can't be used as a type argument, which is why
+    // the other endpoints here borrow their request/response records for the same purpose.
+    private sealed record HostRebootForward;
+
+    // The main app's answer is passed through untouched, status code included. Deciding here
+    // which of its refusals mean what would mean keeping a second copy of that reasoning in sync
+    // with HostReboot.cs, and the messages it returns are already written to be read by a person.
+    private static async Task<IResult> ForwardAsync(
+        HttpMethod method,
+        string path,
+        IHttpClientFactory httpClientFactory,
+        AppSettingsFile mainAppSettings,
+        IConfiguration configuration,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", ct);
+        if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
+            return Results.Json(new { error = "The main app's API key is not configured." }, statusCode: 503);
+
+        var baseUrl = (configuration["MainAppBaseUrl"] ?? "http://127.0.0.1:5080").TrimEnd('/');
+        var client = httpClientFactory.CreateClient(nameof(SystemStatusEndpoints));
+
+        using var request = new HttpRequestMessage(method, $"{baseUrl}{path}");
+        request.Headers.TryAddWithoutValidation("X-Api-Key", bridge.ApiKey);
+
+        try
+        {
+            using var response = await client.SendAsync(request, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+                logger.LogWarning("Forward of {Path} failed: {StatusCode} {Body}", path, (int)response.StatusCode, body);
+            return Results.Content(body, "application/json", statusCode: (int)response.StatusCode);
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogWarning(ex, "Could not reach the main app at {BaseUrl} for {Path}", baseUrl, path);
+            return Results.Json(new { error = "Could not reach the main app." }, statusCode: 502);
+        }
     }
 
     // Mirrors SystemStatusSnapshot in the main app - kept as a separate type since this project

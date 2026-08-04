@@ -83,6 +83,28 @@ public static class AlertNotificationPolicy
     // interrupt someone's evening, not about whether anything happened. A person standing in your
     // own driveway with the gate shut is not worth a push notification and is absolutely worth
     // having the video of.
+    // "Did the AI look at this frame and find something?" - the whole-alert form of
+    // HasVisibleSubject, and the rule the Events tab uses to decide whether an alert passed the AI
+    // check. Null means no verdict exists to apply: the alert is still queued, the analysis failed,
+    // or the model never returned one. That is deliberately NOT the same as "found nothing", and
+    // callers must not collapse the two - an unreachable model is an infrastructure problem, not a
+    // judgement that the driveway was empty.
+    //
+    // The two exemptions mirror ShouldNotify's, and for the same reasons: a gate-open check is an
+    // ambient state question that by construction has nobody in frame, and Package Theft Watch's
+    // whole subject is a package that is no longer there to be seen.
+    public static bool? AnalysisFoundSubject(AlertResult result)
+    {
+        if (!string.Equals(result.Status, "completed", StringComparison.OrdinalIgnoreCase)) return null;
+        if (result.Analysis is not { } analysis) return null;
+
+        if (string.Equals(result.Profile, GateCheckDecision.ProfileName, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (analysis.PackageTheftSuspected) return true;
+
+        return HasVisibleSubject(analysis);
+    }
+
     public static bool HasVisibleSubject(VisionAnalysis analysis) =>
         analysis.Person.Visible ||
         analysis.Vehicle.Visible ||

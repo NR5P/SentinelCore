@@ -134,6 +134,13 @@ struct ServerSettingsSectionView: View {
                     }
                 }
             }
+
+            // The one section that isn't only its fields. Everything else here saves a value and
+            // is done; this one also has to report what the server's operating system will
+            // actually permit, which no schema can describe. See HostRebootPanel.
+            if section.key == "hostReboot" {
+                HostRebootPanel()
+            }
         }
         .formStyle(.grouped)
         .navigationTitle(Text(section.title).font(.body.smallCaps()))

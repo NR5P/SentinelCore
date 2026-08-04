@@ -24,7 +24,7 @@
       <span class="cursor">&#9608;</span>
     </div>
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-view="events" data-tip-below data-tip="Everything the cameras have caught, newest first - the snapshot, its clip if one was recorded, and what the AI made of it." >events</button>
+      <button class="tab active" data-view="events" data-tip-below data-tip="Confirmed events only, newest first - the snapshot, its clip, and what the AI made of it. Anything the AI rejected, is still judging, or never got to is filtered out; use &quot;show hidden&quot; to see it." >events</button>
       <button class="tab" data-view="timeline" data-tip-below data-tip="Review saved trigger clips across a day, with Sentinel AI events marked on the time rail.">timeline</button>
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones.">cameras</button>
@@ -52,9 +52,9 @@
       <div class="toolbar">
         <div class="toolbar-label">EVENTS</div>
         <div class="toolbar-actions">
-          <span id="event-count" class="event-count" data-tip-below data-tip-right data-tip="How many events match the current filters. The list reloads on its own every 30 seconds.">0 events</span>
+          <span id="event-count" class="event-count" data-tip-below data-tip-right data-tip="How many confirmed events match the current filters. The list reloads on its own every 30 seconds, which is also how a clip that was still recording turns into a play button.">0 events</span>
           <button id="refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload now instead of waiting for the next automatic refresh. Clips appear a few seconds after their event, once the post-roll finishes recording.">refresh</button>
-          <button id="show-hidden-btn" class="btn" data-tip-below data-tip-right data-tip="Also show motion the AI rejected as nothing (and any still waiting on a verdict). Nothing is ever deleted - this is how you check the filter isn't hiding things it shouldn't.">show hidden</button>
+          <button id="show-hidden-btn" class="btn" data-tip-below data-tip-right data-tip="Also show what this tab filters out: motion the AI rejected as nothing, anything still waiting on a verdict, and frames nothing ever judged because the analysis failed. Each one is badged with which. Nothing is ever deleted - this is how you check the filter isn't hiding things it shouldn't.">show hidden</button>
           <span id="queue-status" class="event-count hidden" data-tip-below data-tip-right data-tip="Alerts waiting to be analyzed. Each one takes as long as a real AI analysis does, so a large number here can mean a long wait."></span>
           <button id="clear-queue-btn" class="btn hidden" data-tip-below data-tip-right data-tip="Discard everything waiting in the analysis queue without analyzing it. Whatever is already being analyzed right now finishes normally - this only clears the backlog behind it. Cannot be undone.">clear queue</button>
         </div>

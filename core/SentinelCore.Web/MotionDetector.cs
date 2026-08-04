@@ -74,6 +74,13 @@ public sealed class MotionDetector
     // detector was built with - or null if there's no prior frame to diff against yet.
     //
     // The returned array is reused between calls; copy it if you need to hold on to it.
+    //
+    // The frame is copied into detector-owned storage rather than kept by reference. It used to be
+    // kept, which worked only because the one real caller cloned its read buffer before every call
+    // - a 172KB allocation twice a second per camera whose necessity was invisible from here. Any
+    // caller that did the natural thing and reused its buffer would have made `frame` and
+    // `_previousFrame` the same array, so every diff would come out as zero and the camera would
+    // silently never trigger again. Owning the copy makes that impossible to get wrong.
     public double[]? ProcessFrame(byte[] frame)
     {
         if (frame.Length != FrameSizeBytes)
@@ -81,7 +88,7 @@ public sealed class MotionDetector
 
         if (_previousFrame is null)
         {
-            _previousFrame = frame;
+            _previousFrame = (byte[])frame.Clone();
             return null;
         }
 
@@ -101,7 +108,7 @@ public sealed class MotionDetector
             _changedScratch[i] = true;
         }
 
-        _previousFrame = frame;
+        Buffer.BlockCopy(frame, 0, _previousFrame, 0, FrameSizeBytes);
 
         for (var zone = 0; zone < _zoneMasks.Length; zone++)
             _resultScratch[zone] = (double)LargestConnectedComponent(zone) / PixelCount;

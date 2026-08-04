@@ -474,3 +474,15 @@ public sealed class ServerSettingsDto
     [Required]
     public string Urls { get; set; } = string.Empty;
 }
+
+// Two settings and no more, because the third thing this feature needs - permission from the
+// operating system to reboot the machine - cannot be stored in a config file. Enabled here only
+// says the buttons may appear; GET /api/system/host-reboot is what says whether they will work.
+// See HostReboot.cs.
+public sealed class HostRebootSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(0, 3600)]
+    public int DelaySeconds { get; set; } = 60;
+}

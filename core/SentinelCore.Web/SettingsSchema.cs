@@ -653,6 +653,20 @@ public static class SettingsSchema
                 Check("enabled", "Only show confirmed triggers", "Hold each trigger back until the AI confirms something was actually there. Turn this off to see every motion trigger the moment it fires, the way it worked before."),
                 Number("timeoutSeconds", "Give up after (s)", "How long to wait for the AI before showing the trigger anyway. A trigger is never hidden because the analysis was slow, crashed, or couldn't be reached - only because the AI looked and found nothing. Raise this if your analyses regularly take longer than this and unconfirmed triggers are slipping through.", 30, 3600)
             ]
+        },
+        new()
+        {
+            Key = "hostReboot",
+            Title = "REBOOT SERVER",
+            Endpoint = "/api/settings/host-reboot",
+            Basic = false,
+            DtoType = typeof(HostRebootSettingsDto),
+            Description = "Lets you restart the computer this software runs on - the whole machine, not just this app - from here, your phone, or the TV app. Off by default, and switching it on is only half of it: the operating system also has to be told to allow it, which is a command you run once on the server itself. Turn this on and the reboot screen will work out what your machine needs and show you exactly what to paste. Cameras keep recording through a reboot if your recorder is a separate machine; what stops for a minute is analysis, this dashboard, and notifications. There is deliberately no way to shut the machine down from here - software can't turn it back on again.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Allow this machine to be rebooted from the apps. You'll still be asked to confirm every time, and the reboot screen will tell you if the operating system hasn't been set up to permit it yet."),
+                Number("delaySeconds", "Undo window (s)", "How long to wait before actually rebooting, so a mis-tap can be called back. The reboot screen counts down and offers Cancel for this long. Set to 0 to reboot immediately.", 0, 3600)
+            ]
         }
     ];
 }

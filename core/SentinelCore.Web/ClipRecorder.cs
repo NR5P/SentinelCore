@@ -39,11 +39,21 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
     public string SegmentPattern(Guid cameraId) =>
         Path.Combine(BufferDirectory(cameraId), $"{SegmentPrefix}%Y%m%d-%H%M%S.ts");
 
-    // The buffer only ever needs to reach back far enough to cover the longest configured
-    // pre-roll (plus slack for a clip that is still waiting on its post-roll).
-    public void PruneBuffer(Guid cameraId, int preSeconds)
+    // The buffer has to reach back far enough to still hold the pre-roll of a clip that is only
+    // now being assembled - which is a clip whose trigger fired a whole post-roll ago, because
+    // BuildClipAsync waits that long before it touches the buffer at all (see
+    // TriggerZoneMonitor.BuildClipAsync).
+    //
+    // This used to keep `preSeconds + 60`, a flat minute of slack, and prune on every reconcile
+    // pass throughout that wait. That covered a post-roll up to about 55 seconds; the trigger
+    // editor accepts up to 120. Set a two-minute post-roll and the oldest surviving segment at
+    // build time started roughly a minute AFTER the trigger, so the saved clip began after the
+    // person had left - and silently, because segments covering the tail of the window still
+    // existed, so the "no buffered video" warning never fired. Deriving the window from the
+    // post-roll instead of guessing at it makes the retention correct for any setting.
+    public void PruneBuffer(Guid cameraId, int preSeconds, int postSeconds)
     {
-        var keepFor = TimeSpan.FromSeconds(preSeconds + 60);
+        var keepFor = TimeSpan.FromSeconds(preSeconds + postSeconds + RetentionSlackSeconds);
         var cutoff = DateTimeOffset.UtcNow - keepFor;
 
         foreach (var file in EnumerateSegments(cameraId))
@@ -52,6 +62,11 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
             try { File.Delete(file.Path); } catch { /* best effort - may be mid-write */ }
         }
     }
+
+    // Covers the segment the trigger moment itself landed in, the extra segment BuildClipAsync
+    // waits for so the tail is closed off, and the concatenation. Deliberately roomy: over-keeping
+    // costs a few seconds of low-bitrate .ts on disk, under-keeping costs the footage.
+    private const int RetentionSlackSeconds = 60;
 
     public void DiscardBuffer(Guid cameraId)
     {
@@ -64,11 +79,18 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
         var from = triggeredAt - TimeSpan.FromSeconds(preSeconds);
         var to = triggeredAt + TimeSpan.FromSeconds(postSeconds);
 
-        // A segment named T covers roughly [T, T + SegmentSeconds), so anything that starts
-        // before the window ends and ends after it begins overlaps the clip.
-        var segments = EnumerateSegments(cameraId)
-            .Where(s => s.StartsAt < to && s.StartsAt + TimeSpan.FromSeconds(SegmentSeconds) > from)
-            .OrderBy(s => s.StartsAt)
+        // A segment runs until the next one starts. That matters more than it looks: the muxer can
+        // only cut on a keyframe, so with -c copy the real segment length is the camera's GOP
+        // rounded up to SegmentSeconds, and 4- and 10-second GOPs are ordinary on the cameras this
+        // talks to. Assuming a flat SegmentSeconds of coverage therefore under-measured every
+        // segment, and the one holding the pre-roll - the segment that STARTS before the window and
+        // runs into it - was the one that got excluded. The clip then began at the trigger instead
+        // of five seconds before it, with nothing logged, because the rest of the window was still
+        // covered. The last segment has no successor to measure against, so it falls back to the
+        // nominal length.
+        var ordered = EnumerateSegments(cameraId).OrderBy(s => s.StartsAt).ToList();
+        var segments = ordered
+            .Where((s, i) => s.StartsAt < to && SegmentEnd(ordered, i) > from)
             .ToList();
 
         if (segments.Count == 0)
@@ -106,6 +128,28 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
             try { File.Delete(listPath); } catch { /* best effort */ }
         }
     }
+
+    // When a segment really ends: where the next one begins, since the muxer writes them back to
+    // back. The clamp matters because the buffer isn't guaranteed contiguous - a restarted or
+    // stalled detection session leaves a hole in it, and without the clamp the last segment before
+    // the hole would be credited with covering the entire outage, splicing footage from before it
+    // onto the front of a clip. Beyond a plausible GOP, fall back to the nominal length; the last
+    // segment has no successor to measure against and does the same.
+    private static DateTimeOffset SegmentEnd(IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index)
+    {
+        var nominalEnd = ordered[index].StartsAt + TimeSpan.FromSeconds(SegmentSeconds);
+        if (index + 1 >= ordered.Count) return nominalEnd;
+
+        var nextStart = ordered[index + 1].StartsAt;
+        return nextStart - ordered[index].StartsAt <= TimeSpan.FromSeconds(MaxSegmentSpanSeconds)
+            ? nextStart
+            : nominalEnd;
+    }
+
+    // The longest a single segment can plausibly be: SegmentSeconds rounded up to the camera's GOP,
+    // and long GOPs on these cameras top out around 10 seconds. Anything longer is a gap, not a
+    // segment.
+    private const int MaxSegmentSpanSeconds = 15;
 
     private IEnumerable<(string Path, DateTimeOffset StartsAt)> EnumerateSegments(Guid cameraId)
     {

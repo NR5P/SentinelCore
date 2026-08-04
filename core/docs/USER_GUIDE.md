@@ -690,6 +690,33 @@ any setting. It's mainly useful for spotting a machine that's struggling (a queu
 growing, a vision backend that's gone unreachable) before it turns into missed alerts, or for a
 quick sanity check after a restart or update that everything actually came back up healthy.
 
+## 7b. Restarting the server machine
+
+Under Settings → REBOOT SERVER. Off by default, and it restarts the whole computer the software
+runs on — not just the app. It's there for the times a service restart isn't enough: the network
+stack has wedged, a system update wants a reboot, or the AI backend is stuck in a way that only a
+clean boot clears.
+
+Switching it on is only half of it. The operating system also has to be told to permit it, which
+is one command run once on the server itself — a phone can't grant itself that. You don't have to
+go and look it up: turn the setting on and the panel below tells you exactly what this machine
+needs, with your actual username and paths already filled in, and a **Copy Commands** button.
+Paste them into a terminal on the server, come back, press **Check Again**, and it should turn
+green. On Windows this is usually already done, and it'll say so.
+
+That check is worth pressing now and then. The permission lives in the operating system, not in
+this app, so a rebuilt machine or a system upgrade can quietly take it away — and the panel always
+tells you what's true right now rather than what was true when you set it up.
+
+When you do reboot, you get a 60-second countdown with a **Cancel Reboot** button (you can change
+or remove that window in the same section). After that the machine goes down and comes back on its
+own, usually inside a minute or two. If your recorder is a separate machine, it keeps recording the
+whole time — what pauses is analysis, this dashboard, and notifications.
+
+There's no shut-down button, on purpose. Software can turn a machine off but it can't turn one back
+on, so that button's worst case is a drive to wherever the server lives. A reboot's worst case is
+just a slow minute.
+
 ## 8. Vision analysis backend — local, cloud, or both
 
 Every alert (Blue Iris or your own trigger zones) gets analyzed by one of three kinds of AI

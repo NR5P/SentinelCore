@@ -152,3 +152,40 @@ struct SettingsSaveResult: Decodable {
     let saved: Bool?
     let restartRequired: Bool?
 }
+
+// Rebooting the machine the server runs on - mirrors HostRebootProbe in HostReboot.cs.
+//
+// Deliberately carries the server's prose rather than reconstructing it here. Which sudoers line
+// to add, on which path, for which user, is a question only the server can answer about itself,
+// and an app that guessed would eventually guess wrong on someone's install.
+struct HostRebootProbe: Decodable, Equatable {
+    let platform: String
+    let platformLabel: String
+    let readiness: String
+    let enabled: Bool
+    let runningAs: String
+    let summary: String
+    let delaySeconds: Int
+    let setupScript: String?
+    let setupNote: String?
+    let scheduledFor: Date?
+
+    // Counted down from locally. Preferred over subtracting scheduledFor from this device's
+    // clock, which on a phone that has drifted would produce a confidently wrong countdown.
+    let secondsRemaining: Int?
+
+    var isReady: Bool { readiness == "ready" }
+    var needsSetup: Bool { readiness == "setupRequired" }
+    var isUnsupported: Bool { readiness == "unsupported" }
+
+    // Ready and switched on are separate facts, and the difference is the whole reason this
+    // screen exists: one is fixed in this app, the other only at a shell on the server.
+    var canReboot: Bool { isReady && enabled }
+}
+
+struct HostRebootOutcome: Decodable {
+    let ok: Bool
+    let message: String
+    let scheduledFor: Date?
+    let secondsRemaining: Int?
+}

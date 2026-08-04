@@ -42,7 +42,8 @@ public sealed record SettingsSnapshot(
     PushNotificationsSettingsDto? PushNotifications = null,
     LoggingSettingsDto? Logging = null,
     ServerSettingsDto? Server = null,
-    TriggerConfirmationSettingsDto? TriggerConfirmation = null);
+    TriggerConfirmationSettingsDto? TriggerConfirmation = null,
+    HostRebootSettingsDto? HostReboot = null);
 
 public static class SettingsEndpoints
 {
@@ -248,6 +249,12 @@ public static class SettingsEndpoints
         settings.MapPut("/trigger-confirmation", async (TriggerConfirmationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "TriggerConfirmation", ct));
 
+        // Saved into the main app's appsettings.json like every other section here, and read back
+        // there through IOptionsMonitor - so switching this on takes effect within a second or two
+        // and needs no restart of anything.
+        settings.MapPut("/host-reboot", async (HostRebootSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "HostReboot", ct));
+
         settings.MapPut("/webhook", async (WebhookSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "Webhook", ct, extra =>
             {
@@ -430,7 +437,12 @@ public static class SettingsEndpoints
         // Defaulted rather than left null when the section is absent, so the settings form shows
         // this on (which is what an install with no section actually does) instead of unchecked.
         await settings.GetSectionAsync<TriggerConfirmationSettingsDto>("TriggerConfirmation", cancellationToken)
-            ?? new TriggerConfirmationSettingsDto());
+            ?? new TriggerConfirmationSettingsDto(),
+        // Defaulted like TriggerConfirmation above so the form shows the real off-by-default
+        // state and the 60-second undo window, rather than an empty box, on an install whose
+        // appsettings.json predates this feature.
+        await settings.GetSectionAsync<HostRebootSettingsDto>("HostReboot", cancellationToken)
+            ?? new HostRebootSettingsDto());
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -480,6 +492,7 @@ public static class SettingsEndpoints
         if (snapshot.PushNotifications is not null) await settings.MergeSectionAsync("PushNotifications", snapshot.PushNotifications, cancellationToken);
         if (snapshot.Logging is not null) await WriteLoggingAsync(snapshot.Logging, settings, cancellationToken);
         if (snapshot.Server is not null) await settings.ReplaceSectionAsync("Urls", snapshot.Server.Urls, cancellationToken);
+        if (snapshot.HostReboot is not null) await settings.MergeSectionAsync("HostReboot", snapshot.HostReboot, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

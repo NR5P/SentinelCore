@@ -1,5 +1,6 @@
 package com.sentinelcore.android.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,20 +34,28 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.sentinelcore.android.data.HostRebootProbe
 import com.sentinelcore.android.data.SettingsField
 import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
+import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelRed
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -185,6 +194,26 @@ private fun ServerSettingsSectionEditor(
     var confirmRestart by remember { mutableStateOf(false) }
     var confirmAction by remember { mutableStateOf(false) }
 
+    // Held here rather than inside HostRebootPanel because that panel is drawn from a LazyColumn
+    // item: everything remembered inside an item is thrown away the moment it scrolls out of
+    // view, which would abandon a running reboot countdown and close the confirm dialog mid-
+    // scroll. The panel below is pure rendering; the state and the timers live at screen scope.
+    val hostReboot = remember(section.key) { HostRebootState() }
+
+    if (section.key == "hostReboot") {
+        LaunchedEffect(Unit) { hostReboot.refresh(model) }
+
+        // Counts down from the server's own figure rather than a wall-clock deadline, so a phone
+        // whose clock has drifted still shows the truth. Anchored here so scrolling can't stop it.
+        LaunchedEffect(hostReboot.remaining) {
+            val current = hostReboot.remaining
+            if (current != null && current > 0) {
+                delay(1000)
+                hostReboot.remaining = current - 1
+            }
+        }
+    }
+
     fun save() {
         val payload = JSONObject()
         val problems = mutableListOf<String>()
@@ -291,6 +320,12 @@ private fun ServerSettingsSectionEditor(
                     }
                 }
             }
+            // The only section that is more than its fields. The switch above records an
+            // intention; whether the server's operating system will honour it is a question only
+            // the server can answer, and the answer can change without this app being told.
+            if (section.key == "hostReboot") {
+                item { HostRebootPanel(model, hostReboot, scope) }
+            }
             item { Spacer(Modifier.padding(12.dp)) }
         }
     }
@@ -324,6 +359,10 @@ private fun ServerSettingsSectionEditor(
             },
             dismissButton = { TextButton(onClick = { confirmRestart = false }) { Text("Cancel") } },
         )
+    }
+
+    if (hostReboot.confirming) {
+        HostRebootConfirmDialog(model, hostReboot, scope)
     }
 
     val action = section.extraAction
@@ -455,4 +494,224 @@ private fun writePath(target: JSONObject, path: String, value: Any) {
         node = node.optJSONObject(segment) ?: JSONObject().also { node.put(segment, it) }
     }
     node.put(segments.last(), value)
+}
+
+
+// State for the REBOOT SERVER panel, deliberately owned by the screen rather than the panel -
+// see the comment at its remember { } site. Holding it in one object keeps that hoisting to a
+// single line instead of six.
+@Stable
+private class HostRebootState {
+    var probe by mutableStateOf<HostRebootProbe?>(null)
+    var failure by mutableStateOf<String?>(null)
+    var message by mutableStateOf<String?>(null)
+    var busy by mutableStateOf(false)
+    var confirming by mutableStateOf(false)
+    var remaining by mutableStateOf<Int?>(null)
+
+    // Re-asked on every appearance rather than cached. The permission this reports on is granted
+    // outside the app, at a shell, and can disappear the same way - a rebuilt box, an OS upgrade
+    // that cleared /etc/sudoers.d. A remembered "ready" would be a promise nothing can keep.
+    suspend fun refresh(model: SentinelViewModel) {
+        try {
+            val fresh = model.hostRebootProbe()
+            probe = fresh
+            remaining = fresh.secondsRemaining
+            failure = null
+        } catch (error: Exception) {
+            failure = error.message ?: "Could not ask the server about rebooting."
+        }
+    }
+}
+
+// The live half of the REBOOT SERVER section: what the server's operating system will actually
+// permit, and the commands to fix it when the answer is "nothing yet". Pure rendering - every
+// piece of state it touches belongs to the screen above it.
+@Composable
+private fun HostRebootPanel(
+    model: SentinelViewModel,
+    state: HostRebootState,
+    scope: CoroutineScope,
+) {
+    val clipboard = LocalClipboardManager.current
+
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "Rebooting this machine",
+            style = MaterialTheme.typography.titleSmall,
+            color = SentinelGreen,
+        )
+
+        val current = state.probe
+        val countdown = state.remaining
+        val failure = state.failure
+
+        when {
+            current == null && failure != null ->
+                Text(failure, color = SentinelRed, style = MaterialTheme.typography.bodySmall)
+
+            current == null -> Text(
+                "Checking…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            countdown != null -> Text(
+                if (countdown > 0) {
+                    "Rebooting in ${countdown}s. Cancel now to call it off."
+                } else {
+                    "Rebooting now - the server will be gone for a minute or two."
+                },
+                color = SentinelRed,
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            else -> {
+                // Ready-but-switched-off is spelled out rather than folded into the server's
+                // summary: it is the one state fixable from this screen, and burying it would
+                // send someone to a terminal they don't need to open.
+                val headline = if (current.isReady && !current.enabled) {
+                    "Ready, but switched off above. Turn on Enabled and save to use it."
+                } else {
+                    current.summary
+                }
+                Text(
+                    headline,
+                    color = when {
+                        current.isReady && current.enabled -> SentinelGreen
+                        current.needsSetup -> SentinelAmber
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "${current.platformLabel}, running as ${current.runningAs}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        // Shown below the status rather than instead of it, so a failed reboot or cancel doesn't
+        // hide what the machine's actual state is.
+        if (current != null && failure != null) {
+            Text(failure, color = SentinelRed, style = MaterialTheme.typography.bodySmall)
+        }
+
+        val script = current?.setupScript
+        if (countdown == null && script != null) {
+            Text(
+                script,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(8.dp),
+            )
+            // Copying and pasting into a terminal on the server is the real workflow - nobody
+            // retypes a sudoers line off a phone screen correctly.
+            OutlinedButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(script))
+                    state.message = "Commands copied. Run them on the server, then check again."
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Copy Commands") }
+
+            current.setupNote?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        state.message?.let { Text(it, color = SentinelGreen, style = MaterialTheme.typography.bodySmall) }
+
+        if (countdown != null && countdown > 0) {
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        state.busy = true
+                        try {
+                            state.message = model.cancelHostReboot().message
+                            state.remaining = null
+                            state.refresh(model)
+                        } catch (error: Exception) {
+                            // refresh() clears failure, so a failed cancel deliberately doesn't
+                            // re-probe - it would wipe the explanation it just produced.
+                            state.failure = error.message ?: "Could not cancel."
+                        }
+                        state.busy = false
+                    }
+                },
+                enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Cancel Reboot") }
+        } else if (countdown == null && current?.canReboot == true) {
+            OutlinedButton(
+                onClick = { state.confirming = true },
+                enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Reboot Server", color = SentinelRed) }
+        }
+
+        OutlinedButton(
+            onClick = {
+                scope.launch {
+                    state.busy = true
+                    state.refresh(model)
+                    state.busy = false
+                }
+            },
+            enabled = !state.busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Check Again") }
+    }
+}
+
+@Composable
+private fun HostRebootConfirmDialog(
+    model: SentinelViewModel,
+    state: HostRebootState,
+    scope: CoroutineScope,
+) {
+    val window = state.probe?.delaySeconds ?: 60
+    AlertDialog(
+        onDismissRequest = { state.confirming = false },
+        title = { Text("Reboot the server machine?") },
+        text = {
+            Text(
+                "The whole computer restarts, not just this app. Analysis, the dashboard and " +
+                    "notifications stop for a minute or two; if your recorder is a separate " +
+                    "machine it keeps recording throughout." +
+                    if (window > 0) " You'll have $window seconds to cancel." else "",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                state.confirming = false
+                scope.launch {
+                    state.busy = true
+                    state.message = null
+                    try {
+                        val outcome = model.rebootHost()
+                        state.message = outcome.message
+                        state.remaining = outcome.secondsRemaining
+                        state.failure = null
+                    } catch (error: Exception) {
+                        // The server's refusals are written to be read - shown as they are.
+                        state.failure = error.message ?: "Could not reboot the server."
+                    }
+                    state.busy = false
+                }
+            }) { Text("Reboot", color = SentinelRed) }
+        },
+        dismissButton = { TextButton(onClick = { state.confirming = false }) { Text("Cancel") } },
+    )
 }

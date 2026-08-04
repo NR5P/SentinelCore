@@ -532,6 +532,109 @@ call rather than one call naming both — that's intentional, so it matches thes
 allowlisted command lines regardless of whether you run `./deploy.sh`, `./deploy.sh main`, or
 `./deploy.sh web`.
 
+## 10a. Rebooting the machine from the apps (optional)
+
+Off by default. Section 10 above grants restarts of the *services*; this grants a restart of the
+*machine*, which is the one recovery step that previously still needed SSH — a wedged network
+stack, a kernel or driver update, an Ollama that a service restart alone won't clear.
+
+Two things have to be true before the button works, and they are deliberately separate:
+
+1. **Host Reboot** is switched on under Settings → REBOOT SERVER (dashboard, iOS/macOS, or
+   Android). This is a stored setting and takes effect immediately, no restart needed.
+2. The operating system has been told to allow it. That cannot be done from any app — it is one
+   command run once on the server itself, and it differs per platform.
+
+You do not have to work out which command yourself. Switch the setting on, open the REBOOT SERVER
+section, and the panel underneath reports what this specific machine needs — the right commands
+for its operating system, with its actual service account and paths already filled in — plus a
+**Check Again** button that verifies the grant landed **without rebooting to find out**. What
+follows is the same thing, for reference.
+
+There is deliberately no shut-down option, and there should not be: a machine that is off cannot
+be turned back on by software, so a mis-tap would end in a trip to wherever the box lives. A
+reboot's worst case is the one any crash already has.
+
+### Linux
+
+The services run as `APP_USER` (`media` by default), not root, so `shutdown` needs an explicit
+grant:
+
+```bash
+sudo mkdir -p /etc/sudoers.d
+printf '%s\n' 'media ALL=(root) NOPASSWD: /usr/sbin/shutdown -r now' | sudo tee /etc/sudoers.d/sentinelcore-reboot >/dev/null
+sudo chmod 440 /etc/sudoers.d/sentinelcore-reboot
+sudo visudo -c -f /etc/sudoers.d/sentinelcore-reboot
+```
+
+Replace `media` with your actual `APP_USER`, and check `/usr/sbin/shutdown` is where your distro
+keeps it (`command -v shutdown`) — the grant matches the exact path and arguments, which is what
+keeps it narrow. Verify without rebooting:
+
+```bash
+sudo -n -l /usr/sbin/shutdown -r now
+```
+
+A polkit rule granting `org.freedesktop.login1.reboot` is the more native answer on systemd and
+grants less. It is not the default advice here for one reason: polkit checks
+`org.freedesktop.login1.reboot-multiple-sessions` instead whenever anyone else is logged in, so a
+rule that only grants the first action works on the day you write it and mysteriously stops
+working months later. Grant both if you go that route.
+
+To undo either: delete `/etc/sudoers.d/sentinelcore-reboot`.
+
+### macOS
+
+The LaunchDaemons in section 8c set `<key>UserName</key>` to the install user rather than running
+as root, so macOS needs the same kind of grant. `/etc` is a symlink to `/private/etc` and the
+stock `sudoers` already carries `#includedir /private/etc/sudoers.d`, so a file dropped here is
+picked up with no further edit:
+
+```bash
+sudo mkdir -p /etc/sudoers.d
+printf '%s\n' 'media ALL=(root) NOPASSWD: /sbin/shutdown -r now' | sudo tee /etc/sudoers.d/sentinelcore-reboot >/dev/null
+sudo chmod 440 /etc/sudoers.d/sentinelcore-reboot
+sudo visudo -c -f /etc/sudoers.d/sentinelcore-reboot
+```
+
+On newer macOS releases Terminal may need Full Disk Access before it can write to
+`/etc/sudoers.d`.
+
+### Windows
+
+Usually nothing to do. `scripts/install-windows.ps1` registers the services with `New-Service` and
+no `-Credential`, so they run as LocalSystem, which already holds `SeShutdownPrivilege`. The panel
+will report **Ready** straight away.
+
+If you changed the services to run under a named account, either put them back:
+
+```powershell
+sc.exe config SentinelCoreBridge obj= LocalSystem
+sc.exe stop SentinelCoreBridge
+sc.exe start SentinelCoreBridge
+```
+
+(the space after `obj=` is required — `sc.exe` treats it as part of the syntax), or grant that
+account the **Shut down the system** right under Local Security Policy (`secpol.msc`) → Local
+Policies → User Rights Assignment, then restart the service.
+
+### Containers
+
+Not supported, and reported as such rather than offered and then failing. A container cannot
+reboot the host it runs on; do that from the host, or from whatever manages the container.
+
+### What a reboot actually costs
+
+If your recorder is a separate machine — Blue Iris on Windows, in the usual setup — it keeps
+recording throughout. What stops for a minute or two is AI analysis, the dashboard, HomeKit, and
+notifications. The services come back on their own: systemd units are `enabled`, LaunchDaemons are
+loaded at boot, and Windows services are set to Automatic.
+
+Every reboot is scheduled with an undo window (60 seconds by default, configurable, 0 to reboot
+immediately). The countdown is held in the app's own process rather than handed to
+`shutdown -r +1`, so cancelling is reliable and needs no privilege of its own — and if the process
+dies inside the window, the reboot simply doesn't happen, which is the right way for this to fail.
+
 ## 11. Updating to a new version
 
 This section is for a **git checkout** install. If you installed from a prebuilt release .zip
