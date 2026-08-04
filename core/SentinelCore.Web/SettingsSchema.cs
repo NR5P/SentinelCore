@@ -449,6 +449,36 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "location",
+            Title = "LOCATION",
+            Endpoint = "/api/settings/location",
+            Basic = true,
+            DtoType = typeof(LocationSettingsDto),
+            Description = "Where this server is, used for one thing only: working out when the sun rises and sets here, so a schedule can fire at sunset or \"when it gets dark\" instead of at a fixed clock time that drifts out of step through the year. Nothing is sent anywhere - the calculation happens on this machine. You can type a town to fill the coordinates in, or enter them yourself; only the numbers are saved.",
+            Fields =
+            [
+                Text("label", "Town or City", "A place name to look up, e.g. \"Louisville, KY\". Filling this in and pressing Find sets the two coordinates below. Only ever a convenience - entering the coordinates directly works just as well, and is the only option on a server with no internet access."),
+                Number("latitude", "Latitude", "Degrees north of the equator, negative for south. Leave this and longitude at 0 if you would rather not set a location - schedules that follow the sun simply won't run.", -90, 90, 0.0001),
+                Number("longitude", "Longitude", "Degrees east of Greenwich, negative for west.", -180, 180, 0.0001)
+            ]
+        },
+        new()
+        {
+            Key = "schedules",
+            Title = "SCHEDULES",
+            Endpoint = "/api/settings/schedules",
+            Basic = true,
+            DtoType = typeof(ScheduleSettingsDto),
+            Description = "How the scheduler behaves as a whole. The schedules themselves are on the Automations tab - this is only the handful of settings that apply to all of them.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Run schedules at their appointed times. Turning this off stops every schedule at once without having to disable them one by one."),
+                Number("maximumCatchUpMinutes", "Catch-Up Limit (min)", "For schedules set to catch up on a firing they missed while the server was off: how late is still worth running. Beyond this the run is recorded as missed instead, so a coop door doesn't close at breakfast because the machine was down overnight.", 1, 1440),
+                Text("timeZone", "Time Zone", "Leave empty to use this machine's own time zone, which is almost always right. Set an IANA id such as America/New_York only if the server's clock runs on UTC but schedules should follow local time.")
+            ]
+        },
+        new()
+        {
             Key = "quietHours",
             Title = "QUIET HOURS",
             Endpoint = "/api/settings/quiet-hours",

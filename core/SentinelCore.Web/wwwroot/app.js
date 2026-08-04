@@ -500,7 +500,9 @@ for (const tab of tabs) {
     if (target === "cameras") window.GateWatchCameras.renderList();
     if (target === "live") window.GateWatchCameras.showLive();
     if (target === "events") loadEvents();
-    if (target === "automations") window.GateWatchAutomations.load();
+    // Two panes share this tab - rules and schedules - so the one actually on screen is the one
+    // that gets reloaded, rather than always the rules.
+    if (target === "automations") window.SentinelSchedules.loadActivePane();
     if (target === "devices") window.GateWatchDevices.load();
     if (target === "docs") window.GateWatchDocs.load();
     if (target === "timeline") {

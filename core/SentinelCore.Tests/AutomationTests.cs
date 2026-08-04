@@ -211,11 +211,49 @@ public sealed class AutomationTests
 
     private static AutomationAlertAction BuildAction(
         FakeAutomationRuleStore store, FakeMqttPublisher publisher, bool mqttEnabled, RecordingHandler? handler = null) =>
-        new(new HttpClient(handler ?? new RecordingHandler()),
-            store,
-            publisher,
-            new StaticOptionsMonitor<MqttOptions>(new MqttOptions { Enabled = mqttEnabled }),
+        new(store,
+            BuildDispatcher(publisher, mqttEnabled, handler),
             NullLogger<AutomationAlertAction>.Instance);
+
+    // The Device Hub half of the dispatcher is left switched off here: these tests are about the
+    // MQTT and webhook paths, and a bus with the hub disabled never opens a connection.
+    private static AutomationActionDispatcher BuildDispatcher(
+        FakeMqttPublisher publisher, bool mqttEnabled, RecordingHandler? handler = null)
+    {
+        var mqttOptions = new StaticOptionsMonitor<MqttOptions>(new MqttOptions { Enabled = mqttEnabled });
+        var deviceStore = new EmptyDeviceStore();
+        var bus = new MqttDeviceBus(
+            mqttOptions,
+            new StaticOptionsMonitor<DeviceHubOptions>(new DeviceHubOptions { Enabled = false }),
+            deviceStore,
+            NullLogger<MqttDeviceBus>.Instance);
+
+        return new AutomationActionDispatcher(
+            new HttpClient(handler ?? new RecordingHandler()), publisher, mqttOptions, deviceStore, bus);
+    }
+
+    private sealed class EmptyDeviceStore : IDeviceStore
+    {
+        public Task<IReadOnlyList<HubDevice>> GetAllAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<HubDevice>>([]);
+
+        public Task<IReadOnlyList<HubDevice>> GetEnabledAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<HubDevice>>([]);
+
+        public Task<HubDevice?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<HubDevice?>(null);
+
+        public Task<HubDevice> CreateAsync(HubDevice device, CancellationToken cancellationToken) =>
+            Task.FromResult(device);
+
+        public Task<HubDevice?> UpdateAsync(Guid id, HubDevice device, CancellationToken cancellationToken) =>
+            Task.FromResult<HubDevice?>(device);
+
+        public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(false);
+
+        public Task UpdateOrderAsync(IReadOnlyList<Guid> orderedIds, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
 
     private static AutomationRule MqttRule(IReadOnlyList<string> cameras, IReadOnlyList<string> categories)
     {

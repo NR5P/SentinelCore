@@ -573,3 +573,130 @@ data class HostRebootOutcome(
     val message: String,
     val secondsRemaining: Int?,
 )
+
+// --- Schedules -------------------------------------------------------------------------------
+
+// A "do this at that time" rule - the clock-driven counterpart to the dashboard's automation
+// rules, sharing their action vocabulary plus a Device Hub option. See ScheduleModel.cs.
+data class ScheduleAction(
+    val type: String,
+    val deviceId: String?,
+    val deviceAction: String,
+    val deviceBrightness: Int?,
+    val mqttTopic: String,
+    val mqttPayload: String,
+    val mqttRetain: Boolean,
+    val webhookUrl: String,
+    val webhookMethod: String,
+    val webhookHeaders: String,
+    val webhookBody: String,
+    val webhookContentType: String,
+)
+
+data class Schedule(
+    val id: String,
+    val name: String,
+    val enabled: Boolean,
+    val kind: String,
+    val timeOfDay: String,
+    val daysOfWeek: List<Int>,
+    val intervalSeconds: Int,
+    val windowStart: String,
+    val windowEnd: String,
+    val cronExpression: String,
+    val runAtUtc: Instant?,
+    val solarEvent: String,
+    val solarOffsetMinutes: Int,
+    // How far below the horizon the sun must be for a "dusk"/"dawn" firing - a darkness level
+    // rather than a time, which is what makes it track the seasons on its own.
+    val solarElevationDegrees: Double,
+    val action: ScheduleAction,
+    val catchUpPolicy: String,
+    val lastRunUtc: Instant?,
+    val lastStatus: String,
+    val lastDetail: String,
+    val nextDueUtc: Instant?,
+    val runCount: Long,
+) {
+    val followsTheSun: Boolean get() = kind == "solar"
+}
+
+data class ScheduleRun(
+    val id: String,
+    val scheduleId: String,
+    val dueAtUtc: Instant,
+    val firedAtUtc: Instant,
+    val status: String,
+    val detail: String,
+    val durationMs: Long,
+)
+
+// One of the named darkness levels the server offers, so this app doesn't have to know that
+// "civil twilight" means -6 degrees.
+data class DarknessLevel(
+    val key: String,
+    val label: String,
+    val description: String,
+    val elevationDegrees: Double,
+)
+
+data class ScheduleDeviceOption(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val room: String,
+    val enabled: Boolean,
+    val supportsBrightness: Boolean,
+    val momentary: Boolean,
+    val coverLike: Boolean,
+    val hasStop: Boolean,
+)
+
+data class ScheduleMetadata(
+    val darknessLevels: List<DarknessLevel> = emptyList(),
+    val deviceActions: List<String> = emptyList(),
+    val tokens: List<String> = emptyList(),
+    val minimumIntervalSeconds: Int = 10,
+    // Whether coordinates have been set. A sun-following schedule can't work without them, and
+    // saying so up front beats a save that fails.
+    val locationSet: Boolean = false,
+    val timeZone: String = "",
+    val devices: List<ScheduleDeviceOption> = emptyList(),
+)
+
+data class SchedulePreview(
+    val occurrences: List<String> = emptyList(),
+    val timeZone: String = "",
+    val explanation: String = "",
+)
+
+data class ScheduleInput(
+    val name: String,
+    val enabled: Boolean,
+    val kind: String,
+    val timeOfDay: String,
+    val daysOfWeek: List<Int>,
+    val intervalSeconds: Int,
+    val windowStart: String,
+    val windowEnd: String,
+    val cronExpression: String,
+    val runAtUtc: Instant?,
+    val solarEvent: String,
+    val solarOffsetMinutes: Int,
+    val solarElevationDegrees: Double,
+    val actionType: String,
+    val deviceId: String?,
+    val deviceAction: String,
+    val deviceBrightness: Int?,
+    val mqttTopic: String,
+    val mqttPayload: String,
+    val mqttRetain: Boolean,
+    val webhookUrl: String,
+    val webhookMethod: String,
+    val webhookHeaders: String,
+    val webhookBody: String,
+    val webhookContentType: String,
+    val catchUpPolicy: String,
+)
+
+data class ScheduleRunResult(val fired: Boolean, val detail: String)

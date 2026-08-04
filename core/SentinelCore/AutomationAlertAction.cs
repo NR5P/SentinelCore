@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text;
-using Microsoft.Extensions.Options;
 
 namespace SentinelCore;
 
@@ -8,27 +6,23 @@ namespace SentinelCore;
 // Unlike MqttAlertAction/WebhookAlertAction (one fixed global destination each), any number of
 // rules can be defined here, each scoped to specific cameras/detected categories, with its own
 // MQTT topic or webhook URL and a templated payload (see AutomationTemplate). CRUD lives behind
-// AutomationRuleEndpoints; this class only matches and fires.
+// AutomationRuleEndpoints; this class only matches and decides, and hands the doing to
+// AutomationActionDispatcher - which ScheduleWorker also uses, so a time-driven firing and a
+// detection-driven one behave identically.
 public sealed class AutomationAlertAction : IAlertAction
 {
-    private readonly HttpClient _httpClient;
     private readonly IAutomationRuleStore _store;
-    private readonly IMqttPublisher _mqttPublisher;
-    private readonly IOptionsMonitor<MqttOptions> _mqttOptions;
+    private readonly AutomationActionDispatcher _dispatcher;
     private readonly ILogger<AutomationAlertAction> _logger;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastFired = new(StringComparer.OrdinalIgnoreCase);
 
     public AutomationAlertAction(
-        HttpClient httpClient,
         IAutomationRuleStore store,
-        IMqttPublisher mqttPublisher,
-        IOptionsMonitor<MqttOptions> mqttOptions,
+        AutomationActionDispatcher dispatcher,
         ILogger<AutomationAlertAction> logger)
     {
-        _httpClient = httpClient;
         _store = store;
-        _mqttPublisher = mqttPublisher;
-        _mqttOptions = mqttOptions;
+        _dispatcher = dispatcher;
         _logger = logger;
     }
 
@@ -110,84 +104,8 @@ public sealed class AutomationAlertAction : IAlertAction
     }
 
     private Task<string> DispatchAsync(AutomationRule rule, AlertResult result, string? category, CancellationToken cancellationToken) =>
-        string.Equals(rule.ActionType, "mqtt", StringComparison.OrdinalIgnoreCase)
-            ? DispatchMqttAsync(rule, result, category, cancellationToken)
-            : DispatchWebhookAsync(rule, result, category, cancellationToken);
-
-    private async Task<string> DispatchMqttAsync(AutomationRule rule, AlertResult result, string? category, CancellationToken cancellationToken)
-    {
-        if (!_mqttOptions.CurrentValue.Enabled)
-            throw new InvalidOperationException("MQTT is not enabled - turn on the MQTT integration in Settings first.");
-
-        var topic = AutomationTemplate.Render(rule.MqttTopic, result, category);
-        if (string.IsNullOrWhiteSpace(topic))
-            throw new InvalidOperationException("The MQTT topic is empty after substitution.");
-
-        var payload = AutomationTemplate.Render(rule.MqttPayload, result, category);
-        await _mqttPublisher.PublishAsync(topic, payload, rule.MqttRetain, cancellationToken);
-        return $"published to {topic}";
-    }
-
-    private async Task<string> DispatchWebhookAsync(AutomationRule rule, AlertResult result, string? category, CancellationToken cancellationToken)
-    {
-        var url = AutomationTemplate.Render(rule.WebhookUrl, result, category);
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            throw new InvalidOperationException($"'{url}' is not a valid URL after substitution.");
-
-        var method = ParseMethod(rule.WebhookMethod);
-        using var request = new HttpRequestMessage(method, uri);
-
-        foreach (var (name, value) in ParseHeaders(rule.WebhookHeaders, result, category))
-            request.Headers.TryAddWithoutValidation(name, value);
-
-        if (method != HttpMethod.Get && method != HttpMethod.Head && !string.IsNullOrEmpty(rule.WebhookBody))
-        {
-            var body = AutomationTemplate.Render(rule.WebhookBody, result, category);
-            var contentType = string.IsNullOrWhiteSpace(rule.WebhookContentType) ? "application/json" : rule.WebhookContentType;
-            request.Content = new StringContent(body, Encoding.UTF8, contentType);
-        }
-
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            throw new InvalidOperationException($"{method} {uri} returned {(int)response.StatusCode}: {Truncate(responseBody, 300)}");
-        }
-
-        return $"{method} {uri} -> {(int)response.StatusCode}";
-    }
-
-    private static HttpMethod ParseMethod(string method) => method?.Trim().ToUpperInvariant() switch
-    {
-        "GET" => HttpMethod.Get,
-        "PUT" => HttpMethod.Put,
-        "PATCH" => HttpMethod.Patch,
-        "DELETE" => HttpMethod.Delete,
-        _ => HttpMethod.Post
-    };
-
-    // One "Name: Value" header per line - blank lines and lines without a colon are ignored.
-    // Values go through the same {{token}} substitution as the URL/body, so e.g.
-    // "X-Camera: {{camera}}" works as a header too.
-    private static IEnumerable<(string Name, string Value)> ParseHeaders(string raw, AlertResult result, string? category)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) yield break;
-
-        foreach (var line in raw.Split('\n'))
-        {
-            var trimmed = line.Trim();
-            if (trimmed.Length == 0) continue;
-
-            var separator = trimmed.IndexOf(':');
-            if (separator <= 0) continue;
-
-            var name = trimmed[..separator].Trim();
-            var value = AutomationTemplate.Render(trimmed[(separator + 1)..].Trim(), result, category);
-            if (name.Length > 0) yield return (name, value);
-        }
-    }
-
-    private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
+        _dispatcher.DispatchAsync(
+            rule.ToAction(), AutomationTemplate.BuildValues(result, category), cancellationToken);
 
     private static AlertResult BuildTestAlertResult(AutomationRule rule)
     {

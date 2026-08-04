@@ -785,3 +785,46 @@ public sealed class InternetOutageOptions
     // field can't silently disable the feature while it still reads as on.
     public List<string> ProbeUrls { get; init; } = [];
 }
+
+public sealed class LocationOptions
+{
+    public const string SectionName = "Location";
+
+    // Only ever used to work out when the sun rises and sets here, which is what lets a schedule
+    // say "when it gets dark" instead of a clock time that would need changing every few weeks.
+    // Never transmitted anywhere: the sunrise calculation is local arithmetic (SolarCalculator),
+    // with no service to call and nothing to look up at run time.
+    //
+    // Unset is (0, 0) - a point in the Gulf of Guinea, and the reason GeoCoordinate.IsValid
+    // treats it as "not configured" rather than as a real place near the equator.
+    [Range(-90, 90)]
+    public double Latitude { get; init; }
+
+    [Range(-180, 180)]
+    public double Longitude { get; init; }
+
+    // What the coordinates were derived from ("Louisville, KY"), for display only. Kept so the
+    // Settings screen can show somewhere recognisable rather than two numbers nobody can check
+    // at a glance; nothing reads it back.
+    public string Label { get; init; } = string.Empty;
+}
+
+public sealed class ScheduleOptions
+{
+    public const string SectionName = "Schedules";
+
+    // On by default, unlike most integrations here, because it costs nothing until a schedule
+    // exists - and once one does, the owner has already said what they want to happen.
+    public bool Enabled { get; init; } = true;
+
+    // How late a firing missed while the server was down may still be honoured, for schedules
+    // set to catch up. Beyond this the run is recorded as missed instead: a coop door has no
+    // business closing at breakfast because the machine was off overnight.
+    [Range(1, 1440)]
+    public int MaximumCatchUpMinutes { get; init; } = 60;
+
+    // Empty means the machine's own time zone, which is what QuietHours and the daily digest
+    // already use. Set it to an IANA id ("America/New_York") when the server's clock is on UTC
+    // but the schedules should follow local wall-clock time - common on headless installs.
+    public string TimeZone { get; init; } = string.Empty;
+}

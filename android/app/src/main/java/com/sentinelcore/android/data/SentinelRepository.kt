@@ -178,6 +178,141 @@ class SentinelRepository(
             )
         }
 
+    // --- Schedules ---------------------------------------------------------------------------
+
+    // Schedules live in the main app and are proxied by the web host, exactly like automation
+    // rules - see ScheduleProxyEndpoints.cs. Reads need only a signed-in account; everything that
+    // changes or fires one is AdminOnly server-side.
+    suspend fun schedules(): List<Schedule> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/schedules"))
+        buildList {
+            for (index in 0 until array.length()) add(parseSchedule(array.getJSONObject(index)))
+        }
+    }
+
+    suspend fun scheduleMetadata(): ScheduleMetadata = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/schedules/metadata"))
+
+        val levels = json.optJSONArray("darknessLevels") ?: JSONArray()
+        val devices = json.optJSONArray("devices") ?: JSONArray()
+
+        ScheduleMetadata(
+            darknessLevels = buildList {
+                for (index in 0 until levels.length()) {
+                    val item = levels.getJSONObject(index)
+                    add(
+                        DarknessLevel(
+                            key = item.optString("key"),
+                            label = item.optString("label"),
+                            description = item.optString("description"),
+                            elevationDegrees = item.optDouble("elevationDegrees", -6.0),
+                        ),
+                    )
+                }
+            },
+            deviceActions = json.optJSONArray("deviceActions").toStringList(),
+            tokens = json.optJSONArray("tokens").toStringList(),
+            minimumIntervalSeconds = json.optInt("minimumIntervalSeconds", 10),
+            locationSet = json.optBoolean("locationSet"),
+            timeZone = json.optString("timeZone", ""),
+            devices = buildList {
+                for (index in 0 until devices.length()) {
+                    val item = devices.getJSONObject(index)
+                    add(
+                        ScheduleDeviceOption(
+                            id = item.getString("id"),
+                            name = item.optString("name", "Device"),
+                            kind = item.optString("kind", "light"),
+                            room = item.optString("room", ""),
+                            enabled = item.optBoolean("enabled", true),
+                            supportsBrightness = item.optBoolean("supportsBrightness"),
+                            momentary = item.optBoolean("momentary"),
+                            coverLike = item.optBoolean("coverLike"),
+                            hasStop = item.optBoolean("hasStop"),
+                        ),
+                    )
+                }
+            },
+        )
+    }
+
+    suspend fun scheduleRuns(id: String, limit: Int = 25): List<ScheduleRun> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/schedules/${queryValue(id)}/runs?limit=$limit"))
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                add(
+                    ScheduleRun(
+                        id = item.getString("id"),
+                        scheduleId = item.getString("scheduleId"),
+                        dueAtUtc = parseInstant(item.getString("dueAtUtc")),
+                        firedAtUtc = parseInstant(item.getString("firedAtUtc")),
+                        status = item.optString("status"),
+                        detail = item.optString("detail"),
+                        durationMs = item.optLong("durationMs"),
+                    ),
+                )
+            }
+        }
+    }
+
+    // Upcoming firing times for a schedule that hasn't been saved yet - the only practical way to
+    // check that a darkness level or a cron expression says what was meant.
+    suspend fun previewSchedule(input: ScheduleInput): SchedulePreview = withContext(Dispatchers.IO) {
+        val json = JSONObject(
+            request("/api/schedules/preview", method = "POST", body = input.toJson().toString()),
+        )
+        val occurrences = json.optJSONArray("occurrences") ?: JSONArray()
+        SchedulePreview(
+            occurrences = buildList {
+                for (index in 0 until occurrences.length()) {
+                    add(occurrences.getJSONObject(index).optString("local"))
+                }
+            },
+            timeZone = json.optString("timeZone", ""),
+            explanation = json.optString("explanation", ""),
+        )
+    }
+
+    suspend fun createSchedule(input: ScheduleInput): Schedule = withContext(Dispatchers.IO) {
+        parseSchedule(JSONObject(request("/api/schedules", method = "POST", body = input.toJson().toString())))
+    }
+
+    suspend fun updateSchedule(id: String, input: ScheduleInput): Schedule = withContext(Dispatchers.IO) {
+        parseSchedule(
+            JSONObject(
+                request("/api/schedules/${queryValue(id)}", method = "PUT", body = input.toJson().toString()),
+            ),
+        )
+    }
+
+    suspend fun deleteSchedule(id: String) = withContext(Dispatchers.IO) {
+        request("/api/schedules/${queryValue(id)}", method = "DELETE")
+        Unit
+    }
+
+    suspend fun setScheduleEnabled(id: String, enabled: Boolean): Schedule = withContext(Dispatchers.IO) {
+        parseSchedule(
+            JSONObject(
+                request(
+                    "/api/schedules/${queryValue(id)}/enabled",
+                    method = "POST",
+                    body = JSONObject().put("enabled", enabled).toString(),
+                ),
+            ),
+        )
+    }
+
+    // Fires the action now, ignoring the timing. This really opens the gate or switches the
+    // light, which is why the server puts it behind AdminOnly.
+    suspend fun runSchedule(id: String): ScheduleRunResult = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/schedules/${queryValue(id)}/run", method = "POST"))
+        ScheduleRunResult(
+            fired = json.optBoolean("fired"),
+            detail = if (json.optBoolean("fired")) json.optString("detail") else json.optString("error"),
+        )
+    }
+
     suspend fun createDevice(input: HubDeviceInput): HubDevice = withContext(Dispatchers.IO) {
         parseDevice(JSONObject(request("/api/devices", method = "POST", body = input.toJson().toString())))
     }
@@ -1024,6 +1159,89 @@ class SentinelRepository(
             onvifPtzServiceUrl = json.nullableString("onvifPtzServiceUrl"),
             onvifProfileToken = json.nullableString("onvifProfileToken"),
         )
+
+    private fun JSONArray?.toStringList(): List<String> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) add(optString(index))
+        }
+    }
+
+    private fun parseSchedule(json: JSONObject): Schedule {
+        val action = json.optJSONObject("action") ?: JSONObject()
+        val days = json.optJSONArray("daysOfWeek") ?: JSONArray()
+
+        return Schedule(
+            id = json.getString("id"),
+            name = json.optString("name", "Schedule"),
+            enabled = json.optBoolean("enabled", true),
+            kind = json.optString("kind", "daily"),
+            timeOfDay = json.optString("timeOfDay", ""),
+            daysOfWeek = buildList {
+                for (index in 0 until days.length()) add(days.getInt(index))
+            },
+            intervalSeconds = json.optInt("intervalSeconds", 900),
+            windowStart = json.optString("windowStart", ""),
+            windowEnd = json.optString("windowEnd", ""),
+            cronExpression = json.optString("cronExpression", ""),
+            runAtUtc = json.nullableString("runAtUtc")?.let { parseInstant(it) },
+            solarEvent = json.optString("solarEvent", "dusk"),
+            solarOffsetMinutes = json.optInt("solarOffsetMinutes"),
+            solarElevationDegrees = json.optDouble("solarElevationDegrees", -6.0),
+            action = ScheduleAction(
+                type = action.optString("type", "device"),
+                deviceId = action.nullableString("deviceId"),
+                deviceAction = action.optString("deviceAction", ""),
+                deviceBrightness = if (action.isNull("deviceBrightness")) null else action.optInt("deviceBrightness"),
+                mqttTopic = action.optString("mqttTopic", ""),
+                mqttPayload = action.optString("mqttPayload", ""),
+                mqttRetain = action.optBoolean("mqttRetain"),
+                webhookUrl = action.optString("webhookUrl", ""),
+                webhookMethod = action.optString("webhookMethod", "POST"),
+                webhookHeaders = action.optString("webhookHeaders", ""),
+                webhookBody = action.optString("webhookBody", ""),
+                webhookContentType = action.optString("webhookContentType", "application/json"),
+            ),
+            catchUpPolicy = json.optString("catchUpPolicy", "skip"),
+            lastRunUtc = json.nullableString("lastRunUtc")?.let { parseInstant(it) },
+            lastStatus = json.optString("lastStatus", ""),
+            lastDetail = json.optString("lastDetail", ""),
+            nextDueUtc = json.nullableString("nextDueUtc")?.let { parseInstant(it) },
+            runCount = json.optLong("runCount"),
+        )
+    }
+
+    private fun ScheduleInput.toJson(): JSONObject =
+        JSONObject().apply {
+            put("name", name)
+            put("enabled", enabled)
+            put("kind", kind)
+            put("timeOfDay", timeOfDay)
+            put("daysOfWeek", JSONArray(daysOfWeek))
+            put("intervalSeconds", intervalSeconds)
+            put("windowStart", windowStart)
+            put("windowEnd", windowEnd)
+            put("cronExpression", cronExpression)
+            // JSONObject.put with a null drops the key, which the server reads as "not set" -
+            // exactly right for every timing kind that isn't a one-off.
+            put("runAtUtc", runAtUtc?.toString())
+            put("solarEvent", solarEvent)
+            put("solarOffsetMinutes", solarOffsetMinutes)
+            put("solarElevationDegrees", solarElevationDegrees)
+            put("actionType", actionType)
+            put("deviceId", deviceId)
+            put("deviceAction", deviceAction)
+            put("deviceBrightness", deviceBrightness)
+            put("mqttTopic", mqttTopic)
+            put("mqttPayload", mqttPayload)
+            put("mqttRetain", mqttRetain)
+            put("webhookUrl", webhookUrl)
+            put("webhookMethod", webhookMethod)
+            put("webhookHeaders", webhookHeaders)
+            put("webhookBody", webhookBody)
+            put("webhookContentType", webhookContentType)
+            put("catchUpPolicy", catchUpPolicy)
+        }
 
     private fun parseDevice(json: JSONObject): HubDevice =
         HubDevice(

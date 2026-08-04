@@ -30,6 +30,12 @@ import com.sentinelcore.android.data.LiveCameraOrder
 import com.sentinelcore.android.data.PromptProfileName
 import com.sentinelcore.android.data.PushStatus
 import com.sentinelcore.android.data.RecordingTimelineDay
+import com.sentinelcore.android.data.Schedule
+import com.sentinelcore.android.data.ScheduleInput
+import com.sentinelcore.android.data.ScheduleMetadata
+import com.sentinelcore.android.data.SchedulePreview
+import com.sentinelcore.android.data.ScheduleRun
+import com.sentinelcore.android.data.ScheduleRunResult
 import com.sentinelcore.android.data.ScanInterface
 import com.sentinelcore.android.data.ScanJobSnapshot
 import com.sentinelcore.android.data.SecurityEvent
@@ -565,6 +571,28 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             throw error
         }
     }
+
+    // Schedules keep their state in the screen rather than in SentinelUiState, the same way the
+    // server-settings screen does - nothing outside that screen needs them, and they would
+    // otherwise be re-fetched on every poll of the shared state.
+    suspend fun schedules(): List<Schedule> = repository.schedules()
+
+    suspend fun scheduleMetadata(): ScheduleMetadata = repository.scheduleMetadata()
+
+    suspend fun scheduleRuns(id: String): List<ScheduleRun> = repository.scheduleRuns(id)
+
+    suspend fun previewSchedule(input: ScheduleInput): SchedulePreview = repository.previewSchedule(input)
+
+    suspend fun createSchedule(input: ScheduleInput): Schedule = repository.createSchedule(input)
+
+    suspend fun updateSchedule(id: String, input: ScheduleInput): Schedule = repository.updateSchedule(id, input)
+
+    suspend fun deleteSchedule(id: String) = repository.deleteSchedule(id)
+
+    suspend fun setScheduleEnabled(id: String, enabled: Boolean): Schedule =
+        repository.setScheduleEnabled(id, enabled)
+
+    suspend fun runSchedule(id: String): ScheduleRunResult = repository.runSchedule(id)
 
     suspend fun settingsSchema(): List<SettingsSection> = repository.settingsSchema()
 

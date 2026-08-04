@@ -141,6 +141,14 @@ builder.Services.AddOptions<QuietHoursOptions>()
     .Bind(builder.Configuration.GetSection(QuietHoursOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<ScheduleOptions>()
+    .Bind(builder.Configuration.GetSection(ScheduleOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddOptions<LocationOptions>()
+    .Bind(builder.Configuration.GetSection(LocationOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<MqttOptions>()
     .Bind(builder.Configuration.GetSection(MqttOptions.SectionName))
     .ValidateDataAnnotations()
@@ -228,6 +236,14 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttDeviceBus>());
 builder.Services.AddSingleton<MqttDeviceDiscovery>();
 
 builder.Services.AddSingleton<IAutomationRuleStore, SqliteAutomationRuleStore>();
+
+// Schedules - the clock-driven counterpart to the alert-driven automation rules above. The
+// worker is registered in the main app only, for the same reason as StartupNotificationWorker
+// below: three processes each firing the same schedule would open the gate three times.
+builder.Services.AddSingleton<IScheduleStore, SqliteScheduleStore>();
+builder.Services.AddSingleton<ScheduleContext>();
+builder.Services.AddSingleton<ScheduleRunner>();
+builder.Services.AddHostedService<ScheduleWorker>();
 
 // Before AlertProcessor so interrupted alerts are already waiting when it starts draining.
 builder.Services.AddHostedService<AlertRecoveryService>();
@@ -338,12 +354,15 @@ builder.Services.AddHttpClient<IAlertAction, HomeKitAlertAction>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(homeKitSettings.TimeoutSeconds);
 });
-// Registered as its own concrete type (not just IAlertAction) so the /test endpoint can resolve
-// it directly - same pattern as MqttPublisher/IMqttPublisher above.
-builder.Services.AddHttpClient<AutomationAlertAction>(client =>
+// The one place MQTT publishes, webhook calls and Device Hub commands are actually carried out,
+// shared by the alert-driven rules below and the clock-driven ScheduleWorker.
+builder.Services.AddHttpClient<AutomationActionDispatcher>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(20);
 });
+// Registered as its own concrete type (not just IAlertAction) so the /test endpoint can resolve
+// it directly - same pattern as MqttPublisher/IMqttPublisher above.
+builder.Services.AddSingleton<AutomationAlertAction>();
 builder.Services.AddSingleton<IAlertAction>(sp => sp.GetRequiredService<AutomationAlertAction>());
 var telegramChatSettings = builder.Configuration.GetSection(TelegramChatOptions.SectionName).Get<TelegramChatOptions>() ?? new();
 builder.Services.AddHttpClient(nameof(TelegramChatWorker), client =>
@@ -678,6 +697,7 @@ app.MapPost("/api/queue/clear", async (IAlertQueue queue, IEventStore eventStore
 // dashboard's own ask box (see SentinelCore.Web/ChatEndpoints.cs) doesn't need a
 // Telegram account. Already covered by ApiKeyMiddleware above like every other /api route.
 app.MapAutomationRuleEndpoints();
+app.MapScheduleEndpoints();
 app.MapDeviceHubEndpoints();
 
 app.MapPost("/api/chat/ask", async (ChatQuestionRequest request, ChatAnswerService chatAnswers, CancellationToken ct) =>

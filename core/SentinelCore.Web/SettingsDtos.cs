@@ -283,6 +283,32 @@ public sealed class InternetOutageSettingsDto
     public List<string> ProbeUrls { get; set; } = [];
 }
 
+public sealed class LocationSettingsDto
+{
+    // Only ever used to work out sunrise and sunset here, which is what lets a schedule fire
+    // "when it gets dark" instead of at a clock time that needs changing every few weeks. The
+    // calculation is local arithmetic - nothing is sent anywhere. See LocationOptions.
+    [Range(-90, 90)]
+    public double Latitude { get; set; }
+
+    [Range(-180, 180)]
+    public double Longitude { get; set; }
+
+    // Display only - what the coordinates were looked up from, so the form can show a place
+    // name rather than two numbers nobody can sanity-check at a glance.
+    public string Label { get; set; } = string.Empty;
+}
+
+public sealed class ScheduleSettingsDto
+{
+    public bool Enabled { get; set; } = true;
+
+    [Range(1, 1440)]
+    public int MaximumCatchUpMinutes { get; set; } = 60;
+
+    public string TimeZone { get; set; } = string.Empty;
+}
+
 public sealed class QuietHoursSettingsDto
 {
     public bool Enabled { get; set; }

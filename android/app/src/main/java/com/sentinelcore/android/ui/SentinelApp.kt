@@ -65,6 +65,8 @@ import com.sentinelcore.android.ui.screens.KnownFaceEditScreen
 import com.sentinelcore.android.ui.screens.LiveCamerasScreen
 import com.sentinelcore.android.ui.screens.LivePlayerScreen
 import com.sentinelcore.android.ui.screens.RecordingTimelineScreen
+import com.sentinelcore.android.ui.screens.ScheduleEditScreen
+import com.sentinelcore.android.ui.screens.ScheduleListScreen
 import com.sentinelcore.android.ui.screens.LoginScreen
 import com.sentinelcore.android.ui.screens.ServerSetupScreen
 import com.sentinelcore.android.ui.screens.ServerSettingsScreen
@@ -356,7 +358,37 @@ private fun SentinelNavHost(
                 onManageCameras = { navController.navigate("settings/cameras") },
                 onManageAccounts = { navController.navigate("settings/accounts") },
                 onManageKnownFaces = { navController.navigate("settings/faces") },
+                onManageSchedules = { navController.navigate("settings/schedules") },
                 onServerSettings = { navController.navigate("settings/server") },
+            )
+        }
+
+        composable("settings/schedules") {
+            ScheduleListScreen(
+                model = model,
+                isAdmin = state.isAdmin,
+                onBack = { navController.popBackStack() },
+                onAddSchedule = { navController.navigate("settings/schedules/new") },
+                onEditSchedule = { navController.navigate("settings/schedules/${it.id}") },
+            )
+        }
+        composable("settings/schedules/new") {
+            ScheduleEditScreen(
+                model = model,
+                scheduleId = null,
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() },
+            )
+        }
+        composable(
+            "settings/schedules/{scheduleId}",
+            arguments = listOf(navArgument("scheduleId") { type = NavType.StringType }),
+        ) { entry ->
+            ScheduleEditScreen(
+                model = model,
+                scheduleId = entry.arguments?.getString("scheduleId"),
+                onBack = { navController.popBackStack() },
+                onSaved = { navController.popBackStack() },
             )
         }
 

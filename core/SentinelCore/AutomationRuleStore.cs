@@ -28,7 +28,16 @@ public sealed record AutomationRule(
     string WebhookBody,
     string WebhookContentType,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt)
+{
+    // The rule's action half, in the shape AutomationActionDispatcher takes - which is also what
+    // a Schedule stores directly. Rules do not offer the dispatcher's "device" type yet; their
+    // table predates it, and every existing row is an MQTT publish or a webhook call.
+    public AutomationAction ToAction() => new(
+        ActionType, DeviceId: null, DeviceAction: "", DeviceBrightness: null,
+        MqttTopic, MqttPayload, MqttRetain,
+        WebhookUrl, WebhookMethod, WebhookHeaders, WebhookBody, WebhookContentType);
+}
 
 public interface IAutomationRuleStore
 {

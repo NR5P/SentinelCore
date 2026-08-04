@@ -9,6 +9,7 @@
     <PublishSingleFile>false</PublishSingleFile>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Cronos" Version="0.13.0" />
     <PackageReference Include="ElBruno.LocalEmbeddings.ImageEmbeddings" Version="1.5.3" />
     <PackageReference Include="ElBruno.LocalEmbeddings.ImageEmbeddings.Downloader" Version="1.5.3" />
     <PackageReference Include="FaceAiSharp" Version="0.6.35" />

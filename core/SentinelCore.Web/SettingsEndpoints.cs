@@ -43,7 +43,9 @@ public sealed record SettingsSnapshot(
     LoggingSettingsDto? Logging = null,
     ServerSettingsDto? Server = null,
     TriggerConfirmationSettingsDto? TriggerConfirmation = null,
-    HostRebootSettingsDto? HostReboot = null);
+    HostRebootSettingsDto? HostReboot = null,
+    LocationSettingsDto? Location = null,
+    ScheduleSettingsDto? Schedules = null);
 
 public static class SettingsEndpoints
 {
@@ -191,6 +193,35 @@ public static class SettingsEndpoints
 
         settings.MapPut("/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "QuietHours", ct));
+
+        settings.MapPut("/location", async (LocationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Location", ct, extra =>
+            {
+                // (0, 0) is how "not set" is stored, so it has to stay allowed - but half a
+                // coordinate pair is always a mistake, and one that would quietly put every
+                // sunset an ocean away.
+                if (dto.Latitude == 0 && dto.Longitude != 0)
+                    extra.Add("Latitude is missing. Enter both coordinates, or clear both to unset your location.");
+                if (dto.Longitude == 0 && dto.Latitude != 0)
+                    extra.Add("Longitude is missing. Enter both coordinates, or clear both to unset your location.");
+            }));
+
+        settings.MapPut("/schedules", async (ScheduleSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "Schedules", ct, extra =>
+            {
+                if (string.IsNullOrWhiteSpace(dto.TimeZone)) return;
+
+                try
+                {
+                    TimeZoneInfo.FindSystemTimeZoneById(dto.TimeZone.Trim());
+                }
+                catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+                {
+                    // Caught on the way in rather than discovered as "every schedule ran an hour
+                    // out" - the worker falls back to the machine's zone, which looks like a bug.
+                    extra.Add($"'{dto.TimeZone}' is not a time zone this server knows. Use an IANA id such as America/New_York, or leave it empty to use the server's own time zone.");
+                }
+            }));
 
         settings.MapPut("/mqtt", async (MqttSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "Mqtt", ct, extra =>
@@ -442,7 +473,13 @@ public static class SettingsEndpoints
         // state and the 60-second undo window, rather than an empty box, on an install whose
         // appsettings.json predates this feature.
         await settings.GetSectionAsync<HostRebootSettingsDto>("HostReboot", cancellationToken)
-            ?? new HostRebootSettingsDto());
+            ?? new HostRebootSettingsDto(),
+        // Defaulted for the same reason as the two above: an install predating schedules should
+        // show the real defaults in the form, not an empty location and a blank interval.
+        await settings.GetSectionAsync<LocationSettingsDto>("Location", cancellationToken)
+            ?? new LocationSettingsDto(),
+        await settings.GetSectionAsync<ScheduleSettingsDto>("Schedules", cancellationToken)
+            ?? new ScheduleSettingsDto());
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -474,6 +511,8 @@ public static class SettingsEndpoints
         if (snapshot.StartupNotification is not null) await settings.MergeSectionAsync("StartupNotification", snapshot.StartupNotification, cancellationToken);
         if (snapshot.InternetOutage is not null) await settings.MergeSectionAsync("InternetOutage", snapshot.InternetOutage, cancellationToken);
         if (snapshot.QuietHours is not null) await settings.MergeSectionAsync("QuietHours", snapshot.QuietHours, cancellationToken);
+        if (snapshot.Location is not null) await settings.MergeSectionAsync("Location", snapshot.Location, cancellationToken);
+        if (snapshot.Schedules is not null) await settings.MergeSectionAsync("Schedules", snapshot.Schedules, cancellationToken);
         if (snapshot.KnownVehicles is not null) await settings.ReplaceSectionAsync("KnownVehicles", snapshot.KnownVehicles, cancellationToken);
         // Enrollment photos on disk aren't part of the backup file (same as alert images
         // aren't) - restoring KnownFaces brings back the labels/embeddings, but re-enrolling

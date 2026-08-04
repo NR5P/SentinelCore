@@ -24,11 +24,22 @@ public static partial class AutomationTemplate
     [GeneratedRegex(@"\{\{\s*(\w+)\s*\}\}")]
     private static partial Regex TokenPattern();
 
-    public static string Render(string template, AlertResult result, string? category)
+    // Tokens a schedule can use. A scheduled firing has no camera and no analysis behind it, so
+    // it gets its own much smaller set - see BuildScheduleValues.
+    public static readonly IReadOnlyList<string> ScheduleTokens =
+    [
+        "schedule_name", "schedule_kind", "run_id", "now", "now_utc", "unix", "due_at"
+    ];
+
+    public static string Render(string template, AlertResult result, string? category) =>
+        Render(template, BuildValues(result, category));
+
+    // The substitution itself, over whatever values the caller has. Everything above and below
+    // is just a different way of filling that dictionary.
+    public static string Render(string template, IReadOnlyDictionary<string, string> values)
     {
         if (string.IsNullOrEmpty(template)) return template;
 
-        var values = BuildValues(result, category);
         return TokenPattern().Replace(template, match =>
         {
             var key = match.Groups[1].Value.ToLowerInvariant();
@@ -36,7 +47,20 @@ public static partial class AutomationTemplate
         });
     }
 
-    private static Dictionary<string, string> BuildValues(AlertResult result, string? category)
+    public static Dictionary<string, string> BuildScheduleValues(
+        Schedule schedule, Guid runId, DateTimeOffset dueAt, DateTimeOffset firedAt) =>
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["schedule_name"] = schedule.Name,
+            ["schedule_kind"] = schedule.Kind,
+            ["run_id"] = runId.ToString(),
+            ["now"] = firedAt.ToLocalTime().ToString("O"),
+            ["now_utc"] = firedAt.ToUniversalTime().ToString("O"),
+            ["unix"] = firedAt.ToUnixTimeSeconds().ToString(),
+            ["due_at"] = dueAt.ToLocalTime().ToString("O")
+        };
+
+    public static Dictionary<string, string> BuildValues(AlertResult result, string? category)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {

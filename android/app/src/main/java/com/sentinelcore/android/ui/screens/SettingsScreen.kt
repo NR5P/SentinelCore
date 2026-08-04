@@ -65,6 +65,7 @@ fun SettingsScreen(
     onManageCameras: () -> Unit,
     onManageAccounts: () -> Unit,
     onManageKnownFaces: () -> Unit,
+    onManageSchedules: () -> Unit,
     onServerSettings: () -> Unit,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
@@ -204,6 +205,21 @@ fun SettingsScreen(
                         ) {
                             Text("Manage Known Faces", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
+                    }
+                }
+                item {
+                    SettingsSection("Schedules") {
+                        TextButton(
+                            onClick = onManageSchedules,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Manage Schedules", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            "Switch a device, publish MQTT, or call an API endpoint at a time of your choosing — or at sunset, or when it gets dark.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 item {

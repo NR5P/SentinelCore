@@ -18,6 +18,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 5c. [Camera Groups — cross-camera recording & incident correlation](#5c-camera-groups--cross-camera-recording--incident-correlation)
 6. [Motion zones on your own cameras](#6-motion-zones-on-your-own-cameras)
 6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
+6ab. [Schedules — doing something at a time, at sunset, or when it gets dark](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark)
 6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
 7. [The SETTINGS tab](#7-the-settings-tab)
 7a. [System health — how hard the server is working](#7a-system-health--how-hard-the-server-is-working)
@@ -537,6 +538,91 @@ and a body. The URL and body both accept the same `{{token}}` placeholders as MQ
 Every rule card has a **test** button that fires it immediately against sample data — useful
 for checking a topic/payload or URL/body actually work before waiting for a real detection. The
 result (published topic, or the HTTP status the endpoint returned) shows next to the button.
+
+## 6ab. Schedules — doing something at a time, at sunset, or when it gets dark
+
+Automation rules above fire when a camera sees something. **Schedules** fire when the clock — or
+the sun — says so, with no camera involved. They share the same "AUTOMATIONS" tab: switch to the
+**at a time** view at the top of it. In the iPhone, Mac, and Android apps they live under
+**Settings → Manage Schedules**.
+
+Each schedule is two halves: **when** it fires, and **what** it does.
+
+### When
+
+| Timing | What it means |
+|---|---|
+| At a time of day | A wall-clock time, on the days you choose. It stays that time on both sides of a daylight-saving change — a 07:00 schedule is 07:00 in June and 07:00 in December. |
+| Sunset / sunrise / darkness | Fires relative to where the sun actually is here. See below. |
+| Every so often | Every N minutes or hours. Without a window, firings line up with the clock — every 15 minutes means :00, :15, :30, :45. With one, they run only between the two times you set, and a start later than the end means a window that crosses midnight (22:00 → 06:00). |
+| Once | A single date and time. The schedule switches itself off afterwards, keeping its history. |
+| Cron | A standard five-field cron expression (`0 6 * * 1-5` is 6am on weekdays) for anything the others can't express. A leading sixth field adds seconds. |
+
+### Following the sun, and "this darkness every night"
+
+This is the option to use for anything that should track the seasons on its own — a coop door,
+outdoor lights, a gate that should be shut after dark. Rather than a clock time you would have to
+keep adjusting, you pick **how dark it should be**, and the server works out what time that
+happens here, today:
+
+| Level | The sun is | Roughly |
+|---|---|---|
+| Sun on the horizon | 0° | Sunset itself — still broad daylight to look at. |
+| Getting dark | 6° below | Civil twilight. Colours are fading, outdoor lights are coming on. **Chickens have gone in to roost by now**, which makes this the usual choice for shutting a coop. |
+| Properly dark | 12° below | Nautical twilight. The horizon is no longer distinct. |
+| Fully dark | 18° below | Astronomical twilight — the last of the sun's light is gone. |
+
+You can also enter any angle in between. **Offset** shifts the firing either side of that moment —
+20 minutes after "getting dark" gives the birds a few minutes to finish going in.
+
+Because this is worked out from the sun's real position, the clock time moves through the year by
+well over an hour by itself. Nothing needs changing in spring or autumn.
+
+**This needs your location.** Set it once under **Settings → LOCATION**: type a town and press
+Find, or enter the latitude and longitude yourself. Only the two numbers are saved, and they are
+used for nothing but this calculation — it happens on your own machine, with nothing sent
+anywhere. (Pressing Find is the one exception: the place name you typed goes to OpenStreetMap's
+public lookup service to get the coordinates back. On a server with no internet access, that
+button reports it can't reach the service and you enter the numbers directly.)
+
+At high latitudes some darkness levels genuinely never happen in midsummer — the sun never gets
+18° below the horizon in a Scottish June. A schedule set to one of those simply doesn't fire on
+those nights, and picks up again when it can.
+
+### What it does
+
+| Action | Notes |
+|---|---|
+| Switch a device | Anything in your [Device Hub](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices) — a light on or off, a gate open or closed, a button pressed. The form offers only the actions that device understands, plus brightness for devices that dim. |
+| Publish MQTT | A topic and payload of your choosing, exactly like an automation rule's MQTT action. |
+| Call an API endpoint | A URL, method, headers, and body — again as per automation rules. |
+
+MQTT and webhook actions accept `{{token}}` placeholders, though a scheduled firing has no camera
+or analysis behind it, so the available set is a small one: `{{schedule_name}}`, `{{now}}`,
+`{{due_at}}`, `{{run_id}}`, and a couple more listed under the form.
+
+### If the server was off when it was due
+
+Every schedule chooses what should happen to a firing it missed:
+
+- **Skip it** (the default) — records that it was missed and moves on. Right for anything where
+  being late is pointless, like flashing a light.
+- **Run it once on the way back up** — right for anything where the *state it leaves behind* is
+  the point, like arming at night or shutting a door.
+
+Either way there's a limit on how late is too late (an hour by default, under **Settings →
+SCHEDULES**), so a machine that was off overnight doesn't shut the coop at breakfast.
+
+### Checking it actually worked
+
+Every schedule shows when it next runs and how the last run went, and every firing is recorded —
+successes, failures, skips, and misses alike. Press **history** on a schedule to see the recent
+ones with what came of each ("switched Coop Door off", or the error if it didn't). If MQTT is
+switched off, or a device has been deleted, the failed run says exactly that rather than the
+schedule quietly doing nothing.
+
+**Run now** does the action immediately, ignoring the timing — the way to test a new schedule, and
+the way to shut the coop early on a particular evening. It really does switch the device.
 
 ## 6b. Multi-frame analysis — reducing false positives from a single frame
 

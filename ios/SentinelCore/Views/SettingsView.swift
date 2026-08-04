@@ -88,6 +88,18 @@ struct SettingsView: View {
                     }
                 }
                 Section {
+                    NavigationLink("Manage Schedules") {
+                        ScheduleListView()
+                    }
+                } header: {
+                    Text("Schedules")
+                } footer: {
+                    // A row here rather than a tab of its own: the iPhone tab bar is already at
+                    // the five items UIKit can show without collapsing into a "More" list, which
+                    // these screens cannot survive - see AppSection.compactTabCases.
+                    Text("Switch a device, publish MQTT, or call an API endpoint at a time of your choosing — or at sunset, or when it gets dark.")
+                }
+                Section {
                     NavigationLink("Server Settings") {
                         ServerSettingsView()
                     }

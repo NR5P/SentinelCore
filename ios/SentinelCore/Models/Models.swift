@@ -651,3 +651,157 @@ extension JSONDecoder {
         return decoder
     }()
 }
+
+// MARK: - Schedules
+
+// A "do this at that time" rule. The clock-driven counterpart to the automation rules on the
+// dashboard, sharing their action vocabulary plus a Device Hub option. See ScheduleModel.cs.
+struct ScheduleAction: Codable, Hashable {
+    var type: String
+    var deviceId: UUID?
+    var deviceAction: String
+    var deviceBrightness: Int?
+    var mqttTopic: String
+    var mqttPayload: String
+    var mqttRetain: Bool
+    var webhookUrl: String
+    var webhookMethod: String
+    var webhookHeaders: String
+    var webhookBody: String
+    var webhookContentType: String
+}
+
+struct Schedule: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    var enabled: Bool
+    var kind: String
+    var timeOfDay: String
+    var daysOfWeek: [Int]
+    var intervalSeconds: Int
+    var windowStart: String
+    var windowEnd: String
+    var cronExpression: String
+    var runAtUtc: Date?
+    var solarEvent: String
+    var solarOffsetMinutes: Int
+    // How far below the horizon the sun must be for a "dusk"/"dawn" firing - a darkness level
+    // rather than a time, which is what makes it track the seasons on its own.
+    var solarElevationDegrees: Double
+    var action: ScheduleAction
+    var catchUpPolicy: String
+    var lastRunUtc: Date?
+    var lastStatus: String
+    var lastDetail: String
+    var nextDueUtc: Date?
+    var runCount: Int
+
+    var followsTheSun: Bool { kind == "solar" }
+}
+
+struct ScheduleRun: Codable, Identifiable, Hashable {
+    let id: UUID
+    var scheduleId: UUID
+    var dueAtUtc: Date
+    var firedAtUtc: Date
+    var status: String
+    var detail: String
+    var durationMs: Int
+}
+
+// One of the named darkness levels the server offers, so this app doesn't have to know that
+// "civil twilight" means -6 degrees.
+struct DarknessLevel: Codable, Identifiable, Hashable {
+    var id: String { key }
+    var key: String
+    var label: String
+    var description: String
+    var elevationDegrees: Double
+}
+
+// A commandable Device Hub device, in the trimmed-down shape the schedules metadata returns.
+struct ScheduleDeviceOption: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    var kind: String
+    var room: String
+    var enabled: Bool
+    var supportsBrightness: Bool
+    var momentary: Bool
+    var coverLike: Bool
+    var hasStop: Bool
+}
+
+struct ScheduleMetadata: Codable {
+    var kinds: [String]
+    var solarEvents: [String]
+    var darknessLevels: [DarknessLevel]
+    var actionTypes: [String]
+    var catchUpPolicies: [String]
+    var deviceActions: [String]
+    var tokens: [String]
+    var minimumIntervalSeconds: Int
+    // Whether a latitude and longitude have been set. A sun-following schedule can't be created
+    // without them, and saying so up front beats a save that fails.
+    var locationSet: Bool
+    var timeZone: String
+    var devices: [ScheduleDeviceOption]
+
+    static let empty = ScheduleMetadata(
+        kinds: [], solarEvents: [], darknessLevels: [], actionTypes: [], catchUpPolicies: [],
+        deviceActions: [], tokens: [], minimumIntervalSeconds: 10, locationSet: false,
+        timeZone: "", devices: [])
+}
+
+struct SchedulePreviewOccurrence: Codable, Hashable {
+    var utc: Date
+    var local: String
+}
+
+struct SchedulePreview: Codable {
+    var occurrences: [SchedulePreviewOccurrence]
+    var timeZone: String
+    var explanation: String
+}
+
+struct ScheduleInput: Encodable {
+    var name: String
+    var enabled: Bool
+    var kind: String
+    var timeOfDay: String
+    var daysOfWeek: [Int]
+    var intervalSeconds: Int
+    var windowStart: String
+    var windowEnd: String
+    var cronExpression: String
+    // ISO-8601 rather than a Date: the client's shared JSONEncoder has no date strategy set, so
+    // a Date here would go out as a bare number the server can't read. Every other input type in
+    // this app happens to have no dates, which is why it has never come up.
+    var runAtUtc: String?
+    var solarEvent: String
+    var solarOffsetMinutes: Int
+    var solarElevationDegrees: Double
+    var actionType: String
+    var deviceId: UUID?
+    var deviceAction: String
+    var deviceBrightness: Int?
+    var mqttTopic: String
+    var mqttPayload: String
+    var mqttRetain: Bool
+    var webhookUrl: String
+    var webhookMethod: String
+    var webhookHeaders: String
+    var webhookBody: String
+    var webhookContentType: String
+    var catchUpPolicy: String
+}
+
+struct ScheduleEnabledInput: Encodable {
+    var enabled: Bool
+}
+
+struct ScheduleRunResult: Codable {
+    var fired: Bool
+    var detail: String?
+    var error: String?
+}

@@ -318,6 +318,63 @@ final class SentinelClient {
         )
     }
 
+    // MARK: - Schedules
+
+    // Schedules live in the main app and are proxied by the web host, exactly like automation
+    // rules - see ScheduleProxyEndpoints.cs. Reads need only a signed-in account; everything that
+    // changes or fires one is AdminOnly server-side.
+    func schedules() async throws -> [Schedule] {
+        try await get("/api/schedules")
+    }
+
+    func scheduleMetadata() async throws -> ScheduleMetadata {
+        try await get("/api/schedules/metadata")
+    }
+
+    func scheduleRuns(id: UUID, limit: Int = 25) async throws -> [ScheduleRun] {
+        try await get("/api/schedules/\(id.uuidString)/runs?limit=\(limit)")
+    }
+
+    // Upcoming firing times for a schedule that hasn't been saved yet - the only practical way
+    // to check that a darkness level or a cron expression says what was meant.
+    func previewSchedule(_ input: ScheduleInput) async throws -> SchedulePreview {
+        try await send("/api/schedules/preview", method: "POST", body: input)
+    }
+
+    func createSchedule(_ input: ScheduleInput) async throws -> Schedule {
+        try await send("/api/schedules", method: "POST", body: input)
+    }
+
+    func updateSchedule(id: UUID, _ input: ScheduleInput) async throws -> Schedule {
+        try await send("/api/schedules/\(id.uuidString)", method: "PUT", body: input)
+    }
+
+    func deleteSchedule(id: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/schedules/\(id.uuidString)",
+            method: "DELETE",
+            body: Optional<String>.none
+        )
+    }
+
+    func setScheduleEnabled(id: UUID, enabled: Bool) async throws -> Schedule {
+        try await send(
+            "/api/schedules/\(id.uuidString)/enabled",
+            method: "POST",
+            body: ScheduleEnabledInput(enabled: enabled)
+        )
+    }
+
+    // Fires the action now, ignoring the timing. This really opens the gate or switches the
+    // light, which is why the server puts it behind AdminOnly.
+    func runSchedule(id: UUID) async throws -> ScheduleRunResult {
+        try await send(
+            "/api/schedules/\(id.uuidString)/run",
+            method: "POST",
+            body: Optional<String>.none
+        )
+    }
+
     func createDevice(_ input: HubDeviceInput) async throws -> HubDevice {
         try await send("/api/devices", method: "POST", body: input)
     }

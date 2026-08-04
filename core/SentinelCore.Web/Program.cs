@@ -247,6 +247,9 @@ builder.Services.AddHttpClient();
 // always enough), so this needs headroom above that or the proxy would cut the request off
 // before the main app itself gives up and returns its own graceful "took too long" message.
 builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout = TimeSpan.FromSeconds(330));
+// Short, because the overwhelmingly likely failure is a server with no route out at all, and
+// the Settings form should say so promptly rather than appearing to hang.
+builder.Services.AddHttpClient(nameof(LocationLookupEndpoints), client => client.Timeout = TimeSpan.FromSeconds(8));
 // The HomeKit sidecar is on loopback and only ever asked for a status blob or a small PNG, so a
 // short timeout is right here - if it's not answering promptly it's not running, and the settings
 // UI should say so immediately rather than hanging.
@@ -374,6 +377,8 @@ app.MapChatEndpoints();
 app.MapQueueEndpoints();
 app.MapSystemStatusEndpoints();
 app.MapAutomationRuleProxyEndpoints();
+app.MapScheduleProxyEndpoints();
+app.MapLocationLookupEndpoints();
 app.MapDeviceHubProxyEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();
