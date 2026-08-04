@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.sentinelcore.android.data.Account
+import com.sentinelcore.android.data.ActivityItem
 import com.sentinelcore.android.data.AuthStatus
 import com.sentinelcore.android.data.Camera
 import com.sentinelcore.android.data.CameraInput
@@ -26,25 +27,28 @@ import com.sentinelcore.android.data.HubDevice
 import com.sentinelcore.android.data.HubDeviceInput
 import com.sentinelcore.android.data.KnownFace
 import com.sentinelcore.android.data.LiveCameraOrder
-import com.sentinelcore.android.data.SettingsAction
-import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.data.PromptProfileName
+import com.sentinelcore.android.data.PushStatus
+import com.sentinelcore.android.data.RecordingTimelineDay
 import com.sentinelcore.android.data.ScanInterface
 import com.sentinelcore.android.data.ScanJobSnapshot
 import com.sentinelcore.android.data.SecurityEvent
 import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.SentinelRepository
 import com.sentinelcore.android.data.ServerCompatibility
-import com.sentinelcore.android.data.TriggerConfig
-import com.sentinelcore.android.data.TriggerEvent
-import com.sentinelcore.android.data.PushStatus
+import com.sentinelcore.android.data.SettingsAction
+import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.data.SystemStatus
-import com.sentinelcore.android.data.RecordingTimelineDay
+import com.sentinelcore.android.data.TriggerConfig
 import com.sentinelcore.android.net.DiscoveredServer
 import com.sentinelcore.android.net.ServerDiscovery
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.PushTokenStore
 import com.sentinelcore.android.push.PushTokenUpdates
+import java.net.URI
+import java.time.Instant
+import java.time.LocalDate
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -54,10 +58,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.net.URI
-import java.time.Instant
-import java.time.LocalDate
-import java.util.concurrent.atomic.AtomicLong
 
 data class SentinelUiState(
     val serverUrl: String = "",
@@ -71,8 +71,17 @@ data class SentinelUiState(
     // app behaves differently, it just says so - see ServerCompatibility.
     val serverCompatibility: ServerCompatibility = ServerCompatibility.Unknown,
     val authStatus: AuthStatus? = null,
-    val events: List<SecurityEvent> = emptyList(),
-    val triggers: List<TriggerEvent> = emptyList(),
+    // The single Events list: motion and the AI's read of it, already joined server-side into one
+    // row per moment. This replaced two separately-fetched lists (events and triggers), which had
+    // the app showing the same moment twice whenever a camera forwarded to AI analysis.
+    val activity: List<ActivityItem> = emptyList(),
+    // "Show hidden" - motion the AI rejected as nothing, plus anything still awaiting a verdict.
+    // Not persisted: the confirmed-only list is the one to be looking at day to day.
+    val showHiddenActivity: Boolean = false,
+    // An alert opened from a push notification that isn't in `activity` - too old to be on the
+    // current page, or hidden by the confirmed-only filter. Fetched on its own so the banner
+    // always opens something. See resolvePendingPushEvent.
+    val pushedEvent: SecurityEvent? = null,
     val cameras: List<Camera> = emptyList(),
     // How this account has arranged the Live grid, as last known from the server. Kept apart from
     // `cameras` on purpose: that list stays the canonical, order-agnostic one every other screen
@@ -106,6 +115,13 @@ data class SentinelUiState(
     val timelineCameras: List<String> = emptyList(),
     val discoveredServers: List<DiscoveredServer> = emptyList(),
 ) {
+    // A push notification names an alert, and alerts are the analyzed half of the Events list -
+    // derived rather than fetched separately, so there's still exactly one request behind the
+    // list. Motion rows have no alert id and correctly never match a notification.
+    val events: List<SecurityEvent>
+        get() = (listOfNotNull(pushedEvent) + activity.mapNotNull { it.asSecurityEvent() })
+            .distinctBy { it.id }
+
     // The cameras as this account arranged them - what the Live grid renders. Every other screen
     // keeps reading `cameras`, which stays in the server's own order.
     val liveCameras: List<Camera>
@@ -216,7 +232,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                 refreshAll()
                 _state.update { it.copy(connectionState = ConnectionState.ONLINE) }
                 log(
-                    "Connection established; loaded ${_state.value.events.size} events",
+                    "Connection established; loaded ${_state.value.activity.size} events",
                     DiagnosticLevel.INFO,
                 )
                 refreshPushStatus()
@@ -277,19 +293,20 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // Changes what the server is asked for, not how the loaded list is filtered, so it reloads.
+    fun toggleShowHidden() {
+        _state.update { it.copy(showHiddenActivity = !it.showHiddenActivity) }
+        connect()
+    }
+
     suspend fun refreshAll() {
         _state.update { it.copy(isLoading = true) }
         try {
             val currentErrors = mutableListOf<Throwable>()
             val requests = listOf(
                 viewModelScope.async {
-                    runCatching { repository.events() }
-                        .onSuccess { value -> _state.update { it.copy(events = value) } }
-                        .onFailure(currentErrors::add)
-                },
-                viewModelScope.async {
-                    runCatching { repository.triggers() }
-                        .onSuccess { value -> _state.update { it.copy(triggers = value) } }
+                    runCatching { repository.activity(_state.value.showHiddenActivity) }
+                        .onSuccess { value -> _state.update { it.copy(activity = value) } }
                         .onFailure(currentErrors::add)
                 },
                 viewModelScope.async {
@@ -337,7 +354,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                     lastUpdated = Instant.now(),
                 )
             }
-            if (firstError != null && _state.value.events.isEmpty()) throw firstError
+            if (firstError != null && _state.value.activity.isEmpty()) throw firstError
             resolvePendingPushEvent()
         } finally {
             _state.update { it.copy(isLoading = false) }
@@ -962,11 +979,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         if (_state.value.connectionState != ConnectionState.ONLINE || _state.value.requiresLogin) return
 
         runCatching { repository.event(eventId) }
-            .onSuccess { event ->
-                _state.update { current ->
-                    current.copy(events = listOf(event) + current.events.filterNot { it.id == event.id })
-                }
-            }
+            .onSuccess { event -> _state.update { it.copy(pushedEvent = event) } }
             .onFailure { error ->
                 log("Could not open pushed event: ${readableError(error)}", DiagnosticLevel.NOTICE)
             }

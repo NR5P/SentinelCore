@@ -1,15 +1,19 @@
 import SwiftUI
 
-// Simplified tvOS port of ios/SentinelCore/Views/EventFeedView.swift - no search field (typing
-// on a Siri Remote is painful), just the "Notified only" filter. Tapping a card reuses the same
-// model.selectedEvent push-detail path the alert-takeover flow drives, instead of a separate
-// navigationDestination(for:).
+// tvOS port of ios/SentinelCore/Views/EventFeedView.swift - no search field (typing on a Siri
+// Remote is painful), just the "Notified only" and "Show hidden" filters.
+//
+// This used to be two tabs, Alerts and Triggers, which put a camera that forwards to AI analysis
+// on both - once with the description, once with the clip. The server now joins them (see
+// ActivityEndpoints), so a row here is a thing that happened, carrying whatever exists for it.
 struct AlertFeedView: View {
     @EnvironmentObject private var model: AppModel
     @State private var notifiedOnly = false
 
-    private var filteredEvents: [SecurityEvent] {
-        model.events.filter { !notifiedOnly || $0.notified }
+    private var filteredEvents: [ActivityItem] {
+        // A motion row has no notification decision to satisfy, so filtering on one excludes it -
+        // the same rule the server applies to its own analysis-only filters.
+        model.activity.filter { !notifiedOnly || $0.notified }
     }
 
     var body: some View {
@@ -28,7 +32,7 @@ struct AlertFeedView: View {
                     .padding(.top, 60)
                 } else {
                     ForEach(filteredEvents) { event in
-                        Button { model.selectedEvent = event } label: {
+                        NavigationLink(value: event) {
                             AlertCard(event: event)
                         }
                         .buttonStyle(.card)
@@ -38,6 +42,7 @@ struct AlertFeedView: View {
             .padding(.horizontal, 60)
             .padding(.bottom, 60)
         }
+        .navigationDestination(for: ActivityItem.self) { ActivityDetailView(event: $0) }
         .toolbar {
             ToolbarItem {
                 // ToggleStyle.button isn't available on tvOS - a plain Button flipping the
@@ -50,6 +55,17 @@ struct AlertFeedView: View {
                     // .labelStyle(.iconOnly) doesn't survive the toolbar's own styling.
                     Image(systemName: notifiedOnly ? "bell.fill" : "bell")
                         .accessibilityLabel("Notified only")
+                }
+            }
+            // Changing this changes what the server is asked for, so it reloads rather than
+            // filtering what's already here.
+            ToolbarItem {
+                Button {
+                    model.showHiddenActivity.toggle()
+                    Task { await model.connect() }
+                } label: {
+                    Image(systemName: model.showHiddenActivity ? "eye.slash.fill" : "eye.slash")
+                        .accessibilityLabel("Show hidden")
                 }
             }
             ToolbarItem {
@@ -71,7 +87,7 @@ struct AlertFeedView: View {
     private var sectionHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("\(filteredEvents.count) alerts").font(.headline).foregroundStyle(.secondary)
+                Text("\(filteredEvents.count) events").font(.headline).foregroundStyle(.secondary)
                 if let lastUpdated = model.lastUpdated {
                     Text("Updated \(lastUpdated.formatted(date: .omitted, time: .shortened))")
                         .foregroundStyle(.secondary.opacity(0.75))
@@ -84,19 +100,22 @@ struct AlertFeedView: View {
     }
 
     private var emptyTitle: String {
-        if model.isLoading { return "Loading alerts…" }
-        if notifiedOnly { return "No matching alerts" }
-        return "No alerts"
+        if model.isLoading { return "Loading events…" }
+        if notifiedOnly { return "No matching events" }
+        return "No events"
     }
 
     private var emptyDescription: String {
         if notifiedOnly { return "Try turning off the notification filter." }
-        return "AI-verified camera activity will appear here."
+        if !model.showHiddenActivity {
+            return "Anything the cameras catch will appear here. Motion the AI rejected is hidden - turn on Show hidden to see it."
+        }
+        return "Anything the cameras catch will appear here."
     }
 }
 
 private struct AlertCard: View {
-    let event: SecurityEvent
+    let event: ActivityItem
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -105,6 +124,17 @@ private struct AlertCard: View {
                 .frame(width: 260, height: 146)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .clipped()
+                .overlay(alignment: .bottomLeading) {
+                    if event.hasClip {
+                        Label("Clip", systemImage: "play.fill")
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.6), in: Capsule())
+                            .foregroundStyle(SentinelTheme.cyan)
+                            .padding(8)
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -116,17 +146,35 @@ private struct AlertCard: View {
                     Text(event.occurredAt.formatted(.relative(presentation: .named)))
                         .foregroundStyle(.secondary)
                 }
-                Text(event.summary.isEmpty ? "No description" : event.summary)
-                    .lineLimit(3)
+                // Nothing analysed a motion row, so the zone that caught it stands in for a
+                // description - dimmed, so a mixed list reads as "described" vs "not looked at".
+                if event.isAnalyzed {
+                    Text(event.summary?.isEmpty == false ? event.summary! : "No description")
+                        .lineLimit(3)
+                } else {
+                    Text(event.zoneName ?? "Motion in zone")
+                        .italic()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
                 HStack(spacing: 14) {
-                    Text(event.eventType.replacingOccurrences(of: "_", with: " ").capitalized)
-                        .foregroundStyle(SentinelTheme.cyan)
+                    Text(footerLabel)
+                        .foregroundStyle(event.isAnalyzed ? SentinelTheme.cyan : .secondary)
                     if event.notified {
                         Label("Notified", systemImage: "bell.fill").foregroundStyle(SentinelTheme.green)
                     }
+                    if let confirmation = event.confirmation, confirmation != "confirmed" {
+                        Label(
+                            confirmation == "rejected" ? "Nothing found" : "Checking",
+                            systemImage: confirmation == "rejected" ? "exclamationmark.triangle.fill" : "ellipsis.circle"
+                        )
+                        .foregroundStyle(SentinelTheme.amber)
+                    }
                     Spacer()
-                    Text(event.confidence, format: .percent.precision(.fractionLength(0)))
-                        .foregroundStyle(.secondary)
+                    if let confidence = event.confidence, event.isAnalyzed {
+                        Text(confidence, format: .percent.precision(.fractionLength(0)))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .font(.callout)
             }
@@ -134,7 +182,12 @@ private struct AlertCard: View {
         .padding(20)
     }
 
+    private var footerLabel: String {
+        guard event.isAnalyzed else { return "Motion only" }
+        return (event.eventType ?? "unknown").replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
     private var imageURL: URL? {
-        event.hasImage ? model.client.url(path: "/api/events/\(event.id.uuidString)/image") : nil
+        event.imageUrl.flatMap { model.client.url(path: $0) }
     }
 }

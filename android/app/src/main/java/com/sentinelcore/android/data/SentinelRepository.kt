@@ -61,37 +61,25 @@ class SentinelRepository(
         )
     }
 
-    suspend fun events(): List<SecurityEvent> = withContext(Dispatchers.IO) {
-        val array = JSONArray(request("/api/events?limit=100"))
-        buildList {
-            for (index in 0 until array.length()) {
-                add(parseEvent(array.getJSONObject(index)))
-            }
-        }
-    }
-
     suspend fun event(id: String): SecurityEvent = withContext(Dispatchers.IO) {
         parseEvent(JSONObject(request("/api/events/${URLEncoder.encode(id, StandardCharsets.UTF_8.name())}")))
     }
 
-    suspend fun triggers(): List<TriggerEvent> = withContext(Dispatchers.IO) {
-        // Keep a busy camera's full day visible; the former 100-row cap made earlier same-day
-        // triggers look as if they had disappeared even though the server still retained them.
-        val array = JSONArray(request("/api/triggers?limit=500"))
+    // The merged Events list, and the only list this app fetches now - it replaced separate calls
+    // to /api/events and /api/triggers, which returned two rows for one moment whenever a camera
+    // forwarded to AI analysis. Those endpoints still exist server-side for older installed
+    // builds of this app; nothing here calls them.
+    //
+    // includeUnconfirmed is the "show hidden" toggle - motion the AI rejected as nothing, plus
+    // anything still waiting on a verdict. Off by default, matching the web dashboard.
+    suspend fun activity(includeUnconfirmed: Boolean = false): List<ActivityItem> = withContext(Dispatchers.IO) {
+        // This list is the day-level audit trail now that it carries motion as well as analyses,
+        // so a busy camera's whole day has to fit.
+        val path = "/api/activity?limit=500" + if (includeUnconfirmed) "&includeUnconfirmed=true" else ""
+        val array = JSONArray(request(path))
         buildList {
             for (index in 0 until array.length()) {
-                val json = array.getJSONObject(index)
-                add(
-                    TriggerEvent(
-                        id = json.getString("id"),
-                        cameraId = json.optString("cameraId"),
-                        cameraName = json.optString("cameraName", "Unknown camera"),
-                        occurredAt = parseInstant(json.getString("occurredAt")),
-                        triggerAreaFraction = json.optDouble("triggerAreaFraction", 0.0),
-                        hasClip = json.optBoolean("hasClip"),
-                        zoneName = json.nullableString("zoneName"),
-                    ),
-                )
+                add(parseActivityItem(array.getJSONObject(index)))
             }
         }
     }
@@ -957,6 +945,35 @@ class SentinelRepository(
             notificationReason = json.optString("notificationReason"),
             confidence = json.optDouble("confidence", 0.0),
             hasImage = json.optBoolean("hasImage"),
+        )
+
+    // optDouble returns NaN for a missing key rather than throwing, which is how a null
+    // confidence/area on a motion row is told apart from a real 0.
+    private fun JSONObject.nullableDouble(name: String): Double? =
+        optDouble(name).takeUnless { it.isNaN() }
+
+    private fun parseActivityItem(json: JSONObject): ActivityItem =
+        ActivityItem(
+            id = json.getString("id"),
+            kind = json.optString("kind", "analyzed"),
+            camera = json.optString("camera", "Unknown camera"),
+            occurredAt = parseInstant(json.getString("occurredAt")),
+            imageUrl = json.nullableString("imageUrl"),
+            clipUrl = json.nullableString("clipUrl"),
+            status = json.optString("status"),
+            eventType = json.nullableString("eventType"),
+            summary = json.nullableString("summary"),
+            notified = json.optBoolean("notified"),
+            notificationReason = json.nullableString("notificationReason"),
+            confidence = json.nullableDouble("confidence"),
+            linkedCameras = json.nullableString("linkedCameras"),
+            packageTheftReason = json.nullableString("packageTheftReason"),
+            incidentId = json.nullableString("incidentId"),
+            triggerId = json.nullableString("triggerId"),
+            zoneName = json.nullableString("zoneName"),
+            confirmation = json.nullableString("confirmation"),
+            cameraId = json.nullableString("cameraId"),
+            triggerAreaFraction = json.nullableDouble("triggerAreaFraction"),
         )
 
     private fun parseCamera(json: JSONObject): Camera =

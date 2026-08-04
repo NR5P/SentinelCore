@@ -3,7 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var selection: AppSection? = .feed
+    @State private var selection: AppSection? = .events
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,7 +38,7 @@ struct RootView: View {
             Task { await model.connect(resetNetworkSession: true) }
         }
         .onChange(of: model.selectedEvent?.id) { _, eventId in
-            if eventId != nil { selection = .feed }
+            if eventId != nil { selection = .events }
         }
     }
 
@@ -57,7 +57,7 @@ struct RootView: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 220)
         } detail: {
             NavigationStack {
-                sectionView(selection ?? .feed)
+                sectionView(selection ?? .events)
                     .navigationDestination(item: $model.selectedEvent) { event in
                         EventDetailView(event: event)
                     }
@@ -82,42 +82,42 @@ struct RootView: View {
 
     private var compactSelection: Binding<AppSection> {
         Binding(
-            get: { selection ?? .feed },
+            get: { selection ?? .events },
             set: { selection = $0 }
         )
     }
 
     @ViewBuilder private func sectionView(_ section: AppSection) -> some View {
         switch section {
-        case .feed: EventFeedView()
+        case .events: EventFeedView()
         case .timeline: RecordingTimelineView()
         case .live: LiveCamerasView(isActive: selection == .live)
-        case .triggers: TriggerFeedView()
         case .devices: DeviceHubView(isActive: selection == .devices)
         case .settings: SettingsView()
         }
     }
 }
 
+// "Feed" and "Triggers" used to be separate sections - one for AI-analysed alerts, one for raw
+// motion - which put a camera that forwards to AI analysis on both, once with the description and
+// once with the clip. They are now one Events section over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case feed, timeline, live, triggers, devices, settings
+    case events, timeline, live, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
-        case .feed: "Feed"
+        case .events: "Events"
         case .timeline: "Timeline"
         case .live: "Live"
-        case .triggers: "Triggers"
         case .devices: "Device Hub"
         case .settings: "Settings"
         }
     }
     var icon: String {
         switch self {
-        case .feed: "shield.lefthalf.filled"
+        case .events: "shield.lefthalf.filled"
         case .timeline: "clock.arrow.circlepath"
         case .live: "video.fill"
-        case .triggers: "wave.3.right.circle.fill"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
@@ -132,12 +132,13 @@ enum AppSection: String, CaseIterable, Identifiable {
     // An iPhone tab bar holds five items; a sixth makes UIKit collapse the overflow into its own
     // "More" navigation controller, which cannot host these sections - a NavigationStack inside
     // it crashes outright ("attempt to nest wrapped navigation controllers"), and without one
-    // the section renders blank. So the compact bar is capped at five, and enabling the Device
-    // Hub displaces Settings, which EventFeedView then offers as a toolbar button instead.
-    // With the Device Hub off - the default - this is the original five tabs, unchanged.
+    // the section renders blank.
+    //
+    // Merging Feed and Triggers into one Events section brought the maximum back to exactly five
+    // (Events, Timeline, Live, Device Hub, Settings), so Settings no longer has to be displaced
+    // when the Device Hub is switched on - it keeps its tab in every configuration.
     static func compactTabCases(deviceHubEnabled: Bool) -> [AppSection] {
         visibleCases(deviceHubEnabled: deviceHubEnabled)
-            .filter { !(deviceHubEnabled && $0 == .settings) }
     }
 
     // Every section, on every platform with a sidebar. macOS also has a real Settings scene on

@@ -1836,6 +1836,46 @@ public sealed class BasicTests
         Assert.Empty(otherCamera);
     }
 
+    // The key the Events tab joins on. A trigger starts with no alert - nothing has been
+    // forwarded yet - and gains one the moment the pipeline accepts the forward.
+    [Fact]
+    public async Task SqliteTriggerStore_SetAlertIdAsync_RoundTripsTheLinkToTheAnalysis()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        // The concrete store implements both trigger interfaces, and each declares a GetAsync -
+        // the event one is the one under test here.
+        var events = (ITriggerEventStore)store;
+        var cameraId = Guid.NewGuid();
+        var trigger = await store.AddAsync(cameraId, "image.jpg", 0.1, null, TriggerConfirmation.Confirmed, CancellationToken.None);
+        Assert.Null(trigger.AlertId);
+
+        var alertId = Guid.NewGuid();
+        await store.SetAlertIdAsync(trigger.Id, alertId, CancellationToken.None);
+
+        var reloaded = await events.GetAsync(trigger.Id, CancellationToken.None);
+        Assert.Equal(alertId, reloaded!.AlertId);
+
+        // Also has to survive the list query, which is what /api/activity actually reads.
+        var recent = await store.GetRecentAsync(50, cameraId, false, CancellationToken.None);
+        Assert.Equal(alertId, Assert.Single(recent).AlertId);
+    }
+
+    // A trigger that was never forwarded (the camera doesn't send to AI analysis) has no alert to
+    // point at, and must stay that way rather than picking up someone else's.
+    [Fact]
+    public async Task SqliteTriggerStore_ATriggerThatWasNeverForwarded_HasNoAlertId()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        var forwarded = await store.AddAsync(cameraId, "a.jpg", 0.1, null, TriggerConfirmation.Confirmed, CancellationToken.None);
+        var untouched = await store.AddAsync(cameraId, "b.jpg", 0.1, null, TriggerConfirmation.Confirmed, CancellationToken.None);
+
+        await store.SetAlertIdAsync(forwarded.Id, Guid.NewGuid(), CancellationToken.None);
+
+        var reloaded = await ((ITriggerEventStore)store).GetAsync(untouched.Id, CancellationToken.None);
+        Assert.Null(reloaded!.AlertId);
+    }
+
     // --- Timeline trigger-clip correlation (TimelineEndpoints.MatchTriggerEvents) -------------
     //
     // The AI event and its local trigger row are written a few statements apart from the same

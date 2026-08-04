@@ -51,22 +51,23 @@ struct RootView: View {
     @ViewBuilder private func sectionView(_ section: AppSection) -> some View {
         switch section {
         case .live: LiveCamerasView(isActive: selection == .live)
-        case .alerts: AlertFeedView()
-        case .triggers: TriggerFeedView()
+        case .events: AlertFeedView()
         case .devices: DeviceHubView(isActive: selection == .devices)
         case .settings: SettingsView()
         }
     }
 }
 
+// "Alerts" and "Triggers" used to be separate tabs - one for AI-analysed alerts, one for raw
+// motion - which put a camera that forwards to AI analysis on both, once with the description and
+// once with the clip. They are now one Events tab over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case live, alerts, triggers, devices, settings
+    case live, events, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .live: "Live"
-        case .alerts: "Alerts"
-        case .triggers: "Triggers"
+        case .events: "Events"
         case .devices: "Device Hub"
         case .settings: "Settings"
         }
@@ -74,8 +75,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .live: "video.fill"
-        case .alerts: "shield.lefthalf.filled"
-        case .triggers: "wave.3.right.circle.fill"
+        case .events: "shield.lefthalf.filled"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }

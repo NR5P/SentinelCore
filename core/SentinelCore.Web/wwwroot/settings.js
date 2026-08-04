@@ -456,7 +456,7 @@ window.GateWatchSettings = (function () {
 
     const questionsWrap = document.createElement("div");
     questionsWrap.className = "field-row";
-    questionsWrap.dataset.tip = "Specific things to ask about each image. The answers become the structured fields you see on the Feed tab.";
+    questionsWrap.dataset.tip = "Specific things to ask about each image. The answers become the structured fields you see on the Events tab.";
     const qLabel = document.createElement("label");
     qLabel.className = "field-label";
     qLabel.textContent = "Questions";

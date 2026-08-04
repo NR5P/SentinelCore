@@ -128,6 +128,11 @@ public sealed class CameraTriggerService(
             var forwarded = await alertForwarder.ForwardAsync(
                 bytes, [], camera.Name, profile, now, null, incidentId, cancellationToken);
 
+            // Same as the zone-trigger path: record which alert this became so the Events tab can
+            // show one card for the moment rather than a motion row beside an analysis row.
+            if (forwarded.AlertId is { } alertId)
+                await eventStore.SetAlertIdAsync(trigger.Id, alertId, cancellationToken);
+
             // Waiting out the *analysis*, on the other hand, takes as long as the model takes -
             // minutes on a CPU-only box - so the verdict is followed up in the background and
             // whoever pulled the trigger URL gets their answer now. CancellationToken.None

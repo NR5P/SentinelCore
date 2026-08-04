@@ -13,17 +13,62 @@ struct SecurityEvent: Codable, Identifiable, Hashable {
     let hasImage: Bool
 }
 
-struct TriggerEvent: Codable, Identifiable, Hashable {
-    let id: UUID
-    let cameraId: UUID
-    let cameraName: String
+// One row of the Events list: a single moment, whichever records back it. The server joins the
+// motion trigger and the AI analysis of that same frame into this (see ActivityEndpoints), so the
+// app shows one card per thing that happened rather than one per row in a database.
+//
+// `kind` is what a view should branch on. "analyzed" carries a summary, event type, and notify
+// decision; "motion" carries none of those and never will, because nothing looked at the frame -
+// either the camera doesn't forward to AI analysis, or the forward was refused. Both kinds can
+// carry a clip, since that comes from the trigger side.
+//
+// `id` is a String, not a UUID: a motion row's id is prefixed ("trigger:<guid>") so the two
+// sources can't collide in one list. Use triggerId/analysisId to get at the underlying ids.
+struct ActivityItem: Codable, Identifiable, Hashable {
+    let id: String
+    let kind: String
+    let camera: String
     let occurredAt: Date
-    let triggerAreaFraction: Double
-    let hasClip: Bool
-    // Which trigger zone's polygon the motion fell inside. Null for companion captures, sensor
-    // and manual triggers, and anything recorded before zones could be split up - so it's a
-    // label to show when there is one, not something to depend on.
+    let imageUrl: String?
+    let clipUrl: String?
+    let status: String
+    let eventType: String?
+    let summary: String?
+    let notified: Bool
+    let notificationReason: String?
+    let confidence: Double?
+    let linkedCameras: String?
+    let packageTheftReason: String?
+    let incidentId: String?
+    let triggerId: String?
     let zoneName: String?
+    let confirmation: String?
+    let cameraId: UUID?
+    let triggerAreaFraction: Double?
+
+    var isAnalyzed: Bool { kind == "analyzed" }
+    var hasClip: Bool { clipUrl != nil }
+
+    // Only an analyzed row has an alert behind it, and only then is `id` a bare alert guid.
+    var analysisId: UUID? { isAnalyzed ? UUID(uuidString: id) : nil }
+
+    // Rebuilds what AlertDetailView already knows how to show, so the merged list can open the
+    // existing detail screen without a second round-trip for fields the list already holds.
+    var asSecurityEvent: SecurityEvent? {
+        guard let analysisId else { return nil }
+        return SecurityEvent(
+            id: analysisId,
+            camera: camera,
+            occurredAt: occurredAt,
+            status: status,
+            eventType: eventType ?? "unknown",
+            summary: summary ?? "",
+            notified: notified,
+            notificationReason: notificationReason ?? "",
+            confidence: confidence ?? 0,
+            hasImage: imageUrl != nil
+        )
+    }
 }
 
 struct Camera: Codable, Identifiable, Hashable {

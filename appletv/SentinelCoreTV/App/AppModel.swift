@@ -35,8 +35,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var serverCompatibility: ServerCompatibility = .unknown
     @Published var connectionState: ConnectionState = .checking
     @Published var authStatus: AuthStatus?
-    @Published var events: [SecurityEvent] = []
-    @Published var triggers: [TriggerEvent] = []
+    // The single Events list: motion and the AI's read of it, already joined server-side into one
+    // row per moment. This replaced two separately-fetched lists (alerts and triggers), which had
+    // the app showing the same moment twice whenever a camera forwarded to AI analysis.
+    @Published var activity: [ActivityItem] = []
+    // "Show hidden" - motion the AI rejected as nothing, plus anything still awaiting a verdict.
+    // Not persisted: the confirmed-only list is the one to be looking at day to day.
+    @Published var showHiddenActivity = false
     @Published var cameras: [Camera] = []
     // How the signed-in account has arranged the Live grid, set on a phone or in the dashboard.
     // Read-only on this device - see liveCameras.
@@ -187,7 +192,7 @@ final class AppModel: ObservableObject {
         }
         try await refreshAll()
         connectionState = .online
-        log("Connection established; loaded \(events.count) events")
+        log("Connection established; loaded \(activity.count) events")
         await refreshPushStatus()
         await syncPushRegistration()
         selectPendingPushEvent()
@@ -252,16 +257,10 @@ final class AppModel: ObservableObject {
 
         var firstError: Error?
         do {
-            events = try await client.events()
+            activity = try await client.activity(includeUnconfirmed: showHiddenActivity)
         } catch {
             if Self.isCancellation(error) { throw error }
             firstError = error
-        }
-        do {
-            triggers = try await client.triggers()
-        } catch {
-            if Self.isCancellation(error) { throw error }
-            firstError = firstError ?? error
         }
         do {
             cameras = try await client.cameras()
@@ -312,7 +311,7 @@ final class AppModel: ObservableObject {
 
         if let firstError {
             lastError = firstError.localizedDescription
-            if events.isEmpty { throw firstError }
+            if activity.isEmpty { throw firstError }
         } else {
             lastError = nil
         }
@@ -578,6 +577,11 @@ final class AppModel: ObservableObject {
     // Fetches the alerted event (falling back to a full refresh if it isn't already loaded) and
     // drives the full-screen takeover - used both for a banner tap (backgrounded/launch) and for
     // an immediate foreground interrupt (see PushNotificationCoordinator's willPresent handling).
+    // A push notification names an alert, and alerts are the analyzed half of the Events list -
+    // derived rather than fetched separately, so there's still exactly one request behind the
+    // list. Motion rows have no alert id and correctly never match a notification.
+    var events: [SecurityEvent] { activity.compactMap(\.asSecurityEvent) }
+
     private func openPushEvent(_ id: UUID) async {
         pendingPushEventId = id
         if let event = events.first(where: { $0.id == id }) {

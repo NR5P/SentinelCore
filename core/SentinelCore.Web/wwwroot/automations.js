@@ -149,7 +149,7 @@ window.GateWatchAutomations = (function () {
     fields.appendChild(buildCheckboxField("auto-enabled", "Enabled", rule?.enabled ?? true,
       "Turn this rule off without deleting it."));
     fields.appendChild(buildTextField("auto-cameras", "Cameras (comma-separated, blank = any)", (rule?.cameras ?? []).join(", "),
-      "Match the camera name exactly as it appears on the Feed tab - the Blue Iris camera name, or one of your own added cameras. Leave blank to match every camera."));
+      "Match the camera name exactly as it appears on the Events tab - the Blue Iris camera name, or one of your own added cameras. Leave blank to match every camera."));
     fields.appendChild(buildCategoryCheckboxes(rule?.categories ?? []));
     fields.appendChild(buildRangeField("auto-min-confidence", "Minimum confidence", rule?.minimumConfidence ?? 0.6,
       "Only fire when the AI's confidence is at least this. 0 fires on anything, 1 requires certainty."));

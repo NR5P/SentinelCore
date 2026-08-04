@@ -40,22 +40,25 @@ final class SentinelClient {
         try await get("/api/health")
     }
 
-    func events(search: String? = nil, notifiedOnly: Bool = false) async throws -> [SecurityEvent] {
-        var items = [URLQueryItem(name: "limit", value: "100")]
-        if let search, !search.isEmpty { items.append(.init(name: "search", value: search)) }
-        if notifiedOnly { items.append(.init(name: "notifiedOnly", value: "true")) }
-        return try await get("/api/events", query: items)
-    }
-
     func event(id: UUID) async throws -> SecurityEvent {
         try await get("/api/events/\(id.uuidString)")
     }
 
-    func triggers() async throws -> [TriggerEvent] {
-        // The trigger screen is the day-level audit trail, not just a notification preview. Busy
-        // cameras can legitimately exceed 100 detections in a day, which made older same-day
-        // rows appear to have vanished even though they were still in the server database.
-        try await get("/api/triggers", query: [.init(name: "limit", value: "500")])
+    // The merged Events list, and the only list this app fetches now - it replaced separate calls
+    // to /api/events and /api/triggers, which returned two rows for one moment whenever a camera
+    // forwarded to AI analysis. Those endpoints still exist server-side for older installed
+    // builds of this app; nothing here calls them.
+    //
+    // includeUnconfirmed is the "show hidden" toggle - motion the AI rejected as nothing, plus
+    // anything still waiting on a verdict. Off by default, matching the web dashboard.
+    func activity(search: String? = nil, notifiedOnly: Bool = false, includeUnconfirmed: Bool = false) async throws -> [ActivityItem] {
+        // This list is the day-level audit trail now that it carries motion as well as analyses,
+        // so a busy camera's whole day has to fit.
+        var items = [URLQueryItem(name: "limit", value: "500")]
+        if let search, !search.isEmpty { items.append(.init(name: "search", value: search)) }
+        if notifiedOnly { items.append(.init(name: "notifiedOnly", value: "true")) }
+        if includeUnconfirmed { items.append(.init(name: "includeUnconfirmed", value: "true")) }
+        return try await get("/api/activity", query: items)
     }
 
     func cameras() async throws -> [Camera] {

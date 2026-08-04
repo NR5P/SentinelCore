@@ -38,17 +38,34 @@ function formatClock(iso) {
   });
 }
 
+// One card per real-world moment, whatever records back it. An "analyzed" item has an AI summary
+// and a notify decision; a "motion" item has neither and never will - nothing looked at it,
+// because the camera doesn't forward to the alert pipeline or the forward was refused. Either can
+// carry a clip, since that comes from the trigger side. See ActivityEndpoints for the join.
 function renderCard(event) {
+  const analyzed = event.kind === "analyzed";
+
   const card = document.createElement("div");
   card.className = "card" + (event.notified ? " notified" : "");
 
-  const imageHtml = event.hasImage
-    ? `<img src="/api/events/${event.id}/image" alt="${escapeHtml(event.summary)}" />`
+  const imageHtml = event.imageUrl
+    ? `<img src="${event.imageUrl}" alt="${escapeHtml(event.summary || event.zoneName || "camera snapshot")}" />`
     : `<div class="no-image">no image</div>`;
 
   const badgeHtml = event.notified
     ? `<span class="badge" data-tip="${escapeHtml(event.notificationReason) || "The AI judged this worth telling you about, so an alert was sent."}">notified</span>`
     : "";
+
+  const clipHtml = event.clipUrl
+    ? `<span class="clip-badge" data-tip="A clip was recorded around this event. Click to play it.">&#9654; clip</span>`
+    : "";
+
+  // Only ever present with "show hidden" on - a confirmed event is the normal case and gets no
+  // badge, so the list looks the same as it does with the filter doing its job quietly.
+  const confirmationHtml = {
+    rejected: `<span class="clip-badge confirmation-badge" data-tip="The AI looked at this frame and found no person, vehicle, package, or animal, so it's hidden from the normal list. The snapshot and clip are still on disk.">&#9888; nothing found</span>`,
+    pending: `<span class="clip-badge confirmation-badge" data-tip="Still waiting on the AI to say whether anything was really here. It'll appear in the normal list if confirmed.">&#8230; checking</span>`
+  }[event.confirmation] || "";
 
   const linkedCamerasHtml = event.linkedCameras
     ? `<div class="card-meta" data-tip="A Camera Group also pulled in footage from these cameras when this one triggered.">🔗 Also recorded: ${escapeHtml(event.linkedCameras)}</div>`
@@ -58,29 +75,48 @@ function renderCard(event) {
     ? `<div class="card-meta card-warning" data-tip="Package Theft Watch flagged this alert.">📦 ${escapeHtml(event.packageTheftReason)}</div>`
     : "";
 
+  // Motion rows have no description to show, so the zone that caught it takes that line instead -
+  // it's the one thing that says why this frame exists.
+  const summaryHtml = analyzed
+    ? `<div class="card-summary" data-tip="The AI's description of what it saw in this snapshot.">${escapeHtml(event.summary) || "&mdash;"}</div>`
+    : `<div class="card-summary card-muted" data-tip="Motion caught this frame, but nothing analyzed it - this camera doesn't send to AI analysis (Settings on the camera's trigger zone).">${escapeHtml(event.zoneName || "motion in zone")}</div>`;
+
+  const footerLabel = analyzed
+    ? `<span class="card-event-type" data-tip="What kind of event the AI classified this as.">${escapeHtml(event.eventType)}</span>`
+    : `<span class="card-event-type" data-tip="No AI analysis exists for this one - motion only.">motion only</span>`;
+
+  const imageTip = event.clipUrl
+    ? "Click to play the clip recorded around this event."
+    : event.imageUrl ? "Click to view the full-size snapshot. No clip was saved for this one." : "";
+
   card.innerHTML = `
-    <div class="card-image"${event.hasImage ? ` data-tip="Click to view the full-size snapshot."` : ""}>
+    <div class="card-image"${imageTip ? ` data-tip="${imageTip}"` : ""}>
       ${imageHtml}
       ${badgeHtml}
+      ${clipHtml}
+      ${confirmationHtml}
     </div>
     <div class="card-body">
       <div class="card-meta">
-        <span class="card-camera" data-tip="Which Blue Iris camera this came from.">${escapeHtml(event.camera)}</span>
+        <span class="card-camera" data-tip="Which camera this came from.">${escapeHtml(event.camera)}</span>
         <span title="${escapeHtml(event.occurredAt)}">${timeAgo(event.occurredAt)}</span>
       </div>
-      <div class="card-summary" data-tip="The AI's description of what it saw in this snapshot.">${escapeHtml(event.summary) || "&mdash;"}</div>
+      ${summaryHtml}
       ${linkedCamerasHtml}
       ${packageTheftHtml}
       <div class="card-footer">
-        <span class="card-event-type" data-tip="What kind of event the AI classified this as.">${escapeHtml(event.eventType)}</span>
+        ${footerLabel}
         <span>${formatClock(event.occurredAt)}</span>
       </div>
     </div>
   `;
 
-  if (event.hasImage) {
-    const img = card.querySelector(".card-image img");
-    img.addEventListener("click", () => openLightbox(img.src));
+  const img = card.querySelector(".card-image img");
+  if (img) {
+    img.addEventListener("click", () => {
+      if (event.clipUrl) openLightboxVideo(event.clipUrl);
+      else openLightbox(img.src);
+    });
   }
 
   return card;
@@ -200,8 +236,13 @@ function dateInputToIso(value, endOfDay) {
   return new Date(y, m - 1, d + (endOfDay ? 1 : 0)).toISOString();
 }
 
+// Deliberately not persisted across reloads: the confirmed-only list is the one to be looking at
+// day to day, and this is for spot-checking what the AI filter threw away.
+let showHidden = false;
+
 function buildFilterQuery() {
   const params = new URLSearchParams({ limit: "50" });
+  if (showHidden) params.set("includeUnconfirmed", "true");
   if (filterSearchEl.value.trim()) params.set("search", filterSearchEl.value.trim());
   if (filterCameraEl.value) params.set("camera", filterCameraEl.value);
   if (filterEventTypeEl.value) params.set("eventType", filterEventTypeEl.value);
@@ -242,7 +283,7 @@ filterClearBtn.addEventListener("click", () => {
 
 async function loadEvents() {
   try {
-    const response = await fetch(`/api/events?${buildFilterQuery()}`);
+    const response = await fetch(`/api/activity?${buildFilterQuery()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const events = await response.json();
 
@@ -253,7 +294,9 @@ async function loadEvents() {
     if (events.length === 0) {
       feedEl.innerHTML = hasActiveFilters()
         ? `<div class="empty-state">no events match these filters</div>`
-        : `<div class="empty-state">no events recorded yet</div>`;
+        : showHidden
+          ? `<div class="empty-state">no events recorded yet</div>`
+          : `<div class="empty-state">no events recorded yet &mdash; try "show hidden"</div>`;
       return;
     }
 
@@ -362,6 +405,14 @@ askInput.addEventListener("keydown", (e) => { if (e.key === "Enter") askQuestion
 refreshBtn.addEventListener("click", loadEvents);
 clearQueueBtn.addEventListener("click", clearQueue);
 
+const showHiddenBtn = document.getElementById("show-hidden-btn");
+showHiddenBtn.addEventListener("click", () => {
+  showHidden = !showHidden;
+  showHiddenBtn.classList.toggle("btn-on", showHidden);
+  showHiddenBtn.textContent = showHidden ? "hide hidden" : "show hidden";
+  loadEvents();
+});
+
 loadFilterOptions();
 loadEvents();
 loadQueueStatus();
@@ -377,11 +428,10 @@ window.GateWatchExposure.check();
 // video playback as it's shown/hidden so streams nobody is looking at don't keep running.
 const tabs = document.querySelectorAll(".tab");
 const views = {
-  feed: document.getElementById("view-feed"),
+  events: document.getElementById("view-events"),
   timeline: document.getElementById("view-timeline"),
   live: document.getElementById("view-live"),
   cameras: document.getElementById("view-cameras"),
-  triggers: document.getElementById("view-triggers"),
   automations: document.getElementById("view-automations"),
   devices: document.getElementById("view-devices"),
   docs: document.getElementById("view-docs"),
@@ -391,7 +441,7 @@ const views = {
 let settingsLoaded = false;
 let camerasLoaded = false;
 let timelineLoaded = false;
-let currentView = "feed";
+let currentView = "events";
 
 for (const tab of tabs) {
   tab.addEventListener("click", async () => {
@@ -414,7 +464,7 @@ for (const tab of tabs) {
     }
     if (target === "cameras") window.GateWatchCameras.renderList();
     if (target === "live") window.GateWatchCameras.showLive();
-    if (target === "triggers") window.GateWatchTriggers.load();
+    if (target === "events") loadEvents();
     if (target === "automations") window.GateWatchAutomations.load();
     if (target === "devices") window.GateWatchDevices.load();
     if (target === "docs") window.GateWatchDocs.load();

@@ -41,19 +41,20 @@ final class SentinelClient {
         try await get("/api/health")
     }
 
-    func events(search: String? = nil, notifiedOnly: Bool = false) async throws -> [SecurityEvent] {
-        var items = [URLQueryItem(name: "limit", value: "100")]
-        if let search, !search.isEmpty { items.append(.init(name: "search", value: search)) }
-        if notifiedOnly { items.append(.init(name: "notifiedOnly", value: "true")) }
-        return try await get("/api/events", query: items)
-    }
-
     func event(id: UUID) async throws -> SecurityEvent {
         try await get("/api/events/\(id.uuidString)")
     }
 
-    func triggers() async throws -> [TriggerEvent] {
-        try await get("/api/triggers", query: [.init(name: "limit", value: "500")])
+    // The merged Events list - motion and the AI's read of it, joined server-side into one row
+    // per moment, and the only list this app fetches now. It replaced separate calls to
+    // /api/events and /api/triggers, which returned two rows for one moment whenever a camera
+    // forwarded to AI analysis. Those endpoints still exist for older installed builds of this
+    // app; nothing here calls them.
+    func activity(notifiedOnly: Bool = false, includeUnconfirmed: Bool = false) async throws -> [ActivityItem] {
+        var items = [URLQueryItem(name: "limit", value: "500")]
+        if notifiedOnly { items.append(.init(name: "notifiedOnly", value: "true")) }
+        if includeUnconfirmed { items.append(.init(name: "includeUnconfirmed", value: "true")) }
+        return try await get("/api/activity", query: items)
     }
 
     func cameras() async throws -> [Camera] {

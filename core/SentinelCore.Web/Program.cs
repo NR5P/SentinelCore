@@ -363,6 +363,7 @@ app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();
 app.MapCameraPtzEndpoints();
 app.MapTriggerEndpoints();
+app.MapActivityEndpoints();
 app.MapCameraTriggerEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();

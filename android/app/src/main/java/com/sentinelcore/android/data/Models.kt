@@ -15,18 +15,63 @@ data class SecurityEvent(
     val hasImage: Boolean,
 )
 
-data class TriggerEvent(
+// One row of the Events list: a single moment, whichever records back it. The server joins the
+// motion trigger and the AI analysis of that same frame into this (see ActivityEndpoints), so the
+// app shows one card per thing that happened rather than one per row in a database.
+//
+// `kind` is what the UI branches on. "analyzed" carries a summary, event type, and notify
+// decision; "motion" carries none of those and never will, because nothing looked at the frame -
+// either the camera doesn't forward to AI analysis, or the forward was refused. Both kinds can
+// carry a clip, since that comes from the trigger side.
+//
+// `id` is prefixed ("trigger:<guid>") on a motion row so the two sources can't collide in one
+// list. Use triggerId/analysisId to get at the underlying ids.
+data class ActivityItem(
     val id: String,
-    val cameraId: String,
-    val cameraName: String,
+    val kind: String,
+    val camera: String,
     val occurredAt: Instant,
-    val triggerAreaFraction: Double,
-    val hasClip: Boolean,
-    // Which trigger zone's polygon the motion fell inside. Null for companion captures, sensor
-    // and manual triggers, and anything recorded before zones could be split up - so it's a
-    // label to show when there is one, not something to depend on.
+    val imageUrl: String?,
+    val clipUrl: String?,
+    val status: String,
+    val eventType: String?,
+    val summary: String?,
+    val notified: Boolean,
+    val notificationReason: String?,
+    val confidence: Double?,
+    val linkedCameras: String?,
+    val packageTheftReason: String?,
+    val incidentId: String?,
+    val triggerId: String?,
     val zoneName: String?,
-)
+    val confirmation: String?,
+    val cameraId: String?,
+    val triggerAreaFraction: Double?,
+) {
+    val isAnalyzed: Boolean get() = kind == "analyzed"
+    val hasClip: Boolean get() = clipUrl != null
+
+    // Only an analyzed row has an alert behind it, and only then is `id` a bare alert guid.
+    val analysisId: String? get() = if (isAnalyzed) id else null
+
+    // Rebuilds what the event detail screen already knows how to show, so the merged list can
+    // open it without a second round-trip for fields the list already holds.
+    fun asSecurityEvent(): SecurityEvent? {
+        val alertId = analysisId ?: return null
+        return SecurityEvent(
+            id = alertId,
+            camera = camera,
+            occurredAt = occurredAt,
+            status = status,
+            eventType = eventType ?: "unknown",
+            summary = summary ?: "",
+            notified = notified,
+            notificationReason = notificationReason ?: "",
+            confidence = confidence ?: 0.0,
+            hasImage = imageUrl != null,
+        )
+    }
+}
 
 data class Camera(
     val id: String,

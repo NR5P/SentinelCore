@@ -24,11 +24,10 @@
       <span class="cursor">&#9608;</span>
     </div>
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-view="feed" data-tip-below data-tip="Alerts from Blue Iris that the AI has analysed, newest first." >feed</button>
+      <button class="tab active" data-view="events" data-tip-below data-tip="Everything the cameras have caught, newest first - the snapshot, its clip if one was recorded, and what the AI made of it." >events</button>
       <button class="tab" data-view="timeline" data-tip-below data-tip="Review saved trigger clips across a day, with Sentinel AI events marked on the time rail.">timeline</button>
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
-      <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones. Separate from Blue Iris.">cameras</button>
-      <button class="tab" data-view="triggers" data-tip-below data-tip-right data-tip="Motion caught inside a trigger zone. Click a thumbnail to view the snapshot or play its clip.">triggers</button>
+      <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones.">cameras</button>
       <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
       <button class="tab hidden" id="tab-devices" data-view="devices" data-tip-below data-tip-right data-tip="Switch lights, plugs, and other MQTT devices on and off. Only appears when the Device Hub is turned on in Settings.">device hub</button>
       <button class="tab" data-view="docs" data-tip-below data-tip-right data-tip="The full User Guide, Deployment guide, and Push Notifications setup - viewable as PDFs without leaving the dashboard.">docs</button>
@@ -49,12 +48,13 @@
   </div>
 
   <main>
-    <section id="view-feed" class="view">
+    <section id="view-events" class="view">
       <div class="toolbar">
-        <div class="toolbar-label">EVENT_FEED</div>
+        <div class="toolbar-label">EVENTS</div>
         <div class="toolbar-actions">
-          <span id="event-count" class="event-count" data-tip-below data-tip-right data-tip="How many events match the current filters. The feed reloads on its own every 30 seconds.">0 events</span>
-          <button id="refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload the feed now instead of waiting for the next automatic refresh.">refresh</button>
+          <span id="event-count" class="event-count" data-tip-below data-tip-right data-tip="How many events match the current filters. The list reloads on its own every 30 seconds.">0 events</span>
+          <button id="refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload now instead of waiting for the next automatic refresh. Clips appear a few seconds after their event, once the post-roll finishes recording.">refresh</button>
+          <button id="show-hidden-btn" class="btn" data-tip-below data-tip-right data-tip="Also show motion the AI rejected as nothing (and any still waiting on a verdict). Nothing is ever deleted - this is how you check the filter isn't hiding things it shouldn't.">show hidden</button>
           <span id="queue-status" class="event-count hidden" data-tip-below data-tip-right data-tip="Alerts waiting to be analyzed. Each one takes as long as a real AI analysis does, so a large number here can mean a long wait."></span>
           <button id="clear-queue-btn" class="btn hidden" data-tip-below data-tip-right data-tip="Discard everything waiting in the analysis queue without analyzing it. Whatever is already being analyzed right now finishes normally - this only clears the backlog behind it. Cannot be undone.">clear queue</button>
         </div>
@@ -88,7 +88,7 @@
       </div>
 
       <div id="feed" class="feed">
-        <div class="empty-state">loading feed&hellip;</div>
+        <div class="empty-state">loading events&hellip;</div>
       </div>
     </section>
 
@@ -238,21 +238,6 @@
 
       <div id="cameras-root" class="settings-root">
         <div class="empty-state">loading cameras&hellip;</div>
-      </div>
-    </section>
-
-    <section id="view-triggers" class="view hidden">
-      <div class="toolbar">
-        <div class="toolbar-label">TRIGGERS</div>
-        <div class="toolbar-actions">
-          <span id="trigger-count" class="event-count" data-tip-below data-tip-right data-tip="How many triggers are shown. Motion detection fires these; with AI-confirmed triggers on (Settings), only the ones the AI agreed were real are listed.">0 alerts</span>
-          <button id="triggers-hidden-btn" class="btn" data-tip-below data-tip-right data-tip="Also list triggers the AI rejected as nothing (and any still waiting on it). Nothing is ever deleted - this is how you check the filter isn't hiding things it shouldn't.">show hidden</button>
-          <button id="triggers-refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Reload the list. Clips appear a few seconds after their trigger, once the post-roll finishes recording.">refresh</button>
-        </div>
-      </div>
-
-      <div id="triggers-root" class="feed">
-        <div class="empty-state">loading triggers&hellip;</div>
       </div>
     </section>
 
@@ -425,7 +410,7 @@
               <label class="field-label" for="zone-clip-post">Seconds after trigger</label>
               <input type="number" id="zone-clip-post" class="field-input" min="0" max="120" step="1" />
             </div>
-            <div class="field-row field-row-wide field-checkbox-row" data-tip="Sends the trigger snapshot to the same AI analysis and alert pipeline (email/Telegram/webhook) that Blue Iris alerts use. Off by default - with this off, triggers only show up in the Triggers tab. This is also what lets AI-confirmed triggers filter this camera: with it off nothing ever analyses the frame, so every motion trigger from this camera is listed as before.">
+            <div class="field-row field-row-wide field-checkbox-row" data-tip="Sends the trigger snapshot to the same AI analysis and alert pipeline (email/Telegram/webhook) that Blue Iris alerts use. Off by default - with this off, motion from this camera still appears on the Events tab, just with no description and no alert. This is also what lets AI-confirmed triggers filter this camera: with it off nothing ever analyses the frame, so every motion trigger from this camera is listed as before.">
               <label class="switch"><input type="checkbox" id="zone-send-to-alerts" /><span class="switch-track"></span></label>
               <span class="field-label">Send triggers to the AI and alert pipeline</span>
             </div>

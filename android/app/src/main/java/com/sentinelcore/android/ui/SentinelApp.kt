@@ -58,6 +58,7 @@ import com.sentinelcore.android.ui.screens.DeviceDiscoveryScreen
 import com.sentinelcore.android.ui.screens.DeviceEditScreen
 import com.sentinelcore.android.ui.screens.DeviceHubScreen
 import com.sentinelcore.android.ui.screens.EventDetailScreen
+import com.sentinelcore.android.ui.screens.ActivityDetailScreen
 import com.sentinelcore.android.ui.screens.EventFeedScreen
 import com.sentinelcore.android.ui.screens.KnownFaceAdminScreen
 import com.sentinelcore.android.ui.screens.KnownFaceEditScreen
@@ -68,8 +69,6 @@ import com.sentinelcore.android.ui.screens.LoginScreen
 import com.sentinelcore.android.ui.screens.ServerSetupScreen
 import com.sentinelcore.android.ui.screens.ServerSettingsScreen
 import com.sentinelcore.android.ui.screens.SettingsScreen
-import com.sentinelcore.android.ui.screens.TriggerDetailScreen
-import com.sentinelcore.android.ui.screens.TriggerFeedScreen
 import com.sentinelcore.android.data.ServerCompatibility
 import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelBackground
@@ -163,12 +162,13 @@ private fun AppShell(
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
-    // Detail routes are nested under their section ("feed/event/{eventId}"), so a route match
+    // Detail routes are nested under their section ("events/{activityId}"), so a route match
     // has to check for that prefix too - otherwise the tab bar would deselect itself the moment
-    // a detail screen opens.
+    // a detail screen opens. The push-only "feed/event/{eventId}" route matches no section and
+    // falls through to Events, which is where its Back lands anyway.
     val selectedSection = AppSection.entries.firstOrNull { section ->
         currentRoute == section.route || currentRoute?.startsWith("${section.route}/") == true
-    } ?: AppSection.FEED
+    } ?: AppSection.EVENTS
 
     // Navigates straight to the pushed event without waiting for state.events to already contain
     // it - the detail route itself shows a brief loading state if the list hasn't caught up yet,
@@ -239,15 +239,30 @@ private fun SentinelNavHost(
     model: SentinelViewModel,
     modifier: Modifier = Modifier,
 ) {
-    NavHost(navController = navController, startDestination = AppSection.FEED.route, modifier = modifier) {
-        composable(AppSection.FEED.route) {
+    NavHost(navController = navController, startDestination = AppSection.EVENTS.route, modifier = modifier) {
+        composable(AppSection.EVENTS.route) {
             EventFeedScreen(
                 state = state,
                 model = model,
-                onEvent = { navController.navigate("feed/event/${it.id}") },
+                onEvent = { navController.navigate("events/${Uri.encode(it.id)}") },
                 onRefresh = { model.connect(resetNetworkSession = true) },
             )
         }
+        // Opened from the merged list: an id that may be either an alert guid or a prefixed
+        // "trigger:<guid>", so it is encoded into the route.
+        composable(
+            route = "events/{activityId}",
+            arguments = listOf(navArgument("activityId") { type = NavType.StringType }),
+        ) { entry ->
+            val event = state.activity.firstOrNull { it.id == entry.arguments?.getString("activityId") }
+            if (event != null) {
+                ActivityDetailScreen(event = event, model = model, onBack = { navController.popBackStack() })
+            } else {
+                DetailLoading(onBack = { navController.popBackStack() })
+            }
+        }
+        // The push path starts from an alert id rather than from the list, and can open an alert
+        // that isn't on the current page at all - see SentinelUiState.pushedEvent.
         composable(
             route = "feed/event/{eventId}",
             arguments = listOf(navArgument("eventId") { type = NavType.StringType }),
@@ -279,26 +294,6 @@ private fun SentinelNavHost(
             val camera = state.cameras.firstOrNull { it.id == entry.arguments?.getString("cameraId") }
             if (camera != null) {
                 LivePlayerScreen(camera = camera, model = model, onBack = { navController.popBackStack() })
-            } else {
-                DetailLoading(onBack = { navController.popBackStack() })
-            }
-        }
-
-        composable(AppSection.TRIGGERS.route) {
-            TriggerFeedScreen(
-                state = state,
-                model = model,
-                onTrigger = { navController.navigate("triggers/trigger/${it.id}") },
-                onRefresh = model::connect,
-            )
-        }
-        composable(
-            route = "triggers/trigger/{triggerId}",
-            arguments = listOf(navArgument("triggerId") { type = NavType.StringType }),
-        ) { entry ->
-            val trigger = state.triggers.firstOrNull { it.id == entry.arguments?.getString("triggerId") }
-            if (trigger != null) {
-                TriggerDetailScreen(trigger = trigger, model = model, onBack = { navController.popBackStack() })
             } else {
                 DetailLoading(onBack = { navController.popBackStack() })
             }
@@ -547,10 +542,9 @@ private enum class AppSection(
     val icon: ImageVector,
     val route: String,
 ) {
-    FEED("Feed", Icons.Default.Security, "feed"),
+    EVENTS("Events", Icons.Default.Security, "events"),
     TIMELINE("Timeline", Icons.Default.History, "timeline"),
     LIVE("Live", Icons.Default.LiveTv, "live"),
-    TRIGGERS("Triggers", Icons.Default.Radar, "triggers"),
     DEVICES("Devices", Icons.Default.Lightbulb, "devices"),
     SETTINGS("Settings", Icons.Default.Settings, "settings"),
     ;

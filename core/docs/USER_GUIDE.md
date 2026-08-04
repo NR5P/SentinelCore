@@ -9,14 +9,14 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 1. [What this system does](#1-what-this-system-does)
 2. [Opening the dashboard](#2-opening-the-dashboard)
 2a. [The iOS, Android, and Apple TV apps](#2a-the-ios-android-and-apple-tv-apps)
-3. [The FEED tab — Blue Iris alerts](#3-the-feed-tab--blue-iris-alerts)
+3. [The EVENTS tab — everything the cameras caught](#3-the-events-tab--everything-the-cameras-caught)
 3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
 5b. [Gate/door open check — a safety check independent of motion alerts](#5b-gatedoor-open-check--a-safety-check-independent-of-motion-alerts)
 5c. [Camera Groups — cross-camera recording & incident correlation](#5c-camera-groups--cross-camera-recording--incident-correlation)
-6. [The TRIGGERS tab — motion zones on your own cameras](#6-the-triggers-tab--motion-zones-on-your-own-cameras)
+6. [Motion zones on your own cameras](#6-motion-zones-on-your-own-cameras)
 6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
 6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
 7. [The SETTINGS tab](#7-the-settings-tab)
@@ -55,7 +55,7 @@ There are two independent pieces running on your home server:
 
 Both pieces can also independently trigger the *same* AI analysis and the *same* alerts
 (email/Telegram) — Blue Iris images always have, and your own added cameras can too if you
-turn that on for a given camera's trigger zone. See [section 6](#6-the-triggers-tab--motion-zones-on-your-own-cameras).
+turn that on for a given camera's trigger zone. See [section 6](#6-motion-zones-on-your-own-cameras).
 
 ## 2. Opening the dashboard
 
@@ -117,8 +117,8 @@ different network/VLAN than the server, nothing will show up. Either way, a manu
 (`http://192.168.1.50:3320`) is always available right there too, so discovery is a convenience,
 never a requirement.
 
-**iOS and Android** are close to full parity with the web dashboard: the Feed, Timeline, Live
-view, adding/editing cameras, PTZ control, Triggers, Automations, and every Settings section
+**iOS and Android** are close to full parity with the web dashboard: Events, Timeline, Live
+view, adding/editing cameras, PTZ control, trigger zones, Automations, and every Settings section
 including [Known Faces](#10a-known-faces--local-face-recognition) enrollment (with a direct
 camera-capture option the web UI doesn't have) and [System health](#7a-system-health--how-hard-the-server-is-working).
 
@@ -141,20 +141,41 @@ full-screen switch — tvOS doesn't allow one app to draw over another app's vid
 Push notifications (a phone/TV alert even when the app itself isn't open) are configured
 separately — see [docs/PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md).
 
-## 3. The FEED tab — Blue Iris alerts
+## 3. The EVENTS tab — everything the cameras caught
 
-This is the history of everything Blue Iris has sent over, newest first, refreshing itself
-every 30 seconds (or click **refresh** to force it). Each card shows:
+One list of everything that has happened, newest first, refreshing itself every 30 seconds (or
+click **refresh** to force it). It covers both sources at once: alerts Blue Iris sent over, and
+motion your own cameras caught in a trigger zone (section 6).
 
-- The snapshot image (click to view it full-size)
-- Which Blue Iris camera it came from
+This used to be two tabs — FEED for analysed alerts and TRIGGERS for motion. A camera that
+forwards its motion for AI analysis produces both records for a single moment, so the same event
+appeared twice, once with the description and once with the clip. They are now joined into one
+card per thing that happened.
+
+Each card shows:
+
+- The snapshot image
+- Which camera it came from
 - How long ago it happened, and the exact time
-- The AI's plain-English description of what it saw
-- The event type the AI classified it as (e.g. person at gate, vehicle entering)
+- A **▶ clip** badge when a clip was recorded around it — click the image to play it, rather
+  than opening the still
 - A green **notified** badge if this event actually triggered an alert — hover it to see why
 
-If a card has no image, either `Bridge:SaveImages` is off or the image failed to save; the
-AI's text analysis is still recorded either way.
+What else a card shows depends on whether anything analysed the frame:
+
+- **Analysed** — the AI's plain-English description of what it saw, and the event type it
+  classified it as (e.g. person at gate, vehicle entering).
+- **Motion only** — the name of the zone that caught it, in italics, and a `motion only` label
+  instead of an event type. Nothing described it because nothing looked at it: that camera has
+  "Send triggers to the AI and alert pipeline" switched off, or the hand-off was refused. Turn
+  that toggle on for the camera (section 6) if you want descriptions for it.
+
+If an analysed card has no image, either `Bridge:SaveImages` is off or the image failed to save;
+the AI's text analysis is still recorded either way.
+
+**show hidden** lists motion the AI rejected as nothing (marked ⚠ nothing found) plus anything
+still awaiting a verdict (… checking) — see "Only showing triggers that turned out to be real"
+in section 6.
 
 **Ask a question.** The box above the filters lets you ask in plain English - "what happened
 last night?", "did anyone come to the gate today?", or a how-to/configuration question like
@@ -166,7 +187,7 @@ here too), just usable without a Telegram account. Questions about your cameras 
 seconds; how-to/configuration questions read through part of this guide first and can take
 closer to a minute on a modest local machine - both are normal.
 
-**Searching and filtering.** Above the feed is a filter bar:
+**Searching and filtering.** Above the list is a filter bar:
 
 - A text box that searches the AI's description (e.g. searching "package" finds every event
   whose summary mentions one), debounced so it doesn't refetch on every keystroke
@@ -174,6 +195,10 @@ closer to a minute on a modest local machine - both are normal.
   ever appeared in history — not just what's currently shown
 - **From** / **to** date fields to bound the search to a range
 - A **notified only** toggle to hide everything that didn't actually alert
+
+The **event type**, **notified only**, and text-search filters describe the AI's own output, so
+switching any of them on leaves out motion-only rows — nothing analysed those, so they can't
+match. Camera and date filters apply to everything.
 
 Every filter combines with the others (all must match), and the count at the top of the tab
 reflects the current filter, not the total history. **clear** resets everything back to the
@@ -346,7 +371,7 @@ opens. Set it to a number of hours to also get a reminder if it's still open aft
 useful for a gate that tends to get left open and forgotten rather than closed again quickly.
 
 Notifications from this feature go through the same Email/Telegram/MQTT/HomeKit/push channels as
-every other alert, and appear in the FEED tab like any other event — it's a different way of
+every other alert, and appear in the EVENTS tab like any other event — it's a different way of
 noticing something worth telling you about, not a separate notification system.
 
 ## 5c. Camera Groups — cross-camera recording & incident correlation
@@ -378,7 +403,7 @@ recorded: CameraA, CameraB"*, listing what else was captured alongside it.
 (shape, sensitivity, rate limiting) — it only adds companion recording/analysis on top of
 whatever each camera was already going to do on its own.
 
-## 6. The TRIGGERS tab — motion zones on your own cameras
+## 6. Motion zones on your own cameras
 
 This is where you set up motion detection on cameras you added in the CAMERAS tab. Click a
 camera's trigger-zone icon to open the zone editor, which has two parts:
@@ -416,15 +441,15 @@ set to the `gate` profile), or for adding AI-backed alerting to a camera Blue Ir
 know about at all — a chicken coop camera on the `chicken-coop-predator` profile, for
 instance.
 
-The **TRIGGERS** tab itself (separate from the zone editor) shows a history of motion events
-caught by any zone, each with a thumbnail — click it to view the snapshot, or play the clip if
-one was recorded (marked with a ▶ clip badge).
+Motion caught by any zone appears on the [EVENTS tab](#3-the-events-tab--everything-the-cameras-caught)
+alongside everything else, each with a thumbnail — click it to view the snapshot, or play the
+clip if one was recorded (marked with a ▶ clip badge).
 
 ### Only showing triggers that turned out to be real
 
 Motion detection is a frame comparison — it can tell that pixels changed, not what changed. On
 a windy or rainy night that means branches, rain, moths on the IR illuminator, and headlight
-sweep all land on the TRIGGERS tab looking exactly like a person would.
+sweep all land on the EVENTS tab looking exactly like a person would.
 
 **AI-confirmed triggers** (SETTINGS → AI-CONFIRMED TRIGGERS, **on by default**) fixes that. A
 trigger is held back until the AI has actually looked at the frame, and only appears on the tab
@@ -438,7 +463,7 @@ A few things worth knowing:
   before. If you turn this on and a camera's triggers are still noisy, that camera's send-to-AI
   toggle is the thing to check.
 - **Nothing is ever deleted.** Rejected triggers and their clips stay on disk. The **show
-  hidden** button on the TRIGGERS tab lists them, marked ⚠ nothing found, so you can check the
+  hidden** button on the EVENTS tab lists them, marked ⚠ nothing found, so you can check the
   filter isn't hiding things it shouldn't.
 - **Triggers appear with a delay** — as long as the analysis takes, which on a CPU-only box can
   be a minute or more. Until then they're marked "… checking" under **show hidden**.
@@ -450,7 +475,7 @@ A few things worth knowing:
 
 A zone watches the video. These two let something *else* decide the camera should look — and
 both work on a camera with no zone drawn at all. Either way the result is identical to a zone
-trigger: a snapshot, a row on the TRIGGERS tab, and the same AI analysis and alerts.
+trigger: a snapshot, a row on the EVENTS tab, and the same AI analysis and alerts.
 
 **From a sensor.** Pick any sensor the [Device Hub](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices)
 knows about in **Trigger from a sensor** — a proximity sensor at the gate, a PIR in a shed, a
@@ -490,7 +515,7 @@ Click **+ add rule** to create one:
 | Field | What it does |
 |---|---|
 | Name | A label for your own reference, e.g. "Gate — package delivered". |
-| Cameras | Comma-separated camera names this rule watches. Must match the name exactly as shown on the FEED tab (the Blue Iris camera name, or one of your own added cameras). Leave blank to match every camera. |
+| Cameras | Comma-separated camera names this rule watches. Must match the name exactly as shown on the EVENTS tab (the Blue Iris camera name, or one of your own added cameras). Leave blank to match every camera. |
 | Detected categories | Which kinds of detection fire the rule — person at gate, vehicle entering, package delivered, animal, etc. Leave every box unchecked to match any detection, including ones that don't fall into a named category. |
 | Minimum confidence | Only fires when the AI's confidence is at least this. |
 | Only when a notification is recommended | On by default — skips alerts the AI itself judged not worth telling anyone about. |
@@ -534,7 +559,7 @@ processing time per alert than a single frame, since there's more image data to 
 off if single-frame analysis is already comfortably fast and accurate for your cameras.
 
 **What it applies to:** only your own added cameras' trigger zones that have **Send triggers to
-the AI and alert pipeline** turned on (see [section 6](#6-the-triggers-tab--motion-zones-on-your-own-cameras)).
+the AI and alert pipeline** turned on (see [section 6](#6-motion-zones-on-your-own-cameras)).
 Blue Iris alerts always arrive as a single image and are unaffected either way. Camera Groups'
 optional companion-camera analysis (previous section) also always uses a single frame regardless
 of this setting, to keep its own added cost predictable.
@@ -722,7 +747,7 @@ the road, or turn **Notify On Vehicle** off in the Fast Local Detection section 
 road-facing cameras.
 
 Whichever backend actually analyzed a given alert is recorded with it as `model`, visible in
-the raw result at `/api/results/{id}` (not currently shown in the FEED tab itself). A `model`
+the raw result at `/api/results/{id}` (not currently shown in the EVENTS tab itself). A `model`
 of `pending` means analysis hasn't finished yet; `unavailable` means both the primary and (if
 configured) the fallback failed and the alert was never analyzed.
 
@@ -759,7 +784,7 @@ Each profile has:
 | Display Name | Friendly label shown in this list and in the trigger-zone profile picker. Optional. |
 | Name (technical) | The stable identifier Blue Iris and camera profile pickers actually match against. Changing this **breaks** anything already pointing at the old name (a Blue Iris alert action, a saved trigger-zone profile). |
 | System Prompt | The instructions given to the AI before it ever sees an image. |
-| Questions | The specific things the AI must answer about each image — these become the structured fields you see on the Feed tab. |
+| Questions | The specific things the AI must answer about each image — these become the structured fields you see on the EVENTS tab. |
 | Use crop region | Optionally send only part of the image to the AI, e.g. to cut a road or sky out of frame so the model focuses on what matters. |
 | License plate recognition | Off by default. See [section 10](#10-license-plate-recognition--known-vehicles). |
 
@@ -1068,7 +1093,7 @@ didn't alert when you expected it to, it's almost always one of these:
    the gate closed. A single still image usually can't prove a vehicle is "arriving" vs.
    "already parked," so this logic is deliberately lenient toward vehicles — only a vehicle in
    a clearly settled resting spot is suppressed.
-6. **Trigger zone rate limiting** (Triggers tab, per zone — separate from the two above,
+6. **Trigger zone rate limiting** (Cameras tab → zone editor, per zone — separate from the two above,
    and it applies before the AI is even involved) — "Seconds between triggers" and "Max
    triggers per minute" limit how often *the zone itself* fires at all, regardless of what the
    AI would have said about any particular frame.
@@ -1137,7 +1162,7 @@ cached old copy is the usual culprit.
 failed to save for that particular alert — the AI's text analysis is still recorded either
 way.
 
-**A clip never appears on the Triggers tab.** Clips only show up once the "seconds after
+**A clip never appears on the EVENTS tab.** Clips only show up once the "seconds after
 trigger" portion has finished recording — check back after that many seconds. Also confirm
 **Save a video clip around each trigger** was on *before* the trigger happened; it can't
 retroactively record footage that wasn't being captured yet.

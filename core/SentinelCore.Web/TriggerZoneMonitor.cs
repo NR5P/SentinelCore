@@ -343,7 +343,7 @@ public sealed class TriggerZoneMonitor(
             if (session.Config.SendToAlerts)
                 _ = ForwardToAlertPipelineAsync(
                     camera, bytes, session.MultiFrame, session.Config.AlertProfile, now, linkedCameraNames, incidentId,
-                    gated ? trigger.Id : null);
+                    trigger.Id, gated);
         }
         catch (Exception ex)
         {
@@ -407,7 +407,7 @@ public sealed class TriggerZoneMonitor(
                     var alertProfile = memberConfig?.AlertProfile ?? "default";
                     _ = ForwardToAlertPipelineAsync(
                         memberCamera, snapshot, new MultiFrameOptions(), alertProfile, occurredAt, [], incidentId,
-                        companionGated ? companionTrigger.Id : null);
+                        companionTrigger.Id, companionGated);
                 }
             }
             catch (Exception ex)
@@ -425,12 +425,14 @@ public sealed class TriggerZoneMonitor(
     // in MaybeTriggerAsync) keeps the ~0.5-1s of extra delay off the critical path that saves the
     // trigger's primary image and records the TriggerEvent - the Feed/Timeline see no difference.
     //
-    // confirmTriggerId is set when the trigger it came from is sitting Pending waiting on this
-    // analysis - the verdict is followed up (and the trigger released, one way or the other) once
-    // the alert has been queued. Null means nothing is waiting on it.
+    // triggerId is the trigger this forward came from - always set, so the alert it becomes can be
+    // recorded against it and the Events tab can show the motion and its analysis as one card.
+    // gated additionally says that trigger is sitting Pending waiting on this analysis, in which
+    // case the verdict is followed up (and the trigger released, one way or the other) once the
+    // alert has been queued.
     private async Task ForwardToAlertPipelineAsync(
         Camera camera, byte[] imageBytes, MultiFrameOptions multiFrame, string profile, DateTimeOffset occurredAt,
-        IReadOnlyList<string> linkedCameraNames, string? incidentId, Guid? confirmTriggerId)
+        IReadOnlyList<string> linkedCameraNames, string? incidentId, Guid triggerId, bool gated)
     {
         try
         {
@@ -448,7 +450,12 @@ public sealed class TriggerZoneMonitor(
             var forwarded = await alertForwarder.ForwardAsync(
                 imageBytes, extraFrames, camera.Name, profile, occurredAt, linkedCameraNames, incidentId, _stoppingToken);
 
-            if (confirmTriggerId is { } triggerId)
+            // Recorded before the verdict is waited on, and regardless of gating: the join is what
+            // the Events tab renders from, and a refused forward simply leaves it null.
+            if (forwarded.AlertId is { } alertId)
+                await eventStore.SetAlertIdAsync(triggerId, alertId, _stoppingToken);
+
+            if (gated)
                 await triggerConfirmation.ResolveAsync(triggerId, forwarded, _stoppingToken);
         }
         catch (OperationCanceledException)
@@ -461,8 +468,8 @@ public sealed class TriggerZoneMonitor(
 
             // The forward itself blew up, so no verdict is coming for a trigger that's hidden
             // waiting on one. Release it rather than let the startup sweep find it minutes later.
-            if (confirmTriggerId is { } strandedId)
-                await triggerConfirmation.ResolveAsync(strandedId, AlertForwardResult.Refused, CancellationToken.None);
+            if (gated)
+                await triggerConfirmation.ResolveAsync(triggerId, AlertForwardResult.Refused, CancellationToken.None);
         }
     }
 

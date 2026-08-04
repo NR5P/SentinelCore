@@ -58,8 +58,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.sentinelcore.android.data.ActivityItem
 import com.sentinelcore.android.data.Camera
-import com.sentinelcore.android.data.TriggerEvent
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.components.EmptyState
@@ -71,103 +71,27 @@ import com.sentinelcore.android.ui.components.fullDateTime
 import com.sentinelcore.android.ui.components.relativeTime
 import com.sentinelcore.android.ui.components.rememberGridReorderState
 import com.sentinelcore.android.ui.components.reorderableGridItem
+import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
+// One event, opened from the merged Events list. What it shows depends on what exists for that
+// moment rather than on which screen you came from - the clip if one was recorded, the AI's read
+// of the frame if anything analysed it, and the motion facts when a trigger is behind it.
+//
+// Replaced TriggerDetailScreen, which could only ever show the trigger half and sat behind a
+// separate Triggers tab. EventDetailScreen stays for the push path, which starts from an alert
+// rather than from this list.
 @Composable
-fun TriggerFeedScreen(
-    state: SentinelUiState,
-    model: SentinelViewModel,
-    onTrigger: (TriggerEvent) -> Unit,
-    onRefresh: () -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        ScreenHeader("Triggers", state, onRefresh)
-        if (state.isLoading) {
-            LinearProgressIndicator(Modifier.fillMaxWidth(), color = SentinelGreen)
-        }
-        if (state.triggers.isEmpty() && !state.isLoading) {
-            EmptyState(
-                "No motion triggers",
-                "Motion detected inside configured camera zones will appear here.",
-                Modifier.fillMaxSize(),
-            )
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(280.dp),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                items(state.triggers, key = TriggerEvent::id) { trigger ->
-                    TriggerCard(trigger, model, Modifier.clickable { onTrigger(trigger) })
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TriggerCard(
-    trigger: TriggerEvent,
-    model: SentinelViewModel,
-    modifier: Modifier = Modifier,
-) {
-    Card(modifier) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            SentinelRemoteImage(
-                model = model,
-                path = "/api/triggers/${trigger.id}/image",
-                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(6.dp)),
-                description = "${trigger.cameraName} motion trigger",
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    trigger.cameraName,
-                    color = SentinelGreen,
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                if (trigger.hasClip) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Video clip",
-                        tint = SentinelCyan,
-                    )
-                    Text("Clip", color = SentinelCyan, style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            Text(
-                trigger.occurredAt.relativeTime(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // Same fallback as the web build: zoneName is null for sensor/manual triggers,
-            // companion captures, and rows from before zones could be split up.
-            Text(
-                "${trigger.zoneName ?: "Motion"} · area ${(trigger.triggerAreaFraction * 1000).roundToInt() / 10.0}%",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-fun TriggerDetailScreen(
-    trigger: TriggerEvent,
+fun ActivityDetailScreen(
+    event: ActivityItem,
     model: SentinelViewModel,
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        DetailHeader(trigger.cameraName, onBack)
+        DetailHeader(event.camera, onBack)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -177,35 +101,103 @@ fun TriggerDetailScreen(
                     modifier = Modifier.padding(16.dp).fillMaxWidth().widthIn(max = 900.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    if (trigger.hasClip) {
+                    val clipUrl = event.clipUrl
+                    if (clipUrl != null) {
                         SentinelPlayer(
-                            url = model.absoluteUrl("/api/triggers/${trigger.id}/clip"),
+                            url = model.absoluteUrl(clipUrl),
                             headers = model.mediaHeaders(),
                             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
                         )
                     } else {
                         SentinelRemoteImage(
                             model = model,
-                            path = "/api/triggers/${trigger.id}/image",
+                            path = event.imageUrl,
                             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                                 .clip(RoundedCornerShape(8.dp)),
                             contentScale = ContentScale.Fit,
-                            description = "${trigger.cameraName} trigger image",
+                            description = "${event.camera} event image",
                         )
                     }
+
+                    if (event.isAnalyzed) {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    StatusChip(
+                                        event.eventType.orEmpty().ifBlank { "unknown" }
+                                            .replace('_', ' ').uppercase(),
+                                        SentinelCyan,
+                                        Modifier.weight(1f, fill = false),
+                                    )
+                                    if (event.notified) StatusChip("NOTIFIED", SentinelGreen)
+                                    Spacer(Modifier.weight(1f))
+                                    event.confidence?.let {
+                                        Text(
+                                            "${(it * 100).roundToInt()}%",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                Text(
+                                    event.summary.orEmpty().ifBlank { "No description" },
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                if (event.notified) {
+                                    Text(
+                                        event.notificationReason.orEmpty().ifBlank { "Notification sent" },
+                                        color = SentinelGreen,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                event.packageTheftReason?.let {
+                                    Text(it, color = SentinelAmber, style = MaterialTheme.typography.bodySmall)
+                                }
+                                event.linkedCameras?.let {
+                                    Text(
+                                        "Also recorded: $it",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Card(Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            MetadataRow("Camera", trigger.cameraName)
-                            trigger.zoneName?.let { MetadataRow("Zone", it) }
-                            MetadataRow("Time", trigger.occurredAt.fullDateTime())
-                            MetadataRow(
-                                "Motion area",
-                                "${(trigger.triggerAreaFraction * 1000).roundToInt() / 10.0}%",
-                            )
-                            MetadataRow("Media", if (trigger.hasClip) "Video clip" else "Snapshot")
+                            MetadataRow("Camera", event.camera)
+                            event.zoneName?.let { MetadataRow("Zone", it) }
+                            MetadataRow("Time", event.occurredAt.fullDateTime())
+                            event.triggerAreaFraction?.let {
+                                MetadataRow("Motion area", "${(it * 1000).roundToInt() / 10.0}%")
+                            }
+                            MetadataRow("Media", if (event.hasClip) "Video clip" else "Snapshot")
+                            // Only worth stating when it isn't the ordinary case. "Confirmed" on
+                            // every card would be noise; the other two explain why a row is only
+                            // visible with Hidden switched on.
+                            if (event.confirmation != null && event.confirmation != "confirmed") {
+                                MetadataRow(
+                                    "AI verdict",
+                                    if (event.confirmation == "rejected") {
+                                        "Nothing found in frame"
+                                    } else {
+                                        "Awaiting verdict"
+                                    },
+                                )
+                            }
+                            if (!event.isAnalyzed) {
+                                Text(
+                                    "Nothing analysed this frame - this camera doesn't send to AI analysis.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

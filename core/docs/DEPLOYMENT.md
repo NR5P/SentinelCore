@@ -92,7 +92,7 @@ you'd rather do it by hand.
   [Vision analysis backend](USER_GUIDE.md#8-vision-analysis-backend--local-cloud-or-both)
   section.
 - **ffmpeg**, installed and on `PATH` — required by the Web project for the Cameras/Live/
-  Triggers tabs (it shells out to ffmpeg for HLS streaming, snapshot capture, and clip
+  Events tabs (it shells out to ffmpeg for HLS streaming, snapshot capture, and clip
   extraction)
 - **git**
 - Optional but useful: `sqlite3` (to query the databases directly), `openssl` (to generate a
@@ -237,7 +237,7 @@ it yourself.
 - `MainAppSettingsPath` must be an absolute path to the main app's `appsettings.json` — the
   Settings tab reads and writes this file directly.
 - `MainAppBaseUrl` is where the Web project sends trigger-zone alerts that opt into the AI
-  pipeline (see [USER_GUIDE.md § Triggers](USER_GUIDE.md#6-the-triggers-tab--motion-zones-on-your-own-cameras)).
+  pipeline (see [USER_GUIDE.md § Motion zones](USER_GUIDE.md#6-motion-zones-on-your-own-cameras)).
 - `CamerasDataDirectory` is where `cameras.db`, `triggers.db`, and recorded clips live — can
   be relative (to the Web project's working directory) or absolute.
 - `FfmpegPath` can be a bare command name (resolved via `PATH`) or an absolute path.
@@ -855,7 +855,7 @@ pointing at a path that doesn't exist.
 actually points at the main app's `appsettings.json` — a relative or wrong path will read
 nothing.
 
-**Cameras/Live/Triggers tabs don't work, or streams never start.** Confirm `ffmpeg` is
+**Cameras/Live/Events tabs don't work, or streams never start.** Confirm `ffmpeg` is
 installed and either on `PATH` or that `FfmpegPath` in the Web project's config is an
 absolute path to the binary. Check `journalctl -u sentinelcore-web -f` while
 opening the Live tab — ffmpeg errors show up there.

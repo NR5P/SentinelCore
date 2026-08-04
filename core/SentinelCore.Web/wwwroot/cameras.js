@@ -246,7 +246,7 @@ window.GateWatchCameras = (function () {
     setTestStatus("", null);
 
     fields.appendChild(buildTextField("cam-name", "Name", camera?.name ?? "",
-      "Whatever you want to call this camera, e.g. 'front gate'. Shown on the Live and Triggers tabs."));
+      "Whatever you want to call this camera, e.g. 'front gate'. Shown on the Live and Events tabs."));
     fields.appendChild(buildTextField("cam-url", "Stream URL (rtsp:// or http://)", camera?.streamUrl ?? "",
       "The camera's video stream address, not its web page. Look for an RTSP or streaming section in the camera's own settings."));
     fields.appendChild(buildTextField("cam-username", "Username (optional)", camera?.username ?? "",

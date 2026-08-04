@@ -101,7 +101,7 @@ public static class DocsPdfRenderer
         };
 
         // Markdig's own auto-identifier extension strips leading digits (it assumes an id can't
-        // start with one), which doesn't match the "#3-the-feed-tab..." anchors these docs write
+        // start with one), which doesn't match the "#3-the-events-tab..." anchors these docs write
         // by hand in their own table of contents. Slugify below reproduces the GitHub-style
         // algorithm those anchors actually follow instead, so TOC links resolve as real jumps.
         var slug = Slugify(PlainText(heading.Inline));
@@ -245,7 +245,7 @@ public static class DocsPdfRenderer
         if (url.StartsWith('#'))
         {
             // The href is already the literal anchor text the doc's own TOC was written with
-            // (e.g. "#3-the-feed-tab--blue-iris-alerts") - matched against the same string
+            // (e.g. "#3-the-events-tab--everything-the-cameras-caught") - matched against the same string
             // Slugify produces for the heading it points at, so no re-slugifying here.
             Style(text.SectionLink(label, url[1..]), bold, italic).FontColor(Colors.Blue.Darken1);
         }

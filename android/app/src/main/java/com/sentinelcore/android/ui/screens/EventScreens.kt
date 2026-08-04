@@ -22,8 +22,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -44,9 +47,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.sentinelcore.android.data.ActivityItem
 import com.sentinelcore.android.data.SecurityEvent
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
@@ -63,26 +68,35 @@ import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelGreenDim
 import kotlin.math.roundToInt
 
+// The one list of everything the cameras caught. This used to be two screens - "Feed" for
+// AI-analysed alerts and "Triggers" for motion - which meant a camera that forwards to AI
+// analysis put the same moment on both, once with the description and once with the clip. The
+// server now joins them (see ActivityEndpoints), so a row here is a thing that happened, and it
+// carries whatever exists for it: a snapshot always, a clip when one was recorded, a description
+// when something actually looked at the frame.
 @Composable
 fun EventFeedScreen(
     state: SentinelUiState,
     model: SentinelViewModel,
-    onEvent: (SecurityEvent) -> Unit,
+    onEvent: (ActivityItem) -> Unit,
     onRefresh: () -> Unit,
 ) {
     var search by rememberSaveable { mutableStateOf("") }
     var notifiedOnly by rememberSaveable { mutableStateOf(false) }
-    val filtered = state.events.filter { event ->
+    val filtered = state.activity.filter { event ->
+        // A motion row has no notification decision to satisfy, so filtering on one excludes it -
+        // the same rule the server applies to its own analysis-only filters.
         (!notifiedOnly || event.notified) &&
             (search.isBlank() ||
                 event.camera.contains(search, ignoreCase = true) ||
-                event.summary.contains(search, ignoreCase = true) ||
-                event.eventType.contains(search, ignoreCase = true))
+                event.summary.orEmpty().contains(search, ignoreCase = true) ||
+                event.zoneName.orEmpty().contains(search, ignoreCase = true) ||
+                event.eventType.orEmpty().contains(search, ignoreCase = true))
     }
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(
-            title = "Feed",
+            title = "Events",
             state = state,
             onRefresh = onRefresh,
         )
@@ -139,6 +153,21 @@ fun EventFeedScreen(
                                 )
                             },
                         )
+                        Spacer(Modifier.width(8.dp))
+                        // Reloads rather than filtering what is already here: this changes what
+                        // the server is asked for.
+                        FilterChip(
+                            selected = state.showHiddenActivity,
+                            onClick = { model.toggleShowHidden() },
+                            label = { Text("Hidden") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.VisibilityOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                        )
                     }
                 }
             }
@@ -147,7 +176,7 @@ fun EventFeedScreen(
                 item {
                     EmptyState(
                         title = if (state.isLoading) {
-                            "Loading feed…"
+                            "Loading events…"
                         } else if (search.isNotBlank() || notifiedOnly) {
                             "No matching events"
                         } else {
@@ -155,14 +184,16 @@ fun EventFeedScreen(
                         },
                         message = if (search.isNotBlank() || notifiedOnly) {
                             "Try changing your search or notification filter."
+                        } else if (!state.showHiddenActivity) {
+                            "Anything the cameras catch will appear here. Motion the AI rejected is hidden - turn on Hidden to see it."
                         } else {
-                            "Alerts received by Sentinel Core will appear here."
+                            "Anything the cameras catch will appear here."
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
             } else {
-                items(filtered, key = SecurityEvent::id) { event ->
+                items(filtered, key = ActivityItem::id) { event ->
                     EventCard(
                         event = event,
                         model = model,
@@ -196,7 +227,7 @@ fun EventFeedScreen(
 
 @Composable
 private fun EventCard(
-    event: SecurityEvent,
+    event: ActivityItem,
     model: SentinelViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -205,24 +236,12 @@ private fun EventCard(
             val compact = maxWidth < 620.dp
             if (compact) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SentinelRemoteImage(
-                        model = model,
-                        path = event.imagePath(),
-                        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(6.dp)),
-                        description = "${event.camera} event",
-                    )
+                    EventImage(event, model, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                     EventSummary(event)
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    SentinelRemoteImage(
-                        model = model,
-                        path = event.imagePath(),
-                        modifier = Modifier.width(156.dp).height(96.dp)
-                            .clip(RoundedCornerShape(6.dp)),
-                        description = "${event.camera} event",
-                    )
+                    EventImage(event, model, Modifier.width(156.dp).height(96.dp))
                     EventSummary(event, Modifier.weight(1f))
                 }
             }
@@ -239,8 +258,38 @@ private fun EventCard(
 }
 
 @Composable
+private fun EventImage(
+    event: ActivityItem,
+    model: SentinelViewModel,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier) {
+        SentinelRemoteImage(
+            model = model,
+            path = event.imageUrl,
+            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)),
+            description = "${event.camera} event",
+        )
+        if (event.hasClip) {
+            Row(
+                modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Video clip",
+                    tint = SentinelCyan,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("Clip", color = SentinelCyan, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
 private fun EventSummary(
-    event: SecurityEvent,
+    event: ActivityItem,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -259,20 +308,50 @@ private fun EventSummary(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Text(
-            event.summary.ifBlank { "No description" },
-            maxLines = 4,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // Nothing analysed a motion row, so the zone that caught it stands in for a description -
+        // dimmed, so a mixed list reads as "described" vs "not looked at".
+        if (event.isAnalyzed) {
+            Text(
+                event.summary.orEmpty().ifBlank { "No description" },
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Text(
+                event.zoneName ?: "Motion in zone",
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                fontStyle = FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                event.eventType.replace('_', ' ').replaceFirstChar(Char::uppercase),
-                color = SentinelCyan,
+                if (event.isAnalyzed) {
+                    event.eventType.orEmpty().ifBlank { "unknown" }
+                        .replace('_', ' ').replaceFirstChar(Char::uppercase)
+                } else {
+                    "Motion only"
+                },
+                color = if (event.isAnalyzed) SentinelCyan else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (event.confirmation != null && event.confirmation != "confirmed") {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = if (event.confirmation == "rejected") {
+                        "AI found nothing"
+                    } else {
+                        "Awaiting AI verdict"
+                    },
+                    tint = SentinelAmber,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+            }
             if (event.notified) {
                 Icon(
                     Icons.Default.Notifications,
@@ -282,11 +361,13 @@ private fun EventSummary(
                 )
                 Spacer(Modifier.width(10.dp))
             }
-            Text(
-                "${(event.confidence * 100).roundToInt()}%",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (event.isAnalyzed && event.confidence != null) {
+                Text(
+                    "${(event.confidence * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

@@ -456,6 +456,13 @@ main {
   color: var(--text);
 }
 
+/* A motion-only event has no AI description - this line carries the zone that caught it instead,
+   dimmed so a list mixing the two reads as "analysed" vs "not looked at" at a glance. */
+.card-summary.card-muted {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .card-footer {
   display: flex;
   justify-content: space-between;

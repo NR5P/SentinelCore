@@ -38,8 +38,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var serverCompatibility: ServerCompatibility = .unknown
     @Published var connectionState: ConnectionState = .checking
     @Published var authStatus: AuthStatus?
-    @Published var events: [SecurityEvent] = []
-    @Published var triggers: [TriggerEvent] = []
+    // The single Events list: motion and the AI's read of it, already joined server-side into one
+    // row per moment. This replaced two separately-fetched lists (events and triggers), which had
+    // the app showing the same moment twice whenever a camera forwarded to AI analysis.
+    @Published var activity: [ActivityItem] = []
+    // "Show hidden" - motion the AI rejected as nothing, plus anything still awaiting a verdict.
+    // Not persisted: the confirmed-only list is the one to be looking at day to day.
+    @Published var showHiddenActivity = false
     @Published var cameras: [Camera] = []
     // How this account has arranged the Live grid, newest server answer first. Kept apart from
     // `cameras` on purpose: that list stays the canonical, order-agnostic one every other screen
@@ -217,7 +222,7 @@ final class AppModel: ObservableObject {
         }
         try await refreshAll()
         connectionState = .online
-        log("Connection established; loaded \(events.count) events")
+        log("Connection established; loaded \(activity.count) events")
         await refreshPushStatus()
         await syncPushRegistration()
         selectPendingPushEvent()
@@ -307,16 +312,10 @@ final class AppModel: ObservableObject {
         // events that were returned successfully.
         var firstError: Error?
         do {
-            events = try await client.events()
+            activity = try await client.activity(includeUnconfirmed: showHiddenActivity)
         } catch {
             if Self.isCancellation(error) { throw error }
             firstError = error
-        }
-        do {
-            triggers = try await client.triggers()
-        } catch {
-            if Self.isCancellation(error) { throw error }
-            firstError = firstError ?? error
         }
         do {
             cameras = try await client.cameras()
@@ -373,7 +372,7 @@ final class AppModel: ObservableObject {
             // Logged even when it isn't rethrown: a partial refresh still leaves the app looking
             // connected while quietly missing a resource, and without this that left no trace.
             log("Refresh finished with an error: \(Self.describe(firstError))", level: .error)
-            if events.isEmpty { throw firstError }
+            if activity.isEmpty { throw firstError }
         } else {
             lastError = nil
         }
@@ -700,6 +699,11 @@ final class AppModel: ObservableObject {
             log("Push token registration failed: \(error.localizedDescription)", level: .error)
         }
     }
+
+    // A push notification names an alert, and alerts are the analyzed half of the Events list -
+    // derived rather than fetched separately, so there's still exactly one request behind the
+    // list. Motion rows have no alert id and correctly never match a notification.
+    var events: [SecurityEvent] { activity.compactMap(\.asSecurityEvent) }
 
     private func openPushEvent(_ id: UUID) async {
         pendingPushEventId = id

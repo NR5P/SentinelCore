@@ -1,22 +1,26 @@
 import SwiftUI
 
+// The one list of everything the cameras caught. This used to be two screens - "Feed" for
+// AI-analysed alerts and "Triggers" for motion - which meant a camera that forwards to AI
+// analysis put the same moment on both, once with the description and once with the clip. The
+// server now joins them (see ActivityEndpoints), so a row here is a thing that happened, and it
+// carries whatever exists for it: a snapshot always, a clip when one was recorded, a description
+// when something actually looked at the frame.
 struct EventFeedView: View {
     @EnvironmentObject private var model: AppModel
     @State private var search = ""
     @State private var notifiedOnly = false
-    #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    // Only used on iPhone, where enabling the Device Hub pushes Settings off the tab bar.
-    @State private var showingSettings = false
-    #endif
 
-    private var filteredEvents: [SecurityEvent] {
-        model.events.filter { event in
+    private var filteredEvents: [ActivityItem] {
+        model.activity.filter { event in
+            // A motion row has no notification decision to satisfy, so filtering on one excludes
+            // it - the same rule the server applies to its own analysis-only filters.
             (!notifiedOnly || event.notified) &&
             (search.isEmpty ||
-             event.summary.localizedCaseInsensitiveContains(search) ||
+             (event.summary ?? "").localizedCaseInsensitiveContains(search) ||
              event.camera.localizedCaseInsensitiveContains(search) ||
-             event.eventType.localizedCaseInsensitiveContains(search))
+             (event.zoneName ?? "").localizedCaseInsensitiveContains(search) ||
+             (event.eventType ?? "").localizedCaseInsensitiveContains(search))
         }
     }
 
@@ -53,11 +57,11 @@ struct EventFeedView: View {
             }
         }
         .listStyle(.plain)
-        .navigationTitle("Feed")
+        .navigationTitle("Events")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
-        .navigationDestination(for: SecurityEvent.self) { EventDetailView(event: $0) }
+        .navigationDestination(for: ActivityItem.self) { ActivityDetailView(event: $0) }
         .searchable(text: $search, prompt: "Search camera activity")
         .refreshable { await model.connect() }
         .toolbar {
@@ -67,38 +71,24 @@ struct EventFeedView: View {
                 }
                 .toggleStyle(.button)
             }
+            // Changing this changes what the server is asked for, so it reloads rather than
+            // filtering what's already here.
+            ToolbarItem {
+                Toggle(isOn: $model.showHiddenActivity) {
+                    Label("Show hidden", systemImage: "eye.slash.fill")
+                }
+                .toggleStyle(.button)
+                .onChange(of: model.showHiddenActivity) { _, _ in
+                    Task { await model.connect() }
+                }
+            }
             ToolbarItem {
                 Button { Task { await model.connect(resetNetworkSession: true) } } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(model.isLoading)
             }
-            #if os(iOS)
-            // An iPhone tab bar only holds five items, and the Device Hub takes the fifth when
-            // it's enabled - see AppSection.compactTabCases. Settings then lives here instead so
-            // it stays one tap away. On iPad this whole toolbar sits beside a sidebar that still
-            // lists Settings, so the button would be a duplicate.
-            if model.deviceHubEnabled && horizontalSizeClass == .compact {
-                ToolbarItem {
-                    Button { showingSettings = true } label: {
-                        Label("Settings", systemImage: "gearshape.fill")
-                    }
-                }
-            }
-            #endif
         }
-        #if os(iOS)
-        .sheet(isPresented: $showingSettings) {
-            NavigationStack {
-                SettingsView()
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showingSettings = false }
-                        }
-                    }
-            }
-        }
-        #endif
         .task {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(30)) } catch { return }
@@ -128,7 +118,7 @@ struct EventFeedView: View {
     }
 
     private var emptyTitle: String {
-        if model.isLoading { return "Loading feed…" }
+        if model.isLoading { return "Loading events…" }
         if !search.isEmpty || notifiedOnly { return "No matching events" }
         return "No events"
     }
@@ -137,14 +127,17 @@ struct EventFeedView: View {
         if !search.isEmpty || notifiedOnly {
             return "Try changing your search or notification filter."
         }
-        return "Alerts received by Sentinel Core will appear here."
+        if !model.showHiddenActivity {
+            return "Anything the cameras catch will appear here. Motion the AI rejected is hidden - turn on Show hidden to see it."
+        }
+        return "Anything the cameras catch will appear here."
     }
 }
 
 struct EventCard: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    let event: SecurityEvent
+    let event: ActivityItem
 
     var body: some View {
         Group {
@@ -169,13 +162,24 @@ struct EventCard: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(event.camera), \(event.summary), \(event.occurredAt.formatted())")
+        .accessibilityLabel(accessibilityDescription)
     }
 
     private var eventImage: some View {
         SentinelRemoteImage(url: imageURL)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .clipped()
+            .overlay(alignment: .bottomLeading) {
+                if event.hasClip {
+                    Label("Clip", systemImage: "play.fill")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.6), in: Capsule())
+                        .foregroundStyle(SentinelTheme.cyan)
+                        .padding(6)
+                }
+            }
     }
 
     private var eventDetails: some View {
@@ -187,27 +191,53 @@ struct EventCard: View {
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
-            Text(event.summary.isEmpty ? "No description" : event.summary)
-                .multilineTextAlignment(.leading)
-                .lineLimit(horizontalSizeClass == .compact ? 4 : 3)
+            // Nothing analysed a motion row, so the zone that caught it stands in for a
+            // description - dimmed, so a mixed list reads as "described" vs "not looked at".
+            if event.isAnalyzed {
+                Text(event.summary?.isEmpty == false ? event.summary! : "No description")
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(horizontalSizeClass == .compact ? 4 : 3)
+            } else {
+                Text(event.zoneName ?? "Motion in zone")
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
             HStack(spacing: 10) {
-                Text(event.eventType.replacingOccurrences(of: "_", with: " ").capitalized)
-                    .foregroundStyle(SentinelTheme.cyan)
+                Text(footerLabel)
+                    .foregroundStyle(event.isAnalyzed ? SentinelTheme.cyan : .secondary)
                     .lineLimit(1)
+                if let confirmation = event.confirmation, confirmation != "confirmed" {
+                    Image(systemName: confirmation == "rejected" ? "exclamationmark.triangle.fill" : "ellipsis.circle")
+                        .foregroundStyle(SentinelTheme.amber)
+                        .accessibilityLabel(confirmation == "rejected" ? "AI found nothing" : "Awaiting AI verdict")
+                }
                 Spacer(minLength: 4)
                 if event.notified {
                     Image(systemName: "bell.fill")
                         .foregroundStyle(SentinelTheme.green)
                         .accessibilityLabel("Notification sent")
                 }
-                Text(event.confidence, format: .percent.precision(.fractionLength(0)))
-                    .foregroundStyle(.secondary)
+                if let confidence = event.confidence, event.isAnalyzed {
+                    Text(confidence, format: .percent.precision(.fractionLength(0)))
+                        .foregroundStyle(.secondary)
+                }
             }
             .font(.caption)
         }
     }
 
+    private var footerLabel: String {
+        guard event.isAnalyzed else { return "Motion only" }
+        return (event.eventType ?? "unknown").replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    private var accessibilityDescription: String {
+        let detail = event.isAnalyzed ? (event.summary ?? "") : "Motion only, \(event.zoneName ?? "in zone")"
+        return "\(event.camera), \(detail), \(event.occurredAt.formatted())"
+    }
+
     private var imageURL: URL? {
-        event.hasImage ? model.client.url(path: "/api/events/\(event.id.uuidString)/image") : nil
+        event.imageUrl.flatMap { model.client.url(path: $0) }
     }
 }
