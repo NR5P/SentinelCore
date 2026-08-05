@@ -370,6 +370,22 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "triggerRewind",
+            Title = "TRIGGER REWIND",
+            Endpoint = "/api/settings/trigger-rewind",
+            Basic = false,
+            DtoType = typeof(TriggerRewindSettingsDto),
+            Description = "Off by default. Motion is spotted on a deliberately tiny copy of the video - full-resolution frames twice a second would cost more CPU than everything else put together - so the moment is known but the picture is not, and a fresh photo has to be taken afterwards. On a busy machine that photo can be seconds too late to still show anything: a car drives past and the saved image is of an empty road. With this on, the full-resolution frame for that exact moment is fetched out of the recent video instead, and it is both what you see and what the AI is given. The frame is looked up by its timestamp, so there is nothing to tune and it behaves the same on fast hardware and slow.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Use the frame the motion was really in, instead of photographing the scene again once the trigger has been handled. If the frame cannot be fetched for any reason the old live snapshot is used, so a trigger is never lost."),
+                Number("lookbackSeconds", "Lookback (s)", "How far back a fetch may reach. This is not a search window - the moment wanted is known exactly - it is only a sanity limit, so a camera reconnecting or a clock jumping can never present footage from minutes ago as the current event. The default suits everything; raise it only if the log says a frame was refused for being older than this.", 2, 15),
+                Check("bufferEveryCamera", "Keep Footage For Every Camera", "Fetching needs a few seconds of recent video on disk - the same rolling buffer clip recording already keeps. On, every camera with a trigger zone keeps one, so this works everywhere instead of only where clips happen to be enabled. The buffer is copied, never re-encoded, so it costs almost no CPU - but it is a continuous write at the camera's full bitrate, which is worth weighing on a small or heavily-worn SSD."),
+                Check("applyToCompanions", "Apply To Companion Cameras", "Fetch the same moment from the other cameras in a camera group. They have no motion of their own to date the event by, so they borrow the triggering camera's timing - an approximation, but a much better one than a picture taken after the event.")
+            ]
+        },
+        new()
+        {
             Key = "packageTheftWatch",
             Title = "PACKAGE THEFT WATCH",
             Endpoint = "/api/settings/package-theft-watch",

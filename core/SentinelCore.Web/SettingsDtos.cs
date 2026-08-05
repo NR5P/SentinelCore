@@ -221,6 +221,18 @@ public sealed class MultiFrameAnalysisSettingsDto
     public int FrameIntervalMs { get; set; } = 350;
 }
 
+public sealed class TriggerRewindSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(2, 15)]
+    public int LookbackSeconds { get; set; } = 6;
+
+    public bool BufferEveryCamera { get; set; } = true;
+
+    public bool ApplyToCompanions { get; set; } = true;
+}
+
 public sealed class PackageTheftWatchSettingsDto
 {
     public bool Enabled { get; set; }

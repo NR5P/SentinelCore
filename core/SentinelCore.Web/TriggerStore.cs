@@ -127,7 +127,15 @@ public sealed record TriggerEvent(
     // of a motion row and an analysis row for the same thing - see the /api/activity merge.
     // Null whenever no analysis exists to join to: the camera doesn't forward to alerts, the
     // forward was refused, or the row predates this column.
-    Guid? AlertId = null);
+    Guid? AlertId = null,
+    // How long after OccurredAt this row's image was actually fetched - the pipeline's own latency
+    // between a frame being captured and the trigger being handled. The image still shows OccurredAt
+    // exactly; this says how far behind real time the system was running at that moment, which is
+    // the diagnostic whose absence let a three-second detection lag go unnoticed for months.
+    //
+    // Null when the image came from the live snapshot instead: Trigger Rewind is off, or there was
+    // no buffered video to fetch from.
+    double? CaptureDelaySeconds = null);
 
 public interface ITriggerConfigStore
 {
@@ -142,11 +150,17 @@ public interface ITriggerConfigStore
 
 public interface ITriggerEventStore
 {
-    // zoneName is trailing and optional so the callers that have no zone to name (companion
-    // captures, sensor and manual triggers) are unchanged.
+    // zoneName, captureDelaySeconds and occurredAt are trailing and optional so the callers that have
+    // none of them (companion captures, sensor and manual triggers) are unchanged.
+    //
+    // occurredAt is when the event happened, which is not the same as when this row is being
+    // written: motion detection works on decoded video, and the gap between a frame being captured
+    // and a trigger being handled is real. Callers that know the frame's capture time pass it so
+    // the row, its clip and its alert all describe the same moment. Omitting it falls back to now.
     Task<TriggerEvent> AddAsync(
         Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId,
-        TriggerConfirmation confirmation, CancellationToken cancellationToken, string? zoneName = null);
+        TriggerConfirmation confirmation, CancellationToken cancellationToken, string? zoneName = null,
+        double? captureDelaySeconds = null, DateTimeOffset? occurredAt = null);
 
     // includeUnconfirmed surfaces pending and rejected triggers too, for the Triggers tab's
     // "show unconfirmed" toggle - the only way to see what the AI filter is actually throwing
@@ -246,6 +260,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         // their analysis after the fact (no key existed to record), so they stay motion-only in
         // the Events tab rather than being guessed at by camera and timestamp.
         AddColumnIfMissing("TriggerEvents", "AlertId", "TEXT");
+        AddColumnIfMissing("TriggerEvents", "CaptureDelaySeconds", "REAL");
 
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = """
@@ -410,17 +425,20 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
     public async Task<TriggerEvent> AddAsync(
         Guid cameraId, string imagePath, double triggerAreaFraction, string? incidentId,
-        TriggerConfirmation confirmation, CancellationToken cancellationToken, string? zoneName = null)
+        TriggerConfirmation confirmation, CancellationToken cancellationToken, string? zoneName = null,
+        double? captureDelaySeconds = null, DateTimeOffset? occurredAt = null)
     {
-        var trigger = new TriggerEvent(Guid.NewGuid(), cameraId, DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null, incidentId, confirmation, zoneName);
+        var trigger = new TriggerEvent(
+            Guid.NewGuid(), cameraId, occurredAt ?? DateTimeOffset.UtcNow, imagePath, triggerAreaFraction, null,
+            incidentId, confirmation, zoneName, AlertId: null, CaptureDelaySeconds: captureDelaySeconds);
 
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, IncidentId, Confirmation, ZoneName)
-                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction, $incidentId, $confirmation, $zoneName);
+                INSERT INTO TriggerEvents (Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, IncidentId, Confirmation, ZoneName, CaptureDelaySeconds)
+                VALUES ($id, $cameraId, $occurredAt, $imagePath, $triggerAreaFraction, $incidentId, $confirmation, $zoneName, $captureDelaySeconds);
                 """;
             command.Parameters.AddWithValue("$id", trigger.Id.ToString("N"));
             command.Parameters.AddWithValue("$cameraId", trigger.CameraId.ToString("N"));
@@ -430,6 +448,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$incidentId", (object?)trigger.IncidentId ?? DBNull.Value);
             command.Parameters.AddWithValue("$confirmation", ToStorage(confirmation));
             command.Parameters.AddWithValue("$zoneName", (object?)trigger.ZoneName ?? DBNull.Value);
+            command.Parameters.AddWithValue("$captureDelaySeconds", (object?)trigger.CaptureDelaySeconds ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -508,7 +527,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
             using var command = _connection.CreateCommand();
             command.CommandText =
-                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId " +
+                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds " +
                 $"FROM TriggerEvents {where}ORDER BY OccurredAt DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$limit", limit);
             if (cameraId is not null) command.Parameters.AddWithValue("$cameraId", cameraId.Value.ToString("N"));
@@ -533,7 +552,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds
                 FROM TriggerEvents
                 WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end AND Confirmation = 'confirmed'
                 ORDER BY OccurredAt ASC;
@@ -578,7 +597,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId FROM TriggerEvents WHERE Id = $id;";
+            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds FROM TriggerEvents WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -620,7 +639,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         reader.IsDBNull(6) ? null : reader.GetString(6),
         FromStorage(reader.GetString(7)),
         reader.IsDBNull(8) ? null : reader.GetString(8),
-        reader.IsDBNull(9) ? null : Guid.ParseExact(reader.GetString(9), "N"));
+        reader.IsDBNull(9) ? null : Guid.ParseExact(reader.GetString(9), "N"),
+        reader.IsDBNull(10) ? null : reader.GetDouble(10));
 
     private static string ToStorage(TriggerConfirmation confirmation) => confirmation switch
     {

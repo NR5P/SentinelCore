@@ -583,6 +583,48 @@ public sealed class MultiFrameOptions
     public int FrameIntervalMs { get; init; } = 350;
 }
 
+public sealed class TriggerRewindOptions
+{
+    public const string SectionName = "TriggerRewind";
+
+    // Off by default, which is exactly today's behaviour: the trigger's image is a fresh photograph
+    // taken at the instant the trigger finishes being handled.
+    //
+    // The problem that turns this on: motion is detected on a deliberately tiny 320x180 copy of the
+    // video, because comparing full-resolution frames twice a second would cost more CPU than the
+    // rest of the system together. So the moment is known but the picture is not, and the code has
+    // to go and take one - which can only ever mean "now", some time after the event. With this on,
+    // the full-resolution frame for that exact moment is fetched out of the rolling video buffer
+    // instead, so what you see and what the AI is given are the frame the motion was actually in.
+    //
+    // This is the same approach every established system in this space takes: Frigate hands its
+    // tracker a (camera, frame_time, frame_id) reference to look the frame up by, ZoneMinder keeps
+    // a shared-memory ring of recent images, Blue Iris keeps a pre-trigger buffer measured in
+    // frames. The lookup is by timestamp alone - no search, no scoring, nothing to tune - which is
+    // what makes it behave identically on fast hardware and slow.
+    public bool Enabled { get; init; }
+
+    // How far back a fetch is allowed to reach. This is NOT a search window: the instant wanted is
+    // known exactly. It only bounds the damage from a timestamp that cannot be right - a clock step,
+    // a camera reconnecting - so nothing can present footage from minutes ago as the current event.
+    [Range(2, 15)]
+    public int LookbackSeconds { get; init; } = 6;
+
+    // Fetching needs a few seconds of recent video on disk, which is the same rolling segment buffer
+    // clip recording already keeps. With this on, that buffer runs for every camera with an enabled
+    // trigger zone rather than only those recording clips, so rewind works everywhere instead of
+    // being an accident of an unrelated setting. The buffer is written with -c copy - no decoding,
+    // no encoding, near-zero CPU - but it is a continuous write at the camera's full bitrate, so on
+    // a small or heavily-worn SSD this is the setting to weigh. Inert while Enabled is false.
+    public bool BufferEveryCamera { get; init; } = true;
+
+    // Fetch the same instant from the other cameras in a camera group. They have no detection of
+    // their own to date the event by, so they borrow the triggering camera's timestamp - an
+    // approximation, since each camera's own delay differs, but a far better one than a frame taken
+    // after the event. Inert while Enabled is false.
+    public bool ApplyToCompanions { get; init; } = true;
+}
+
 public sealed class PackageTheftOptions
 {
     public const string SectionName = "PackageTheftWatch";

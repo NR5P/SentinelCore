@@ -41,6 +41,7 @@ window.GateWatchSettings = (function () {
     discord: "Post alert cards and trigger snapshots to a Discord channel through a webhook.",
     blueIris: "On-demand Blue Iris snapshots for the Telegram bot. Sentinel's Timeline uses its own local trigger clips instead.",
     multiFrameAnalysis: "Analyze 2-3 frames per trigger instead of one, to reduce false alarms from shadows/reflections. Off by default - costs more AI processing time per alert.",
+    triggerRewind: "Saves the frame the motion was really in, rather than a photo taken once the trigger is handled - which on a busy machine can be seconds too late to still show anything.",
     packageTheftWatch: "Flags a package that disappears without a recognized pickup, and forces a notification. Off by default - no extra AI cost, but a heuristic guess, not proof.",
     semanticSearch: "Search the Feed by visual content (\"red truck\") instead of only saved text. Off by default - ~577MB one-time model download, plus per-alert processing time.",
     selfMonitoring: "Watches the bridge itself and warns you if it stops keeping up.",

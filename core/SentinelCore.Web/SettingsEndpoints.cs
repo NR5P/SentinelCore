@@ -24,6 +24,7 @@ public sealed record SettingsSnapshot(
     TelegramChatSettingsDto? TelegramChat,
     BlueIrisSettingsDto? BlueIris,
     MultiFrameAnalysisSettingsDto? MultiFrameAnalysis,
+    TriggerRewindSettingsDto? TriggerRewind,
     PackageTheftWatchSettingsDto? PackageTheftWatch,
     SemanticSearchSettingsDto? SemanticSearch,
     SelfMonitoringSettingsDto? SelfMonitoring,
@@ -159,6 +160,9 @@ public static class SettingsEndpoints
 
         settings.MapPut("/multi-frame-analysis", async (MultiFrameAnalysisSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "MultiFrameAnalysis", ct));
+
+        settings.MapPut("/trigger-rewind", async (TriggerRewindSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "TriggerRewind", ct));
 
         settings.MapPut("/package-theft-watch", async (PackageTheftWatchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "PackageTheftWatch", ct));
@@ -447,6 +451,7 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<TelegramChatSettingsDto>("TelegramChat", cancellationToken),
         await settings.GetSectionAsync<BlueIrisSettingsDto>("BlueIris", cancellationToken),
         await settings.GetSectionAsync<MultiFrameAnalysisSettingsDto>("MultiFrameAnalysis", cancellationToken),
+        await settings.GetSectionAsync<TriggerRewindSettingsDto>("TriggerRewind", cancellationToken),
         await settings.GetSectionAsync<PackageTheftWatchSettingsDto>("PackageTheftWatch", cancellationToken),
         await settings.GetSectionAsync<SemanticSearchSettingsDto>("SemanticSearch", cancellationToken),
         await settings.GetSectionAsync<SelfMonitoringSettingsDto>("SelfMonitoring", cancellationToken),
@@ -505,6 +510,7 @@ public static class SettingsEndpoints
         if (snapshot.TelegramChat is not null) await settings.MergeSectionAsync("TelegramChat", snapshot.TelegramChat, cancellationToken);
         if (snapshot.BlueIris is not null) await MergeUnmaskedAsync(snapshot.BlueIris, "BlueIris", settings, cancellationToken);
         if (snapshot.MultiFrameAnalysis is not null) await settings.MergeSectionAsync("MultiFrameAnalysis", snapshot.MultiFrameAnalysis, cancellationToken);
+        if (snapshot.TriggerRewind is not null) await settings.MergeSectionAsync("TriggerRewind", snapshot.TriggerRewind, cancellationToken);
         if (snapshot.PackageTheftWatch is not null) await settings.MergeSectionAsync("PackageTheftWatch", snapshot.PackageTheftWatch, cancellationToken);
         if (snapshot.SemanticSearch is not null) await settings.MergeSectionAsync("SemanticSearch", snapshot.SemanticSearch, cancellationToken);
         if (snapshot.SelfMonitoring is not null) await settings.MergeSectionAsync("SelfMonitoring", snapshot.SelfMonitoring, cancellationToken);

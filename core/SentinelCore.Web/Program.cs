@@ -241,6 +241,7 @@ var triggerStore = new SqliteTriggerStore(camerasRoot);
 builder.Services.AddSingleton<ITriggerConfigStore>(triggerStore);
 builder.Services.AddSingleton<ITriggerEventStore>(triggerStore);
 builder.Services.AddSingleton<ClipRecorder>();
+builder.Services.AddSingleton<TriggerRewindService>();
 builder.Services.AddHttpClient();
 // Longer than the default 100s - the main app's own chat timeout is 300s (TelegramChatOptions.
 // TimeoutSeconds, confirmed against a real, busy camera's event history that less wasn't

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 
 namespace SentinelCore.Web;
@@ -51,10 +50,15 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
     // person had left - and silently, because segments covering the tail of the window still
     // existed, so the "no buffered video" warning never fired. Deriving the window from the
     // post-roll instead of guessing at it makes the retention correct for any setting.
-    public void PruneBuffer(Guid cameraId, int preSeconds, int postSeconds)
+    public void PruneBuffer(Guid cameraId, int preSeconds, int postSeconds) =>
+        PruneBuffer(cameraId, preSeconds + postSeconds + RetentionSlackSeconds);
+
+    // Explicit-window overload for callers that aren't building a clip: TriggerRewind keeps a
+    // buffer on cameras with clips switched off, where "pre + post" means nothing and the only
+    // requirement is that the lookback window still be on disk when a trigger lands.
+    public void PruneBuffer(Guid cameraId, int keepSeconds)
     {
-        var keepFor = TimeSpan.FromSeconds(preSeconds + postSeconds + RetentionSlackSeconds);
-        var cutoff = DateTimeOffset.UtcNow - keepFor;
+        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(keepSeconds);
 
         foreach (var file in EnumerateSegments(cameraId))
         {
@@ -88,10 +92,7 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
         // of five seconds before it, with nothing logged, because the rest of the window was still
         // covered. The last segment has no successor to measure against, so it falls back to the
         // nominal length.
-        var ordered = EnumerateSegments(cameraId).OrderBy(s => s.StartsAt).ToList();
-        var segments = ordered
-            .Where((s, i) => s.StartsAt < to && SegmentEnd(ordered, i) > from)
-            .ToList();
+        var segments = SelectSegmentsCovering(BufferedSegments(cameraId), from, to);
 
         if (segments.Count == 0)
         {
@@ -101,7 +102,7 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
 
         var clipPath = Path.Combine(ClipsDirectory(cameraId), $"{triggeredAt:yyyyMMdd-HHmmss-fff}.mp4");
         var listPath = Path.Combine(Path.GetTempPath(), $"cliplist-{Guid.NewGuid():N}.txt");
-        await File.WriteAllLinesAsync(listPath, segments.Select(s => $"file '{s.Path.Replace("'", @"'\''")}'"), cancellationToken);
+        await File.WriteAllLinesAsync(listPath, segments.Select(s => ConcatListLine(s.Path)), cancellationToken);
 
         try
         {
@@ -115,7 +116,10 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
                 "-y", clipPath
             };
 
-            if (!await RunFfmpegAsync(args, cancellationToken) || !File.Exists(clipPath))
+            var built = await FfmpegProcess.RunAsync(
+                _ffmpegPath, args, TimeSpan.FromSeconds(60), logger, "clip build", priority: null, cancellationToken);
+
+            if (!built || !File.Exists(clipPath))
             {
                 logger.LogWarning("Failed to build trigger clip for camera {CameraId}", cameraId);
                 return null;
@@ -135,7 +139,7 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
     // the hole would be credited with covering the entire outage, splicing footage from before it
     // onto the front of a clip. Beyond a plausible GOP, fall back to the nominal length; the last
     // segment has no successor to measure against and does the same.
-    private static DateTimeOffset SegmentEnd(IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index)
+    public static DateTimeOffset SegmentEnd(IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index)
     {
         var nominalEnd = ordered[index].StartsAt + TimeSpan.FromSeconds(SegmentSeconds);
         if (index + 1 >= ordered.Count) return nominalEnd;
@@ -150,6 +154,39 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
     // and long GOPs on these cameras top out around 10 seconds. Anything longer is a gap, not a
     // segment.
     private const int MaxSegmentSpanSeconds = 15;
+
+    // Every segment currently on disk for a camera, oldest first. The ordering is what makes
+    // SegmentEnd meaningful, so callers get it pre-sorted rather than being trusted to remember.
+    public IReadOnlyList<(string Path, DateTimeOffset StartsAt)> BufferedSegments(Guid cameraId) =>
+        EnumerateSegments(cameraId).OrderBy(s => s.StartsAt).ToList();
+
+    // Segments overlapping [from, to] - not merely contained in it. See the note in BuildClipAsync
+    // about long GOPs: the segment holding the pre-roll is the one that STARTS before the window
+    // and runs into it, and requiring containment silently dropped it.
+    public static List<(string Path, DateTimeOffset StartsAt)> SelectSegmentsCovering(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, DateTimeOffset from, DateTimeOffset to) =>
+        ordered.Where((s, i) => s.StartsAt < to && SegmentEnd(ordered, i) > from).ToList();
+
+    // Trims a selection back to the unbroken run that ends at its newest segment.
+    //
+    // Load-bearing for anything that seeks by time offset rather than just concatenating: the
+    // concat demuxer treats the first segment's start as t=0 and assumes the rest follow back to
+    // back, so a hole anywhere in the list silently shifts every later offset by the length of the
+    // outage. A clip merely looks jumpy when that happens; a frame sought at "3.5 seconds in"
+    // becomes a frame from somewhere else entirely.
+    public static List<(string Path, DateTimeOffset StartsAt)> ContiguousRunEndingAtNewest(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered)
+    {
+        if (ordered.Count == 0) return [];
+
+        var first = ordered.Count - 1;
+        while (first > 0 && SegmentEnd(ordered, first - 1) >= ordered[first].StartsAt) first--;
+
+        return ordered.Skip(first).ToList();
+    }
+
+    // A line of an ffmpeg concat list file. Single quotes are the escape the demuxer understands.
+    public static string ConcatListLine(string path) => $"file '{path.Replace("'", @"'\''")}'";
 
     private IEnumerable<(string Path, DateTimeOffset StartsAt)> EnumerateSegments(Guid cameraId)
     {
@@ -173,48 +210,6 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
 
             yield return (path, startsAt);
         }
-    }
-
-    private async Task<bool> RunFfmpegAsync(IReadOnlyList<string> args, CancellationToken cancellationToken)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = _ffmpegPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
-
-        using var process = Process.Start(psi);
-        if (process is null) return false;
-
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        _ = process.StandardOutput.ReadToEndAsync(cancellationToken);
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return false;
-        }
-
-        if (process.ExitCode == 0) return true;
-
-        logger.LogWarning("ffmpeg clip build exited {Code}: {Error}", process.ExitCode, Tail(await stderr));
-        return false;
-    }
-
-    private static string Tail(string text)
-    {
-        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        return string.Join('\n', lines.TakeLast(10));
     }
 
     private static string ResolveRoot(IConfiguration configuration, IHostEnvironment environment)

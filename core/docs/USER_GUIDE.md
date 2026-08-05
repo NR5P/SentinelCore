@@ -735,6 +735,19 @@ The full list below covers both modes:
 - **Multi-Frame Analysis** — has the AI look at a couple of frames per trigger instead of one, to
   cut down on shadow/reflection false positives. See
   [section 6b](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame).
+- **Trigger Rewind** — off by default. Motion is spotted on a deliberately tiny copy of the video
+  (full-resolution frames twice a second would cost more CPU than everything else put together), so
+  the *moment* is known but the *picture* isn't — and a fresh photo then has to be taken, which can
+  only mean "now". On a busy machine that's seconds too late to still show anything: a car drives
+  past and the saved image is of an empty road. With this on, the full-resolution frame for that
+  exact moment is fetched out of the recent video instead, and it's both what you see and what the
+  AI is given. The frame is looked up by its timestamp, so there's nothing to tune and it behaves
+  the same on fast hardware and slow. If the frame can't be fetched for any reason the old live
+  snapshot is used, so a trigger is never lost. It needs a few seconds of recent video on disk,
+  which is the same rolling buffer clip recording already keeps — **Keep Footage For Every Camera**
+  extends that to cameras not recording clips. The buffer is copied rather than re-encoded so it
+  costs almost no CPU, but it is a continuous write at the camera's full bitrate, worth weighing on
+  a small or heavily-worn SSD.
 - **System Health** — a read-only view of CPU, memory, disk, queue depth, and vision-backend
   reachability. See [section 7a](#7a-system-health--how-hard-the-server-is-working).
 - **MQTT / Home Assistant** — publishes events over MQTT with Home Assistant auto-discovery,
