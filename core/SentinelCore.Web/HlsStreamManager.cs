@@ -273,10 +273,21 @@ public sealed class HlsStreamManager : IDisposable
         // behind live, the camera's own I-frame-interval setting sets the floor on end-to-end
         // latency for this whole pipeline - see docs/ for how to check and change it.
         //
-        // Which is why this asks for 2s rather than the 1s it used to. On a camera with a GOP of
-        // 2s or more the number changes nothing at all (the GOP wins either way), and on a camera
-        // with a short GOP it stops us cutting needlessly tiny segments - every segment is an HTTP
-        // round trip per viewer per camera, and a live grid multiplies that by both.
+        // This asked for 2s for a while, to halve the HTTP round trips a live grid makes - every
+        // segment is one request per viewer per camera. Measured against this install's gate
+        // camera, that trade was the wrong way round:
+        //
+        //   -hls_time 2  ->  playlist available 5.00s after ffmpeg starts
+        //   -hls_time 1  ->  playlist available 2.29s
+        //
+        // and the playlist is only the first half of the wait, because a player then sits idle
+        // until enough segments have been PRODUCED to fill its buffer - three segments is six
+        // seconds of waiting at 2s each and three at 1s. The saving was half a request per second
+        // per camera, which no LAN server has ever noticed; the cost was several seconds of black
+        // rectangle every time somebody opened the Live tab, which is the first thing anyone sees.
+        //
+        // On a camera with a GOP of 2s or more this changes nothing either way - copying video can
+        // only cut on a keyframe, so the GOP wins and hls_time is only ever a floor.
         args.AddRange(["-map", "0:v:0", "-c:v", "copy"]);
         if (includeAudio)
             args.AddRange(["-map", "0:a:0?", "-c:a", "aac", "-ac", "1"]);
@@ -284,14 +295,16 @@ public sealed class HlsStreamManager : IDisposable
             args.Add("-an");
         args.AddRange([
             "-f", "hls",
-            "-hls_time", "2",
+            "-hls_time", "1",
             // The playlist window, in segments. This is the margin a viewer has to fall behind by
             // before the segment it is asking for has rolled off the playlist entirely - at which
             // point its only move is to jump back to the live edge, which is a visible rebuffer.
             // Six segments was thin: on a camera with a 2s GOP that is a twelve-second window, and
             // a player deliberately sitting near the live edge spends most of it already used up.
-            // Ten costs nothing but a little disk and absorbs the ordinary jitter instead.
-            "-hls_list_size", "10",
+            // Counted in segments rather than seconds, so halving the segment length above would
+            // have quietly halved this window too - twenty keeps the same ~20s of margin, and the
+            // same disk footprint, since each segment is now half the size.
+            "-hls_list_size", "20",
             // temp_file: write each segment under a scratch name and rename it into place when
             // it's complete, so a viewer can never fetch a half-written .ts and stall on it.
             // independent_segments: every segment starts on a keyframe (guaranteed here, since

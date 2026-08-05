@@ -3930,13 +3930,25 @@ public sealed class BasicTests
         Assert.Contains("delete_segments", flags);
         Assert.Contains("omit_endlist", flags);
         Assert.Equal("5", args[args.IndexOf("-hls_delete_threshold") + 1]);
-        Assert.Equal("2", args[args.IndexOf("-hls_time") + 1]);
+
+        // Short segments are what make the Live tab appear quickly, because a player waits for
+        // several of them to be PRODUCED before it has enough to start. Measured cold against a
+        // real camera: 5.00s to a usable playlist at 2s segments, 2.29s at 1s. On a camera whose
+        // GOP is longer this is moot - copying video can only cut on a keyframe, so hls_time is
+        // only ever a floor.
+        var segmentSeconds = int.Parse(args[args.IndexOf("-hls_time") + 1]);
+        Assert.Equal(1, segmentSeconds);
 
         // The playlist window a viewer has to fall behind by before its next segment has rolled
         // off and its only recourse is a jump back to the live edge - which viewers see as the
-        // stream stopping and restarting. Ten segments is the margin that made the live grid stop
-        // stuttering; trimming it back is the change that would quietly undo that.
-        Assert.Equal("10", args[args.IndexOf("-hls_list_size") + 1]);
+        // stream stopping and restarting. Twenty seconds is the margin that made the live grid
+        // stop stuttering.
+        //
+        // Asserted in SECONDS, not segments, because that is the thing that actually matters:
+        // hls_list_size counts segments, so halving hls_time above would otherwise have halved
+        // this window silently while the old assertion still passed.
+        var windowSeconds = segmentSeconds * int.Parse(args[args.IndexOf("-hls_list_size") + 1]);
+        Assert.True(windowSeconds >= 20, $"playlist window is only {windowSeconds}s");
 
         // A decoder option, so it has to precede -i to apply to the input. The HLS output copies
         // video and never decodes; without this the poster-frame output alone made ffmpeg decode
