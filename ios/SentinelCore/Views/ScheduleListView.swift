@@ -70,14 +70,22 @@ struct ScheduleListView: View {
         }
     }
 
+    @ViewBuilder
     private func editorSheet(for schedule: Schedule?) -> some View {
-        NavigationStack {
+        let editor = NavigationStack {
             ScheduleEditView(schedule: schedule, metadata: metadata) {
                 Task { await load() }
             }
         }
-        // Mac sheets collapse around their content without one - see the note in CameraEditView.
-        .frame(minWidth: 520, minHeight: 620)
+
+        // A Mac sheet collapses around a Form's ideal size without a minimum - see the note above
+        // deviceHubSheetFrame(). The minimum has to stay off iPhone, where it is wider than the
+        // screen and pushes the whole editor sideways.
+        #if os(macOS)
+        editor.frame(minWidth: 520, minHeight: 620)
+        #else
+        editor
+        #endif
     }
 
     @ViewBuilder
