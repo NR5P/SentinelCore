@@ -851,6 +851,20 @@ endpoint, so there's no equivalent override for those.
   never reach the expensive model at all. This is the recommended setup for a low-powered
   server: sub-second local screening, with the full analysis reserved for alerts that actually
   contain something. If escalation fails, the detector's own result still stands.
+- **Full AI Has The Final Say** — what happens when the detector finds someone but the escalated
+  full AI comes back saying the frame is empty. Off (the default), the detector is believed and
+  the event is kept: one full AI shrugging at a dark night-vision frame shouldn't be able to hide
+  real footage. Turn it on if you're seeing a steady stream of events the full AI never confirmed
+  — then the full AI's verdict stands, no notification is sent, and the event is filed as rejected
+  so it drops off EVENTS unless you show hidden ones. This only applies to an actual verdict: if
+  the full AI is unreachable or errors out, the detector's result still stands either way.
+- **Full AI Minimum Confidence** — how sure the full AI has to be before what it reports counts as
+  a real subject. Below this the alert is treated as empty — no notification, event filed as
+  rejected — though the description it wrote is still kept on the event so you can see what it
+  thought it saw. This is the full AI's counterpart to Fast Local Detection's **Score Threshold**;
+  it doesn't affect the detector's own results or gate checks. 0 turns it off. Note that with Fast
+  Local Detection as your primary, this only changes the outcome when the setting above is also
+  on — otherwise the detector's result wins regardless.
 
 Two notes on the fast detector's limits: gate/door open checks (section on Gate Checks) always
 use a full AI even when Fast Local Detection is primary, since a plain detector can't read

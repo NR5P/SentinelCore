@@ -192,6 +192,36 @@ public sealed class VisionRoutingOptions
     // "cloud", or "ollama".
     [Required]
     public string EscalationTarget { get; init; } = "auto";
+
+    // Only meaningful alongside EscalationEnabled: who wins when the detector found a subject and
+    // the escalated VLM reports an empty frame. Off (the default) keeps the detector's result -
+    // the detector is usually right about mere presence, and one VLM shrugging at a dark IR frame
+    // would otherwise file real footage as Rejected and hide it. On, the VLM's verdict replaces
+    // the detection, which is what you want when the two disagree constantly enough that the
+    // detector is clearly the unreliable one.
+    //
+    // Either way, escalation *failure* - target unreachable, target threw, no target configured -
+    // still keeps the detector's result. "The VLM said nothing is there" and "the VLM never
+    // answered" are different facts and only the first one is a verdict.
+    public bool EscalationVerdictWins { get; init; }
+
+    // The VLM tier's counterpart to FastLocal:ScoreThreshold. A VLM analysis scoring below this is
+    // treated as having found no subject: the visible flags and package status are cleared and the
+    // notification is suppressed, while the summary, descriptions and the raw response are kept so
+    // the event still reads correctly. 0 (the default) disables the check entirely, preserving the
+    // behaviour every existing install has today.
+    //
+    // Pairs with the prompt convention in OllamaVisionClient.BuildPrompt, which tells the model to
+    // report a confidence at or below 0.2 when the frame is too dark or obstructed to judge - so a
+    // floor anywhere above that turns "I can't see" into "nothing here" instead of a false alert.
+    //
+    // Deliberately not applied to fast-detector results: FastLocalVisionClient scores an *empty*
+    // frame 0.8 by convention and a real detection by its own max score, so the two aren't on the
+    // same number line and a shared floor would suppress a 0.82 detection while passing the 0.8
+    // empty frame. ScoreThreshold is that tier's gate and it runs per-detection, before mapping.
+    // Also not applied to gate checks, which by construction have nobody in frame.
+    [Range(0, 1)]
+    public double MinimumConfidence { get; init; }
 }
 
 public sealed class FastLocalOptions

@@ -97,12 +97,12 @@ public sealed class FastLocalTests
 
     // --- FailoverVisionClient: fastlocal routing and escalation -------------------------------
 
-    private static VisionAnalysis SubjectAnalysis() => new()
+    private static VisionAnalysis SubjectAnalysis(double confidence = 0.9) => new()
     {
         EventType = "unknown",
         Summary = "Fast detection: a person.",
         Person = new PersonAnalysis { Visible = true, Location = "unknown", Activity = "unknown" },
-        Confidence = 0.9,
+        Confidence = confidence,
         NotificationRecommended = true
     };
 
@@ -247,6 +247,258 @@ public sealed class FastLocalTests
 
         Assert.Equal("gemma3:4b", model);
         Assert.Equal(0, fastLocal.CallCount);
+    }
+
+    // --- FailoverVisionClient: EscalationVerdictWins -------------------------------------------
+
+    // The opt-in inverse of Escalation_FindingNothing_DoesNotOverwriteTheDetectorsSubject above.
+    // Asserted through AlertNotificationPolicy rather than Person.Visible alone because that is the
+    // rule the Events tab and the trigger confirmation actually apply.
+    [Fact]
+    public async Task EscalationVerdictWins_EmptyEscalation_ReplacesTheDetectorsSubject()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini"); // empty analysis: sees nothing
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", EscalationEnabled = true, EscalationVerdictWins = true },
+            new CloudVisionOptions { Enabled = true, ApiKey = "key" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gpt-4o-mini", model);
+        Assert.False(AlertNotificationPolicy.HasVisibleSubject(analysis));
+    }
+
+    // The load-bearing one: "the full AI said nothing is there" and "the full AI never answered"
+    // are different facts, and only the first is a verdict this flag can act on.
+    [Fact]
+    public async Task EscalationVerdictWins_EscalationFailure_StillKeepsFastLocalResult()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini") { ThrowOnAnalyze = true };
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", EscalationEnabled = true, EscalationVerdictWins = true },
+            new CloudVisionOptions { Enabled = true, ApiKey = "key" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.True(analysis.Person.Visible);
+        Assert.Equal(1, cloud.CallCount);
+    }
+
+    // The other way escalation can produce no verdict: no target to escalate to at all.
+    [Fact]
+    public async Task EscalationVerdictWins_NoEscalationTarget_KeepsFastLocalResult()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions
+            {
+                Primary = "fastlocal",
+                EscalationEnabled = true,
+                EscalationTarget = "cloud",
+                EscalationVerdictWins = true
+            },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.True(analysis.Person.Visible);
+        Assert.Equal(0, ollama.CallCount);
+        Assert.Equal(0, cloud.CallCount);
+    }
+
+    // --- FailoverVisionClient: MinimumConfidence ----------------------------------------------
+
+    [Fact]
+    public async Task MinimumConfidence_BelowFloor_TreatsVlmAnalysisAsNoSubject()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b") { Analysis = SubjectAnalysis(0.4) };
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "ollama", MinimumConfidence = 0.6 },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var (analysis, _, _) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.False(AlertNotificationPolicy.HasVisibleSubject(analysis));
+        Assert.False(analysis.NotificationRecommended);
+        Assert.NotEmpty(analysis.NotificationReason);
+
+        // The verdict changes; the evidence does not. The event still has to read correctly in the
+        // dashboard, the API and semantic search.
+        Assert.Equal("Fast detection: a person.", analysis.Summary);
+        Assert.Equal(0.4, analysis.Confidence);
+    }
+
+    [Fact]
+    public async Task MinimumConfidence_AtFloor_LeavesAnalysisAlone()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b") { Analysis = SubjectAnalysis(0.6) };
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "ollama", MinimumConfidence = 0.6 },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var (analysis, _, _) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.True(analysis.Person.Visible);
+    }
+
+    // The off-by-default no-op, and a guard against the floor being written as `<=` - a genuinely
+    // 0.0-confidence analysis must still pass when the feature is off.
+    [Fact]
+    public async Task MinimumConfidence_DefaultZero_ChangesNothing()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b") { Analysis = SubjectAnalysis(0.0) };
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "ollama" },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var (analysis, _, _) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.True(analysis.Person.Visible);
+    }
+
+    // The detector scores an empty frame 0.8 by convention and a real detection by its own max
+    // score, so its numbers aren't on this floor's scale. FastLocal:ScoreThreshold is that tier's
+    // gate, and it runs per-detection before anything is mapped.
+    [Fact]
+    public async Task MinimumConfidence_DoesNotApplyToFastLocalResults()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis(0.5) };
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", MinimumConfidence = 0.9 },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.True(analysis.Person.Visible);
+    }
+
+    [Fact]
+    public async Task MinimumConfidence_AppliesToFallbackResult()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b") { Analysis = SubjectAnalysis(0.3) };
+        var cloud = new FakeVisionClient("gpt-4o-mini") { ThrowOnAnalyze = true };
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "cloud", FallbackEnabled = true, MinimumConfidence = 0.6 },
+            new CloudVisionOptions { Enabled = true, ApiKey = "key" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gemma3:4b", model);
+        Assert.False(AlertNotificationPolicy.HasVisibleSubject(analysis));
+    }
+
+    // A gate check's subject is ambient state rather than anything in frame, so there is no
+    // presence claim to withdraw and a hesitant reading is still a usable answer.
+    [Fact]
+    public async Task MinimumConfidence_DoesNotApplyToGateChecks()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b")
+        {
+            Analysis = new VisionAnalysis
+            {
+                Gate = new GateAnalysis { State = "open" },
+                Person = new PersonAnalysis { Visible = true },
+                Confidence = 0.3
+            }
+        };
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", MinimumConfidence = 0.6 },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var gateCheckAlert = new IncomingAlert(
+            Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            GateCheckDecision.ProfileName, "image/jpeg", "check.jpg", []);
+
+        var (analysis, _, _) = await client.AnalyzeAsync(gateCheckAlert, MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("open", analysis.Gate.State);
+        Assert.True(analysis.Person.Visible);
+    }
+
+    // --- FailoverVisionClient: the two options together ---------------------------------------
+
+    // The floor alone can't delete a detection: it collapses the escalation to "found nothing",
+    // which then hits the default detector-wins path.
+    [Fact]
+    public async Task MinimumConfidence_LowConfidenceEscalation_StillKeepsDetectorResult_ByDefault()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini") { Analysis = SubjectAnalysis(0.2) };
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", EscalationEnabled = true, MinimumConfidence = 0.6 },
+            new CloudVisionOptions { Enabled = true, ApiKey = "key" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.True(analysis.Person.Visible);
+    }
+
+    [Fact]
+    public async Task MinimumConfidence_WithEscalationVerdictWins_RejectsTheEvent()
+    {
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano") { Analysis = SubjectAnalysis() };
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini") { Analysis = SubjectAnalysis(0.2) };
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions
+            {
+                Primary = "fastlocal",
+                EscalationEnabled = true,
+                EscalationVerdictWins = true,
+                MinimumConfidence = 0.6
+            },
+            new CloudVisionOptions { Enabled = true, ApiKey = "key" });
+
+        var (analysis, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gpt-4o-mini", model);
+        Assert.False(AlertNotificationPolicy.HasVisibleSubject(analysis));
+        Assert.False(analysis.NotificationRecommended);
+    }
+
+    // Package.Status is the branch easiest to get wrong: HasVisibleSubject counts a delivery status
+    // as a subject in its own right, regardless of Package.Visible.
+    [Fact]
+    public void WithoutVisibleSubject_ClearsPackageStatus_AndKeepsTheDescription()
+    {
+        var analysis = new VisionAnalysis
+        {
+            Summary = "A parcel by the gate.",
+            Package = new PackageAnalysis { Visible = false, Status = "delivered", Location = "at_gate" },
+            Confidence = 0.3,
+            NotificationRecommended = true
+        };
+
+        var suppressed = FailoverVisionClient.WithoutVisibleSubject(analysis, "below the floor");
+
+        Assert.False(AlertNotificationPolicy.HasVisibleSubject(suppressed));
+        Assert.Equal("none", suppressed.Package.Status);
+        Assert.False(suppressed.NotificationRecommended);
+        Assert.Equal("below the floor", suppressed.NotificationReason);
+        Assert.Equal("A parcel by the gate.", suppressed.Summary);
+        Assert.Equal(0.3, suppressed.Confidence);
     }
 
     // --- helpers ------------------------------------------------------------------------------

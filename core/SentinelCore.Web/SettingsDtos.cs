@@ -80,6 +80,11 @@ public sealed class VisionRoutingSettingsDto
 
     [Required]
     public string EscalationTarget { get; set; } = "auto";
+
+    public bool EscalationVerdictWins { get; set; }
+
+    [Range(0, 1)]
+    public double MinimumConfidence { get; set; }
 }
 
 // ModelPath/DownloadUrl/InputSize are deliberately absent: the ONNX session loads once per

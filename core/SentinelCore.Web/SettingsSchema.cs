@@ -221,7 +221,9 @@ public static class SettingsSchema
                 Select("escalationTarget", "Escalation Target", "Which full AI escalated alerts go to. 'Cloud Vision only' never falls back to Ollama - the right choice on hardware where a surprise multi-minute local analysis is worse than a missing description.",
                     ("auto", "Auto (cloud if configured, else Ollama)"),
                     ("cloud", "Cloud Vision only"),
-                    ("ollama", "Ollama (local)"))
+                    ("ollama", "Ollama (local)")),
+                Check("escalationVerdictWins", "Full AI Has The Final Say", "What happens when the fast detector finds someone but the escalated full AI says the frame is empty. Off (the default), the detector is believed and the event is kept - one full AI shrugging at a dark night-vision frame can't hide real footage. On, the full AI is believed instead: no notification, and the event is filed as rejected so it drops off EVENTS unless you show hidden ones. Turn it on if you're getting a steady stream of events the full AI never confirmed. Either way, if the full AI is unreachable or errors out, the fast result still stands - that's a failure, not a verdict."),
+                Number("minimumConfidence", "Full AI Minimum Confidence", "How sure the full AI must be before what it reports counts as a real subject, 0-1. Below this the alert is treated as empty: no notification, and the event is filed as rejected - though the description it wrote is still kept on the event. This is the full AI's counterpart to Fast Local Detection's Score Threshold; it doesn't affect the detector's own results or gate/door open checks. 0 turns it off. Note that with Fast Local Detection as the primary, this only changes the outcome when the setting above is also on - otherwise the detector's result wins anyway.", 0, 1, 0.05)
             ]
         },
         new()
