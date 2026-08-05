@@ -12,6 +12,12 @@ Native SwiftUI client for iPhone, iPad, and macOS.
 
 The device and Sentinel Core server must currently be on the same local network.
 
+> **Open issue, 2026-08-05:** Live view stutters on iPhone over Wi-Fi — a frozen frame that jumps
+> every few seconds — while the same cameras play correctly in the web dashboard. The server side has
+> been verified healthy at frame level, so start by checking whether the installed build predates the
+> `LiveStreamPlayer` stall fixes of 30 July. Full findings and a suggested order of attack:
+> [`core/docs/IOS_LIVE_VIEW_HANDOFF.md`](../core/docs/IOS_LIVE_VIEW_HANDOFF.md).
+
 ## Current foundation
 
 - Native event feed with pull-to-refresh, search, notification filter, and automatic refresh
