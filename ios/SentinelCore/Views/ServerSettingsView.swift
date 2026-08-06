@@ -165,23 +165,21 @@ struct ServerSettingsSectionView: View {
                 }
 
             case "password":
-                LabeledContent(field.label) {
+                LabeledContent {
                     SecureField("not set", text: textBinding(field.name))
                         .multilineTextAlignment(.trailing)
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .textInputAutocapitalization(.never)
                         #endif
+                } label: {
+                    // See wrappingLabel: a label long enough to wrap otherwise draws over the
+                    // tip underneath it rather than making the row taller.
+                    wrappingLabel(field.label)
                 }
 
             case "number":
-                LabeledContent(field.label) {
-                    TextField("0", text: textBinding(field.name))
-                        .multilineTextAlignment(.trailing)
-                        #if os(iOS)
-                        .keyboardType(.numbersAndPunctuation)
-                        #endif
-                }
+                numberField(field)
 
             case "text", "csv":
                 VStack(alignment: .leading, spacing: 2) {
@@ -204,6 +202,98 @@ struct ServerSettingsSectionView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    // LabeledContent gives its label whatever width is left over and then lays the row out at the
+    // height of a single line. A label that wraps - "Full AI Minimum Confidence" is the one that
+    // showed it - draws its second line straight over the tip below instead of pushing it down.
+    // fixedSize makes the label's own intrinsic height authoritative, so the row grows to fit it.
+    private func wrappingLabel(_ label: String) -> some View {
+        Text(label).fixedSize(horizontal: false, vertical: true)
+    }
+
+    // A slider where dragging one really is better than typing, and a keyboard everywhere else.
+    // The line between them is how many stops the range has: a 0-1 confidence in twentieths is
+    // twenty positions and every one of them is reachable by thumb, while a port (1-65535) or an
+    // image width (256-4096) is a number you already know and just want to enter. 100 is the
+    // cutoff - above it a slider stops being able to land on the value you meant.
+    private func usesSlider(_ field: SettingsFieldSchema) -> Bool {
+        guard let min = field.min, let max = field.max, max > min else { return false }
+        let step = field.step ?? 1
+        guard step > 0 else { return false }
+        return (max - min) / step <= 100
+    }
+
+    @ViewBuilder
+    private func numberField(_ field: SettingsFieldSchema) -> some View {
+        if usesSlider(field), let min = field.min, let max = field.max {
+            let step = field.step ?? 1
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    wrappingLabel(field.label)
+                    Spacer(minLength: 0)
+                    Text(formatted(numberValue(field), step: step))
+                        .monospacedDigit()
+                        .foregroundStyle(SentinelTheme.green)
+                }
+                Slider(value: numberBinding(field, min: min, max: max), in: min...max, step: step)
+                recommendation(field, step: step)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                wrappingLabel(field.label)
+                TextField("0", text: textBinding(field.name))
+                    #if os(iOS)
+                    .keyboardType(.numbersAndPunctuation)
+                    #endif
+                recommendation(field, step: field.step ?? 1)
+            }
+        }
+    }
+
+    // "What do I even put here?" is the actual question a confidence threshold provokes, and the
+    // tip underneath explains what the number does without ever answering it. This answers it,
+    // and offers to apply it - hidden once the value is already there, so it stops being noise
+    // for someone who has made their choice.
+    @ViewBuilder
+    private func recommendation(_ field: SettingsFieldSchema, step: Double) -> some View {
+        if let recommended = field.recommended {
+            HStack(spacing: 8) {
+                Text("Recommended: \(formatted(recommended, step: step))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if abs(numberValue(field) - recommended) > step / 2 {
+                    Button("Use") { text[field.name] = formatted(recommended, step: step) }
+                        .font(.caption2)
+                        .buttonStyle(.borderless)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    // The stored value is a string, because that is what every other field type here is and what
+    // save() parses back. Falling back to the recommendation rather than zero matters on a field
+    // that has never been set: a slider parked at the bottom of its range reads as a decision.
+    private func numberValue(_ field: SettingsFieldSchema) -> Double {
+        let raw = (text[field.name] ?? "").trimmingCharacters(in: .whitespaces)
+        let value = Double(raw) ?? field.recommended ?? field.min ?? 0
+        guard let min = field.min, let max = field.max else { return value }
+        return Swift.min(Swift.max(value, min), max)
+    }
+
+    private func numberBinding(_ field: SettingsFieldSchema, min: Double, max: Double) -> Binding<Double> {
+        Binding(
+            get: { numberValue(field) },
+            set: { text[field.name] = formatted(Swift.min(Swift.max($0, min), max), step: field.step ?? 1) }
+        )
+    }
+
+    // Decimal places from the step, so a field that moves in twentieths shows 0.65 and one that
+    // moves in whole numbers doesn't show 7.00.
+    private func formatted(_ value: Double, step: Double) -> String {
+        let places = step >= 1 ? 0 : (step >= 0.1 ? 1 : 2)
+        return String(format: "%.\(places)f", value)
     }
 
     private func textBinding(_ name: String) -> Binding<String> {

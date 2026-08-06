@@ -926,6 +926,29 @@ main {
   height: 20px;
 }
 
+/* Sits under a numeric input and fills it in when clicked - see field.recommended in
+   settings.js. Styled as a quiet link rather than a button so it reads as a hint about the
+   field, not a second control competing with Save. */
+.field-recommended {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.field-recommended:hover,
+.field-recommended:focus-visible {
+  color: var(--green);
+}
+
 .field-password-row {
   display: flex;
   gap: 6px;

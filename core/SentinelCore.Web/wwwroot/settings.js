@@ -167,6 +167,24 @@ window.GateWatchSettings = (function () {
       input.step = field.step !== undefined ? field.step : "any";
     }
     row.appendChild(input);
+
+    // What to put in the box, for the fields where the tip explains what the number does without
+    // ever answering that - a confidence threshold means nothing until you have watched this
+    // camera misfire for a week. Clickable, because reading a number and then typing it is a
+    // silly thing to make someone do.
+    if (field.recommended !== undefined && field.recommended !== null) {
+      const hint = document.createElement("button");
+      hint.type = "button";
+      hint.className = "field-recommended";
+      hint.textContent = `use recommended: ${field.recommended}`;
+      hint.dataset.tip = "Set this field to the value we suggest for a typical install.";
+      hint.addEventListener("click", () => {
+        input.value = field.recommended;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      row.appendChild(hint);
+    }
+
     return row;
   }
 

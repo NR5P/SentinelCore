@@ -30,6 +30,11 @@ struct SettingsFieldSchema: Decodable, Identifiable, Hashable {
     let min: Double?
     let max: Double?
     let step: Double?
+
+    // What to use if you have no opinion, for the numeric settings where that is the honest
+    // position - see SettingsFieldSchema.Recommended on the server. Absent on most fields, and
+    // deliberately not the same thing as the shipped default.
+    let recommended: Double?
     let options: [SettingsFieldOption]?
     let requiresRestart: Bool
     let secret: Bool
