@@ -51,6 +51,17 @@ public sealed record SettingsFieldSchema
     public double? Max { get; init; }
     public double? Step { get; init; }
 
+    // The value someone with no opinion should use, for the numeric settings where "what do I
+    // even put here?" is the real question - a confidence threshold means nothing to somebody who
+    // hasn't watched this particular camera misfire for a week. Clients show it next to the
+    // control and can offer to jump back to it.
+    //
+    // This is a recommendation, not the shipped default, and the two differ on purpose: a setting
+    // can ship off (0) because off is the safe way to arrive, while the number worth trying first
+    // once you have a reason to touch it is something else entirely. Where they agree, saying so
+    // is still useful - it tells the reader they have nothing to decide.
+    public double? Recommended { get; init; }
+
     // Only for Type == "select".
     public IReadOnlyList<SettingsFieldOption>? Options { get; init; }
 
@@ -106,8 +117,13 @@ public static class SettingsSchema
         new() { Name = name, Label = label, Type = "csv", Tip = tip };
 
     private static SettingsFieldSchema Number(
-        string name, string label, string tip, double min, double max, double? step = null) =>
-        new() { Name = name, Label = label, Type = "number", Tip = tip, Min = min, Max = max, Step = step };
+        string name, string label, string tip, double min, double max, double? step = null,
+        double? recommended = null) =>
+        new()
+        {
+            Name = name, Label = label, Type = "number", Tip = tip,
+            Min = min, Max = max, Step = step, Recommended = recommended
+        };
 
     private static SettingsFieldSchema Select(
         string name, string label, string tip, params (string Value, string Label)[] options) =>
@@ -197,7 +213,7 @@ public static class SettingsSchema
             Description = "A small object detector that answers 'is a person, vehicle, or animal there?' in well under a second, even on a CPU-only machine that would take minutes to run Ollama's full model. It can't describe the scene, read gate state, or spot packages - pair it with escalation in VISION ROUTING below to get the full analysis only for alerts that actually contain something. The detector model (~100MB) downloads automatically the first time it's used.",
             Fields =
             [
-                Number("scoreThreshold", "Score Threshold", "Minimum detection confidence for a subject to count, 0-1. Lower it if the detector misses distant or nighttime subjects; raise it if shadows and headlights are causing false detections.", 0, 1, 0.05),
+                Number("scoreThreshold", "Score Threshold", "Minimum detection confidence for a subject to count, 0-1. Lower it if the detector misses distant or nighttime subjects; raise it if shadows and headlights are causing false detections.", 0, 1, 0.05, recommended: 0.5),
                 Check("notifyOnPerson", "Notify On Person", "Recommend a notification when a person is detected."),
                 Check("notifyOnVehicle", "Notify On Vehicle", "Recommend a notification when a vehicle is detected. Unlike the full AI, the detector can't tell passing road traffic from a vehicle at your gate - draw your trigger zones so the road isn't included, or turn this off for road-facing cameras."),
                 Check("notifyOnAnimal", "Notify On Animal", "Recommend a notification when an animal is detected. Off by default - the detector can't judge which animals matter to you.")
@@ -224,7 +240,7 @@ public static class SettingsSchema
                     ("cloud", "Cloud Vision only"),
                     ("ollama", "Ollama (local)")),
                 Check("escalationVerdictWins", "Full AI Has The Final Say", "What happens when the fast detector finds someone but the escalated full AI says the frame is empty. Off (the default), the detector is believed and the event is kept - one full AI shrugging at a dark night-vision frame can't hide real footage. On, the full AI is believed instead: no notification, and the event is filed as rejected so it drops off EVENTS unless you show hidden ones. Turn it on if you're getting a steady stream of events the full AI never confirmed. Either way, if the full AI is unreachable or errors out, the fast result still stands - that's a failure, not a verdict."),
-                Number("minimumConfidence", "Full AI Minimum Confidence", "How sure the full AI must be before what it reports counts as a real subject, 0-1. Below this the alert is treated as empty: no notification, and the event is filed as rejected - though the description it wrote is still kept on the event. This is the full AI's counterpart to Fast Local Detection's Score Threshold; it doesn't affect the detector's own results or gate/door open checks. 0 turns it off. Note that with Fast Local Detection as the primary, this only changes the outcome when the setting above is also on - otherwise the detector's result wins anyway.", 0, 1, 0.05)
+                Number("minimumConfidence", "Full AI Minimum Confidence", "How sure the full AI must be before what it reports counts as a real subject, 0-1. Below this the alert is treated as empty: no notification, and the event is filed as rejected - though the description it wrote is still kept on the event. This is the full AI's counterpart to Fast Local Detection's Score Threshold; it doesn't affect the detector's own results or gate/door open checks. 0 turns it off. Note that with Fast Local Detection as the primary, this only changes the outcome when the setting above is also on - otherwise the detector's result wins anyway.", 0, 1, 0.05, recommended: 0)
             ]
         },
         new()
@@ -264,7 +280,7 @@ public static class SettingsSchema
                 Text("fromName", "From Name", "Display name shown as the sender, e.g. Sentinel Core."),
                 Text("toAddress", "To Address", "Where alerts are sent."),
                 Number("duplicateCooldownMinutes", "Duplicate Cooldown (min)", "Suppress repeat emails about the same kind of event for this long, so one visitor doesn't fill your inbox.", 0, 1440),
-                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before emailing. Raise it if you get false alarms, lower it if real events slip through.", 0, 1, 0.05),
+                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before emailing. Raise it if you get false alarms, lower it if real events slip through.", 0, 1, 0.05, recommended: 0.7),
                 Check("attachImage", "Attach Image", "Include the snapshot in the email rather than text only.")
             ]
         },
@@ -298,7 +314,7 @@ public static class SettingsSchema
                 Password("botToken", "Bot Token", "The token BotFather gave you when you created the bot."),
                 Text("chatId", "Chat ID", "Which Telegram conversation to send to. This is the only chat the bot will talk to."),
                 Check("onlyWhenNotificationRecommended", "Only When Notification Recommended", "Only message when the AI judges the event worth your attention, rather than for every single one."),
-                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before messaging you.", 0, 1, 0.05),
+                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before messaging you.", 0, 1, 0.05, recommended: 0.7),
                 Check("attachImage", "Attach Image", "Send the snapshot with the message rather than text only."),
                 Number("duplicateCooldownMinutes", "Duplicate Cooldown (min)", "Suppress repeat Telegram messages about the same kind of event for this long, so one vehicle sitting at the gate doesn't message you over and over. 0 disables this.", 0, 1440)
             ]
@@ -332,7 +348,7 @@ public static class SettingsSchema
                 Check("enabled", "Enabled", "Post camera alerts to a Discord channel."),
                 Password("webhookUrl", "Webhook URL", "The Discord channel webhook URL. Treat it like a password: anyone with it can post to that channel."),
                 Check("onlyWhenNotificationRecommended", "Only When Notification Recommended", "Only post when the AI judges the event worth your attention."),
-                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before posting the alert.", 0, 1, 0.05),
+                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before posting the alert.", 0, 1, 0.05, recommended: 0.7),
                 Check("attachImage", "Attach Image", "Include the trigger snapshot in the Discord alert card."),
                 Number("duplicateCooldownMinutes", "Duplicate Cooldown (min)", "Suppress repeat posts for the same camera and event category during this window. 0 disables this.", 0, 1440)
             ]
@@ -581,7 +597,7 @@ public static class SettingsSchema
             [
                 Check("enabled", "Enabled", "Send native push notifications to registered phones, tablets, and TVs. The delivery services below still need their own credentials and their own Enabled switch."),
                 Check("onlyWhenNotificationRecommended", "Only When Notification Recommended", "Only push when the AI judges the event worth your attention, rather than for every single one."),
-                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before pushing. Raise it if you get false alarms, lower it if real events slip through.", 0, 1, 0.05),
+                Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before pushing. Raise it if you get false alarms, lower it if real events slip through.", 0, 1, 0.05, recommended: 0.7),
                 Number("duplicateCooldownMinutes", "Duplicate Cooldown (min)", "Suppress repeat pushes about the same kind of event for this long, so one visitor doesn't buzz your phone over and over. 0 disables this.", 0, 1440),
                 Check("apple.enabled", "Apple: Enabled", "Deliver to iPhone, iPad, Mac, and Apple TV through Apple's push service. Needs the key details below from your Apple Developer account."),
                 Text("apple.teamId", "Apple: Team ID", "Your Apple Developer Team ID - the 10-character code shown under Membership Details at developer.apple.com."),

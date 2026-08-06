@@ -61,6 +61,21 @@ public interface IAccountStore
     Task<bool> UpdatePasswordAsync(Guid id, string passwordHash, CancellationToken cancellationToken);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken);
 
+    // Config restore only - unlike CreateAsync this keeps the account's own Id, so a re-import
+    // updates rather than duplicating, and so the per-account live grid order carried in the same
+    // backup still points at a real account.
+    //
+    // Usernames are unique case-insensitively, so an account whose username is already held by a
+    // DIFFERENT row would violate that index. The backup wins and the clashing row goes - a
+    // restore is meant to reinstate the install that was exported, not merge two. Any session
+    // belonging to either the replaced row or the restored account is dropped in the same
+    // transaction: the password behind it may have just changed, and a session pointing at a
+    // deleted AccountId would be a login with nothing behind it.
+    //
+    // What this must never do is take away the login being used to perform the restore, which is
+    // why the caller - not this method - decides which accounts to pass in. See BackupEndpoints.
+    Task RestoreAsync(Account account, CancellationToken cancellationToken);
+
     // Drives the one-time legacy-auth migration: only ever true before the first account is
     // created, so the migration stays a no-op on every subsequent startup.
     Task<bool> AnyAccountsExistAsync(CancellationToken cancellationToken);
@@ -185,6 +200,69 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
         }
 
         return account;
+    }
+
+    public async Task RestoreAsync(Account account, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+
+            // Sessions of whatever row is about to be displaced, before it stops existing.
+            using (var orphanedSessions = _connection.CreateCommand())
+            {
+                orphanedSessions.Transaction = transaction;
+                orphanedSessions.CommandText = """
+                    DELETE FROM Sessions WHERE AccountId IN (
+                        SELECT Id FROM Accounts WHERE Username = $username COLLATE NOCASE AND Id <> $id
+                    );
+                    """;
+                orphanedSessions.Parameters.AddWithValue("$username", account.Username);
+                orphanedSessions.Parameters.AddWithValue("$id", account.Id.ToString("N"));
+                await orphanedSessions.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            using (var clash = _connection.CreateCommand())
+            {
+                clash.Transaction = transaction;
+                clash.CommandText = "DELETE FROM Accounts WHERE Username = $username COLLATE NOCASE AND Id <> $id;";
+                clash.Parameters.AddWithValue("$username", account.Username);
+                clash.Parameters.AddWithValue("$id", account.Id.ToString("N"));
+                await clash.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            using (var upsert = _connection.CreateCommand())
+            {
+                upsert.Transaction = transaction;
+                upsert.CommandText = """
+                    INSERT INTO Accounts (Id, Username, PasswordHash, Role, DisplayName, CreatedAt)
+                    VALUES ($id, $username, $passwordHash, $role, $displayName, $createdAt)
+                    ON CONFLICT(Id) DO UPDATE SET
+                        Username = excluded.Username,
+                        PasswordHash = excluded.PasswordHash,
+                        Role = excluded.Role,
+                        DisplayName = excluded.DisplayName;
+                    """;
+                AddParameters(upsert, account);
+                await upsert.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            // And this account's own sessions - its password may be different now.
+            using (var ownSessions = _connection.CreateCommand())
+            {
+                ownSessions.Transaction = transaction;
+                ownSessions.CommandText = "DELETE FROM Sessions WHERE AccountId = $id;";
+                ownSessions.Parameters.AddWithValue("$id", account.Id.ToString("N"));
+                await ownSessions.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            transaction.Commit();
+        }
+        finally
+        {
+            _lock.Release();
+        }
     }
 
     public async Task<bool> UpdateRoleAsync(Guid id, AccountRole role, CancellationToken cancellationToken)

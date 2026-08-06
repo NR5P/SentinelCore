@@ -74,6 +74,12 @@ public interface ICameraGroupStore
 
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken);
 
+    // Unlike AddAsync, preserves the group's own Id rather than minting a new one - the same
+    // reason ICameraStore.RestoreAsync exists, and used only by config restore. Importing the
+    // same backup twice then updates the groups it created the first time instead of leaving a
+    // duplicate of every one.
+    Task RestoreAsync(CameraGroup group, CancellationToken cancellationToken);
+
     // The one group (if any) this camera belongs to - a camera can only be in one group at a
     // time, keeping "which group fired" unambiguous at trigger time.
     Task<CameraGroup?> GetGroupForCameraAsync(Guid cameraId, CancellationToken cancellationToken);
@@ -379,6 +385,33 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
 
             var rows = await command.ExecuteNonQueryAsync(cancellationToken);
             return rows > 0;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task RestoreAsync(CameraGroup group, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO CameraGroups
+                    (Id, Name, CameraIds, CorrelationWindowSeconds, RecordCompanionClips, AnalyzeCompanionCaptures)
+                VALUES
+                    ($id, $name, $cameraIds, $correlationWindowSeconds, $recordCompanionClips, $analyzeCompanionCaptures)
+                ON CONFLICT(Id) DO UPDATE SET
+                    Name = excluded.Name,
+                    CameraIds = excluded.CameraIds,
+                    CorrelationWindowSeconds = excluded.CorrelationWindowSeconds,
+                    RecordCompanionClips = excluded.RecordCompanionClips,
+                    AnalyzeCompanionCaptures = excluded.AnalyzeCompanionCaptures;
+                """;
+            AddGroupParameters(command, group);
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
         {

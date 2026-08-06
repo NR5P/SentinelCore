@@ -167,6 +167,24 @@ window.GateWatchSettings = (function () {
       input.step = field.step !== undefined ? field.step : "any";
     }
     row.appendChild(input);
+
+    // What to put in the box, for the fields where the tip explains what the number does without
+    // ever answering that - a confidence threshold means nothing until you have watched this
+    // camera misfire for a week. Clickable, because reading a number and then typing it is a
+    // silly thing to make someone do.
+    if (field.recommended !== undefined && field.recommended !== null) {
+      const hint = document.createElement("button");
+      hint.type = "button";
+      hint.className = "field-recommended";
+      hint.textContent = `use recommended: ${field.recommended}`;
+      hint.dataset.tip = "Set this field to the value we suggest for a typical install.";
+      hint.addEventListener("click", () => {
+        input.value = field.recommended;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      row.appendChild(hint);
+    }
+
     return row;
   }
 
@@ -818,7 +836,7 @@ window.GateWatchSettings = (function () {
     const header = document.createElement("div");
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">BACKUP</span><span class="settings-section-caret">&#9656;</span>`;
-    header.dataset.tip = "Export everything configurable here - settings, cameras, trigger zones, known vehicles, prompt profiles - as one file, or restore from a previous export.";
+    header.dataset.tip = "Export everything configurable here - settings, cameras, camera groups, trigger zones, gate checks, user accounts, known vehicles, prompt profiles - as one file, or restore from a previous export.";
     header.addEventListener("click", () => {
       section.classList.toggle("open");
       window.GateWatchTooltips.schedule();
@@ -826,12 +844,20 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
-    body.appendChild(buildSectionIntro("Saves everything configurable here - settings, cameras, trigger zones, known vehicles, prompt profiles - into one file you can restore later or move to another machine. Worth doing before any big change, and after you first get things working the way you like."));
+    body.appendChild(buildSectionIntro("Saves everything configurable here - settings, cameras, camera groups, trigger zones, gate checks, user accounts, known vehicles, prompt profiles - into one file you can restore later or move to another machine. Worth doing before any big change, and after you first get things working the way you like."));
 
     const warning = document.createElement("div");
     warning.className = "settings-hint";
-    warning.textContent = "Includes secrets (passwords, API keys, tokens) for a complete restore - store the downloaded file like a password. Restoring overlays onto your current setup; it never deletes a camera or setting the backup doesn't mention.";
+    warning.textContent = "Includes secrets (passwords, API keys, tokens) and every user account's stored password for a complete restore - anyone with this file can sign in to a restored copy as any of your users, so store it like a password. Restoring overlays onto your current setup; it never deletes a camera or setting the backup doesn't mention.";
     body.appendChild(warning);
+
+    // The two things about restoring accounts that are surprising in the moment rather than in
+    // hindsight: other people get signed out, and your own login deliberately doesn't change -
+    // which is what stops a backup with a forgotten admin password locking you out mid-restore.
+    const accountsNote = document.createElement("div");
+    accountsNote.className = "settings-hint";
+    accountsNote.textContent = "Restoring brings back user accounts and signs those people out, so they'll log in again with the password from the backup. Your own account is left exactly as it is. Event history and captured images aren't included.";
+    body.appendChild(accountsNote);
 
     const exportRow = document.createElement("div");
     exportRow.className = "profiles-toolbar";
@@ -901,7 +927,18 @@ window.GateWatchSettings = (function () {
           showToast("Restore failed", false);
           return;
         }
-        showToast(`Restored ${payload.camerasRestored} camera(s), ${payload.triggerZonesRestored} trigger zone(s)`, true);
+        // Only the parts that actually restored something, so a backup with no groups or gate
+        // checks doesn't report "0 camera group(s)" and read like something went missing.
+        const restored = [
+          [payload.camerasRestored, "camera"],
+          [payload.cameraGroupsRestored, "camera group"],
+          [payload.triggerZonesRestored, "trigger zone"],
+          [payload.gateChecksRestored, "gate check"],
+          [payload.accountsRestored, "account"]
+        ]
+          .filter(([count]) => count > 0)
+          .map(([count, noun]) => `${count} ${noun}${count === 1 ? "" : "s"}`);
+        showToast(restored.length ? `Restored ${restored.join(", ")}` : "Restored settings", true);
         window.location.reload();
       } catch {
         showFieldErrors(errors, ["Network error while restoring."]);
