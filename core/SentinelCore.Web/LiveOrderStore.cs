@@ -26,7 +26,17 @@ public interface ILiveOrderStore
     Task<IReadOnlyList<Guid>> GetAsync(string ownerKey, CancellationToken cancellationToken);
 
     Task SaveAsync(string ownerKey, IReadOnlyList<Guid> cameraIds, CancellationToken cancellationToken);
+
+    // Every owner's arrangement, for config backup. Nothing else wants this: the endpoints only
+    // ever read and write the one row belonging to whoever is asking.
+    Task<IReadOnlyList<LiveOrderEntry>> GetAllAsync(CancellationToken cancellationToken);
 }
+
+// One person's arrangement, as it travels through a backup. The owner key is "account:<id>" (or
+// "shared" on an install with login turned off), which is why this is only meaningful in a backup
+// that also carries the accounts - restore them and the ids still line up; restore this alone and
+// every row points at nobody.
+public sealed record LiveOrderEntry(string OwnerKey, IReadOnlyList<Guid> CameraIds);
 
 public sealed class SqliteLiveOrderStore : ILiveOrderStore, IDisposable
 {
@@ -87,6 +97,30 @@ public sealed class SqliteLiveOrderStore : ILiveOrderStore, IDisposable
             command.Parameters.AddWithValue("$cameraIds", JsonSerializer.Serialize(cameraIds));
             command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
             await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<LiveOrderEntry>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT OwnerKey, CameraIds FROM LiveOrders;";
+
+            var entries = new List<LiveOrderEntry>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var cameraIds = JsonSerializer.Deserialize<List<Guid>>(reader.GetString(1)) ?? [];
+                entries.Add(new LiveOrderEntry(reader.GetString(0), cameraIds));
+            }
+
+            return entries;
         }
         finally
         {

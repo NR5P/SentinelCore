@@ -1,50 +1,91 @@
+using System.Security.Claims;
 using System.Text.Json;
 
 namespace SentinelCore.Web;
 
 // Everything configurable through this dashboard, in one portable file: the settings that
-// SettingsEndpoints already exposes, plus cameras and trigger zones, which live in their own
-// SQLite stores and aren't part of that response. Deliberately excludes Setup (one-time
-// onboarding state) and License (just a file path - the .lic file has its own upload flow).
+// SettingsEndpoints already exposes, plus the configuration that lives in the SQLite stores
+// instead and so isn't part of that response - cameras, trigger zones, camera groups and
+// gate/door checks. Deliberately excludes Setup (one-time onboarding state) and License (just a
+// file path - the .lic file has its own upload flow).
 //
-// This intentionally includes secrets (SMTP password, bot tokens, API keys, the login
-// password hash) for a genuinely one-file restore - the exported file is as sensitive as
-// appsettings.json itself, and the UI says so.
+// The settings half of this cannot drift: it is built and applied through the same
+// SettingsEndpoints.BuildSnapshotAsync/ApplySnapshotAsync the settings screen uses, so a new
+// settings section is in the backup the day it is added. The SQLite half has to be remembered by
+// hand, which is exactly how camera groups and gate checks came to be missing from it for a
+// while - if you add a store, add it here and to BackupRoundTripTests.
+//
+// Still NOT included, deliberately:
+//   - Events, captured images, and the "reviewed" marks on them: history, not configuration, and
+//     large. An install restored from this file is your setup, not your past.
+//   - Login sessions: restoring one onto another machine would be handing over a live login.
+//
+// This intentionally includes secrets (SMTP password, bot tokens, API keys) and, since accounts
+// are here, password hashes - for a genuinely one-file restore. The exported file is as sensitive
+// as appsettings.json and accounts.db together, and the UI says so.
 public sealed record BackupDocument(
     int SchemaVersion,
     DateTimeOffset ExportedAt,
     SettingsSnapshot? Settings,
     IReadOnlyList<Camera>? Cameras,
-    IReadOnlyList<TriggerConfig>? TriggerZones);
+    IReadOnlyList<TriggerConfig>? TriggerZones,
+    // Added in schema 2. Optional with a default so a schema 1 file - which has no such property -
+    // still deserializes, and so every one of these simply arrives null and is skipped on import.
+    IReadOnlyList<CameraGroup>? CameraGroups = null,
+    IReadOnlyList<GateCheckConfig>? GateChecks = null,
+    IReadOnlyList<Account>? Accounts = null,
+    IReadOnlyList<LiveOrderEntry>? LiveOrder = null);
 
 public static class BackupEndpoints
 {
-    private const int CurrentSchemaVersion = 1;
+    // 2 added CameraGroups and GateChecks. Bumping this does not invalidate older exports - see
+    // Validate, which accepts anything up to this number.
+    private const int CurrentSchemaVersion = 2;
     private static readonly JsonSerializerOptions ImportOptions = new(JsonSerializerDefaults.Web);
 
     public static void MapBackupEndpoints(this WebApplication app)
     {
         var backup = app.MapGroup("/api/backup").RequireAuthorization("AdminOnly");
 
-        backup.MapGet("/export", async (AppSettingsFile settings, ICameraStore cameras, ITriggerConfigStore triggerConfigs, CancellationToken ct) =>
+        // Accounts go in, password hashes and all, so that losing the machine doesn't also mean
+        // rebuilding everyone's login by hand. That is a deliberate trade: it makes this file
+        // enough to sign in as anybody on a restored install, so it needs storing like the
+        // password it effectively is - which the dashboard, USER_GUIDE and DEPLOYMENT all say.
+        // The hashes are still hashes; the plaintext API keys already in here are worth more.
+        //
+        // Live grid order rides along because it is keyed by account id and is meaningless
+        // without them.
+        backup.MapGet("/export", async (
+            AppSettingsFile settings, ICameraStore cameras, ICameraGroupStore cameraGroups,
+            ITriggerConfigStore triggerConfigs, IGateCheckStore gateChecks,
+            IAccountStore accounts, ILiveOrderStore liveOrder, CancellationToken ct) =>
         {
             var document = new BackupDocument(
                 CurrentSchemaVersion,
                 DateTimeOffset.UtcNow,
                 await SettingsEndpoints.BuildSnapshotAsync(settings, ct),
                 await cameras.GetAllAsync(ct),
-                await triggerConfigs.GetAllAsync(ct));
+                await triggerConfigs.GetAllAsync(ct),
+                await cameraGroups.GetAllAsync(ct),
+                [.. (await gateChecks.GetAllAsync(ct)).Select(WithoutTransitionMemory)],
+                await accounts.GetAllAsync(ct),
+                await liveOrder.GetAllAsync(ct));
 
             return Results.Ok(document);
         });
 
-        // Applies settings, then cameras, then trigger zones, in that order - trigger zones
-        // reference cameras by Id, so the cameras they point at have to exist first. Cameras
-        // are restored via ICameraStore.RestoreAsync, which (unlike AddAsync) keeps the
-        // camera's original Id instead of minting a new one, so the trigger zones in the same
-        // backup still resolve correctly. Nothing in the current setup that isn't mentioned in
-        // the backup is touched or removed - restore overlays, it never wipes.
-        backup.MapPost("/import", async (HttpRequest request, AppSettingsFile settings, ICameraStore cameras, ITriggerConfigStore triggerConfigs, CancellationToken ct) =>
+        // Settings first, then cameras, then everything that points at a camera by Id - trigger
+        // zones, camera groups and gate checks all do, so the cameras have to exist first.
+        // Cameras and groups are restored via RestoreAsync, which (unlike AddAsync) keeps the
+        // original Id instead of minting a new one, so those references still resolve, and so
+        // importing the same file twice updates what it created rather than duplicating it.
+        // Nothing in the current setup that isn't mentioned in the backup is touched or removed -
+        // restore overlays, it never wipes.
+        backup.MapPost("/import", async (
+            HttpRequest request, HttpContext http, AppSettingsFile settings, ICameraStore cameras,
+            ICameraGroupStore cameraGroups, ITriggerConfigStore triggerConfigs,
+            IGateCheckStore gateChecks, IAccountStore accounts, ILiveOrderStore liveOrder,
+            CancellationToken ct) =>
         {
             BackupDocument? document;
             try
@@ -69,6 +110,13 @@ public static class BackupEndpoints
                 camerasRestored++;
             }
 
+            var cameraGroupsRestored = 0;
+            foreach (var group in document.CameraGroups ?? [])
+            {
+                await cameraGroups.RestoreAsync(group, ct);
+                cameraGroupsRestored++;
+            }
+
             var triggerZonesRestored = 0;
             foreach (var zone in document.TriggerZones ?? [])
             {
@@ -76,9 +124,81 @@ public static class BackupEndpoints
                 triggerZonesRestored++;
             }
 
-            return Results.Ok(new { success = true, camerasRestored, triggerZonesRestored });
+            // SaveAsync's upsert deliberately leaves the four transition-memory columns alone on
+            // conflict, so importing onto a running install can't make a gate that is currently
+            // open look like a fresh transition and re-notify. On a camera this install has never
+            // seen, the neutral values the export wrote are what land.
+            var gateChecksRestored = 0;
+            foreach (var check in document.GateChecks ?? [])
+            {
+                await gateChecks.SaveAsync(WithoutTransitionMemory(check), ct);
+                gateChecksRestored++;
+            }
+
+            // The account performing this restore is skipped, always. Everything else here
+            // overlays; accounts are the one thing that can lock the person out of the install
+            // they are in the middle of restoring - a backup whose admin password nobody
+            // remembers any more would otherwise replace the working login with it, and there is
+            // no way back from that through the dashboard. Skipping by both id and username
+            // covers the two ways "the same person" can appear: a re-import onto this machine
+            // (same id) and a restore onto a fresh one where setup minted a new id for the same
+            // name. Whoever is signed in keeps their password; every other account comes back.
+            var currentAccountId = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var currentUsername = http.User.Identity?.Name;
+
+            var accountsRestored = 0;
+            var accountsSkipped = 0;
+            foreach (var account in document.Accounts ?? [])
+            {
+                var isCurrent =
+                    string.Equals(account.Id.ToString("N"), currentAccountId, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(account.Username, currentUsername, StringComparison.OrdinalIgnoreCase);
+
+                if (isCurrent)
+                {
+                    accountsSkipped++;
+                    continue;
+                }
+
+                await accounts.RestoreAsync(account, ct);
+                accountsRestored++;
+            }
+
+            // After the accounts, since every owner key names one - restoring an arrangement for
+            // an account that isn't there yet would just be a row nothing ever reads.
+            var liveOrderRestored = 0;
+            foreach (var entry in document.LiveOrder ?? [])
+            {
+                await liveOrder.SaveAsync(entry.OwnerKey, entry.CameraIds, ct);
+                liveOrderRestored++;
+            }
+
+            return Results.Ok(new
+            {
+                success = true,
+                camerasRestored,
+                triggerZonesRestored,
+                cameraGroupsRestored,
+                gateChecksRestored,
+                accountsRestored,
+                accountsSkipped,
+                liveOrderRestored
+            });
         });
     }
+
+    // A gate check's LastKnownState/LastStateChangedAt/LastNotifiedAt/LastKnownBlocked are memory
+    // of what this install last saw, not configuration - see GateCheckConfig. Carrying them into a
+    // backup would export "when your gate was last open" along with the settings, and restoring
+    // them onto a different machine would seed it with a transition that never happened there.
+    private static GateCheckConfig WithoutTransitionMemory(GateCheckConfig config) =>
+        config with
+        {
+            LastKnownState = "unknown",
+            LastStateChangedAt = null,
+            LastNotifiedAt = null,
+            LastKnownBlocked = false
+        };
 
     private static List<string> Validate(BackupDocument? document)
     {
@@ -89,8 +209,17 @@ public static class BackupEndpoints
             return errors;
         }
 
-        if (document.SchemaVersion != CurrentSchemaVersion)
-            errors.Add($"Unsupported backup version {document.SchemaVersion} (this install supports {CurrentSchemaVersion}).");
+        // Older files are fine and must stay fine: the whole point of an exported backup is that
+        // it is still there when you need it, which may be several versions later. Every section
+        // is optional, so a file from an earlier schema simply restores the sections it has. Only
+        // a file from a NEWER version is refused - that one may contain configuration this install
+        // would silently drop, and quietly restoring nine tenths of a backup is worse than saying
+        // so. This used to be an equality check, which rejected old exports the day the schema
+        // moved.
+        if (document.SchemaVersion < 1 || document.SchemaVersion > CurrentSchemaVersion)
+            errors.Add(
+                $"Unsupported backup version {document.SchemaVersion} (this install supports up to {CurrentSchemaVersion}). " +
+                "A backup from a newer version of Sentinel Core can't be restored here - update this install first.");
 
         if (document.Settings?.PromptProfiles is { } profiles && !profiles.ContainsKey("default"))
             errors.Add("Backup's prompt profiles are missing a 'default' profile.");

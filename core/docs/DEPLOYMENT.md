@@ -1114,9 +1114,33 @@ cp backups/<timestamp>/SentinelCore.appsettings.json SentinelCore/appsettings.js
 ```
 
 Your cameras, events and images are never modified by any of this, so a rollback doesn't lose
-them. For a portable copy of settings, cameras and trigger zones in one file, use **Settings →
-Backup** in the dashboard before upgrading - that export is also the only thing that survives
-losing the machine entirely.
+them. For a portable copy of the configuration in one file - settings, cameras, camera groups,
+trigger zones, gate checks, user accounts and each person's live grid arrangement - use
+**Settings → Backup** in the dashboard before upgrading.
+
+Because it carries accounts, that file includes every stored password hash. **Anyone holding it
+can stand up a copy of this install and sign in as any of your users.** Treat it as a credential,
+not a config file: it does not belong in a shared drive, a chat message, or a git repository.
+
+That export is the only thing that survives losing the machine entirely, so it is worth knowing
+exactly what it does **not** carry, because none of it is recoverable from the file alone:
+
+| Not in the export | What that means after a machine loss |
+|---|---|
+| Events, captured images, review marks | History, not configuration, and far too large for a settings file. Back up `SentinelCore/data/` separately if you want to keep it. |
+| HTTPS certificate authority (`certs/`) | Every phone, Mac and Apple TV trusts this specific CA (§ 14a). Losing it means re-trusting the new one on every device. Copy `certs/` somewhere safe. |
+| HomeKit pairings | Re-pair from the QR code in Settings → Apple HomeKit. |
+| Login sessions | Everyone signs in again. Deliberate - a restored session would be a live login handed to another machine. |
+
+So a genuine off-machine backup is that JSON export **plus** `certs/`, and `SentinelCore/data/` if
+you want the event history too. The export alone gets you a working install, not an identical one.
+
+**Restoring accounts onto a machine you are signed in to** leaves your own account exactly as it
+is - matched by account id *or* username, so it holds whether you are re-importing onto the same
+install or restoring onto a fresh one where setup minted you a new id. Every other account in the
+file is written over the current one of the same name, and those people are signed out. This is
+the rule that stops a backup whose admin password nobody remembers from replacing the working
+login halfway through a restore, which is not recoverable from the dashboard.
 
 ### Testing an upgrade before handing builds to testers
 

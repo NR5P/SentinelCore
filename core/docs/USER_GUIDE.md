@@ -761,10 +761,15 @@ The full list below covers both modes:
   iPhone notifications. Shows the pairing QR code here. Its own section below. See
   [section 14](#14-apple-homekit).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
-- **Backup** — exports everything on this list (plus cameras and trigger zones) as one JSON
-  file, and restores from a previous export. Includes secrets, so treat the downloaded file
-  like a password. Restoring overlays onto your current setup — it never deletes a camera or
-  setting the file doesn't mention.
+- **Backup** — exports everything on this list, plus cameras, camera groups, trigger zones, gate
+  checks, user accounts and each person's live grid arrangement, as one JSON file, and restores
+  from a previous export. It contains your secrets *and* every account's stored password, so
+  anyone holding the file can sign in to a restored copy as any of your users — keep it somewhere
+  you'd keep a password. Restoring overlays onto your current setup: it never deletes a camera or
+  setting the file doesn't mention, other people are signed out and log back in with the password
+  from the backup, and **your own account is left untouched** so a backup whose admin password
+  nobody remembers can't lock you out mid-restore. **Not included:** event history and captured
+  images. Backups from older versions still restore; they simply bring the sections they have.
 - **Login** — an optional username/password gate for this dashboard, off by default. See
   [section 2](#2-opening-the-dashboard).
 - **Prompt Profiles** — the actual instructions given to the AI, per camera. Its own section
