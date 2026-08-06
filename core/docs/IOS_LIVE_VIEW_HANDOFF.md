@@ -3,6 +3,12 @@
 Written 2026-08-05 from the Linux server. Everything below was measured on the server side; nothing
 has been tried on a Mac or a real device yet, because building and installing the app needs Xcode.
 
+> **That last sentence is no longer true, and neither is some of the reasoning that follows from
+> it.** The Mac follow-up happened the same day and did not reproduce the fault. Read
+> [Follow-up on the Mac](#follow-up-on-the-mac-2026-08-05--not-reproduced) at the bottom before
+> acting on anything above it — in particular, the dashboard comparison this file opens with turns
+> out not to be a like-for-like test.
+
 ## The report
 
 On an **iPhone, over Wi-Fi**, the Live view "refreshes every 10 seconds or so, seconds don't move on
@@ -93,3 +99,63 @@ behaviour the app sees.
 - The camera's own clock is set to **UTC-8** while the server runs **UTC-5**, a constant 3-hour
   offset. The burned-in timestamp is genuine and useful for diagnosing freezes — just remember it
   will never match the server clock.
+
+## Follow-up on the Mac, 2026-08-05 — not reproduced
+
+**The stutter stopped happening on the phone**, with nothing deployed to fix it. That alone moves
+this from "a bug with two suspects" to "an intermittent fault with no confirmed cause", and the
+notes above should be read in that light.
+
+### What was measured
+
+A stub server generated live HLS at the gate camera's exact profile — 2560x1920, **8.75 Mbit/s
+measured**, 30fps, 1s segments — for two cameras at once, and the current app build watched it in
+an iPhone 17 Pro simulator. Screenshots two seconds apart, cropped to a tile and hashed, gave **ten
+distinct frames out of ten samples** with a steady request cadence and no stalls.
+
+So at this install's real bitrate, on current app code, the Live grid plays smoothly. That does not
+rule out the phone's radio, but it does rule out the stream itself and the player logic being
+inherently at fault.
+
+### The dashboard comparison at the top of this file is not a fair one
+
+The report rests on "the web dashboard was fine at the same time". The dashboard tries WebRTC, then
+MSE over WebSocket, and only reaches HLS if both fail — see `attachPlayer` in `cameras.js` — so on
+this install it is almost certainly *not playing HLS at all*. It talks to go2rtc, which connects to
+the camera directly. The two surfaces share a camera, not a code path, and the dashboard being
+healthy says nothing about the HLS pipeline.
+
+### Leading suspect now: a server that had just started
+
+`/api/cameras` warms **every** camera at once, so a freshly started server spawns an ffmpeg per
+camera simultaneously — RTSP connects, keyframe waits, remuxing — on a box that often sits at load
+6–7 with `llama-server` at ~80%. Segments land late and irregularly for the first stretch; a player
+that starts in that window stalls and falls behind, which looks exactly like a frozen frame jumping
+every several seconds. It also survives the "segments were healthy when checked" measurement above,
+because a player that has fallen far behind does not recover just because the server does.
+
+This is untested. Testing it means restarting the server and watching the phone immediately, versus
+watching it after things settle.
+
+### Suspect 2 is built and parked, not merged
+
+Branch `substream-live-tiles` (`53a762b`) serves live tiles the camera's substream and keeps the
+main stream for full-screen, with per-quality sessions and fallbacks for cameras that have no
+substream. Tested, but never run against the real server. Reach for it if the stutter comes back
+under load; don't merge it on spec — it costs an extra camera connection while somebody is watching
+full-screen, and a cold start on the paths that no longer get warmed.
+
+That branch also carries `tools/live-view-test-harness/`, which is what produced the measurements
+above and can throttle segment delivery to emulate a link that cannot keep up.
+
+**It is a local branch on the Mac and has deliberately not been pushed**, so that commit will not
+resolve anywhere else. If it turns out to be wanted, it needs pushing from there first; if this
+note is old and nobody ever went back to it, the branch may simply be gone, and the description
+above plus `HlsStreamManager` is enough to rebuild it.
+
+### Note for anyone testing from this Mac
+
+The Mac cannot reach the media box: instant TCP RST on every port, no ICMP, while the server is up
+and still advertising `_sentinelcore._tcp` at `192.168.50.8:3443`. It is firewalled off — the
+lasting consequence of an earlier round of failed SSH auth. Pointing a simulator at the real server
+needs that lifted first.
