@@ -249,4 +249,164 @@ public sealed class TriggerConfirmationTests
 
         Assert.True(AlertNotificationPolicy.HasVisibleSubject(analysis));
     }
+
+    // --- Ageing out rejected motion ------------------------------------------------------------
+    //
+    // This is the one query in the store that destroys data, and the blast radius of getting the
+    // WHERE clause wrong is the entire event history rather than a rendering glitch. Each clause is
+    // asserted separately for that reason: what it deletes, and the three things it must not.
+
+    [Fact]
+    public async Task DeleteUnconfirmedBeforeAsync_RemovesOnlyRejectedMotionPastTheCutoff()
+    {
+        using var store = NewStore(out _);
+        ITriggerEventStore events = store;
+        var cameraId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+
+        var oldRejected = await store.AddAsync(
+            cameraId, "old-rejected.jpg", 0.1, null, TriggerConfirmation.Rejected,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        var oldConfirmed = await store.AddAsync(
+            cameraId, "old-confirmed.jpg", 0.1, null, TriggerConfirmation.Confirmed,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        // Still waiting on a verdict. Age is not enough to delete it - the answer may yet arrive,
+        // and the startup sweeper is what resolves the ones a restart orphaned.
+        var oldPending = await store.AddAsync(
+            cameraId, "old-pending.jpg", 0.1, null, TriggerConfirmation.Pending,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        var recentRejected = await store.AddAsync(
+            cameraId, "recent-rejected.jpg", 0.1, null, TriggerConfirmation.Rejected,
+            CancellationToken.None, occurredAt: now.AddHours(-1));
+
+        var files = await events.DeleteUnconfirmedBeforeAsync(now.AddDays(-3), CancellationToken.None);
+
+        Assert.Equal(["old-rejected.jpg"], files);
+
+        var remaining = await store.GetRecentAsync(50, null, includeUnconfirmed: true, CancellationToken.None);
+        var ids = remaining.Select(e => e.Id).ToList();
+        Assert.DoesNotContain(oldRejected.Id, ids);
+        Assert.Contains(oldConfirmed.Id, ids);
+        Assert.Contains(oldPending.Id, ids);
+        Assert.Contains(recentRejected.Id, ids);
+    }
+
+    // --- Orphan sweep ---------------------------------------------------------------------------
+    //
+    // Files with no row can only be found by diffing the directory against the database, which
+    // means "I can't see an owner" is the delete condition - and the two things that legitimately
+    // have no owner are a clip still being written and the live snapshot. Both are asserted here
+    // because getting either wrong deletes data that is actively in use, silently.
+
+    private static (string, DateTimeOffset) OnDisk(string path, DateTimeOffset lastWrite) => (path, lastWrite);
+
+    [Fact]
+    public void SelectOrphans_DeletesUnreferencedFilesPastTheGrace()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var referenced = new HashSet<string>(
+            [MotionRetentionWorker.NormalizePath("/data/trigger-images/cam/kept.jpg")],
+            StringComparer.Ordinal);
+
+        var orphans = MotionRetentionWorker.SelectOrphans(
+            [
+                OnDisk("/data/trigger-images/cam/kept.jpg", now.AddHours(-5)),
+                OnDisk("/data/trigger-images/cam/orphan.jpg", now.AddHours(-5))
+            ],
+            referenced,
+            now.AddHours(-1));
+
+        Assert.Equal(["/data/trigger-images/cam/orphan.jpg"], orphans);
+    }
+
+    // A clip's row is written when motion fires, with ClipPath still null, and patched only once
+    // the post-roll has elapsed. So an unreferenced, very recent file is the normal appearance of
+    // a clip the recorder is in the middle of writing - deleting it would corrupt live output.
+    [Fact]
+    public void SelectOrphans_SparesFilesInsideTheGrace_SoClipsBeingWrittenSurvive()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var orphans = MotionRetentionWorker.SelectOrphans(
+            [OnDisk("/data/trigger-clips/cam/being-written.mp4", now.AddMinutes(-2))],
+            new HashSet<string>(StringComparer.Ordinal),
+            now.AddHours(-1));
+
+        Assert.Empty(orphans);
+    }
+
+    // Continuously rewritten by ffmpeg and referenced by no row, ever. Its mtime is always recent
+    // in practice, but a camera whose zone was switched off leaves a stale one behind - which would
+    // then age past the grace and look exactly like an orphan.
+    [Fact]
+    public void SelectOrphans_NeverDeletesTheLiveSnapshot()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var orphans = MotionRetentionWorker.SelectOrphans(
+            [OnDisk("/data/trigger-images/cam/_latest.jpg", now.AddDays(-30))],
+            new HashSet<string>(StringComparer.Ordinal),
+            now.AddHours(-1));
+
+        Assert.Empty(orphans);
+    }
+
+    // The database stores absolute paths and the directory walk produces its own spelling of the
+    // same file. If the two don't compare equal, every referenced file reads as unowned and the
+    // sweep deletes the entire history in one pass.
+    [Fact]
+    public void SelectOrphans_MatchesReferencedPathsThroughDifferentSpellings()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var referenced = new HashSet<string>(
+            [MotionRetentionWorker.NormalizePath("/data/trigger-images/cam/kept.jpg")],
+            StringComparer.Ordinal);
+
+        var orphans = MotionRetentionWorker.SelectOrphans(
+            [OnDisk("/data/trigger-images/cam/../cam/kept.jpg", now.AddHours(-5))],
+            referenced,
+            now.AddHours(-1));
+
+        Assert.Empty(orphans);
+    }
+
+    [Fact]
+    public async Task GetAllReferencedFilesAsync_ReturnsImagesAndClipsFromEveryVerdict()
+    {
+        using var store = NewStore(out _);
+        ITriggerEventStore events = store;
+        var cameraId = Guid.NewGuid();
+
+        var confirmed = await AddAsync(store, cameraId, TriggerConfirmation.Confirmed);
+        await events.SetClipPathAsync(confirmed.Id, "confirmed.mp4", CancellationToken.None);
+        await AddAsync(store, cameraId, TriggerConfirmation.Rejected);
+
+        var referenced = await events.GetAllReferencedFilesAsync(CancellationToken.None);
+
+        // Both rows' images plus the one clip: a sweep that only looked at confirmed rows would
+        // treat every rejected row's still-live image as an orphan.
+        Assert.Equal(3, referenced.Count);
+        Assert.Contains("confirmed.mp4", referenced);
+    }
+
+    // The clip is the reason this exists at all - it is thousands of times the size of the
+    // thumbnail, and a sweep that returned only image paths would reclaim almost nothing.
+    [Fact]
+    public async Task DeleteUnconfirmedBeforeAsync_ReturnsBothTheImageAndTheClip()
+    {
+        using var store = NewStore(out _);
+        ITriggerEventStore events = store;
+        var cameraId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+
+        var rejected = await store.AddAsync(
+            cameraId, "frame.jpg", 0.1, null, TriggerConfirmation.Rejected,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        await events.SetClipPathAsync(rejected.Id, "motion.mp4", CancellationToken.None);
+
+        var files = await events.DeleteUnconfirmedBeforeAsync(now.AddDays(-3), CancellationToken.None);
+
+        Assert.Contains("frame.jpg", files);
+        Assert.Contains("motion.mp4", files);
+    }
 }

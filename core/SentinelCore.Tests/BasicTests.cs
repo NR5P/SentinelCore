@@ -1308,6 +1308,71 @@ public sealed class BasicTests
         }
     }
 
+    // The Events tab reads as date-filtered when it isn't. A camera pointed at something that moves
+    // all night - a spider web on the lens was the real case - produces an unbroken run of frames
+    // the AI rejects, and if that run is longer than the page, an unfiltered query returns nothing
+    // but rejects. The confirmed-only filter then empties the page, and every real event older than
+    // the run is never fetched at all: yesterday's events vanish while sitting untouched in the
+    // table. Filtering in SQL is what bounds the query by confirmed rows instead of by how noisy
+    // the camera was, so this asserts against a run deliberately longer than the limit.
+    [Fact]
+    public async Task SqliteEventStore_SearchEvents_ConfirmedOnly_SurvivesRunOfRejectsLongerThanTheLimit()
+    {
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var options = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteEventStore(options, new FakeHostEnvironment(tempDir));
+
+            // SubjectConfirmed is derived from the visible-subject flags, not from EventType (see
+            // AlertNotificationPolicy.AnalysisFoundSubject), so the car has to actually be visible
+            // for this row to store as confirmed.
+            var yesterday = new DateTimeOffset(2026, 8, 5, 21, 0, 0, TimeSpan.Zero);
+            var realEvent = new AlertResult
+            {
+                Id = Guid.NewGuid(),
+                Camera = "gateCamera",
+                OccurredAt = yesterday,
+                ReceivedAt = yesterday,
+                CompletedAt = yesterday,
+                Profile = "gate",
+                Model = "gemma3:4b",
+                Status = "completed",
+                Analysis = new VisionAnalysis
+                {
+                    EventType = "vehicle_entering_property",
+                    Summary = "A car pulled into the driveway.",
+                    NotificationRecommended = true,
+                    Confidence = 0.8,
+                    Vehicle = new VehicleAnalysis { Visible = true, Location = "inside_driveway" }
+                }
+            };
+            await store.RecordAsync(realEvent, TestContext.Current.CancellationToken);
+
+            // Nothing visible is what AnalysisFoundSubject reads as "nothing was there", so these
+            // land with SubjectConfirmed = 0 - the same rows the spider web produced. All of them
+            // are newer than the real event, so an unfiltered ORDER BY ... LIMIT never reaches it.
+            const int limit = 50;
+            for (var i = 0; i < limit * 3; i++)
+                await store.RecordAsync(
+                    MakeResult(yesterday.AddHours(1).AddSeconds(i), eventType: "none", notified: false),
+                    TestContext.Current.CancellationToken);
+
+            var unfiltered = await store.SearchEventsAsync(
+                new EventFilter(Limit: limit), TestContext.Current.CancellationToken);
+            Assert.DoesNotContain(unfiltered, e => e.Id == realEvent.Id);
+            Assert.All(unfiltered, e => Assert.False(e.SubjectConfirmed));
+
+            var confirmedOnly = await store.SearchEventsAsync(
+                new EventFilter(Limit: limit, ConfirmedOnly: true), TestContext.Current.CancellationToken);
+            Assert.Equal(realEvent.Id, Assert.Single(confirmedOnly).Id);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task DailySummaryWorker_BuildMessageAsync_EmbedsNotableImagesAndListsAllEvents()
     {

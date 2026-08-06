@@ -196,6 +196,21 @@ public interface ITriggerEventStore
     // IncidentId among any of these camera ids triggered within the window, or null if none has.
     // Used by TriggerZoneMonitor to reuse vs. mint an IncidentId when a group member fires.
     Task<string?> GetMostRecentIncidentIdAsync(IReadOnlyList<Guid> cameraIds, DateTimeOffset since, CancellationToken cancellationToken);
+
+    // Drops motion the AI never confirmed once it is older than the cutoff, and hands back the
+    // image and clip files those rows owned so the caller can unlink them. Confirmed rows are
+    // never touched here - they age out under the main app's own retention setting.
+    //
+    // Rows and files are separate deletions on purpose, and the row goes first: a row pointing at
+    // a file that is already gone renders as a missing thumbnail, while a file with no row is
+    // invisible and unreclaimable. Losing the race in that direction is the recoverable one.
+    Task<IReadOnlyList<string>> DeleteUnconfirmedBeforeAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
+
+    // Every image and clip path any row still points at. The retention sweep diffs this against
+    // what is actually on disk to find files nothing owns any more - see
+    // MotionRetentionWorker.SelectOrphans for why those accumulate and can't be caught any other
+    // way.
+    Task<IReadOnlyList<string>> GetAllReferencedFilesAsync(CancellationToken cancellationToken);
 }
 
 public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore, IDisposable
@@ -602,6 +617,72 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             return await reader.ReadAsync(cancellationToken) ? ReadEvent(reader) : null;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    async Task<IReadOnlyList<string>> ITriggerEventStore.DeleteUnconfirmedBeforeAsync(DateTimeOffset olderThan, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            var cutoff = olderThan.UtcDateTime.ToString("O");
+
+            // Collected before the DELETE because the paths only exist on the rows. Anything still
+            // Pending is left alone whatever its age: a verdict may yet land on it, and the startup
+            // sweeper resolves the ones orphaned by a restart (see GetPendingBeforeAsync).
+            var files = new List<string>();
+            using (var select = _connection.CreateCommand())
+            {
+                select.CommandText =
+                    "SELECT ImagePath, ClipPath FROM TriggerEvents " +
+                    "WHERE Confirmation NOT IN ('confirmed', 'pending') AND OccurredAt < $cutoff;";
+                select.Parameters.AddWithValue("$cutoff", cutoff);
+
+                await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    if (!reader.IsDBNull(0)) files.Add(reader.GetString(0));
+                    if (!reader.IsDBNull(1)) files.Add(reader.GetString(1));
+                }
+            }
+
+            using var delete = _connection.CreateCommand();
+            delete.CommandText =
+                "DELETE FROM TriggerEvents " +
+                "WHERE Confirmation NOT IN ('confirmed', 'pending') AND OccurredAt < $cutoff;";
+            delete.Parameters.AddWithValue("$cutoff", cutoff);
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+
+            return files;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    async Task<IReadOnlyList<string>> ITriggerEventStore.GetAllReferencedFilesAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText =
+                "SELECT ImagePath, ClipPath FROM TriggerEvents WHERE ImagePath IS NOT NULL OR ClipPath IS NOT NULL;";
+
+            var files = new List<string>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (!reader.IsDBNull(0)) files.Add(reader.GetString(0));
+                if (!reader.IsDBNull(1)) files.Add(reader.GetString(1));
+            }
+
+            return files;
         }
         finally
         {

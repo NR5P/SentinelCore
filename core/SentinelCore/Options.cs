@@ -23,6 +23,13 @@ public sealed class BridgeOptions
     [Range(1, 3650)]
     public int RetentionDays { get; init; } = 30;
 
+    // NOTE: UnverifiedMotionRetentionDays also lives in this section of appsettings.json, but is
+    // deliberately NOT bound here. Nothing in this process reads it - it belongs to the web app's
+    // MotionRetentionWorker, which reads the file directly - and binding it in two places with two
+    // defaults is how a setting ends up meaning different things depending on who asks. It shares
+    // the section only so the Settings UI can show it next to RetentionDays, and AppSettingsFile
+    // merges sections key-by-key, so an unbound key survives a write untouched.
+
     public HashSet<string> AllowedImageContentTypes { get; init; } = new(StringComparer.OrdinalIgnoreCase)
     {
         "image/jpeg", "image/png", "image/webp"

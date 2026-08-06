@@ -135,6 +135,7 @@ public static class SettingsSchema
                 Password("apiKey", "API Key", "The secret Blue Iris must send with each alert. If this doesn't match what Blue Iris is configured with, alerts are rejected."),
                 Number("maximumImageBytes", "Max Image Bytes", "Largest snapshot accepted from Blue Iris. Anything bigger is refused instead of eating memory.", 1024, 104857600),
                 Number("retentionDays", "Retention Days", "How long events and their images are kept before being cleaned up automatically.", 1, 3650),
+                Number("unverifiedMotionRetentionDays", "Unverified Motion Days", "How long to keep motion the AI rejected as nothing, along with its clips. These are only useful for checking a camera's trigger zone is tuned right, and they use far more disk than confirmed events do. 0 keeps them forever.", 0, 365),
                 Check("saveImages", "Save Images", "Keep a copy of each snapshot on disk. Turn off to record only the AI's text analysis."),
                 Csv("allowedImageContentTypes", "Allowed Content Types (comma separated)", "Image formats accepted from Blue Iris, e.g. image/jpeg. Anything else is rejected.")
             ],

@@ -38,7 +38,18 @@ public sealed record EventFilter(
     string? SearchText = null,
     DateTimeOffset? From = null,
     DateTimeOffset? To = null,
-    int Limit = 50);
+    int Limit = 50,
+    // Drop rows the AI didn't confirm, in the query rather than after it. Limit is applied by
+    // SQLite last, so without this a run of rejected frames longer than Limit fills the whole page
+    // and every confirmed event older than that run falls off the end - the list reads as "nothing
+    // ever happened" while the rows sit untouched in the table. One night of a camera pointed at a
+    // spider web is enough to do it.
+    //
+    // Safe to push down because ActivityEndpoints.VerdictFor can only return Confirmed for a row
+    // whose SubjectConfirmed is true: this is a superset of what survives the merge, never a
+    // narrower one, so a row that would have been shown can't be filtered out here. The trigger
+    // side already does the same thing (see SqliteTriggerStore.GetRecentAsync).
+    bool ConfirmedOnly = false);
 
 public sealed record EventFilterOptions(IReadOnlyList<string> Cameras, IReadOnlyList<string> EventTypes);
 
@@ -373,6 +384,10 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
                 conditions.Add("OccurredAt < $to");
                 command.Parameters.AddWithValue("$to", ToUtcSortable(filter.To.Value));
             }
+            if (filter.ConfirmedOnly)
+            {
+                conditions.Add("SubjectConfirmed = 1");
+            }
 
             var whereClause = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
             command.CommandText = $"""
@@ -437,6 +452,10 @@ public sealed class SqliteEventStore : IEventStore, IDisposable
             {
                 conditions.Add("OccurredAt < $to");
                 command.Parameters.AddWithValue("$to", ToUtcSortable(filter.To.Value));
+            }
+            if (filter.ConfirmedOnly)
+            {
+                conditions.Add("SubjectConfirmed = 1");
             }
 
             command.CommandText = $"""

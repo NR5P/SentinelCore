@@ -20,6 +20,12 @@ public sealed class BridgeSettingsDto
     [Range(1, 3650)]
     public int RetentionDays { get; set; }
 
+    // Separate from RetentionDays and much shorter, because it answers a different question:
+    // rejected motion is kept to tune a zone against, not as history. Zero keeps it forever, which
+    // is how the system behaved before this existed - see MotionRetentionWorker.
+    [Range(0, 365)]
+    public int UnverifiedMotionRetentionDays { get; set; }
+
     [MinLength(1)]
     public List<string> AllowedImageContentTypes { get; set; } = [];
 }

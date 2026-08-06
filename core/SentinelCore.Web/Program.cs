@@ -273,6 +273,11 @@ builder.Services.AddHostedService<TriggerConfirmationSweeper>();
 
 builder.Services.AddHostedService<TriggerZoneMonitor>();
 
+// Ages out rejected motion and its clips. Lives here rather than beside the main app's
+// RetentionWorker because trigger-images and trigger-clips are this project's data, under this
+// project's data root, and that worker is deliberately scoped to its own.
+builder.Services.AddHostedService<MotionRetentionWorker>();
+
 // Triggering a camera from outside the motion detector - the key-authenticated HTTP endpoint and
 // a Device Hub sensor firing both land in CameraTriggerService. The watcher holds no broker
 // connection at all until some camera actually has a sensor bound to it.

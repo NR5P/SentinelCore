@@ -36,10 +36,27 @@ public static class ActivityEndpoints
     // and there's nothing on the row to tell us either way.
     private static readonly TimeSpan ClipFaultWindow = TimeSpan.FromHours(6);
 
-    // How many rows to pull from each store per page of `capped` when the confirmed-only filter is
-    // on. Filtering happens after the query - neither store knows about the other's verdict - so
-    // without over-fetching a page made mostly of rejected frames would come back nearly empty and
-    // read as "nothing happened today".
+    // Slack on top of `capped` when the confirmed-only filter is on, to absorb the rows that pass
+    // each store's own filter and are then demoted by the merge: an alert whose SubjectConfirmed is
+    // true but whose trigger came back Pending or Rejected (see VerdictFor). That is the only
+    // remaining source of post-query shrinkage, and it's a trickle.
+    //
+    // It used to be doing much more work than that. Both stores were queried unfiltered and every
+    // verdict was applied here, after the fact, so this multiplier was the ONLY thing standing
+    // between a noisy night and an empty tab - and being a multiplier on a limit that clamps at
+    // 500, it couldn't stretch far enough. A camera watching a spider web produced 566 consecutive
+    // rejected frames, which is more than the entire fetch window: the query returned 500 rejected
+    // rows, the filter below discarded all 500, and every confirmed event older than that run was
+    // simply never fetched. The tab showed nothing and looked date-filtered. Both stores now filter
+    // in SQL instead, which is bounded by the number of confirmed rows rather than by how quiet the
+    // camera happened to be.
+    //
+    // Left at 4 even though the remaining job is much smaller than the old one. The demotion it
+    // now absorbs is on the trigger side - a row that passes `Confirmation = 'confirmed'` in SQL
+    // and is still demoted to Unverified by the merge, which happens when a camera is set to
+    // forward to AI and the forward failed. That is the same shape of problem as the one above,
+    // just narrower, and shrinking the only cushion against it to save a few hundred rows of a
+    // query that already clamps at 500 would be trading a real risk for nothing.
     private const int ConfirmedOnlyOverFetch = 4;
 
     // What links the two rows is TriggerEvent.AlertId, written when the forward is accepted (see
@@ -68,7 +85,9 @@ public static class ActivityEndpoints
         {
             var capped = Math.Clamp(limit, 1, 500);
             var fetch = includeUnconfirmed ? capped : Math.Clamp(capped * ConfirmedOnlyOverFetch, capped, 500);
-            var filter = new EventFilter(camera, eventType, notifiedOnly, search, from, to, fetch);
+            var filter = new EventFilter(
+                camera, eventType, notifiedOnly, search, from, to, fetch,
+                ConfirmedOnly: !includeUnconfirmed);
 
             var alerts = await SearchAlertsAsync(eventStore, imageEmbeddings, appSettings, filter, visualSearch, ct);
 
