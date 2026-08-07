@@ -27,3 +27,8 @@ certs/
 # Self-contained per-OS release bundles built by scripts/publish-release.sh - regenerated from
 # source, never worth committing.
 dist/
+
+# Output of the automated 6am review (scripts/daily-review/). These must stay untracked:
+# the review refuses to commit anything when the working tree is already dirty, so a tracked
+# report file would make it permanently unable to ship its own fixes.
+daily-reviews/
