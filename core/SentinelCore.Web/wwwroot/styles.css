@@ -706,6 +706,13 @@ main {
   display: none;
 }
 
+/* Sub-panes within a view, switched by that view's own .tabs nav. There is no blanket
+   .hidden rule in this sheet - every one is scoped - so a pane needs this class to be
+   hideable at all. */
+.tab-pane.hidden {
+  display: none;
+}
+
 /* Settings */
 
 .settings-root {

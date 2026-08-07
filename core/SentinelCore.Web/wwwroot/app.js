@@ -461,7 +461,10 @@ window.GateWatchExposure.check();
 
 // Tab switching. Settings/cameras are lazy-loaded on first visit; the live view starts/stops
 // video playback as it's shown/hidden so streams nobody is looking at don't keep running.
-const tabs = document.querySelectorAll(".tab");
+// Scoped to the top nav on purpose: the Automations view has its own .tab buttons for its two
+// sub-panes, and a bare ".tab" selector picked those up too. Clicking one read an undefined
+// data-view, which hid every view at once and blanked the page.
+const tabs = document.querySelectorAll("#tabs .tab");
 const views = {
   events: document.getElementById("view-events"),
   timeline: document.getElementById("view-timeline"),
