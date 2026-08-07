@@ -50,46 +50,61 @@ public sealed class TriggerRewindTests
         Assert.Empty(ClipRecorder.SelectSegmentsCovering(ordered, Base.AddSeconds(30), Base.AddSeconds(40)));
     }
 
-    // Load-bearing for a lookup by time: the concat demuxer treats the first segment's start as t=0
-    // and assumes the rest follow back to back, so a hole shifts every later offset by the length of
-    // the outage. A frame asked for at "3.5s in" would come from somewhere else entirely.
-    [Fact]
-    public void ContiguousRunEndingAtNewest_DropsEverythingBeforeAHole()
-    {
-        var ordered = new[] { Seg(0), Seg(2), Seg(40), Seg(42), Seg(44) };
-
-        var run = ClipRecorder.ContiguousRunEndingAtNewest(ordered);
-
-        Assert.Equal(3, run.Count);
-        Assert.Equal(Base.AddSeconds(40), run[0].StartsAt);
-    }
-
-    [Fact]
-    public void ContiguousRunEndingAtNewest_KeepsAnUnbrokenBuffer() =>
-        Assert.Equal(3, ClipRecorder.ContiguousRunEndingAtNewest([Seg(0), Seg(2), Seg(4)]).Count);
-
     // --- the lookup ---------------------------------------------------------------------------
 
+    // The newest file is never selectable - ffmpeg is still writing it - but it is what gives the
+    // segment before it a real measured end rather than a nominal one.
     [Fact]
-    public void OffsetInto_IsMeasuredFromTheFirstSegmentNotTheRequestedTime()
+    public void IndexOfSegmentContaining_PicksTheSegmentHoldingTheInstant()
     {
-        var run = new[] { Seg(10), Seg(12), Seg(14) };
+        var ordered = new[] { Seg(0), Seg(2), Seg(4), Seg(6) };
 
-        Assert.Equal(3.5, TriggerRewind.OffsetInto(run, Base.AddSeconds(13.5)), 3);
-        Assert.Equal(0, TriggerRewind.OffsetInto(run, Base.AddSeconds(10)), 3);
+        Assert.Equal(1, TriggerRewind.IndexOfSegmentContaining(ordered, Base.AddSeconds(3.5)));
+        Assert.Equal(0, TriggerRewind.IndexOfSegmentContaining(ordered, Base.AddSeconds(0)));
+        Assert.Equal(2, TriggerRewind.IndexOfSegmentContaining(ordered, Base.AddSeconds(5.9)));
     }
 
-    // -ss before -i is input seeking: jump to the nearest keyframe rather than decoding the whole
-    // concat and throwing all but one frame away.
     [Fact]
-    public void BuildExtractArguments_SeeksBeforeTheInput()
-    {
-        var args = TriggerRewind.BuildExtractArguments("/tmp/list.txt", 3.5, "/tmp/out.jpg");
+    public void IndexOfSegmentContaining_RefusesTheSegmentFfmpegIsStillWriting() =>
+        Assert.Equal(-1, TriggerRewind.IndexOfSegmentContaining(
+            [Seg(0), Seg(2), Seg(4)], Base.AddSeconds(4.5)));
 
-        Assert.True(args.IndexOf("-ss") < args.IndexOf("-i"));
-        Assert.Equal("3.5", args[args.IndexOf("-ss") + 1]);
+    // A frame from the wrong side of an outage is worse than no frame: the caller falls back to the
+    // live snapshot, which at least doesn't claim to be the moment that fired.
+    [Fact]
+    public void IndexOfSegmentContaining_RefusesAnInstantInsideAHole() =>
+        Assert.Equal(-1, TriggerRewind.IndexOfSegmentContaining(
+            [Seg(0), Seg(2), Seg(60), Seg(62)], Base.AddSeconds(30)));
+
+    [Fact]
+    public void IndexOfSegmentContaining_WhenTheBufferIsEmptyOrHasOnlyTheOpenFile_FindsNothing()
+    {
+        Assert.Equal(-1, TriggerRewind.IndexOfSegmentContaining([], Base));
+        Assert.Equal(-1, TriggerRewind.IndexOfSegmentContaining([Seg(0)], Base));
+    }
+
+    [Fact]
+    public void OffsetInto_IsMeasuredFromItsOwnSegment_SoAHoleElsewhereCannotShiftIt()
+    {
+        Assert.Equal(1.5, TriggerRewind.OffsetInto(Seg(12), Base.AddSeconds(13.5)), 3);
+        Assert.Equal(0, TriggerRewind.OffsetInto(Seg(10), Base.AddSeconds(10)), 3);
+    }
+
+    // -ss must come AFTER -i. Input seeking on these segments doesn't merely lose precision, it
+    // returns nothing at all: a segment is commonly one GOP with a single keyframe at its head, so
+    // seeking past that keyframe finds no later one and ffmpeg exits 0 having written no file.
+    // Measured on a real 2.017s segment, input seeking produced no frame from 1.2s onward.
+    [Fact]
+    public void BuildExtractArguments_SeeksAfterTheInput_AndTakesOneSegmentNotAConcatList()
+    {
+        var args = TriggerRewind.BuildExtractArguments("/tmp/seg_0.ts", 1.5, "/tmp/out.jpg");
+
+        Assert.True(args.IndexOf("-ss") > args.IndexOf("-i"));
+        Assert.Equal("/tmp/seg_0.ts", args[args.IndexOf("-i") + 1]);
+        Assert.Equal("1.5", args[args.IndexOf("-ss") + 1]);
         Assert.Equal("1", args[args.IndexOf("-frames:v") + 1]);
         Assert.Equal("1", args[args.IndexOf("-threads") + 1]);
+        Assert.DoesNotContain("concat", args);
     }
 
     [Fact]
@@ -134,11 +149,14 @@ public sealed class TriggerRewindTests
         Assert.Equal(frameAt, pick.ChosenAt);
         Assert.NotEmpty(pick.ImageBytes);
 
-        // The offset handed to ffmpeg is measured from the start of the contiguous run, not from
-        // the requested instant - getting that wrong is how you fetch a frame from the wrong second.
+        // The offset handed to ffmpeg is measured from the start of the one segment holding the
+        // instant - getting that wrong is how you fetch a frame from the wrong second. The seeded
+        // instant is that segment's own start, so it is zero rather than merely non-negative;
+        // asserting the exact value is what would have caught an offset measured from the start of
+        // the whole buffer instead.
         var seek = box.LastSeekOffset();
         Assert.NotNull(seek);
-        Assert.True(seek >= 0, $"seek offset should be into the run, got {seek}");
+        Assert.Equal(0, seek.Value, 3);
     }
 
     // The instant is known exactly, so lookback is only a sanity bound - it stops a clock step or a
@@ -234,7 +252,12 @@ public sealed class TriggerRewindTests
         public DateTimeOffset SeedSegments(int count)
         {
             var dir = Clips.BufferDirectory(CameraId);
-            var newest = DateTime.Now;
+
+            // Truncated to a whole second because that is all a segment's filename carries, so the
+            // instant returned below lands exactly on a segment boundary. Seeding from a raw
+            // DateTime.Now instead left the sub-second remainder as a phantom seek offset.
+            var now = DateTime.Now;
+            var newest = now.AddTicks(-(now.Ticks % TimeSpan.TicksPerSecond));
 
             for (var i = 0; i < count; i++)
             {

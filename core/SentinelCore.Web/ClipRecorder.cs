@@ -167,24 +167,6 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
         IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, DateTimeOffset from, DateTimeOffset to) =>
         ordered.Where((s, i) => s.StartsAt < to && SegmentEnd(ordered, i) > from).ToList();
 
-    // Trims a selection back to the unbroken run that ends at its newest segment.
-    //
-    // Load-bearing for anything that seeks by time offset rather than just concatenating: the
-    // concat demuxer treats the first segment's start as t=0 and assumes the rest follow back to
-    // back, so a hole anywhere in the list silently shifts every later offset by the length of the
-    // outage. A clip merely looks jumpy when that happens; a frame sought at "3.5 seconds in"
-    // becomes a frame from somewhere else entirely.
-    public static List<(string Path, DateTimeOffset StartsAt)> ContiguousRunEndingAtNewest(
-        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered)
-    {
-        if (ordered.Count == 0) return [];
-
-        var first = ordered.Count - 1;
-        while (first > 0 && SegmentEnd(ordered, first - 1) >= ordered[first].StartsAt) first--;
-
-        return ordered.Skip(first).ToList();
-    }
-
     // A line of an ffmpeg concat list file. Single quotes are the escape the demuxer understands.
     public static string ConcatListLine(string path) => $"file '{path.Replace("'", @"'\''")}'";
 

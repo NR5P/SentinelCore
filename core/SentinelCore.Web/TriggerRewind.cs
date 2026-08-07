@@ -21,21 +21,36 @@ namespace SentinelCore.Web;
 // comes from TriggerZoneMonitor's capture loop, which cannot fall behind (see FrameSlot).
 public static class TriggerRewind
 {
-    // -ss BEFORE -i is input seeking: ffmpeg jumps to the nearest keyframe and decodes forward from
-    // there, instead of decoding the whole concat and discarding all but one frame. Since ffmpeg
-    // 2.1 that is also frame-accurate, so the speed costs no precision.
+    // One segment in, -ss AFTER it. Both halves of that were wrong before, and each was wrong on
+    // its own:
     //
-    // -threads 1 is deliberate. Measured on this hardware, letting ffmpeg use every core took the
-    // same wall time and burned 50% more CPU - a pointless burst on a machine whose spare capacity
-    // is what keeps the detection loop live.
-    public static List<string> BuildExtractArguments(string concatListPath, double offsetSeconds, string outputPath) =>
+    // The input used to be a concat list of the whole contiguous run - up to 40 files, ~80 seconds -
+    // with -ss placed BEFORE it on the reasoning that input seeking would jump straight to the right
+    // keyframe. The concat demuxer does not work that way: it walks the segments. Measured on this
+    // hardware against a live buffer, a seek near the end of the run took 20.2 SECONDS and 22.5s of
+    // CPU, against 0.8s for the same frame out of the one segment holding it. The cost scaled with
+    // how much buffer happened to be on disk, on the machine whose spare capacity is the whole
+    // reason the detection loop stays live.
+    //
+    // -ss then has to move after -i, because input seeking on these segments does not just cost
+    // precision, it silently returns NOTHING. A segment is commonly a single GOP with one keyframe
+    // at its head, so an input seek past that keyframe finds no later one and hits EOF with no
+    // frames written - ffmpeg exits 0 and the file never appears. Measured on a 2.017s segment:
+    // input seeking returned no frame at all at offsets 1.2s and beyond, and returned the SAME
+    // frame for 0.4s and 0.8s (snapped to the keyframe) where it did work. Output seeking returned
+    // a distinct, correct frame at every offset - verified against the cameras' burned-in clock,
+    // which advanced by two seconds across the segment as it should.
+    //
+    // Decoding a whole ~2s segment to drop most of it is exactly the waste input seeking was meant
+    // to avoid. At this size that waste is 0.8s and bounded; it does not grow with the buffer.
+    //
+    // -threads 1 is deliberate: fetching a frame must always yield to the capture loop.
+    public static List<string> BuildExtractArguments(string segmentPath, double offsetSeconds, string outputPath) =>
     [
         "-v", "error",
         "-threads", "1",
+        "-i", segmentPath,
         "-ss", FormatSeconds(offsetSeconds),
-        "-f", "concat",
-        "-safe", "0",
-        "-i", concatListPath,
         "-frames:v", "1",
         "-q:v", "2",
         "-y", outputPath
@@ -47,12 +62,36 @@ public static class TriggerRewind
     public static string FormatSeconds(double seconds) =>
         seconds.ToString("0.###", CultureInfo.InvariantCulture);
 
-    // How far into a concatenated run of segments a given instant falls. The run's first segment is
-    // t=0 for the concat demuxer, which is why the run has to be contiguous - see
-    // ClipRecorder.ContiguousRunEndingAtNewest.
-    public static double OffsetInto(
-        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> run, DateTimeOffset at) =>
-        (at - run[0].StartsAt).TotalSeconds;
+    // How far into its own segment a given instant falls. Measured against that one file, so a hole
+    // anywhere else in the buffer cannot shift it - which is what made the old concat offset fragile
+    // enough to need a contiguity check in front of it.
+    public static double OffsetInto((string Path, DateTimeOffset StartsAt) segment, DateTimeOffset at) =>
+        (at - segment.StartsAt).TotalSeconds;
+
+    // Which segment holds `at`, or -1 if the buffer has no cover for that instant.
+    //
+    // `ordered` is every segment on disk, oldest first. The newest is never selectable - ffmpeg is
+    // still writing it, and reading a half-written file hands the decoder a truncated stream - but
+    // it is still passed in, because SegmentEnd measures a segment's real length from where the
+    // NEXT one begins. Excluding it from the list outright would leave the last selectable segment
+    // measured at its nominal length instead, which is the case most likely to be asked for: the
+    // trigger that just fired lands at the live end of the buffer.
+    //
+    // Searching newest-first because that is where triggers land, and returning -1 rather than the
+    // nearest segment on a miss. A frame from the wrong side of an outage is worse than no frame -
+    // the caller falls back to the live snapshot, which at least does not claim to be the moment
+    // that fired.
+    public static int IndexOfSegmentContaining(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, DateTimeOffset at)
+    {
+        for (var i = ordered.Count - 2; i >= 0; i--)
+        {
+            if (at < ordered[i].StartsAt) continue;
+            return at < ClipRecorder.SegmentEnd(ordered, i) ? i : -1;
+        }
+
+        return -1;
+    }
 }
 
 // CaptureDelaySeconds is how long after the frame was captured the fetch completed - the pipeline's
@@ -103,8 +142,9 @@ public sealed class TriggerRewindService(
 
             await WaitForSegmentCoveringAsync(cameraId, frameAt, cancellationToken);
 
-            var run = ClipRecorder.ContiguousRunEndingAtNewest(UsableSegments(cameraId));
-            if (run.Count == 0 || frameAt < run[0].StartsAt)
+            var ordered = clips.BufferedSegments(cameraId);
+            var index = TriggerRewind.IndexOfSegmentContaining(ordered, frameAt);
+            if (index < 0)
             {
                 logger.LogWarning(
                     "Trigger rewind found no buffered video covering the trigger on camera {CameraId}; " +
@@ -112,7 +152,7 @@ public sealed class TriggerRewindService(
                 return null;
             }
 
-            var bytes = await ExtractAsync(run, frameAt, cancellationToken);
+            var bytes = await ExtractAsync(ordered[index], frameAt, cancellationToken);
             if (bytes is null) return null;
 
             // Includes the wait for the segment holding the frame to be closed by the muxer, so it
@@ -141,10 +181,11 @@ public sealed class TriggerRewindService(
     {
         try
         {
-            var run = ClipRecorder.ContiguousRunEndingAtNewest(UsableSegments(cameraId));
-            if (run.Count == 0 || at < run[0].StartsAt) return null;
+            var ordered = clips.BufferedSegments(cameraId);
+            var index = TriggerRewind.IndexOfSegmentContaining(ordered, at);
+            if (index < 0) return null;
 
-            return await ExtractAsync(run, at, cancellationToken);
+            return await ExtractAsync(ordered[index], at, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -158,27 +199,36 @@ public sealed class TriggerRewindService(
     }
 
     private async Task<byte[]?> ExtractAsync(
-        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> run, DateTimeOffset at, CancellationToken cancellationToken)
+        (string Path, DateTimeOffset StartsAt) segment, DateTimeOffset at, CancellationToken cancellationToken)
     {
-        var listPath = Path.Combine(Path.GetTempPath(), $"rewindlist-{Guid.NewGuid():N}.txt");
         var framePath = Path.Combine(Path.GetTempPath(), $"rewind-{Guid.NewGuid():N}.jpg");
-        await File.WriteAllLinesAsync(listPath, run.Select(s => ClipRecorder.ConcatListLine(s.Path)), cancellationToken);
 
         try
         {
-            var offset = Math.Max(0, TriggerRewind.OffsetInto(run, at));
+            var offset = Math.Max(0, TriggerRewind.OffsetInto(segment, at));
             var ok = await FfmpegProcess.RunAsync(
-                _ffmpegPath, TriggerRewind.BuildExtractArguments(listPath, offset, framePath),
+                _ffmpegPath, TriggerRewind.BuildExtractArguments(segment.Path, offset, framePath),
                 ExtractTimeout, logger, "rewind frame fetch", RewindPriority, cancellationToken);
 
-            if (!ok || !File.Exists(framePath)) return null;
+            // ffmpeg exits 0 having written nothing when a seek finds no frame - the failure that
+            // used to arrive as a corrupt-looking encoder error rather than a missing file. Treat
+            // the absent file as the real signal and say so, because silently falling back to the
+            // live snapshot is what put a photograph of a different moment on the event in the
+            // first place.
+            if (!ok || !File.Exists(framePath))
+            {
+                logger.LogWarning(
+                    "Trigger rewind found the segment for {At:HH:mm:ss.fff} on camera stream {Segment} but ffmpeg " +
+                    "produced no frame at {Offset:0.###}s into it; using the live snapshot instead",
+                    at, Path.GetFileName(segment.Path), offset);
+                return null;
+            }
 
             var bytes = await File.ReadAllBytesAsync(framePath, cancellationToken);
             return TriggerImagePaths.IsCompleteJpeg(bytes) ? bytes : null;
         }
         finally
         {
-            try { File.Delete(listPath); } catch { /* best effort */ }
             try { File.Delete(framePath); } catch { /* best effort */ }
         }
     }
@@ -203,13 +253,5 @@ public sealed class TriggerRewindService(
         logger.LogInformation(
             "Trigger rewind stopped waiting for camera {CameraId}'s buffer to close the segment holding the trigger; " +
             "using what is already on disk", cameraId);
-    }
-
-    // The newest file is the one ffmpeg is writing into right now; reading it would hand the
-    // demuxer a truncated stream and shift every offset after it.
-    private IReadOnlyList<(string Path, DateTimeOffset StartsAt)> UsableSegments(Guid cameraId)
-    {
-        var all = clips.BufferedSegments(cameraId);
-        return all.Count <= 1 ? [] : all.Take(all.Count - 1).ToList();
     }
 }
