@@ -156,6 +156,10 @@ struct EventCard: View {
             }
         }
         .padding(.vertical, 6)
+        // The gutter is reserved on every card, not just notified ones, so the bar can sit in
+        // it without the snapshot and the text running into its edge - and so a notified card
+        // still lines up with the ones above and below it.
+        .padding(.leading, 10)
         .overlay(alignment: .leading) {
             if event.notified {
                 Rectangle().fill(SentinelTheme.green).frame(width: 3).padding(.vertical, 5)
