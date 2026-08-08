@@ -86,8 +86,79 @@ public sealed class TriggerRewindTests
     [Fact]
     public void OffsetInto_IsMeasuredFromItsOwnSegment_SoAHoleElsewhereCannotShiftIt()
     {
-        Assert.Equal(1.5, TriggerRewind.OffsetInto(Seg(12), Base.AddSeconds(13.5)), 3);
-        Assert.Equal(0, TriggerRewind.OffsetInto(Seg(10), Base.AddSeconds(10)), 3);
+        var ordered = new[] { Seg(0), Seg(10), Seg(12), Seg(14) };
+
+        Assert.Equal(1.5, TriggerRewind.OffsetInto(ordered, 2, Base.AddSeconds(13.5), closedAt: null), 3);
+        Assert.Equal(0, TriggerRewind.OffsetInto(ordered, 1, Base.AddSeconds(10), closedAt: null), 3);
+    }
+
+    // --- sub-second segment boundaries ----------------------------------------------------------
+
+    // strftime has no sub-second field, so a segment's name is its true start truncated to the whole
+    // second. The muxer closes a segment when it opens the next, so the previous file's close time
+    // supplies the fraction the name dropped. Each pair here is (segment, when that segment closed),
+    // in seconds from Base - so a segment named :02 that really opened at 2.9s appears as the close
+    // of the segment named :00.
+    private static Func<string, DateTimeOffset> ClosedAt(params (int Second, double Closed)[] closes)
+    {
+        var byPath = closes.ToDictionary(c => Seg(c.Second).Path, c => Base.AddSeconds(c.Closed));
+        return path => byPath.TryGetValue(path, out var at) ? at : DateTimeOffset.MinValue;
+    }
+
+    // A buffer of ~1.9s segments whose starts have drifted 0.9s past the second they are named for.
+    private static Func<string, DateTimeOffset> DriftedByNinePercent() =>
+        ClosedAt((0, 2.9), (2, 4.9), (4, 6.9));
+
+    [Fact]
+    public void OffsetInto_MeasuresFromWhereTheSegmentReallyOpened_NotTheWholeSecondItIsNamedAfter()
+    {
+        var ordered = new[] { Seg(0), Seg(2), Seg(4), Seg(6) };
+
+        // Segment :02 really opened at 2.9s, so an instant at 3.5s is 0.6s into it - not the 1.5s
+        // the filename implies. Seeking to 1.5s would land most of a second late, and past the end
+        // of a ~1.94s segment it lands nowhere at all.
+        Assert.Equal(
+            0.6,
+            TriggerRewind.OffsetInto(ordered, 1, Base.AddSeconds(3.5), DriftedByNinePercent()),
+            3);
+    }
+
+    [Fact]
+    public void IndexOfSegmentContaining_PutsAnInstantInsideTheTruncatedFraction_InThePrecedingSegment()
+    {
+        var ordered = new[] { Seg(0), Seg(2), Seg(4), Seg(6) };
+        var closed = DriftedByNinePercent();
+
+        // 2.5s falls under segment :02's name, but that segment did not open until 2.9s - so 2.5s
+        // is still in the :00 file, and that is where the frame for it lives.
+        Assert.Equal(0, TriggerRewind.IndexOfSegmentContaining(ordered, Base.AddSeconds(2.5), closed));
+
+        // Past the refined start it belongs to segment :02 as usual.
+        Assert.Equal(1, TriggerRewind.IndexOfSegmentContaining(ordered, Base.AddSeconds(3.5), closed));
+    }
+
+    // The refinement sharpens a boundary; it must never invent coverage across an outage.
+    [Fact]
+    public void IndexOfSegmentContaining_WithRefinedBoundaries_StillRefusesAnInstantInsideAHole() =>
+        Assert.Equal(-1, TriggerRewind.IndexOfSegmentContaining(
+            [Seg(0), Seg(2), Seg(60), Seg(62)],
+            Base.AddSeconds(30),
+            ClosedAt((0, 2.9), (2, 3.9), (60, 62.9))));
+
+    // A close time that does not truncate back to the name it is supposed to belong to is not a
+    // measurement of that segment's start - it is a stale file, a hole, or a filesystem that does
+    // not keep the timestamp. The nominal boundary stands.
+    [Fact]
+    public void RefinedStart_IgnoresACloseTimeThatDoesNotTruncateToTheSegmentsOwnName()
+    {
+        var ordered = new[] { Seg(0), Seg(2), Seg(4) };
+
+        Assert.Equal(Base.AddSeconds(2), TriggerRewind.RefinedStart(ordered, 1, ClosedAt((0, 0.5))));
+        Assert.Equal(Base.AddSeconds(2), TriggerRewind.RefinedStart(ordered, 1, ClosedAt((0, 3.5))));
+        Assert.Equal(Base.AddSeconds(2), TriggerRewind.RefinedStart(ordered, 1, closedAt: null));
+
+        // The oldest segment has no predecessor to measure against.
+        Assert.Equal(Base, TriggerRewind.RefinedStart(ordered, 0, DriftedByNinePercent()));
     }
 
     // -ss must come AFTER -i. Input seeking on these segments doesn't merely lose precision, it

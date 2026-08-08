@@ -62,32 +62,95 @@ public static class TriggerRewind
     public static string FormatSeconds(double seconds) =>
         seconds.ToString("0.###", CultureInfo.InvariantCulture);
 
+    // A segment's boundaries to sub-second precision, which its filename does not carry.
+    //
+    // ffmpeg names each segment with strftime, and strftime has no sub-second field, so the name is
+    // the true start TRUNCATED to the whole second - up to a second early. An offset measured from
+    // the name therefore seeks that much too far into the file. The error is not a fixed bias that
+    // would quietly cancel: these segments run ~1.94s against a nominal 2s, so the missing fraction
+    // drifts through the entire 0-1s range and back about every 25 seconds.
+    //
+    // Measured against the cameras' burned-in clock across one full drift cycle - 18 consecutive
+    // segments, frame taken at the same stream position in each - the frame fetched for an instant
+    // ran a whole second late on exactly the six segments whose fraction had drifted past ~0.6, and
+    // matched on the rest. Where the overshoot ran past the last frame in the file ffmpeg wrote
+    // nothing at all and exited 0, which is the "produced no frame" fallback to a live snapshot: 4
+    // of 155 fetches on the last buffer.
+    //
+    // The muxer closes a segment when it opens the next, so the PREVIOUS file's last-write time is
+    // this one's true start. On this buffer that agrees with the ext4 birth timestamp to within a
+    // millisecond. File.GetCreationTimeUtc is no help - on Linux .NET hands back the write time,
+    // not the birth time - so the previous file's close is the measurement actually available.
+    //
+    // `closedAt` is null in tests that are only exercising the nominal arithmetic, and null is also
+    // the honest answer on a filesystem whose timestamps cannot be trusted: refinement is skipped
+    // and every boundary is the filename's, exactly as before.
+    public static DateTimeOffset RefinedStart(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index,
+        Func<string, DateTimeOffset>? closedAt)
+    {
+        var nominal = ordered[index].StartsAt;
+        if (closedAt is null || index <= 0) return nominal;
+
+        return Believable(closedAt(ordered[index - 1].Path), nominal);
+    }
+
+    // A segment ends where the next one begins, so its refined end is that segment's refined start.
+    public static DateTimeOffset RefinedEnd(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index,
+        Func<string, DateTimeOffset>? closedAt)
+    {
+        var nominalEnd = ClipRecorder.SegmentEnd(ordered, index);
+        if (closedAt is null || index + 1 >= ordered.Count) return nominalEnd;
+
+        // SegmentEnd returning anything other than the next start means its clamp fired: it judged
+        // the gap an outage rather than one long segment. Sharpening that boundary would be
+        // claiming coverage across a hole, which is the one thing this lookup must never do.
+        return nominalEnd == ordered[index + 1].StartsAt
+            ? RefinedStart(ordered, index + 1, closedAt)
+            : nominalEnd;
+    }
+
+    // A measured boundary is only believable if it still truncates to the second it is named after,
+    // which is precisely what strftime guaranteed when it wrote that name. A hole in the buffer
+    // leaves the previous file closing long before the next one opens, the check fails, and the
+    // nominal boundary stands - so an outage still reads as an outage.
+    private static DateTimeOffset Believable(DateTimeOffset measured, DateTimeOffset nominal) =>
+        measured >= nominal && measured < nominal + TimeSpan.FromSeconds(1) ? measured : nominal;
+
     // How far into its own segment a given instant falls. Measured against that one file, so a hole
     // anywhere else in the buffer cannot shift it - which is what made the old concat offset fragile
     // enough to need a contiguity check in front of it.
-    public static double OffsetInto((string Path, DateTimeOffset StartsAt) segment, DateTimeOffset at) =>
-        (at - segment.StartsAt).TotalSeconds;
+    public static double OffsetInto(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index, DateTimeOffset at,
+        Func<string, DateTimeOffset>? closedAt) =>
+        (at - RefinedStart(ordered, index, closedAt)).TotalSeconds;
 
     // Which segment holds `at`, or -1 if the buffer has no cover for that instant.
     //
     // `ordered` is every segment on disk, oldest first. The newest is never selectable - ffmpeg is
     // still writing it, and reading a half-written file hands the decoder a truncated stream - but
-    // it is still passed in, because SegmentEnd measures a segment's real length from where the
-    // NEXT one begins. Excluding it from the list outright would leave the last selectable segment
-    // measured at its nominal length instead, which is the case most likely to be asked for: the
-    // trigger that just fired lands at the live end of the buffer.
+    // it is still passed in, because the end of the last selectable segment is measured from where
+    // the NEXT one begins. Excluding it from the list outright would leave that segment measured at
+    // its nominal length instead, which is the case most likely to be asked for: the trigger that
+    // just fired lands at the live end of the buffer.
     //
     // Searching newest-first because that is where triggers land, and returning -1 rather than the
     // nearest segment on a miss. A frame from the wrong side of an outage is worse than no frame -
     // the caller falls back to the live snapshot, which at least does not claim to be the moment
     // that fired.
     public static int IndexOfSegmentContaining(
-        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, DateTimeOffset at)
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, DateTimeOffset at,
+        Func<string, DateTimeOffset>? closedAt = null)
     {
         for (var i = ordered.Count - 2; i >= 0; i--)
         {
-            if (at < ordered[i].StartsAt) continue;
-            return at < ClipRecorder.SegmentEnd(ordered, i) ? i : -1;
+            // Against the refined start, not the filename's: an instant in the fraction of a second
+            // between the two belongs to the segment BEFORE this one, and the loop finds it there
+            // on the next pass. Selecting on the filename put roughly a quarter of all instants in
+            // the wrong file, at the near edge where the overshoot was largest.
+            if (at < RefinedStart(ordered, i, closedAt)) continue;
+            return at < RefinedEnd(ordered, i, closedAt) ? i : -1;
         }
 
         return -1;
@@ -121,6 +184,17 @@ public sealed class TriggerRewindService(
     private static readonly TimeSpan SegmentPollInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan ExtractTimeout = TimeSpan.FromSeconds(15);
 
+    // When the muxer closed a segment, which is the same instant it opened the next one. This is
+    // the sub-second start the filename could not record; see RefinedStart. A file that has gone
+    // (retention sweeping the tail of the buffer mid-lookup) reports a close far in the past, which
+    // the believability check rejects, leaving the nominal boundary in place.
+    private static DateTimeOffset ClosedAt(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); }
+        catch (IOException) { return DateTimeOffset.MinValue; }
+        catch (UnauthorizedAccessException) { return DateTimeOffset.MinValue; }
+    }
+
     // The frame captured at frameAt, or null if the buffer cannot supply it.
     //
     // lookbackSeconds is not a search window - the instant is known exactly. It only bounds how far
@@ -143,7 +217,7 @@ public sealed class TriggerRewindService(
             await WaitForSegmentCoveringAsync(cameraId, frameAt, cancellationToken);
 
             var ordered = clips.BufferedSegments(cameraId);
-            var index = TriggerRewind.IndexOfSegmentContaining(ordered, frameAt);
+            var index = TriggerRewind.IndexOfSegmentContaining(ordered, frameAt, ClosedAt);
             if (index < 0)
             {
                 logger.LogWarning(
@@ -152,7 +226,7 @@ public sealed class TriggerRewindService(
                 return null;
             }
 
-            var bytes = await ExtractAsync(ordered[index], frameAt, cancellationToken);
+            var bytes = await ExtractAsync(ordered, index, frameAt, cancellationToken);
             if (bytes is null) return null;
 
             // Includes the wait for the segment holding the frame to be closed by the muxer, so it
@@ -182,10 +256,10 @@ public sealed class TriggerRewindService(
         try
         {
             var ordered = clips.BufferedSegments(cameraId);
-            var index = TriggerRewind.IndexOfSegmentContaining(ordered, at);
+            var index = TriggerRewind.IndexOfSegmentContaining(ordered, at, ClosedAt);
             if (index < 0) return null;
 
-            return await ExtractAsync(ordered[index], at, cancellationToken);
+            return await ExtractAsync(ordered, index, at, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -199,13 +273,15 @@ public sealed class TriggerRewindService(
     }
 
     private async Task<byte[]?> ExtractAsync(
-        (string Path, DateTimeOffset StartsAt) segment, DateTimeOffset at, CancellationToken cancellationToken)
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index, DateTimeOffset at,
+        CancellationToken cancellationToken)
     {
+        var segment = ordered[index];
         var framePath = Path.Combine(Path.GetTempPath(), $"rewind-{Guid.NewGuid():N}.jpg");
 
         try
         {
-            var offset = Math.Max(0, TriggerRewind.OffsetInto(segment, at));
+            var offset = Math.Max(0, TriggerRewind.OffsetInto(ordered, index, at, ClosedAt));
             var ok = await FfmpegProcess.RunAsync(
                 _ffmpegPath, TriggerRewind.BuildExtractArguments(segment.Path, offset, framePath),
                 ExtractTimeout, logger, "rewind frame fetch", RewindPriority, cancellationToken);
