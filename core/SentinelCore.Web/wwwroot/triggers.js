@@ -93,6 +93,8 @@ window.GateWatchTriggers = (function () {
 
       const triggerUrl = triggerUrlResp && triggerUrlResp.ok ? await triggerUrlResp.json() : null;
       showTriggerUrl(triggerUrl);
+
+      await loadRecordingSchedules();
     } catch (err) {
       console.error("Failed to load trigger zone editor", err);
       showEditorError("Network error while loading.");
@@ -426,6 +428,216 @@ window.GateWatchTriggers = (function () {
       showEditorError("Network error while saving.");
     }
   }
+
+  // --- scheduled recording ---------------------------------------------------------------------
+  //
+  // Clock-driven recording windows, edited here rather than on the Schedules tab because this is
+  // where someone already is when they're thinking about what a camera should capture - and because
+  // a window belongs to one camera, which the Schedules tab has no notion of.
+  //
+  // The editor deals in two clock times; the server stores a start and a duration. See
+  // RecordingSchedule.DurationSeconds for why - in short, a stored stop *time* can be orphaned from
+  // its start and leave a camera recording forever, and a length cannot.
+
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  function recordingEl(id) { return document.getElementById(id); }
+
+  function buildDayToggles() {
+    const container = recordingEl("recording-days");
+    if (container.childElementCount > 0) return;
+
+    for (let day = 0; day < 7; day++) {
+      const label = document.createElement("label");
+      label.className = "recording-day";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = String(day);
+      input.addEventListener("change", previewRecording);
+      label.append(input, document.createTextNode(DAY_NAMES[day]));
+      container.appendChild(label);
+    }
+  }
+
+  function selectedDays() {
+    return [...recordingEl("recording-days").querySelectorAll("input:checked")].map(i => parseInt(i.value, 10));
+  }
+
+  // Which fields are relevant depends entirely on the kind, and showing all of them at once is how
+  // someone ends up filling in a cron expression that a daily schedule will ignore.
+  function applyRecordingKind() {
+    const kind = recordingEl("recording-kind").value;
+    recordingEl("recording-cron-row").classList.toggle("hidden", kind !== "cron");
+    recordingEl("recording-once-row").classList.toggle("hidden", kind !== "once");
+    recordingEl("recording-solar-row").classList.toggle("hidden", kind !== "solar");
+    recordingEl("recording-solar-offset-row").classList.toggle("hidden", kind !== "solar");
+    recordingEl("recording-days-row").classList.toggle("hidden", kind === "once" || kind === "cron");
+
+    // Only a daily window has a start time of its own to type. The others still need a length,
+    // which is what the stop time is really setting, so it stays visible throughout.
+    recordingEl("recording-start").closest(".field-row").classList.toggle("hidden", kind !== "daily");
+    previewRecording();
+  }
+
+  function recordingBody() {
+    const kind = recordingEl("recording-kind").value;
+    const start = recordingEl("recording-start").value;
+    const stop = recordingEl("recording-stop").value;
+
+    // For the kinds with no clock start of their own, the two time fields can't be subtracted -
+    // the start comes from a cron expression or the sun. The stop time is read as a length from
+    // midnight instead, which is what it means in that context: "record for two hours" is 02:00.
+    let durationSeconds = null;
+    if (kind !== "daily" && stop) {
+      const [h, m] = stop.split(":").map(Number);
+      durationSeconds = (h * 3600) + (m * 60);
+    }
+
+    const onceValue = recordingEl("recording-once").value;
+    return {
+      name: recordingEl("recording-name").value.trim(),
+      enabled: recordingEl("recording-enabled").checked,
+      kind,
+      startTime: kind === "daily" ? start : "",
+      stopTime: kind === "daily" ? stop : "",
+      daysOfWeek: kind === "once" || kind === "cron" ? [] : selectedDays(),
+      cronExpression: recordingEl("recording-cron").value.trim(),
+      runAtUtc: kind === "once" && onceValue ? new Date(onceValue).toISOString() : null,
+      solarEvent: kind === "solar" ? recordingEl("recording-solar").value : "",
+      solarOffsetMinutes: parseInt(recordingEl("recording-solar-offset").value, 10) || 0,
+      solarElevationDegrees: 0,
+      durationSeconds,
+      includeAudio: false
+    };
+  }
+
+  function describeWindow(startIso, endIso) {
+    const start = new Date(startIso);
+    const end = new Date(endIso);
+    const time = d => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return `${start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} ${time(start)}-${time(end)}`;
+  }
+
+  let previewTimer = null;
+
+  // Debounced because it fires on every keystroke in the cron box, and each call is a round trip.
+  function previewRecording() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(runPreview, 350);
+  }
+
+  async function runPreview() {
+    const label = recordingEl("recording-preview");
+    const body = recordingBody();
+    if (!body.name) { label.textContent = "Fill in a window to see when it would run."; return; }
+
+    try {
+      const response = await fetch("/api/recording-schedules/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) { label.textContent = (payload.errors || ["That window isn't valid yet."])[0]; return; }
+
+      if (!payload.occurrences || payload.occurrences.length === 0) {
+        label.textContent = "This would never run - check the days and times.";
+        return;
+      }
+
+      const minutes = Math.round(payload.durationSeconds / 60);
+      const next = payload.occurrences.slice(0, 3).map(o => describeWindow(o.start, o.end)).join(" · ");
+      label.textContent = `${minutes} min each · next: ${next}`;
+    } catch {
+      label.textContent = "Could not work out when this would run.";
+    }
+  }
+
+  async function loadRecordingSchedules() {
+    const list = recordingEl("recording-schedule-list");
+    list.innerHTML = "";
+
+    try {
+      const response = await fetch(`/api/cameras/${currentCamera.id}/recording-schedules`);
+      if (!response.ok) return;
+
+      const schedules = await response.json();
+      if (schedules.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "recording-schedule-empty";
+        empty.textContent = "No timed recordings on this camera yet.";
+        list.appendChild(empty);
+        return;
+      }
+
+      for (const schedule of schedules) list.appendChild(renderRecordingRow(schedule));
+    } catch (err) {
+      console.error("Failed to load recording schedules", err);
+    }
+  }
+
+  function renderRecordingRow(schedule) {
+    const row = document.createElement("li");
+    row.className = "recording-schedule-row";
+    if (!schedule.enabled) row.classList.add("recording-schedule-off");
+
+    const name = document.createElement("span");
+    name.className = "recording-schedule-name";
+    name.textContent = schedule.name;
+
+    const when = document.createElement("span");
+    when.className = "recording-schedule-when";
+    when.textContent = schedule.nextOccurrences && schedule.nextOccurrences.length > 0
+      ? `next ${describeWindow(schedule.nextOccurrences[0], new Date(new Date(schedule.nextOccurrences[0]).getTime() + schedule.durationSeconds * 1000).toISOString())}`
+      : schedule.enabled ? "no upcoming runs" : "off";
+
+    const remove = document.createElement("button");
+    remove.className = "btn btn-small";
+    remove.type = "button";
+    remove.textContent = "remove";
+    remove.addEventListener("click", async () => {
+      // The rule goes; recordings it already made stay. Said out loud because "remove" next to a
+      // list of video is easy to read as "delete the video".
+      const response = await fetch(`/api/cameras/${currentCamera.id}/recording-schedules/${schedule.id}`, { method: "DELETE" });
+      if (response.ok) await loadRecordingSchedules();
+    });
+
+    row.append(name, when, remove);
+    return row;
+  }
+
+  async function addRecordingSchedule() {
+    const errorsEl = document.getElementById("zone-editor-errors");
+    errorsEl.innerHTML = "";
+
+    const body = recordingBody();
+    try {
+      const response = await fetch(`/api/cameras/${currentCamera.id}/recording-schedules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        for (const message of payload.errors || ["Could not save that recording window."]) showEditorError(message);
+        return;
+      }
+
+      recordingEl("recording-name").value = "";
+      await loadRecordingSchedules();
+      previewRecording();
+    } catch {
+      showEditorError("Network error while saving the recording window.");
+    }
+  }
+
+  buildDayToggles();
+  recordingEl("recording-kind").addEventListener("change", applyRecordingKind);
+  recordingEl("recording-add-btn").addEventListener("click", addRecordingSchedule);
+  for (const id of ["recording-name", "recording-start", "recording-stop", "recording-cron", "recording-once", "recording-solar", "recording-solar-offset"]) {
+    recordingEl(id).addEventListener("input", previewRecording);
+  }
+  applyRecordingKind();
 
   return { openZoneEditor };
 })();

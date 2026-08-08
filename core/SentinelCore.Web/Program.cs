@@ -281,6 +281,20 @@ builder.Services.AddHostedService<TriggerZoneMonitor>();
 // project's data root, and that worker is deliberately scoped to its own.
 builder.Services.AddHostedService<MotionRetentionWorker>();
 
+// Clock-driven recording windows ("record the driveway 8pm-8:30pm every Tuesday"), the timed
+// counterpart to a trigger zone. Its own database, its own worker and its own segment buffer,
+// deliberately sharing nothing with the trigger clip pipeline but the concat helpers - see
+// ScheduledRecorder for why reusing that buffer was rejected.
+//
+// Lives in this project rather than beside the main app's Schedules because the cameras, ffmpeg and
+// the video are all here, and there is no push channel from that app to this one to fire it with.
+var recordingStore = new SqliteRecordingStore(camerasRoot);
+builder.Services.AddSingleton<IRecordingScheduleStore>(recordingStore);
+builder.Services.AddSingleton<IRecordingStore>(recordingStore);
+builder.Services.AddSingleton<ScheduledRecorder>();
+builder.Services.AddHostedService<RecordingScheduleWorker>();
+builder.Services.AddHostedService<ScheduledRecordingRetentionWorker>();
+
 // Triggering a camera from outside the motion detector - the key-authenticated HTTP endpoint and
 // a Device Hub sensor firing both land in CameraTriggerService. The watcher holds no broker
 // connection at all until some camera actually has a sensor bound to it.
@@ -377,6 +391,7 @@ app.MapCameraPtzEndpoints();
 app.MapTriggerEndpoints();
 app.MapActivityEndpoints();
 app.MapCameraTriggerEndpoints();
+app.MapRecordingEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();
 app.MapAuthEndpoints();

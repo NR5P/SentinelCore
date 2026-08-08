@@ -164,6 +164,9 @@ public static class SettingsEndpoints
         settings.MapPut("/trigger-rewind", async (TriggerRewindSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "TriggerRewind", ct));
 
+        settings.MapPut("/scheduled-recording", async (ScheduledRecordingSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, ScheduledRecordingOptions.SectionName, ct));
+
         settings.MapPut("/package-theft-watch", async (PackageTheftWatchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "PackageTheftWatch", ct));
 

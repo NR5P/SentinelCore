@@ -239,6 +239,15 @@ public sealed class TriggerRewindSettingsDto
     public bool ApplyToCompanions { get; set; } = true;
 }
 
+public sealed class ScheduledRecordingSettingsDto
+{
+    [Range(1, 365)]
+    public int RetentionDays { get; set; } = 14;
+
+    [Range(1, 500)]
+    public double MinimumFreeGigabytes { get; set; } = 5;
+}
+
 public sealed class PackageTheftWatchSettingsDto
 {
     public bool Enabled { get; set; }

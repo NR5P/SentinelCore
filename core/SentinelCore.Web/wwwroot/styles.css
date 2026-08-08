@@ -1050,6 +1050,74 @@ main {
   margin-bottom: 6px;
 }
 
+/* Divides the trigger editor's motion settings from the clock-driven recording ones below. They
+   are two unrelated ways to make the same camera record, and without a break the recording fields
+   read as more motion settings. */
+.field-section-heading {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border, #333);
+  opacity: 0.75;
+  letter-spacing: 0.08em;
+}
+
+.recording-schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.recording-schedule-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.recording-schedule-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-schedule-when {
+  opacity: 0.7;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* A disabled window stays in the list rather than disappearing - it is still configuration
+   somebody wrote - but must not read as one that is going to run tonight. */
+.recording-schedule-off {
+  opacity: 0.45;
+}
+
+.recording-schedule-empty {
+  opacity: 0.6;
+  font-size: 0.9em;
+}
+
+.recording-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.recording-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+}
+
+.btn-small {
+  padding: 2px 8px;
+  font-size: 0.8em;
+}
+
 .known-vehicles-list {
   display: flex;
   flex-direction: column;
