@@ -666,7 +666,7 @@ public static class SettingsSchema
             Endpoint = "/api/settings/bug-reports",
             Basic = true,
             DtoType = typeof(BugReportSettingsDto),
-            Description = "Emails the developer when something breaks inside the app, using the email account configured above. Off by default - nothing is ever sent unless you turn it on.",
+            Description = "Emails the developer when something breaks inside the app, using the email account configured above. On by default, so bugs get reported instead of going unnoticed - turn it off if you'd rather nothing left the machine. Only the error text and stack trace are sent, never images or clips.",
             Fields =
             [
                 Check("enabled", "Enabled", "Email the developer when something in the bridge or dashboard hits an internal error, using the same account configured under Email above. Goes to a fixed developer address, not one you set - there's nothing else to configure here.")

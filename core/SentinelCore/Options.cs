@@ -349,10 +349,11 @@ public sealed class BugReportOptions
 {
     public const string SectionName = "BugReports";
 
-    // Off by default - nothing here is sent anywhere until explicitly turned on. The recipient
-    // is fixed (see IBugReportSender.Recipient) and isn't exposed as a setting; sending reuses
-    // whatever SMTP account is already configured under Email above.
-    public bool Enabled { get; init; }
+    // On by default - internal errors are worth hearing about, and an install that only reports
+    // them once someone opts in never reports the ones that matter. Still sends nothing until
+    // Email is configured. The recipient is fixed (see IBugReportSender.Recipient) and isn't
+    // exposed as a setting; sending reuses whatever SMTP account is configured under Email above.
+    public bool Enabled { get; init; } = true;
 }
 
 public sealed class LoginAlertOptions

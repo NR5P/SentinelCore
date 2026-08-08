@@ -360,7 +360,7 @@ public sealed class InternetExposedSettingsDto
 
 public sealed class BugReportSettingsDto
 {
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
 }
 
 public sealed class LoginAlertSettingsDto
