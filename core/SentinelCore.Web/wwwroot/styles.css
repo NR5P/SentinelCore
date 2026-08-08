@@ -894,6 +894,13 @@ main {
   gap: 6px;
 }
 
+/* Scoped, like every other .hidden in this sheet - see the note above .tab-pane.hidden. Needed
+   because display:flex above would otherwise win over a bare .hidden. Used by the sensor
+   threshold fields, which only apply to the two numeric compare modes. */
+.field-row.hidden {
+  display: none;
+}
+
 .field-label {
   font-size: 12px;
   color: var(--text-dim);

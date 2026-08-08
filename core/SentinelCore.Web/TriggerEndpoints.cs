@@ -41,13 +41,21 @@ public sealed class TriggerConfigDto
     public string SensorDeviceId { get; set; } = "";
     public string SensorTriggerOn { get; set; } = "on";
     public int SensorCooldownSeconds { get; set; } = 30;
+    public string SensorMeasurement { get; set; } = "";
+    public double SensorThreshold { get; set; }
 
     public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
+
+    public bool UsesThreshold =>
+        SensorTriggerOn.Trim().ToLowerInvariant() is "below" or "above";
 }
 
 public static class TriggerEndpoints
 {
-    internal static readonly string[] SensorTriggerOnValues = ["on", "off", "any"];
+    // "below"/"above" compare a harvested number against SensorThreshold; the first three read the
+    // device's on/off state. Kept as one field rather than a separate mode flag because from the
+    // user's side it is one question - what about this sensor should fire the camera.
+    internal static readonly string[] SensorTriggerOnValues = ["on", "off", "any", "below", "above"];
 
     // Turns whatever the client sent into the zone list to persist, and is where the
     // old-client-must-not-destroy-data rule actually lives.
@@ -96,7 +104,8 @@ public static class TriggerEndpoints
             var profile = string.IsNullOrWhiteSpace(dto.AlertProfile) ? "default" : dto.AlertProfile.Trim();
             var config = new TriggerConfig(id, dto.Enabled, zones[0].Polygon, zones[0].MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
                 dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile,
-                dto.SensorDeviceId.Trim(), dto.SensorTriggerOn.Trim().ToLowerInvariant(), dto.SensorCooldownSeconds, zones);
+                dto.SensorDeviceId.Trim(), dto.SensorTriggerOn.Trim().ToLowerInvariant(), dto.SensorCooldownSeconds, zones,
+                dto.SensorMeasurement.Trim(), dto.SensorThreshold);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         }).RequireAuthorization("AdminOnly");
@@ -218,7 +227,16 @@ public static class TriggerEndpoints
             errors.Add("The sensor device id isn't a valid device.");
 
         if (dto.HasSensorBinding && !SensorTriggerOnValues.Contains(dto.SensorTriggerOn, StringComparer.OrdinalIgnoreCase))
-            errors.Add("Sensor trigger state must be 'on', 'off', or 'any'.");
+            errors.Add("Sensor trigger state must be 'on', 'off', 'any', 'below', or 'above'.");
+
+        // The one combination that would save happily and then never fire: a comparison with
+        // nothing named to compare. Worth refusing at the door, because the failure is silent
+        // afterwards - no state ever satisfies an empty key.
+        if (dto.HasSensorBinding && dto.UsesThreshold && string.IsNullOrWhiteSpace(dto.SensorMeasurement))
+            errors.Add("Choose which reading to compare when firing on a threshold.");
+
+        if (dto.HasSensorBinding && dto.UsesThreshold && !double.IsFinite(dto.SensorThreshold))
+            errors.Add("The sensor threshold must be a number.");
 
         if (dto.SensorCooldownSeconds is < 0 or > 3600)
             errors.Add("Sensor cooldown must be between 0 and 3600 seconds.");

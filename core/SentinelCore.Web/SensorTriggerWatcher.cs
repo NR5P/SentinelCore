@@ -37,16 +37,40 @@ public sealed class SensorTriggerWatcher(
     // topic -> the sensors listening on it. One topic can legitimately drive more than one camera.
     private volatile Dictionary<string, List<SensorBinding>> _bindings = new(StringComparer.Ordinal);
 
-    // Last power we saw per device, so a sensor that republishes "ON" every 30 seconds fires once
-    // when it turns on rather than every time it repeats itself. A device missing from here has no
-    // baseline yet - see OnMessageAsync for why that first message never fires anything.
-    private readonly Dictionary<Guid, DevicePower> _lastPower = [];
+    // What we last saw for each binding, so a sensor that republishes "ON" (or a distance that
+    // stays under the threshold) every 30 seconds fires once on the change rather than every time
+    // it repeats itself. A binding missing from here has no baseline yet - see OnMessageAsync for
+    // why that first message never fires anything.
+    //
+    // Keyed per binding rather than per device: two cameras can watch the same sensor with
+    // different thresholds, and one crossing its line says nothing about whether the other did.
+    private readonly Dictionary<BindingKey, DevicePower> _lastPower = [];
+    private readonly Dictionary<BindingKey, bool> _lastSatisfied = [];
+
+    // Bindings we've already complained about naming a reading the sensor doesn't publish. The
+    // warning is worth making loudly once; repeating it for every message on a chatty topic would
+    // bury the log.
+    private readonly HashSet<BindingKey> _warnedMissingMeasurement = [];
     private readonly object _stateLock = new();
+
+    // The condition is part of the identity, not just the camera and device. Editing a threshold
+    // from "below 100" to "below 200" produces a different key, so the new condition re-baselines
+    // instead of being compared against what the old one had decided - otherwise moving the line
+    // past a stationary reading fires the camera on the save, with nothing having happened.
+    // Reconcile prunes keys that no longer correspond to a live binding.
+    private readonly record struct BindingKey(
+        Guid CameraId, Guid DeviceId, string TriggerOn, string Measurement, double Threshold);
 
     private HashSet<string> _subscribedTopics = new(StringComparer.Ordinal);
     private CancellationToken _stoppingToken = CancellationToken.None;
 
-    private sealed record SensorBinding(HubDevice Device, Guid CameraId, string TriggerOn, int CooldownSeconds);
+    private sealed record SensorBinding(
+        HubDevice Device, Guid CameraId, string TriggerOn, int CooldownSeconds, string Measurement, double Threshold)
+    {
+        public bool IsThreshold => TriggerOn is "below" or "above";
+
+        public BindingKey Key => new(CameraId, Device.Id, TriggerOn, Measurement, Threshold);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -113,10 +137,13 @@ public sealed class SensorTriggerWatcher(
             if (!bindings.TryGetValue(device.StateTopic, out var list))
                 bindings[device.StateTopic] = list = [];
 
-            list.Add(new SensorBinding(device, config.CameraId, config.SensorTriggerOn, config.SensorCooldownSeconds));
+            list.Add(new SensorBinding(
+                device, config.CameraId, config.SensorTriggerOn, config.SensorCooldownSeconds,
+                config.SensorMeasurement, config.SensorThreshold));
         }
 
         _bindings = bindings;
+        PruneBaselines(bindings.Values.SelectMany(list => list).Select(b => b.Key).ToHashSet());
 
         if (bindings.Count == 0)
         {
@@ -178,7 +205,7 @@ public sealed class SensorTriggerWatcher(
             // Clean session, so the broker kept nothing: every wanted topic has to be sent again,
             // and every device needs a fresh baseline before it's allowed to fire (see below).
             _subscribedTopics = new HashSet<string>(StringComparer.Ordinal);
-            lock (_stateLock) _lastPower.Clear();
+            lock (_stateLock) ClearBaselines();
 
             logger.LogInformation("Sensor triggers connected to MQTT broker at {Host}:{Port}", host, port);
         }
@@ -227,15 +254,26 @@ public sealed class SensorTriggerWatcher(
         foreach (var binding in bindings)
         {
             var reading = DeviceTopics.ParseState(binding.Device, payload);
-            if (reading is null || reading.Power == DevicePower.Unknown) continue;
+            if (reading is null) continue;
+
+            // Fire-and-forget below: an MQTT message handler must not block the client's receive
+            // loop for the seconds a snapshot and a pipeline round-trip take, and every failure
+            // path inside TriggerAsync already logs and returns rather than throwing.
+            if (binding.IsThreshold)
+            {
+                if (CrossedThreshold(binding, reading, out var detail)) _ = FireAsync(binding, detail);
+                continue;
+            }
+
+            if (reading.Power == DevicePower.Unknown) continue;
 
             bool isFirstReading;
             bool changed;
             lock (_stateLock)
             {
-                isFirstReading = !_lastPower.TryGetValue(binding.Device.Id, out var previous);
+                isFirstReading = !_lastPower.TryGetValue(binding.Key, out var previous);
                 changed = isFirstReading || previous != reading.Power;
-                _lastPower[binding.Device.Id] = reading.Power;
+                _lastPower[binding.Key] = reading.Power;
             }
 
             // The first message after subscribing is the baseline, never a trigger. Brokers
@@ -245,13 +283,80 @@ public sealed class SensorTriggerWatcher(
 
             if (!Fires(binding.TriggerOn, reading.Power)) continue;
 
-            // Fire-and-forget: an MQTT message handler must not block the client's receive loop
-            // for the seconds a snapshot and a pipeline round-trip take, and every failure path
-            // inside TriggerAsync already logs and returns rather than throwing.
-            _ = FireAsync(binding, reading.Power);
+            _ = FireAsync(binding, reading.Power.ToString().ToLowerInvariant());
         }
 
         return Task.CompletedTask;
+    }
+
+    // True only on the message where the reading crosses INTO the firing range. A tape measure
+    // pointed at a driveway sits below its threshold for as long as the car is parked there, and
+    // the interesting moment is the arrival, not each of the thousand messages that follow. Going
+    // back out of range re-arms it and fires nothing by itself.
+    private bool CrossedThreshold(SensorBinding binding, DeviceStateReading reading, out string detail)
+    {
+        detail = string.Empty;
+
+        if (!reading.Measurements.TryGetValue(binding.Measurement, out var value))
+        {
+            WarnMissingMeasurementOnce(binding, reading);
+            return false;
+        }
+
+        var satisfied = Satisfies(binding.TriggerOn, value, binding.Threshold);
+
+        bool isFirstReading;
+        bool wasSatisfied;
+        lock (_stateLock)
+        {
+            isFirstReading = !_lastSatisfied.TryGetValue(binding.Key, out wasSatisfied);
+            _lastSatisfied[binding.Key] = satisfied;
+        }
+
+        // Same baseline rule as the on/off path: a retained message replayed at subscribe time
+        // describes how the world already was, not a change worth waking a camera for.
+        if (isFirstReading || wasSatisfied || !satisfied) return false;
+
+        detail = $"{binding.Measurement} {binding.TriggerOn} {binding.Threshold:0.##}, read {value:0.##}";
+        return true;
+    }
+
+    private void WarnMissingMeasurementOnce(SensorBinding binding, DeviceStateReading reading)
+    {
+        lock (_stateLock)
+        {
+            if (!_warnedMissingMeasurement.Add(binding.Key)) return;
+        }
+
+        // The keys it *did* publish are the whole diagnosis - the usual cause is a name that
+        // differs from what was guessed ("illuminance_lux", not "illuminance").
+        logger.LogWarning(
+            "Camera {CameraId} fires on '{Measurement}' from sensor '{DeviceName}', which doesn't report it. It reports: {Available}",
+            binding.CameraId, binding.Measurement, binding.Device.Name,
+            reading.Measurements.Count == 0 ? "(no numeric readings)" : string.Join(", ", reading.Measurements.Keys));
+    }
+
+    // Every baseline this instance holds. Called under _stateLock whenever the subscription is
+    // torn down or re-established: a clean session means the broker kept nothing, so every binding
+    // has to earn a fresh baseline before it is allowed to fire again.
+    private void ClearBaselines()
+    {
+        _lastPower.Clear();
+        _lastSatisfied.Clear();
+        _warnedMissingMeasurement.Clear();
+    }
+
+    // Drops what belongs to bindings that are gone or have been edited, so the state here can't
+    // outgrow the configuration that justifies it. Dropping is always safe: a key that comes back
+    // simply re-baselines and skips one message, which is the same thing a restart does.
+    private void PruneBaselines(HashSet<BindingKey> live)
+    {
+        lock (_stateLock)
+        {
+            foreach (var key in _lastPower.Keys.Where(k => !live.Contains(k)).ToArray()) _lastPower.Remove(key);
+            foreach (var key in _lastSatisfied.Keys.Where(k => !live.Contains(k)).ToArray()) _lastSatisfied.Remove(key);
+            _warnedMissingMeasurement.IntersectWith(live);
+        }
     }
 
     // Public so the truth table can be tested directly - this project has no InternalsVisibleTo,
@@ -263,14 +368,20 @@ public sealed class SensorTriggerWatcher(
         _ => power == DevicePower.On
     };
 
-    private async Task FireAsync(SensorBinding binding, DevicePower power)
+    // Strict comparison both ways, so a reading sitting exactly on the threshold is not "below"
+    // it. The alternative makes a sensor parked on a round number - which is where cheap sensors
+    // like to sit - flap in and out of range forever.
+    public static bool Satisfies(string triggerOn, double value, double threshold) =>
+        triggerOn == "below" ? value < threshold : value > threshold;
+
+    private async Task FireAsync(SensorBinding binding, string detail)
     {
         try
         {
             var camera = await cameras.GetAsync(binding.CameraId, _stoppingToken);
             if (camera is null) return;
 
-            var source = $"sensor '{binding.Device.Name}' ({power.ToString().ToLowerInvariant()})";
+            var source = $"sensor '{binding.Device.Name}' ({detail})";
             var result = await triggers.TriggerAsync(
                 camera,
                 new CameraTriggerRequest(source, AlertProfile: null, binding.CooldownSeconds),
@@ -292,7 +403,7 @@ public sealed class SensorTriggerWatcher(
     private async Task DisconnectAsync()
     {
         _subscribedTopics = new HashSet<string>(StringComparer.Ordinal);
-        lock (_stateLock) _lastPower.Clear();
+        lock (_stateLock) ClearBaselines();
 
         if (!_client.IsConnected) return;
 

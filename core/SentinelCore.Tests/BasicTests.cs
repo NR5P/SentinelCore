@@ -4297,6 +4297,64 @@ public sealed class BasicTests
         Assert.False(saved.Enabled);
     }
 
+    [Theory]
+    [InlineData("below", 40, 100, true)]
+    [InlineData("below", 140, 100, false)]
+    [InlineData("above", 140, 100, true)]
+    [InlineData("above", 40, 100, false)]
+    // Exactly on the line satisfies neither. A sensor resting on a round number would otherwise
+    // flip in and out of range on noise alone, and each entry is a camera trigger.
+    [InlineData("below", 100, 100, false)]
+    [InlineData("above", 100, 100, false)]
+    // Negative thresholds are ordinary - an outdoor thermometer crossing below freezing.
+    [InlineData("below", -5, 0, true)]
+    public void SensorTriggerWatcher_Satisfies_ComparesAgainstTheThreshold(
+        string triggerOn, double value, double threshold, bool expected) =>
+        Assert.Equal(expected, SensorTriggerWatcher.Satisfies(triggerOn, value, threshold));
+
+    [Fact]
+    public async Task SqliteTriggerStore_SaveAsync_RoundTripsAThresholdBinding()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid().ToString();
+
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId) with
+        {
+            SensorDeviceId = deviceId,
+            SensorTriggerOn = "below",
+            SensorMeasurement = "distance",
+            // A fraction, to catch the column being declared INTEGER rather than REAL.
+            SensorThreshold = 152.5
+        }, CancellationToken.None);
+
+        var saved = await store.GetAsync(cameraId, CancellationToken.None);
+
+        Assert.NotNull(saved);
+        Assert.True(saved!.UsesThreshold);
+        Assert.Equal("distance", saved.SensorMeasurement);
+        Assert.Equal(152.5, saved.SensorThreshold);
+    }
+
+    [Fact]
+    public async Task SqliteTriggerStore_OnOffBinding_IsNotAThresholdBinding()
+    {
+        using var store = new SqliteTriggerStore(Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}"));
+        var cameraId = Guid.NewGuid();
+
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId) with
+        {
+            SensorDeviceId = Guid.NewGuid().ToString(),
+            SensorTriggerOn = "on"
+        }, CancellationToken.None);
+
+        var saved = await store.GetAsync(cameraId, CancellationToken.None);
+
+        Assert.NotNull(saved);
+        Assert.False(saved!.UsesThreshold);
+        Assert.Equal(string.Empty, saved.SensorMeasurement);
+    }
+
     [Fact]
     public async Task SqliteTriggerStore_ConfigWithNoSensor_ReportsNoBinding()
     {

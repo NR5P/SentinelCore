@@ -7,6 +7,9 @@ window.GateWatchTriggers = (function () {
   let activeZone = 0;
   let referenceUrl = null;
   let draggingCircle = false;
+  // Cached so the "reading to compare" list can be rebuilt when the sensor changes without
+  // re-fetching the device list.
+  let sensorDevices = [];
 
   // The detector works on a fixed 320x180 grid (MotionDetector.GridWidth/GridHeight), so a size
   // expressed as a fraction of the frame turns into this many pixels - the number the trigger
@@ -55,6 +58,7 @@ window.GateWatchTriggers = (function () {
 
       let alertProfile = "default";
       let sensorDeviceId = "";
+      let sensorMeasurement = "";
       if (configResp.ok) {
         const config = await configResp.json();
         // Prefer the zone list. Fall back to the legacy single-polygon fields for a server that
@@ -83,6 +87,8 @@ window.GateWatchTriggers = (function () {
         sensorDeviceId = config.sensorDeviceId || "";
         document.getElementById("zone-sensor-state").value = config.sensorTriggerOn || "on";
         document.getElementById("zone-sensor-cooldown").value = config.sensorCooldownSeconds ?? 30;
+        document.getElementById("zone-sensor-threshold").value = config.sensorThreshold ?? 0;
+        sensorMeasurement = config.sensorMeasurement || "";
       }
 
       const profileNames = profilesResp.ok ? await profilesResp.json() : [];
@@ -90,6 +96,8 @@ window.GateWatchTriggers = (function () {
 
       const devices = devicesResp && devicesResp.ok ? await devicesResp.json() : [];
       populateSensorOptions(devices, sensorDeviceId);
+      populateMeasurementOptions(sensorDeviceId, sensorMeasurement);
+      updateSensorModeRows();
 
       const triggerUrl = triggerUrlResp && triggerUrlResp.ok ? await triggerUrlResp.json() : null;
       showTriggerUrl(triggerUrl);
@@ -144,20 +152,53 @@ window.GateWatchTriggers = (function () {
     select.value = selected || "default";
   }
 
-  // Sensors only - a light or a plug has a state topic too, but firing a camera off one is not
-  // what this is for. A bound device that has since been deleted or changed kind is still listed
+  // Sensors first, because they are what this is for - but not sensors only. A contact on a gate
+  // or a garage door is registered as that kind rather than as a sensor, and "film the driveway
+  // when the gate opens" is exactly the thing people want. Anything without a state topic is left
+  // out: it has no reading to fire on. A bound device that has since been deleted is still listed
   // (as "no longer available") so it's visible rather than silently swapped to "none" on save.
   function populateSensorOptions(devices, selected) {
     const select = document.getElementById("zone-sensor-device");
-    const sensors = (devices || []).filter(d => d.kind === "sensor");
-    const options = [{ id: "", name: "None" }, ...sensors];
-    if (selected && !sensors.some(d => d.id === selected))
-      options.push({ id: selected, name: "(no longer available)" });
+    sensorDevices = (devices || []).filter(d => d.stateTopic);
 
-    select.innerHTML = options
-      .map(d => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.room ? `${d.name} - ${d.room}` : d.name)}</option>`)
-      .join("");
+    const sensors = sensorDevices.filter(d => d.kind === "sensor");
+    const others = sensorDevices.filter(d => d.kind !== "sensor");
+    const label = d => escapeHtml(d.room ? `${d.name} - ${d.room}` : d.name);
+    const option = d => `<option value="${escapeHtml(d.id)}">${label(d)}</option>`;
+    const group = (name, list) =>
+      list.length ? `<optgroup label="${name}">${list.map(option).join("")}</optgroup>` : "";
+
+    let html = `<option value="">None</option>` + group("Sensors", sensors) + group("Other devices", others);
+    if (selected && !sensorDevices.some(d => d.id === selected))
+      html += `<option value="${escapeHtml(selected)}">(no longer available)</option>`;
+
+    select.innerHTML = html;
     select.value = selected || "";
+  }
+
+  // The readings this sensor has actually published, which is the only list there is - nothing
+  // declares up front what a device reports (see DeviceTopics.HarvestMeasurements). A saved key
+  // the device hasn't reported since the hub restarted is kept in the list rather than dropped,
+  // because losing it here would silently rewrite a working binding on the next save.
+  function populateMeasurementOptions(deviceId, selected) {
+    const select = document.getElementById("zone-sensor-measurement");
+    const device = sensorDevices.find(d => d.id === deviceId);
+    const keys = ((device && device.measurements) || []).map(m => m.key);
+    if (selected && !keys.includes(selected)) keys.push(selected);
+
+    select.innerHTML = keys.length
+      ? keys.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join("")
+      : `<option value="">(nothing reported yet)</option>`;
+    select.value = selected || keys[0] || "";
+  }
+
+  // The comparison rows only mean anything for the two numeric modes, and a threshold box sitting
+  // under an on/off binding reads as though it applies.
+  function updateSensorModeRows() {
+    const mode = document.getElementById("zone-sensor-state").value;
+    const numeric = mode === "below" || mode === "above";
+    document.getElementById("zone-sensor-measurement-row").classList.toggle("hidden", !numeric);
+    document.getElementById("zone-sensor-threshold-row").classList.toggle("hidden", !numeric);
   }
 
   function showTriggerUrl(info) {
@@ -386,6 +427,13 @@ window.GateWatchTriggers = (function () {
 
   document.getElementById("zone-save-btn").addEventListener("click", saveZoneConfig);
 
+  document.getElementById("zone-sensor-state").addEventListener("change", updateSensorModeRows);
+
+  // Each sensor reports its own set of readings, so the compare list has to follow the device.
+  document.getElementById("zone-sensor-device").addEventListener("change", e => {
+    populateMeasurementOptions(e.target.value, "");
+  });
+
   async function saveZoneConfig() {
     const errorsEl = document.getElementById("zone-editor-errors");
     errorsEl.innerHTML = "";
@@ -409,7 +457,9 @@ window.GateWatchTriggers = (function () {
       alertProfile: document.getElementById("zone-alert-profile").value || "default",
       sensorDeviceId: document.getElementById("zone-sensor-device").value || "",
       sensorTriggerOn: document.getElementById("zone-sensor-state").value || "on",
-      sensorCooldownSeconds: parseInt(document.getElementById("zone-sensor-cooldown").value, 10) || 0
+      sensorCooldownSeconds: parseInt(document.getElementById("zone-sensor-cooldown").value, 10) || 0,
+      sensorMeasurement: document.getElementById("zone-sensor-measurement").value || "",
+      sensorThreshold: parseFloat(document.getElementById("zone-sensor-threshold").value) || 0
     };
 
     try {

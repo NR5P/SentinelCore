@@ -466,13 +466,23 @@
               <label class="field-label" for="zone-sensor-device">Trigger from a sensor</label>
               <select id="zone-sensor-device" class="field-input"></select>
             </div>
-            <div class="field-row" data-tip="Which reading fires the camera. 'On' covers motion detected, contact opened, or presence - whatever that sensor calls its active state. Only a change fires it, so a sensor that repeats itself every few seconds still triggers once.">
+            <div class="field-row" data-tip="Which reading fires the camera. 'On' covers motion detected, contact opened, or presence - whatever that sensor calls its active state. The two comparisons are for sensors that report a number instead, like a distance or a light level. Only a change fires it, so a sensor that repeats itself every few seconds still triggers once.">
               <label class="field-label" for="zone-sensor-state">Fire when the sensor reads</label>
               <select id="zone-sensor-state" class="field-input">
                 <option value="on">On</option>
                 <option value="off">Off</option>
                 <option value="any">Any change</option>
+                <option value="below">Drops below a value</option>
+                <option value="above">Rises above a value</option>
               </select>
+            </div>
+            <div class="field-row" id="zone-sensor-measurement-row" data-tip="Which of the sensor's numbers to compare. The list is whatever this sensor has actually reported so far - a distance sensor reports one, a climate sensor reports several. If it's empty, the sensor hasn't published a reading since the hub last started.">
+              <label class="field-label" for="zone-sensor-measurement">Reading to compare</label>
+              <select id="zone-sensor-measurement" class="field-input"></select>
+            </div>
+            <div class="field-row" id="zone-sensor-threshold-row" data-tip-right data-tip="The value to compare against, in whatever units the sensor reports. It fires on the message that crosses the line, not repeatedly while it stays there - so a car parked inside the range triggers once on arrival.">
+              <label class="field-label" for="zone-sensor-threshold">Value</label>
+              <input type="number" id="zone-sensor-threshold" class="field-input" step="any" />
             </div>
             <div class="field-row" data-tip-right data-tip="Ignore repeat sensor triggers for this camera for this many seconds. Separate from the motion cooldown above, because how often a sensor should fire the camera depends on the sensor, not on the video.">
               <label class="field-label" for="zone-sensor-cooldown">Sensor cooldown (s)</label>
