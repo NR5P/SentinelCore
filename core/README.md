@@ -288,11 +288,25 @@ To add a different action (MQTT, SMS, database, Home Assistant), implement `IAle
 
 ## Data
 
+The ingest service writes under `SentinelCore/data/`:
+
 - `data/images/YYYY-MM-DD/`: retained alert images, if enabled
 - `data/results/`: queued, completed, or failed JSON results
 - `data/events.db`: SQLite history of every alert (one row per alert, updated as it progresses from queued to completed/failed), with a link to its saved image file
+- `data/devices.db`, `schedules.db`, `push-devices.db`, `automation-rules.db`, `package-watches.db`, `timeline-reviews.db`: one database per feature that keeps state of its own
+- `data/fastlocal-model/`: the downloaded `FastLocal` detector weights
 
-Retention cleanup runs every 12 hours according to `Bridge:RetentionDays`. It does not remove old rows from `events.db`.
+The dashboard writes separately, under `SentinelCore.Web/data/` (`CamerasDataDirectory`). In practice this is the bulk of the disk footprint — far more than the ingest service — so it is the first place to look when space runs short:
+
+- `data/trigger-clips/<cameraId>/`: saved clips for confirmed triggers, the largest consumer by a wide margin
+- `data/trigger-images/<cameraId>/`: trigger snapshots, plus `_latest.jpg` per camera
+- `data/clip-buffer/<cameraId>/`: the rolling ~2s video segments trigger clips and Trigger Rewind are cut from, continuously recycled
+- `data/triggers.db`, `cameras.db`, `accounts.db`, `live-order.db`, `gate-checks.db`
+
+Two retention passes run, and they cover different data:
+
+- `Bridge:RetentionDays` — every 12 hours, prunes saved alert images and result JSON. It does not remove old rows from `events.db`.
+- `Bridge:UnverifiedMotionRetentionDays` (default 3) — prunes motion that was never confirmed as a real subject: it deletes those rows from `triggers.db` as well as their clips and images, then sweeps any file under the trigger directories that no row points at any more. This is what keeps `trigger-clips` at a steady size rather than growing without limit.
 
 Query the history with `sqlite3` or any SQLite client, for example:
 
