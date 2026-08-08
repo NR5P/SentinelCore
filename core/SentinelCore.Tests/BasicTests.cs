@@ -436,6 +436,58 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void OllamaVisionClient_BuildPrompt_OnlyAsksForVehicleMotionOnABurst()
+    {
+        var profile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
+        var occurredAt = DateTimeOffset.UtcNow;
+        var singleFrameAlert = new IncomingAlert(
+            Guid.NewGuid(), "gateCamera", null, occurredAt, occurredAt,
+            "gate", "image/jpeg", "alert.jpg", []);
+
+        // One image cannot show motion, so the field must not be asked for at all - otherwise the
+        // model answers it from pose, which is what vehicle.orientation already reports honestly.
+        // Matched narrowly: an unrelated rule already uses the bare word "motion" to say a single
+        // frame cannot confirm a vehicle has settled.
+        var singleFramePrompt = OllamaVisionClient.BuildPrompt(singleFrameAlert, profile);
+        Assert.DoesNotContain("vehicle.motion", singleFramePrompt);
+        Assert.DoesNotContain("\"motion\"", singleFramePrompt);
+        Assert.Contains("- One still image normally cannot prove motion.", singleFramePrompt);
+
+        var burstPrompt = OllamaVisionClient.BuildPrompt(singleFrameAlert with { ExtraFrames = [[1, 2, 3]] }, profile);
+        Assert.Contains("\"motion\": \"unknown\",", burstPrompt);
+        Assert.Contains("Allowed vehicle.motion values:", burstPrompt);
+        Assert.Contains("Set vehicle.motion from how the vehicle's position and apparent size change", burstPrompt);
+
+        // The blanket single-frame instruction has to go when a burst replaces it, or the prompt
+        // tells the model to discard the very evidence the extra frames were captured to provide.
+        Assert.DoesNotContain("- One still image normally cannot prove motion.", burstPrompt);
+
+        // The interpolated blocks carry their own indentation, because the raw string literal they
+        // are spliced into has already been de-indented by the time they land in it.
+        Assert.Contains("\n    \"motion\": \"unknown\",\n    \"activity\"", burstPrompt);
+        Assert.Contains("\nAllowed vehicle.motion values:\nunknown, stationary,", burstPrompt);
+    }
+
+    [Fact]
+    public void BuildJsonSchema_OnlyDeclaresVehicleMotionForABurst()
+    {
+        // Ollama constrains generation to this schema, so a field the prompt asks for but the
+        // schema omits is not merely dropped - the model cannot emit it at all.
+        var profile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Q"] };
+
+        foreach (var single in new[] { OpenAiVisionClient.BuildJsonSchema(profile), GoogleVisionClient.BuildJsonSchema(profile) })
+            Assert.Null(single["properties"]!["vehicle"]!["properties"]!["motion"]);
+
+        foreach (var burst in new[] { OpenAiVisionClient.BuildJsonSchema(profile, true), GoogleVisionClient.BuildJsonSchema(profile, true) })
+        {
+            var vehicle = burst["properties"]!["vehicle"]!;
+            Assert.NotNull(vehicle["properties"]!["motion"]);
+            // Strict mode has no optional properties: undeclared in "required" means unanswerable.
+            Assert.Contains("motion", vehicle["required"]!.AsArray().Select(n => n!.GetValue<string>()));
+        }
+    }
+
+    [Fact]
     public void OpenAiVisionClient_BuildJsonSchema_OnlyIncludesLicensePlateWhenProfileOptsIn()
     {
         var disabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };

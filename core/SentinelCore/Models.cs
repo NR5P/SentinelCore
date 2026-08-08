@@ -138,6 +138,13 @@ public sealed class VehicleAnalysis
     [JsonPropertyName("orientation")]
     public string Orientation { get; init; } = "unknown";
 
+    // Which way the vehicle is actually travelling, as opposed to Orientation, which is only which
+    // way it is pointed - a vehicle reversing out of the driveway is facing_gate and receding at
+    // the same time. Only requested when a burst of frames was captured (see MultiFrameOptions);
+    // a single image cannot show motion, so this stays "unknown" for every Blue Iris alert.
+    [JsonPropertyName("motion")]
+    public string Motion { get; init; } = "unknown";
+
     [JsonPropertyName("activity")]
     public string Activity { get; init; } = "none";
 
