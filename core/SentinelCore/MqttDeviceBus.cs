@@ -12,9 +12,14 @@ public sealed record DeviceLiveState(
     DevicePower Power,
     int? BrightnessPercent,
     bool Available,
-    DateTimeOffset? LastSeen)
+    DateTimeOffset? LastSeen,
+    // The device's latest numeric readings, accumulated across messages rather than replaced
+    // wholesale. Zigbee2MQTT and Tasmota both publish partial payloads - a message carrying only
+    // a battery percentage must not blank the temperature that arrived a minute earlier.
+    IReadOnlyDictionary<string, double> Measurements)
 {
-    public static readonly DeviceLiveState Unknown = new(DevicePower.Unknown, null, Available: true, LastSeen: null);
+    public static readonly DeviceLiveState Unknown =
+        new(DevicePower.Unknown, null, Available: true, LastSeen: null, DeviceStateReading.NoMeasurements);
 }
 
 public sealed record DeviceCommandResult(bool Published, bool Acknowledged, string? Error);
@@ -506,6 +511,7 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
                         {
                             Power = reading.Power == DevicePower.Unknown ? current.Power : reading.Power,
                             BrightnessPercent = reading.BrightnessPercent ?? current.BrightnessPercent,
+                            Measurements = MergeMeasurements(current.Measurements, reading.Measurements),
                             LastSeen = DateTimeOffset.UtcNow
                         });
                     }
@@ -524,6 +530,19 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
         }
 
         return Task.CompletedTask;
+    }
+
+    // Copy-on-write rather than mutation: GetState hands the cached state out without a lock, so
+    // a reader may still be enumerating the dictionary a new message is merging into.
+    private static IReadOnlyDictionary<string, double> MergeMeasurements(
+        IReadOnlyDictionary<string, double> current, IReadOnlyDictionary<string, double> incoming)
+    {
+        if (incoming.Count == 0) return current;
+        if (current.Count == 0) return incoming;
+
+        var merged = new Dictionary<string, double>(current, StringComparer.Ordinal);
+        foreach (var (key, value) in incoming) merged[key] = value;
+        return merged;
     }
 
     private void Update(Guid deviceId, Func<DeviceLiveState, DeviceLiveState> transform) =>
