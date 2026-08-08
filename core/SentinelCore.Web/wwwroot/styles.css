@@ -1416,6 +1416,38 @@ main {
   color: var(--amber);
 }
 
+/* What a sensor reports. Empty for everything else, and :empty keeps it from adding the tile's
+   own 10px gap to a lamp that has nothing to say. */
+.device-measurements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.device-measurements:empty {
+  display: none;
+}
+
+.device-measurement {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.device-measurement-key {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.device-measurement-value {
+  color: var(--text);
+  font-size: 14px;
+  /* Tabular figures so a value ticking 21.4 -> 21.5 doesn't shuffle the row beside it. */
+  font-variant-numeric: tabular-nums;
+}
+
 .device-tile-controls {
   display: flex;
   align-items: center;
