@@ -25,9 +25,41 @@ public sealed class CameraInputDto
     public string? OnvifProfileToken { get; set; }
 }
 
+// One live tile reporting how it actually got its video. The live grid tries WebRTC, then MSE,
+// then HLS (see attachPlayer in cameras.js), and until this existed nothing anywhere recorded
+// which of the three a tile ended up on - so "the feed was stuttering last night" was
+// unanswerable after the fact, even though the three tiers look completely different on screen
+// and the difference between them is most of what "stuttering" means here.
+public sealed class LivePathReportDto
+{
+    // "webrtc" | "mse" | "hls" - the tier this report is about.
+    [Required]
+    public string Tier { get; set; } = string.Empty;
+
+    // "playing" when frames reached the screen, "failed" when the tile gave up on this tier and
+    // dropped to the next one, "degraded" when it hit a stall it expects to recover from in place.
+    // The last is what a rebuffering feed looks like from here, and is the whole reason someone
+    // reads this log.
+    [Required]
+    public string Outcome { get; set; } = string.Empty;
+
+    // Why it failed, for a failure. Free text from the client, so it is logged as data and
+    // never interpreted.
+    public string? Reason { get; set; }
+
+    // Milliseconds from the tile starting this tier to the outcome. The number that says whether
+    // a fallback was a real failure or just a deadline that was too tight.
+    public int ElapsedMs { get; set; }
+}
+
 public static class CameraEndpoints
 {
     private static readonly string[] AllowedSchemes = ["rtsp", "http", "https"];
+
+    // Tiers the report endpoint will log. A closed set, so a client bug (or anything else posting
+    // here) can't write arbitrary strings into the log.
+    private static readonly string[] LiveTiers = ["webrtc", "mse", "hls"];
+    private static readonly string[] LiveOutcomes = ["playing", "failed", "degraded"];
 
     public static void MapCameraEndpoints(this WebApplication app)
     {
@@ -204,6 +236,59 @@ public static class CameraEndpoints
             }
 
             return Results.Empty;
+        }).RequireAuthorization();
+
+        // Where the live grid reports which tier each tile landed on - see LivePathReportDto for
+        // why. Cheap enough to call on every transition: one small POST per tile per tier change,
+        // against a grid that is already fetching a video segment per camera per second.
+        //
+        // Logged, not stored. The question this answers ("was it WebRTC or HLS at 9pm, and why")
+        // is asked of the log alongside the go2rtc and ffmpeg lines that explain it, and a
+        // security box should not grow a database table for telemetry about itself.
+        app.MapPost("/api/cameras/{id:guid}/live-path", async (
+            Guid id, LivePathReportDto report, ICameraStore store, ILoggerFactory loggerFactory, CancellationToken ct) =>
+        {
+            var tier = report.Tier?.Trim().ToLowerInvariant() ?? string.Empty;
+            var outcome = report.Outcome?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (!LiveTiers.Contains(tier) || !LiveOutcomes.Contains(outcome))
+                return Results.BadRequest(new { errors = new[] { "Unrecognised tier or outcome." } });
+
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            // Bounded and stripped of newlines: this is client-supplied text going into a log,
+            // and a log line that can contain newlines is a log line that can forge other entries.
+            var reason = report.Reason is null
+                ? null
+                : new string(report.Reason.Where(c => !char.IsControl(c)).Take(200).ToArray());
+
+            var logger = loggerFactory.CreateLogger("SentinelCore.Web.LiveView");
+            switch (outcome)
+            {
+                case "playing":
+                    logger.LogInformation(
+                        "Live tile for {Camera} is playing over {Tier}, {ElapsedMs}ms to first frame",
+                        camera.Name, tier, report.ElapsedMs);
+                    break;
+
+                // Warnings, not Information: a fallback moves a viewer to a tier that can be an
+                // order of magnitude further behind the camera, and a degrade is a feed visibly
+                // stalling. Both are the thing that gets noticed and complained about, so both
+                // should be findable without knowing to look.
+                case "degraded":
+                    logger.LogWarning(
+                        "Live tile for {Camera} stalled on {Tier} after {ElapsedMs}ms and is recovering in place: {Reason}",
+                        camera.Name, tier, report.ElapsedMs, reason ?? "no reason given");
+                    break;
+
+                default:
+                    logger.LogWarning(
+                        "Live tile for {Camera} gave up on {Tier} after {ElapsedMs}ms: {Reason}",
+                        camera.Name, tier, report.ElapsedMs, reason ?? "no reason given");
+                    break;
+            }
+
+            return Results.NoContent();
         }).RequireAuthorization();
 
         // Instant poster frame for a camera tile: if there's a warm stream, this is just a file

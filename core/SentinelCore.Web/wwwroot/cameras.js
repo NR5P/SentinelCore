@@ -5,17 +5,27 @@ window.GateWatchCameras = (function () {
   const webrtcConnections = new Map();
   const mseConnections = new Map();
 
-  // Set the first time the server answers 503 for a WebRTC offer - that's its "go2rtc isn't
-  // installed here" signal, which won't change until the server restarts, so every other tile
-  // (and every rebuild this page load) goes straight to HLS instead of re-asking. MSE runs
-  // through the same go2rtc, so it's skipped too, straight to HLS.
-  let webrtcUnavailable = false;
+  // How long a "this tier isn't available" verdict is trusted before the next tile is allowed to
+  // find out for itself. These used to be plain booleans that, once set, stayed set for the life
+  // of the page - which is the life of the tab, since this is a single-page dashboard people leave
+  // open for days. That made a momentary server-side condition permanent: the server backs WebRTC
+  // off for a few seconds while go2rtc restarts, one tile happens to ask during that window, and
+  // every tile in that tab is on HLS until somebody reloads. Re-probing costs one small request
+  // per tile per interval, against a grid already fetching a video segment per camera per second.
+  const TIER_UNAVAILABLE_TTL_MS = 2 * 60 * 1000;
+
+  // Set when the server answers 503 for a WebRTC offer - its "go2rtc isn't usable here" signal.
+  // MSE runs through the same go2rtc, so it's skipped too, straight to HLS.
+  let webrtcUnavailableUntil = 0;
 
   // Set when the MSE endpoint itself is missing or refused (older server, go2rtc gone) so other
-  // tiles skip the doomed WebSocket attempt this page load. Distinct from webrtcUnavailable:
+  // tiles skip the doomed WebSocket attempt for a while. Distinct from webrtcUnavailable:
   // WebRTC can be dead (media port unreachable) while MSE works fine - that's its whole reason
   // to exist.
-  let mseUnavailable = false;
+  let mseUnavailableUntil = 0;
+
+  const webrtcUnavailable = () => Date.now() < webrtcUnavailableUntil;
+  const mseUnavailable = () => Date.now() < mseUnavailableUntil;
 
   // Leaving the Live tab pauses players instead of tearing them down immediately, so a quick
   // flip to another tab and back doesn't force a full HLS reconnect. Only if you stay away
@@ -879,7 +889,14 @@ window.GateWatchCameras = (function () {
       status.className = "live-tile-status";
       status.textContent = "connecting…";
 
-      tile.append(video, label, status);
+      // Which of the three live tiers this tile ended up on - see reportLivePath. Blank until
+      // something actually plays, so it never claims a tier the viewer isn't watching.
+      const tier = document.createElement("div");
+      tier.className = "live-tile-tier";
+      tier.dataset.tip = "How this tile is receiving video. webrtc is lowest latency, hls the highest.";
+      liveTierBadges.set(camera.id, tier);
+
+      tile.append(video, label, status, tier);
       // Nothing to arrange with a single camera - the handle would just be clutter over the frame.
       if (cameras.length > 1) tile.appendChild(buildDragHandle(camera));
       if (camera.ptzEnabled) tile.appendChild(buildPtzControls(camera));
@@ -1133,6 +1150,58 @@ window.GateWatchCameras = (function () {
     } catch { /* best effort - see comment above */ }
   }
 
+  // Which tier each tile is currently playing on, shown on the tile itself. The server log answers
+  // "why was it stuttering last night"; this answers "what am I looking at right now", which is
+  // the question you have while standing in front of a feed that looks wrong.
+  const liveTierBadges = new Map();
+
+  // A tile can fail and recover in place several times a second - hls.js raises a fatal error, the
+  // recovery re-arms the loader, the same error comes straight back. That is worth one log line,
+  // not two hundred, and a diagnostic that buries the thing you're looking for is no better than
+  // none. Only degraded reports are throttled: playing and failed are transitions, and there are
+  // only ever a handful of those per tile.
+  const DEGRADED_REPORT_INTERVAL_MS = 5000;
+  const lastDegradedReport = new Map();
+
+  // Live-path reporting. The grid degrades silently through three tiers whose latency differs by
+  // an order of magnitude, and which one a tile lands on is settled by timing races that leave no
+  // trace - so every transition is reported to the server, which logs it. See the /live-path
+  // endpoint in CameraEndpoints.
+  //
+  // Fire-and-forget, and wrapped so thoroughly it cannot throw: a diagnostic that can break a live
+  // tile is worse than no diagnostic at all.
+  function reportLivePath(camera, tier, outcome, reason, elapsedMs) {
+    if (outcome === "degraded") {
+      const previous = lastDegradedReport.get(camera.id) ?? 0;
+      if (Date.now() - previous < DEGRADED_REPORT_INTERVAL_MS) return;
+      lastDegradedReport.set(camera.id, Date.now());
+    }
+
+    if (outcome === "playing") {
+      const badge = liveTierBadges.get(camera.id);
+      if (badge) {
+        badge.textContent = tier;
+        badge.className = `live-tile-tier live-tile-tier-${tier}`;
+      }
+    }
+
+    try {
+      fetch(`/api/cameras/${camera.id}/live-path`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // So a report about a tile that is being torn down still gets out - the interesting
+        // failures are exactly the ones where something is going away.
+        keepalive: true,
+        body: JSON.stringify({
+          tier,
+          outcome,
+          reason: reason ?? null,
+          elapsedMs: Math.max(0, Math.round(elapsedMs))
+        })
+      }).catch(() => { /* best effort */ });
+    } catch { /* reporting must never break playback */ }
+  }
+
   function attachPlayer(video, status, camera) {
     // Not { once: true }: a tile that recovers from a stall has to be able to clear this again,
     // and showStatus below puts it back up whenever playback actually stops.
@@ -1154,7 +1223,7 @@ window.GateWatchCameras = (function () {
     // can't happen - go2rtc not installed on the server (the one-time 503 above), a browser
     // without WebRTC, or a network path that only forwards HTTP (e.g. a Cloudflare Tunnel, which
     // carries the HLS segments fine but not WebRTC's UDP media).
-    if (webrtcUnavailable || typeof RTCPeerConnection === "undefined") {
+    if (webrtcUnavailable() || typeof RTCPeerConnection === "undefined") {
       attachHls(video, status, camera); // no go2rtc on the server - MSE would 503 too
     } else if (webrtcKnownDead()) {
       connectMse(video, status, camera); // WebRTC media can't flow here, but MSE may well work
@@ -1176,15 +1245,32 @@ window.GateWatchCameras = (function () {
 
   // Set (per tab) once a tile has run the whole WebRTC ladder without ever rendering a frame,
   // so reloads and later tiles in this tab go straight to HLS instead of re-proving that the
-  // media port is unreachable, one 6-second attempt at a time. Cleared implicitly by opening a
-  // new tab - environments change (VPN off, different network), and a fresh tab is the natural
-  // point to give WebRTC another shot.
+  // media port is unreachable, one 6-second attempt at a time.
+  //
+  // This stored a bare "1" and was documented as being cleared by opening a new tab. In practice
+  // that was the *only* thing that cleared it, and the flag was a one-way door: webrtcKnownDead()
+  // routes straight past connectWebRtc, while rememberWebrtcAlive() only ever runs from inside
+  // connectWebRtc's own watchdog - so nothing reachable after the latch closed could reopen it.
+  // A single unlucky moment (the server restarting, go2rtc still coming up, the six-second budget
+  // below expiring twice) therefore pinned that tab to HLS for as long as it stayed open, which on
+  // a dashboard people leave up for days is effectively forever. It is a cache of a fact about the
+  // network, and facts about the network expire, so it now stores when it was learned.
+  //
+  // A stale "1" from a previous release reads back as Number("1") = 1, i.e. learned in 1970, and
+  // so expires on sight - no migration needed.
   const WEBRTC_NO_MEDIA_KEY = "webrtcNoMedia";
+  const WEBRTC_NO_MEDIA_TTL_MS = 10 * 60 * 1000;
   const webrtcKnownDead = () => {
-    try { return sessionStorage.getItem(WEBRTC_NO_MEDIA_KEY) === "1"; } catch { return false; }
+    try {
+      const learnedAt = Number(sessionStorage.getItem(WEBRTC_NO_MEDIA_KEY));
+      if (!learnedAt) return false;
+      if (Date.now() - learnedAt < WEBRTC_NO_MEDIA_TTL_MS) return true;
+      sessionStorage.removeItem(WEBRTC_NO_MEDIA_KEY);
+      return false;
+    } catch { return false; }
   };
   const rememberWebrtcDead = () => {
-    try { sessionStorage.setItem(WEBRTC_NO_MEDIA_KEY, "1"); } catch { /* storage off - skip */ }
+    try { sessionStorage.setItem(WEBRTC_NO_MEDIA_KEY, String(Date.now())); } catch { /* storage off - skip */ }
   };
   const rememberWebrtcAlive = () => {
     try { sessionStorage.removeItem(WEBRTC_NO_MEDIA_KEY); } catch { /* storage off - skip */ }
@@ -1193,6 +1279,7 @@ window.GateWatchCameras = (function () {
   async function connectWebRtc(video, status, camera, priorFailures) {
     const pc = new RTCPeerConnection();
     webrtcConnections.set(camera.id, pc);
+    const startedAt = Date.now();
 
     // True while this pc is still the one the tile owns - teardownLive or a newer attempt
     // replaces/removes the map entry, at which point every callback below must do nothing.
@@ -1218,22 +1305,26 @@ window.GateWatchCameras = (function () {
         if (lastTime >= 0 && !sawMedia) {
           sawMedia = true; // the clock moved between ticks - real frames arrived
           rememberWebrtcAlive();
+          reportLivePath(camera, "webrtc", "playing", null, Date.now() - startedAt);
         }
         lastTime = video.currentTime;
         stalledSinceMs = null;
         return;
       }
       stalledSinceMs ??= Date.now();
-      if (Date.now() - stalledSinceMs > 8000) fail();
+      if (Date.now() - stalledSinceMs > 8000) {
+        fail(sawMedia ? "the stream stalled for 8s" : "connected but no frames arrived within 8s");
+      }
     }, 2000);
 
-    const fail = () => {
+    const fail = (reason) => {
       if (!isCurrent()) return;
       webrtcConnections.delete(camera.id);
       clearInterval(stallWatchdog);
       if (disconnectTimer) clearTimeout(disconnectTimer);
       try { pc.close(); } catch { /* already closed */ }
       video.srcObject = null;
+      reportLivePath(camera, "webrtc", "failed", reason, Date.now() - startedAt);
 
       // A connection that genuinely worked and then died resets the count - that's a camera or
       // network hiccup worth retrying afresh, not evidence WebRTC doesn't work here. "Worked"
@@ -1242,7 +1333,7 @@ window.GateWatchCameras = (function () {
       // the camera pull inside the window) used to reset the count here, so the tile re-ran
       // that doomed handshake forever and never reached the HLS fallback below.
       const failures = (sawMedia ? 0 : priorFailures) + 1;
-      if (webrtcUnavailable || failures >= WEBRTC_MAX_FAILURES) {
+      if (webrtcUnavailable() || failures >= WEBRTC_MAX_FAILURES) {
         // A ladder that ends with zero frames ever rendered means this environment can't do
         // WebRTC media at all right now - remember that for the rest of the tab so the next
         // reload doesn't sit through the whole ladder again before showing video. MSE is the
@@ -1280,10 +1371,12 @@ window.GateWatchCameras = (function () {
         case "disconnected":
           // Often self-heals within a second or two - only a "disconnected" that persists is
           // treated as dead. "failed" below is definitive and gets no such grace.
-          if (!disconnectTimer) disconnectTimer = setTimeout(fail, 4000);
+          if (!disconnectTimer) {
+            disconnectTimer = setTimeout(() => fail("the peer connection stayed disconnected for 4s"), 4000);
+          }
           break;
         case "failed":
-          fail();
+          fail("the peer connection failed - the media port is usually unreachable");
           break;
       }
     });
@@ -1306,7 +1399,7 @@ window.GateWatchCameras = (function () {
         body: pc.localDescription.sdp
       });
       if (response.status === 503) {
-        webrtcUnavailable = true; // see declaration - go2rtc isn't on this server
+        webrtcUnavailableUntil = Date.now() + TIER_UNAVAILABLE_TTL_MS; // see declaration
         throw new Error("WebRTC not available on this server");
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1315,8 +1408,8 @@ window.GateWatchCameras = (function () {
       if (!isCurrent()) return;
       await pc.setRemoteDescription({ type: "answer", sdp: answer });
       await waitForConnection(pc, WEBRTC_CONNECT_TIMEOUT_MS);
-    } catch {
-      fail();
+    } catch (error) {
+      fail(error?.message ?? "the WebRTC handshake failed");
     }
   }
 
@@ -1366,7 +1459,7 @@ window.GateWatchCameras = (function () {
   // seconds - and because the media rides the same HTTP connection as the dashboard itself, it
   // works in every environment where the page loads at all. Any failure lands on attachHls.
   function connectMse(video, status, camera) {
-    if (webrtcUnavailable || mseUnavailable || !("MediaSource" in window)) {
+    if (webrtcUnavailable() || mseUnavailable() || !("MediaSource" in window)) {
       attachHls(video, status, camera);
       return;
     }
@@ -1374,6 +1467,7 @@ window.GateWatchCameras = (function () {
     const session = { ws: null, timers: [], objectUrl: null, done: false };
     mseConnections.set(camera.id, session);
     const isCurrent = () => mseConnections.get(camera.id) === session;
+    const startedAt = Date.now();
 
     const cleanup = () => {
       session.done = true;
@@ -1384,11 +1478,12 @@ window.GateWatchCameras = (function () {
       if (isCurrent()) mseConnections.delete(camera.id);
     };
 
-    const fail = () => {
+    const fail = (reason) => {
       if (session.done) return;
       const owned = isCurrent();
       cleanup();
       if (!owned) return;
+      reportLivePath(camera, "mse", "failed", reason, Date.now() - startedAt);
       video.removeAttribute("src");
       video.load();
       attachHls(video, status, camera);
@@ -1406,8 +1501,8 @@ window.GateWatchCameras = (function () {
     try {
       ws = new WebSocket(`${scheme}://${location.host}/api/cameras/${camera.id}/mse`);
     } catch {
-      mseUnavailable = true;
-      fail();
+      mseUnavailableUntil = Date.now() + TIER_UNAVAILABLE_TTL_MS;
+      fail("the browser refused to open the MSE WebSocket");
       return;
     }
     session.ws = ws;
@@ -1426,16 +1521,23 @@ window.GateWatchCameras = (function () {
     // let HLS take over. Generous first deadline - the server may be starting go2rtc.
     let lastTime = -1;
     let stalledSinceMs = null;
+    let sawMedia = false;
     session.timers.push(setInterval(() => {
       if (session.done || !isCurrent()) { cleanup(); return; }
       if (video.paused && receivedAnyMedia) { stalledSinceMs = null; return; }
       if (video.currentTime !== lastTime) {
+        if (lastTime >= 0 && !sawMedia) {
+          sawMedia = true; // the playhead moved between ticks - real frames are rendering
+          reportLivePath(camera, "mse", "playing", null, Date.now() - startedAt);
+        }
         lastTime = video.currentTime;
         stalledSinceMs = null;
         return;
       }
       stalledSinceMs ??= Date.now();
-      if (Date.now() - stalledSinceMs > 10000) fail();
+      if (Date.now() - stalledSinceMs > 10000) {
+        fail(receivedAnyMedia ? "media arrived but the playhead stalled for 10s" : "no media within 10s");
+      }
     }, 2000));
 
     // Keep the tile pinned near the live edge: fMP4 keeps arriving while a tab is throttled or
@@ -1469,7 +1571,7 @@ window.GateWatchCameras = (function () {
         sourceBuffer.appendBuffer(next);
       } catch {
         // QuotaExceeded or a closed source - either way this player is wedged.
-        fail();
+        fail("the media buffer rejected an append");
       }
     };
 
@@ -1478,12 +1580,12 @@ window.GateWatchCameras = (function () {
       try {
         sourceBuffer = mediaSource.addSourceBuffer(pendingMime);
       } catch {
-        fail(); // codec string this browser can't actually handle
+        fail(`this browser can't decode ${pendingMime}`); // codec string it can't actually handle
         return;
       }
       sourceBuffer.mode = "segments";
       sourceBuffer.addEventListener("updateend", pump);
-      sourceBuffer.addEventListener("error", fail);
+      sourceBuffer.addEventListener("error", () => fail("the media source buffer errored"));
       pump();
     };
 
@@ -1519,13 +1621,25 @@ window.GateWatchCameras = (function () {
     // or an immediate close before any media - mark MSE off for this page load in that case so
     // other tiles don't repeat the attempt. A close after media flowed is just a dropped
     // connection: fail this tile over to HLS but leave MSE available for retries elsewhere.
-    ws.addEventListener("error", () => { if (!receivedAnyMedia) mseUnavailable = true; fail(); });
-    ws.addEventListener("close", () => { if (!session.done) fail(); });
+    ws.addEventListener("error", () => {
+      if (!receivedAnyMedia) mseUnavailableUntil = Date.now() + TIER_UNAVAILABLE_TTL_MS;
+      fail(receivedAnyMedia ? "the MSE WebSocket errored mid-stream" : "the MSE WebSocket was refused");
+    });
+    ws.addEventListener("close", () => {
+      if (!session.done) fail(receivedAnyMedia ? "the MSE WebSocket closed mid-stream" : "the MSE WebSocket closed before any media");
+    });
   }
 
   function attachHls(video, status, camera) {
     const src = `/api/cameras/${camera.id}/stream/stream.m3u8`;
     video.srcObject = null; // in case a WebRTC attempt got as far as attaching a stream
+    const startedAt = Date.now();
+
+    // The bottom rung reports too. It is the tier that visibly rebuffers, so knowing a tile spent
+    // the evening here - and how long it took to show anything - is the whole point of the log.
+    video.addEventListener("playing", () => {
+      reportLivePath(camera, "hls", "playing", null, Date.now() - startedAt);
+    }, { once: true });
 
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls(LIVE_HLS_CONFIG);
@@ -1584,6 +1698,12 @@ window.GateWatchCameras = (function () {
   function handleHlsError(hls, video, status, camera, data) {
     if (!data.fatal) return;
 
+    // Reported as degraded rather than failed: the tile stays on HLS and recovers in place. These
+    // are the events behind "it went live and then buffered again", so they are exactly what makes
+    // the log worth reading - a run of them on one camera says the problem is that camera or its
+    // ffmpeg, a run across all of them says it is the server or the network.
+    reportLivePath(camera, "hls", "degraded", `fatal ${data.details ?? data.type}`, 0);
+
     switch (data.type) {
       case Hls.ErrorTypes.NETWORK_ERROR:
         showStatus(status, "reconnecting…");
@@ -1626,6 +1746,9 @@ window.GateWatchCameras = (function () {
     liveTeardownTimer = null;
     liveBuilt = false;
     liveBuiltCameraIds = null;
+    // The badges point at DOM the next buildLive replaces - holding them would pin detached nodes
+    // and let a late report write into a tile nobody is looking at.
+    liveTierBadges.clear();
 
     for (const hls of hlsInstances.values()) {
       try { hls.destroy(); } catch { /* already gone */ }

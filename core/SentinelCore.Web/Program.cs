@@ -185,6 +185,9 @@ builder.Services.AddSingleton<ILiveOrderStore>(new SqliteLiveOrderStore(camerasR
 // sidecar's startup wait.
 builder.Services.AddHttpClient(nameof(Go2RtcManager), client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddSingleton<Go2RtcManager>();
+// Have the sidecar up before the first viewer arrives rather than on their time - see
+// Go2RtcWarmUpService. Optional and non-blocking: an install without go2rtc boots unchanged.
+builder.Services.AddHostedService<Go2RtcWarmUpService>();
 
 // Short timeout on purpose - a camera being probed is either on the LAN and answers in
 // milliseconds, or it isn't there, and the whole point of the probe is to fail fast on the ones

@@ -32,10 +32,19 @@ public sealed class Go2RtcManager : IDisposable
     // second, so this is generous.
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(10);
 
-    // After a failed start (binary missing, port taken), how long to stop trying. Every live
-    // tile probes WebRTC once per page load, so without this a dashboard with six cameras would
-    // attempt six doomed process spawns per visit.
-    private static readonly TimeSpan UnavailableRetry = TimeSpan.FromMinutes(5);
+    // After a failed start, how long to stop trying. Every live tile probes WebRTC once per page
+    // load, so without this a dashboard with six cameras would attempt six doomed process spawns
+    // per visit.
+    //
+    // Split in two, because the two failures have nothing in common but their symptom. A binary
+    // that isn't there stays not-there until somebody installs it, so backing off for minutes
+    // costs nothing. A sidecar that started and then died, or never answered, is usually the
+    // previous run's process still holding the ports across a restart - which clears in seconds.
+    // Both used to take the five-minute penalty, so a restart could park every live tile on HLS
+    // for five minutes over a port that was free again after two, and that is exactly the window
+    // in which somebody opens the app to check what just happened.
+    private static readonly TimeSpan MissingBinaryRetry = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan TransientFailureRetry = TimeSpan.FromSeconds(20);
 
     private readonly string _binaryPath;
     private readonly string _ffmpegPath;
@@ -80,6 +89,23 @@ public sealed class Go2RtcManager : IDisposable
         Directory.CreateDirectory(_workingRoot);
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+    }
+
+    // Bring the sidecar up before anyone asks for a stream, so the first viewer after a restart
+    // doesn't pay for it. That bill used to land squarely on them: the dashboard gives an entire
+    // WebRTC attempt six seconds (WEBRTC_CONNECT_TIMEOUT_MS in cameras.js) while a cold start here
+    // is allowed ten, so the browser could give up on a sidecar that was still coming up, twice,
+    // and then latch itself onto HLS for the rest of the tab. Whoever opened the app first after a
+    // restart got the stuttering feed - which is precisely when someone opens it.
+    //
+    // Deliberately starts the process only, and registers no streams: go2rtc dials a camera when a
+    // viewer actually asks for it, and pre-registering would hold connections open against cameras
+    // nobody is watching. On a Reolink, whose concurrent-connection budget is small enough that the
+    // detection pipeline already competes with the live view, that would trade one problem for a
+    // worse one.
+    public async Task WarmUpAsync(CancellationToken cancellationToken)
+    {
+        await EnsureStartedAsync(cancellationToken);
     }
 
     // The whole signaling exchange for one viewer: make sure the sidecar is up and this camera
@@ -253,6 +279,13 @@ public sealed class Go2RtcManager : IDisposable
             // instead; _shutdown is what stops it outliving the app.
             var startupToken = _shutdown.Token;
 
+            // How long the sidecar actually takes to become usable. Worth a number rather than a
+            // shrug: the dashboard gives a whole WebRTC attempt six seconds, so a cold start that
+            // creeps past that is the difference between a smooth tile and one that falls back to
+            // HLS and visibly rebuffers - and there is no way to tell those apart after the fact
+            // without this figure in the log.
+            var startup = Stopwatch.StartNew();
+
             if (DateTimeOffset.UtcNow < _unavailableUntil)
                 throw new Go2RtcUnavailableException(
                     "WebRTC is off because go2rtc could not be started. Install go2rtc (https://github.com/AlexxIT/go2rtc) " +
@@ -283,7 +316,7 @@ public sealed class Go2RtcManager : IDisposable
             }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
             {
-                _unavailableUntil = DateTimeOffset.UtcNow + UnavailableRetry;
+                _unavailableUntil = DateTimeOffset.UtcNow + MissingBinaryRetry;
                 _logger.LogInformation(
                     "go2rtc is not installed (looked for '{Path}') - live view will use HLS. Install go2rtc for lower-latency WebRTC.",
                     _binaryPath);
@@ -311,8 +344,11 @@ public sealed class Go2RtcManager : IDisposable
                 {
                     if (process.HasExited)
                     {
-                        _unavailableUntil = DateTimeOffset.UtcNow + UnavailableRetry;
-                        _logger.LogWarning("go2rtc exited during startup. Recent log:\n{Log}", RecentLog);
+                        _unavailableUntil = DateTimeOffset.UtcNow + TransientFailureRetry;
+                        _logger.LogWarning(
+                            "go2rtc exited {ElapsedMs}ms into startup; WebRTC and MSE live view are off for {BackoffSeconds:n0}s "
+                            + "and tiles will use HLS meanwhile. Recent log:\n{Log}",
+                            startup.ElapsedMilliseconds, TransientFailureRetry.TotalSeconds, RecentLog);
                         throw new Go2RtcUnavailableException(
                             $"go2rtc exited during startup (often a port already in use - it needs {_apiPort}, {_rtspPort} and {_webRtcPort} free, " +
                             $"all configurable under Go2Rtc: in appsettings.json). Recent log:\n{RecentLog}");
@@ -330,7 +366,11 @@ public sealed class Go2RtcManager : IDisposable
 
                     if (DateTimeOffset.UtcNow >= deadline)
                     {
-                        _unavailableUntil = DateTimeOffset.UtcNow + UnavailableRetry;
+                        _unavailableUntil = DateTimeOffset.UtcNow + TransientFailureRetry;
+                        _logger.LogWarning(
+                            "go2rtc started but its API never answered within {TimeoutSeconds:n0}s; WebRTC and MSE live view are off "
+                            + "for {BackoffSeconds:n0}s and tiles will use HLS meanwhile. Recent log:\n{Log}",
+                            StartupTimeout.TotalSeconds, TransientFailureRetry.TotalSeconds, RecentLog);
                         throw new Go2RtcUnavailableException($"go2rtc started but its API never came up. Recent log:\n{RecentLog}");
                     }
 
@@ -344,8 +384,9 @@ public sealed class Go2RtcManager : IDisposable
                 throw;
             }
 
-            _logger.LogInformation("Started go2rtc for WebRTC live view, pid {Pid} (api :{ApiPort}, media :{MediaPort})",
-                process.Id, _apiPort, _webRtcPort);
+            _logger.LogInformation(
+                "Started go2rtc for WebRTC live view in {ElapsedMs}ms, pid {Pid} (api :{ApiPort}, media :{MediaPort})",
+                startup.ElapsedMilliseconds, process.Id, _apiPort, _webRtcPort);
             _process = process;
         }
         finally
