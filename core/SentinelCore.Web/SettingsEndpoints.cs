@@ -46,7 +46,8 @@ public sealed record SettingsSnapshot(
     TriggerConfirmationSettingsDto? TriggerConfirmation = null,
     HostRebootSettingsDto? HostReboot = null,
     LocationSettingsDto? Location = null,
-    ScheduleSettingsDto? Schedules = null);
+    ScheduleSettingsDto? Schedules = null,
+    NuisanceAdvisorSettingsDto? NuisanceAdvisor = null);
 
 public static class SettingsEndpoints
 {
@@ -269,6 +270,9 @@ public static class SettingsEndpoints
         settings.MapPut("/login-alerts", async (LoginAlertSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "LoginAlerts", ct));
 
+        settings.MapPut("/nuisance-advisor", async (NuisanceAdvisorSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "NuisanceAdvisor", ct));
+
         // Generates the key the first time this is switched on, rather than making the owner
         // invent one - the same reasoning as AutoApiKeyProvisioner for Bridge:ApiKey, and it means
         // a blank key field in the UI never silently saves a feature that can't authenticate
@@ -484,7 +488,11 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<LocationSettingsDto>("Location", cancellationToken)
             ?? new LocationSettingsDto(),
         await settings.GetSectionAsync<ScheduleSettingsDto>("Schedules", cancellationToken)
-            ?? new ScheduleSettingsDto());
+            ?? new ScheduleSettingsDto(),
+        // Defaulted for the same reason as the sections above, and it matters more here: this one
+        // ships on, so a null would show the form unchecked while the advisor was in fact running.
+        await settings.GetSectionAsync<NuisanceAdvisorSettingsDto>("NuisanceAdvisor", cancellationToken)
+            ?? new NuisanceAdvisorSettingsDto());
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -538,6 +546,7 @@ public static class SettingsEndpoints
         if (snapshot.Logging is not null) await WriteLoggingAsync(snapshot.Logging, settings, cancellationToken);
         if (snapshot.Server is not null) await settings.ReplaceSectionAsync("Urls", snapshot.Server.Urls, cancellationToken);
         if (snapshot.HostReboot is not null) await settings.MergeSectionAsync("HostReboot", snapshot.HostReboot, cancellationToken);
+        if (snapshot.NuisanceAdvisor is not null) await settings.MergeSectionAsync("NuisanceAdvisor", snapshot.NuisanceAdvisor, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

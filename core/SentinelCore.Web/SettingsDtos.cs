@@ -371,6 +371,24 @@ public sealed class LoginAlertSettingsDto
     public int CooldownMinutes { get; set; } = 15;
 }
 
+// Mirrors NuisanceAdvisorOptions in the main app.
+public sealed class NuisanceAdvisorSettingsDto
+{
+    public bool Enabled { get; set; } = true;
+
+    [Range(10, 5000)]
+    public int MinimumNightTriggers { get; set; } = 60;
+
+    [Range(0, 100)]
+    public double MaximumConfirmedPercent { get; set; } = 10;
+
+    [Range(1, 50)]
+    public double MinimumNightDayRatio { get; set; } = 3;
+
+    [Range(1, 90)]
+    public int CooldownDays { get; set; } = 3;
+}
+
 public sealed class TriggerApiSettingsDto
 {
     public bool Enabled { get; set; }

@@ -373,6 +373,42 @@ public sealed class LoginAlertOptions
     public int CooldownMinutes { get; init; } = 15;
 }
 
+public sealed class NuisanceAdvisorOptions
+{
+    public const string SectionName = "NuisanceAdvisor";
+
+    // On by default, unlike the outbound-notification features above, because this one is advice
+    // about the owner's own cameras sent to the owner's own address - and because the whole
+    // problem it exists to name is one that otherwise goes unnoticed for months while the AI
+    // quietly swallows a few hundred empty frames a night. It still sends nothing until Email or
+    // Telegram is configured, and at most one message per camera per CooldownDays.
+    public bool Enabled { get; init; } = true;
+
+    // How many dusk-to-dawn triggers make a night worth mentioning. Below this it is just a
+    // night, whatever caused it, and advice to go clean a lens would be noise of its own. The
+    // gate camera's measured web night was 235.
+    [Range(10, 5000)]
+    public int MinimumNightTriggers { get; init; } = 60;
+
+    // The share of those triggers the AI may confirm as a real person, vehicle, package, or
+    // animal before this stops looking like a web. A night with something genuinely happening in
+    // it confirms a good fraction; the measured web night confirmed none of 235.
+    [Range(0, 100)]
+    public double MaximumConfirmedPercent { get; init; } = 10;
+
+    // How many times busier the dark hours must be than the daylight either side. This is what
+    // keeps a camera pointed at a busy road - which triggers all day and needs its zone redrawn,
+    // not a broom - from being told it has a spider web. Measured on the web night: 6.4.
+    [Range(1, 50)]
+    public double MinimumNightDayRatio { get; init; } = 3;
+
+    // A web that isn't dealt with is still there tomorrow, so this repeats - but slowly. Long
+    // enough that clearing the web on the morning you're told ends it, short enough that ignoring
+    // the advice gets a reminder rather than silence.
+    [Range(1, 90)]
+    public int CooldownDays { get; init; } = 3;
+}
+
 public sealed class TriggerApiOptions
 {
     public const string SectionName = "TriggerApi";

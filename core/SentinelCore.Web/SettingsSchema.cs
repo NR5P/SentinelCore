@@ -688,6 +688,23 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "nuisanceAdvisor",
+            Title = "SPIDER WEB & BUG ADVISOR",
+            Endpoint = "/api/settings/nuisance-advisor",
+            Basic = true,
+            DtoType = typeof(NuisanceAdvisorSettingsDto),
+            Description = "Tells you when a camera has spent the night triggering on a spider web or on insects in front of the lens, using the accounts configured under Email and Telegram above. A camera's own infrared light draws moths, moths draw spiders, and both sit close enough to the lens to be huge, white, out of focus, and never quite still - so motion fires all night on an empty driveway. No setting fixes it, because at that distance a strand of silk covers about as many pixels as a person at the gate does; the fix is physical, and this tells you when it's worth going out with a broom. Checks once each morning for the night just gone, and only speaks up when a camera was busy after dark, quiet in daylight, and the AI found nothing real in almost all of it.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Email and/or Telegram you when a camera's overnight triggers look like a spider web or insects on the lens rather than anything real."),
+                Number("minimumNightTriggers", "Triggers to speak up (per night)", "How many times a camera has to trigger between dusk and dawn before the night is worth mentioning at all. Below this it's just a night, whatever caused it.", 10, 5000, recommended: 60),
+                Number("maximumConfirmedPercent", "Most that may be real (%)", "If the AI confirmed more than this share of the night's triggers as a person, vehicle, package, or animal, something was genuinely happening and nothing is sent. A camera behind a web typically confirms none at all.", 0, 100, recommended: 10),
+                Number("minimumNightDayRatio", "Night-to-day busyness", "How many times busier the dark hours must be than the daylight either side. This is what stops a camera pointed at a busy road - which triggers all day and wants its zone redrawn, not a broom - from being blamed on spiders.", 1, 50, recommended: 3),
+                Number("cooldownDays", "Remind again after (days)", "A web that isn't dealt with is still there tomorrow, so this repeats - but no more often than this, per camera. Clear the web on the morning you're told and you'll hear nothing more.", 1, 90, recommended: 3)
+            ]
+        },
+        new()
+        {
             Key = "triggerApi",
             Title = "TRIGGER API",
             Endpoint = "/api/settings/trigger-api",

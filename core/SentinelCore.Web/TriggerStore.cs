@@ -174,6 +174,20 @@ public interface ITriggerEventStore
     // any more than it should the tab.
     Task<IReadOnlyList<TriggerEvent>> GetEventsInRangeAsync(Guid cameraId, DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken);
 
+    // The same window, but every row regardless of verdict. The rejected ones are the entire
+    // subject of the night-nuisance check (see LensNuisance): a camera behind a spider web
+    // produces hundreds of triggers the AI throws away, and a query that only returns what
+    // survived confirmation would show that camera as having had a perfectly quiet night.
+    Task<IReadOnlyList<TriggerEvent>> GetAllEventsInRangeAsync(Guid cameraId, DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken);
+
+    // When this camera was last advised that it looks like it has a web or insects on it, or null
+    // if it never has been. Persisted rather than held in memory because the check runs once a
+    // day: a process restart between two mornings would otherwise reset the cooldown and send the
+    // same advice again the next morning.
+    Task<DateTimeOffset?> GetLastNuisanceAdvisoryAsync(Guid cameraId, CancellationToken cancellationToken);
+
+    Task RecordNuisanceAdvisoryAsync(Guid cameraId, DateOnly night, DateTimeOffset sentAt, CancellationToken cancellationToken);
+
     // Records the AI's verdict once the analysis for this trigger has finished.
     Task SetConfirmationAsync(Guid id, TriggerConfirmation confirmation, CancellationToken cancellationToken);
 
@@ -281,6 +295,13 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         incidentIndex.CommandText = """
             CREATE INDEX IF NOT EXISTS IX_TriggerEvents_IncidentId ON TriggerEvents (IncidentId);
             CREATE INDEX IF NOT EXISTS IX_TriggerEvents_Confirmation ON TriggerEvents (Confirmation, OccurredAt DESC);
+
+            CREATE TABLE IF NOT EXISTS NuisanceAdvisories (
+                CameraId TEXT NOT NULL,
+                Night TEXT NOT NULL,
+                SentAt TEXT NOT NULL,
+                PRIMARY KEY (CameraId, Night)
+            );
             """;
         incidentIndex.ExecuteNonQuery();
     }
@@ -582,6 +603,79 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 results.Add(ReadEvent(reader));
 
             return results;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<TriggerEvent>> GetAllEventsInRangeAsync(Guid cameraId, DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds
+                FROM TriggerEvents
+                WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end
+                ORDER BY OccurredAt ASC;
+                """;
+            command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
+            command.Parameters.AddWithValue("$start", start.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$end", end.UtcDateTime.ToString("O"));
+
+            var results = new List<TriggerEvent>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(ReadEvent(reader));
+
+            return results;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<DateTimeOffset?> GetLastNuisanceAdvisoryAsync(Guid cameraId, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT MAX(SentAt) FROM NuisanceAdvisories WHERE CameraId = $cameraId;";
+            command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
+
+            var value = await command.ExecuteScalarAsync(cancellationToken);
+            return value is string text && DateTimeOffset.TryParse(
+                text, null, System.Globalization.DateTimeStyles.RoundtripKind, out var sentAt)
+                ? sentAt
+                : null;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task RecordNuisanceAdvisoryAsync(Guid cameraId, DateOnly night, DateTimeOffset sentAt, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            // Keyed on the night rather than only the camera so the history stays readable, and
+            // REPLACE rather than INSERT so a retry after a half-failed send can't throw.
+            command.CommandText = """
+                INSERT OR REPLACE INTO NuisanceAdvisories (CameraId, Night, SentAt)
+                VALUES ($cameraId, $night, $sentAt);
+                """;
+            command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
+            command.Parameters.AddWithValue("$night", night.ToString("yyyy-MM-dd"));
+            command.Parameters.AddWithValue("$sentAt", sentAt.UtcDateTime.ToString("O"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
         {

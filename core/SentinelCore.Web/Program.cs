@@ -281,6 +281,13 @@ builder.Services.AddHostedService<TriggerZoneMonitor>();
 // project's data root, and that worker is deliberately scoped to its own.
 builder.Services.AddHostedService<MotionRetentionWorker>();
 
+// Reads each finished night's rejected motion back and says when it looks like a spider web or
+// insects on the lens rather than anything real - the one false-alert cause that no threshold can
+// be tuned around, and which the confirmation filter above otherwise hides so well that nobody
+// notices it. See LensNuisance.
+builder.Services.AddHttpClient(nameof(NuisanceAdvisorWorker));
+builder.Services.AddHostedService<NuisanceAdvisorWorker>();
+
 // Triggering a camera from outside the motion detector - the key-authenticated HTTP endpoint and
 // a Device Hub sensor firing both land in CameraTriggerService. The watcher holds no broker
 // connection at all until some camera actually has a sensor bound to it.
