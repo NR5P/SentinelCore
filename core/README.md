@@ -43,7 +43,67 @@ Edit `SentinelCore/appsettings.json`:
 3. Keep `Ollama:Model` as `gemma3:4b`.
 4. Optionally enable the webhook action.
 
+To analyze alerts with something other than the local VLM — a hosted model, or the fast ONNX detector in front of it — see [Vision backends](#vision-backends) below.
+
 Do not expose port 5080 directly to the Internet. The API key is intended for LAN authentication, not as a replacement for TLS on an untrusted network.
+
+## Vision backends
+
+Three backends can analyze an alert, and `VisionRouting` decides which one does:
+
+- **`ollama`** (default) — the local VLM named by `Ollama:Model`. Describes the scene in prose and fills in gate state, delivery company, package status. Seconds per alert.
+- **`cloud`** — a hosted VLM, configured under `CloudVision`.
+- **`fastlocal`** — an ONNX object detector (RF-DETR Nano, ~103 MB, Apache 2.0), downloaded on first use. Milliseconds per alert, but it only reports *what* it saw, not what was happening.
+
+```json
+"VisionRouting": {
+  "Primary": "ollama",
+  "FallbackEnabled": false,
+  "EscalationEnabled": false,
+  "EscalationTarget": "auto",
+  "EscalationVerdictWins": false,
+  "MinimumConfidence": 0.0
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `Primary` | `ollama`, `cloud`, or `fastlocal`. Defaults to `ollama`, so an existing install behaves exactly as before with no config change. |
+| `FallbackEnabled` | If the primary's own retries are exhausted, retry once against another backend rather than failing the alert. |
+| `EscalationEnabled` | Only meaningful when `Primary` is `fastlocal`. Once the detector finds a person, vehicle, or animal, re-run the alert through a VLM for the full description. Alerts where the detector finds nothing — most of them — never reach the expensive backend, which is the point of the fast tier. |
+| `EscalationTarget` | Where escalation goes: `auto` (cloud if configured, else Ollama), `cloud`, or `ollama`. |
+| `EscalationVerdictWins` | Who wins when the detector found a subject and the escalated VLM reports an empty frame. Off keeps the detection; on lets the VLM overrule it. Escalation *failure* — unreachable, threw, not configured — always keeps the detection, since "the VLM said nothing is there" and "the VLM never answered" are different facts. |
+| `MinimumConfidence` | Floor for a **VLM** analysis. Below it, the visible flags and package status are cleared and the notification is suppressed, while the summary and raw response are kept so the event still reads correctly. `0` disables the check. Deliberately not applied to fast-detector results — see below. |
+
+`MinimumConfidence` pairs with the prompt convention in `OllamaVisionClient.BuildPrompt`, which asks the model to report confidence at or below 0.2 when the frame is too dark or obstructed to judge. A floor above that turns "I can't see" into "nothing here" rather than a false alert.
+
+### FastLocal
+
+Only used when `fastlocal` is the primary or fallback backend.
+
+```json
+"FastLocal": {
+  "ModelPath": "fastlocal-model/rf-detr-nano.onnx",
+  "DownloadUrl": "https://huggingface.co/PierreMarieCurie/rf-detr-onnx/resolve/main/rf-detr-nano.onnx",
+  "DownloadSha256": "3fcbba0f68bad4939fdf1c38f432783b95691e2869af3be369780aa5be67abb2",
+  "InputSize": 384,
+  "ScoreThreshold": 0.5,
+  "NotifyOnPerson": true,
+  "NotifyOnVehicle": true,
+  "NotifyOnAnimal": false
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `ModelPath` | Relative paths resolve under `Bridge:DataDirectory`. The ONNX session is built once per process, so changing this needs a restart. |
+| `DownloadUrl` | Fetched once if `ModelPath` doesn't exist. Clear it to require the file be provisioned by hand. |
+| `DownloadSha256` | Verified before the download is moved into place. Only applies to the download — a manually provisioned file is trusted as-is. |
+| `InputSize` | Fallback only. A model that declares a static input shape wins, and RF-DETR Nano is fixed at 384×384, so this matters only for a substituted model with dynamic axes. |
+| `ScoreThreshold` | Minimum score for a detection to count. Lower it if a camera misses distant or night subjects, at the cost of more false alerts. |
+| `NotifyOnPerson` / `NotifyOnVehicle` / `NotifyOnAnimal` | Which subjects set `notification_recommended`. Animals default off — a detector can't tell a raccoon in the trash from a bird on the lawn. |
+
+Note that the two thresholds are not on the same scale and are deliberately kept separate. `FastLocal:ScoreThreshold` gates each detection before it is mapped to an analysis; `VisionRouting:MinimumConfidence` gates a finished VLM analysis. The detector scores an *empty* frame 0.8 by convention and a real detection by its own max score, so a shared floor would suppress a 0.82 detection while passing the 0.8 empty frame.
 
 ## Run interactively
 
