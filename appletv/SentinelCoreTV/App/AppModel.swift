@@ -216,13 +216,33 @@ final class AppModel: ObservableObject {
 
     private func failConnection(with error: Error) {
         connectionState = .offline
-        // The system's own wording for a distrusted certificate ("...may be pretending to be...")
-        // reads as an active attack and names no way out - replace it with what's actually going
-        // on and what to do about it.
-        lastError = Self.isCertificateTrustFailure(error)
-            ? "This device doesn't trust the certificate the server generated for itself. Use the http:// address, or install the server's ca.crt on this device to keep HTTPS."
-            : error.localizedDescription
+        lastError = Self.userFacingMessage(for: error)
         log("Connection failed: \(error.localizedDescription)", level: .error)
+    }
+
+    // URLError's wording is written for apps that talk to the public internet, so for the two
+    // failures this app actually hits on a LAN it names the wrong problem. A distrusted
+    // self-signed certificate ("...may be pretending to be...") reads as an active attack and
+    // names no way out. A denied Local Network permission reports "The Internet connection
+    // appears to be offline", which sends people to their router and their Wi-Fi when the fix is
+    // a privacy toggle. Both get replaced with the real cause and a way out; everything else
+    // keeps the system wording, which is accurate for the remaining cases.
+    static func userFacingMessage(for error: Error) -> String {
+        if isCertificateTrustFailure(error) {
+            return "This device doesn't trust the certificate the server generated for itself. Use the http:// address, or install the server's ca.crt on this device to keep HTTPS."
+        }
+        if isLocalNetworkFailure(error) {
+            return "Can't reach anything on your local network. Check this Apple TV is on the same network as the server - and if Sentinel Core was denied Local Network access, turn it back on under Settings → General → Privacy & Security → Local Network."
+        }
+        return error.localizedDescription
+    }
+
+    // -1009 has two causes here and the error carries nothing that separates them: the network
+    // really is down, or the OS is refusing this app's LAN traffic specifically. A denied grant is
+    // the far more likely one for a server on the same subnet - it is also the one users cannot
+    // guess - so the message has to raise it without asserting it over the mundane case.
+    static func isLocalNetworkFailure(_ error: Error) -> Bool {
+        (error as? URLError)?.code == .notConnectedToInternet
     }
 
     // Everything URLSession reports when a TLS handshake completed enough to judge the server's
