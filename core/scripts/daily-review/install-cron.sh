@@ -150,11 +150,13 @@ else
   warn   "git:      not a git repo? skipping push check"
 fi
 
-# deploy.sh restarts services with sudo. Test the exact allowlisted commands, not sudo
-# in general — a NOPASSWD rule scoped to systemctl won't satisfy a generic `sudo -n` probe.
-# -k first, or a sudo timestamp cached earlier in this terminal makes every command look
-# passwordless and this check silently passes. See setup.sh for the same fix.
-if sudo -k -n -l /usr/bin/systemctl restart sentinelcore >/dev/null 2>&1; then
+# deploy.sh restarts services with sudo, and cron gets no terminal to type a password at.
+# Grep the allowlist for a NOPASSWD line rather than asking `sudo -n -l <command>`: that form
+# reports authorization, not passwordlessness, and this box's blanket `(ALL : ALL) ALL` makes
+# it exit 0 for everything. `-k` does not rescue it - the blanket rule grants authorization
+# with or without a cached timestamp. See setup.sh for the same check, and deploy.sh's
+# preflight, which is where this wording comes from.
+if sudo -n -l 2>/dev/null | grep -qE "NOPASSWD:.*systemctl restart sentinelcore( |\$)"; then
   echo "    sudo:     passwordless restart allowed"
 else
   warn   "sudo:     restarting services needs a password, which cron can't supply."
