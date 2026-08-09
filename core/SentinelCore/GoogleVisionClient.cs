@@ -152,7 +152,7 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
             {
                 temperature = 0,
                 responseMimeType = "application/json",
-                responseSchema = BuildJsonSchema(profile)
+                responseSchema = BuildJsonSchema(profile, imageFrames.Count > 1)
             }
         };
     }
@@ -161,7 +161,7 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
     // way to forbid extra fields the way OpenAI's strict mode does). Otherwise the same shape as
     // OpenAiVisionClient.BuildJsonSchema - see that for the reasoning behind which fields are
     // conditional on LicensePlateRecognitionEnabled.
-    public static JsonObject BuildJsonSchema(PromptProfile profile)
+    public static JsonObject BuildJsonSchema(PromptProfile profile, bool multiFrame = false)
     {
         var vehicleProps = new List<(string Name, JsonNode Type)>
         {
@@ -171,6 +171,8 @@ public sealed class GoogleVisionClient : IVisionAnalysisClient
         };
         if (profile.LicensePlateRecognitionEnabled)
             vehicleProps.Add(("license_plate", Str()));
+        if (multiFrame)
+            vehicleProps.Add(("motion", Str()));
 
         var rootProps = new List<(string Name, JsonNode Type)>
         {

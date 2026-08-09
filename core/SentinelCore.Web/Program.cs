@@ -176,6 +176,9 @@ var camerasRoot = Path.IsPathRooted(camerasDataDirectory)
 var cameraStore = new SqliteCameraStore(camerasRoot);
 builder.Services.AddSingleton<ICameraStore>(cameraStore);
 builder.Services.AddSingleton<ICameraGroupStore>(cameraStore);
+// Resolves where a camera's video is actually read from, which differs for browser-published
+// cameras - see CameraSource. Registered before HlsStreamManager, which depends on it.
+builder.Services.AddSingleton<CameraSource>();
 builder.Services.AddSingleton<HlsStreamManager>();
 // How each person has dragged their Live tiles around - a per-account view preference, kept out
 // of cameras.db so the camera list itself stays the one canonical, order-agnostic answer.
@@ -288,6 +291,20 @@ builder.Services.AddHostedService<MotionRetentionWorker>();
 builder.Services.AddHttpClient(nameof(NuisanceAdvisorWorker));
 builder.Services.AddHostedService<NuisanceAdvisorWorker>();
 
+// Clock-driven recording windows ("record the driveway 8pm-8:30pm every Tuesday"), the timed
+// counterpart to a trigger zone. Its own database, its own worker and its own segment buffer,
+// deliberately sharing nothing with the trigger clip pipeline but the concat helpers - see
+// ScheduledRecorder for why reusing that buffer was rejected.
+//
+// Lives in this project rather than beside the main app's Schedules because the cameras, ffmpeg and
+// the video are all here, and there is no push channel from that app to this one to fire it with.
+var recordingStore = new SqliteRecordingStore(camerasRoot);
+builder.Services.AddSingleton<IRecordingScheduleStore>(recordingStore);
+builder.Services.AddSingleton<IRecordingStore>(recordingStore);
+builder.Services.AddSingleton<ScheduledRecorder>();
+builder.Services.AddHostedService<RecordingScheduleWorker>();
+builder.Services.AddHostedService<ScheduledRecordingRetentionWorker>();
+
 // Triggering a camera from outside the motion detector - the key-authenticated HTTP endpoint and
 // a Device Hub sensor firing both land in CameraTriggerService. The watcher holds no broker
 // connection at all until some camera actually has a sensor bound to it.
@@ -375,6 +392,7 @@ app.UseAuthorization();
 app.UseWebSockets();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
+app.MapCameraPublishEndpoints();
 app.MapCameraGroupEndpoints();
 app.MapLiveOrderEndpoints();
 app.MapKnownFaceEndpoints();
@@ -384,6 +402,7 @@ app.MapCameraPtzEndpoints();
 app.MapTriggerEndpoints();
 app.MapActivityEndpoints();
 app.MapCameraTriggerEndpoints();
+app.MapRecordingEndpoints();
 app.MapSetupEndpoints();
 app.MapLicenseEndpoints();
 app.MapAuthEndpoints();

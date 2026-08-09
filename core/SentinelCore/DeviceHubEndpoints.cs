@@ -93,7 +93,8 @@ public static class DeviceHubEndpoints
                         power = state.Power.ToString().ToLowerInvariant(),
                         brightness = state.BrightnessPercent,
                         available = state.Available,
-                        lastSeen = state.LastSeen
+                        lastSeen = state.LastSeen,
+                        measurements = ToMeasurements(state)
                     };
                 })
             });
@@ -275,9 +276,20 @@ public static class DeviceHubEndpoints
             Brightness = state.BrightnessPercent,
             state.Available,
             state.LastSeen,
+            Measurements = ToMeasurements(state),
             Commandable = DeviceTopics.IsCommandable(device.Kind)
         };
     }
+
+    // Sorted by key rather than handed over in dictionary order: the clients render these in the
+    // order they arrive, and a set of readings that reshuffles itself between polls would be a
+    // tile that never sits still. Values are the raw numbers the device published - naming and
+    // units are a display concern that no device agrees on well enough to belong here yet.
+    private static object[] ToMeasurements(DeviceLiveState state) =>
+        state.Measurements
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => (object)new { key = pair.Key, value = pair.Value })
+            .ToArray();
 
     private static HubDevice ToDevice(HubDeviceDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
         id,
@@ -306,7 +318,9 @@ public static class DeviceHubEndpoints
         createdAt,
         updatedAt);
 
-    private static List<string> Validate(HubDeviceDto dto)
+    // Public for the same reason MqttDeviceBus.SetStateForTesting is - this project has no
+    // InternalsVisibleTo, and these rules decide which real devices can be saved at all.
+    public static List<string> Validate(HubDeviceDto dto)
     {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(dto.Name)) errors.Add("Name is required.");
@@ -353,7 +367,11 @@ public static class DeviceHubEndpoints
                 errors.Add("Brightness Scale must be between 1 and 65535.");
         }
 
-        if (string.Equals(dto.Schema, DeviceTopics.SchemaJson, StringComparison.OrdinalIgnoreCase) &&
+        // A sensor is exempt: it has no ON/OFF to name, and a numeric one - a thermometer, a
+        // power meter - has no such key in its payload at all. Requiring the template anyway
+        // meant the only way to save one was to invent a key that doesn't exist.
+        if (commandable &&
+            string.Equals(dto.Schema, DeviceTopics.SchemaJson, StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(dto.StateTopic) &&
             string.IsNullOrWhiteSpace(dto.StateValueTemplate))
         {

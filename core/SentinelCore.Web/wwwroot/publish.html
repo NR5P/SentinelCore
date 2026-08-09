@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SENTINEL_CORE :: publish</title>
+  <link rel="icon" href="icons/favicon.ico" sizes="any" />
+  <link rel="apple-touch-icon" href="icons/icon-180.png" />
+  <link rel="manifest" href="site.webmanifest" />
+  <meta name="theme-color" content="#05070a" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<!--
+  A page whose whole job is to be left open. Point a laptop or a spare phone at whatever you want
+  watched, press start, and this tab becomes a camera in the dashboard - no install, no RTSP, no
+  port forwarding, because the video is pushed out to the server rather than pulled in.
+
+  Deliberately its own page rather than a dashboard tab: it has to survive being left alone for
+  days, so it holds a screen wake lock and does nothing else - no polling of events, no live grid
+  behind it quietly eating the battery of the device it is running on.
+-->
+<body class="publish-body">
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">SENTINEL_CORE</span>
+      <span class="brand-sub">publish</span>
+    </div>
+    <a class="btn" href="/">dashboard</a>
+  </header>
+
+  <main class="publish-main">
+    <!-- Everything below starts hidden and exactly one of these is shown at a time; publish.js
+         decides which, so a device that simply cannot do this (no camera permission, plain HTTP)
+         gets an explanation rather than a dead button. -->
+    <section id="publish-blocked" class="publish-panel hidden">
+      <h1 class="publish-title">Can't use this device's camera</h1>
+      <p id="publish-blocked-reason" class="publish-note"></p>
+      <div id="publish-blocked-fix" class="publish-note"></div>
+    </section>
+
+    <section id="publish-picker" class="publish-panel hidden">
+      <h1 class="publish-title">Which camera is this device?</h1>
+      <p class="publish-note">
+        Pick the camera this device should stream to. Add one on the dashboard's Cameras tab with
+        <em>add webcam device</em> if the list is empty.
+      </p>
+      <div id="publish-picker-list" class="publish-picker-list"></div>
+    </section>
+
+    <section id="publish-stage" class="publish-panel hidden">
+      <h1 id="publish-camera-name" class="publish-title"></h1>
+
+      <div class="publish-video-wrap">
+        <!-- Muted is required for autoplay and is also just correct: this is the device's own
+             microphone, and unmuted local playback would howl. -->
+        <video id="publish-preview" class="publish-video" autoplay playsinline muted></video>
+        <div id="publish-idle-overlay" class="publish-idle-overlay">not streaming</div>
+      </div>
+
+      <div class="publish-controls">
+        <label class="field-label" for="publish-device">Camera</label>
+        <select id="publish-device" class="field-input"></select>
+
+        <label class="field-label" for="publish-mic">
+          <input type="checkbox" id="publish-mic" />
+          Include this device's microphone
+        </label>
+
+        <button id="publish-toggle" class="btn btn-primary">start streaming</button>
+      </div>
+
+      <p id="publish-status" class="publish-status"></p>
+      <ul id="publish-errors" class="form-errors"></ul>
+
+      <p class="publish-note">
+        Leave this tab open and the device plugged in. Closing the tab, locking the screen or
+        letting the machine sleep stops the stream - the dashboard will report the camera as
+        offline if that happens.
+      </p>
+    </section>
+  </main>
+
+  <script src="publish.js"></script>
+</body>
+</html>

@@ -1,6 +1,9 @@
 window.GateWatchCameras = (function () {
   let cameras = [];
   let editingId = null;
+  // Which of the two camera forms is currently open - a webcam device has no URL or PTZ
+  // fields, so saveCamera has to know not to read them.
+  let publishedForm = false;
   const hlsInstances = new Map();
   const webrtcConnections = new Map();
   const mseConnections = new Map();
@@ -108,9 +111,15 @@ window.GateWatchCameras = (function () {
 
     const info = document.createElement("div");
     info.className = "camera-card-info";
+    // A webcam device has no address to show, and showing an empty line reads as a broken camera.
+    // What matters about it instead is that something has to be publishing for it to work at all.
+    const sourceLine = camera.isBrowserPublished
+      ? "published from a browser on another device"
+      : escapeHtml(camera.streamUrl);
+
     info.innerHTML = `
       <span class="camera-card-name">${escapeHtml(camera.name)}</span>
-      <span class="camera-card-meta">${escapeHtml(camera.streamUrl)}</span>
+      <span class="camera-card-meta">${sourceLine}</span>
       <span class="camera-card-meta">${camera.includeAudio ? "video + audio" : "video only"}</span>
       ${camera.ptzEnabled ? `<span class="camera-card-meta">PTZ enabled</span>` : ""}
       ${gateCheck?.enabled ? `<span class="camera-card-meta">gate check: every ${gateCheck.intervalMinutes} min${gateCheck.checkBlocked ? ", blocked-camera check on" : ""}</span>` : ""}
@@ -142,7 +151,24 @@ window.GateWatchCameras = (function () {
     deleteBtn.setAttribute("data-tip-right", "");
     deleteBtn.dataset.tip = "Remove this camera from the dashboard. Does not touch Blue Iris or the camera itself.";
     deleteBtn.addEventListener("click", () => removeCamera(camera));
-    actions.append(editBtn, zoneBtn, gateCheckBtn, deleteBtn);
+
+    // PTZ has nothing to drive on a webcam device, but trigger zones and gate checks work exactly
+    // as they do on a real camera, so they stay.
+    if (camera.isBrowserPublished) {
+      const publishBtn = document.createElement("a");
+      publishBtn.className = "btn";
+      publishBtn.textContent = "publish page";
+      publishBtn.href = `publish.html?camera=${encodeURIComponent(camera.id)}`;
+      publishBtn.target = "_blank";
+      publishBtn.rel = "noopener";
+      publishBtn.setAttribute("data-tip-right", "");
+      publishBtn.dataset.tip =
+        "Open this on the device that has the camera - not here - and press start. " +
+        "That device streams its webcam to this dashboard for as long as the page stays open.";
+      actions.append(editBtn, publishBtn, zoneBtn, gateCheckBtn, deleteBtn);
+    } else {
+      actions.append(editBtn, zoneBtn, gateCheckBtn, deleteBtn);
+    }
 
     card.append(info, actions);
     return card;
@@ -244,7 +270,51 @@ window.GateWatchCameras = (function () {
     }
   }
 
+  // A webcam camera is configured by what it *doesn't* have: no address, no credentials, no PTZ,
+  // nothing to test a connection to. Rather than show those fields disabled, the form drops them
+  // entirely - the only things left to decide are what to call it and whether to take the
+  // device's microphone. Everything else is settled when the device itself connects.
+  function openWebcamForm(camera) {
+    closeDiscovery();
+    closeGateCheckForm();
+    editingId = camera ? camera.id : null;
+    publishedForm = true;
+
+    const wrap = document.getElementById("camera-form-wrap");
+    const fields = document.getElementById("camera-form-fields");
+    document.getElementById("camera-form-errors").innerHTML = "";
+    fields.innerHTML = "";
+    setTestStatus("", null);
+
+    fields.appendChild(buildTextField("cam-name", "Name", camera?.name ?? "",
+      "Whatever you want to call this device, e.g. 'living room laptop'. Shown on the Live and Events tabs."));
+    fields.appendChild(buildCheckboxField("cam-audio", "Include the device's microphone", camera?.includeAudio ?? false,
+      "Stream the device's microphone alongside its camera, into live view and saved clips."));
+
+    const note = document.createElement("p");
+    note.className = "field-note";
+    note.textContent =
+      "After saving, open the publish page on the device itself and pick this camera. " +
+      "That device has to stay awake with the page open for as long as you want the feed.";
+    fields.appendChild(note);
+
+    // PTZ and connection testing are meaningless here, but saveCamera still reads these inputs -
+    // hidden fields keep it from having to care which form built the panel.
+    fields.appendChild(buildHiddenField("cam-url", ""));
+    fields.appendChild(buildHiddenField("cam-username", ""));
+    fields.appendChild(buildHiddenField("cam-password", ""));
+    fields.appendChild(buildHiddenField("cam-ptz-service-url", ""));
+    fields.appendChild(buildHiddenField("cam-ptz-token", ""));
+
+    document.getElementById("camera-test-btn").classList.add("hidden");
+    wrap.classList.remove("hidden");
+    wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   function openForm(camera) {
+    if (camera?.isBrowserPublished) return openWebcamForm(camera);
+    publishedForm = false;
+    document.getElementById("camera-test-btn").classList.remove("hidden");
     closeDiscovery();
     closeGateCheckForm();
     editingId = camera ? camera.id : null;
@@ -358,10 +428,11 @@ window.GateWatchCameras = (function () {
     const body = {
       name: document.getElementById("cam-name").value.trim(),
       streamUrl: document.getElementById("cam-url").value.trim(),
+      isBrowserPublished: publishedForm,
       username: document.getElementById("cam-username").value.trim() || null,
       password: document.getElementById("cam-password").value || null,
       includeAudio: document.getElementById("cam-audio").checked,
-      ptzEnabled: document.getElementById("cam-ptz").checked,
+      ptzEnabled: document.getElementById("cam-ptz")?.checked ?? false,
       onvifPtzServiceUrl: document.getElementById("cam-ptz-service-url").value || null,
       onvifProfileToken: document.getElementById("cam-ptz-token").value || null
     };
@@ -1786,6 +1857,7 @@ window.GateWatchCameras = (function () {
   document.getElementById("camera-save-btn").addEventListener("click", saveCamera);
   document.getElementById("camera-test-btn").addEventListener("click", testConnection);
   document.getElementById("discover-cameras-btn").addEventListener("click", openDiscovery);
+  document.getElementById("add-webcam-btn").addEventListener("click", () => openWebcamForm(null));
   document.getElementById("discovery-cancel-btn").addEventListener("click", closeDiscovery);
   document.getElementById("discovery-scan-btn").addEventListener("click", startScan);
   document.getElementById("gate-check-save-btn").addEventListener("click", saveGateCheck);

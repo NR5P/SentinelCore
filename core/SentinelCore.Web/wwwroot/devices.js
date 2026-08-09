@@ -79,6 +79,7 @@ window.GateWatchDevices = (function () {
         device.power = state.power;
         device.brightness = state.brightness;
         device.available = state.available;
+        device.measurements = state.measurements;
         applyTileState(device);
       }
     } catch {
@@ -191,6 +192,12 @@ window.GateWatchDevices = (function () {
     status.className = "device-tile-status";
     status.id = `device-status-${device.id}`;
 
+    // Whatever numbers the device reports, filled in by applyTileState. Stays empty - and takes
+    // up no room - for the switches and lamps that report none.
+    const measurements = document.createElement("div");
+    measurements.className = "device-measurements";
+    measurements.id = `device-measurements-${device.id}`;
+
     const controls = document.createElement("div");
     controls.className = "device-tile-controls";
 
@@ -282,7 +289,7 @@ window.GateWatchDevices = (function () {
     deleteBtn.addEventListener("click", () => removeDevice(device));
 
     actions.append(editBtn, deleteBtn);
-    tile.append(header, status, controls, actions);
+    tile.append(header, status, measurements, controls, actions);
     applyTileState(device, tile);
     return tile;
   }
@@ -291,12 +298,20 @@ window.GateWatchDevices = (function () {
     const tile = tileEl || document.getElementById(`device-tile-${device.id}`);
     if (!tile) return;
 
+    const readings = device.measurements || [];
+
+    // A thermometer reports numbers and no on/off at all. Saying "state unknown" about a device
+    // that is plainly working - and dimming it the way a switched-off lamp is dimmed - reads as
+    // broken, so a sensor that's reporting gets said so instead.
+    const reporting = !device.commandable && device.power === "unknown" && readings.length > 0;
+
     const status = tile.querySelector(`#device-status-${device.id}`);
     if (status) {
       if (!device.enabled) status.textContent = "disabled";
       else if (!device.available) status.textContent = "unavailable";
       // A momentary device has no on/off to report - reachable is the whole story.
       else if (isMomentary(device)) status.textContent = "ready";
+      else if (reporting) status.textContent = "reporting";
       else if (device.power === "unknown") status.textContent = "state unknown";
       else if (isCoverLike(device)) status.textContent = device.power === "on" ? "open" : "closed";
       else if (device.kind === "lock") status.textContent = device.power === "on" ? "locked" : "unlocked";
@@ -306,7 +321,9 @@ window.GateWatchDevices = (function () {
       status.classList.toggle("device-status-stale", !device.available || !device.enabled);
     }
 
-    tile.classList.toggle("device-tile-off", device.power !== "on");
+    renderMeasurements(device, tile, readings);
+
+    tile.classList.toggle("device-tile-off", !reporting && device.power !== "on");
     tile.classList.toggle("device-tile-unavailable", !device.available || !device.enabled);
 
     const toggle = tile.querySelector(`#device-toggle-${device.id}`);
@@ -315,6 +332,48 @@ window.GateWatchDevices = (function () {
     const slider = tile.querySelector(`#device-brightness-${device.id}`);
     // Never yank the slider out from under someone mid-drag.
     if (slider && document.activeElement !== slider && device.brightness != null) slider.value = device.brightness;
+  }
+
+  function renderMeasurements(device, tile, readings) {
+    const host = tile.querySelector(`#device-measurements-${device.id}`);
+    if (!host) return;
+
+    // The rows are rebuilt only when the set of keys changes. A device reports the same handful
+    // every time, and throwing the DOM away on every five-second poll would fight anyone trying
+    // to read or select what's in it.
+    const signature = readings.map(reading => reading.key).join(" ");
+    if (host.dataset.keys !== signature) {
+      host.dataset.keys = signature;
+      host.innerHTML = "";
+      for (const reading of readings) {
+        const row = document.createElement("div");
+        row.className = "device-measurement";
+
+        const key = document.createElement("span");
+        key.className = "device-measurement-key";
+        key.textContent = reading.key;
+
+        const value = document.createElement("span");
+        value.className = "device-measurement-value";
+        value.dataset.key = reading.key;
+
+        row.append(key, value);
+        host.appendChild(row);
+      }
+    }
+
+    for (const reading of readings) {
+      const valueEl = host.querySelector(`[data-key="${CSS.escape(reading.key)}"]`);
+      if (valueEl) valueEl.textContent = formatMeasurement(reading.value);
+    }
+  }
+
+  // The raw number, minus the float noise a scaled reading picks up on the way here
+  // (21.500000000000004). The device's own key is the label: units and friendly names are a
+  // display concern no two vendors agree on, and guessing them would be worse than not trying.
+  function formatMeasurement(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+    return String(Math.round(value * 100) / 100);
   }
 
   // ---------------- Commands ----------------

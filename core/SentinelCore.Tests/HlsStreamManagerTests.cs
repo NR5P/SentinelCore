@@ -95,11 +95,26 @@ public sealed class HlsStreamManagerTests : IDisposable
             })
             .Build();
 
-        return new HlsStreamManager(configuration, new StubEnvironment(_root), NullLogger<HlsStreamManager>.Instance);
+        // The sidecar manager is only reached for browser-published cameras, which these tests
+        // don't use - it is here to satisfy the constructor, not to be exercised.
+        var go2rtc = new Go2RtcManager(
+            configuration, new StubEnvironment(_root), new PlainHttpClientFactory(),
+            NullLogger<Go2RtcManager>.Instance);
+
+        return new HlsStreamManager(
+            configuration, new StubEnvironment(_root), new CameraSource(configuration), go2rtc,
+            NullLogger<HlsStreamManager>.Instance);
+    }
+
+    // Local rather than shared: Go2RtcManagerTests has its own, and a two-line stub is cheaper to
+    // duplicate than to hoist into a helper both files then depend on.
+    private sealed class PlainHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new() { Timeout = TimeSpan.FromSeconds(2) };
     }
 
     private static Camera TestCamera() => new(
-        Guid.NewGuid(), "Test Camera", "rtsp://127.0.0.1/stream", null, null, false, false, null, null, DateTimeOffset.UtcNow);
+        Guid.NewGuid(), "Test Camera", "rtsp://127.0.0.1/stream", null, null, false, false, null, null, false, DateTimeOffset.UtcNow);
 
     // The regression this file exists for. A session that ran for a while and then dropped - the
     // camera rebooted, the network blipped - has to be noticed and replaced.

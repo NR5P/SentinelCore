@@ -131,6 +131,11 @@
       </div>
 
       <div class="timeline-filters">
+        <select id="timeline-verdict" class="field-input">
+          <option value="confirmed" selected>confirmed only</option>
+          <option value="all">confirmed + rejected</option>
+          <option value="rejected">rejected only</option>
+        </select>
         <select id="timeline-category" class="field-input">
           <option value="">all objects</option>
           <option value="person">people</option>
@@ -138,6 +143,7 @@
           <option value="animal">animals</option>
           <option value="package">packages</option>
           <option value="plate">plates</option>
+          <option value="none">nothing detected</option>
           <option value="other">other</option>
         </select>
         <select id="timeline-severity" class="field-input">
@@ -178,6 +184,7 @@
         <div class="toolbar-actions">
           <button id="add-camera-btn" class="btn" data-tip-below data-tip-right data-tip="Add a camera by its stream URL. Most IP cameras expose an rtsp:// address.">+ add camera</button>
           <button id="discover-cameras-btn" class="btn" data-tip-below data-tip-right data-tip="Scan your network for cameras that support ONVIF discovery - the standard most IP cameras speak. Sends one broadcast per network adapter you select; doesn't touch any camera you haven't chosen to scan for.">discover cameras</button>
+          <button id="add-webcam-btn" class="btn" data-tip-below data-tip-right data-tip="Use a laptop, tablet or spare phone as a camera. Nothing to install: you open a page on that device and it streams its own webcam here. Useful for watching a room indoors while you're away.">+ add webcam device</button>
           <button id="manage-camera-groups-btn" class="btn" data-tip-below data-tip-right data-tip="Link cameras that are physically related (e.g. gate, driveway, front door). When one triggers, the others get pulled in too - recording alongside it and tagged as one connected incident.">camera groups</button>
         </div>
       </div>
@@ -474,6 +481,69 @@
             <div class="field-row field-row-wide" id="zone-trigger-url-row" data-tip="Fetching this address triggers this camera, for anything that can open a URL but can't log in - a doorbell, an NVR alert action, a script. Turn the Trigger API on under Settings first. Treat it like a password: the key is in the address.">
               <label class="field-label" for="zone-trigger-url">Trigger address</label>
               <input type="text" id="zone-trigger-url" class="field-input" readonly />
+            </div>
+
+            <div class="field-row field-row-wide field-section-heading" data-tip="Recordings that run on the clock instead of on motion - for when you know in advance you want everything between two times, whether or not anything moves. Independent of the zone above: a camera with no zone at all can still record on a schedule.">
+              <span class="field-label">SCHEDULED RECORDING</span>
+            </div>
+            <div class="field-row field-row-wide" id="recording-schedule-list-row">
+              <ul class="recording-schedule-list" id="recording-schedule-list"></ul>
+            </div>
+            <div class="field-row" data-tip="A name for this window, so you can tell it apart in the list and in the recordings.">
+              <label class="field-label" for="recording-name">Name</label>
+              <input type="text" id="recording-name" class="field-input" placeholder="Evening driveway" />
+            </div>
+            <div class="field-row" data-tip="How the start time is decided. 'Every day' repeats on the days you pick, 'Once' is a single date and time, 'At sunrise/sunset' follows the sun through the year, and 'Cron' is for an expression you already have.">
+              <label class="field-label" for="recording-kind">Repeats</label>
+              <select id="recording-kind" class="field-input">
+                <option value="daily">Every day</option>
+                <option value="once">Once</option>
+                <option value="solar">At sunrise/sunset</option>
+                <option value="cron">Cron expression</option>
+              </select>
+            </div>
+            <div class="field-row" data-tip="When recording starts.">
+              <label class="field-label" for="recording-start">Start recording at</label>
+              <input type="time" id="recording-start" class="field-input" />
+            </div>
+            <div class="field-row" data-tip="When recording stops. A stop time earlier than the start means the window crosses midnight - 23:00 to 01:00 records two hours.">
+              <label class="field-label" for="recording-stop">Stop recording at</label>
+              <input type="time" id="recording-stop" class="field-input" />
+            </div>
+            <div class="field-row field-row-wide" id="recording-days-row" data-tip="Which days this repeats on. None selected means every day.">
+              <label class="field-label">On these days</label>
+              <div class="recording-days" id="recording-days"></div>
+            </div>
+            <div class="field-row field-row-wide hidden" id="recording-cron-row" data-tip="Standard 5-field cron: minute hour day-of-month month day-of-week. The stop time is taken as a length from whenever the expression fires.">
+              <label class="field-label" for="recording-cron">Cron expression</label>
+              <input type="text" id="recording-cron" class="field-input" placeholder="0 20 * * 2" />
+            </div>
+            <div class="field-row field-row-wide hidden" id="recording-once-row" data-tip="The single date and time this records at. It will not repeat.">
+              <label class="field-label" for="recording-once">Date and time</label>
+              <input type="datetime-local" id="recording-once" class="field-input" />
+            </div>
+            <div class="field-row hidden" id="recording-solar-row" data-tip="Which solar moment starts the recording. The clock time this lands on moves through the year on its own.">
+              <label class="field-label" for="recording-solar">Starts at</label>
+              <select id="recording-solar" class="field-input">
+                <option value="sunset">Sunset</option>
+                <option value="sunrise">Sunrise</option>
+                <option value="dusk">Dusk</option>
+                <option value="dawn">Dawn</option>
+              </select>
+            </div>
+            <div class="field-row hidden" id="recording-solar-offset-row" data-tip="Minutes before (negative) or after (positive) that solar moment.">
+              <label class="field-label" for="recording-solar-offset">Offset (minutes)</label>
+              <input type="number" id="recording-solar-offset" class="field-input" min="-720" max="720" step="1" value="0" />
+            </div>
+            <div class="field-row field-checkbox-row" data-tip="Turn this window off without deleting it.">
+              <label class="switch"><input type="checkbox" id="recording-enabled" checked /><span class="switch-track"></span></label>
+              <span class="field-label">Enabled</span>
+            </div>
+            <div class="field-row field-row-wide" id="recording-preview-row" data-tip="The next few times this would actually record, worked out the same way the server will when it fires. The quickest way to tell whether a cron expression or a day set says what you meant.">
+              <span class="field-label" id="recording-preview">Fill in a window to see when it would run.</span>
+            </div>
+            <div class="field-row field-row-wide">
+              <button id="recording-add-btn" class="btn" type="button" data-tip="Save this recording window.">add recording window</button>
             </div>
           </div>
           <div class="zone-editor-footer">

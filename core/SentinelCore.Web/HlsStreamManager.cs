@@ -21,6 +21,15 @@ public sealed class HlsStreamManager : IDisposable
     // some cameras/encoders use long GOPs, so this stays generous rather than flaky.
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
 
+    // Browser-published cameras are the extreme case of that long-GOP problem, and predictably so:
+    // a browser's WebRTC encoder emits a keyframe roughly every 30 seconds, and ffmpeg produces
+    // nothing at all until one arrives. Measured at ~30s, so the ordinary budget would fail more
+    // often than not. Only the first request pays it - the session then stays warm.
+    private static readonly TimeSpan PublishedStartupTimeout = TimeSpan.FromSeconds(75);
+
+    private static TimeSpan StartupBudgetFor(Camera camera) =>
+        camera.IsBrowserPublished ? PublishedStartupTimeout : StartupTimeout;
+
     // How long a session has to have survived before its death is treated as worth retrying
     // rather than as a camera that simply isn't working - see GetOrStartLiveSession.
     private static readonly TimeSpan RestartBackoff = TimeSpan.FromSeconds(10);
@@ -31,13 +40,19 @@ public sealed class HlsStreamManager : IDisposable
     // broken camera from having a fresh ffmpeg spawned for it on every request - see
     // GetOrStartLiveSession.
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _restartBlockedUntil = new();
+    private readonly CameraSource _cameraSource;
+    private readonly Go2RtcManager _go2rtc;
     private readonly string _ffmpegPath;
     private readonly string _workingRoot;
     private readonly ILogger<HlsStreamManager> _logger;
     private readonly Timer _cleanupTimer;
 
-    public HlsStreamManager(IConfiguration configuration, IHostEnvironment environment, ILogger<HlsStreamManager> logger)
+    public HlsStreamManager(
+        IConfiguration configuration, IHostEnvironment environment, CameraSource cameraSource,
+        Go2RtcManager go2rtc, ILogger<HlsStreamManager> logger)
     {
+        _cameraSource = cameraSource;
+        _go2rtc = go2rtc;
         _ffmpegPath = configuration["FfmpegPath"] ?? "ffmpeg";
         var configured = configuration["CamerasDataDirectory"] ?? "data";
         var root = Path.IsPathRooted(configured) ? configured : Path.Combine(environment.ContentRootPath, configured);
@@ -52,7 +67,7 @@ public sealed class HlsStreamManager : IDisposable
         var session = GetOrStartLiveSession(camera);
 
         var playlistPath = Path.Combine(session.OutputDirectory, "stream.m3u8");
-        var deadline = DateTimeOffset.UtcNow + StartupTimeout;
+        var deadline = DateTimeOffset.UtcNow + StartupBudgetFor(camera);
         while (!File.Exists(playlistPath) && DateTimeOffset.UtcNow < deadline)
         {
             if (session.Process.HasExited)
@@ -185,7 +200,7 @@ public sealed class HlsStreamManager : IDisposable
         if (Directory.Exists(outputDir)) Directory.Delete(outputDir, recursive: true);
         Directory.CreateDirectory(outputDir);
 
-        var sourceUrl = BuildAuthenticatedUrl(camera);
+        var sourceUrl = _cameraSource.ResolveUrl(camera);
         var args = BuildFfmpegArguments(sourceUrl, camera.IncludeAudio, outputDir);
 
         var psi = new ProcessStartInfo
@@ -359,8 +374,15 @@ public sealed class HlsStreamManager : IDisposable
     // editor's reference image and for saving a full-res snapshot when a trigger zone fires.
     public async Task<byte[]?> CaptureSnapshotAsync(Camera camera, CancellationToken cancellationToken)
     {
+        // A browser-published camera is asked through the sidecar rather than with ffmpeg. Pointing
+        // ffmpeg at one works, but takes ~30s: it has to wait for the publisher's next keyframe,
+        // and browsers emit those far apart. go2rtc can ask the publisher for one - see
+        // Go2RtcManager.CaptureFrameAsync.
+        if (camera.IsBrowserPublished)
+            return await _go2rtc.CaptureFrameAsync(camera.Id, cancellationToken);
+
         var tempPath = Path.Combine(Path.GetTempPath(), $"snapshot-{Guid.NewGuid():N}.jpg");
-        var sourceUrl = BuildAuthenticatedUrl(camera);
+        var sourceUrl = _cameraSource.ResolveUrl(camera);
 
         var psi = new ProcessStartInfo
         {
