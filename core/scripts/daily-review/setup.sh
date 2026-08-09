@@ -257,7 +257,10 @@ echo
 echo "[6/7] Passwordless service restarts (for deploys)"
 SUDOERS_FILE=/etc/sudoers.d/sentinelcore
 SYSTEMCTL=$(command -v systemctl || echo /usr/bin/systemctl)
-if sudo -n -l "$SYSTEMCTL" restart sentinelcore >/dev/null 2>&1; then
+# -k first: without it, a sudo timestamp cached earlier in your terminal makes EVERY command
+# look passwordless, so this check passes and the 6am deploy still dies on a password prompt.
+# That exact false positive happened here on 2026-08-07.
+if sudo -k -n -l "$SYSTEMCTL" restart sentinelcore >/dev/null 2>&1; then
   ok "passwordless restart already allowed"
 else
   bad "deploys will fail under cron — restarting services needs a password"

@@ -152,7 +152,9 @@ fi
 
 # deploy.sh restarts services with sudo. Test the exact allowlisted commands, not sudo
 # in general — a NOPASSWD rule scoped to systemctl won't satisfy a generic `sudo -n` probe.
-if sudo -n -l /usr/bin/systemctl restart sentinelcore >/dev/null 2>&1; then
+# -k first, or a sudo timestamp cached earlier in this terminal makes every command look
+# passwordless and this check silently passes. See setup.sh for the same fix.
+if sudo -k -n -l /usr/bin/systemctl restart sentinelcore >/dev/null 2>&1; then
   echo "    sudo:     passwordless restart allowed"
 else
   warn   "sudo:     restarting services needs a password, which cron can't supply."
