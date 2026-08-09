@@ -27,6 +27,67 @@ case "$TARGET" in
     ;;
 esac
 
+# Check we can actually restart before spending three minutes building something we then can't
+# load. A deploy that dies at the restart is not a no-op: it leaves fresh binaries in bin/Release
+# with the old processes still serving, which reads exactly like success. Worse here than on most
+# projects, because wwwroot is served from the source tree rather than from bin - so a build that
+# never gets loaded still ships its JavaScript, and the browser starts calling endpoints the
+# running server does not have yet. Failing before the build keeps the tree and the processes
+# telling the same story.
+#
+# Linux/systemd only. macOS installs go through launchd, where the equivalent allowlist is a
+# different shape, and nobody has hit this there.
+restart_blocked() {
+  local unit=$1
+  # A cached sudo timestamp or a blanket NOPASSWD covers everything; no need to inspect further.
+  sudo -n true 2>/dev/null && return 1
+  # Otherwise the restart only goes through if this exact command is allowlisted. The trailing
+  # boundary matters: without it "restart sentinelcore" matches the sentinelcore-web entry.
+  sudo -n -l 2>/dev/null | grep -qE "NOPASSWD:.*systemctl restart ${unit}( |\$)" && return 1
+  return 0
+}
+
+if [[ "$(uname -s)" != "Darwin" && "${SKIP_RESTART:-0}" != "1" ]]; then
+  units=()
+  case "$TARGET" in
+    main) units=(sentinelcore) ;;
+    web) units=(sentinelcore-web) ;;
+    homekit) units=(sentinelcore-homekit) ;;
+    all) units=(sentinelcore sentinelcore-web) ;;
+  esac
+
+  blocked=()
+  for unit in "${units[@]}"; do
+    # An uninstalled HomeKit sidecar is skipped at restart time, so don't demand rights for it.
+    if [[ "$unit" == "sentinelcore-homekit" ]] && ! systemctl cat sentinelcore-homekit >/dev/null 2>&1; then
+      continue
+    fi
+    restart_blocked "$unit" && blocked+=("$unit")
+  done
+
+  if (( ${#blocked[@]} > 0 )); then
+    echo "==> Cannot restart ${blocked[*]} without a password prompt - stopping before the build." >&2
+    echo >&2
+    echo "    Nothing was built, so this run has not moved bin/Release further ahead of them." >&2
+    echo >&2
+    # The failure mode seen on this machine was an allowlist left behind by the rename, which
+    # looks fine until you read the unit names in it - so say so rather than just printing the fix.
+    if sudo -n -l 2>/dev/null | grep -q "systemctl restart blueiris-ollama-bridge"; then
+      echo "    The sudoers allowlist covers the pre-rename units (blueiris-ollama-bridge*), which" >&2
+      echo "    no longer exist. It needs updating to the current names." >&2
+      echo >&2
+    fi
+    echo "    Fix (see docs/DEPLOYMENT.md section 10):" >&2
+    echo "      sudo visudo -f /etc/sudoers.d/blueiris-deploy" >&2
+    for unit in sentinelcore sentinelcore-web sentinelcore-homekit; do
+      echo "      media ALL=(root) NOPASSWD: /usr/bin/systemctl restart $unit" >&2
+    done
+    echo >&2
+    echo "    Or run the build alone with SKIP_RESTART=1, then restart by hand." >&2
+    exit 1
+  fi
+fi
+
 echo "==> Clearing stale build servers (works around an intermittent CLR crash seen here before)"
 dotnet build-server shutdown >/dev/null 2>&1 || true
 
@@ -87,6 +148,25 @@ restart_homekit() {
   echo "==> Restarting sentinelcore-homekit"
   sudo systemctl restart sentinelcore-homekit
 }
+
+if [[ "${SKIP_RESTART:-0}" == "1" ]]; then
+  # Deliberately loud, and deliberately the last thing printed. This leaves the machine in the
+  # state the preflight above exists to prevent - new binaries, old processes, and wwwroot already
+  # serving the new frontend out of the source tree - which is fine when it's a choice you made
+  # and is silently wrong when you forget.
+  echo
+  echo "==> Skipping restart (SKIP_RESTART=1)"
+  echo "    bin/Release is now AHEAD of the running services. wwwroot is served from source, so"
+  echo "    the dashboard is already running the new frontend against the old backend."
+  echo "    Finish with:"
+  case "$TARGET" in
+    main) echo "      sudo systemctl restart sentinelcore" ;;
+    web) echo "      sudo systemctl restart sentinelcore-web" ;;
+    homekit) echo "      sudo systemctl restart sentinelcore-homekit" ;;
+    all) echo "      sudo systemctl restart sentinelcore sentinelcore-web" ;;
+  esac
+  exit 0
+fi
 
 case "$TARGET" in
   main) restart_main ;;

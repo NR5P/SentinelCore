@@ -492,13 +492,26 @@ either platform.
 The HomeKit sidecar is skipped automatically if its unit isn't installed, so `./deploy.sh` works
 unchanged whether or not you're using HomeKit.
 
-It runs (in order): `dotnet build-server shutdown` (safety, see section 4), `dotnet build -c
-Release`, `dotnet test` (set `SKIP_TESTS=1` to skip — not recommended), then the systemd
-restart(s), then a status + health-check summary. If the build or tests fail, it stops before
-touching the running services.
+It runs (in order): a check that it will be able to restart the services at all, `dotnet
+build-server shutdown` (safety, see section 4), `dotnet build -c Release`, `dotnet test` (set
+`SKIP_TESTS=1` to skip — not recommended), then the systemd restart(s), then a status +
+health-check summary. If the build or tests fail, it stops before touching the running services.
 
 It needs `sudo` for the `systemctl restart` calls — either enter your password each time it
 prompts, or see the next section to make that passwordless.
+
+The restart check comes **first**, before the build, and the script exits without building if the
+restart would need a password it can't ask for (a cron job, an agent, any non-interactive shell).
+That ordering is deliberate. A deploy that builds and then fails at the restart isn't a no-op: it
+leaves new binaries in `bin/Release` while the old processes keep serving, which looks just like a
+successful deploy from the outside. On this project it goes one step further — `wwwroot` is served
+from the source tree, not from `bin/Release`, so the dashboard picks up new JavaScript the moment
+it's written, and a half-finished deploy leaves the browser calling API routes the running server
+doesn't have yet. Both of those are quiet; the failure message isn't.
+
+Set `SKIP_RESTART=1` to build and test without restarting — useful for checking a change compiles
+against the live tree. It skips the check, prints the restart command to finish with, and warns
+that the frontend is already live against the old backend.
 
 ## 10. Passwordless restarts (optional)
 
