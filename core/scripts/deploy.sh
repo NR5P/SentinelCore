@@ -65,8 +65,20 @@ if [[ "$(uname -s)" != "Darwin" && "${SKIP_RESTART:-0}" != "1" ]]; then
     restart_blocked "$unit" && blocked+=("$unit")
   done
 
+  # At a terminal a password is not a blocker, it's a prompt - so ask for it now rather than
+  # letting the build run first and stopping for input three minutes later, when whoever started
+  # it has already looked away. Caching the timestamp up front also means the restart itself
+  # won't stop to ask.
+  if (( ${#blocked[@]} > 0 )) && [[ -t 0 ]]; then
+    echo "==> Restarting ${blocked[*]} will need sudo - authenticating now, before the build"
+    if sudo -v; then
+      blocked=()
+    fi
+  fi
+
   if (( ${#blocked[@]} > 0 )); then
-    echo "==> Cannot restart ${blocked[*]} without a password prompt - stopping before the build." >&2
+    echo "==> Cannot restart ${blocked[*]}: sudo wants a password and there is no terminal to ask on." >&2
+    echo "    Stopping before the build." >&2
     echo >&2
     echo "    Nothing was built, so this run has not moved bin/Release further ahead of them." >&2
     echo >&2
