@@ -194,8 +194,20 @@ private struct LiveCameraPreview: View {
         model.client.url(path: "/api/cameras/\(camera.id.uuidString)/thumbnail.jpg")
     }
 
+    // The low rendition, not the main one. A tile is a few hundred points wide, and a grid of them
+    // pulling full-resolution streams is what saturated the phone's Wi-Fi: measured against three
+    // 2560x1920 Reolinks, each tile got ~8 Mbit/s of a ~25 Mbit/s ceiling, every tile stalled and
+    // reconnected, and dropped frames stayed at zero throughout - starved for data, not short of
+    // decode. The full-screen view below keeps the main stream, which is where the detail is
+    // wanted and where it is the only stream being pulled.
+    //
+    // A camera with no low stream is served its main one, so this costs nothing where it can't
+    // help. A server *older* than this path is a different matter - it routes /stream/{file} only,
+    // so the extra segment doesn't match and the tile gets a 404. This app therefore has to reach
+    // a server carrying the matching change; the reverse is fine, since /stream/{file} still means
+    // the main stream and older clients keep working against a new server.
     private var streamURL: URL? {
-        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
+        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/sub/stream.m3u8")
     }
 
     private var streamRequest: LiveStreamRequest {

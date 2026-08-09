@@ -51,7 +51,34 @@ That fix is already committed:
 **If the app on the phone was built before 30 July 2026, a rebuild is the whole fix.** Establish
 this before changing any code — it costs one build and it is the most likely answer.
 
-## Suspect 2 — the stream is very heavy for a phone
+## Suspect 2 — the stream is very heavy for a phone — **CONFIRMED AND FIXED 2026-08-09**
+
+Measured on the phone itself, via `AVPlayerItem.accessLog()`, against three cameras:
+
+| gate camera | In the grid | Solo |
+|---|---|---|
+| throughput | 7.9 Mbit/s avg | 15.2 Mbit/s avg |
+| stalls | 2 | 0 |
+| reconnects | 1 | 0 |
+
+Aggregate grid demand was **24.7 Mbit/s**, all three tiles degraded together, and every tile
+reconnected at least once while neither solo view did. **Dropped frames were zero throughout**,
+which is what rules out the decoder and names the link: the phone was starved for data, not short
+of decode.
+
+Fixed by giving live view a rendition choice. `StreamQuality` (`CameraSource`) picks Main or Sub;
+`HlsStreamManager` keys sessions by camera *and* rendition; `/api/cameras/{id}/stream/sub/...`
+serves the low one. Grid tiles on iOS, tvOS, Android and the dashboard's HLS tier ask for Sub, and
+every full-screen view keeps Main. A camera with no derivable low stream, or one that turns out not
+to serve it, falls back to Main and is remembered rather than retried per request.
+
+**Deployment order matters:** the server must carry this before the apps do. Old clients work
+against a new server (`/stream/{file}` still means Main), but a new client against an old server
+gets a 404 on the extra path segment.
+
+The original note follows.
+
+### Original analysis
 
 `HlsStreamManager` serves the camera's **main** stream with `-c:v copy`: on the gate camera that is
 **2560x1920 at roughly 8.6 Mbit/s**, sustained, over Wi-Fi, while the server often sits at load

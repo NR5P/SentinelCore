@@ -1702,7 +1702,15 @@ window.GateWatchCameras = (function () {
   }
 
   function attachHls(video, status, camera) {
-    const src = `/api/cameras/${camera.id}/stream/stream.m3u8`;
+    // The low rendition. This is the bottom rung - the tier a tile lands on when WebRTC and MSE
+    // are both unavailable, and the one that visibly rebuffers - so it is the last place that
+    // wants to be pulling a 2560x1920 stream per tile. A camera with no low stream is served its
+    // main one, so this costs nothing where it can't help.
+    //
+    // The WebRTC tier above still pulls main streams through go2rtc, which is a deliberate
+    // limit rather than an oversight: go2rtc registers one stream per camera, and giving it a
+    // second is its own change.
+    const src = `/api/cameras/${camera.id}/stream/sub/stream.m3u8`;
     video.srcObject = null; // in case a WebRTC attempt got as far as attaching a stream
     const startedAt = Date.now();
 

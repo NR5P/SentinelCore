@@ -40,8 +40,17 @@ public sealed class HlsStreamManagerTests : IDisposable
     // Stands in for ffmpeg: records that it was started, writes a playlist and one segment into
     // the output directory the real arguments name, then either stays alive like a healthy
     // session or exits like a camera that dropped.
-    private void WriteFfmpegStub(bool stayAlive, bool emptySegment = false)
+    // refuseUrlContaining stands in for a camera that advertises a rendition it won't actually
+    // serve: real ffmpeg refuses an input it can't open and quits before writing anything, so the
+    // stub has to quit before the playlist too - exiting *after* writing one is a working stream
+    // that merely stopped, which is a different case entirely.
+    private void WriteFfmpegStub(bool stayAlive, bool emptySegment = false, string? refuseUrlContaining = null)
     {
+        var refusal = refuseUrlContaining is null
+            ? ""
+            : $"""
+              case "$*" in *{refuseUrlContaining}*) exit 1;; esac
+              """;
         var segmentBody = emptySegment ? "" : "printf '\\x47fake-segment-payload' > \"$OUTDIR/seg_000.ts\"";
         // The final argument is the thumbnail, not the playlist (BuildFfmpegArguments appends the
         // poster-frame output last), so the output directory is derived from it and the playlist
@@ -49,6 +58,7 @@ public sealed class HlsStreamManagerTests : IDisposable
         File.WriteAllText(_stubPath, $"""
             #!/bin/sh
             echo started >> "{_invocationLog}"
+            {refusal}
             for LAST in "$@"; do :; done
             OUTDIR=$(dirname "$LAST")
             {segmentBody}
@@ -73,13 +83,23 @@ public sealed class HlsStreamManagerTests : IDisposable
 
     // StartedAt is deliberately read-only on the session, so the "ran for a while then died" case
     // is set up by reaching in rather than by making the production type mutable for a test.
-    private static void SetSessionStartedAt(HlsStreamManager manager, Guid cameraId, DateTimeOffset startedAt)
+    //
+    // Sessions are keyed by camera *and* rendition since live view gained a low-resolution stream
+    // for grid tiles, so the key has to be built rather than passed as a bare id. Main is the one
+    // these tests drive: they use a stub ffmpeg and a URL with no derivable low stream, so that is
+    // also what a Sub request would resolve to.
+    private static void SetSessionStartedAt(
+        HlsStreamManager manager, Guid cameraId, DateTimeOffset startedAt,
+        StreamQuality quality = StreamQuality.Main)
     {
         var sessionsField = typeof(HlsStreamManager)
             .GetField("_sessions", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         var sessions = sessionsField.GetValue(manager)!;
+        var keyType = typeof(HlsStreamManager)
+            .GetNestedType("SessionKey", System.Reflection.BindingFlags.NonPublic)!;
+        var key = Activator.CreateInstance(keyType, cameraId, quality)!;
         var indexer = sessions.GetType().GetProperty("Item")!;
-        var session = indexer.GetValue(sessions, [cameraId])!;
+        var session = indexer.GetValue(sessions, [key])!;
         var backing = session.GetType()
             .GetField("<StartedAt>k__BackingField", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         backing.SetValue(session, startedAt);
@@ -240,6 +260,79 @@ public sealed class HlsStreamManagerTests : IDisposable
             var sessionDirectory = Path.Combine(_root, "hls", camera.Id.ToString("N"));
             Assert.StartsWith(sessionDirectory, Path.GetFullPath(escaped), StringComparison.Ordinal);
         }
+    }
+
+    // A camera whose URL names a rendition ffmpeg can be pointed at separately. TestCamera's plain
+    // "rtsp://127.0.0.1/stream" deliberately has no derivable low stream, which is the other half
+    // of this pair.
+    private static Camera ReolinkCamera() => new(
+        Guid.NewGuid(), "Gate", "rtsp://127.0.0.1/h264Preview_01_main", null, null, false, false, null, null,
+        false, DateTimeOffset.UtcNow);
+
+    // The load-bearing guarantee of the whole split. A camera with no low stream must be served
+    // from the session it already has, not from a second identical one: two ffmpegs pulling the
+    // same main stream would double both the process count and the connections against a Reolink's
+    // small budget, which is the exact opposite of what serving a low rendition is for.
+    [Fact]
+    public async Task ACameraWithNoLowStream_ServesGridTilesFromItsMainSession_RatherThanASecondCopyOfIt()
+    {
+        WriteFfmpegStub(stayAlive: true);
+        using var manager = CreateManager();
+        var camera = TestCamera();
+
+        var main = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Main, TestContext.Current.CancellationToken);
+        var sub = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
+
+        Assert.Equal(main, sub);
+        Assert.Equal(1, InvocationCount());
+        // And the segments a player reads out of that playlist have to resolve under the name it
+        // asked for, since it follows them relative to the URL it was handed.
+        Assert.Equal(
+            Path.Combine(_root, "hls", camera.Id.ToString("N")),
+            Path.GetDirectoryName(sub));
+    }
+
+    [Fact]
+    public async Task ACameraWithALowStream_RunsItAsItsOwnSession_SoBothRenditionsCanBeWatchedAtOnce()
+    {
+        WriteFfmpegStub(stayAlive: true);
+        using var manager = CreateManager();
+        var camera = ReolinkCamera();
+
+        var main = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Main, TestContext.Current.CancellationToken);
+        var sub = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
+
+        // Someone watching one camera full-screen while a grid elsewhere shows tiles is the
+        // ordinary case, not a corner one - neither may evict or reuse the other's segments.
+        Assert.NotEqual(main, sub);
+        Assert.Equal(2, InvocationCount());
+        Assert.Equal(Path.Combine(_root, "hls", $"{camera.Id:N}-sub"), Path.GetDirectoryName(sub));
+    }
+
+    [Fact]
+    public async Task ACameraThatDoesntActuallyServeItsDerivedLowStream_FallsBackToTheMainOne()
+    {
+        // ffmpeg refuses an input it can't open and quits immediately, which is what a camera whose
+        // low stream is switched off looks like from here. A dead tile would be the wrong answer:
+        // the picture is available, just not at the size that was asked for.
+        WriteFfmpegStub(stayAlive: true, refuseUrlContaining: "_sub");
+        using var manager = CreateManager();
+        var camera = ReolinkCamera();
+
+        var sub = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
+
+        Assert.Equal(Path.Combine(_root, "hls", camera.Id.ToString("N")), Path.GetDirectoryName(sub));
+
+        // And the camera is remembered, so the next tile goes straight to the main stream instead
+        // of spawning another doomed ffmpeg to rediscover the same thing.
+        var invocationsAfterFallback = InvocationCount();
+        await manager.EnsureStreamStartedAsync(camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
+        Assert.Equal(invocationsAfterFallback, InvocationCount());
     }
 
     private sealed class StubEnvironment(string contentRoot) : IHostEnvironment

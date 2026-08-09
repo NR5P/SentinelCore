@@ -259,8 +259,15 @@ fun LiveCamerasScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             SentinelPlayer(
+                                // The low rendition, not the main one - a grid of tiles pulling
+                                // full-resolution streams saturates the link it is watched over,
+                                // and a tile is far too small to show the difference. The
+                                // full-screen player below keeps the main stream. A camera with
+                                // no low stream is served its main one; a server older than this
+                                // path routes /stream/{file} only and would 404 on the extra
+                                // segment, so this app needs a server carrying the same change.
                                 url = model.absoluteUrl(
-                                    "/api/cameras/${camera.id}/stream/stream.m3u8",
+                                    "/api/cameras/${camera.id}/stream/sub/stream.m3u8",
                                 ),
                                 headers = model.mediaHeaders(),
                                 model = model,

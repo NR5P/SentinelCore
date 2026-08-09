@@ -34,12 +34,24 @@ public sealed class HlsStreamManager : IDisposable
     // rather than as a camera that simply isn't working - see GetOrStartLiveSession.
     private static readonly TimeSpan RestartBackoff = TimeSpan.FromSeconds(10);
 
-    private readonly ConcurrentDictionary<Guid, StreamSession> _sessions = new();
+    // Keyed by camera *and* rendition: a grid tile watching the low stream and a full-screen
+    // viewer watching the main one are two different ffmpeg processes writing two different
+    // segment directories, and neither may reuse or evict the other's.
+    private readonly record struct SessionKey(Guid CameraId, StreamQuality Quality);
+
+    private readonly ConcurrentDictionary<SessionKey, StreamSession> _sessions = new();
 
     // Cameras whose stream died on startup, and when it becomes worth trying them again. Keeps a
     // broken camera from having a fresh ffmpeg spawned for it on every request - see
     // GetOrStartLiveSession.
-    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _restartBlockedUntil = new();
+    private readonly ConcurrentDictionary<SessionKey, DateTimeOffset> _restartBlockedUntil = new();
+
+    // Cameras that turned out not to serve the low-resolution stream their URL implied. ffmpeg
+    // refuses an input it can't open and quits immediately, so a Sub session that exits without
+    // ever writing a playlist is that camera telling us the rendition isn't enabled. Latching it
+    // sends every later request for that camera to the main stream instead of crash-looping on the
+    // same guess - the same fallback TriggerZoneMonitor keeps for detection, for the same reason.
+    private readonly ConcurrentDictionary<Guid, bool> _noLowResStream = new();
     private readonly CameraSource _cameraSource;
     private readonly Go2RtcManager _go2rtc;
     private readonly string _ffmpegPath;
@@ -62,9 +74,55 @@ public sealed class HlsStreamManager : IDisposable
         _cleanupTimer = new Timer(_ => CleanupIdleSessions(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
     }
 
-    public async Task<string> EnsureStreamStartedAsync(Camera camera, CancellationToken cancellationToken)
+    public Task<string> EnsureStreamStartedAsync(Camera camera, CancellationToken cancellationToken) =>
+        EnsureStreamStartedAsync(camera, StreamQuality.Main, cancellationToken);
+
+    // Asking for Sub is a preference, not a demand: a camera that doesn't serve one still has to
+    // show a picture. So a Sub request that can't be satisfied degrades to the main stream rather
+    // than failing, and the camera is remembered so the next viewer doesn't pay the same discovery
+    // twice. Main requests keep the original behaviour exactly - they have nothing to fall back to.
+    public async Task<string> EnsureStreamStartedAsync(
+        Camera camera, StreamQuality quality, CancellationToken cancellationToken)
     {
-        var session = GetOrStartLiveSession(camera);
+        var effective = EffectiveQuality(camera, quality);
+        try
+        {
+            return await StartAndWaitAsync(camera, effective, cancellationToken);
+        }
+        catch (Exception ex) when (effective == StreamQuality.Sub && ex is not OperationCanceledException)
+        {
+            if (_noLowResStream.TryAdd(camera.Id, true))
+                _logger.LogWarning(
+                    "Camera {CameraId} ({Name}) never produced a playlist on its derived low-resolution stream, so " +
+                    "that stream probably isn't enabled on the camera. Falling back to the main stream for live view. {Reason}",
+                    camera.Id, camera.Name, ex.Message);
+
+            // The failed attempt left a backoff behind for the rendition we're abandoning; clearing
+            // it keeps that from blocking the retry we're about to make on a different key.
+            _restartBlockedUntil.TryRemove(new SessionKey(camera.Id, StreamQuality.Sub), out _);
+            return await StartAndWaitAsync(camera, StreamQuality.Main, cancellationToken);
+        }
+    }
+
+    // Which rendition this camera can actually serve for the one that was asked for. Resolved
+    // before a session key is built, so a camera with no low stream runs one process rather than
+    // two identical ones - warming Sub and Main separately would double both the ffmpeg count and
+    // the connections against a Reolink's small budget, which is the opposite of the point.
+    private StreamQuality EffectiveQuality(Camera camera, StreamQuality requested)
+    {
+        if (requested == StreamQuality.Main) return StreamQuality.Main;
+        if (camera.IsBrowserPublished) return StreamQuality.Main;
+        if (_noLowResStream.ContainsKey(camera.Id)) return StreamQuality.Main;
+        return CameraSource.TryDeriveLowResUrl(HlsStreamManager.BuildAuthenticatedUrl(camera)) is null
+            ? StreamQuality.Main
+            : StreamQuality.Sub;
+    }
+
+    private async Task<string> StartAndWaitAsync(
+        Camera camera, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        var key = new SessionKey(camera.Id, quality);
+        var session = GetOrStartLiveSession(camera, key);
 
         var playlistPath = Path.Combine(session.OutputDirectory, "stream.m3u8");
         var deadline = DateTimeOffset.UtcNow + StartupBudgetFor(camera);
@@ -72,7 +130,7 @@ public sealed class HlsStreamManager : IDisposable
         {
             if (session.Process.HasExited)
             {
-                _sessions.TryRemove(camera.Id, out _);
+                _sessions.TryRemove(key, out _);
                 throw new InvalidOperationException(
                     $"ffmpeg exited before producing a stream - check the camera URL/credentials. Recent log:\n{session.RecentLog}");
             }
@@ -82,7 +140,7 @@ public sealed class HlsStreamManager : IDisposable
 
         if (!File.Exists(playlistPath))
         {
-            _sessions.TryRemove(camera.Id, out _);
+            _sessions.TryRemove(key, out _);
             KillSession(session);
             throw new TimeoutException($"Timed out waiting for the stream to start. Recent log:\n{session.RecentLog}");
         }
@@ -102,16 +160,16 @@ public sealed class HlsStreamManager : IDisposable
     // inside that loop. A dead session is dropped and replaced with a fresh one; if the camera
     // really is unreachable the new process exits too and the caller gets a real error with
     // ffmpeg's log, which is the outcome that tells the owner something is wrong.
-    private StreamSession GetOrStartLiveSession(Camera camera)
+    private StreamSession GetOrStartLiveSession(Camera camera, SessionKey key)
     {
         // Reap a session whose ffmpeg has gone. Compare-and-remove, so that when two viewers
         // arrive together only the one that actually takes this session out of the dictionary
         // disposes it - neither can double-kill a process or tear down the other's replacement.
-        if (_sessions.TryGetValue(camera.Id, out var existing) && existing.Process.HasExited)
+        if (_sessions.TryGetValue(key, out var existing) && existing.Process.HasExited)
         {
             var log = existing.RecentLog;
             var ranFor = DateTimeOffset.UtcNow - existing.StartedAt;
-            if (_sessions.TryRemove(new KeyValuePair<Guid, StreamSession>(camera.Id, existing)))
+            if (_sessions.TryRemove(new KeyValuePair<SessionKey, StreamSession>(key, existing)))
                 KillSession(existing);
 
             // Dying almost immediately means the camera itself isn't working - wrong URL, wrong
@@ -122,17 +180,17 @@ public sealed class HlsStreamManager : IDisposable
             // its own finds the camera again as soon as it recovers.
             if (ranFor < RestartBackoff)
             {
-                _restartBlockedUntil[camera.Id] = DateTimeOffset.UtcNow + RestartBackoff;
+                _restartBlockedUntil[key] = DateTimeOffset.UtcNow + RestartBackoff;
                 throw new InvalidOperationException(
                     $"The stream for this camera keeps stopping - check its URL and credentials, and that it isn't refusing extra connections. Recent log:\n{log}");
             }
 
             _logger.LogWarning(
-                "HLS session for camera {CameraId} ({Name}) died after {Seconds:n0}s; starting a fresh one. Recent log:\n{Log}",
-                camera.Id, camera.Name, ranFor.TotalSeconds, log);
+                "HLS session for camera {CameraId} ({Name}, {Quality}) died after {Seconds:n0}s; starting a fresh one. Recent log:\n{Log}",
+                camera.Id, camera.Name, key.Quality, ranFor.TotalSeconds, log);
         }
 
-        if (_restartBlockedUntil.TryGetValue(camera.Id, out var blockedUntil))
+        if (_restartBlockedUntil.TryGetValue(key, out var blockedUntil))
         {
             if (DateTimeOffset.UtcNow < blockedUntil)
             {
@@ -140,23 +198,38 @@ public sealed class HlsStreamManager : IDisposable
                     "The stream for this camera keeps stopping - check its URL and credentials, and that it isn't refusing extra connections.");
             }
 
-            _restartBlockedUntil.TryRemove(camera.Id, out _);
+            _restartBlockedUntil.TryRemove(key, out _);
         }
 
-        var session = _sessions.GetOrAdd(camera.Id, _ => StartSession(camera));
+        var session = _sessions.GetOrAdd(key, k => StartSession(camera, k.Quality));
         session.LastAccessed = DateTimeOffset.UtcNow;
         return session;
     }
 
-    public void Touch(Guid cameraId)
+    public void Touch(Guid cameraId) => Touch(cameraId, StreamQuality.Main);
+
+    public void Touch(Guid cameraId, StreamQuality quality)
     {
-        if (_sessions.TryGetValue(cameraId, out var session))
+        if (TryGetServingSession(cameraId, quality, out var session))
             session.LastAccessed = DateTimeOffset.UtcNow;
     }
 
-    public string? GetSegmentPath(Guid cameraId, string fileName)
+    // The session actually serving a rendition, which is not always the one named: a camera with
+    // no low stream has its Sub requests served by the Main session (see EffectiveQuality), and a
+    // player following relative segment names out of the playlist it was handed knows nothing
+    // about that. Resolving the fallback here is what keeps those segment URLs pointing at video.
+    private bool TryGetServingSession(Guid cameraId, StreamQuality quality, out StreamSession session)
     {
-        if (!_sessions.TryGetValue(cameraId, out var session)) return null;
+        if (_sessions.TryGetValue(new SessionKey(cameraId, quality), out session!)) return true;
+        return _sessions.TryGetValue(new SessionKey(cameraId, StreamQuality.Main), out session!);
+    }
+
+    public string? GetSegmentPath(Guid cameraId, string fileName) =>
+        GetSegmentPath(cameraId, StreamQuality.Main, fileName);
+
+    public string? GetSegmentPath(Guid cameraId, StreamQuality quality, string fileName)
+    {
+        if (!TryGetServingSession(cameraId, quality, out var session)) return null;
         var safeName = Path.GetFileName(fileName); // guards against path traversal
         var path = Path.Combine(session.OutputDirectory, safeName);
 
@@ -181,26 +254,46 @@ public sealed class HlsStreamManager : IDisposable
     // reading it is just a file read, not another camera round-trip. Null if there's no running
     // session or it hasn't written a first frame yet; callers should fall back to
     // CaptureSnapshotAsync in that case.
+    // Any warm session's poster frame will do - both renditions show the same scene, and a tile
+    // covered by an 896x672 still while its video starts is no worse off than one covered by a
+    // 2560x1920 one. Main first only because it is the likelier one to exist.
     public string? GetThumbnailPath(Guid cameraId)
     {
-        if (!_sessions.TryGetValue(cameraId, out var session)) return null;
-        var path = Path.Combine(session.OutputDirectory, ThumbnailFileName);
-        return File.Exists(path) ? path : null;
+        foreach (var quality in new[] { StreamQuality.Main, StreamQuality.Sub })
+        {
+            if (!_sessions.TryGetValue(new SessionKey(cameraId, quality), out var session)) continue;
+            var path = Path.Combine(session.OutputDirectory, ThumbnailFileName);
+            if (File.Exists(path)) return path;
+        }
+
+        return null;
     }
 
+    // Every rendition of the camera, not just the main one - this runs when a camera is edited or
+    // deleted, and a low-stream session left behind would go on dialling a camera that no longer
+    // exists, or serving video from the URL the edit replaced.
     public void StopStream(Guid cameraId)
     {
-        if (_sessions.TryRemove(cameraId, out var session))
-            KillSession(session);
+        foreach (var quality in new[] { StreamQuality.Main, StreamQuality.Sub })
+        {
+            if (_sessions.TryRemove(new SessionKey(cameraId, quality), out var session))
+                KillSession(session);
+        }
+
+        // An edit may well be the fix for the missing low stream, so let the camera prove itself
+        // again rather than staying latched to the main stream for the life of the process.
+        _noLowResStream.TryRemove(cameraId, out _);
     }
 
-    private StreamSession StartSession(Camera camera)
+    private StreamSession StartSession(Camera camera, StreamQuality quality)
     {
-        var outputDir = Path.Combine(_workingRoot, camera.Id.ToString("N"));
+        var outputDir = Path.Combine(
+            _workingRoot,
+            quality == StreamQuality.Main ? camera.Id.ToString("N") : $"{camera.Id:N}-sub");
         if (Directory.Exists(outputDir)) Directory.Delete(outputDir, recursive: true);
         Directory.CreateDirectory(outputDir);
 
-        var sourceUrl = _cameraSource.ResolveUrl(camera);
+        var sourceUrl = _cameraSource.ResolveUrl(camera, quality);
         var args = BuildFfmpegArguments(sourceUrl, camera.IncludeAudio, outputDir);
 
         var psi = new ProcessStartInfo
@@ -430,11 +523,12 @@ public sealed class HlsStreamManager : IDisposable
     private void CleanupIdleSessions()
     {
         var cutoff = DateTimeOffset.UtcNow - IdleTimeout;
-        foreach (var (id, session) in _sessions)
+        foreach (var (key, session) in _sessions)
         {
-            if (session.LastAccessed < cutoff && _sessions.TryRemove(id, out var removed))
+            if (session.LastAccessed < cutoff && _sessions.TryRemove(key, out var removed))
             {
-                _logger.LogInformation("Stopping idle HLS stream for camera {CameraId}", id);
+                _logger.LogInformation(
+                    "Stopping idle HLS stream for camera {CameraId} ({Quality})", key.CameraId, key.Quality);
                 KillSession(removed);
             }
         }

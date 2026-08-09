@@ -80,9 +80,15 @@ public static class CameraEndpoints
             // warm (EnsureStreamStartedAsync reuses the running session). CancellationToken.None
             // because this outlives the request that triggered it; failures are swallowed here
             // since the real stream request surfaces them normally.
+            // Warmed at Sub rather than Main: a grid of tiles is what opens next in every client,
+            // and that is what a grid now asks for. Warming Main instead would hold a full-
+            // resolution connection open against every camera to serve nobody - the exact load
+            // the low rendition exists to avoid - and on a camera with no low stream Sub resolves
+            // to Main anyway, so nothing is left cold. A full-screen viewer pays its own cold
+            // start, which is one camera and a couple of seconds.
             foreach (var camera in cameras)
             {
-                _ = streams.EnsureStreamStartedAsync(camera, CancellationToken.None)
+                _ = streams.EnsureStreamStartedAsync(camera, StreamQuality.Sub, CancellationToken.None)
                     .ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
             }
 
@@ -131,34 +137,26 @@ public static class CameraEndpoints
         // a session does, so a cache holding one from a previous session would feed a viewer video
         // from a completely different point in time. Relevant well beyond the browser, since
         // Internet Exposed Mode puts a Cloudflare Tunnel in this path.
-        app.MapGet("/api/cameras/{id:guid}/stream/{file}", async (Guid id, string file, HttpContext http, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
-        {
-            http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, private";
+        // Two routes, one handler. The unqualified one is the original and still means the main
+        // stream, so a client built before this change - including the copies already installed on
+        // phones - keeps working untouched. The qualified one is how a grid asks for the cheap
+        // rendition. Quality lives in the path rather than the query because a player resolves the
+        // segment names it finds in a playlist relative to the playlist's own URL, and a query
+        // string does not survive that: ".../stream/sub/stream.m3u8" yields
+        // ".../stream/sub/seg_007.ts", while "?quality=sub" would yield ".../stream/seg_007.ts"
+        // and quietly pull main-stream segments.
+        app.MapGet("/api/cameras/{id:guid}/stream/{file}",
+            (Guid id, string file, HttpContext http, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
+                ServeHlsAsync(id, StreamQuality.Main, file, http, store, streams, ct))
+            .RequireAuthorization();
 
-            if (file == "stream.m3u8")
-            {
-                var camera = await store.GetAsync(id, ct);
-                if (camera is null) return Results.NotFound();
-
-                string playlistPath;
-                try
-                {
-                    playlistPath = await streams.EnsureStreamStartedAsync(camera, ct);
-                }
-                catch (Exception ex)
-                {
-                    return Results.Problem(ex.Message, statusCode: 502);
-                }
-
-                return Results.File(playlistPath, "application/vnd.apple.mpegurl");
-            }
-
-            streams.Touch(id);
-            var segmentPath = streams.GetSegmentPath(id, file);
-            if (segmentPath is null || !File.Exists(segmentPath)) return Results.NotFound();
-
-            return Results.File(segmentPath, "video/mp2t");
-        }).RequireAuthorization();
+        app.MapGet("/api/cameras/{id:guid}/stream/{quality:regex(^(main|sub)$)}/{file}",
+            (Guid id, string quality, string file, HttpContext http, ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
+                ServeHlsAsync(
+                    id,
+                    quality.Equals("sub", StringComparison.OrdinalIgnoreCase) ? StreamQuality.Sub : StreamQuality.Main,
+                    file, http, store, streams, ct))
+            .RequireAuthorization();
 
         // WebRTC signaling for a live tile: the browser POSTs its SDP offer here and gets go2rtc's
         // answer back, after which media flows browser<->go2rtc directly (DTLS-SRTP on the media
@@ -319,6 +317,37 @@ public static class CameraEndpoints
     // One direction of the MSE bridge: copy messages (type and message boundaries preserved)
     // until the source closes or errors. 64KB fits go2rtc's fMP4 segments comfortably; larger
     // messages arrive in parts and are forwarded part by part with EndOfMessage carried through.
+    private static async Task<IResult> ServeHlsAsync(
+        Guid id, StreamQuality quality, string file, HttpContext http,
+        ICameraStore store, HlsStreamManager streams, CancellationToken ct)
+    {
+        http.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate, private";
+
+        if (file == "stream.m3u8")
+        {
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            string playlistPath;
+            try
+            {
+                playlistPath = await streams.EnsureStreamStartedAsync(camera, quality, ct);
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(ex.Message, statusCode: 502);
+            }
+
+            return Results.File(playlistPath, "application/vnd.apple.mpegurl");
+        }
+
+        streams.Touch(id, quality);
+        var segmentPath = streams.GetSegmentPath(id, quality, file);
+        if (segmentPath is null || !File.Exists(segmentPath)) return Results.NotFound();
+
+        return Results.File(segmentPath, "video/mp2t");
+    }
+
     private static async Task PumpWebSocketAsync(
         System.Net.WebSockets.WebSocket from, System.Net.WebSockets.WebSocket to, CancellationToken cancellationToken)
     {

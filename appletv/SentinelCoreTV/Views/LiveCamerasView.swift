@@ -144,8 +144,10 @@ private struct LiveCameraPreview: View {
         model.client.url(path: "/api/cameras/\(camera.id.uuidString)/thumbnail.jpg")
     }
 
+    // The low rendition for tiles - see the note on the iPhone's twin of this view. A TV grid is
+    // several tiles at once over the same one link, which is the case that saturates.
     private var streamURL: URL? {
-        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
+        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/sub/stream.m3u8")
     }
 
     private var streamRequest: LiveStreamRequest {

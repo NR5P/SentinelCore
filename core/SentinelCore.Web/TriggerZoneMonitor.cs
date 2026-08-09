@@ -269,20 +269,11 @@ public sealed class TriggerZoneMonitor(
     // close, plus the pass-to-pass gap between prunes.
     private const int RewindBufferSlackSeconds = 30;
 
-    // The camera's low-resolution companion stream for a known main-stream URL, or null when no
-    // safe derivation exists (a camera whose URL doesn't follow a recognized pattern simply
-    // keeps decoding its main stream for detection, exactly as before). Reolink's FLV naming:
-    // channel0_main.bcs / channel0_ext.bcs (mid) / channel0_sub.bcs (low) - ext is preferred
-    // because detection downscales to a 320-wide grid either way and ext keeps a little more
-    // detail for it. Reolink RTSP naming: h264Preview_01_main / h264Preview_01_sub.
-    public static string? TryDeriveDetectionUrl(string mainUrl)
-    {
-        if (mainUrl.Contains("_main.bcs", StringComparison.OrdinalIgnoreCase))
-            return mainUrl.Replace("_main.bcs", "_ext.bcs", StringComparison.OrdinalIgnoreCase);
-        if (mainUrl.Contains("Preview_01_main", StringComparison.OrdinalIgnoreCase))
-            return mainUrl.Replace("Preview_01_main", "Preview_01_sub", StringComparison.OrdinalIgnoreCase);
-        return null;
-    }
+    // The camera's low-resolution companion stream, or null when no safe derivation exists (a
+    // camera whose URL doesn't follow a recognized pattern simply keeps decoding its main stream
+    // for detection, exactly as before). Live view now downshifts the same way for its grid tiles,
+    // so the rule itself lives in CameraSource and both callers read it from there.
+    public static string? TryDeriveDetectionUrl(string mainUrl) => CameraSource.TryDeriveLowResUrl(mainUrl);
 
     private DetectionSession StartSession(
         Camera camera, TriggerConfig config, MultiFrameOptions multiFrame, TriggerRewindOptions rewindOptions)
