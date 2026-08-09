@@ -15,6 +15,7 @@
   const categoryEl = document.getElementById("timeline-category");
   const severityEl = document.getElementById("timeline-severity");
   const reviewedEl = document.getElementById("timeline-reviewed");
+  const verdictEl = document.getElementById("timeline-verdict");
   const skipGapsEl = document.getElementById("timeline-skip-gaps");
 
   let day = null;
@@ -28,9 +29,18 @@
     return local.toISOString().slice(0, 10);
   }
 
+  // "confirmed" keeps anything the AI didn't actively reject, so a frame whose analysis failed or
+  // was cancelled still shows up - an outage should look like an outage, not like a quiet day.
+  function matchesVerdict(event) {
+    if (verdictEl.value === "rejected") return event.verdict === "rejected";
+    if (verdictEl.value === "confirmed") return event.verdict !== "rejected";
+    return true;
+  }
+
   function filteredEvents() {
     if (!day) return [];
     return day.events.filter(event =>
+      matchesVerdict(event) &&
       (!categoryEl.value || event.category === categoryEl.value) &&
       (!severityEl.value || event.severity === severityEl.value) &&
       (!reviewedEl.value || String(event.reviewed) === reviewedEl.value));
@@ -52,8 +62,18 @@
     return day?.recording.segments.find(segment => segment.eventId === event.id);
   }
 
+  // The filters decide what day you're reviewing, so a clip belonging to a hidden event is treated
+  // as not being there at all - it stays off the rail, play skips over it, and scrubbing across it
+  // reads as a gap. Otherwise hiding 350 rejected rows from the list would still leave 350 bands
+  // on the rail and playback would keep dropping into empty frames.
+  function visibleSegments() {
+    if (!day) return [];
+    const shown = new Set(filteredEvents().map(event => event.id));
+    return day.recording.segments.filter(segment => shown.has(segment.eventId));
+  }
+
   function segmentAt(date) {
-    return day?.recording.segments.find(segment =>
+    return visibleSegments().find(segment =>
       new Date(segment.start) <= date && new Date(segment.end) >= date);
   }
 
@@ -82,9 +102,13 @@
       const response = await fetch(`/api/timeline/day?${query}`);
       if (!response.ok) throw new Error((await response.json()).error || "Timeline request failed.");
       day = await response.json();
-      const initial = day.recording.segments.length
-        ? secondsFor(day.recording.segments[day.recording.segments.length - 1].start)
-        : day.events.length ? secondsFor(day.events[day.events.length - 1].occurredAt) : 43200;
+      // Open on the last thing worth looking at, which is the last *shown* event - landing on a
+      // rejected frame's clip would put the cursor somewhere the rail doesn't even draw.
+      const shown = filteredEvents();
+      const shownSegments = visibleSegments();
+      const initial = shownSegments.length
+        ? secondsFor(shownSegments[shownSegments.length - 1].start)
+        : shown.length ? secondsFor(shown[shown.length - 1].occurredAt) : 43200;
       scrubberEl.max = String(totalSeconds() - 1);
       scrubberEl.value = String(initial);
       render();
@@ -99,18 +123,24 @@
   function render() {
     if (!day) return;
     const events = filteredEvents();
-    countEl.textContent = `${events.length} of ${day.events.length} AI events`;
+    const segments = visibleSegments();
+    // How much the camera threw away is worth stating outright rather than leaving to be inferred
+    // from a shrinking list: a day that rejected 350 frames is a day the camera needs attention.
+    const rejected = day.events.filter(event => event.verdict === "rejected").length;
+    countEl.textContent = rejected && verdictEl.value === "confirmed"
+      ? `${events.length} shown · ${rejected} rejected`
+      : `${events.length} of ${day.events.length} AI events`;
     statusEl.textContent = day.recording.available
-      ? `${day.recording.segments.length} trigger clips`
+      ? `${segments.length} trigger clips`
       : "trigger clips unavailable";
-    rangesEl.innerHTML = day.recording.segments.map(segment => {
+    rangesEl.innerHTML = segments.map(segment => {
       const left = secondsFor(segment.start) / totalSeconds() * 100;
       const width = Math.max(.08,
         (secondsFor(segment.end) - secondsFor(segment.start)) / totalSeconds() * 100);
       return `<span class="timeline-range" style="left:${left}%;width:${width}%"></span>`;
     }).join("");
     markersEl.innerHTML = events.map(event =>
-      `<button class="timeline-marker severity-${event.severity}" style="left:${secondsFor(event.occurredAt) / totalSeconds() * 100}%" data-id="${event.id}" aria-label="${escapeHtml(event.category)} at ${escapeHtml(event.occurredAt)}"></button>`
+      `<button class="timeline-marker severity-${event.severity}${event.verdict === "rejected" ? " rejected" : ""}" style="left:${secondsFor(event.occurredAt) / totalSeconds() * 100}%" data-id="${event.id}" aria-label="${escapeHtml(event.category)} at ${escapeHtml(event.occurredAt)}"></button>`
     ).join("");
     for (const marker of markersEl.querySelectorAll(".timeline-marker")) {
       marker.addEventListener("click", () => {
@@ -125,7 +155,7 @@
 
   function renderEvent(event) {
     const row = document.createElement("div");
-    row.className = `timeline-event${event.reviewed ? " reviewed" : ""}`;
+    row.className = `timeline-event${event.reviewed ? " reviewed" : ""}${event.verdict === "rejected" ? " rejected" : ""}`;
     row.innerHTML = `
       <img src="${event.hasImage ? `/api/events/${event.id}/image` : ""}" alt="">
       <div class="timeline-event-body">
@@ -133,6 +163,7 @@
           <span>${new Date(event.occurredAt).toLocaleTimeString()}</span>
           <span class="category-${event.category}">${escapeHtml(event.category)}</span>
           <span class="severity-${event.severity}">${escapeHtml(event.severity)}</span>
+          ${event.verdict === "rejected" ? "<span class=\"verdict-rejected\">REJECTED</span>" : ""}
           ${event.hasClip ? "" : "<span>NO CLIP</span>"}
         </div>
         <div>${escapeHtml(event.summary || event.eventType)}</div>
@@ -227,7 +258,7 @@
     if (!playing || !loadedSegment) return;
     if (!skipGapsEl.checked) return stop();
     const finishedEnd = new Date(loadedSegment.end);
-    const next = day.recording.segments.find(segment => new Date(segment.start) > finishedEnd);
+    const next = visibleSegments().find(segment => new Date(segment.start) > finishedEnd);
     if (!next) return stop();
     scrubberEl.value = String(secondsFor(next.start));
     updateCursor();
@@ -271,6 +302,7 @@
   document.getElementById("timeline-refresh").addEventListener("click", load);
   cameraEl.addEventListener("change", load);
   dateEl.addEventListener("change", load);
+  verdictEl.addEventListener("change", () => { render(); updateFrame(); });
   categoryEl.addEventListener("change", render);
   severityEl.addEventListener("change", render);
   reviewedEl.addEventListener("change", render);

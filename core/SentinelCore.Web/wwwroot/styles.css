@@ -2023,6 +2023,25 @@ main {
   opacity: .66;
 }
 
+/* Only ever visible when you've deliberately asked to see rejected frames, so it reads as
+   background rather than as another thing demanding review. */
+.timeline-event.rejected {
+  opacity: .5;
+  border-style: dashed;
+}
+
+.timeline-event .verdict-rejected {
+  color: var(--text-dim);
+  letter-spacing: .08em;
+}
+
+/* A short centred tick against the full-height 38px marker a real sighting gets. */
+.timeline-marker.rejected {
+  opacity: .45;
+  top: 19px;
+  height: 16px;
+}
+
 .timeline-event img {
   width: 126px;
   aspect-ratio: 16 / 9;
@@ -2060,6 +2079,9 @@ main {
 .category-package { color: #b388ff; }
 .category-animal { color: #ff8a50; }
 .category-plate { color: var(--amber); }
+/* The AI looked and found nobody. Deliberately the dimmest of the set - it is the absence of a
+   sighting, and on a noisy camera it is most of the day. */
+.category-none { color: var(--text-dim); }
 
 @media (max-width: 480px) {
   .topbar {

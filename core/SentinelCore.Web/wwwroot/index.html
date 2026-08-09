@@ -131,6 +131,11 @@
       </div>
 
       <div class="timeline-filters">
+        <select id="timeline-verdict" class="field-input">
+          <option value="confirmed" selected>confirmed only</option>
+          <option value="all">confirmed + rejected</option>
+          <option value="rejected">rejected only</option>
+        </select>
         <select id="timeline-category" class="field-input">
           <option value="">all objects</option>
           <option value="person">people</option>
@@ -138,6 +143,7 @@
           <option value="animal">animals</option>
           <option value="package">packages</option>
           <option value="plate">plates</option>
+          <option value="none">nothing detected</option>
           <option value="other">other</option>
         </select>
         <select id="timeline-severity" class="field-input">

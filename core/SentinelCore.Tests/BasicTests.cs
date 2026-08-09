@@ -1997,6 +1997,93 @@ public sealed class BasicTests
         Assert.Equal(boundaryTrigger.Id, matches[alertEvent.Id].Id);
     }
 
+    // --- Timeline classification (TimelineEndpoints.Category/Severity) -------------------------
+    //
+    // The model narrates absences in the same voice it narrates sightings, so a summary is only
+    // evidence of a subject once you know it isn't a denial. Both classifiers used to read the
+    // raw string, which on a gate camera watching a spider web put roughly three quarters of a
+    // day's rows under "animals" at "high" severity and left the timeline's filters with nothing
+    // to separate.
+
+    private static AlertEventRecord Classified(string summary, double confidence, bool? subjectConfirmed) =>
+        new(Guid.NewGuid(), "GateCam", DateTimeOffset.UtcNow, "Completed", "none", summary,
+            false, null, confidence, null, SubjectConfirmed: subjectConfirmed);
+
+    [Fact]
+    public void Category_DenialOfEverySubjectIsNotAnAnimalSighting()
+    {
+        // The exact string FastLocalVisionClient writes, and the single most common row in the
+        // database: the word "animal" appears in it only as one of the things that weren't there.
+        var nothing = Classified("No person, vehicle, or animal detected.", 0.8, false);
+
+        Assert.Equal("none", TimelineEndpoints.Category(nothing));
+    }
+
+    [Fact]
+    public void Category_ProseDenialIsNotAPackageSighting()
+    {
+        // The vision model's longer phrasing of the same verdict, which used to land under
+        // "packages" for naming the thing it had just ruled out.
+        var nothing = Classified(
+            "The image shows a residential gate with no visible people, vehicles, or packages.",
+            0.8,
+            false);
+
+        Assert.Equal("none", TimelineEndpoints.Category(nothing));
+    }
+
+    [Fact]
+    public void Category_DenialWrittenBeforeSubjectConfirmedExistedStillReadsAsNothing()
+    {
+        // Rows predating the column were backfilled to confirmed wholesale, so the verdict alone
+        // would clear them. The wording is what gives them away.
+        var backfilled = Classified("No person, vehicle, or animal detected.", 0.8, true);
+
+        Assert.Equal("none", TimelineEndpoints.Category(backfilled));
+    }
+
+    [Fact]
+    public void Category_PersonOutranksWhateverElseSharesTheFrame()
+    {
+        var sighting = Classified("A person is walking past a parked car.", 0.8, true);
+
+        Assert.Equal("person", TimelineEndpoints.Category(sighting));
+    }
+
+    [Fact]
+    public void Severity_ConfidentDenialRanksLowNotHigh()
+    {
+        // 0.8 is how sure the model is that nothing is there. Feeding that straight into severity
+        // is what put every empty frame in the same band as somebody standing at the gate.
+        var nothing = Classified("No person, vehicle, or animal detected.", 0.8, false);
+        var somebody = Classified("A person is standing at the gate.", 0.8, true);
+
+        Assert.Equal("low", TimelineEndpoints.Severity(nothing));
+        Assert.Equal("high", TimelineEndpoints.Severity(somebody));
+    }
+
+    [Fact]
+    public void Severity_RejectedFrameStaysLowEvenWhenNotificationWasRecommended()
+    {
+        var rejected = new AlertEventRecord(
+            Guid.NewGuid(), "GateCam", DateTimeOffset.UtcNow, "Completed", "none",
+            "No person, vehicle, or animal detected.", true, null, 0.95, null,
+            SubjectConfirmed: false);
+
+        Assert.Equal("low", TimelineEndpoints.Severity(rejected));
+    }
+
+    [Fact]
+    public void Category_UnverifiedFrameIsClassifiedOnItsWordsNotDroppedToNothing()
+    {
+        // A failed or cancelled analysis has no verdict. Whatever summary it did manage should
+        // still be read normally - "unverified" is the timeline's signal for these, not "none".
+        var unverified = Classified("A red pickup truck is parked in the driveway.", 0.6, null);
+
+        Assert.Equal("vehicle", TimelineEndpoints.Category(unverified));
+        Assert.Equal("medium", TimelineEndpoints.Severity(unverified));
+    }
+
     [Fact]
     public void HttpsSettings_ExplicitlyDisabled_StaysOffSilently()
     {
