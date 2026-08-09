@@ -341,7 +341,7 @@ window.GateWatchDevices = (function () {
     // The rows are rebuilt only when the set of keys changes. A device reports the same handful
     // every time, and throwing the DOM away on every five-second poll would fight anyone trying
     // to read or select what's in it.
-    const signature = readings.map(reading => reading.key).join(" ");
+    const signature = readings.map(reading => reading.key).join("\0");
     if (host.dataset.keys !== signature) {
       host.dataset.keys = signature;
       host.innerHTML = "";
