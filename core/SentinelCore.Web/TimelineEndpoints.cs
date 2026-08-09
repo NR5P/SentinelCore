@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using SentinelCore;
 
 namespace SentinelCore.Web;
@@ -125,6 +126,7 @@ public static class TimelineEndpoints
                     summary = item.Summary ?? string.Empty,
                     confidence = item.Confidence ?? 0,
                     notified = item.NotificationRecommended == true,
+                    verdict = Verdict(item),
                     reviewed = reviewed.Contains(item.Id),
                     hasImage = !string.IsNullOrWhiteSpace(item.ImagePath) && File.Exists(item.ImagePath),
                     hasClip = clipsByEvent.ContainsKey(item.Id),
@@ -190,19 +192,49 @@ public static class TimelineEndpoints
     private static DateTimeOffset Min(DateTimeOffset first, DateTimeOffset second) =>
         first < second ? first : second;
 
-    private static string Category(AlertEventRecord item)
+    // Mirrors ActivityEndpoints.VerdictFor for the subset the timeline can see. A row the analysis
+    // never reached (failed, cancelled) is "unverified" rather than "rejected": the camera may well
+    // have seen something, nothing got to judge it, and silently dropping those would hide an
+    // outage behind an empty day.
+    private static string Verdict(AlertEventRecord item) => item.SubjectConfirmed switch
     {
+        true => "confirmed",
+        false => "rejected",
+        _ => "unverified"
+    };
+
+    // The model states absences as confidently as presences, and on a camera watching a wind-blown
+    // spider web most of a day's rows are some phrasing of "nothing is here". Those are not
+    // sightings. Reading them as such is what filed thousands of empty frames under "animals" -
+    // the word occurs in "No person, vehicle, or animal detected" - and rated every one of them
+    // "high" off a confidence score that was only ever about the verdict, not about the subject.
+    //
+    // The verdict alone would cover today's rows; the phrase check also catches the older ones
+    // written before SubjectConfirmed was populated, which are confirmed and empty.
+    private static readonly Regex AbsencePhrase = new(
+        @"\bno\s+(visible\s+)?(persons?|people|vehicles?|animals?|packages?|cars?|trucks?)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool NoSubjectDetected(AlertEventRecord item) =>
+        item.SubjectConfirmed == false || AbsencePhrase.IsMatch(item.Summary ?? string.Empty);
+
+    public static string Category(AlertEventRecord item)
+    {
+        if (NoSubjectDetected(item)) return "none";
         var value = $"{item.EventType} {item.Summary}".ToLowerInvariant();
         if (ContainsAny(value, "plate", "alpr", "license")) return "plate";
         if (ContainsAny(value, "package", "parcel", "delivery")) return "package";
-        if (ContainsAny(value, "animal", "dog", "cat", "bird", "wildlife", "deer")) return "animal";
-        if (ContainsAny(value, "vehicle", "car", "truck", "van", "motorcycle", "bicycle")) return "vehicle";
+        // A person outranks whatever else shares the frame: "a person walking past a parked car"
+        // is somebody at the gate, not a parking event.
         if (ContainsAny(value, "person", "people", "human")) return "person";
+        if (ContainsAny(value, "vehicle", "car", "truck", "van", "motorcycle", "bicycle")) return "vehicle";
+        if (ContainsAny(value, "animal", "dog", "cat", "bird", "wildlife", "deer")) return "animal";
         return "other";
     }
 
-    private static string Severity(AlertEventRecord item)
+    public static string Severity(AlertEventRecord item)
     {
+        if (NoSubjectDetected(item)) return "low";
         var confidence = item.Confidence ?? 0;
         if (item.NotificationRecommended == true && confidence >= 0.85) return "critical";
         if (item.NotificationRecommended == true || confidence >= 0.75) return "high";

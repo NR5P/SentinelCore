@@ -14,7 +14,21 @@ public enum DevicePower
 public sealed record DevicePublish(string Topic, string Payload, bool Retain);
 
 // What a device's own state message told us. Null members mean "this message didn't say".
-public sealed record DeviceStateReading(DevicePower Power, int? BrightnessPercent);
+//
+// Measurements are the numeric readings the payload carried, keyed by the payload key that held
+// them - "temperature", "battery", "ENERGY.Power". They are harvested from whatever the device
+// happened to publish rather than declared in advance, deliberately: one Zigbee2MQTT sensor
+// reports five or six of these in a single message, and requiring someone to name each one
+// before any of them appear would make the common device the most work to set up. The cost is a
+// few keys nobody cares about (linkquality, voltage), which a display preference can hide later.
+public sealed record DeviceStateReading(
+    DevicePower Power,
+    int? BrightnessPercent,
+    IReadOnlyDictionary<string, double> Measurements)
+{
+    public static readonly IReadOnlyDictionary<string, double> NoMeasurements =
+        new Dictionary<string, double>(0, StringComparer.Ordinal);
+}
 
 // Pure payload building and parsing, with no MQTT connection anywhere in sight - the same split
 // MqttTopics/MqttPublisher already use, so every vendor quirk below is testable directly against
@@ -42,6 +56,11 @@ public static class DeviceTopics
     // worth a settings field the user would have to know the answer to - Zigbee2MQTT and Home
     // Assistant say "brightness", Tasmota says "Dimmer", and a few report a percentage directly.
     private static readonly string[] BrightnessKeys = ["brightness", "Dimmer", "brightness_pct"];
+
+    // A ceiling on how many numbers one state message can contribute. Real devices report a
+    // handful; this only exists so a misconfigured topic pointing at something enormous can't
+    // turn every cached device state into a large allocation.
+    private const int MaxMeasurements = 32;
 
     public static bool IsCommandable(string kind) =>
         !string.Equals(kind, "sensor", StringComparison.OrdinalIgnoreCase);
@@ -203,20 +222,38 @@ public static class DeviceTopics
         if (payload is null) return null;
 
         if (!string.Equals(device.Schema, SchemaJson, StringComparison.OrdinalIgnoreCase))
-            return new DeviceStateReading(MatchPower(device, payload.Trim()), BrightnessPercent: null);
-
-        JsonElement root;
-        try
         {
-            using var document = JsonDocument.Parse(payload);
-            root = document.RootElement.Clone();
-        }
-        catch (JsonException)
-        {
-            return null;
+            var trimmed = payload.Trim();
+            var rawPower = MatchPower(device, trimmed);
+
+            // "raw" describes how the on/off payload is written; it is not a promise that the
+            // device only ever publishes bare strings - and a sensor, having no on/off payload,
+            // gives it nothing to describe at all. This matters because Home Assistant discovery
+            // hands every `sensor` component this schema ("schema" is a light-only field in that
+            // spec), so the most common real sensor there is - a Zigbee2MQTT climate device that
+            // announces itself and then publishes {"temperature":21.5,...} - arrives here rather
+            // than on the JSON path below. Reading the payload for what it plainly is beats
+            // making the user correct a schema that discovery had no way to get right.
+            if (TryParseObject(trimmed, out var rawRoot))
+            {
+                return new DeviceStateReading(
+                    rawPower,
+                    BrightnessPercent: null,
+                    HarvestMeasurements(rawRoot, device.StateValueTemplate ?? string.Empty, brightnessKey: null));
+            }
+
+            // Otherwise the entire payload is the reading - "21.5" arriving on a temperature
+            // topic. Keyed "value" because the topic is the only name that reading has. A payload
+            // that already matched PayloadOn/PayloadOff is a switch state, not a measurement, so
+            // a device using "1"/"0" for on/off doesn't also sprout a meaningless number.
+            var rawMeasurements = rawPower == DevicePower.Unknown && TryParseNumber(trimmed, out var single)
+                ? new Dictionary<string, double>(StringComparer.Ordinal) { ["value"] = single }
+                : DeviceStateReading.NoMeasurements;
+
+            return new DeviceStateReading(rawPower, BrightnessPercent: null, rawMeasurements);
         }
 
-        if (root.ValueKind != JsonValueKind.Object) return null;
+        if (!TryParseObject(payload, out var root)) return null;
 
         var power = DevicePower.Unknown;
         if (TryResolvePath(root, string.IsNullOrWhiteSpace(device.StateValueTemplate) ? "state" : device.StateValueTemplate, out var stateElement))
@@ -232,6 +269,7 @@ public static class DeviceTopics
         }
 
         int? brightnessPercent = null;
+        string? brightnessKey = null;
         foreach (var key in BrightnessKeys)
         {
             if (!root.TryGetProperty(key, out var element) || element.ValueKind != JsonValueKind.Number) continue;
@@ -240,11 +278,83 @@ public static class DeviceTopics
             brightnessPercent = key == "brightness_pct"
                 ? Math.Clamp((int)Math.Round(element.GetDouble(), MidpointRounding.AwayFromZero), 0, 100)
                 : ToPercentBrightness(element.GetDouble(), device.BrightnessScale);
+            brightnessKey = key;
             break;
         }
 
-        return new DeviceStateReading(power, brightnessPercent);
+        var statePath = string.IsNullOrWhiteSpace(device.StateValueTemplate) ? "state" : device.StateValueTemplate;
+        return new DeviceStateReading(power, brightnessPercent, HarvestMeasurements(root, statePath, brightnessKey));
     }
+
+    // Every numeric value in a state payload, minus the two that already have a home: the key
+    // holding on/off and the key holding brightness would otherwise be reported twice, once as
+    // the thing they are and once as an anonymous number.
+    private static IReadOnlyDictionary<string, double> HarvestMeasurements(
+        JsonElement root, string statePath, string? brightnessKey)
+    {
+        var measurements = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        foreach (var property in root.EnumerateObject())
+        {
+            if (measurements.Count >= MaxMeasurements) break;
+            if (brightnessKey is not null && string.Equals(property.Name, brightnessKey, StringComparison.Ordinal))
+                continue;
+
+            if (property.Value.ValueKind == JsonValueKind.Number)
+            {
+                if (string.Equals(property.Name, statePath, StringComparison.Ordinal)) continue;
+                if (property.Value.TryGetDouble(out var value)) measurements[property.Name] = value;
+                continue;
+            }
+
+            // One level down and no further. Tasmota buries its power meter in
+            // {"ENERGY":{"Power":42,"Total":1.2}}, which is worth reaching, but an unbounded walk
+            // of an arbitrary payload is an unbounded amount of junk to render.
+            if (property.Value.ValueKind != JsonValueKind.Object) continue;
+
+            foreach (var nested in property.Value.EnumerateObject())
+            {
+                if (measurements.Count >= MaxMeasurements) break;
+                if (nested.Value.ValueKind != JsonValueKind.Number) continue;
+
+                var key = $"{property.Name}.{nested.Name}";
+                if (string.Equals(key, statePath, StringComparison.Ordinal)) continue;
+                if (nested.Value.TryGetDouble(out var value)) measurements[key] = value;
+            }
+        }
+
+        return measurements.Count == 0 ? DeviceStateReading.NoMeasurements : measurements;
+    }
+
+    // A JSON object, or nothing. The leading-brace check is a cheap gate before paying for a
+    // parse: almost every raw payload in existence is "ON" or a bare number, and neither is
+    // worth a JsonDocument to rule out.
+    private static bool TryParseObject(string payload, out JsonElement root)
+    {
+        root = default;
+
+        var trimmed = payload.Trim();
+        if (trimmed.Length == 0 || trimmed[0] != '{') return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+            root = document.RootElement.Clone();
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryParseNumber(string value, out double result) =>
+        double.TryParse(
+            value,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out result);
 
     // A brightness-only state topic (Tasmota's stat/<x>/Dimmer) carries a bare number.
     public static int? ParseBrightnessPayload(HubDevice device, string payload) =>

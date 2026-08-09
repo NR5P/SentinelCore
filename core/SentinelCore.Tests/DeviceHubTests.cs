@@ -306,6 +306,146 @@ public sealed class DeviceHubTests
         Assert.Equal(DevicePower.On, reading!.Power);
     }
 
+    // ---------------- Numeric measurements ----------------
+
+    [Fact]
+    public void ParseState_JsonSensor_HarvestsEveryNumberItReports()
+    {
+        // The payload a Zigbee2MQTT climate sensor actually publishes. None of these keys are
+        // configured anywhere - the point of harvesting is that they arrive without setup.
+        var device = Device("Barn", commandTopic: "", "zigbee2mqtt/barn") with
+        {
+            Kind = "sensor",
+            Schema = DeviceTopics.SchemaJson
+        };
+
+        var reading = DeviceTopics.ParseState(
+            device, """{"temperature":21.5,"humidity":48,"battery":94,"linkquality":120}""");
+
+        Assert.NotNull(reading);
+        Assert.Equal(21.5, reading.Measurements["temperature"]);
+        Assert.Equal(48, reading.Measurements["humidity"]);
+        Assert.Equal(94, reading.Measurements["battery"]);
+        Assert.Equal(120, reading.Measurements["linkquality"]);
+    }
+
+    [Fact]
+    public void ParseState_JsonLight_KeepsStateAndBrightnessOutOfTheMeasurements()
+    {
+        // Both already have a home on the reading; reporting them again as anonymous numbers
+        // would put a duplicate "brightness" tile next to the slider that controls it.
+        var device = Device("Lounge", "zigbee2mqtt/lounge/set", "zigbee2mqtt/lounge") with
+        {
+            Schema = DeviceTopics.SchemaJson,
+            StateValueTemplate = "state",
+            SupportsBrightness = true,
+            BrightnessScale = 254
+        };
+
+        var reading = DeviceTopics.ParseState(
+            device, """{"state":"ON","brightness":127,"linkquality":42}""");
+
+        Assert.Equal(50, reading!.BrightnessPercent);
+        Assert.False(reading.Measurements.ContainsKey("brightness"));
+        Assert.False(reading.Measurements.ContainsKey("state"));
+        Assert.Equal(42, reading.Measurements["linkquality"]);
+    }
+
+    [Fact]
+    public void ParseState_NestedNumbers_AreReachedOneLevelDown()
+    {
+        // Tasmota reports its power meter nested, and the flat key alone would miss all of it.
+        var device = Device("Meter", "cmnd/meter/POWER", "tele/meter/SENSOR") with
+        {
+            Schema = DeviceTopics.SchemaJson,
+            StateValueTemplate = "POWER"
+        };
+
+        var reading = DeviceTopics.ParseState(
+            device, """{"ENERGY":{"Power":42,"Total":1.23},"Time":"2026-08-08T10:00:00"}""");
+
+        Assert.Equal(42, reading!.Measurements["ENERGY.Power"]);
+        Assert.Equal(1.23, reading.Measurements["ENERGY.Total"]);
+    }
+
+    [Fact]
+    public void ParseState_RawSensor_TreatsTheWholePayloadAsOneReading()
+    {
+        var device = Device("Probe", commandTopic: "", "sensors/probe/temp") with { Kind = "sensor" };
+
+        var reading = DeviceTopics.ParseState(device, " 21.5 ");
+
+        Assert.Equal(21.5, reading!.Measurements["value"]);
+    }
+
+    [Fact]
+    public void ParseState_RawSwitchUsingNumericPayloads_ReportsNoMeasurement()
+    {
+        // "1" here is an on/off payload, not a reading. Harvesting it would give every such
+        // switch a meaningless number sitting under its toggle.
+        var device = Device("Pump", "cmnd/pump/POWER", "stat/pump/POWER") with
+        {
+            PayloadOn = "1",
+            PayloadOff = "0"
+        };
+
+        var reading = DeviceTopics.ParseState(device, "1");
+
+        Assert.Equal(DevicePower.On, reading!.Power);
+        Assert.Empty(reading.Measurements);
+    }
+
+    [Fact]
+    public void ParseState_RawSensorPublishingAJsonDocument_IsStillHarvested()
+    {
+        // The single most common real sensor: Home Assistant discovery has no "schema" field for
+        // a sensor component, so MqttDeviceDiscovery necessarily files it as raw - and then the
+        // device publishes JSON anyway. Reading only bare numbers here would mean the default
+        // discovered sensor reports nothing at all.
+        var device = Device("Barn", commandTopic: "", "zigbee2mqtt/barn") with { Kind = "sensor" };
+
+        var reading = DeviceTopics.ParseState(device, """{"temperature":21.5,"battery":94}""");
+
+        Assert.Equal(DeviceTopics.SchemaRaw, device.Schema);
+        Assert.Equal(21.5, reading!.Measurements["temperature"]);
+        Assert.Equal(94, reading.Measurements["battery"]);
+    }
+
+    [Fact]
+    public void Validate_JsonSensorWithoutAStateValueTemplate_IsAccepted()
+    {
+        // A thermometer has no key holding ON/OFF, so demanding one made a numeric sensor
+        // impossible to save without inventing a key that isn't in the payload.
+        var errors = DeviceHubEndpoints.Validate(new HubDeviceDto
+        {
+            Name = "Barn Climate",
+            Kind = "sensor",
+            Schema = DeviceTopics.SchemaJson,
+            StateTopic = "zigbee2mqtt/barn",
+            StateValueTemplate = ""
+        });
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void Validate_JsonLightWithoutAStateValueTemplate_IsStillRefused()
+    {
+        // The exemption above is for sensors only - a light genuinely does need to be told
+        // which key carries its on/off, and losing that rule would break switching silently.
+        var errors = DeviceHubEndpoints.Validate(new HubDeviceDto
+        {
+            Name = "Lounge Lamp",
+            Kind = "light",
+            Schema = DeviceTopics.SchemaJson,
+            CommandTopic = "zigbee2mqtt/lounge/set",
+            StateTopic = "zigbee2mqtt/lounge",
+            StateValueTemplate = ""
+        });
+
+        Assert.Contains(errors, error => error.Contains("State Value Template", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void ParseState_MalformedJson_ReturnsNullSoTheLastGoodStateSurvives()
     {
@@ -682,7 +822,7 @@ public sealed class DeviceHubTests
         // Reported once, then went quiet for far longer than the timeout.
         bus.SetStateForTesting(device.Id, new DeviceLiveState(
             DevicePower.On, BrightnessPercent: null, Available: true,
-            LastSeen: DateTimeOffset.UtcNow.AddHours(-3)));
+            LastSeen: DateTimeOffset.UtcNow.AddHours(-3), DeviceStateReading.NoMeasurements));
 
         var state = bus.GetState(device);
 
@@ -698,7 +838,7 @@ public sealed class DeviceHubTests
 
         bus.SetStateForTesting(device.Id, new DeviceLiveState(
             DevicePower.On, BrightnessPercent: null, Available: true,
-            LastSeen: DateTimeOffset.UtcNow.AddMinutes(-5)));
+            LastSeen: DateTimeOffset.UtcNow.AddMinutes(-5), DeviceStateReading.NoMeasurements));
 
         Assert.False(bus.GetState(device).Available);
     }
@@ -713,7 +853,7 @@ public sealed class DeviceHubTests
 
         bus.SetStateForTesting(device.Id, new DeviceLiveState(
             DevicePower.On, BrightnessPercent: null, Available: true,
-            LastSeen: DateTimeOffset.UtcNow.AddHours(-1)));
+            LastSeen: DateTimeOffset.UtcNow.AddHours(-1), DeviceStateReading.NoMeasurements));
 
         Assert.True(bus.GetState(device).Available);
     }
@@ -826,6 +966,92 @@ public sealed class DeviceHubTests
             {
                 await lamp.DisconnectAsync(cancellationToken: CancellationToken.None);
                 lamp.Dispose();
+                await bus.StopAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            await server.StopAsync();
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    // The merge rule only exists on the live path, so this is the only place it can be proven:
+    // MergeMeasurements is reached from the subscription handler and nowhere else.
+    [Fact]
+    public async Task MqttDeviceBus_AccumulatesMeasurementsAcrossPartialSensorPayloads()
+    {
+        var port = GetFreeTcpPort();
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var serverOptions = new MqttServerFactory().CreateServerOptionsBuilder()
+            .WithDefaultEndpoint()
+            .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback)
+            .WithDefaultEndpointPort(port)
+            .Build();
+        using var server = new MqttServerFactory().CreateMqttServer(serverOptions);
+        await server.StartAsync();
+
+        var tempDir = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var bridgeOptions = Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", DataDirectory = tempDir });
+            using var store = new SqliteDeviceStore(bridgeOptions, new FakeHostEnvironment(tempDir));
+
+            var device = await store.CreateAsync(
+                Device("Barn Sensor", commandTopic: "", "zigbee2mqtt/barn") with
+                {
+                    Kind = "sensor",
+                    Schema = DeviceTopics.SchemaJson
+                },
+                cancellationToken);
+
+            var mqttOptions = new MqttOptions { Enabled = true, BrokerHost = "127.0.0.1", BrokerPort = port };
+            await using var bus = new MqttDeviceBus(
+                new StaticOptionsMonitor<MqttOptions>(mqttOptions),
+                new StaticOptionsMonitor<DeviceHubOptions>(new DeviceHubOptions { Enabled = true, StateTimeoutSeconds = 600 }),
+                store,
+                NullLogger<MqttDeviceBus>.Instance);
+
+            await bus.StartAsync(cancellationToken);
+            await WaitUntilAsync(() => bus.IsConnected, TimeSpan.FromSeconds(10));
+            await bus.ResubscribeAsync(cancellationToken);
+
+            var sensor = new MqttClientFactory().CreateMqttClient();
+            await sensor.ConnectAsync(new MqttClientFactory().CreateClientOptionsBuilder()
+                .WithClientId("fake-sensor")
+                .WithTcpServer("127.0.0.1", port)
+                .WithCleanSession()
+                .Build(), cancellationToken);
+
+            try
+            {
+                async Task ReportAsync(string payload) =>
+                    await sensor.PublishAsync(new MqttApplicationMessageBuilder()
+                        .WithTopic("zigbee2mqtt/barn")
+                        .WithPayload(payload)
+                        .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
+                        .Build(), cancellationToken);
+
+                await ReportAsync("""{"temperature":21.5,"humidity":48}""");
+                await WaitUntilAsync(
+                    () => bus.GetState(device).Measurements.ContainsKey("temperature"), TimeSpan.FromSeconds(10));
+
+                // The partial follow-up a real sensor sends: battery only, minutes later. The
+                // temperature it said nothing about has to survive it.
+                await ReportAsync("""{"battery":94}""");
+                await WaitUntilAsync(
+                    () => bus.GetState(device).Measurements.ContainsKey("battery"), TimeSpan.FromSeconds(10));
+
+                var measurements = bus.GetState(device).Measurements;
+                Assert.Equal(21.5, measurements["temperature"]);
+                Assert.Equal(48, measurements["humidity"]);
+                Assert.Equal(94, measurements["battery"]);
+            }
+            finally
+            {
+                await sensor.DisconnectAsync(cancellationToken: CancellationToken.None);
+                sensor.Dispose();
                 await bus.StopAsync(CancellationToken.None);
             }
         }

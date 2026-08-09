@@ -166,7 +166,7 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
                 {
                     name = "alert_analysis",
                     strict = true,
-                    schema = BuildJsonSchema(profile)
+                    schema = BuildJsonSchema(profile, imageFrames.Count > 1)
                 }
             }
         };
@@ -176,7 +176,12 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
     // (there's no concept of an optional property in strict mode) and "additionalProperties":
     // false on every object level. Every VisionAnalysis field already defaults to a non-null
     // value, so plain string/boolean/number types cover everything without needing nullable unions.
-    public static JsonObject BuildJsonSchema(PromptProfile profile)
+    // multiFrame must match whether BuildPrompt was given a burst: strict mode forbids any property
+    // the schema does not declare, so declaring motion for a single-frame alert would demand an
+    // answer the prompt never asks for, and omitting it for a burst would silently drop the answer
+    // it does ask for. Ollama reuses this builder to constrain generation, so there the mismatch
+    // isn't merely wasteful - the field becomes unrepresentable.
+    public static JsonObject BuildJsonSchema(PromptProfile profile, bool multiFrame = false)
     {
         var vehicleProps = new List<(string Name, JsonNode Type)>
         {
@@ -186,6 +191,8 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
         };
         if (profile.LicensePlateRecognitionEnabled)
             vehicleProps.Add(("license_plate", Str()));
+        if (multiFrame)
+            vehicleProps.Add(("motion", Str()));
 
         var rootProps = new List<(string Name, JsonNode Type)>
         {

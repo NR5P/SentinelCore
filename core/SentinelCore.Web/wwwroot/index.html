@@ -131,6 +131,11 @@
       </div>
 
       <div class="timeline-filters">
+        <select id="timeline-verdict" class="field-input">
+          <option value="confirmed" selected>confirmed only</option>
+          <option value="all">confirmed + rejected</option>
+          <option value="rejected">rejected only</option>
+        </select>
         <select id="timeline-category" class="field-input">
           <option value="">all objects</option>
           <option value="person">people</option>
@@ -138,6 +143,7 @@
           <option value="animal">animals</option>
           <option value="package">packages</option>
           <option value="plate">plates</option>
+          <option value="none">nothing detected</option>
           <option value="other">other</option>
         </select>
         <select id="timeline-severity" class="field-input">
@@ -178,6 +184,7 @@
         <div class="toolbar-actions">
           <button id="add-camera-btn" class="btn" data-tip-below data-tip-right data-tip="Add a camera by its stream URL. Most IP cameras expose an rtsp:// address.">+ add camera</button>
           <button id="discover-cameras-btn" class="btn" data-tip-below data-tip-right data-tip="Scan your network for cameras that support ONVIF discovery - the standard most IP cameras speak. Sends one broadcast per network adapter you select; doesn't touch any camera you haven't chosen to scan for.">discover cameras</button>
+          <button id="add-webcam-btn" class="btn" data-tip-below data-tip-right data-tip="Use a laptop, tablet or spare phone as a camera. Nothing to install: you open a page on that device and it streams its own webcam here. Useful for watching a room indoors while you're away.">+ add webcam device</button>
           <button id="manage-camera-groups-btn" class="btn" data-tip-below data-tip-right data-tip="Link cameras that are physically related (e.g. gate, driveway, front door). When one triggers, the others get pulled in too - recording alongside it and tagged as one connected incident.">camera groups</button>
         </div>
       </div>

@@ -436,6 +436,58 @@ public sealed class BasicTests
     }
 
     [Fact]
+    public void OllamaVisionClient_BuildPrompt_OnlyAsksForVehicleMotionOnABurst()
+    {
+        var profile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
+        var occurredAt = DateTimeOffset.UtcNow;
+        var singleFrameAlert = new IncomingAlert(
+            Guid.NewGuid(), "gateCamera", null, occurredAt, occurredAt,
+            "gate", "image/jpeg", "alert.jpg", []);
+
+        // One image cannot show motion, so the field must not be asked for at all - otherwise the
+        // model answers it from pose, which is what vehicle.orientation already reports honestly.
+        // Matched narrowly: an unrelated rule already uses the bare word "motion" to say a single
+        // frame cannot confirm a vehicle has settled.
+        var singleFramePrompt = OllamaVisionClient.BuildPrompt(singleFrameAlert, profile);
+        Assert.DoesNotContain("vehicle.motion", singleFramePrompt);
+        Assert.DoesNotContain("\"motion\"", singleFramePrompt);
+        Assert.Contains("- One still image normally cannot prove motion.", singleFramePrompt);
+
+        var burstPrompt = OllamaVisionClient.BuildPrompt(singleFrameAlert with { ExtraFrames = [[1, 2, 3]] }, profile);
+        Assert.Contains("\"motion\": \"unknown\",", burstPrompt);
+        Assert.Contains("Allowed vehicle.motion values:", burstPrompt);
+        Assert.Contains("Set vehicle.motion from how the vehicle's position and apparent size change", burstPrompt);
+
+        // The blanket single-frame instruction has to go when a burst replaces it, or the prompt
+        // tells the model to discard the very evidence the extra frames were captured to provide.
+        Assert.DoesNotContain("- One still image normally cannot prove motion.", burstPrompt);
+
+        // The interpolated blocks carry their own indentation, because the raw string literal they
+        // are spliced into has already been de-indented by the time they land in it.
+        Assert.Contains("\n    \"motion\": \"unknown\",\n    \"activity\"", burstPrompt);
+        Assert.Contains("\nAllowed vehicle.motion values:\nunknown, stationary,", burstPrompt);
+    }
+
+    [Fact]
+    public void BuildJsonSchema_OnlyDeclaresVehicleMotionForABurst()
+    {
+        // Ollama constrains generation to this schema, so a field the prompt asks for but the
+        // schema omits is not merely dropped - the model cannot emit it at all.
+        var profile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Q"] };
+
+        foreach (var single in new[] { OpenAiVisionClient.BuildJsonSchema(profile), GoogleVisionClient.BuildJsonSchema(profile) })
+            Assert.Null(single["properties"]!["vehicle"]!["properties"]!["motion"]);
+
+        foreach (var burst in new[] { OpenAiVisionClient.BuildJsonSchema(profile, true), GoogleVisionClient.BuildJsonSchema(profile, true) })
+        {
+            var vehicle = burst["properties"]!["vehicle"]!;
+            Assert.NotNull(vehicle["properties"]!["motion"]);
+            // Strict mode has no optional properties: undeclared in "required" means unanswerable.
+            Assert.Contains("motion", vehicle["required"]!.AsArray().Select(n => n!.GetValue<string>()));
+        }
+    }
+
+    [Fact]
     public void OpenAiVisionClient_BuildJsonSchema_OnlyIncludesLicensePlateWhenProfileOptsIn()
     {
         var disabledProfile = new PromptProfile { SystemPrompt = "Test.", Questions = ["Is a vehicle visible?"] };
@@ -1848,7 +1900,7 @@ public sealed class BasicTests
     {
         using var store = new SqliteCameraStore(Path.Combine(Path.GetTempPath(), $"cam-{Guid.NewGuid():N}"));
         var id = Guid.NewGuid();
-        var original = new Camera(id, "Front Gate", "rtsp://example/1", null, null, false, false, null, null, DateTimeOffset.UtcNow);
+        var original = new Camera(id, "Front Gate", "rtsp://example/1", null, null, false, false, null, null, false, DateTimeOffset.UtcNow);
 
         await store.RestoreAsync(original, CancellationToken.None);
         var restored = await store.GetAsync(id, CancellationToken.None);
@@ -1995,6 +2047,93 @@ public sealed class BasicTests
 
         Assert.Single(matches);
         Assert.Equal(boundaryTrigger.Id, matches[alertEvent.Id].Id);
+    }
+
+    // --- Timeline classification (TimelineEndpoints.Category/Severity) -------------------------
+    //
+    // The model narrates absences in the same voice it narrates sightings, so a summary is only
+    // evidence of a subject once you know it isn't a denial. Both classifiers used to read the
+    // raw string, which on a gate camera watching a spider web put roughly three quarters of a
+    // day's rows under "animals" at "high" severity and left the timeline's filters with nothing
+    // to separate.
+
+    private static AlertEventRecord Classified(string summary, double confidence, bool? subjectConfirmed) =>
+        new(Guid.NewGuid(), "GateCam", DateTimeOffset.UtcNow, "Completed", "none", summary,
+            false, null, confidence, null, SubjectConfirmed: subjectConfirmed);
+
+    [Fact]
+    public void Category_DenialOfEverySubjectIsNotAnAnimalSighting()
+    {
+        // The exact string FastLocalVisionClient writes, and the single most common row in the
+        // database: the word "animal" appears in it only as one of the things that weren't there.
+        var nothing = Classified("No person, vehicle, or animal detected.", 0.8, false);
+
+        Assert.Equal("none", TimelineEndpoints.Category(nothing));
+    }
+
+    [Fact]
+    public void Category_ProseDenialIsNotAPackageSighting()
+    {
+        // The vision model's longer phrasing of the same verdict, which used to land under
+        // "packages" for naming the thing it had just ruled out.
+        var nothing = Classified(
+            "The image shows a residential gate with no visible people, vehicles, or packages.",
+            0.8,
+            false);
+
+        Assert.Equal("none", TimelineEndpoints.Category(nothing));
+    }
+
+    [Fact]
+    public void Category_DenialWrittenBeforeSubjectConfirmedExistedStillReadsAsNothing()
+    {
+        // Rows predating the column were backfilled to confirmed wholesale, so the verdict alone
+        // would clear them. The wording is what gives them away.
+        var backfilled = Classified("No person, vehicle, or animal detected.", 0.8, true);
+
+        Assert.Equal("none", TimelineEndpoints.Category(backfilled));
+    }
+
+    [Fact]
+    public void Category_PersonOutranksWhateverElseSharesTheFrame()
+    {
+        var sighting = Classified("A person is walking past a parked car.", 0.8, true);
+
+        Assert.Equal("person", TimelineEndpoints.Category(sighting));
+    }
+
+    [Fact]
+    public void Severity_ConfidentDenialRanksLowNotHigh()
+    {
+        // 0.8 is how sure the model is that nothing is there. Feeding that straight into severity
+        // is what put every empty frame in the same band as somebody standing at the gate.
+        var nothing = Classified("No person, vehicle, or animal detected.", 0.8, false);
+        var somebody = Classified("A person is standing at the gate.", 0.8, true);
+
+        Assert.Equal("low", TimelineEndpoints.Severity(nothing));
+        Assert.Equal("high", TimelineEndpoints.Severity(somebody));
+    }
+
+    [Fact]
+    public void Severity_RejectedFrameStaysLowEvenWhenNotificationWasRecommended()
+    {
+        var rejected = new AlertEventRecord(
+            Guid.NewGuid(), "GateCam", DateTimeOffset.UtcNow, "Completed", "none",
+            "No person, vehicle, or animal detected.", true, null, 0.95, null,
+            SubjectConfirmed: false);
+
+        Assert.Equal("low", TimelineEndpoints.Severity(rejected));
+    }
+
+    [Fact]
+    public void Category_UnverifiedFrameIsClassifiedOnItsWordsNotDroppedToNothing()
+    {
+        // A failed or cancelled analysis has no verdict. Whatever summary it did manage should
+        // still be read normally - "unverified" is the timeline's signal for these, not "none".
+        var unverified = Classified("A red pickup truck is parked in the driveway.", 0.6, null);
+
+        Assert.Equal("vehicle", TimelineEndpoints.Category(unverified));
+        Assert.Equal("medium", TimelineEndpoints.Severity(unverified));
     }
 
     [Fact]
@@ -3639,11 +3778,13 @@ public sealed class BasicTests
         public Task<Camera?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Camera?>(null);
         public Task<Camera> AddAsync(
             string name, string streamUrl, string? username, string? password, bool includeAudio,
-            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, CancellationToken cancellationToken) =>
+            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<bool> UpdateAsync(
             Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio,
-            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, CancellationToken cancellationToken) =>
+            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task RestoreAsync(Camera camera, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -4050,7 +4191,8 @@ public sealed class BasicTests
         var id = Guid.NewGuid();
         Camera Make(bool includeAudio) => new(
             id, "Gate", "rtsp://cam/live", "user", "secret", includeAudio,
-            PtzEnabled: false, OnvifPtzServiceUrl: null, OnvifProfileToken: null, DateTimeOffset.UtcNow);
+            PtzEnabled: false, OnvifPtzServiceUrl: null, OnvifProfileToken: null,
+            IsBrowserPublished: false, DateTimeOffset.UtcNow);
 
         // Video is never re-encoded: the first (and without audio, only) source is the camera's
         // own stream with credentials embedded, exactly what the HLS pipeline connects to.

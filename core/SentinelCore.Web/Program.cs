@@ -176,6 +176,9 @@ var camerasRoot = Path.IsPathRooted(camerasDataDirectory)
 var cameraStore = new SqliteCameraStore(camerasRoot);
 builder.Services.AddSingleton<ICameraStore>(cameraStore);
 builder.Services.AddSingleton<ICameraGroupStore>(cameraStore);
+// Resolves where a camera's video is actually read from, which differs for browser-published
+// cameras - see CameraSource. Registered before HlsStreamManager, which depends on it.
+builder.Services.AddSingleton<CameraSource>();
 builder.Services.AddSingleton<HlsStreamManager>();
 // How each person has dragged their Live tiles around - a per-account view preference, kept out
 // of cameras.db so the camera list itself stays the one canonical, order-agnostic answer.
@@ -382,6 +385,7 @@ app.UseAuthorization();
 app.UseWebSockets();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
+app.MapCameraPublishEndpoints();
 app.MapCameraGroupEndpoints();
 app.MapLiveOrderEndpoints();
 app.MapKnownFaceEndpoints();

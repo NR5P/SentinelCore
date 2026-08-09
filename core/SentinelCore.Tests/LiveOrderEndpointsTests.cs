@@ -106,7 +106,7 @@ public sealed class LiveOrderEndpointsTests : IDisposable
         {
             var cameras = scope.ServiceProvider.GetRequiredService<ICameraStore>();
             await cameras.DeleteAsync(cameraIds[1], ct);
-            var camera = await cameras.AddAsync("side gate", "rtsp://camera/side", null, null, false, false, null, null, ct);
+            var camera = await cameras.AddAsync("side gate", "rtsp://camera/side", null, null, false, false, null, null, false, ct);
             added = camera.Id;
         }
 
@@ -179,7 +179,7 @@ public sealed class LiveOrderEndpointsTests : IDisposable
         var ids = new List<Guid>();
         foreach (var name in names)
         {
-            var camera = await cameras.AddAsync(name, $"rtsp://camera/{name}", null, null, false, false, null, null, ct);
+            var camera = await cameras.AddAsync(name, $"rtsp://camera/{name}", null, null, false, false, null, null, false, ct);
             ids.Add(camera.Id);
         }
 

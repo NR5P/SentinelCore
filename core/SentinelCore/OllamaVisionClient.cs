@@ -65,7 +65,7 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             // prompt still spells out the same structure; the schema enforces shape, the prompt
             // explains meaning. Reuses the OpenAI builder because Ollama takes the same standard
             // JSON Schema dialect (additionalProperties:false included).
-            format = OpenAiVisionClient.BuildJsonSchema(profile),
+            format = OpenAiVisionClient.BuildJsonSchema(profile, alert.ExtraFrames.Count > 0),
             options = new
             {
                 temperature = _options.Temperature,
@@ -296,6 +296,34 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
             ? "Analyze the attached images together using the camera-layout rules from the system prompt."
             : "Analyze the attached image using the camera-layout rules from the system prompt.";
 
+        // Direction of travel is the one thing a burst can answer that a single frame genuinely
+        // cannot, so the field, its allowed values, and its rule are all conditional on the burst
+        // existing - the same opt-in shape as license_plate and camera_blocked above. Asking a
+        // single-frame alert for motion would only get pose guessed back, which vehicle.orientation
+        // already covers honestly. The schema builders gate the field on the same condition; for
+        // Ollama that is load-bearing, since generation is constrained to the schema.
+        // Indented to match the prompt as the reader sees it, not as it looks in this file: the raw
+        // string literal is de-indented against its closing delimiter, but interpolated values are
+        // spliced in verbatim afterwards, so these carry the final column widths themselves.
+        var vehicleMotionField = frameCount > 1
+            ? "\n    \"motion\": \"unknown\","
+            : "";
+
+        var vehicleMotionValues = frameCount > 1
+            ? "\n\nAllowed vehicle.motion values:\nunknown, stationary, approaching_camera, receding_from_camera, left_to_right, right_to_left"
+            : "";
+
+        var vehicleMotionRule = frameCount > 1
+            ? "\n- Set vehicle.motion from how the vehicle's position and apparent size change between the frames, not from which way it is pointed: growing larger and lower in the frame is approaching_camera, shrinking and receding toward the background is receding_from_camera, and consistent sideways travel with little size change is left_to_right or right_to_left. A vehicle reversing is receding_from_camera even while it still faces the camera, so motion and orientation are allowed to disagree - report each on its own evidence. If the vehicle occupies the same place at the same size in every frame, use stationary. If the frames are too similar, too dark, or too blurred to tell, use unknown rather than guessing, and let vehicle.activity fall back to what a single frame supports."
+            : "";
+
+        // The blanket "one still image cannot prove motion" instruction is true for the single-frame
+        // path and actively wrong for a burst - left in place it tells the model to discard the very
+        // evidence the extra frames were captured and paid for.
+        var motionEvidenceRule = frameCount > 1
+            ? "- Across these frames, movement between them is real evidence: use it for vehicle.motion and to choose vehicle.activity. Do not infer motion from a subject's pose within any single frame."
+            : "- One still image normally cannot prove motion. Use unknown unless the visible evidence strongly supports the activity.";
+
         return $$"""
         Camera: {{alert.Camera}}
         Event time: {{alert.OccurredAt:O}}
@@ -322,7 +350,7 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
           "vehicle": {
             "visible": false,
             "location": "none",
-            "orientation": "unknown",
+            "orientation": "unknown",{{vehicleMotionField}}
             "activity": "none",
             "type": "none",
             "color": "unknown",
@@ -366,7 +394,7 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
         inside_driveway, parked_inside_property, unknown
 
         Allowed vehicle.orientation values:
-        unknown, facing_gate, facing_road, left, right
+        unknown, facing_gate, facing_road, left, right{{vehicleMotionValues}}
 
         Allowed vehicle.activity values:
         none, passing, stopped, entering, leaving, parked, unknown
@@ -413,7 +441,7 @@ public sealed class OllamaVisionClient : IVisionAnalysisClient
         - Delivery activity and a package newly left at the gate are notification-worthy.
         - Do not identify a delivery company unless visible logos, markings, colors, or uniforms support it.{{licensePlateRule}}
         - Do not call an object a package unless it reasonably appears to be a delivered parcel.
-        - One still image normally cannot prove motion. Use unknown unless the visible evidence strongly supports the activity.
+        {{motionEvidenceRule}}{{vehicleMotionRule}}
         - Describe only the important foreground event. Do not treat distant houses, parked vehicles across the road, or ordinary background objects as the alert subject.
         - Confidence values must be between 0.0 and 1.0.
         - Use unknown instead of guessing.

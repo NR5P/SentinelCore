@@ -185,7 +185,7 @@ public sealed class LivePathReportTests : IDisposable
     {
         using var scope = factory.Services.CreateScope();
         var cameras = scope.ServiceProvider.GetRequiredService<ICameraStore>();
-        var camera = await cameras.AddAsync("gate", "rtsp://camera/gate", null, null, false, false, null, null, ct);
+        var camera = await cameras.AddAsync("gate", "rtsp://camera/gate", null, null, false, false, null, null, false, ct);
         return camera.Id;
     }
 }
