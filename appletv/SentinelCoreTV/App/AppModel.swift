@@ -313,6 +313,7 @@ final class AppModel: ObservableObject {
                     devices[index].power = state.power
                     devices[index].brightness = state.brightness
                     devices[index].available = state.available
+                    devices[index].measurements = state.measurements
                 }
             } catch {
                 if Self.isCancellation(error) { throw error }

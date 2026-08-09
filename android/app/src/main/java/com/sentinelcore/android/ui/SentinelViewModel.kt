@@ -505,6 +505,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                             power = state.power,
                             brightness = state.brightness,
                             available = state.available,
+                            measurements = state.measurements,
                         )
                     } ?: device
                 },

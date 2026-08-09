@@ -185,6 +185,7 @@ struct DeviceHubView: View {
                 model.devices[index].power = state.power
                 model.devices[index].brightness = state.brightness
                 model.devices[index].available = state.available
+                model.devices[index].measurements = state.measurements
             }
             errorMessage = snapshot.connected ? nil : "Not connected to the MQTT broker."
         } catch {
@@ -318,6 +319,25 @@ private struct DeviceRow: View {
                 }
             }
 
+            // What the device actually reports, under its own keys. Absent for the switches and
+            // lamps that report nothing, so the row simply doesn't grow a gap.
+            if let measurements = device.measurements, !measurements.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(measurements) { measurement in
+                        HStack {
+                            Text(measurement.key)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(measurement.formattedValue)
+                                .monospacedDigit()
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .font(.caption)
+                .padding(.leading, 40)
+            }
+
             if device.commandable && device.supportsBrightness {
                 HStack(spacing: 8) {
                     Image(systemName: "sun.min").foregroundStyle(.secondary).font(.caption)
@@ -391,6 +411,7 @@ private struct DeviceRow: View {
     private var statusText: String {
         if !device.enabled { return "Disabled" }
         if !device.available { return "Unavailable" }
+        if device.isReporting { return "Reporting" }
         if !device.commandable { return "Sensor" }
         // A pulse device has no on/off to report - reachable is the whole story.
         if device.isMomentary { return "Ready" }

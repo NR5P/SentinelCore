@@ -309,6 +309,27 @@ data class TimelineSecurityEvent(
     val hasClip: Boolean,
 )
 
+// One numeric reading a device published, keyed by whatever the payload called it. There are
+// deliberately no units and no friendly name: the server hands over the raw number under the
+// device's own key, because no two vendors agree on units well enough for guessing to beat
+// saying nothing.
+data class HubMeasurement(
+    val key: String,
+    val value: Double,
+) {
+    // Round to two decimals, then drop the trailing zeros - 21.500000000000004 is float noise
+    // picked up from scaling upstream, not precision the sensor reported. Matches the dashboard's
+    // formatMeasurement so the same reading reads identically on every client.
+    val formattedValue: String
+        get() {
+            if (value.isNaN() || value.isInfinite()) return "-"
+            val text = String.format(java.util.Locale.US, "%.2f", value)
+                .trimEnd('0')
+                .trimEnd('.')
+            return if (text == "-0") "0" else text
+        }
+}
+
 // A device in the Device Hub. Power/brightness/available are the live MQTT state the server
 // tracks, carried on the same object as the configuration so the list renders from one call;
 // /api/devices/state re-fetches just those while the screen is open.
@@ -346,8 +367,15 @@ data class HubDevice(
     val brightness: Int?,
     val available: Boolean,
     val commandable: Boolean,
+    // The numeric readings this device published, sorted by key server-side. Defaulted rather
+    // than required so a server older than the numeric sensor update still parses; render in the
+    // order given so the rows don't reshuffle between polls.
+    val measurements: List<HubMeasurement> = emptyList(),
 ) {
     val isOn: Boolean get() = power == "on"
+
+    // A device with no on/off that is publishing numbers is working, not in an unknown state.
+    val isReporting: Boolean get() = !commandable && power == "unknown" && measurements.isNotEmpty()
 
     // Kind-flavoured behaviour, mirroring DeviceTopics on the server.
     val isMomentary: Boolean get() = momentary || kind == "button"
@@ -361,6 +389,8 @@ data class HubDeviceState(
     val power: String,
     val brightness: Int?,
     val available: Boolean,
+    // Defaulted for the same reason as HubDevice.measurements - see the note there.
+    val measurements: List<HubMeasurement> = emptyList(),
 )
 
 data class HubDeviceStateSnapshot(

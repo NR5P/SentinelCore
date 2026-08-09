@@ -356,6 +356,30 @@ struct PtzMoveBody: Encodable {
 // dashboard, iPhone, Mac, or Android, where entering an MQTT topic isn't a fight with an on-screen
 // keyboard. So there's no candidate/input type here, unlike the other clients - just what's needed
 // to show a device and switch it.
+// One numeric reading a device published, keyed by whatever the payload called it. There are
+// deliberately no units and no friendly name: the server hands over the raw number under the
+// device's own key, because no two vendors agree on units well enough for guessing to beat
+// saying nothing.
+struct HubMeasurement: Codable, Identifiable, Hashable {
+    var key: String
+    var value: Double
+
+    var id: String { key }
+
+    // Round to two decimals, then drop the trailing zeros - 21.500000000000004 is float noise
+    // picked up from scaling upstream, not precision the sensor reported. Matches the dashboard's
+    // formatMeasurement so the same reading reads identically on every client.
+    var formattedValue: String {
+        guard value.isFinite else { return "-" }
+        var text = String(format: "%.2f", value)
+        if text.contains(".") {
+            while text.hasSuffix("0") { text.removeLast() }
+            if text.hasSuffix(".") { text.removeLast() }
+        }
+        return text == "-0" ? "0" : text
+    }
+}
+
 struct HubDevice: Codable, Identifiable, Hashable {
     let id: UUID
     var name: String
@@ -367,8 +391,16 @@ struct HubDevice: Codable, Identifiable, Hashable {
     var brightness: Int?
     var available: Bool
     var commandable: Bool
+    // Optional on the wire so this app still decodes against a server older than the numeric
+    // sensor update - a synthesized Codable throws on a missing key it declares non-optional,
+    // which would stop the whole Device Hub decoding rather than just this one field. Sorted by
+    // key server-side; render in the order given so the rows don't reshuffle between polls.
+    var measurements: [HubMeasurement]?
 
     var isOn: Bool { power == "on" }
+
+    // A device with no on/off that is publishing numbers is working, not in an unknown state.
+    var isReporting: Bool { !commandable && power == "unknown" && !(measurements ?? []).isEmpty }
 
     var systemImage: String {
         switch kind {
@@ -387,6 +419,8 @@ struct HubDeviceState: Codable, Identifiable, Hashable {
     var power: String
     var brightness: Int?
     var available: Bool
+    // Optional for the same reason as HubDevice.measurements - see the note there.
+    var measurements: [HubMeasurement]?
 }
 
 struct HubDeviceStateSnapshot: Codable {

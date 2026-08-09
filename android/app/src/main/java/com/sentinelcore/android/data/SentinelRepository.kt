@@ -154,6 +154,7 @@ class SentinelRepository(
                             power = item.optString("power", "unknown"),
                             brightness = if (item.isNull("brightness")) null else item.optInt("brightness"),
                             available = item.optBoolean("available", true),
+                            measurements = parseMeasurements(item),
                         ),
                     )
                 }
@@ -1271,7 +1272,23 @@ class SentinelRepository(
             brightness = if (json.isNull("brightness")) null else json.optInt("brightness"),
             available = json.optBoolean("available", true),
             commandable = json.optBoolean("commandable", true),
+            measurements = parseMeasurements(json),
         )
+
+    // Absent on a server older than the numeric sensor update, which reads the same as a device
+    // that reports nothing - an empty list either way. Order is the server's; it sorts by key so
+    // the rows hold still between polls, and re-sorting here would only be a chance to disagree.
+    private fun parseMeasurements(json: JSONObject): List<HubMeasurement> {
+        val array = json.optJSONArray("measurements") ?: return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val key = item.optString("key", "")
+                if (key.isEmpty()) continue
+                add(HubMeasurement(key = key, value = item.optDouble("value", Double.NaN)))
+            }
+        }
+    }
 
     private fun parseCandidate(json: JSONObject): DeviceCandidate =
         DeviceCandidate(

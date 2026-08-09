@@ -335,6 +335,27 @@ private fun DeviceCard(
                 }
             }
 
+            // What the device actually reports, under its own keys. Empty for the switches and
+            // lamps that report nothing, so the card doesn't grow a gap.
+            if (device.measurements.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    device.measurements.forEach { measurement ->
+                        Row(Modifier.fillMaxWidth()) {
+                            Text(
+                                measurement.key,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SentinelTextDim,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                measurement.formattedValue,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+
             if (device.room.isNotBlank()) {
                 Text(
                     device.room,
@@ -388,6 +409,7 @@ private fun HubDevice.kindIcon(): ImageVector = when (kind) {
 private fun HubDevice.statusText(): String = when {
     !enabled -> "Disabled"
     !available -> "Unavailable"
+    isReporting -> "Reporting"
     !commandable -> "Sensor"
     // A pulse device has no on/off to report - reachable is the whole story.
     isMomentary -> "Ready"

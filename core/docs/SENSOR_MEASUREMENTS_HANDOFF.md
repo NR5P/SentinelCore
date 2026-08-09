@@ -1,10 +1,11 @@
 # Numeric sensor measurements — client notes
 
 The server and the web dashboard now read and show **the numbers a sensor reports** — temperature,
-humidity, battery, power draw — instead of only whether a device is on or off. iOS, tvOS and
-Android still ignore them; that work is what this note is for.
+humidity, battery, power draw — instead of only whether a device is on or off.
 
-Branch: `worktree-sensor-measurements`. Server side is committed and the full suite is green.
+**Status: done.** iOS, tvOS and Android now read the field too, built and tested on a Mac with the
+Swift and Android toolchains. What follows is kept as the record of the wire format and the rules
+the three clients hold to, not as outstanding work.
 
 ## Why the feature exists
 
@@ -82,8 +83,14 @@ yet — showing them all is the current, intended behaviour.
 | tvOS | `appletv/SentinelCoreTV/Models/Models.swift:359`, `:385` | `appletv/SentinelCoreTV/App/AppModel.swift:293` | `appletv/SentinelCoreTV/Views/DeviceHubView.swift` |
 | Android | `android/.../data/Models.kt:315` (`HubDevice`), `:359` (`HubDeviceState`) | `SentinelViewModel.kt` / `SentinelRepository.kt` | Device Hub composable |
 
-Each is the same three-step change: add the field to both models, copy it across in the poll
-handler beside `power`/`brightness`/`available`, and render the rows on the tile.
+Each was the same three-step change: add the field to both models, copy it across in the poll
+handler beside `power`/`brightness`/`available`, and render the rows on the tile. Note tvOS applies
+state in *two* places — the startup prime in `AppModel.swift` as well as the screen's own poll — and
+missing either one leaves the tile stale in a way the other client's single site doesn't.
+
+The shared rules are covered by `android/app/src/test/java/com/sentinelcore/android/data/HubMeasurementTest.kt`.
+Both Swift clients were checked against the same cases, including that an older server sending no
+`measurements` key still decodes.
 
 A shared decimal rule, so the three clients agree with the web:
 

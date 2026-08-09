@@ -85,6 +85,7 @@ struct DeviceHubView: View {
                 model.devices[index].power = state.power
                 model.devices[index].brightness = state.brightness
                 model.devices[index].available = state.available
+                model.devices[index].measurements = state.measurements
             }
             errorMessage = snapshot.connected ? nil : "Not connected to the MQTT broker."
         } catch {
@@ -160,6 +161,23 @@ private struct DeviceCard: View {
                     }
                 }
 
+                // What the device actually reports, under its own keys. Absent for the switches
+                // and lamps that report nothing, so the card doesn't grow an empty gap.
+                if let measurements = device.measurements, !measurements.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(measurements) { measurement in
+                            HStack {
+                                Text(measurement.key)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(measurement.formattedValue)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+
                 if device.supportsBrightness, let brightness = device.brightness {
                     // A read-only bar: the actual adjustment is the left/right remote buttons
                     // below, since a draggable slider isn't a thing the Siri remote does well.
@@ -192,6 +210,7 @@ private struct DeviceCard: View {
     private var statusText: String {
         if !device.enabled { return "Disabled" }
         if !device.available { return "Unavailable" }
+        if device.isReporting { return "Reporting" }
         if !device.commandable { return "Sensor" }
         switch device.power {
         case "on": return "On"
