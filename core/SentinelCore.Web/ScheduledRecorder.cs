@@ -37,6 +37,7 @@ public sealed class ScheduledRecordingOptions
 // system exists to produce. A directory of its own cannot.
 public sealed class ScheduledRecorder(
     Go2RtcManager go2Rtc,
+    CameraSource cameraSource,
     IRecordingStore recordings,
     AppSettingsFile mainAppSettings,
     IConfiguration configuration,
@@ -125,7 +126,14 @@ public sealed class ScheduledRecorder(
             if (recording.ActualStartUtc is null)
                 await recordings.SetStartedAsync(recording.Id, DateTimeOffset.UtcNow, cancellationToken);
 
-            var source = await go2Rtc.EnsureRecordableAsync(camera, cancellationToken);
+            await go2Rtc.EnsureRecordableAsync(camera, cancellationToken);
+
+            // The sidecar's own address for this stream, which is what makes the recording share a
+            // connection instead of spending one. Deliberately not CameraSource.ResolveUrl: that
+            // hands back the camera's *direct* address for an ordinary camera, which is exactly the
+            // second dial this path exists to avoid. For a browser-published camera the two are the
+            // same address anyway - there is nowhere else its video exists.
+            var source = cameraSource.PublishedUrl(camera.Id);
 
             logger.LogInformation(
                 "Recording {Name} on camera {CameraId} for {Minutes:0.#} more minute(s) into {Directory}",

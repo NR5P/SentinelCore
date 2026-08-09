@@ -107,30 +107,31 @@ public sealed class Go2RtcManager : IDisposable
     // nobody is watching. On a Reolink, whose concurrent-connection budget is small enough that the
     // detection pipeline already competes with the live view, that would trade one problem for a
     // worse one.
-    // Make this camera recordable: sidecar up, stream registered, and hand back the loopback RTSP
-    // address ffmpeg should pull. The one entry point for a consumer that isn't a browser.
-    //
-    // Going through go2rtc rather than dialling the camera directly is the whole point. A scheduled
-    // recording is a second consumer, and on a Reolink the concurrent-connection budget is tight
-    // enough that the detection pipeline already competes with the live view - a direct pull would
-    // add another connection unconditionally. Registered here, the recorder shares whatever
-    // upstream connection go2rtc already holds for anyone watching the same camera, and only causes
-    // a dial of its own when nobody is.
-    public async Task<string> EnsureRecordableAsync(Camera camera, CancellationToken cancellationToken)
-    {
-        await EnsureStartedAsync(cancellationToken);
-        await RegisterStreamAsync(camera, cancellationToken);
-        return RtspUrl(camera.Id);
-    }
-
-    // Where go2rtc serves a registered stream. Loopback only, matching the listener in
-    // BuildConfigYaml - this address is never reachable from off the box and is not a URL to hand
-    // to anything but a local ffmpeg.
-    public string RtspUrl(Guid cameraId) => $"rtsp://127.0.0.1:{_rtspPort}/{StreamName(cameraId)}";
-
     public async Task WarmUpAsync(CancellationToken cancellationToken)
     {
         await EnsureStartedAsync(cancellationToken);
+    }
+
+    // Make this camera readable from the sidecar's loopback RTSP server, for a consumer that isn't a
+    // browser - currently ScheduledRecorder, which then pulls the address CameraSource builds.
+    //
+    // Going through go2rtc rather than dialling the camera directly is the point of it. A scheduled
+    // recording is a second consumer, and on a Reolink the concurrent-connection budget is tight
+    // enough that the detection pipeline already competes with the live view - a direct pull would
+    // spend another connection unconditionally. Registered here, the recorder shares whatever
+    // upstream connection go2rtc already holds for anyone watching the same camera, and only causes
+    // a dial of its own when nobody is.
+    //
+    // A browser-published camera is deliberately NOT registered: it is already registered, by the
+    // browser that is publishing into it (ExchangePublishOfferAsync). Registering it again would at
+    // best be a no-op against the cached source key and at worst re-PUT the stream, which recreates
+    // it inside go2rtc - dropping the publisher, and with it the very feed being recorded.
+    public async Task EnsureRecordableAsync(Camera camera, CancellationToken cancellationToken)
+    {
+        await EnsureStartedAsync(cancellationToken);
+        if (camera.IsBrowserPublished) return;
+
+        await RegisterStreamAsync(camera, cancellationToken);
     }
 
     // The whole signaling exchange for one viewer: make sure the sidecar is up and this camera
