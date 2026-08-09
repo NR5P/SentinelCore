@@ -62,7 +62,7 @@ public sealed class Go2RtcManagerTests : IDisposable
 
     private static Camera TestCamera() => new(
         Guid.NewGuid(), "Test Camera", "rtsp://127.0.0.1/stream", null, null, false, false, null, null,
-        DateTimeOffset.UtcNow);
+        false, DateTimeOffset.UtcNow);
 
     // The regression this file exists for.
     [Fact]

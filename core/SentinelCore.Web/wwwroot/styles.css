@@ -2238,3 +2238,108 @@ main {
   background: var(--red);
   color: var(--bg);
 }
+
+/* ---- Publisher page (publish.html) --------------------------------------------------------
+   A device streaming its own webcam into the dashboard. Sized for the two places it actually
+   runs: a laptop propped up somewhere, and a phone held in one hand - hence the single centred
+   column rather than the dashboard's grid. */
+
+.publish-main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.publish-panel {
+  border: 1px solid var(--border);
+  background: var(--panel, rgba(0, 0, 0, 0.25));
+  padding: 20px;
+}
+
+/* This stylesheet has no blanket .hidden rule - every use of the class is scoped to the thing it
+   hides, so these need their own. */
+.publish-panel.hidden {
+  display: none;
+}
+
+.publish-title {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+  color: var(--green);
+  letter-spacing: 0.04em;
+}
+
+.publish-note {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.field-note {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+
+.publish-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.publish-picker-item {
+  text-align: left;
+  text-decoration: none;
+}
+
+.publish-video-wrap {
+  position: relative;
+  margin-bottom: 16px;
+  background: #000;
+  border: 1px solid var(--border);
+  aspect-ratio: 4 / 3;
+}
+
+.publish-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* Covers the preview until capture starts, so a black rectangle doesn't read as a dead camera. */
+.publish-idle-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.publish-idle-overlay.hidden {
+  display: none;
+}
+
+.publish-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.publish-controls .btn {
+  padding: 12px;
+  font-size: 1rem;
+}
+
+.publish-status {
+  color: var(--cyan);
+  font-size: 0.85rem;
+  min-height: 1.2em;
+  margin: 0 0 4px;
+}

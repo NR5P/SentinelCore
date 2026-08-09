@@ -20,6 +20,7 @@ public sealed class TriggerZoneMonitor(
     AlertForwarder alertForwarder,
     TriggerConfirmationService triggerConfirmation,
     AppSettingsFile mainAppSettings,
+    CameraSource cameraSource,
     IConfiguration configuration,
     IHostEnvironment environment,
     ILogger<TriggerZoneMonitor> logger) : BackgroundService
@@ -30,6 +31,18 @@ public sealed class TriggerZoneMonitor(
     // one means the feed is gone, whatever the ffmpeg process claims - see ReconcileCameraAsync.
     // Generous enough that a camera stuttering under load isn't torn down for it.
     private static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(30);
+
+    // Browser-published cameras need a far longer rope, and would otherwise never work at all. A
+    // browser's WebRTC encoder emits a keyframe only every ~30 seconds and ffmpeg decodes nothing
+    // until one arrives, so a freshly-started session for one is legitimately frameless for about
+    // as long as the ordinary timeout allows - the reconcile pass would kill it just before its
+    // first frame, restart it, and repeat forever, leaving the camera permanently blind while
+    // looking busy. Once running, frames arrive at the usual rate; this only has to cover the
+    // wait for that first keyframe, plus room for a slow device.
+    private static readonly TimeSpan PublishedStallTimeout = TimeSpan.FromSeconds(90);
+
+    private static TimeSpan StallTimeoutFor(Camera camera) =>
+        camera.IsBrowserPublished ? PublishedStallTimeout : StallTimeout;
 
     // Motion that reached at least this share of a zone's minimum size is worth telling the user
     // about (see LogNearMiss); below it, it's ordinary scene noise. TriggerRewind reuses it as the
@@ -149,7 +162,7 @@ public sealed class TriggerZoneMonitor(
             // twice a second, so a gap of StallTimeout means the feed is gone whatever the process
             // says about itself.
             var stalledFor = existing.SinceLastFrame(DateTimeOffset.UtcNow);
-            var stalled = stalledFor > StallTimeout;
+            var stalled = stalledFor > existing.StallTimeout;
 
             // Whether this camera should be buffering video at all is part of its session's ffmpeg
             // argument list, so a change to it has to restart the session the same way a config edit
@@ -274,7 +287,7 @@ public sealed class TriggerZoneMonitor(
     private DetectionSession StartSession(
         Camera camera, TriggerConfig config, MultiFrameOptions multiFrame, TriggerRewindOptions rewindOptions)
     {
-        var sourceUrl = HlsStreamManager.BuildAuthenticatedUrl(camera);
+        var sourceUrl = cameraSource.ResolveUrl(camera);
         var cameraDir = Path.Combine(_imagesRoot, camera.Id.ToString("N"));
         Directory.CreateDirectory(cameraDir);
 
@@ -375,7 +388,10 @@ public sealed class TriggerZoneMonitor(
         var session = new DetectionSession(
             process, config, cts, new MotionDetector(config.ResolvedZones, config.ShadowSensitivity), multiFrame,
             rewindOptions, wantsBuffer,
-            detectUrl is not null);
+            detectUrl is not null)
+        {
+            StallTimeout = StallTimeoutFor(camera)
+        };
 
         // A zone whose polygon has fewer than three points rasterizes to an empty mask, and an
         // empty mask can never contain a blob - that camera is silently blind for as long as the
@@ -996,6 +1012,11 @@ public sealed class TriggerZoneMonitor(
         // Whether this session's detection input was guessed from the main stream URL rather than
         // being the URL itself - see TryDeriveDetectionUrl and the fallback in ReconcileCameraAsync.
         public bool UsedDerivedDetectionUrl { get; } = usedDerivedDetectionUrl;
+
+        // How long this session may go frameless before it is treated as dead. Carried here rather
+        // than looked up per pass because the reconcile pass tests it before it has loaded the
+        // camera - and because it is a property of the source this ffmpeg was started against.
+        public TimeSpan StallTimeout { get; init; } = TriggerZoneMonitor.StallTimeout;
 
         // Resolved once rather than per frame: for a config predating multi-zone, ResolvedZones
         // builds a fresh list every time it's read, and the detection loop reads it twice a second

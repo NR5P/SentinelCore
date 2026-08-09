@@ -7,8 +7,14 @@ public sealed class CameraInputDto
     [Required]
     public string Name { get; set; } = string.Empty;
 
-    [Required]
+    // Not [Required]: a browser-published camera has no URL to dial, because the video is pushed
+    // to us rather than fetched. See Validate, which requires this only for the ordinary kind.
     public string StreamUrl { get; set; } = string.Empty;
+
+    // This camera's video comes from a browser pushing its webcam in (a laptop or spare phone
+    // used as an indoor camera) rather than from an address this server connects to - see
+    // CameraPublishEndpoints.
+    public bool IsBrowserPublished { get; set; }
 
     public string? Username { get; set; }
     public string? Password { get; set; }
@@ -90,7 +96,7 @@ public static class CameraEndpoints
 
             var camera = await store.AddAsync(
                 dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio,
-                dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, ct);
+                dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, dto.IsBrowserPublished, ct);
             return Results.Ok(camera);
         }).RequireAuthorization("AdminOnly");
 
@@ -101,7 +107,7 @@ public static class CameraEndpoints
 
             var updated = await store.UpdateAsync(
                 id, dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio,
-                dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, ct);
+                dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, dto.IsBrowserPublished, ct);
             if (!updated) return Results.NotFound();
 
             // Source may have changed - restart the stream on next view rather than serving stale settings.
@@ -344,6 +350,18 @@ public static class CameraEndpoints
     {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(dto.Name)) errors.Add("Name is required.");
+
+        // A browser-published camera is defined by the absence of an address: the publishing
+        // device connects to us. Rejecting a URL outright rather than ignoring one keeps the two
+        // kinds from being silently half-configured - a camera with both would leave "which wins?"
+        // to whoever reads BuildStreamSources next.
+        if (dto.IsBrowserPublished)
+        {
+            if (!string.IsNullOrWhiteSpace(dto.StreamUrl))
+                errors.Add("A browser-published camera has no stream URL - the device pushes video to this server.");
+            return errors;
+        }
+
         if (string.IsNullOrWhiteSpace(dto.StreamUrl))
         {
             errors.Add("Stream URL is required.");

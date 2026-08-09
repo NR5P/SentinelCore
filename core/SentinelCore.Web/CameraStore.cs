@@ -12,6 +12,10 @@ namespace SentinelCore.Web;
 // that detection but stays a separate, independently user-toggleable flag: someone can turn it
 // on for a camera discovery didn't detect it for (that PTZ call will just fail with a clear
 // error, since there's no service URL/profile token to send it to), or off for one that has it.
+// IsBrowserPublished inverts where the video comes from: instead of this server dialing out to
+// StreamUrl, a browser somewhere on the LAN pushes its own webcam in over WebRTC (a laptop or an
+// old phone as an indoor camera - see CameraPublishEndpoints). Such a camera has no address of
+// its own to dial, so StreamUrl is empty and CameraSource is what every consumer asks instead.
 public sealed record Camera(
     Guid Id,
     string Name,
@@ -22,6 +26,7 @@ public sealed record Camera(
     bool PtzEnabled,
     string? OnvifPtzServiceUrl,
     string? OnvifProfileToken,
+    bool IsBrowserPublished,
     DateTimeOffset CreatedAt);
 
 public interface ICameraStore
@@ -31,12 +36,12 @@ public interface ICameraStore
 
     Task<Camera> AddAsync(
         string name, string streamUrl, string? username, string? password, bool includeAudio,
-        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken,
+        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
         CancellationToken cancellationToken);
 
     Task<bool> UpdateAsync(
         Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio,
-        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken,
+        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
         CancellationToken cancellationToken);
 
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken);
@@ -129,6 +134,7 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
         AddColumnIfMissing("Cameras", "PtzEnabled", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing("Cameras", "OnvifPtzServiceUrl", "TEXT");
         AddColumnIfMissing("Cameras", "OnvifProfileToken", "TEXT");
+        AddColumnIfMissing("Cameras", "IsBrowserPublished", "INTEGER NOT NULL DEFAULT 0");
     }
 
     private void AddColumnIfMissing(string table, string column, string definition)
@@ -189,12 +195,12 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
 
     public async Task<Camera> AddAsync(
         string name, string streamUrl, string? username, string? password, bool includeAudio,
-        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken,
+        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
         CancellationToken cancellationToken)
     {
         var camera = new Camera(
             Guid.NewGuid(), name, streamUrl, username, password, includeAudio,
-            ptzEnabled, onvifPtzServiceUrl, onvifProfileToken, DateTimeOffset.UtcNow);
+            ptzEnabled, onvifPtzServiceUrl, onvifProfileToken, isBrowserPublished, DateTimeOffset.UtcNow);
 
         await _lock.WaitAsync(cancellationToken);
         try
@@ -202,9 +208,9 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO Cameras
-                    (Id, Name, StreamUrl, Username, Password, IncludeAudio, PtzEnabled, OnvifPtzServiceUrl, OnvifProfileToken, CreatedAt)
+                    (Id, Name, StreamUrl, Username, Password, IncludeAudio, PtzEnabled, OnvifPtzServiceUrl, OnvifProfileToken, IsBrowserPublished, CreatedAt)
                 VALUES
-                    ($id, $name, $streamUrl, $username, $password, $includeAudio, $ptzEnabled, $onvifPtzServiceUrl, $onvifProfileToken, $createdAt);
+                    ($id, $name, $streamUrl, $username, $password, $includeAudio, $ptzEnabled, $onvifPtzServiceUrl, $onvifProfileToken, $isBrowserPublished, $createdAt);
                 """;
             AddParameters(command, camera);
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -225,14 +231,15 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
             using var command = _connection.CreateCommand();
             command.CommandText = """
                 INSERT INTO Cameras
-                    (Id, Name, StreamUrl, Username, Password, IncludeAudio, PtzEnabled, OnvifPtzServiceUrl, OnvifProfileToken, CreatedAt)
+                    (Id, Name, StreamUrl, Username, Password, IncludeAudio, PtzEnabled, OnvifPtzServiceUrl, OnvifProfileToken, IsBrowserPublished, CreatedAt)
                 VALUES
-                    ($id, $name, $streamUrl, $username, $password, $includeAudio, $ptzEnabled, $onvifPtzServiceUrl, $onvifProfileToken, $createdAt)
+                    ($id, $name, $streamUrl, $username, $password, $includeAudio, $ptzEnabled, $onvifPtzServiceUrl, $onvifProfileToken, $isBrowserPublished, $createdAt)
                 ON CONFLICT(Id) DO UPDATE SET
                     Name = excluded.Name, StreamUrl = excluded.StreamUrl, Username = excluded.Username,
                     Password = excluded.Password, IncludeAudio = excluded.IncludeAudio,
                     PtzEnabled = excluded.PtzEnabled, OnvifPtzServiceUrl = excluded.OnvifPtzServiceUrl,
-                    OnvifProfileToken = excluded.OnvifProfileToken, CreatedAt = excluded.CreatedAt;
+                    OnvifProfileToken = excluded.OnvifProfileToken,
+                    IsBrowserPublished = excluded.IsBrowserPublished, CreatedAt = excluded.CreatedAt;
                 """;
             AddParameters(command, camera);
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -245,7 +252,7 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
 
     public async Task<bool> UpdateAsync(
         Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio,
-        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken,
+        bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
         CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken);
@@ -255,7 +262,8 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
             command.CommandText = """
                 UPDATE Cameras SET Name = $name, StreamUrl = $streamUrl, Username = $username,
                     Password = $password, IncludeAudio = $includeAudio, PtzEnabled = $ptzEnabled,
-                    OnvifPtzServiceUrl = $onvifPtzServiceUrl, OnvifProfileToken = $onvifProfileToken
+                    OnvifPtzServiceUrl = $onvifPtzServiceUrl, OnvifProfileToken = $onvifProfileToken,
+                    IsBrowserPublished = $isBrowserPublished
                 WHERE Id = $id;
                 """;
             command.Parameters.AddWithValue("$id", id.ToString("N"));
@@ -267,6 +275,7 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
             command.Parameters.AddWithValue("$ptzEnabled", ptzEnabled ? 1 : 0);
             command.Parameters.AddWithValue("$onvifPtzServiceUrl", (object?)onvifPtzServiceUrl ?? DBNull.Value);
             command.Parameters.AddWithValue("$onvifProfileToken", (object?)onvifProfileToken ?? DBNull.Value);
+            command.Parameters.AddWithValue("$isBrowserPublished", isBrowserPublished ? 1 : 0);
 
             var rows = await command.ExecuteNonQueryAsync(cancellationToken);
             return rows > 0;
@@ -470,7 +479,7 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
         reader.GetInt64(5) != 0);
 
     private const string SelectColumns =
-        "SELECT Id, Name, StreamUrl, Username, Password, IncludeAudio, PtzEnabled, OnvifPtzServiceUrl, OnvifProfileToken, CreatedAt";
+        "SELECT Id, Name, StreamUrl, Username, Password, IncludeAudio, PtzEnabled, OnvifPtzServiceUrl, OnvifProfileToken, IsBrowserPublished, CreatedAt";
 
     private static void AddParameters(SqliteCommand command, Camera camera)
     {
@@ -483,6 +492,7 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
         command.Parameters.AddWithValue("$ptzEnabled", camera.PtzEnabled ? 1 : 0);
         command.Parameters.AddWithValue("$onvifPtzServiceUrl", (object?)camera.OnvifPtzServiceUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("$onvifProfileToken", (object?)camera.OnvifProfileToken ?? DBNull.Value);
+        command.Parameters.AddWithValue("$isBrowserPublished", camera.IsBrowserPublished ? 1 : 0);
         command.Parameters.AddWithValue("$createdAt", camera.CreatedAt.UtcDateTime.ToString("O"));
     }
 
@@ -496,7 +506,8 @@ public sealed class SqliteCameraStore : ICameraStore, ICameraGroupStore, IDispos
         reader.GetInt64(6) != 0,
         reader.IsDBNull(7) ? null : reader.GetString(7),
         reader.IsDBNull(8) ? null : reader.GetString(8),
-        DateTimeOffset.Parse(reader.GetString(9)));
+        reader.GetInt64(9) != 0,
+        DateTimeOffset.Parse(reader.GetString(10)));
 
     public void Dispose()
     {

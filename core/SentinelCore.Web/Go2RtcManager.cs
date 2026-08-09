@@ -46,6 +46,10 @@ public sealed class Go2RtcManager : IDisposable
     private static readonly TimeSpan MissingBinaryRetry = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan TransientFailureRetry = TimeSpan.FromSeconds(20);
 
+    // Shared with CameraSource, which builds the loopback RTSP URL that browser-published cameras
+    // are read back from and so must agree with the port the sidecar actually listens on.
+    public const int DefaultRtspPort = 18554;
+
     private readonly string _binaryPath;
     private readonly string _ffmpegPath;
     private readonly int _apiPort;
@@ -80,7 +84,7 @@ public sealed class Go2RtcManager : IDisposable
         // go2rtc on this box - Frigate bundles one - would otherwise have our sidecar fail to
         // bind and die on every start attempt.
         _apiPort = configuration.GetValue("Go2Rtc:ApiPort", 11984);
-        _rtspPort = configuration.GetValue("Go2Rtc:RtspPort", 18554);
+        _rtspPort = configuration.GetValue("Go2Rtc:RtspPort", DefaultRtspPort);
         _webRtcPort = configuration.GetValue("Go2Rtc:WebRtcPort", 18555);
 
         var configured = configuration["CamerasDataDirectory"] ?? "data";
@@ -126,6 +130,107 @@ public sealed class Go2RtcManager : IDisposable
             throw new InvalidOperationException($"go2rtc rejected the WebRTC offer ({(int)response.StatusCode}): {body}");
 
         return body;
+    }
+
+    // The mirror image of ExchangeOfferAsync: instead of a viewer asking for this camera's video,
+    // a browser is offering to *be* this camera. Same SDP exchange, but go2rtc is told ?dst= rather
+    // than ?src=, so it attaches the browser as a producer of the stream instead of a consumer.
+    //
+    // Once this returns, the publisher's frames land in the sidecar and everything else reads them
+    // back over loopback RTSP (see CameraSource) - live view, clips, trigger zones and analysis all
+    // treat the camera as ordinary from here on.
+    public async Task<string> ExchangePublishOfferAsync(Camera camera, string sdpOffer, CancellationToken cancellationToken)
+    {
+        await EnsureStartedAsync(cancellationToken);
+        await RegisterStreamAsync(camera, cancellationToken);
+
+        var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
+        using var content = new StringContent(sdpOffer, Encoding.UTF8, "application/sdp");
+        using var response = await client.PostAsync(
+            $"http://127.0.0.1:{_apiPort}/api/webrtc?dst={StreamName(camera.Id)}", content, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"go2rtc rejected the publish offer ({(int)response.StatusCode}): {body}");
+
+        return body;
+    }
+
+    // A single JPEG straight from the sidecar, used for browser-published cameras instead of
+    // pointing ffmpeg at them.
+    //
+    // The reason is keyframes. A browser's WebRTC encoder emits one only every ~30 seconds, and
+    // nothing can decode video until it does - so an ffmpeg snapshot against a published camera
+    // waits that long. go2rtc asks the publisher for a keyframe when it needs one itself, which
+    // makes this path a second or two instead. (Asking for a frame this way does not help a
+    // separate RTSP consumer: go2rtc serves this from its own consumer, and the keyframe it
+    // requests doesn't reach the others. Measured, not assumed.)
+    public async Task<byte[]?> CaptureFrameAsync(Guid cameraId, CancellationToken cancellationToken)
+    {
+        await EnsureStartedAsync(cancellationToken);
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
+            using var response = await client.GetAsync(
+                $"http://127.0.0.1:{_apiPort}/api/frame.jpeg?src={StreamName(cameraId)}", cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            return bytes.Length > 0 ? bytes : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // Nothing is publishing, or the sidecar is busy - the caller reports "no frame" the
+            // same way it would for an unreachable camera.
+            return null;
+        }
+    }
+
+    // Whether a browser is currently pushing video into this camera's stream, used to tell a
+    // publisher that dropped off from one that never started - see CameraPublishEndpoints and
+    // PublisherWatchdog. Asks go2rtc rather than tracking it here: the publisher's connection is
+    // between the browser and the sidecar, and this process never sees it end.
+    public async Task<bool> HasLivePublisherAsync(Guid cameraId, CancellationToken cancellationToken)
+    {
+        if (_process is not { HasExited: false }) return false;
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
+            using var response = await client.GetAsync(
+                $"http://127.0.0.1:{_apiPort}/api/streams?src={StreamName(cameraId)}", cancellationToken);
+            if (!response.IsSuccessStatusCode) return false;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var json = await System.Text.Json.JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            return HasWebRtcProducer(json.RootElement);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            // The sidecar being unreachable is not evidence the publisher is gone, but it is also
+            // not evidence it is alive - and the watchdog's job is to notice absence of video.
+            return false;
+        }
+    }
+
+    // A stream go2rtc knows about lists every attached producer; the placeholder source shows up
+    // as one with no format, so only a producer that actually negotiated WebRTC counts as a live
+    // publisher.
+    private static bool HasWebRtcProducer(System.Text.Json.JsonElement stream)
+    {
+        if (!stream.TryGetProperty("producers", out var producers) ||
+            producers.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return false;
+
+        foreach (var producer in producers.EnumerateArray())
+        {
+            if (producer.TryGetProperty("format_name", out var format) &&
+                format.ValueKind == System.Text.Json.JsonValueKind.String &&
+                format.GetString() == "webrtc")
+                return true;
+        }
+
+        return false;
     }
 
     // The MSE counterpart of ExchangeOfferAsync: make sure the sidecar is up and the camera
@@ -224,11 +329,26 @@ public sealed class Go2RtcManager : IDisposable
     // the direct source, matched up by go2rtc.
     public static List<string> BuildStreamSources(Camera camera)
     {
+        if (camera.IsBrowserPublished) return [PublishPlaceholderSource];
+
         var sources = new List<string> { HlsStreamManager.BuildAuthenticatedUrl(camera) };
         if (camera.IncludeAudio)
             sources.Add($"ffmpeg:{StreamName(camera.Id)}#audio=opus");
         return sources;
     }
+
+    // A browser-published camera's stream has to exist in go2rtc before a browser can publish
+    // into it - a POST to ?dst= for an unknown stream is a 404 - but there is nothing to pull,
+    // because the media arrives by being pushed. go2rtc has no "empty stream" the API can create:
+    // PUT /api/streams with no src, or with an empty one, returns 200 and creates nothing, and a
+    // stream naming its own RTSP URL would be self-referential. So the stream is declared with a
+    // source that is syntactically valid and permanently dead. It exists to make the stream exist.
+    //
+    // Nothing ever dials it: go2rtc only starts a source when a consumer needs one and there is no
+    // live producer, and for these cameras the publishing browser is always the producer. Port 1
+    // is reserved (tcpmux) and nothing on this box listens there, so even an attempt fails at once
+    // rather than hanging.
+    private const string PublishPlaceholderSource = "rtsp://127.0.0.1:1/awaiting-publisher";
 
     // The config go2rtc runs with. YAML, but assembled by hand - it's a dozen fixed lines and
     // taking a YAML dependency for it would be the tail wagging the dog.

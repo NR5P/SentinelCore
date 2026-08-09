@@ -1848,7 +1848,7 @@ public sealed class BasicTests
     {
         using var store = new SqliteCameraStore(Path.Combine(Path.GetTempPath(), $"cam-{Guid.NewGuid():N}"));
         var id = Guid.NewGuid();
-        var original = new Camera(id, "Front Gate", "rtsp://example/1", null, null, false, false, null, null, DateTimeOffset.UtcNow);
+        var original = new Camera(id, "Front Gate", "rtsp://example/1", null, null, false, false, null, null, false, DateTimeOffset.UtcNow);
 
         await store.RestoreAsync(original, CancellationToken.None);
         var restored = await store.GetAsync(id, CancellationToken.None);
@@ -3639,11 +3639,13 @@ public sealed class BasicTests
         public Task<Camera?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Camera?>(null);
         public Task<Camera> AddAsync(
             string name, string streamUrl, string? username, string? password, bool includeAudio,
-            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, CancellationToken cancellationToken) =>
+            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<bool> UpdateAsync(
             Guid id, string name, string streamUrl, string? username, string? password, bool includeAudio,
-            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, CancellationToken cancellationToken) =>
+            bool ptzEnabled, string? onvifPtzServiceUrl, string? onvifProfileToken, bool isBrowserPublished,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task RestoreAsync(Camera camera, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -4050,7 +4052,8 @@ public sealed class BasicTests
         var id = Guid.NewGuid();
         Camera Make(bool includeAudio) => new(
             id, "Gate", "rtsp://cam/live", "user", "secret", includeAudio,
-            PtzEnabled: false, OnvifPtzServiceUrl: null, OnvifProfileToken: null, DateTimeOffset.UtcNow);
+            PtzEnabled: false, OnvifPtzServiceUrl: null, OnvifProfileToken: null,
+            IsBrowserPublished: false, DateTimeOffset.UtcNow);
 
         // Video is never re-encoded: the first (and without audio, only) source is the camera's
         // own stream with credentials embedded, exactly what the HLS pipeline connects to.
