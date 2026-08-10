@@ -432,6 +432,7 @@ Below that, the settings for this zone:
 | Enabled | Master switch for the whole zone. Off means nothing is watched or recorded, but your shape and settings are kept. |
 | Trigger from a sensor | Fires this camera when a Device Hub sensor reports — see below. |
 | Fire when the sensor reads / Sensor cooldown | Which sensor reading fires the camera, and how long to ignore repeats afterwards. |
+| Reading to compare / Value | Only shown for the two threshold options below. Which of the sensor's numbers to watch, and the number to compare it against. |
 | Trigger address | The web address that fires this camera from outside — see below. |
 
 **About "send to alert pipeline":** Blue Iris images and your own trigger-zone cameras can
@@ -484,6 +485,21 @@ contact switch on a door. The moment it reports, the camera is captured. Only a 
 it, so a sensor that republishes its state every few seconds still triggers once, and the state
 it holds when the server starts up is never treated as a fresh trigger. Requires MQTT and the
 Device Hub to be on; only devices saved with kind **sensor** are offered.
+
+**Fire when the sensor reads** decides what counts as worth firing on. **On**, **Off** and **Any
+change** watch the sensor's on/off state — the right choice for a contact switch or a PIR.
+
+**Drops below a value** and **Rises above a value** watch a *number* instead, which is what a
+distance, temperature or power sensor actually reports. Choosing either one reveals two more
+fields: **Reading to compare**, a list of the numbers this sensor has published since the hub last
+started (a distance sensor reports one, a climate sensor several — an empty list means it hasn't
+reported yet), and **Value**, the number to compare against in whatever units the sensor uses.
+
+These are edge-triggered the same way the on/off options are: the camera fires on the message that
+*crosses* the line, not repeatedly while the reading stays past it. A car pulling into range of a
+gate sensor triggers once on arrival and not again while it sits there. A reading exactly equal to
+your value counts as neither below nor above, which keeps a cheap sensor parked on a round number
+from flapping in and out of range forever.
 
 **From a web address.** Turn on **TRIGGER API** under Settings and each camera's zone editor
 shows a **Trigger address** — fetching it fires that camera. This is for anything that can open

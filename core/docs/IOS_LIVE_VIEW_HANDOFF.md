@@ -70,11 +70,15 @@ Fixed by giving live view a rendition choice. `StreamQuality` (`CameraSource`) p
 `HlsStreamManager` keys sessions by camera *and* rendition; `/api/cameras/{id}/stream/sub/...`
 serves the low one. Grid tiles on iOS, tvOS, Android and the dashboard's HLS tier ask for Sub, and
 every full-screen view keeps Main. A camera with no derivable low stream, or one that turns out not
-to serve it, falls back to Main and is remembered rather than retried per request.
+to serve it, falls back to Main and is remembered, so the next tile doesn't spawn another doomed
+ffmpeg to rediscover the same thing. That memory **expires after ten minutes** (`3f0fb29`) — the
+failure it keys on is also what a camera refusing one more connection looks like, and latching on
+one of those would put every tile back on the full-resolution stream until the service restarted.
 
 **Deployment order matters:** the server must carry this before the apps do. Old clients work
 against a new server (`/stream/{file}` still means Main), but a new client against an old server
-gets a 404 on the extra path segment.
+gets a 404 on the extra path segment. *(Done — the server has been running this since 2026-08-09
+13:20.)*
 
 The original note follows.
 
@@ -164,7 +168,15 @@ because a player that has fallen far behind does not recover just because the se
 This is untested. Testing it means restarting the server and watching the phone immediately, versus
 watching it after things settle.
 
-### Suspect 2 is built and parked, not merged
+### Suspect 2 is built and parked, not merged — **SUPERSEDED 2026-08-09**
+
+> This section is kept for the reasoning, not as an instruction. The stutter *did* come back under
+> load, it was measured on the phone (see "CONFIRMED AND FIXED" above), and the substream split
+> shipped on `master` as `d9dfa18` — written against the real server rather than merged from the
+> parked branch. **Do not go looking for `substream-live-tiles`;** whatever is or isn't left of it
+> on the Mac is now behind what is running. The caveats below were real and both were addressed:
+> full-screen's extra connection is why only grid tiles ask for Sub, and the warm-up was moved to
+> Sub so nothing is left cold.
 
 Branch `substream-live-tiles` (`53a762b`) serves live tiles the camera's substream and keeps the
 main stream for full-screen, with per-quality sessions and fallbacks for cameras that have no
@@ -173,7 +185,9 @@ under load; don't merge it on spec — it costs an extra camera connection while
 full-screen, and a cold start on the paths that no longer get warmed.
 
 That branch also carries `tools/live-view-test-harness/`, which is what produced the measurements
-above and can throttle segment delivery to emulate a link that cannot keep up.
+above and can throttle segment delivery to emulate a link that cannot keep up. That harness did
+*not* come across with `d9dfa18` and is still only on the Mac, if it survives at all — it is the
+one piece here worth retrieving.
 
 **It is a local branch on the Mac and has deliberately not been pushed**, so that commit will not
 resolve anywhere else. If it turns out to be wanted, it needs pushing from there first; if this
