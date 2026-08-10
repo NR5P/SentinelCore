@@ -335,6 +335,44 @@ public sealed class HlsStreamManagerTests : IDisposable
         Assert.Equal(invocationsAfterFallback, InvocationCount());
     }
 
+    // The other half of that: the memory has to expire. "Never produced a playlist" is not only
+    // ever "the rendition is switched off" - a Reolink refusing one more connection looks exactly
+    // the same from here, and on these cameras it is the likely reading, since detection already
+    // holds the ext stream and the clip buffer holds the main one. Remembering such a camera for
+    // the life of the process would put every grid tile back on the full-resolution stream for
+    // good, which is the thing the low rendition exists to prevent.
+    [Fact]
+    public async Task ACameraWhoseLowStreamFailedOnce_IsAskedAgainOnceTheRetryIntervalIsUp()
+    {
+        WriteFfmpegStub(stayAlive: true, refuseUrlContaining: "_sub");
+        using var manager = CreateManager();
+        var camera = ReolinkCamera();
+
+        var fellBack = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
+        Assert.Equal(Path.Combine(_root, "hls", camera.Id.ToString("N")), Path.GetDirectoryName(fellBack));
+
+        // The camera frees up - whatever was holding the connection lets go - and the interval
+        // passes.
+        WriteFfmpegStub(stayAlive: true);
+        ExpireLowResRetry(manager, camera.Id);
+
+        var sub = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
+        Assert.Equal(Path.Combine(_root, "hls", $"{camera.Id:N}-sub"), Path.GetDirectoryName(sub));
+    }
+
+    // Winds the retry deadline back into the past, the same reach-in approach SetSessionStartedAt
+    // takes - the alternative is a test that waits out a real ten-minute interval.
+    private static void ExpireLowResRetry(HlsStreamManager manager, Guid cameraId)
+    {
+        var field = typeof(HlsStreamManager)
+            .GetField("_lowResRetryAfter", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var map = (System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset>)field.GetValue(manager)!;
+        Assert.True(map.ContainsKey(cameraId), "the failed low-resolution attempt should have been remembered");
+        map[cameraId] = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1);
+    }
+
     private sealed class StubEnvironment(string contentRoot) : IHostEnvironment
     {
         public string ApplicationName { get; set; } = "Tests";

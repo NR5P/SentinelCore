@@ -46,12 +46,29 @@ public sealed class HlsStreamManager : IDisposable
     // GetOrStartLiveSession.
     private readonly ConcurrentDictionary<SessionKey, DateTimeOffset> _restartBlockedUntil = new();
 
-    // Cameras that turned out not to serve the low-resolution stream their URL implied. ffmpeg
-    // refuses an input it can't open and quits immediately, so a Sub session that exits without
-    // ever writing a playlist is that camera telling us the rendition isn't enabled. Latching it
-    // sends every later request for that camera to the main stream instead of crash-looping on the
-    // same guess - the same fallback TriggerZoneMonitor keeps for detection, for the same reason.
-    private readonly ConcurrentDictionary<Guid, bool> _noLowResStream = new();
+    // Cameras that turned out not to serve the low-resolution stream their URL implied, and when
+    // it becomes worth asking them again. ffmpeg refuses an input it can't open and quits
+    // immediately, so a Sub session that exits without ever writing a playlist is usually that
+    // camera telling us the rendition isn't enabled. Remembering that sends every later request
+    // for the camera to the main stream instead of crash-looping on the same guess - the same
+    // fallback TriggerZoneMonitor keeps for detection, for the same reason.
+    //
+    // It expires rather than latching for the life of the process, because the failure it keys on
+    // is not only ever "the rendition is off". A Reolink refusing one more connection, a startup
+    // that overran its budget under load, or a momentary network drop all look identical from
+    // here, and on these cameras the first of those is likely: the gate camera already carries a
+    // detection consumer on the same ext stream and a clip-buffer consumer on the main one, so a
+    // Sub session is the third connection against a small budget. Latching permanently on one of
+    // those would put every grid tile back on the 2560x1920 stream for good - silently undoing
+    // the whole point of the split, with nothing but a single warning an hour earlier to show for
+    // it. Re-probing costs one ffmpeg that exits immediately, which is the cheaper thing to be
+    // wrong about.
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _lowResRetryAfter = new();
+
+    // Long enough that a camera with no low stream isn't respawning doomed processes (the camera
+    // list warms every camera on each fetch), short enough that a transient failure doesn't cost
+    // a viewer the low rendition for the rest of the day.
+    private static readonly TimeSpan LowResRetryInterval = TimeSpan.FromMinutes(10);
     private readonly CameraSource _cameraSource;
     private readonly Go2RtcManager _go2rtc;
     private readonly string _ffmpegPath;
@@ -91,11 +108,16 @@ public sealed class HlsStreamManager : IDisposable
         }
         catch (Exception ex) when (effective == StreamQuality.Sub && ex is not OperationCanceledException)
         {
-            if (_noLowResStream.TryAdd(camera.Id, true))
+            // Warn the first time only. A camera whose low stream is genuinely switched off would
+            // otherwise reprint this every retry interval for as long as the dashboard is open.
+            var alreadyKnown = _lowResRetryAfter.ContainsKey(camera.Id);
+            _lowResRetryAfter[camera.Id] = DateTimeOffset.UtcNow + LowResRetryInterval;
+            if (!alreadyKnown)
                 _logger.LogWarning(
                     "Camera {CameraId} ({Name}) never produced a playlist on its derived low-resolution stream, so " +
-                    "that stream probably isn't enabled on the camera. Falling back to the main stream for live view. {Reason}",
-                    camera.Id, camera.Name, ex.Message);
+                    "that stream probably isn't enabled on the camera. Falling back to the main stream for live view, " +
+                    "and trying the low one again in {RetryMinutes:n0} minutes. {Reason}",
+                    camera.Id, camera.Name, LowResRetryInterval.TotalMinutes, ex.Message);
 
             // The failed attempt left a backoff behind for the rendition we're abandoning; clearing
             // it keeps that from blocking the retry we're about to make on a different key.
@@ -112,7 +134,8 @@ public sealed class HlsStreamManager : IDisposable
     {
         if (requested == StreamQuality.Main) return StreamQuality.Main;
         if (camera.IsBrowserPublished) return StreamQuality.Main;
-        if (_noLowResStream.ContainsKey(camera.Id)) return StreamQuality.Main;
+        if (_lowResRetryAfter.TryGetValue(camera.Id, out var retryAfter) && DateTimeOffset.UtcNow < retryAfter)
+            return StreamQuality.Main;
         return CameraSource.TryDeriveLowResUrl(HlsStreamManager.BuildAuthenticatedUrl(camera)) is null
             ? StreamQuality.Main
             : StreamQuality.Sub;
@@ -281,8 +304,8 @@ public sealed class HlsStreamManager : IDisposable
         }
 
         // An edit may well be the fix for the missing low stream, so let the camera prove itself
-        // again rather than staying latched to the main stream for the life of the process.
-        _noLowResStream.TryRemove(cameraId, out _);
+        // again immediately rather than serving main until the retry interval is up.
+        _lowResRetryAfter.TryRemove(cameraId, out _);
     }
 
     private StreamSession StartSession(Camera camera, StreamQuality quality)
