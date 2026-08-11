@@ -928,6 +928,14 @@ public sealed class TriggerZoneMonitor(
         }
     }
 
+    // Half a detector pixel: small enough that two areas compare equal only when they round to the
+    // same threshold, which is the only difference this monitor can act on. It used to be a flat
+    // 0.0001, which is 5.8 detector pixels - fine when the editors couldn't express a size below
+    // ~250 pixels, and quietly wrong now that they go down to 4: every edit in the small range fell
+    // inside the tolerance, so the reconcile loop saw "no change", left the running session on its
+    // old threshold, and the setting only took effect at the next restart.
+    private const double MinTriggerAreaEpsilon = 0.5 / MotionDetector.PixelCount;
+
     // Public so the zone comparison can be tested directly - this project has no
     // InternalsVisibleTo, and a field missed in here is a silently ignored edit, not a crash.
     public static bool ConfigsEquivalent(TriggerConfig a, TriggerConfig b)
@@ -953,7 +961,7 @@ public sealed class TriggerZoneMonitor(
         for (var zone = 0; zone < zonesA.Count; zone++)
         {
             if (zonesA[zone].Name != zonesB[zone].Name) return false;
-            if (Math.Abs(zonesA[zone].MinTriggerArea - zonesB[zone].MinTriggerArea) > 0.0001) return false;
+            if (Math.Abs(zonesA[zone].MinTriggerArea - zonesB[zone].MinTriggerArea) > MinTriggerAreaEpsilon) return false;
 
             var polygonA = zonesA[zone].Polygon;
             var polygonB = zonesB[zone].Polygon;

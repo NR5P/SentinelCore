@@ -23,8 +23,44 @@ extension Image {
 // reference, a person standing at a gate roughly 30 feet away measures around 160.
 private let detectorPixels = 320.0 * 180.0
 
+// The smallest size a zone can be set to. Four detector pixels is about as small as the grid can
+// meaningfully express - below a couple of pixels a blob is indistinguishable from sensor noise -
+// and it is far below what this editor used to allow. The old drag-only circle clamped its radius
+// to 10 *view points*, so the floor depended on how big the pane happened to be: on a phone that
+// bottomed out around 250 detector pixels, which is roughly a person at 40 feet. Anything smaller
+// or further away simply couldn't be asked for.
+private let minDetectorPixels = 4.0
+
 private func detectorPixelCount(_ minTriggerArea: Double) -> Int {
     Int((minTriggerArea * detectorPixels).rounded())
+}
+
+// The server rejects anything outside (0, 1], and everything that writes minTriggerArea goes
+// through here so neither end can be reached by accident.
+private func triggerArea(detectorPixels pixels: Double) -> Double {
+    min(max(pixels, minDetectorPixels), detectorPixels) / detectorPixels
+}
+
+// The slider is logarithmic. A linear one over a range this wide (4 to 57600) would put every
+// useful small size inside its first millimetre of travel, which is exactly the end of the range
+// this control exists to reach.
+private func sliderPosition(area: Double) -> Double {
+    let pixels = min(max(area * detectorPixels, minDetectorPixels), detectorPixels)
+    return log(pixels / minDetectorPixels) / log(detectorPixels / minDetectorPixels)
+}
+
+private func triggerArea(sliderPosition position: Double) -> Double {
+    let clamped = min(max(position, 0), 1)
+    let pixels = minDetectorPixels * pow(detectorPixels / minDetectorPixels, clamped)
+    return triggerArea(detectorPixels: pixels.rounded())
+}
+
+// A single detector pixel at the small end, 5% further up. Even a log slider can't be dragged to
+// an exact value of 6 with a fingertip, and 6 versus 7 is a real difference down there.
+private func nudgedArea(_ area: Double, by direction: Double) -> Double {
+    let pixels = (area * detectorPixels).rounded()
+    let step = pixels < 50 ? 1 : (pixels * 0.05).rounded()
+    return triggerArea(detectorPixels: pixels + direction * step)
 }
 
 struct TriggerZoneEditorView: View {
@@ -94,7 +130,7 @@ struct TriggerZoneEditorView: View {
                     }
 
                     Section("Minimum Trigger Size") {
-                        Text("Drag anywhere on the image to resize the circle to the smallest object size that should count as motion. This applies to \(activeZoneName) only.")
+                        Text("The circle is the smallest object size that should count as motion in \(activeZoneName). Set it with the slider below, or drag on the image for a rough size.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if zones.indices.contains(activeZone) {
@@ -104,7 +140,8 @@ struct TriggerZoneEditorView: View {
                             )
                             .aspectRatio(imageAspectRatio(referenceImage), contentMode: .fit)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                            Text("Ignores anything under \(detectorPixelCount(zones[activeZone].minTriggerArea)) detector pixels.")
+                            MinAreaSlider(minTriggerArea: $zones[activeZone].minTriggerArea)
+                            Text("Ignores anything under \(detectorPixelCount(zones[activeZone].minTriggerArea)) detector pixels. Sizes in the low tens will also pick up rain, insects and camera noise.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -465,6 +502,44 @@ private struct PolygonZoneOverlay: View {
     }
 }
 
+// Why this exists alongside the drag-on-the-image control: on a phone the circle is the thing you
+// are aiming at and your fingertip is sitting on top of it, so the smaller it gets the less you
+// can see of what you are setting - and small is where this control now spends most of its range.
+// The slider is off to one side of the picture, and the -/+ buttons land on an exact value.
+private struct MinAreaSlider: View {
+    @Binding var minTriggerArea: Double
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                minTriggerArea = nudgedArea(minTriggerArea, by: -1)
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .accessibilityLabel("Smaller")
+
+            Slider(
+                value: Binding(
+                    get: { sliderPosition(area: minTriggerArea) },
+                    set: { minTriggerArea = triggerArea(sliderPosition: $0) }
+                ),
+                in: 0...1
+            )
+            .accessibilityValue("\(detectorPixelCount(minTriggerArea)) detector pixels")
+
+            Button {
+                minTriggerArea = nudgedArea(minTriggerArea, by: 1)
+            } label: {
+                Image(systemName: "plus.circle")
+            }
+            .accessibilityLabel("Larger")
+        }
+        // Without this the whole row reads as one button inside a Form and either end nudges
+        // whichever the platform decides is the row's action.
+        .buttonStyle(.borderless)
+    }
+}
+
 private struct MinAreaCircleOverlay: View {
     let image: PlatformImage
     @Binding var minTriggerArea: Double
@@ -485,6 +560,19 @@ private struct MinAreaCircleOverlay: View {
                     )
                     context.fill(Path(ellipseIn: circleRect), with: .color(SentinelTheme.cyan.opacity(0.15)))
                     context.stroke(Path(ellipseIn: circleRect), with: .color(SentinelTheme.cyan), lineWidth: 2)
+                    // At the small end of the range the circle is a couple of points across and
+                    // effectively invisible against a busy frame. The dashed ring says "the size
+                    // you set is in here" without pretending to be the size itself.
+                    if radius < locatorRadius {
+                        context.stroke(
+                            Path(ellipseIn: CGRect(
+                                x: center.x - locatorRadius, y: center.y - locatorRadius,
+                                width: locatorRadius * 2, height: locatorRadius * 2
+                            )),
+                            with: .color(SentinelTheme.cyan.opacity(0.5)),
+                            style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+                        )
+                    }
                 }
             }
             .contentShape(Rectangle())
@@ -497,9 +585,12 @@ private struct MinAreaCircleOverlay: View {
                         let dx = value.location.x - center.x
                         let dy = value.location.y - center.y
                         let maxRadius = min(imageRect.width, imageRect.height) / 2
-                        let newRadius = min(max(sqrt(dx * dx + dy * dy), 10), maxRadius)
+                        // No floor on the radius any more, only the domain floor triggerArea
+                        // applies: a 10-point minimum here is what made small sizes unreachable,
+                        // and it did it differently on every screen size.
+                        let newRadius = min(max(sqrt(dx * dx + dy * dy), 0), maxRadius)
                         let area = (Double.pi * newRadius * newRadius) / (imageRect.width * imageRect.height)
-                        minTriggerArea = min(max(area, 0.0001), 1)
+                        minTriggerArea = triggerArea(detectorPixels: area * detectorPixels)
                     }
             )
         }
@@ -509,3 +600,7 @@ private struct MinAreaCircleOverlay: View {
         CGFloat(sqrt(area * rect.width * rect.height / .pi))
     }
 }
+
+// Radius of the dashed "the circle is in here" ring drawn when the real circle is too small to
+// find by eye.
+private let locatorRadius: CGFloat = 9

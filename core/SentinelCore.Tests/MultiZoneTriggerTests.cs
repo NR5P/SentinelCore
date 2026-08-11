@@ -276,6 +276,33 @@ public sealed class MultiZoneTriggerTests
         }), "a renamed zone");
     }
 
+    // The apps let a zone be sized down to a handful of detector pixels, so the whole small end of
+    // the range lives inside what used to be a single tolerance step (0.0001 is 5.8 detector
+    // pixels). Every edit down there has to be noticed, or it saves, reads back correctly, and
+    // silently never takes effect until the service restarts.
+    [Fact]
+    public void ConfigsEquivalent_NoticesAOnePixelEditAtTheSmallEndOfTheRange()
+    {
+        var cameraId = Guid.NewGuid();
+        var polygon = Square(0.4, 0.5, 0.8, 0.7);
+        const double pixels = MotionDetector.PixelCount;
+
+        var six = TriggerConfig.Disabled(cameraId) with
+        {
+            Enabled = true,
+            Zones = [new("Gate", polygon, 6 / pixels)]
+        };
+        var seven = six with { Zones = [new("Gate", polygon, 7 / pixels)] };
+
+        Assert.False(TriggerZoneMonitor.ConfigsEquivalent(six, seven), "6 detector pixels vs 7");
+        // Still tolerant of a value that only differs by round-tripping through JSON and SQLite -
+        // that must not be read as an edit, or every reconcile pass rebuilds the session.
+        Assert.True(TriggerZoneMonitor.ConfigsEquivalent(six, six with
+        {
+            Zones = [new("Gate", polygon, 6 / pixels + 1e-12)]
+        }));
+    }
+
     // A legacy config and the same config after migration describe the same detection, so the
     // reconcile loop must not thrash the ffmpeg session on every pass after an upgrade.
     [Fact]

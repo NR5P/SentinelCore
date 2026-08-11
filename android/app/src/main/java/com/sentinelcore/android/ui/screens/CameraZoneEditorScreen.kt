@@ -73,6 +73,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.PI
+import kotlin.math.ln
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -82,8 +84,43 @@ import kotlin.math.sqrt
 // reference, a person standing at a gate roughly 30 feet away measures around 160.
 private const val DETECTOR_PIXELS = 320.0 * 180.0
 
+// The smallest size a zone can be set to. Four detector pixels is about as small as the grid can
+// meaningfully express - below a couple of pixels a blob is indistinguishable from sensor noise -
+// and it is far below what this editor used to allow. The old drag-only circle clamped its radius
+// to 10 *pixels of the pane*, so the floor depended on how big the pane happened to be: on a phone
+// that bottomed out around 250 detector pixels, roughly a person at 40 feet. Anything smaller or
+// further away simply couldn't be asked for.
+private const val MIN_DETECTOR_PIXELS = 4.0
+
 private fun detectorPixelCount(minTriggerArea: Double): Int =
     (minTriggerArea * DETECTOR_PIXELS).roundToInt()
+
+// The server rejects anything outside (0, 1], and everything that writes minTriggerArea goes
+// through here so neither end can be reached by accident.
+private fun triggerAreaOf(detectorPixels: Double): Double =
+    detectorPixels.coerceIn(MIN_DETECTOR_PIXELS, DETECTOR_PIXELS) / DETECTOR_PIXELS
+
+// The slider is logarithmic. A linear one over a range this wide (4 to 57600) would put every
+// useful small size inside its first millimetre of travel, which is exactly the end of the range
+// this control exists to reach.
+private fun sliderPositionOf(area: Double): Float {
+    val pixels = (area * DETECTOR_PIXELS).coerceIn(MIN_DETECTOR_PIXELS, DETECTOR_PIXELS)
+    return (ln(pixels / MIN_DETECTOR_PIXELS) / ln(DETECTOR_PIXELS / MIN_DETECTOR_PIXELS)).toFloat()
+}
+
+private fun triggerAreaAtSlider(position: Float): Double {
+    val clamped = position.coerceIn(0f, 1f).toDouble()
+    val pixels = MIN_DETECTOR_PIXELS * (DETECTOR_PIXELS / MIN_DETECTOR_PIXELS).pow(clamped)
+    return triggerAreaOf(pixels.roundToInt().toDouble())
+}
+
+// A single detector pixel at the small end, 5% further up. Even a log slider can't be dragged to
+// an exact value of 6 with a fingertip, and 6 versus 7 is a real difference down there.
+private fun nudgedArea(area: Double, direction: Int): Double {
+    val pixels = (area * DETECTOR_PIXELS).roundToInt().toDouble()
+    val step = if (pixels < 50) 1.0 else (pixels * 0.05).roundToInt().toDouble()
+    return triggerAreaOf(pixels + direction * step)
+}
 
 @Composable
 fun CameraZoneEditorScreen(
@@ -406,9 +443,9 @@ fun CameraZoneEditorScreen(
                             val zone = zones.getOrNull(activeZone)
                             Text("Minimum Trigger Size", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "Drag anywhere on the image to resize the circle to the smallest " +
-                                    "object size that should count as motion. This applies to " +
-                                    "${zone?.name ?: TriggerZone.DEFAULT_NAME} only.",
+                                "The circle is the smallest object size that should count as " +
+                                    "motion in ${zone?.name ?: TriggerZone.DEFAULT_NAME}. Set it " +
+                                    "with the slider below, or drag on the image for a rough size.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -420,8 +457,16 @@ fun CameraZoneEditorScreen(
                                         mutateActiveZone { it.copy(minTriggerArea = area) }
                                     },
                                 )
+                                MinAreaSlider(
+                                    minTriggerArea = zone.minTriggerArea,
+                                    onAreaChange = { area ->
+                                        mutateActiveZone { it.copy(minTriggerArea = area) }
+                                    },
+                                )
                                 Text(
-                                    "Ignores anything under ${detectorPixelCount(zone.minTriggerArea)} detector pixels.",
+                                    "Ignores anything under ${detectorPixelCount(zone.minTriggerArea)} " +
+                                        "detector pixels. Sizes in the low tens will also pick up " +
+                                        "rain, insects and camera noise.",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -661,10 +706,13 @@ private fun MinAreaCircleOverlay(
                         val dx = change.position.x - center.x
                         val dy = change.position.y - center.y
                         val maxRadius = minOf(size.width, size.height) / 2f
-                        val newRadius = sqrt(dx * dx + dy * dy).coerceIn(10f, maxRadius)
+                        // No floor on the radius any more, only the domain floor triggerAreaOf
+                        // applies: a 10-pixel minimum here is what made small sizes unreachable,
+                        // and it did it differently on every screen size.
+                        val newRadius = sqrt(dx * dx + dy * dy).coerceIn(0f, maxRadius)
                         val area = (PI * newRadius * newRadius) /
                             (size.width.toDouble() * size.height.toDouble())
-                        currentOnAreaChange.value(area.coerceIn(0.0001, 1.0))
+                        currentOnAreaChange.value(triggerAreaOf(area * DETECTOR_PIXELS))
                     }
                 },
         ) {
@@ -672,7 +720,55 @@ private fun MinAreaCircleOverlay(
             val radius = sqrt(minTriggerArea * size.width * size.height / PI).toFloat()
             drawCircle(color = circleColor.copy(alpha = 0.15f), radius = radius, center = center)
             drawCircle(color = circleColor, radius = radius, center = center, style = Stroke(width = 4f))
+            // At the small end of the range the circle is a couple of pixels across and
+            // effectively invisible against a busy frame. The dashed ring says "the size you set
+            // is in here" without pretending to be the size itself.
+            if (radius < LOCATOR_RADIUS_PX) {
+                drawCircle(
+                    color = circleColor.copy(alpha = 0.5f),
+                    radius = LOCATOR_RADIUS_PX,
+                    center = center,
+                    style = Stroke(
+                        width = 2f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
+                    ),
+                )
+            }
         }
+    }
+}
+
+// Radius of the dashed "the circle is in here" ring drawn when the real circle is too small to
+// find by eye.
+private const val LOCATOR_RADIUS_PX = 18f
+
+// Why this exists alongside the drag-on-the-image control: on a phone the circle is the thing you
+// are aiming at and your fingertip is sitting on top of it, so the smaller it gets the less you
+// can see of what you are setting - and small is where this control now spends most of its range.
+// The slider is off to one side of the picture, and the -/+ buttons land on an exact value.
+@Composable
+private fun MinAreaSlider(
+    minTriggerArea: Double,
+    onAreaChange: (Double) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedButton(
+            onClick = { onAreaChange(nudgedArea(minTriggerArea, -1)) },
+            enabled = detectorPixelCount(minTriggerArea) > MIN_DETECTOR_PIXELS,
+        ) { Text("−") }
+        Slider(
+            value = sliderPositionOf(minTriggerArea),
+            onValueChange = { onAreaChange(triggerAreaAtSlider(it)) },
+            valueRange = 0f..1f,
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+        )
+        OutlinedButton(
+            onClick = { onAreaChange(nudgedArea(minTriggerArea, 1)) },
+            enabled = minTriggerArea < 1.0,
+        ) { Text("+") }
     }
 }
 

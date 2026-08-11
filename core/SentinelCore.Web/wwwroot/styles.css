@@ -1880,6 +1880,32 @@ main {
   cursor: ew-resize;
 }
 
+/* Drawn only when the circle itself is too small to pick out against the frame - it marks where
+   to look, it is not the size. */
+.zone-size-locator {
+  fill: none;
+  stroke: rgba(75, 231, 255, 0.5);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.zone-size-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.zone-size-slider-row .field-range {
+  flex: 1;
+  min-width: 0;
+}
+
+.zone-size-nudge {
+  padding: 2px 8px;
+  line-height: 1.2;
+}
+
 .zone-editor-draw-actions {
   display: flex;
   gap: 8px;

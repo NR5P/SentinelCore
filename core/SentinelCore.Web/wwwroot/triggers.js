@@ -16,6 +16,44 @@ window.GateWatchTriggers = (function () {
   // threshold is actually compared against, and far easier to reason about than "0.0015".
   const DETECTOR_PIXELS = 320 * 180;
 
+  // The smallest size a zone can be set to. Four detector pixels is about as small as the grid can
+  // meaningfully express - below a couple of pixels a blob is indistinguishable from sensor noise -
+  // and it is far below what this editor used to allow. The drag handle clamped its radius to 8
+  // *screen pixels*, so the floor depended on how big the pane happened to be, and on the phone
+  // apps (same control, same clamp) it bottomed out around 250 detector pixels: roughly a person at
+  // 40 feet, with nothing smaller or further away reachable at all.
+  const MIN_DETECTOR_PIXELS = 4;
+
+  // How many steps the slider has. It is logarithmic (see sliderPositionOf): a linear slider over a
+  // range this wide would put every useful small size inside its first few pixels of travel, which
+  // is exactly the end of the range this control exists to reach.
+  const SIZE_SLIDER_STEPS = 1000;
+
+  // The server rejects anything outside (0, 1], and everything that writes minTriggerArea goes
+  // through here so neither end can be reached by accident.
+  const triggerAreaOf = detectorPixels =>
+    Math.min(Math.max(detectorPixels, MIN_DETECTOR_PIXELS), DETECTOR_PIXELS) / DETECTOR_PIXELS;
+
+  function sliderPositionOf(area) {
+    const pixels = Math.min(Math.max(area * DETECTOR_PIXELS, MIN_DETECTOR_PIXELS), DETECTOR_PIXELS);
+    const fraction = Math.log(pixels / MIN_DETECTOR_PIXELS) / Math.log(DETECTOR_PIXELS / MIN_DETECTOR_PIXELS);
+    return Math.round(fraction * SIZE_SLIDER_STEPS);
+  }
+
+  function triggerAreaAtSlider(position) {
+    const fraction = Math.min(Math.max(position / SIZE_SLIDER_STEPS, 0), 1);
+    const pixels = MIN_DETECTOR_PIXELS * Math.pow(DETECTOR_PIXELS / MIN_DETECTOR_PIXELS, fraction);
+    return triggerAreaOf(Math.round(pixels));
+  }
+
+  // A single detector pixel at the small end, 5% further up. Even a log slider can't be dragged to
+  // an exact value of 6, and 6 versus 7 is a real difference down there.
+  function nudgedArea(area, direction) {
+    const pixels = Math.round(area * DETECTOR_PIXELS);
+    const step = pixels < 50 ? 1 : Math.round(pixels * 0.05);
+    return triggerAreaOf(pixels + direction * step);
+  }
+
   const activeZoneOrNull = () => zones[activeZone] || null;
 
   const drawWrap = () => document.getElementById("zone-image-wrap");
@@ -303,9 +341,24 @@ window.GateWatchTriggers = (function () {
       readout.textContent =
         `${zone.name}: ignores anything under ${Math.round(zone.minTriggerArea * DETECTOR_PIXELS)} detector pixels`;
 
+    const slider = document.getElementById("zone-size-slider");
+    if (slider) slider.value = sliderPositionOf(zone.minTriggerArea);
+
     const cx = w / 2;
     const cy = h / 2;
     const r = Math.sqrt((zone.minTriggerArea * w * h) / Math.PI);
+
+    // At the small end of the range the circle is a pixel or two across and effectively invisible
+    // against a busy frame. The dashed ring says "the size you set is in here" without pretending
+    // to be the size itself.
+    if (r < 9) {
+      const locator = svgNs("circle");
+      locator.setAttribute("cx", cx);
+      locator.setAttribute("cy", cy);
+      locator.setAttribute("r", 9);
+      locator.setAttribute("class", "zone-size-locator");
+      svg.appendChild(locator);
+    }
 
     const circle = svgNs("circle");
     circle.setAttribute("cx", cx);
@@ -348,8 +401,12 @@ window.GateWatchTriggers = (function () {
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
     const maxR = Math.min(rect.width, rect.height) / 2 - 4;
-    const r = Math.max(8, Math.min(Math.hypot(px - cx, py - cy), maxR));
-    zone.minTriggerArea = (Math.PI * r * r) / (rect.width * rect.height);
+    // No floor on the radius any more, only the domain floor triggerAreaOf applies: an 8-pixel
+    // minimum here is what made small sizes unreachable, and it did it differently depending on
+    // how wide the pane had been laid out.
+    const r = Math.max(0, Math.min(Math.hypot(px - cx, py - cy), maxR));
+    const area = (Math.PI * r * r) / (rect.width * rect.height);
+    zone.minTriggerArea = triggerAreaOf(area * DETECTOR_PIXELS);
     renderCircle();
     renderZoneTabs(); // the tab shows this zone's pixel size
   });
@@ -357,6 +414,24 @@ window.GateWatchTriggers = (function () {
   document.addEventListener("pointerup", () => {
     draggingCircle = false;
   });
+
+  document.getElementById("zone-size-slider").addEventListener("input", e => {
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+    zone.minTriggerArea = triggerAreaAtSlider(parseInt(e.target.value, 10) || 0);
+    renderCircle();
+    renderZoneTabs();
+  });
+
+  for (const [id, direction] of [["zone-size-smaller", -1], ["zone-size-larger", 1]]) {
+    document.getElementById(id).addEventListener("click", () => {
+      const zone = activeZoneOrNull();
+      if (!zone) return;
+      zone.minTriggerArea = nudgedArea(zone.minTriggerArea, direction);
+      renderCircle();
+      renderZoneTabs();
+    });
+  }
 
   function setShadowSensitivity(value) {
     document.getElementById("zone-shadow-sensitivity").value = value;

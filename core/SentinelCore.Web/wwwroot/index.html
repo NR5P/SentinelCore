@@ -417,12 +417,17 @@
           </div>
         </div>
         <div class="zone-editor-side">
-          <div class="zone-editor-hint" data-tip-below data-tip="Anything smaller than this circle is ignored, which filters out birds and swaying branches. Size it to roughly match a person or car at that spot.">drag the edge to size the smallest object that should trigger</div>
-          <div class="zone-image-wrap zone-size-wrap" id="zone-size-wrap" data-tip-below data-tip="Drag the small dot on the circle's edge to resize it. This size applies to the selected zone only.">
+          <div class="zone-editor-hint" data-tip-below data-tip="Anything smaller than this circle is ignored, which filters out birds and swaying branches. Size it to roughly match a person or car at that spot.">size the smallest object that should trigger</div>
+          <div class="zone-image-wrap zone-size-wrap" id="zone-size-wrap" data-tip-below data-tip="Drag the small dot on the circle's edge for a rough size, or use the slider below to set it exactly. This size applies to the selected zone only.">
             <img id="zone-size-img" src="" alt="camera reference frame" />
             <svg id="zone-size-svg" class="zone-svg"></svg>
           </div>
-          <div class="zone-size-readout" id="zone-size-readout" data-tip-below data-tip="The same size in detector pixels - motion is measured on a 320x180 grid, so this is the number the detector actually compares against. For reference, a person standing at a gate roughly 30 feet away measures around 160.">&nbsp;</div>
+          <div class="zone-size-slider-row" data-tip-below data-tip="The slider covers the whole range, from a few detector pixels up to the whole frame. It is logarithmic, so the small end - where most of the useful sizes are - gets most of the travel. The buttons move by one detector pixel down there.">
+            <button type="button" id="zone-size-smaller" class="btn zone-size-nudge" aria-label="Smaller">−</button>
+            <input type="range" id="zone-size-slider" class="field-range" min="0" max="1000" step="1" aria-label="Minimum trigger size" />
+            <button type="button" id="zone-size-larger" class="btn zone-size-nudge" aria-label="Larger">+</button>
+          </div>
+          <div class="zone-size-readout" id="zone-size-readout" data-tip-below data-tip="The same size in detector pixels - motion is measured on a 320x180 grid, so this is the number the detector actually compares against. For reference, a person standing at a gate roughly 30 feet away measures around 160. Sizes in the low tens will also pick up rain, insects and camera noise.">&nbsp;</div>
           <div class="field-grid">
             <div class="field-row" data-tip="Quiet period after a trigger. One car pulling in fires once instead of over and over while it moves through the zone.">
               <label class="field-label" for="zone-cooldown">Seconds between triggers</label>
