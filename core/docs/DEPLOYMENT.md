@@ -132,7 +132,7 @@ cd SentinelCore/core
 ```
 
 (If you're reading this on the box where it's already deployed, the working copy already
-lives at `/home/sentinel/Desktop/SentinelCore` — the repo root holds `.git` plus a
+lives at `/opt/sentinelcore` — the repo root holds `.git` plus a
 `core/` folder with all the .NET projects (and a sibling iOS app folder, if present).
 `cd` into `core/` and `git pull` for updates, covered in
 [section 11](#11-updating-to-a-new-version).)
@@ -290,7 +290,7 @@ the firewall rules ([section 14](#14-firewall)) and passwordless restarts
 The rest of this section is what the installer generates, for reference or if you'd rather do it
 by hand. The templates live in `systemd/` with `__PLACEHOLDER__` values the installer fills in;
 what follows is one worked example with those substituted for this machine (`media` /
-`/home/sentinel/Desktop/SentinelCore/core`).
+`/opt/sentinelcore/core`).
 
 **`/etc/systemd/system/sentinelcore.service`:**
 
@@ -304,8 +304,8 @@ After=network-online.target ollama.service
 Type=simple
 User=media
 Group=media
-WorkingDirectory=/home/sentinel/Desktop/SentinelCore/core/SentinelCore
-ExecStart=/usr/bin/dotnet /home/sentinel/Desktop/SentinelCore/core/SentinelCore/bin/Release/net10.0/SentinelCore.dll
+WorkingDirectory=/opt/sentinelcore/core/SentinelCore
+ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/SentinelCore/bin/Release/net10.0/SentinelCore.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://0.0.0.0:5080
@@ -331,8 +331,8 @@ After=network-online.target sentinelcore.service
 Type=simple
 User=media
 Group=media
-WorkingDirectory=/home/sentinel/Desktop/SentinelCore/core/SentinelCore.Web
-ExecStart=/usr/bin/dotnet /home/sentinel/Desktop/SentinelCore/core/SentinelCore.Web/bin/Release/net10.0/SentinelCore.Web.dll
+WorkingDirectory=/opt/sentinelcore/core/SentinelCore.Web
+ExecStart=/usr/bin/dotnet /opt/sentinelcore/core/SentinelCore.Web/bin/Release/net10.0/SentinelCore.Web.dll
 
 Environment=ASPNETCORE_ENVIRONMENT=Production
 Environment=ASPNETCORE_URLS=http://0.0.0.0:3320
@@ -655,7 +655,7 @@ instead, there's no checkout to pull - see
 [§ 17, Upgrading an existing install](#upgrading-an-existing-install).
 
 ```bash
-cd /home/sentinel/Desktop/SentinelCore/core
+cd /opt/sentinelcore/core
 git pull
 ./scripts/deploy.sh
 ```

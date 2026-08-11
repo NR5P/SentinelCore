@@ -11,6 +11,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 2a. [The iOS, Android, and Apple TV apps](#2a-the-ios-android-and-apple-tv-apps)
 3. [The EVENTS tab — everything the cameras caught](#3-the-events-tab--everything-the-cameras-caught)
 3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
+3b. [Semantic search — finding events by what the picture shows](#3b-semantic-search--finding-events-by-what-the-picture-shows)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
@@ -26,6 +27,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 9. [Prompt profiles — what the AI is told to look for](#9-prompt-profiles--what-the-ai-is-told-to-look-for)
 10. [License plate recognition & known vehicles](#10-license-plate-recognition--known-vehicles)
 10a. [Known Faces — local face recognition](#10a-known-faces--local-face-recognition)
+10b. [Package Theft Watch — noticing a delivery that disappears](#10b-package-theft-watch--noticing-a-delivery-that-disappears)
 11. [The Telegram bot](#11-the-telegram-bot)
 11a. [Discord alerts](#11a-discord-alerts)
 12. [Email](#12-email)
@@ -34,6 +36,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 14. [Apple HomeKit](#14-apple-homekit)
 15. [Why didn't I get an alert? (rate limiting & suppression, explained)](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
 16. [Self-monitoring](#16-self-monitoring)
+16a. [Spider webs and insects on the lens](#16a-spider-webs-and-insects-on-the-lens)
 17. [Bug reports](#17-bug-reports)
 18. [Where your data lives](#18-where-your-data-lives)
 19. [Troubleshooting](#19-troubleshooting)
@@ -191,7 +194,10 @@ closer to a minute on a modest local machine - both are normal.
 **Searching and filtering.** Above the list is a filter bar:
 
 - A text box that searches the AI's description (e.g. searching "package" finds every event
-  whose summary mentions one), debounced so it doesn't refetch on every keystroke
+  whose summary mentions one), debounced so it doesn't refetch on every keystroke. With
+  **Semantic Search** on it also matches on what the picture actually shows, rather than only
+  on words the AI happened to write — see
+  [section 3b](#3b-semantic-search--finding-events-by-what-the-picture-shows)
 - A **camera** dropdown and an **event type** dropdown, both populated from everything that's
   ever appeared in history — not just what's currently shown
 - **From** / **to** date fields to bound the search to a range
@@ -248,6 +254,33 @@ name, and mapping. If an individual event says **NO CLIP**, its Blue Iris alert 
 found or its clip is no longer retained. The Blue Iris alert action must send `&ALERT_DB` in
 the `alertId` field (the supplied PowerShell command already does). A mapping is needed for each
 Blue Iris camera you want to review.
+
+## 3b. Semantic search — finding events by what the picture shows
+
+Off by default. The EVENTS text box normally matches words in the AI's written description, which
+means you can only find an event using vocabulary the AI happened to choose. Search "red truck"
+and you get nothing if the summary said "a maroon pickup".
+
+With **Settings → Semantic Search** on, every saved alert image is additionally run through a
+local CLIP model that turns the picture itself into a vector describing its visual content. The
+same search box then matches against that too, so "red truck" or "person in a blue jacket" finds
+the event whether or not those words were ever written down.
+
+**What it costs.** Two real things, not just a toggle:
+
+- A **one-time ~577MB model download** to this machine the first time it's used.
+- **Per-alert processing** on every alert image, comparable to Known Faces. On a modest machine
+  that is a genuine addition to how long each alert takes, which is why this is off by default.
+
+Searching itself stays fast however long your history gets — only the encoding, done once per
+alert, is expensive.
+
+**Minimum Similarity** controls how close a visual match has to be before it shows up. Lower
+finds more and includes weaker matches; higher shows only close ones. The default (0.20) comes
+from measured CLIP scores, where a correct image/caption match scored about 0.25–0.27 and a wrong
+one about 0.17–0.24 — a narrow band, so small changes here matter more than the range suggests.
+
+Only alerts analysed *after* you turn this on are encoded; older events stay text-searchable only.
 
 ## 4. The LIVE tab — viewing your own cameras
 
@@ -1022,6 +1055,31 @@ changes whether an alert fires or gets suppressed — it's informational only, a
 AI has already decided the event was worth analyzing. Don't rely on it as its own security layer;
 treat it as a helpful label on top of an alert you'd already be getting.
 
+## 10b. Package Theft Watch — noticing a delivery that disappears
+
+Off by default. When an alert shows a package delivered or already sitting there, this opens a
+**watch** on that camera. If a later alert from the same camera shows the package gone, and
+whoever is in that later frame isn't a recognized household face ([section 10a](#10a-known-faces--local-face-recognition))
+or a known vehicle ([section 10](#10-license-plate-recognition--known-vehicles)), the event is
+flagged as suspected theft and **forced to notify** even if it would otherwise have been
+suppressed by rate limiting or by not being notification-worthy on its own.
+
+**It adds no AI cost.** Unlike Known Faces or Multi-Frame Analysis, this runs no extra model
+calls — it only reuses the package, face, and vehicle detection your other settings already
+produce. It's off by default because it's a heuristic that can force a notification, not because
+it's expensive.
+
+**Watch Window (hours)** is how long after a delivery the watch stays open, 12 by default. Most
+legitimate pickups happen the same day; a longer window catches a slower theft at the cost of
+more chances to be wrong.
+
+**Two limits worth knowing before you trust it:**
+
+- It's a guess, not proof. Someone you simply haven't enrolled — a housemate, a neighbour
+  returning a misdelivered box — looks exactly like a thief to it.
+- It can only catch a removal that **itself trips a new motion alert** on that camera. A package
+  taken with no interceding alert at all is never noticed, because nothing ever looked again.
+
 ## 11. The Telegram bot
 
 Once **Telegram Alerts** is configured (bot token from [@BotFather](https://t.me/BotFather),
@@ -1278,6 +1336,36 @@ unreachable, or the alert queue backing up faster than it's processed. It only m
 momentary blip doesn't page you, but real degradation gets caught before you'd otherwise
 notice by just... not getting alerts. It also tells you when things recover, if
 **Notify On Recovery** is on.
+
+## 16a. Spider webs and insects on the lens
+
+**On by default**, unlike the other outbound-message features — this is advice about your own
+cameras sent to your own address, and the problem it names otherwise goes unnoticed for months.
+
+A camera's own infrared light draws moths, moths draw spiders, and both end up sitting close
+enough to the lens to be huge, white, out of focus, and never quite still. Motion fires all night
+on an empty driveway. **No setting fixes this**: at that distance a single strand of silk covers
+about as many pixels as a person at the gate does, so any threshold that ignores the web also
+ignores people. The fix is physical — a broom — and this exists to tell you when it's worth
+going out with one.
+
+Each morning it looks at the night just gone and speaks up only when a camera was **busy after
+dark, quiet in daylight, and the AI found almost nothing real in any of it**. It sends through
+whichever of **Email** and **Telegram** you already have configured, and says nothing at all if
+neither is set up.
+
+The four thresholds under **Settings → Nuisance Advisor**:
+
+- **Triggers to speak up (per night)** — how many dusk-to-dawn triggers make a night worth
+  mentioning. Default 60. Below this it's just a night, whatever caused it.
+- **Most that may be real (%)** — if the AI confirmed more than this share of the night's
+  triggers as a person, vehicle, package, or animal, something was genuinely happening and
+  nothing is sent. Default 10. A camera behind a web typically confirms none at all.
+- **Night-to-day busyness** — how many times busier the dark hours must be than the daylight
+  either side. Default 3. This is what stops a camera pointed at a busy road — which triggers all
+  day and wants its zone redrawn, not a broom — from being blamed on spiders.
+- **Remind again after (days)** — default 3, per camera. A web left alone is still there
+  tomorrow, so this repeats; clear it on the morning you're told and you'll hear nothing more.
 
 ## 17. Bug reports
 
