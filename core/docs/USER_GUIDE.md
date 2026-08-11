@@ -447,9 +447,34 @@ watched. Three or more points make a shape; anything outside it is ignored, so y
 out a road, a neighbor's yard, or a tree that sways in the wind. Use **undo point** / **clear
 zone** to redo it.
 
-**Size the smallest object** — drag the handle on the circle to roughly match the size of a
-person or car at that distance. Anything smaller is ignored, which filters out birds, cats,
-and blowing debris.
+**Size the smallest object** — anything smaller than this is ignored, which filters out birds,
+cats, and blowing debris. There are two ways to set it, and they drive the same value:
+
+- **Drag the small dot** on the circle's edge, to roughly match a person or car at that spot.
+  Quick, but imprecise.
+- **The slider below the picture**, with **−** and **+** buttons either side. Use this when you
+  want an exact value, or a small one — at the small end the circle is a couple of pixels across
+  and your own cursor or fingertip covers it. When the circle gets too small to see, a dashed
+  ring marks where it is.
+
+The readout underneath gives the same size in **detector pixels**. Motion is measured on a
+320×180 grid (57,600 pixels), so that number is what the detector actually compares against, and
+unlike the circle it means the same thing on every screen. For reference:
+
+| Detector pixels | Roughly |
+|---|---|
+| 4 | The floor — below a couple of pixels, a blob can't be told apart from sensor noise |
+| low tens | Also picks up rain, insects, and camera noise |
+| ~160 | A person standing at a gate about 30 feet away |
+
+The slider is logarithmic, so most of its travel covers the small end where the useful sizes
+are. The **−**/**+** buttons step one detector pixel at a time below 50, and 5% above that,
+since a slider can't be dragged to an exact 6.
+
+> **If you set this on a phone or in the dashboard before 2026-08-11**, the control couldn't go
+> below roughly 211–250 detector pixels — about a person at 40 feet — and the real floor varied
+> with screen size. Anything smaller or further away was unreachable. If you gave up on a zone
+> for a cat on the path or someone at the far end of a driveway, it's worth setting again.
 
 Below that, the settings for this zone:
 
