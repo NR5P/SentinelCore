@@ -12,7 +12,6 @@ import java.io.IOException
 import java.net.CookieManager
 import java.net.CookiePolicy
 import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -728,11 +727,14 @@ class SentinelRepository(
         return "$root/${path.trimStart('/')}"
     }
 
+    // ExoPlayer opens clip and HLS URLs on its own HTTP stack, which shares nothing with
+    // openConnection - so the session has to be handed to it explicitly or every media request
+    // comes back 401 while the rest of the app looks perfectly signed in.
     fun mediaHeaders(): Map<String, String> {
-        val uri = runCatching { URI(normalizedBaseUrl() ?: return emptyMap()) }.getOrNull()
+        val url = runCatching { URL(normalizedBaseUrl() ?: return emptyMap()) }.getOrNull()
             ?: return emptyMap()
-        val cookie = cookieManager.get(uri, emptyMap())["Cookie"]?.joinToString("; ")
-        return if (cookie.isNullOrBlank()) emptyMap() else mapOf("Cookie" to cookie)
+        val cookie = cookieHeader(url) ?: return emptyMap()
+        return mapOf("Cookie" to cookie)
     }
 
     suspend fun loadImage(path: String): Bitmap? = withContext(Dispatchers.IO) {
@@ -1065,19 +1067,34 @@ class SentinelRepository(
         connection.connectTimeout = 15_000
         connection.readTimeout = 30_000
         connection.instanceFollowRedirects = true
-        var cookies = cookieManager.get(url.toURI(), emptyMap())["Cookie"]?.joinToString("; ")
-            ?.takeIf(String::isNotBlank)
-        if (cookies == null) {
-            cookies = sessionCookieStore.load(url)
-            // Rehydrate CookieManager too. Otherwise the first successful response after an app
-            // restart (which normally has no Set-Cookie header) would look like an empty jar and
-            // incorrectly erase the persisted session in storeCookies().
-            if (!cookies.isNullOrBlank()) {
-                cookieManager.put(url.toURI(), mapOf("Set-Cookie" to listOf(cookies)))
-            }
-        }
-        if (!cookies.isNullOrBlank()) connection.setRequestProperty("Cookie", cookies)
+        cookieHeader(url)?.let { connection.setRequestProperty("Cookie", it) }
         return connection
+    }
+
+    // The session for `url`, from the in-memory jar or - after an app restart emptied it - from the
+    // encrypted store. Shared with mediaHeaders() so ExoPlayer authenticates exactly like every
+    // other request does; they used to resolve cookies differently and only one of them worked.
+    private fun cookieHeader(url: URL): String? {
+        cookieManager.get(url.toURI(), emptyMap())["Cookie"]
+            ?.joinToString("; ")
+            ?.takeIf(String::isNotBlank)
+            ?.let { return it }
+
+        val stored = sessionCookieStore.load(url)?.takeIf(String::isNotBlank) ?: return null
+        // Rehydrate CookieManager too. Otherwise the first successful response after an app
+        // restart (which normally has no Set-Cookie header) would look like an empty jar and
+        // incorrectly erase the persisted session in storeCookies().
+        //
+        // Each cookie goes back as its own Set-Cookie pinned to Path=/. Both details matter: a
+        // bare "a=1; b=2" parses as one cookie with a junk attribute, and a Set-Cookie carrying no
+        // Path at all inherits the *requesting* URL's directory - so restoring during a call to
+        // /api/timeline/day used to scope the session to /api/timeline/, leaving it invisible to
+        // any lookup from the site root. That is what stopped ExoPlayer from sending it.
+        val restored = restoredSetCookieValues(stored)
+        if (restored.isNotEmpty()) {
+            runCatching { cookieManager.put(url.toURI(), mapOf("Set-Cookie" to restored)) }
+        }
+        return stored
     }
 
     private fun storeCookies(connection: HttpURLConnection) {
@@ -1479,3 +1496,17 @@ class SentinelRepository(
             URLEncoder.encode(value, StandardCharsets.UTF_8.name())
     }
 }
+
+// Splits a stored "Cookie:" request header back into one Set-Cookie value per cookie, each pinned
+// to the site root, so the jar can be refilled from the encrypted store after a restart.
+//
+// Both halves are load-bearing. A whole header handed over as a single Set-Cookie parses as the
+// first cookie plus junk attributes, silently dropping the rest. And a Set-Cookie with no Path
+// takes the requesting URL's directory, so a session restored while fetching /api/timeline/day
+// gets scoped to /api/timeline/ - matching later /api calls by luck while staying invisible to any
+// lookup from the root, which is how media playback lost the session that the rest of the app had.
+internal fun restoredSetCookieValues(storedHeader: String): List<String> =
+    storedHeader.split(';')
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .map { "$it; Path=/" }

@@ -805,6 +805,14 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                 _state.update {
                     it.copy(timelineDay = value, timelineLoading = false, timelineError = null)
                 }
+            } catch (cancellation: CancellationException) {
+                // The cancel() above can't interrupt the blocking socket read inside the
+                // repository, so a superseded request keeps running and only observes its own
+                // cancellation once the server answers - by which point the request that replaced
+                // it may already have stored its day. Reporting that as a failure would blank the
+                // timeline the user is looking at, which is how switching camera or date used to
+                // leave the screen stuck on an empty day.
+                throw cancellation
             } catch (error: Exception) {
                 val message = readableError(error)
                 _state.update {

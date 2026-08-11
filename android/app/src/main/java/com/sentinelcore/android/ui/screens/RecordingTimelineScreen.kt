@@ -222,8 +222,12 @@ fun RecordingTimelineScreen(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
+                        // The camera button takes only the space left over after the date stepper
+                        // has been laid out, rather than the stepper taking what the button leaves.
+                        // A name as ordinary as "gate camera front door" otherwise squeezed the
+                        // date into two wrapped lines and pushed the next-day arrow off screen.
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box {
+                            Box(Modifier.weight(1f)) {
                                 OutlinedButton(onClick = { cameraMenu = true }) {
                                     Text(
                                         camera.ifBlank { "Choose camera" },
@@ -240,13 +244,12 @@ fun RecordingTimelineScreen(
                                     }
                                 }
                             }
-                            Spacer(Modifier.weight(1f))
                             IconButton(onClick = {
                                 date = LocalDate.parse(date).minusDays(1).toString()
                             }) {
                                 Icon(Icons.Default.ChevronLeft, "Previous day")
                             }
-                            Text(date)
+                            Text(date, maxLines = 1, softWrap = false)
                             IconButton(
                                 onClick = { date = LocalDate.parse(date).plusDays(1).toString() },
                                 enabled = LocalDate.parse(date).isBefore(LocalDate.now()),
@@ -285,8 +288,14 @@ fun RecordingTimelineScreen(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        if (timeline != null && timeline.recording.available) {
-                            if (currentSegment != null) {
+                        // Gated on the day alone, not on recording.available: a camera with no
+                        // trigger-clip recording still has a day of AI events worth scrubbing
+                        // through, and hiding the whole rail behind clip availability left those
+                        // events reachable only from the list below.
+                        if (timeline != null) {
+                            val clipMessage =
+                                clipBoxMessage(timeline.recording.error, currentSegment != null)
+                            if (clipMessage == null) {
                                 AndroidView(
                                     factory = { viewContext ->
                                         PlayerView(viewContext).apply {
@@ -305,8 +314,9 @@ fun RecordingTimelineScreen(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
-                                        "No saved trigger clip at this time.",
+                                        clipMessage,
                                         color = Color.White,
+                                        modifier = Modifier.padding(24.dp),
                                     )
                                 }
                             }
@@ -339,24 +349,22 @@ fun RecordingTimelineScreen(
                                 }) { Icon(Icons.Default.SkipNext, "Next event") }
                                 Text(cursor.shortTime(), color = SentinelCyan)
                             }
+                            state.timelineError?.let { Text(it, color = SentinelAmber) }
                         } else {
+                            // No day at all - the request is in flight or it failed. The failure
+                            // goes in the box rather than the amber line below, which only gets a
+                            // day to sit under when one actually loaded.
                             Box(
                                 Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    timeline?.recording?.error
-                                        ?: if (camera.isBlank()) {
-                                            "AI events will provide camera choices."
-                                        } else {
-                                            "No saved trigger clip is selected."
-                                        },
+                                    dayUnavailableMessage(camera, state.timelineError),
                                     color = Color.White,
                                     modifier = Modifier.padding(24.dp),
                                 )
                             }
                         }
-                        state.timelineError?.let { Text(it, color = SentinelAmber) }
                     }
                 }
             }
@@ -551,7 +559,27 @@ private fun TimelineEventRow(
     }
 }
 
-private fun initialCursor(day: RecordingTimelineDay): Instant =
+// What belongs in the black video box, or null to show the player. The server sends a non-null
+// recording.error for exactly the "no camera here records trigger clips" case, so it always beats
+// the generic wording - the generic line means the day does have clips, just none under the
+// cursor right now.
+internal fun clipBoxMessage(recordingError: String?, hasSegmentAtCursor: Boolean): String? =
+    when {
+        hasSegmentAtCursor -> null
+        recordingError != null -> recordingError
+        else -> "No saved trigger clip at this time."
+    }
+
+// Shown when there is no day loaded at all. This is a "nothing to show yet" state, not a "nothing
+// exists" one, and saying otherwise made an in-flight or failed request read as an empty day.
+internal fun dayUnavailableMessage(camera: String, requestError: String?): String =
+    when {
+        camera.isBlank() -> "AI events will provide camera choices."
+        requestError != null -> requestError
+        else -> "Loading day…"
+    }
+
+internal fun initialCursor(day: RecordingTimelineDay): Instant =
     when {
         day.recording.segments.isNotEmpty() -> day.recording.segments.last().start
         day.events.isNotEmpty() -> day.events.last().occurredAt
@@ -568,12 +596,12 @@ private fun clipStart(day: RecordingTimelineDay?, event: TimelineSecurityEvent):
 private fun eventPosition(day: RecordingTimelineDay?, event: TimelineSecurityEvent): Instant =
     clipStart(day, event) ?: event.occurredAt
 
-private fun nextEvent(day: RecordingTimelineDay?, events: List<TimelineSecurityEvent>, cursor: Instant) =
+internal fun nextEvent(day: RecordingTimelineDay?, events: List<TimelineSecurityEvent>, cursor: Instant) =
     events.map { eventPosition(day, it) }
         .filter { it.isAfter(cursor.plusMillis(500)) }
         .minOrNull()
 
-private fun previousEvent(day: RecordingTimelineDay?, events: List<TimelineSecurityEvent>, cursor: Instant) =
+internal fun previousEvent(day: RecordingTimelineDay?, events: List<TimelineSecurityEvent>, cursor: Instant) =
     events.map { eventPosition(day, it) }
         .filter { it.isBefore(cursor.minusMillis(500)) }
         .maxOrNull()
