@@ -12,7 +12,9 @@ struct AccountAdminView: View {
             }
             Section {
                 ForEach(model.accounts) { account in
-                    NavigationLink(value: AccountAdminRoute.detail(account)) {
+                    NavigationLink {
+                        AccountDetailView(account: account)
+                    } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(account.displayName.map { "\(account.username) (\($0))" } ?? account.username)
                                 .bold()
@@ -28,17 +30,16 @@ struct AccountAdminView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .navigationDestination(for: AccountAdminRoute.self) { route in
-            switch route {
-            case .add:
-                AccountEditView()
-            case .detail(let account):
-                AccountDetailView(account: account)
-            }
-        }
+        // Both links carry their own destination, like every other admin screen here. Routing the
+        // toolbar button through a value plus a navigationDestination(for:) did not work: toolbar
+        // content is hosted by the navigation bar rather than by the List these modifiers are
+        // attached to, so the declaration was not visible from the button's location and tapping
+        // Add did nothing. The rows kept working the whole time, being genuinely inside the List.
         .toolbar {
             ToolbarItem {
-                NavigationLink(value: AccountAdminRoute.add) {
+                NavigationLink {
+                    AccountEditView()
+                } label: {
                     Label("Add Account", systemImage: "plus")
                 }
             }
@@ -68,11 +69,6 @@ struct AccountAdminView: View {
             errorMessage = error.localizedDescription
         }
     }
-}
-
-enum AccountAdminRoute: Hashable {
-    case add
-    case detail(Account)
 }
 
 struct AccountEditView: View {
