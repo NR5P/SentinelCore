@@ -19,6 +19,32 @@ public sealed record FastLocalDetection(
     double Width,
     double Height);
 
+// How much of the square model input the analyzed region actually occupies once it has been
+// scaled to fit and centered, as fractions of the input's width and height. ScaleX/ScaleY are
+// equal whenever the region is scaled uniformly (which ResizeMode.Pad always does), but keeping
+// both axes independent means the un-padding math stays correct if the resize mode ever changes
+// again - and makes the identity case (a square region, no padding at all) fall out as 1.0.
+public sealed record Letterbox(double ScaleX, double ScaleY)
+{
+    public static Letterbox For(int regionWidth, int regionHeight)
+    {
+        if (regionWidth <= 0 || regionHeight <= 0) return new Letterbox(1, 1);
+
+        // Uniform scale to fit the square: the longer side fills it, the shorter side is padded.
+        return regionWidth >= regionHeight
+            ? new Letterbox(1, (double)regionHeight / regionWidth)
+            : new Letterbox((double)regionWidth / regionHeight, 1);
+    }
+
+    // Model output coordinates are normalized to the padded square. Strip the centered bars and
+    // rescale so the result is normalized to the analyzed region again, matching what
+    // FastLocalDetection documents. Values can land slightly outside 0-1 when a box overhangs
+    // the region's edge, exactly as they could before letterboxing.
+    public double UnpadX(double x) => (x - (1 - ScaleX) / 2) / ScaleX;
+
+    public double UnpadY(double y) => (y - (1 - ScaleY) / 2) / ScaleY;
+}
+
 public interface IFastLocalDetector
 {
     Task<IReadOnlyList<FastLocalDetection>> DetectAsync(byte[] imageBytes, CropRegion? crop, CancellationToken cancellationToken);
@@ -78,7 +104,7 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
         var options = _options.CurrentValue;
 
         var startedAt = DateTimeOffset.UtcNow;
-        var tensor = await PreprocessAsync(imageBytes, crop, _inputSize, cancellationToken);
+        var (tensor, letterbox) = await PreprocessAsync(imageBytes, crop, _inputSize, cancellationToken);
 
         using var results = session.Run(
             new[] { NamedOnnxValue.CreateFromTensor(_inputName, tensor) });
@@ -112,10 +138,10 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
             detections.Add(new FastLocalDetection(
                 bestClass,
                 score,
-                boxes[0, q, 0],
-                boxes[0, q, 1],
-                boxes[0, q, 2],
-                boxes[0, q, 3]));
+                letterbox.UnpadX(boxes[0, q, 0]),
+                letterbox.UnpadY(boxes[0, q, 1]),
+                boxes[0, q, 2] / letterbox.ScaleX,
+                boxes[0, q, 3] / letterbox.ScaleY));
         }
 
         _logger.LogInformation(
@@ -234,11 +260,14 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
         return Path.Combine(root, options.ModelPath);
     }
 
-    private static async Task<DenseTensor<float>> PreprocessAsync(
+    private static async Task<(DenseTensor<float> Tensor, Letterbox Letterbox)> PreprocessAsync(
         byte[] imageBytes, CropRegion? crop, int inputSize, CancellationToken cancellationToken)
     {
         await using var input = new MemoryStream(imageBytes, writable: false);
         using var image = await Image.LoadAsync<Rgb24>(input, cancellationToken);
+
+        var analyzedWidth = image.Width;
+        var analyzedHeight = image.Height;
 
         image.Mutate(context =>
         {
@@ -251,15 +280,31 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
                 var right = Math.Clamp((int)Math.Round(crop.Right * image.Width), left, image.Width);
                 var bottom = Math.Clamp((int)Math.Round(crop.Bottom * image.Height), top, image.Height);
                 if (right > left && bottom > top)
+                {
                     context.Crop(new Rectangle(left, top, right - left, bottom - top));
+                    analyzedWidth = right - left;
+                    analyzedHeight = bottom - top;
+                }
             }
 
-            // Plain stretch, not letterbox: it's what RF-DETR's own inference pipeline does, and
-            // it keeps the output boxes' normalized coordinates directly equal to normalized
-            // coordinates in the (cropped) source region with no un-padding math.
+            // Letterbox, not plain stretch. Squashing a wide crop into the square input distorts
+            // people far more than the uncropped frame does - the gate profile's full-width,
+            // 58%-tall band is 2.3:1, so a standing person arrives 2.3x narrower than they are.
+            // Measured on the 2026-08-11 05:42 gate event (a person opening the gate for a truck,
+            // which the detector missed entirely): best person score 0.38 stretched vs 0.66
+            // letterboxed, against a 0.60 threshold. Letterboxing also *lowered* the empty-frame
+            // noise floor (night 0.17 -> 0.15, day 0.42 -> 0.23), so it widens the gap from both
+            // sides rather than trading recall for false positives.
+            //
+            // The cost is that output box coordinates are now normalized to the padded square,
+            // not to the analyzed region, so they have to be mapped back - see Letterbox above.
+            // Nothing consumes the boxes today (FastLocalVisionClient.MapToAnalysis reads only
+            // ClassId and Score), but FastLocalDetection documents them as region-normalized and
+            // that contract is cheap to keep honest.
             context.Resize(new ResizeOptions
             {
-                Mode = ResizeMode.Stretch,
+                Mode = ResizeMode.Pad,
+                Position = AnchorPositionMode.Center,
                 Size = new Size(inputSize, inputSize)
             });
         });
@@ -279,7 +324,7 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
             }
         });
 
-        return tensor;
+        return (tensor, Letterbox.For(analyzedWidth, analyzedHeight));
     }
 
     public void Dispose()

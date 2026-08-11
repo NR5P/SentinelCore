@@ -511,6 +511,62 @@ public sealed class FastLocalTests
             new StaticOptionsMonitor<CloudVisionOptions>(cloudOptions),
             NullLogger<FailoverVisionClient>.Instance);
 
+    // --- Letterbox: mapping padded-square coordinates back to the analyzed region -------------
+
+    [Fact]
+    public void Letterbox_SquareRegion_IsIdentity()
+    {
+        // A square region fills the square input exactly - no bars, so nothing to undo.
+        var box = Letterbox.For(512, 512);
+
+        Assert.Equal(1, box.ScaleX, 6);
+        Assert.Equal(1, box.ScaleY, 6);
+        Assert.Equal(0.25, box.UnpadX(0.25), 6);
+        Assert.Equal(0.80, box.UnpadY(0.80), 6);
+    }
+
+    [Fact]
+    public void Letterbox_WideRegion_PadsTopAndBottomOnly()
+    {
+        // The gate profile's crop: full width, 58% of the height of a 2560x1920 frame.
+        var box = Letterbox.For(2560, 1114);
+
+        // Width fills the square; height occupies 1114/2560 of it, centered.
+        Assert.Equal(1, box.ScaleX, 6);
+        Assert.Equal(1114d / 2560d, box.ScaleY, 6);
+
+        // X is untouched, and the center of the square is still the center of the region.
+        Assert.Equal(0.25, box.UnpadX(0.25), 6);
+        Assert.Equal(0.5, box.UnpadY(0.5), 6);
+
+        // The region's top and bottom edges sit inside the square, where the bars end.
+        var barHeight = (1 - 1114d / 2560d) / 2;
+        Assert.Equal(0, box.UnpadY(barHeight), 6);
+        Assert.Equal(1, box.UnpadY(1 - barHeight), 6);
+    }
+
+    [Fact]
+    public void Letterbox_TallRegion_PadsLeftAndRightOnly()
+    {
+        var box = Letterbox.For(600, 1200);
+
+        Assert.Equal(0.5, box.ScaleX, 6);
+        Assert.Equal(1, box.ScaleY, 6);
+        Assert.Equal(0.5, box.UnpadX(0.5), 6);
+        Assert.Equal(0.75, box.UnpadY(0.75), 6);
+        // Left edge of the region is a quarter of the way into the square.
+        Assert.Equal(0, box.UnpadX(0.25), 6);
+        Assert.Equal(1, box.UnpadX(0.75), 6);
+    }
+
+    [Fact]
+    public void Letterbox_DegenerateRegion_FallsBackToIdentity()
+    {
+        // Never divide by zero on a crop that collapsed - report coordinates unchanged instead.
+        Assert.Equal(1, Letterbox.For(0, 0).ScaleX, 6);
+        Assert.Equal(1, Letterbox.For(-5, 100).ScaleY, 6);
+    }
+
     private static IncomingAlert MakeAlert() => new(
         Guid.NewGuid(), "gateCamera", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
         "gate", "image/jpeg", "alert.jpg", []);
