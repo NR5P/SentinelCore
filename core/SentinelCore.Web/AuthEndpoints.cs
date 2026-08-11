@@ -53,7 +53,8 @@ public static class AuthEndpoints
         app.MapPost("/api/auth/login", async (HttpContext context, LoginRequest request, AppSettingsFile settings, IAccountStore accounts, InternetExposedSettings internetExposed, ILoginAlertSender loginAlerts, ILogger<LoginRequest> logger, CancellationToken ct) =>
         {
             var ip = ClientIpResolver.Resolve(context, internetExposed);
-            var via = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port ? "internet-exposed" : "LAN";
+            var isExposedRequest = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port;
+            var via = isExposedRequest ? "internet-exposed" : "LAN";
 
             if (IsRateLimited(ip))
             {
@@ -62,13 +63,23 @@ public static class AuthEndpoints
             }
 
             var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
-            var account = auth is { Enabled: true } ? await accounts.GetByUsernameAsync(request.Username ?? "", ct) : null;
+            // Auth:Enabled=false means "nobody has to sign in", so there's no account to look up.
+            // The Internet Exposed port is the exception: it always requires login regardless of
+            // that setting - both AuthGateMiddleware and /api/auth/status already treat it that
+            // way - so it has to be able to sign in while the base setting is off. Without this,
+            // that port serves a login screen no correct password can ever get past.
+            var loginRequired = isExposedRequest || auth is { Enabled: true };
+            // Trimmed to match CreateAsync, which stores the username trimmed: a soft keyboard
+            // that tacks a space onto the field shouldn't read as a wrong password.
+            var account = loginRequired ? await accounts.GetByUsernameAsync((request.Username ?? "").Trim(), ct) : null;
             var valid = account is not null && PasswordHasher.Verify(request.Password ?? "", account.PasswordHash);
 
             if (!valid)
             {
                 var failures = RecordFailure(ip);
-                logger.LogWarning("Login failed for {Username} from {Ip} ({Via})", request.Username, ip, via);
+                // Username quoted on purpose: the most confusing way for this to fail is a
+                // keyboard-added space, which is invisible in an unquoted log line.
+                logger.LogWarning("Login failed for '{Username}' from {Ip} ({Via})", request.Username, ip, via);
 
                 // Fire-and-forget: LoginAlertSender swallows its own errors, and a mistyped
                 // password shouldn't make the caller wait out an SMTP/Telegram round trip.

@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -170,7 +171,10 @@ fun LoginScreen(
     fun submit() {
         if (!canSubmit) return
         localError = null
-        onLogin(username, password) { localError = it }
+        // Username trimmed, password never: a phone keyboard that leaves a trailing space behind
+        // shouldn't come back as "invalid username or password". The server trims too, but this
+        // also covers a phone talking to a server that hasn't been updated yet.
+        onLogin(username.trim(), password) { localError = it }
     }
 
     Box(
@@ -192,7 +196,14 @@ fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Username") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    // No autocapitalize and no autocorrect - a username is not a sentence, and
+                    // letting the IME "help" here is how a correct username turns into a
+                    // rejected one.
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrectEnabled = false,
+                        imeAction = ImeAction.Next,
+                    ),
                 )
                 OutlinedTextField(
                     value = password,

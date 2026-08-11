@@ -293,6 +293,30 @@ public sealed class WebAuthorizationTests : IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, delete.StatusCode);
     }
 
+    // Account creation stores the username trimmed, so signing in has to trim too - otherwise a
+    // phone keyboard that leaves a trailing space in the field reports the password as wrong,
+    // which is unguessable from the user's side. The password is deliberately not trimmed: a
+    // leading or trailing space there is a real character someone may have chosen.
+    [Fact]
+    public async Task AuthEnabled_UsernameWithSurroundingWhitespace_StillSignsIn()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+            await accounts.CreateAsync("admin", SentinelCore.Web.PasswordHasher.Hash("correct horse battery"), AccountRole.Admin, null, ct);
+        }
+        await EnableLoginAsync(ct);
+
+        using var client = factory.CreateClient();
+        using var login = await client.PostAsJsonAsync("/api/auth/login", new { Username = " admin ", Password = "correct horse battery" }, ct);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        using var padded = await client.PostAsJsonAsync("/api/auth/login", new { Username = "admin", Password = " correct horse battery " }, ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, padded.StatusCode);
+    }
+
     private async Task EnableLoginAsync(CancellationToken ct)
     {
         // Mirrors what AuthEndpoints.MapPost("/api/auth/enable") writes when accounts already
