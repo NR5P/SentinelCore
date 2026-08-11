@@ -17,6 +17,9 @@ struct DeviceHubView: View {
     @State private var showingAddSheet = false
     @State private var showingDiscoverySheet = false
     @State private var editingDevice: HubDevice?
+    // Set by the Mac's row delete button. A click is far easier to hit by accident than a swipe,
+    // so that path confirms first; the iPhone's swipe action deletes outright as it always has.
+    @State private var deviceToDelete: HubDevice?
 
     private static let statePollInterval = Duration.seconds(5)
 
@@ -70,6 +73,22 @@ struct DeviceHubView: View {
             }
             .deviceHubSheetFrame()
         }
+        .confirmationDialog(
+            deviceToDelete.map { "Delete \($0.name)?" } ?? "Delete device?",
+            isPresented: Binding(
+                get: { deviceToDelete != nil },
+                set: { if !$0 { deviceToDelete = nil } }
+            ),
+            presenting: deviceToDelete
+        ) { device in
+            Button("Delete", role: .destructive) {
+                deviceToDelete = nil
+                Task { await delete(device) }
+            }
+            Button("Cancel", role: .cancel) { deviceToDelete = nil }
+        } message: { device in
+            Text("\(device.name) will be removed from the Device Hub. This can't be undone, but Discover Devices can find it again if it's still on the broker.")
+        }
         .sheet(isPresented: $showingDiscoverySheet) {
             NavigationStack {
                 DeviceDiscoveryView { Task { await reload() } }
@@ -115,9 +134,12 @@ struct DeviceHubView: View {
                         DeviceRow(
                             device: device,
                             isBusy: pendingCommandIds.contains(device.id),
+                            canEdit: model.isAdmin,
                             onToggle: { Task { await toggle(device) } },
                             onAction: { action in Task { await send(device, action: action) } },
-                            onBrightness: { percent in Task { await setBrightness(device, percent: percent) } }
+                            onBrightness: { percent in Task { await setBrightness(device, percent: percent) } },
+                            onEdit: { editingDevice = device },
+                            onDelete: { deviceToDelete = device }
                         )
                         .swipeActions(edge: .trailing) {
                             if model.isAdmin {
@@ -288,9 +310,12 @@ extension View {
 private struct DeviceRow: View {
     let device: HubDevice
     let isBusy: Bool
+    let canEdit: Bool
     let onToggle: () -> Void
     let onAction: (String) -> Void
     let onBrightness: (Int) -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
 
     @State private var sliderValue: Double = 0
     @State private var isDragging = false
@@ -317,6 +342,30 @@ private struct DeviceRow: View {
                 } else if device.commandable {
                     controls
                 }
+
+                #if os(macOS)
+                // The Mac has no swipe gesture, so the swipe actions that carry Edit and Delete on
+                // iPhone are unreachable here - these buttons are the Mac's only route to either.
+                // They stay visible while a command is in flight, and a sensor with no controls
+                // still gets both.
+                if canEdit {
+                    Button(action: onEdit) {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(SentinelTheme.cyan)
+                    .help("Edit \(device.name)")
+                    .accessibilityLabel("Edit \(device.name)")
+
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(SentinelTheme.red)
+                    .help("Delete \(device.name)")
+                    .accessibilityLabel("Delete \(device.name)")
+                }
+                #endif
             }
 
             // What the device actually reports, under its own keys. Absent for the switches and
