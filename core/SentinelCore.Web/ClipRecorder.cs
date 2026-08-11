@@ -50,16 +50,32 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
     // person had left - and silently, because segments covering the tail of the window still
     // existed, so the "no buffered video" warning never fired. Deriving the window from the
     // post-roll instead of guessing at it makes the retention correct for any setting.
-    public void PruneBuffer(Guid cameraId, int preSeconds, int postSeconds) =>
-        PruneBuffer(cameraId, preSeconds + postSeconds + RetentionSlackSeconds);
+    // openClipFrom is the start of a clip whose window is still open - one that a repeat trigger
+    // can still push the end of, see TriggerZoneMonitor.StartOrExtendClip. Such a clip reaches
+    // further back than pre + post by definition, and pruning to pre + post regardless would
+    // delete the front of the very footage the extension exists to keep. Same failure the comment
+    // above describes, arrived at from the other direction.
+    public void PruneBuffer(Guid cameraId, int preSeconds, int postSeconds, DateTimeOffset? openClipFrom = null)
+    {
+        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(preSeconds + postSeconds + RetentionSlackSeconds);
+
+        if (openClipFrom is { } from)
+        {
+            var openCutoff = from - TimeSpan.FromSeconds(RetentionSlackSeconds);
+            if (openCutoff < cutoff) cutoff = openCutoff;
+        }
+
+        PruneBefore(cameraId, cutoff);
+    }
 
     // Explicit-window overload for callers that aren't building a clip: TriggerRewind keeps a
     // buffer on cameras with clips switched off, where "pre + post" means nothing and the only
     // requirement is that the lookback window still be on disk when a trigger lands.
-    public void PruneBuffer(Guid cameraId, int keepSeconds)
-    {
-        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(keepSeconds);
+    public void PruneBuffer(Guid cameraId, int keepSeconds) =>
+        PruneBefore(cameraId, DateTimeOffset.UtcNow - TimeSpan.FromSeconds(keepSeconds));
 
+    private void PruneBefore(Guid cameraId, DateTimeOffset cutoff)
+    {
         foreach (var file in EnumerateSegments(cameraId))
         {
             if (file.StartsAt >= cutoff) continue;
@@ -78,11 +94,13 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
     }
 
-    public async Task<string?> BuildClipAsync(Guid cameraId, DateTimeOffset triggeredAt, int preSeconds, int postSeconds, CancellationToken cancellationToken)
+    // The window is passed in rather than derived from pre/post here because a clip that repeat
+    // triggers extended has an end its anchor knows nothing about - see
+    // TriggerZoneMonitor.StartOrExtendClip. anchoredAt only names the file, and stays the moment
+    // of the trigger that opened the clip so the filename still sorts and reads as that event.
+    public async Task<string?> BuildClipAsync(
+        Guid cameraId, DateTimeOffset anchoredAt, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken)
     {
-        var from = triggeredAt - TimeSpan.FromSeconds(preSeconds);
-        var to = triggeredAt + TimeSpan.FromSeconds(postSeconds);
-
         // A segment runs until the next one starts. That matters more than it looks: the muxer can
         // only cut on a keyframe, so with -c copy the real segment length is the camera's GOP
         // rounded up to SegmentSeconds, and 4- and 10-second GOPs are ordinary on the cameras this
@@ -100,7 +118,7 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
             return null;
         }
 
-        var clipPath = Path.Combine(ClipsDirectory(cameraId), $"{triggeredAt:yyyyMMdd-HHmmss-fff}.mp4");
+        var clipPath = Path.Combine(ClipsDirectory(cameraId), $"{anchoredAt:yyyyMMdd-HHmmss-fff}.mp4");
         var listPath = Path.Combine(Path.GetTempPath(), $"cliplist-{Guid.NewGuid():N}.txt");
         await File.WriteAllLinesAsync(listPath, segments.Select(s => ConcatListLine(s.Path)), cancellationToken);
 

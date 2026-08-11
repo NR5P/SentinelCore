@@ -8,6 +8,15 @@ public static class AlertNotificationPolicy
         if (analysis?.NotificationRecommended != true)
             return false;
 
+        // Already reported, seconds ago, with the same things in frame - see
+        // NotificationDeduplicator, which is what sets this. Deliberately checked here rather than
+        // in each channel: every notifying action gates on this method, and a rule about whether an
+        // event is worth interrupting someone for belongs in one place instead of seven. Note this
+        // is the one suppression in here that AnalysisFoundSubject below does NOT mirror - a repeat
+        // is still a real subject, and its trigger and clip stay exactly as visible as any other's.
+        if (result.DuplicateOfAlertId is not null)
+            return false;
+
         // Gate/door open checks (GateCheckAnalyzer) make their own state-transition-based notify
         // decision (see GateCheckDecision) before a result with NotificationRecommended=true ever
         // exists - by construction, if one reaches here it already decided to notify. The subject

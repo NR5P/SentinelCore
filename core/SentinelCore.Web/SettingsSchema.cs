@@ -431,6 +431,20 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "repeatAlerts",
+            Title = "REPEAT ALERTS FROM ONE CAMERA",
+            Endpoint = "/api/settings/repeat-alerts",
+            Basic = false,
+            DtoType = typeof(RepeatAlertsSettingsDto),
+            Description = "What happens when one camera fires again within seconds of the last time - which is what somebody arriving actually looks like, not a fault. The vehicle stops outside, pulls in, a door opens, someone walks to the gate: four triggers, one arrival. Each of those frames is analyzed one at a time and each takes as long as an analysis takes, so without these two the last frame - usually the interesting one, because it's the one with a person in it - waits behind every earlier near-duplicate before anyone hears about it. Neither setting deletes anything: every trigger, clip and Feed entry is kept exactly as before, and these only decide what is worth spending an analysis on and what is worth interrupting you for.",
+            Fields =
+            [
+                Check("supersedeQueued", "Skip Stale Frames In The Queue", "When a camera sends a new frame while an earlier one from that same camera is still waiting to be analyzed, analyze the new one and stand the old one down. The frame being dropped is seconds older than the one replacing it and its video is kept either way, so this costs nothing and gets the verdict on what's happening now minutes sooner. An analysis already underway is never interrupted."),
+                Number("duplicateNotificationWindowSeconds", "Only Re-Notify On A Change Within (s)", "Inside this window, the same camera notifies again only if what's actually in frame has changed - a person appearing beside the truck is worth telling you about, the truck having moved twenty feet is not. Set to 0 to notify on every analysis, the way it worked before, and leave the per-channel duplicate cooldowns to it.", 0, 3600)
+            ]
+        },
+        new()
+        {
             Key = "semanticSearch",
             Title = "SEMANTIC SEARCH",
             Endpoint = "/api/settings/semantic-search",

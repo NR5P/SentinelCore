@@ -3807,7 +3807,7 @@ public sealed class BasicTests
         var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 10 }));
 
         var alerts = Enumerable.Range(0, 5).Select(i => MakeAlert($"camera-{i}")).ToList();
-        foreach (var alert in alerts) Assert.True(await queue.TryEnqueueAsync(alert, ct));
+        foreach (var alert in alerts) Assert.True((await queue.TryEnqueueAsync(alert, supersedeWaiting: false, ct)).Accepted);
         Assert.Equal(5, queue.ApproximateCount);
 
         var cleared = queue.Clear();
@@ -3833,9 +3833,9 @@ public sealed class BasicTests
         var ct = TestContext.Current.CancellationToken;
         var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 2 }));
 
-        Assert.True(await queue.TryEnqueueAsync(MakeAlert("a"), ct));
-        Assert.True(await queue.TryEnqueueAsync(MakeAlert("b"), ct));
-        Assert.False(await queue.TryEnqueueAsync(MakeAlert("rejected"), ct));
+        Assert.True((await queue.TryEnqueueAsync(MakeAlert("a"), supersedeWaiting: false, ct)).Accepted);
+        Assert.True((await queue.TryEnqueueAsync(MakeAlert("b"), supersedeWaiting: false, ct)).Accepted);
+        Assert.False((await queue.TryEnqueueAsync(MakeAlert("rejected"), supersedeWaiting: false, ct)).Accepted);
 
         Assert.Equal(2, queue.ApproximateCount);
         Assert.Equal(2, queue.Clear().Count); // exactly what was really added, not 3
@@ -3849,13 +3849,13 @@ public sealed class BasicTests
         var ct = TestContext.Current.CancellationToken;
         var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 2 }));
 
-        await queue.TryEnqueueAsync(MakeAlert("a"), ct);
-        await queue.TryEnqueueAsync(MakeAlert("b"), ct);
-        Assert.False(await queue.TryEnqueueAsync(MakeAlert("c"), ct)); // full
+        await queue.TryEnqueueAsync(MakeAlert("a"), supersedeWaiting: false, ct);
+        await queue.TryEnqueueAsync(MakeAlert("b"), supersedeWaiting: false, ct);
+        Assert.False((await queue.TryEnqueueAsync(MakeAlert("c"), supersedeWaiting: false, ct)).Accepted); // full
 
         queue.Clear();
 
-        Assert.True(await queue.TryEnqueueAsync(MakeAlert("d"), ct));
+        Assert.True((await queue.TryEnqueueAsync(MakeAlert("d"), supersedeWaiting: false, ct)).Accepted);
         Assert.Equal(1, queue.ApproximateCount);
     }
 
@@ -3868,8 +3868,8 @@ public sealed class BasicTests
         var ct = TestContext.Current.CancellationToken;
         var queue = new AlertQueue(Options.Create(new BridgeOptions { ApiKey = "test-key-1234567890", QueueCapacity = 10 }));
 
-        await queue.TryEnqueueAsync(MakeAlert("in-progress"), ct);
-        await queue.TryEnqueueAsync(MakeAlert("still-waiting"), ct);
+        await queue.TryEnqueueAsync(MakeAlert("in-progress"), supersedeWaiting: false, ct);
+        await queue.TryEnqueueAsync(MakeAlert("still-waiting"), supersedeWaiting: false, ct);
 
         IncomingAlert? dequeued = null;
         await foreach (var item in queue.ReadAllAsync(ct))

@@ -16,6 +16,7 @@ public sealed class AlertProcessor : BackgroundService
     private readonly IOptionsMonitor<PackageTheftOptions> _packageTheftOptions;
     private readonly IImageEmbeddingService _imageEmbeddings;
     private readonly IOptionsMonitor<SemanticSearchOptions> _semanticSearchOptions;
+    private readonly NotificationDeduplicator _deduplicator;
     private readonly ILogger<AlertProcessor> _logger;
 
     public AlertProcessor(
@@ -31,6 +32,7 @@ public sealed class AlertProcessor : BackgroundService
         IOptionsMonitor<PackageTheftOptions> packageTheftOptions,
         IImageEmbeddingService imageEmbeddings,
         IOptionsMonitor<SemanticSearchOptions> semanticSearchOptions,
+        NotificationDeduplicator deduplicator,
         ILogger<AlertProcessor> logger)
     {
         _queue = queue;
@@ -44,6 +46,7 @@ public sealed class AlertProcessor : BackgroundService
         _packageTheftOptions = packageTheftOptions;
         _imageEmbeddings = imageEmbeddings;
         _semanticSearchOptions = semanticSearchOptions;
+        _deduplicator = deduplicator;
         _logger = logger;
         _profileProvider = profileProvider;
     }
@@ -124,13 +127,25 @@ public sealed class AlertProcessor : BackgroundService
                 IncidentId = alert.IncidentId,
                 Embedding = embedding
             };
+
+            // Before the save, so the stored record and all seven notifying actions below agree on
+            // one decision. Asked only of alerts that would otherwise have notified, which is what
+            // makes "the last thing this camera told you about" mean what it says - an alert that
+            // was never going to notify can't be the thing a later one repeats.
+            if (AlertNotificationPolicy.ShouldNotify(result))
+                result.DuplicateOfAlertId = _deduplicator.FindRecentDuplicate(result, DateTimeOffset.UtcNow);
+
             await _store.SaveAsync(result, cancellationToken);
 
             // Never let the visibility guard drop an alert silently. In practice this fires when
             // the frame is unreadable and the model still writes a subject into the prose, but it
             // would also catch a reply that parsed yet omitted the subject blocks - and that
             // second case is worth seeing in the log rather than quietly losing.
-            if (analysis.NotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result))
+            //
+            // A repeat is excluded because it isn't this guard's doing and isn't a subject problem:
+            // NotificationDeduplicator has already logged that one, with the alert it repeats.
+            if (analysis.NotificationRecommended && result.DuplicateOfAlertId is null &&
+                !AlertNotificationPolicy.ShouldNotify(result))
             {
                 _logger.LogInformation(
                     "Alert {AlertId} recommended a notification but no subject was visible - suppressed. Summary: {Summary}",

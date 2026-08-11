@@ -260,7 +260,20 @@ public sealed class TriggerZoneMonitor(
     private void PruneBufferFor(TriggerConfig config, TriggerRewindOptions rewind)
     {
         if (config.RecordClips)
-            clips.PruneBuffer(config.CameraId, config.ClipPreSeconds, config.ClipPostSeconds);
+        {
+            // A clip being extended reaches back further than pre + post, and every clip in flight
+            // needs its footage until its own concat has read it - so the oldest of them is the
+            // floor. See StartOrExtendClip and ClipRecorder.
+            DateTimeOffset? openClipFrom = null;
+            lock (_openClipLock)
+            {
+                if (_clipsInFlight.TryGetValue(config.CameraId, out var inFlight))
+                    foreach (var clip in inFlight)
+                        if (openClipFrom is null || clip.From < openClipFrom) openClipFrom = clip.From;
+            }
+
+            clips.PruneBuffer(config.CameraId, config.ClipPreSeconds, config.ClipPostSeconds, openClipFrom);
+        }
         else if (rewind.Enabled && rewind.BufferEveryCamera)
             clips.PruneBuffer(config.CameraId, rewind.LookbackSeconds + RewindBufferSlackSeconds);
     }
@@ -686,7 +699,7 @@ public sealed class TriggerZoneMonitor(
                 gated ? " - held for AI confirmation" : "");
 
             if (session.Config.RecordClips)
-                _ = BuildClipAsync(camera, trigger, session.Config, now);
+                StartOrExtendClip(camera, trigger, session.Config, now);
 
             // Fast (file reads/writes and SQLite inserts, no network/wait), so it's fine to await
             // inline here like the rest of this method - only each companion's actual clip build
@@ -760,8 +773,10 @@ public sealed class TriggerZoneMonitor(
                     memberId, memberCamera.Name, incidentId);
 
                 var memberConfig = await configStore.GetAsync(memberId, cancellationToken);
+                // Same merging as the triggering camera's own clip: a group that fires twice in
+                // quick succession gives each companion one clip of the incident, not two.
                 if (group.RecordCompanionClips && memberConfig is { RecordClips: true })
-                    _ = BuildClipAsync(memberCamera, companionTrigger, memberConfig, occurredAt);
+                    StartOrExtendClip(memberCamera, companionTrigger, memberConfig, occurredAt);
 
                 // Off by default (see CameraGroupInputDto) - every companion also gets its own
                 // full AI analysis/Feed entry/notification, tagged with the same incident id.
@@ -854,22 +869,116 @@ public sealed class TriggerZoneMonitor(
         }
     }
 
+    // A trigger while a clip is already recording extends that clip instead of starting a second
+    // one. Somebody arriving fires the zone repeatedly - the vehicle stops outside, pulls in, a
+    // door opens, they walk to the gate - and with a 5s cooldown against a 5s pre-roll and a 10s
+    // post-roll, that produced three clips of a 30-second arrival that were mostly copies of each
+    // other, and three cards in the Feed that each read like a separate visit. One clip of the
+    // whole arrival is both the smaller thing on disk and the truer description of what happened.
+    private void StartOrExtendClip(Camera camera, TriggerEvent trigger, TriggerConfig config, DateTimeOffset triggeredAt)
+    {
+        OpenClip fresh;
+
+        lock (_openClipLock)
+        {
+            // Only the newest can still be extended - anything before it in the list is sealed and
+            // is only still here because its footage has to survive until its build has read it.
+            if (Newest(camera.Id) is { } open &&
+                open.TryExtend(trigger.Id, triggeredAt, config.ClipPreSeconds, config.ClipPostSeconds, MaxExtendedClipSeconds))
+            {
+                logger.LogInformation(
+                    "Trigger on camera {CameraId} ({Name}) landed inside the clip already recording, so that clip now " +
+                    "runs to {End:HH:mm:ss} and covers {Count} trigger(s) instead of a second clip starting",
+                    camera.Id, camera.Name, open.To.ToLocalTime(), open.TriggerCount);
+                return;
+            }
+
+            fresh = new OpenClip(
+                triggeredAt,
+                triggeredAt.AddSeconds(-config.ClipPreSeconds),
+                triggeredAt.AddSeconds(config.ClipPostSeconds),
+                trigger.Id);
+
+            if (!_clipsInFlight.TryGetValue(camera.Id, out var inFlight))
+                _clipsInFlight[camera.Id] = inFlight = [];
+
+            inFlight.Add(fresh);
+        }
+
+        // Started outside the lock: the build takes the same lock on its first line, and running
+        // it inline here would have it reach that lock re-entrantly on this thread, which works
+        // only by accident of Monitor's reentrancy.
+        _ = BuildClipAsync(camera, fresh);
+    }
+
+    // The longest a clip may grow by extension. Motion at a gate can keep firing for minutes, and
+    // without a ceiling "the clip" would become an open-ended recording whose start the rolling
+    // buffer could no longer hold. Past this the next trigger opens a fresh clip, which is the old
+    // behaviour and a reasonable place to break a long event in two.
+    private const int MaxExtendedClipSeconds = 90;
+
+    private readonly object _openClipLock = new();
+
+    // Per camera, every clip whose footage still has to be on disk: the one currently open for
+    // extension, plus any that have been sealed but whose ffmpeg concat has not finished reading
+    // the buffer yet. A list rather than a single entry because the two are not the same lifetime,
+    // and conflating them let PruneBufferFor drop its protection the moment a clip was sealed -
+    // which for a clip extended past pre + post + slack meant the reconcile pass could delete the
+    // front of it in the second between sealing and building, silently producing a short clip.
+    private readonly Dictionary<Guid, List<OpenClip>> _clipsInFlight = [];
+
+    // Caller must hold _openClipLock.
+    private OpenClip? Newest(Guid cameraId) =>
+        _clipsInFlight.TryGetValue(cameraId, out var inFlight) && inFlight.Count > 0
+            ? inFlight[^1]
+            : null;
+
     // Deliberately not tied to the detection session's token: the post-roll wait outlives a config
     // change or a camera being disabled, and the clip is still worth writing when that happens.
-    private async Task BuildClipAsync(Camera camera, TriggerEvent trigger, TriggerConfig config, DateTimeOffset triggeredAt)
+    private async Task BuildClipAsync(Camera camera, OpenClip open)
     {
         try
         {
             // Wait for the post-roll itself plus one segment, so the segment covering the end of
-            // the window has been closed off by ffmpeg before we try to concatenate it.
-            var wait = TimeSpan.FromSeconds(config.ClipPostSeconds + ClipRecorder.SegmentSeconds + 1);
-            await Task.Delay(wait, _stoppingToken);
+            // the window has been closed off by ffmpeg before we try to concatenate it. Looped
+            // rather than a single delay because a trigger arriving during the wait pushes the end
+            // of the window out, and waking up to build against the old end would cut the clip
+            // short at exactly the moment something else was happening.
+            while (true)
+            {
+                DateTimeOffset until;
+                lock (_openClipLock) until = open.To;
 
-            var clipPath = await clips.BuildClipAsync(camera.Id, triggeredAt, config.ClipPreSeconds, config.ClipPostSeconds, _stoppingToken);
+                var wait = until.AddSeconds(ClipRecorder.SegmentSeconds + 1) - DateTimeOffset.UtcNow;
+                if (wait <= TimeSpan.Zero) break;
+
+                await Task.Delay(wait, _stoppingToken);
+            }
+
+            // From here the window is fixed, so a trigger arriving now opens the next clip rather
+            // than moving footage out from under the concat about to read it.
+            DateTimeOffset anchoredAt, from, to;
+            Guid[] triggerIds;
+            lock (_openClipLock)
+            {
+                open.Seal();
+                anchoredAt = open.AnchoredAt;
+                from = open.From;
+                to = open.To;
+                triggerIds = open.TriggerIds;
+            }
+
+            var clipPath = await clips.BuildClipAsync(camera.Id, anchoredAt, from, to, _stoppingToken);
             if (clipPath is null) return;
 
-            await eventStore.SetClipPathAsync(trigger.Id, clipPath, _stoppingToken);
-            logger.LogInformation("Saved trigger clip for camera {CameraId} ({Name})", camera.Id, camera.Name);
+            // Every trigger that landed in the window points at the one file, so opening any of
+            // their cards plays the whole arrival rather than that trigger's slice of it.
+            foreach (var id in triggerIds)
+                await eventStore.SetClipPathAsync(id, clipPath, _stoppingToken);
+
+            logger.LogInformation(
+                "Saved a {Seconds:F0}s trigger clip for camera {CameraId} ({Name}) covering {Count} trigger(s)",
+                (to - from).TotalSeconds, camera.Id, camera.Name, triggerIds.Length);
         }
         catch (OperationCanceledException)
         {
@@ -878,6 +987,67 @@ public sealed class TriggerZoneMonitor(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to build trigger clip for camera {CameraId}", camera.Id);
+        }
+        finally
+        {
+            // In a finally, and covering cancellation, because a clip left in here would hold this
+            // camera's whole rolling buffer on disk forever and - while it was still the newest -
+            // swallow every later trigger into a window nothing would ever build.
+            lock (_openClipLock)
+            {
+                if (_clipsInFlight.TryGetValue(camera.Id, out var inFlight))
+                {
+                    inFlight.Remove(open);
+                    if (inFlight.Count == 0) _clipsInFlight.Remove(camera.Id);
+                }
+            }
+        }
+    }
+
+    // One clip being recorded, from the trigger that opened it until the post-roll after the last
+    // trigger that extended it. Every member is guarded by TriggerZoneMonitor._openClipLock: the
+    // detection loop extends it while the build task is asleep waiting on it.
+    //
+    // Public for the same reason ClipRecorder.SelectSegmentsCovering is: TryExtend is the rule
+    // that decides whether an arrival becomes one clip or several, and it is worth pinning
+    // directly rather than through a running ffmpeg.
+    public sealed class OpenClip(DateTimeOffset anchoredAt, DateTimeOffset from, DateTimeOffset to, Guid firstTriggerId)
+    {
+        private readonly List<Guid> _triggerIds = [firstTriggerId];
+
+        // Names the clip file, and stays the moment the clip opened however far the end moves.
+        public DateTimeOffset AnchoredAt { get; } = anchoredAt;
+        public DateTimeOffset From { get; } = from;
+        public DateTimeOffset To { get; private set; } = to;
+
+        public int TriggerCount => _triggerIds.Count;
+        public Guid[] TriggerIds => [.. _triggerIds];
+
+        // Set once the build has stopped waiting and is about to read the buffer. After that the
+        // window is what gets concatenated, so it must not move.
+        public bool IsSealed { get; private set; }
+
+        public void Seal() => IsSealed = true;
+
+        public bool TryExtend(Guid triggerId, DateTimeOffset at, int preSeconds, int postSeconds, int maxSeconds)
+        {
+            if (IsSealed) return false;
+
+            // The union has to stay contiguous - a clip with a hole in the middle is worse than
+            // two clips. What has to overlap is the footage, not the trigger moments: this
+            // trigger's own pre-roll reaches backwards, so it can land after the current end and
+            // still join on seamlessly. Testing `at` alone instead is what an earlier version did,
+            // and it refused to merge the exact case this exists for - triggers at +0s, +5s and
+            // +17s against a 10s post-roll, where the third is two seconds past an end its own
+            // five-second pre-roll already covers.
+            if (at.AddSeconds(-preSeconds) > To) return false;
+
+            var end = at.AddSeconds(postSeconds);
+            if ((end - From).TotalSeconds > maxSeconds) return false;
+
+            if (end > To) To = end;
+            _triggerIds.Add(triggerId);
+            return true;
         }
     }
 

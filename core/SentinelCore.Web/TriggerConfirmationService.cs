@@ -104,9 +104,28 @@ public sealed class TriggerConfirmationService(
         var client = httpClientFactory.CreateClient(nameof(TriggerConfirmationService));
         var deadline = DateTimeOffset.UtcNow + timeout;
 
+        // How many times a poll may follow a supersede before giving up. A chain can only grow
+        // while the queue is backed up on one camera, so it is short in practice; the cap is
+        // against a cycle in the data, not against ordinary depth.
+        const int MaxSupersedeHops = 10;
+        var hops = 0;
+
         while (DateTimeOffset.UtcNow < deadline)
         {
             var result = await TryFetchResultAsync(client, baseUrl, bridge.ApiKey, alertId, cancellationToken);
+
+            // The alert this trigger produced never got analyzed, because a newer frame from the
+            // same camera took its place in the queue (see AlertQueue). Judge this trigger by that
+            // frame instead: it is the same camera moments later, which is a far better answer than
+            // the "couldn't tell, leave it visible" one every other unfinished status gets here.
+            if (result is { SupersededByAlertId: { } replacement } && hops++ < MaxSupersedeHops)
+            {
+                logger.LogInformation(
+                    "Alert {AlertId} was superseded by {ReplacementId}, so its trigger is judged by that analysis instead",
+                    alertId, replacement);
+                alertId = replacement;
+                continue;
+            }
 
             // Null covers "not found yet" and any transport failure - keep waiting rather than
             // giving a verdict on no information, right up to the deadline.

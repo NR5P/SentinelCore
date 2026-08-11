@@ -687,6 +687,25 @@ public sealed class PackageTheftOptions
     public int WatchWindowHours { get; init; } = 12;
 }
 
+// What to do when one camera fires again within seconds of the last time - the ordinary shape of
+// somebody arriving, not a fault. Both settings here exist because a burst is one event that
+// happens to produce several frames, and the pipeline used to treat every frame as a fresh event
+// with its own analysis and its own notification.
+public sealed class RepeatAlertOptions
+{
+    public const string SectionName = "RepeatAlerts";
+
+    // See AlertQueue: an alert still waiting behind an in-progress analysis is stood down when a
+    // newer one from the same camera arrives. On by default - the frame being dropped is a few
+    // seconds older than the one replacing it, and its footage is kept either way.
+    public bool SupersedeQueued { get; init; } = true;
+
+    // See NotificationDeduplicator. 0 disables the check, and every channel falls back to its own
+    // per-category DuplicateCooldownMinutes exactly as before.
+    [Range(0, 3600)]
+    public int DuplicateNotificationWindowSeconds { get; init; } = 90;
+}
+
 public sealed class SemanticSearchOptions
 {
     public const string SectionName = "SemanticSearch";

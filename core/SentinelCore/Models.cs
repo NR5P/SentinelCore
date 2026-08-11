@@ -220,4 +220,22 @@ public sealed class AlertResult
     // See ImageEmbeddingService - only populated when Semantic Search is enabled and encoding
     // this alert's image succeeded.
     public float[]? Embedding { get; init; }
+
+    // Set when this alert showed the same subjects as a notification the same camera sent moments
+    // ago - see NotificationDeduplicator. It suppresses notifications and nothing else: the alert
+    // is analyzed, stored and shown in the Feed exactly as any other, and its trigger and clip are
+    // unaffected. Kept on the record rather than left in a log line so the Feed can say why an
+    // event that plainly had someone in it never reached anyone's phone.
+    //
+    // Not init-only, for the same reason VisionAnalysis.NotificationRecommended isn't: the check
+    // needs a finished result to run against, so AlertProcessor fills this in on the way to
+    // saving rather than at construction.
+    public Guid? DuplicateOfAlertId { get; set; }
+
+    // Set when a newer frame from the same camera arrived while this one was still waiting to be
+    // analyzed, and took its place - see AlertQueue. Status is "superseded" and there is no
+    // Analysis, because none was ever run. The id is what lets SentinelCore.Web's trigger
+    // confirmation follow the chain to a verdict instead of giving up on this alert - see
+    // TriggerConfirmationService.
+    public Guid? SupersededByAlertId { get; init; }
 }

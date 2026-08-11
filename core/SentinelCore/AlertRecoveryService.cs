@@ -69,7 +69,11 @@ public sealed class AlertRecoveryService(
 
         // A full queue here means we'd only lose it again on the next restart, so treat it the
         // same as any other unrecoverable alert rather than silently dropping it.
-        if (!await queue.TryEnqueueAsync(alert, cancellationToken)) return false;
+        //
+        // Never supersedes: this replays a backlog that is already historical, where every alert
+        // has been waiting since before the restart. Standing one down in favour of another from
+        // the same camera would discard a frame that is no fresher than the one replacing it.
+        if (!(await queue.TryEnqueueAsync(alert, supersedeWaiting: false, cancellationToken)).Accepted) return false;
 
         logger.LogInformation("Resumed interrupted alert {AlertId} from {Camera}", record.Id, record.Camera);
         return true;

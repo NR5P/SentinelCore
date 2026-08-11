@@ -256,6 +256,14 @@ public sealed class PackageTheftWatchSettingsDto
     public int WatchWindowHours { get; set; } = 12;
 }
 
+public sealed class RepeatAlertsSettingsDto
+{
+    public bool SupersedeQueued { get; set; } = true;
+
+    [Range(0, 3600)]
+    public int DuplicateNotificationWindowSeconds { get; set; } = 90;
+}
+
 public sealed class SemanticSearchSettingsDto
 {
     public bool Enabled { get; set; }

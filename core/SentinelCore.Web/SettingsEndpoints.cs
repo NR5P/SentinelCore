@@ -47,7 +47,8 @@ public sealed record SettingsSnapshot(
     HostRebootSettingsDto? HostReboot = null,
     LocationSettingsDto? Location = null,
     ScheduleSettingsDto? Schedules = null,
-    NuisanceAdvisorSettingsDto? NuisanceAdvisor = null);
+    NuisanceAdvisorSettingsDto? NuisanceAdvisor = null,
+    RepeatAlertsSettingsDto? RepeatAlerts = null);
 
 public static class SettingsEndpoints
 {
@@ -173,6 +174,9 @@ public static class SettingsEndpoints
 
         settings.MapPut("/semantic-search", async (SemanticSearchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "SemanticSearch", ct));
+
+        settings.MapPut("/repeat-alerts", async (RepeatAlertsSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, "RepeatAlerts", ct));
 
         settings.MapPut("/startup-notification", async (StartupNotificationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "StartupNotification", ct));
@@ -495,7 +499,11 @@ public static class SettingsEndpoints
         // Defaulted for the same reason as the sections above, and it matters more here: this one
         // ships on, so a null would show the form unchecked while the advisor was in fact running.
         await settings.GetSectionAsync<NuisanceAdvisorSettingsDto>("NuisanceAdvisor", cancellationToken)
-            ?? new NuisanceAdvisorSettingsDto());
+            ?? new NuisanceAdvisorSettingsDto(),
+        // Defaulted for the same reason: both of these ship on, so a null would show the form as
+        // unchecked and zero while the pipeline was in fact merging repeat alerts.
+        await settings.GetSectionAsync<RepeatAlertsSettingsDto>("RepeatAlerts", cancellationToken)
+            ?? new RepeatAlertsSettingsDto());
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -524,6 +532,7 @@ public static class SettingsEndpoints
         if (snapshot.TriggerRewind is not null) await settings.MergeSectionAsync("TriggerRewind", snapshot.TriggerRewind, cancellationToken);
         if (snapshot.PackageTheftWatch is not null) await settings.MergeSectionAsync("PackageTheftWatch", snapshot.PackageTheftWatch, cancellationToken);
         if (snapshot.SemanticSearch is not null) await settings.MergeSectionAsync("SemanticSearch", snapshot.SemanticSearch, cancellationToken);
+        if (snapshot.RepeatAlerts is not null) await settings.MergeSectionAsync("RepeatAlerts", snapshot.RepeatAlerts, cancellationToken);
         if (snapshot.SelfMonitoring is not null) await settings.MergeSectionAsync("SelfMonitoring", snapshot.SelfMonitoring, cancellationToken);
         if (snapshot.StartupNotification is not null) await settings.MergeSectionAsync("StartupNotification", snapshot.StartupNotification, cancellationToken);
         if (snapshot.InternetOutage is not null) await settings.MergeSectionAsync("InternetOutage", snapshot.InternetOutage, cancellationToken);

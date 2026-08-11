@@ -125,6 +125,10 @@ builder.Services.AddOptions<SemanticSearchOptions>()
     .Bind(builder.Configuration.GetSection(SemanticSearchOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder.Services.AddOptions<RepeatAlertOptions>()
+    .Bind(builder.Configuration.GetSection(RepeatAlertOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 builder.Services.AddOptions<SelfMonitoringOptions>()
     .Bind(builder.Configuration.GetSection(SelfMonitoringOptions.SectionName))
     .ValidateDataAnnotations()
@@ -209,6 +213,9 @@ builder.Services.Configure<List<KnownFace>>(builder.Configuration.GetSection("Kn
 
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
+// Singleton, not scoped: "what did this camera last notify about" is process-wide state with the
+// same lifetime as the per-channel cooldowns it sits above.
+builder.Services.AddSingleton<NotificationDeduplicator>();
 builder.Services.AddSingleton<IImageOptimizer, ImageOptimizer>();
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
@@ -441,6 +448,8 @@ app.MapPost("/api/blueiris/alert", async (
     IAlertQueue queue,
     IResultStore store,
     IOptionsMonitor<BridgeOptions> bridgeOptions,
+    IOptionsMonitor<RepeatAlertOptions> repeatAlerts,
+    ILogger<Program> logger,
     CancellationToken ct) =>
 {
     if (!request.HasFormContentType)
@@ -517,7 +526,32 @@ app.MapPost("/api/blueiris/alert", async (
     };
     await store.SaveAsync(queuedResult, ct);
 
-    if (!await queue.TryEnqueueAsync(alert, ct))
+    var enqueued = await queue.TryEnqueueAsync(alert, repeatAlerts.CurrentValue.SupersedeQueued, ct);
+
+    // A frame from this camera was still waiting its turn when this newer one arrived, so it stood
+    // down (see AlertQueue). Its row has to stop saying "queued" for the same reason a full queue's
+    // does - AlertRecoveryService resumes anything left claiming that on the next restart - and it
+    // records what replaced it, which is how the dashboard's trigger confirmation finds a verdict
+    // for the trigger that produced it.
+    if (enqueued.Superseded is { } displaced)
+    {
+        await store.SaveAsync(new AlertResult
+        {
+            Id = displaced.Id, Camera = displaced.Camera, BlueIrisAlertId = displaced.BlueIrisAlertId,
+            OccurredAt = displaced.OccurredAt, ReceivedAt = displaced.ReceivedAt,
+            Profile = displaced.Profile, Model = "superseded",
+            Status = "superseded", CompletedAt = DateTimeOffset.UtcNow, ImagePath = displaced.ImagePath,
+            LinkedCameras = displaced.LinkedCameras, IncidentId = displaced.IncidentId,
+            SupersededByAlertId = alert.Id,
+            Error = $"A newer frame from {displaced.Camera} arrived while this one was still queued, so that one was analyzed instead."
+        }, ct);
+
+        logger.LogInformation(
+            "Alert {SupersededId} from {Camera} was still queued when {AlertId} arrived {Seconds:F0}s later, so the newer frame took its place",
+            displaced.Id, displaced.Camera, alert.Id, (alert.ReceivedAt - displaced.ReceivedAt).TotalSeconds);
+    }
+
+    if (!enqueued.Accepted)
     {
         // Don't leave the row claiming to be queued when nothing is going to pick it up.
         await store.SaveAsync(new AlertResult
