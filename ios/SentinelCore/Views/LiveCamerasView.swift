@@ -7,7 +7,8 @@ import SwiftUI
 // process has AVKit loaded anyway, but in an AppKit process nothing does, so the first time
 // SwiftUI instantiates VideoPlayer's backing view the Swift runtime can't resolve its
 // superclass (AVPlayerView) and traps: "failed to demangle superclass of VideoPlayerView from
-// mangled name 'So12AVPlayerViewC'". That's an abort the moment the Live grid appears on macOS.
+// mangled name 'So12AVPlayerViewC'". Live playback no longer builds a VideoPlayer on macOS (see
+// LiveVideoView), but the recorded-clip screens still do, so the link is still load-bearing.
 
 // Player lifetime, the poster-frame handoff, fast-start buffering, and reconnect-on-drop all
 // live in LiveStreamPlayer.
@@ -158,8 +159,8 @@ private struct LiveCameraPreview: View {
                 } placeholder: { Color.clear }
                 .opacity(stream.isVideoReady ? 0 : 1)
             }
-            VideoPlayer(player: stream.player)
-                // The whole tile opens the camera detail; playback controls live there.
+            LiveVideoView(player: stream.player)
+                // The whole tile opens the camera detail.
                 .allowsHitTesting(false)
                 .opacity(stream.isVideoReady ? 1 : 0)
             LiveStatusChip(isVideoReady: stream.isVideoReady)
@@ -248,7 +249,7 @@ struct LivePlayerView: View {
                 } placeholder: { Color.clear }
                 .opacity(stream.isVideoReady ? 0 : 1)
             }
-            VideoPlayer(player: stream.player)
+            LiveVideoView(player: stream.player)
                 .opacity(stream.isVideoReady ? 1 : 0)
             if !stream.isVideoReady {
                 ProgressView("Starting stream…")
@@ -262,6 +263,29 @@ struct LivePlayerView: View {
         // Applied before the PTZ overlay below so the joystick stays on top of the mark and fully
         // usable - the watermark never gets in the way of operating a camera.
         .unlicensedWatermark()
+        #if os(macOS)
+        // On iOS this is AVKit's own volume control, but the macOS video surface has no controls
+        // at all (see LiveVideoView), and a camera with audio would otherwise play into the room
+        // with no way to stop it short of leaving the screen.
+        .overlay(alignment: .topTrailing) {
+            Button {
+                stream.isMuted.toggle()
+            } label: {
+                Label(
+                    stream.isMuted ? "Unmute" : "Mute",
+                    systemImage: stream.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+                )
+                .labelStyle(.iconOnly)
+                .padding(8)
+            }
+            .buttonStyle(.plain)
+            // The video behind it is arbitrary camera footage, so the control carries its own
+            // backdrop rather than trusting whatever it happens to sit on.
+            .background(.black.opacity(0.5), in: .circle)
+            .foregroundStyle(.white)
+            .padding()
+        }
+        #endif
         .overlay(alignment: .bottomTrailing) {
             if camera.ptzEnabled == true {
                 PtzControlsView(cameraId: camera.id)

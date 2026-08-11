@@ -31,6 +31,13 @@ final class LiveStreamPlayer: ObservableObject {
     // black frame on screen briefly, which is what the poster frame is there to cover.
     @Published private(set) var isVideoReady = false
 
+    // Mirrors the player's own mute state so a view can bind to it. AVPlayer.isMuted isn't
+    // observable from SwiftUI, and on macOS this is the only way to silence a feed - the live
+    // screens there draw the video themselves and have no AVKit volume control (see LiveVideoView).
+    @Published var isMuted: Bool {
+        didSet { player.isMuted = isMuted }
+    }
+
     let player = AVPlayer()
 
     // How long the clock may sit still while the player still claims to be playing before we
@@ -62,6 +69,7 @@ final class LiveStreamPlayer: ObservableObject {
     // The stream URL isn't known at init - it depends on the AppModel the view only reaches
     // through the environment - so it arrives with the first start(url:) instead.
     init(muted: Bool) {
+        isMuted = muted
         player.isMuted = muted
         // Deliberately NOT setting automaticallyWaitsToMinimizeStalling = false here. It reads
         // like the right knob for "show the newest frame, don't build a cushion", and it is for
