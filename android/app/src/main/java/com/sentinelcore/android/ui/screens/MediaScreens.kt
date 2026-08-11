@@ -1,7 +1,10 @@
 package com.sentinelcore.android.ui.screens
 
+import android.view.LayoutInflater
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,9 +26,13 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowOutward
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Speaker
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -35,7 +42,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,9 +53,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
@@ -58,6 +72,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.sentinelcore.android.R
 import com.sentinelcore.android.data.ActivityItem
 import com.sentinelcore.android.data.Camera
 import com.sentinelcore.android.ui.SentinelUiState
@@ -316,6 +331,8 @@ fun LivePlayerScreen(
     onBack: () -> Unit,
 ) {
     val url = model.absoluteUrl("/api/cameras/${camera.id}/stream/stream.m3u8")
+    val zoom = remember { DigitalZoomState() }
+    var isMuted by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         DetailHeader(camera.name, onBack)
         Box(
@@ -327,8 +344,26 @@ fun LivePlayerScreen(
                 headers = model.mediaHeaders(),
                 model = model,
                 posterPath = "/api/cameras/${camera.id}/thumbnail.jpg",
+                muted = isMuted,
+                // The player's own transport bar is off here because the pinch gesture has to own
+                // the picture: the controller sits inside the same view and would swallow every
+                // touch before the zoom saw it. Nothing on it applied to a live feed anyway -
+                // there is no timeline to scrub and no end to seek to - except volume, which is
+                // the mute button below.
+                showControls = false,
                 showLiveStatus = true,
+                zoom = zoom,
                 modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            )
+            MuteButton(
+                isMuted = isMuted,
+                onToggle = { isMuted = !isMuted },
+                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
+            )
+            // Bottom-start: the PTZ pad has the opposite corner and the status chip the top-start.
+            DigitalZoomControls(
+                state = zoom,
+                modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
             )
             if (camera.ptzEnabled) {
                 PtzControls(
@@ -338,6 +373,131 @@ fun LivePlayerScreen(
                 )
             }
         }
+    }
+}
+
+// MARK: digital zoom
+//
+// Zoom that has nothing to do with the camera's own lens. A PTZ camera's optical zoom is a command
+// sent to the camera (PtzControls) and it moves the picture for everyone watching; this scales the
+// frames already on this screen, works on every camera including fixed ones, and is nobody else's
+// business.
+//
+// The transform is applied to the video surface rather than to the player, so it costs nothing: no
+// extra stream, no re-request at a different resolution, no server involvement. What it can't do is
+// add detail that isn't in the stream - past a few times magnification you are looking at the
+// encoder's pixels. Hence the 8x ceiling.
+@Stable
+private class DigitalZoomState {
+    var scale by mutableFloatStateOf(1f)
+        private set
+    var offset by mutableStateOf(Offset.Zero)
+        private set
+
+    // The size of the surface being zoomed, recorded as the player is laid out. The gesture gets
+    // it for free from its own pointer scope; the +/- buttons have no other way to know how far
+    // the picture is allowed to travel.
+    var surfaceSize by mutableStateOf(IntSize.Zero)
+
+    val isZoomed: Boolean get() = scale > 1.01f
+
+    fun reset() {
+        scale = 1f
+        offset = Offset.Zero
+    }
+
+    // `pan` and `centroid` are in the gesture surface's pixels, `centroid` measured from its
+    // top-left; `size` is that surface. Everything below works in distances from the centre,
+    // because the centre is what the scale is applied about.
+    fun transform(gestureZoom: Float, pan: Offset, centroid: Offset, size: IntSize) {
+        val newScale = (scale * gestureZoom).coerceIn(1f, MAX_SCALE)
+        val anchor = Offset(centroid.x - size.width / 2f, centroid.y - size.height / 2f)
+        // Whatever is under the fingers stays under the fingers: a point sitting at
+        // scale * p + offset on screen has to still be there after the pinch, plus the pan.
+        val ratio = newScale / scale
+        val moved = Offset(
+            anchor.x + pan.x - ratio * (anchor.x - offset.x),
+            anchor.y + pan.y - ratio * (anchor.y - offset.y),
+        )
+        scale = newScale
+        offset = clamped(moved, newScale, size)
+    }
+
+    fun scaleBy(factor: Float, size: IntSize) {
+        val newScale = (scale * factor).coerceIn(1f, MAX_SCALE)
+        val ratio = newScale / scale
+        scale = newScale
+        offset = clamped(Offset(offset.x * ratio, offset.y * ratio), newScale, size)
+    }
+
+    // Stops the picture being dragged off the edge, leaving a black screen with nothing to aim at:
+    // at scale s there is (s - 1) / 2 of a frame hidden on each side, and that is exactly how far
+    // it may travel.
+    private fun clamped(offset: Offset, scale: Float, size: IntSize): Offset {
+        val limitX = (size.width * (scale - 1f) / 2f).coerceAtLeast(0f)
+        val limitY = (size.height * (scale - 1f) / 2f).coerceAtLeast(0f)
+        return Offset(offset.x.coerceIn(-limitX, limitX), offset.y.coerceIn(-limitY, limitY))
+    }
+
+    companion object {
+        const val MAX_SCALE = 8f
+    }
+}
+
+// The pinch is the main way in, but it is invisible, and a stuck-at-3x picture with no obvious way
+// back is worse than no zoom at all. These buttons are the discoverable version of both.
+@Composable
+private fun DigitalZoomControls(state: DigitalZoomState, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            .padding(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ZoomButton(Icons.Default.Remove, "Zoom out") { state.scaleBy(1f / 1.5f, state.surfaceSize) }
+        Text(
+            if (state.isZoomed) "%.1f×".format(state.scale) else "1×",
+            color = if (state.isZoomed) SentinelCyan else Color.White.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier
+                .width(38.dp)
+                .clickable(enabled = state.isZoomed) { state.reset() },
+        )
+        ZoomButton(Icons.Default.Add, "Zoom in") { state.scaleBy(1.5f, state.surfaceSize) }
+    }
+}
+
+@Composable
+private fun ZoomButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = label, tint = SentinelCyan, modifier = Modifier.size(16.dp))
+    }
+}
+
+// The live video surface has no controls of its own (see LivePlayerScreen), and a camera with
+// audio would otherwise play into the room with no way to stop it short of leaving the screen.
+@Composable
+private fun MuteButton(isMuted: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+            contentDescription = if (isMuted) "Unmute" else "Mute",
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -351,6 +511,9 @@ private fun SentinelPlayer(
     muted: Boolean = false,
     showControls: Boolean = true,
     showLiveStatus: Boolean = false,
+    // Non-null turns on digital zoom: pinch and drag on the picture, and the transform is applied
+    // to the video surface alone so the transport controls keep their normal size.
+    zoom: DigitalZoomState? = null,
     modifier: Modifier = Modifier,
 ) {
     if (url == null) {
@@ -368,7 +531,10 @@ private fun SentinelPlayer(
     // on a backoff. Counting rather than flagging so a stream that is genuinely gone backs further
     // off each time instead of being retried at a fixed rate forever.
     var playbackFailures by remember(url) { mutableIntStateOf(0) }
-    val player = remember(url, headers, muted) {
+    // Deliberately not keyed on `muted`: the live screen's mute button flips it while the stream is
+    // playing, and rebuilding the player there would mean a full HLS reconnect - a few seconds of
+    // black - every time someone silenced a camera. The LaunchedEffect below applies it instead.
+    val player = remember(url, headers) {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setDefaultRequestProperties(headers)
@@ -401,7 +567,6 @@ private fun SentinelPlayer(
             .build()
             .apply {
                 setMediaItem(mediaItem)
-                volume = if (muted) 0f else 1f
                 playWhenReady = true
                 addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() {
@@ -423,6 +588,8 @@ private fun SentinelPlayer(
                 prepare()
             }
     }
+
+    LaunchedEffect(player, muted) { player.volume = if (muted) 0f else 1f }
 
     // Reconnect after a drop. Skipped on the first pass (nothing has failed yet), then backs off
     // 2s, 4s, 8s… to a 30s ceiling so a server that is actually down isn't hammered by every tile
@@ -452,7 +619,14 @@ private fun SentinelPlayer(
         }
         AndroidView(
             factory = { viewContext ->
-                PlayerView(viewContext).apply {
+                if (zoom == null) {
+                    PlayerView(viewContext)
+                } else {
+                    // Inflated rather than constructed: the surface type is an XML-only attribute,
+                    // and zooming needs the TextureView variant - see the layout's own comment.
+                    LayoutInflater.from(viewContext)
+                        .inflate(R.layout.sentinel_zoomable_player_view, null) as PlayerView
+                }.apply {
                     this.player = player
                     useController = showControls
                 }
@@ -460,9 +634,50 @@ private fun SentinelPlayer(
             update = {
                 it.player = player
                 it.useController = showControls
+                // The transform goes on the video surface, not on the PlayerView and not on this
+                // composable: either of those would magnify the transport controls along with the
+                // picture and then clip them against the tile. The surface's parent content frame
+                // clips it, so a zoomed picture stays inside the letterbox.
+                if (zoom != null) {
+                    it.videoSurfaceView?.apply {
+                        scaleX = zoom.scale
+                        scaleY = zoom.scale
+                        translationX = zoom.offset.x
+                        translationY = zoom.offset.y
+                    }
+                }
             },
             modifier = Modifier.fillMaxSize().alpha(if (isVideoReady) 1f else 0f),
         )
+        if (zoom != null) {
+            Box(
+                Modifier.matchParentSize()
+                    .onSizeChanged { zoom.surfaceSize = it }
+                    // Ahead of the transform detector, which only consumes once a gesture has
+                    // moved past touch slop - so a double tap still reaches this one.
+                    .pointerInput(zoom) {
+                        detectTapGestures(
+                            onDoubleTap = { position ->
+                                if (zoom.isZoomed) {
+                                    zoom.reset()
+                                } else {
+                                    zoom.transform(2f, Offset.Zero, position, size)
+                                }
+                            },
+                        )
+                    }
+                    .pointerInput(zoom) {
+                        detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                            // A one-finger drag reports gestureZoom 1 and pure pan; ignoring it
+                            // at 1x leaves the picture where it is, which is the only sensible
+                            // thing to do when the whole frame is already on screen.
+                            if (gestureZoom != 1f || zoom.isZoomed) {
+                                zoom.transform(gestureZoom, pan, centroid, size)
+                            }
+                        }
+                    },
+            )
+        }
         // On the whole tile rather than the video view alone, so the mark is there over the poster
         // frame too and doesn't blink in and out as playback starts.
         UnlicensedWatermark()

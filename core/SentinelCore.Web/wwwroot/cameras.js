@@ -968,6 +968,7 @@ window.GateWatchCameras = (function () {
       liveTierBadges.set(camera.id, tier);
 
       tile.append(video, label, status, tier);
+      tile.appendChild(buildZoomControls(tile, video));
       // Nothing to arrange with a single camera - the handle would just be clutter over the frame.
       if (cameras.length > 1) tile.appendChild(buildDragHandle(camera));
       if (camera.ptzEnabled) tile.appendChild(buildPtzControls(camera));
@@ -1121,6 +1122,169 @@ window.GateWatchCameras = (function () {
         console.error("Failed to save the live order", err);
       }
     }, 400);
+  }
+
+  // ---------------- Live tab: digital zoom ----------------
+  //
+  // Zoom that has nothing to do with the camera's own lens. The PTZ pad below sends a command to
+  // the camera and moves the picture for everyone watching; this scales the frames already in this
+  // browser, works on every camera including fixed ones, and is nobody else's business. What it
+  // can't do is add detail the stream never carried - past a few times magnification you are
+  // looking at the encoder's pixels, hence the ceiling.
+  const MAX_DIGITAL_ZOOM = 8;
+
+  function buildZoomControls(tile, video) {
+    const state = { scale: 1, x: 0, y: 0 };
+
+    const wrap = document.createElement("div");
+    wrap.className = "live-tile-zoom";
+    wrap.dataset.tip = "Zoom into the picture itself. Ctrl/⌘ + scroll or pinch does the same thing, and you can drag the frame around once it's zoomed in.";
+
+    const button = (text, tip, onClick) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "live-tile-zoom-btn";
+      btn.textContent = text;
+      btn.dataset.tip = tip;
+      btn.addEventListener("click", onClick);
+      return btn;
+    };
+
+    const out = button("−", "Zoom out.", () => scaleAbout(state.scale / 1.5, 0, 0));
+    const readout = button("1×", "Back to the whole frame.", reset);
+    readout.classList.add("live-tile-zoom-readout");
+    const into = button("+", "Zoom in on the middle of the frame.", () => scaleAbout(state.scale * 1.5, 0, 0));
+    // The native transport bar is hidden while zoomed (it would be magnified and clipped along
+    // with the picture), so its two useful buttons live here instead.
+    // A note with a line through it when muted, rather than a speaker emoji: the emoji renders in
+    // full colour and is the only thing on the dashboard that does.
+    const mute = button("♪", "Mute or unmute this camera.", () => {
+      video.muted = !video.muted;
+      render();
+    });
+    const full = button("⛶", "Fill the screen. The zoom and these controls come with it.", () => {
+      if (document.fullscreenElement === tile) document.exitFullscreen();
+      else tile.requestFullscreen().catch(() => { /* denied or unsupported - nothing to recover */ });
+    });
+    wrap.append(out, readout, into, mute, full);
+
+    function clampScale(scale) {
+      return Math.min(Math.max(scale, 1), MAX_DIGITAL_ZOOM);
+    }
+
+    // (ax, ay) is the point to keep still, measured from the centre of the video - that is what
+    // the transform scales about. A point sitting at scale * p + offset has to still be there
+    // afterwards, which is what the ratio below works out.
+    function scaleAbout(scale, ax, ay) {
+      const next = clampScale(scale);
+      const ratio = next / state.scale;
+      state.x = ax - ratio * (ax - state.x);
+      state.y = ay - ratio * (ay - state.y);
+      state.scale = next;
+      render();
+    }
+
+    function panBy(dx, dy) {
+      state.x += dx;
+      state.y += dy;
+      render();
+    }
+
+    function reset() {
+      state.scale = 1;
+      state.x = 0;
+      state.y = 0;
+      render();
+    }
+
+    function render() {
+      // Stops the picture being dragged off the edge and leaving a black tile with nothing to aim
+      // at: at scale s there is (s - 1) / 2 of a frame hidden on each side, and that is exactly how
+      // far it may travel.
+      const limitX = (video.clientWidth * (state.scale - 1)) / 2;
+      const limitY = (video.clientHeight * (state.scale - 1)) / 2;
+      state.x = Math.min(Math.max(state.x, -limitX), limitX);
+      state.y = Math.min(Math.max(state.y, -limitY), limitY);
+
+      const zoomed = state.scale > 1.01;
+      video.style.transform = zoomed ? `translate(${state.x}px, ${state.y}px) scale(${state.scale})` : "";
+      // The browser's own controls are part of the video element, so they would be blown up and
+      // then clipped by the tile along with the picture. Hidden while zoomed, back the moment the
+      // whole frame is on screen again.
+      video.controls = !zoomed;
+      // On the tile rather than on this cluster: the cursor and the "keep me visible" rule both
+      // belong to the picture, which is a sibling of these buttons.
+      tile.classList.toggle("live-tile-zoomed", zoomed);
+      readout.textContent = zoomed ? `${state.scale.toFixed(1)}×` : "1×";
+      mute.classList.toggle("live-tile-zoom-muted", video.muted);
+    }
+
+    // Ctrl/⌘ + wheel is also what a trackpad pinch arrives as. A plain wheel is left alone: it is
+    // how the page scrolls, and a grid of tiles that swallowed it would be unusable.
+    video.addEventListener("wheel", e => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const rect = video.getBoundingClientRect();
+      scaleAbout(
+        state.scale * Math.exp(-e.deltaY / 200),
+        e.clientX - rect.left - rect.width / 2,
+        e.clientY - rect.top - rect.height / 2
+      );
+    }, { passive: false });
+
+    // Two-finger pinch. The video's touch-action allows vertical panning only, which is what makes
+    // these events cancellable: the browser would otherwise take a pinch for its own page zoom and
+    // hand us uncancellable moves.
+    let pinch = null;
+    const touchDistance = touches => Math.hypot(
+      touches[0].clientX - touches[1].clientX,
+      touches[0].clientY - touches[1].clientY
+    );
+
+    video.addEventListener("touchstart", e => {
+      if (e.touches.length !== 2) return;
+      const rect = video.getBoundingClientRect();
+      pinch = {
+        distance: touchDistance(e.touches),
+        scale: state.scale,
+        x: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left - rect.width / 2,
+        y: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top - rect.height / 2
+      };
+    }, { passive: true });
+
+    video.addEventListener("touchmove", e => {
+      if (!pinch || e.touches.length !== 2 || pinch.distance <= 0) return;
+      e.preventDefault();
+      // Against the distance the pinch *started* at, not the last frame's: accumulating frame to
+      // frame squares the gesture and makes the picture bolt away from the fingers.
+      scaleAbout(pinch.scale * (touchDistance(e.touches) / pinch.distance), pinch.x, pinch.y);
+    }, { passive: false });
+
+    video.addEventListener("touchend", () => { pinch = null; });
+    video.addEventListener("touchcancel", () => { pinch = null; });
+
+    // Drag to move the zoomed picture around. Only once zoomed - at 1x there is nothing to pan,
+    // and grabbing the tile is how it gets rearranged.
+    let dragFrom = null;
+    video.addEventListener("pointerdown", e => {
+      if (state.scale <= 1.01 || (e.pointerType === "touch" && pinch)) return;
+      dragFrom = { x: e.clientX, y: e.clientY };
+      video.setPointerCapture(e.pointerId);
+    });
+    video.addEventListener("pointermove", e => {
+      if (!dragFrom) return;
+      panBy(e.clientX - dragFrom.x, e.clientY - dragFrom.y);
+      dragFrom = { x: e.clientX, y: e.clientY };
+    });
+    for (const name of ["pointerup", "pointercancel"]) {
+      video.addEventListener(name, () => { dragFrom = null; });
+    }
+
+    // Leaving fullscreen changes how big the video is, and the pan limits are in pixels of it.
+    tile.addEventListener("fullscreenchange", render);
+
+    render();
+    return wrap;
   }
 
   // ---------------- PTZ (pan/tilt/zoom) joystick ----------------

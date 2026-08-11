@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A PlayerView that renders into a TextureView instead of the default SurfaceView.
+
+  This exists purely so the live picture can be digitally zoomed. A SurfaceView is its own window
+  layer punched through the view hierarchy, and scale/translation on it either lag the rest of the
+  view by a frame or are ignored outright depending on the device; a TextureView is an ordinary
+  view and honours the transform properties exactly. The transform goes on this surface alone
+  (see SentinelPlayer), so the playback controls drawn over it stay their normal size.
+
+  The grid tiles keep the plain SurfaceView-backed PlayerView - they aren't zoomable, and a
+  SurfaceView is the cheaper of the two when several are on screen at once.
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="texture_view" />

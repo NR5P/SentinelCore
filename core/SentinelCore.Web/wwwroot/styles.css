@@ -1569,6 +1569,85 @@ main {
   aspect-ratio: 16 / 9;
   display: block;
   background: #000;
+  /* Vertical panning only. Scrolling the grid still works, but the browser no longer claims a
+     pinch for its own page zoom - which is what makes the tile's touchmove events cancellable, and
+     so what makes pinch-to-zoom on the picture possible at all (see buildZoomControls). */
+  touch-action: pan-y;
+}
+
+.live-tile-zoomed video {
+  cursor: grab;
+}
+
+.live-tile-zoomed video:active {
+  cursor: grabbing;
+}
+
+/* Under the name label, which is the one corner the drag handle, the PTZ pad and the player's own
+   transport bar all leave alone. Out of the way until the tile is hovered - or until the picture
+   is zoomed, when the way back has to stay on screen. */
+.live-tile-zoom {
+  position: absolute;
+  top: 36px;
+  left: 8px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.live-tile:hover .live-tile-zoom,
+.live-tile:focus-within .live-tile-zoom,
+.live-tile-zoomed .live-tile-zoom {
+  opacity: 1;
+}
+
+.live-tile-zoom-btn {
+  background: rgba(5, 7, 10, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+
+.live-tile-zoom-btn:hover,
+.live-tile-zoom-btn:focus-visible {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.live-tile-zoom-readout {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-tile-zoom-muted {
+  color: var(--red);
+  text-decoration: line-through;
+}
+
+.live-tile-zoomed .live-tile-zoom-readout {
+  color: var(--cyan);
+}
+
+/* Fullscreen is requested on the tile, not on the video, so the zoom controls come with it - a
+   fullscreen <video> would drop back to the browser's own bar and lose them. */
+.live-tile:fullscreen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+}
+
+.live-tile:fullscreen video {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  object-fit: contain;
 }
 
 .live-tile-label {

@@ -4,21 +4,30 @@ import SwiftUI
 
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 // The video surface for a *live* feed: picture only, no transport controls.
 //
-// On macOS this deliberately avoids SwiftUI's VideoPlayer. VideoPlayer always builds AVKit's
-// inline playback controls, and on macOS 26/27 assembling those over a live stream aborts inside
-// AVKit itself - AVAuxiliaryControlsView adds a control, that resizes the controls bar, the
-// resulting synchronous re-layout re-enters AVKit's own SwiftUI body, and its
-// AVTimelineScrubberViewModel binding traps (EXC_BREAKPOINT in AVKit, no app frames above
-// SentinelCoreApp.main). It happens as soon as the Live grid draws, so the whole tab was
-// unreachable. There is no public knob to hide VideoPlayer's controls, so live playback renders
-// straight into an AVPlayerLayer instead.
+// This deliberately avoids SwiftUI's VideoPlayer, on both platforms, for two separate reasons.
+//
+// On macOS it is a crash. VideoPlayer always builds AVKit's inline playback controls, and on
+// macOS 26/27 assembling those over a live stream aborts inside AVKit itself -
+// AVAuxiliaryControlsView adds a control, that resizes the controls bar, the resulting synchronous
+// re-layout re-enters AVKit's own SwiftUI body, and its AVTimelineScrubberViewModel binding traps
+// (EXC_BREAKPOINT in AVKit, no app frames above SentinelCoreApp.main). It happens as soon as the
+// Live grid draws, so the whole tab was unreachable. There is no public knob to hide VideoPlayer's
+// controls.
+//
+// On iOS it is digital zoom. Zooming is a transform on the video surface, and AVKit's controls
+// live *inside* that surface - a pinch would blow the transport bar up with the picture and then
+// clip it against the tile. Owning the layer keeps the transform on the picture alone.
 //
 // Nothing is lost by it: a live feed has no timeline to scrub and no end to seek to, and the grid
-// tiles already refused hits so their controls were only ever decoration.
+// tiles already refused hits so their controls were only ever decoration. The one control that did
+// something on the full-screen live view was volume, and LivePlayerView now draws its own mute
+// button (bound to LiveStreamPlayer.isMuted) on both platforms.
 //
 // Recorded playback (RecordingTimelineView, ActivityDetailView) still uses VideoPlayer - those
 // clips have a real duration, the scrubber is the point, and they don't take this path.
@@ -26,11 +35,7 @@ struct LiveVideoView: View {
     let player: AVPlayer
 
     var body: some View {
-        #if os(macOS)
         PlayerLayerView(player: player)
-        #else
-        VideoPlayer(player: player)
-        #endif
     }
 }
 
@@ -83,6 +88,40 @@ final class PlayerLayerBackingView: NSView {
     var player: AVPlayer? {
         get { (layer as? AVPlayerLayer)?.player }
         set { (layer as? AVPlayerLayer)?.player = newValue }
+    }
+}
+#else
+private struct PlayerLayerView: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerLayerBackingView {
+        let view = PlayerLayerBackingView()
+        view.player = player
+        return view
+    }
+
+    func updateUIView(_ view: PlayerLayerBackingView, context: Context) {
+        if view.player !== player { view.player = player }
+    }
+
+    static func dismantleUIView(_ view: PlayerLayerBackingView, coordinator: ()) {
+        view.player = nil
+    }
+}
+
+final class PlayerLayerBackingView: UIView {
+    // layerClass, so the AVPlayerLayer *is* the view's layer and follows its bounds for free.
+    override static var layerClass: AnyClass { AVPlayerLayer.self }
+
+    var player: AVPlayer? {
+        get { (layer as? AVPlayerLayer)?.player }
+        set {
+            guard let playerLayer = layer as? AVPlayerLayer else { return }
+            // Matches what VideoPlayer did, so a tile letterboxes as it always has rather than
+            // cropping the top and bottom off a 4:3 camera.
+            playerLayer.videoGravity = .resizeAspect
+            playerLayer.player = newValue
+        }
     }
 }
 #endif
