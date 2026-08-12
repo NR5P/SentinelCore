@@ -27,6 +27,10 @@ window.GateWatchSettings = (function () {
 
   const WIDE_TYPES = new Set(["checkbox", "password", "csv"]);
 
+  // Must stay identical to SettingsSecrets.Mask on the server: a saved secret is sent out as
+  // this, and a save that sends it back untouched means "keep what's stored".
+  const SECRET_MASK = "••••••••";
+
   const SECTION_TIPS = {
     bridge: "How alerts arrive from Blue Iris, and how long they're kept.",
     ollama: "The local AI model that looks at each snapshot, and how it's tuned.",
@@ -116,16 +120,53 @@ window.GateWatchSettings = (function () {
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "field-toggle-btn";
-      toggle.textContent = "show";
       toggle.setAttribute("data-tip-right", "");
-      // Stored secrets arrive masked (••••••••) and never leave the server, so "show" can only
-      // reveal what's been typed in this session - said here so the bullets aren't mistaken for
-      // the actual stored value.
-      toggle.dataset.tip = "Reveal what's typed here. A saved secret shows as bullets and stays hidden - type a new value to replace it, or leave the bullets to keep it.";
-      toggle.addEventListener("click", () => {
-        input.type = input.type === "password" ? "text" : "password";
+
+      // A saved secret arrives as SettingsSecrets.Mask and the real value never leaves the
+      // server, so while the box still holds the mask the browser has nothing to reveal - a
+      // "show" button here swapped eight bullets for eight bullets and read as broken. In that
+      // state the box is read-only and the button offers "replace" instead; only once the value
+      // is something typed in this session does it become the show/hide toggle. Read-only also
+      // stops a click-and-type from producing "••••••••newkey" and saving that as the secret.
+      const masked = input.value === SECRET_MASK;
+      input.readOnly = masked;
+
+      function syncToggle() {
+        if (input.readOnly) {
+          toggle.textContent = "replace";
+          toggle.dataset.tip = "This secret is saved on the server and never sent back here, so it can't be shown. Click to type a new one - leave it alone to keep what's stored.";
+          return;
+        }
         toggle.textContent = input.type === "password" ? "show" : "hide";
+        toggle.dataset.tip = "Reveal what's typed here so you can check it.";
+      }
+
+      toggle.addEventListener("click", () => {
+        if (input.readOnly) {
+          input.readOnly = false;
+          input.value = "";
+          input.type = "text";
+          input.focus();
+        } else {
+          input.type = input.type === "password" ? "text" : "password";
+        }
+        syncToggle();
       });
+
+      // Backing out of a replace: an empty box would save as "clear this secret", so if the
+      // field started masked and is left empty, put the mask back rather than letting a change
+      // of mind wipe a working key.
+      if (masked) {
+        input.addEventListener("blur", () => {
+          if (input.readOnly || input.value !== "") return;
+          input.value = SECRET_MASK;
+          input.type = "password";
+          input.readOnly = true;
+          syncToggle();
+        });
+      }
+
+      syncToggle();
       wrap.append(input, toggle);
       row.appendChild(wrap);
       return row;

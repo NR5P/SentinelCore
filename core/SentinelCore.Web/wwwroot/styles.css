@@ -993,6 +993,13 @@ main {
   flex: 1;
 }
 
+/* A saved secret sits here read-only until "replace" is pressed - dimmed so it reads as a
+   placeholder for something stored, not as a value you can edit in place. */
+.field-password-row .field-input[readonly] {
+  color: var(--text-dim);
+  cursor: default;
+}
+
 .field-toggle-btn {
   background: transparent;
   border: 1px solid var(--border);
