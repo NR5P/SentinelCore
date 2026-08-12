@@ -145,15 +145,15 @@ public static class SettingsSchema
             Endpoint = "/api/settings/bridge",
             Basic = true,
             DtoType = typeof(BridgeSettingsDto),
-            Description = "How Blue Iris talks to this app, and how long history is kept. The API key here has to match what you entered in Blue Iris - if alerts stop arriving, check that first. Re-run setup wizard walks you through the essentials again without losing anything you've already configured.",
+            Description = "How alerts get into this app, and how long history is kept. Everything that raises an alert goes through here - Blue Iris, and the cameras this app watches itself - so if Blue Iris alerts specifically stop arriving, check the API key below still matches what you entered in Blue Iris. Re-run setup wizard walks you through the essentials again without losing anything you've already configured.",
             Fields =
             [
-                Password("apiKey", "API Key", "The secret Blue Iris must send with each alert. If this doesn't match what Blue Iris is configured with, alerts are rejected."),
-                Number("maximumImageBytes", "Max Image Bytes", "Largest snapshot accepted from Blue Iris. Anything bigger is refused instead of eating memory.", 1024, 104857600),
+                Password("apiKey", "API Key", "The secret every alert must carry to be accepted. Blue Iris has to be configured with this same key or its alerts are rejected; this app's own cameras use it automatically."),
+                Number("maximumImageBytes", "Max Image Bytes", "Largest snapshot accepted with an alert. Anything bigger is refused instead of eating memory.", 1024, 104857600),
                 Number("retentionDays", "Retention Days", "How long events and their images are kept before being cleaned up automatically.", 1, 3650),
                 Number("unverifiedMotionRetentionDays", "Unverified Motion Days", "How long to keep motion the AI rejected as nothing, along with its clips. These are only useful for checking a camera's trigger zone is tuned right, and they use far more disk than confirmed events do. 0 keeps them forever.", 0, 365),
                 Check("saveImages", "Save Images", "Keep a copy of each snapshot on disk. Turn off to record only the AI's text analysis."),
-                Csv("allowedImageContentTypes", "Allowed Content Types (comma separated)", "Image formats accepted from Blue Iris, e.g. image/jpeg. Anything else is rejected.")
+                Csv("allowedImageContentTypes", "Allowed Content Types (comma separated)", "Image formats accepted with an alert, e.g. image/jpeg. Anything else is rejected.")
             ],
             ExtraAction = new SettingsActionSchema(
                 "setupReset",

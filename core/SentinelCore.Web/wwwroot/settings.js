@@ -262,12 +262,9 @@ window.GateWatchSettings = (function () {
       section.classList.toggle("hidden", !advanced && section.dataset.basic !== "true");
     }
 
-    // Whatever was open may now be hidden, so open the first section actually on screen -
-    // otherwise basic mode can load with everything collapsed.
-    const visible = [...root.querySelectorAll(".settings-section")].filter(s => !s.classList.contains("hidden"));
-    if (visible.length > 0 && !visible.some(s => s.classList.contains("open"))) {
-      visible[0].classList.add("open");
-    }
+    // Every section starts collapsed, including the first one. Auto-opening whichever section
+    // happened to be first only ever meant BRIDGE was permanently expanded, which reads as a
+    // section stuck open rather than as a helpful starting point.
 
     const label = document.getElementById("mode-label");
     if (label) label.textContent = advanced ? "advanced" : "basic";
