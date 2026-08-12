@@ -383,6 +383,14 @@ private fun ServerSettingsSectionEditor(
                         problems.add("${field.label} must be a number.")
                         continue
                     }
+                    // Checked here as well as on the server so the message names the box to go
+                    // and fix, and so nothing the server would refuse leaves the phone. The
+                    // server validates it again on arrival regardless - see SaveSectionAsync.
+                    val problem = boundsProblem(field, number)
+                    if (problem != null) {
+                        problems.add(problem)
+                        continue
+                    }
                     // org.json would serialize 30.0 as "30.0", which the server's int binding
                     // refuses - so integral values go as longs.
                     if (number == number.toLong().toDouble()) number.toLong() else number
@@ -700,6 +708,28 @@ private fun writePath(target: JSONObject, path: String, value: Any) {
     }
     node.put(segments.last(), value)
 }
+
+// What is wrong with a number the user typed into a settings box, or null if nothing is. The
+// bounds come from the schema, which mirrors the [Range] the server enforces - so this says the
+// same thing the save would have said, in the same words, without the round trip.
+private fun boundsProblem(field: SettingsField, number: Double): String? {
+    if (field.integer == true && number != number.toLong().toDouble()) {
+        return "${field.label} must be a whole number."
+    }
+    val min = field.min
+    val max = field.max
+    if (min != null && max != null && (number < min || number > max)) {
+        return "${field.label} must be between ${formatBound(min)} and ${formatBound(max)}."
+    }
+    if (min != null && number < min) return "${field.label} must be $min or more."
+    if (max != null && number > max) return "${field.label} must be $max or less."
+    return null
+}
+
+// The same "don't show a port as 1883.0" rule the field seeding uses, applied to the bounds so an
+// error reads "between 1 and 65535" rather than "between 1.0 and 65535.0".
+private fun formatBound(value: Double): String =
+    if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
 
 
 // State for the REBOOT SERVER panel, deliberately owned by the screen rather than the panel -

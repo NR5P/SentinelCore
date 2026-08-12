@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SentinelCore.Web;
@@ -61,10 +63,20 @@ public sealed record SettingsFieldSchema
     public required string Tip { get; init; }
 
     // Numeric bounds, mirroring the [Range] attributes on the DTO properties. Advisory only -
-    // the server validates regardless, since a client is free to ignore these.
+    // the server validates regardless, since a client is free to ignore these. Kept honest by
+    // SettingsSchemaTests, which compares every one of these against its DTO's [Range]: bounds
+    // that drifted would have clients rejecting values the server accepts, or vice versa.
     public double? Min { get; init; }
     public double? Max { get; init; }
     public double? Step { get; init; }
+
+    // Whether a "number" field holds a whole number. Set from the DTO property type when Sections
+    // is built rather than declared per field, for the same reason as Secret below: a hand-written
+    // flag could disagree with the type the value actually binds to. Without it a client has no way
+    // to tell a port (int) from a free-space threshold in GB (double) - both are plain numbers with
+    // no step - and 3.7 typed into the port box would reach the server as a bind error rather than
+    // as "Broker Port must be a whole number".
+    public bool Integer { get; init; }
 
     // The value someone with no opinion should use, for the numeric settings where "what do I
     // even put here?" is the real question - a confidence threshold means nothing to somebody who
@@ -222,7 +234,10 @@ public static class SettingsSchema
             Options = options.Select(o => new SettingsFieldOption(o.Value, o.Label)).ToArray()
         };
 
-    public static IReadOnlyList<SettingsSectionSchema> Sections { get; } =
+    // The sections as written below. Sections - the one clients see - is this run through
+    // WithDerivedFlags, which fills in the per-field flags that are read off the DTOs rather than
+    // typed out by hand. Declared first, because static initializers run in textual order.
+    private static readonly IReadOnlyList<SettingsSectionSchema> Declared =
     [
         new()
         {
@@ -941,4 +956,49 @@ public static class SettingsSchema
             ]
         }
     ];
+
+    public static IReadOnlyList<SettingsSectionSchema> Sections { get; } = WithDerivedFlags(Declared);
+
+    // Fills in the field flags that are read off the DTO instead of being written out per field.
+    // Currently that is Integer alone; anything else derivable belongs here rather than in 67
+    // hand-typed call sites that would each be one edit away from disagreeing with the DTO.
+    private static IReadOnlyList<SettingsSectionSchema> WithDerivedFlags(
+        IReadOnlyList<SettingsSectionSchema> sections) =>
+        sections
+            .Select(section => section with
+            {
+                Fields = section.Fields
+                    .Select(field => field.Type == "number"
+                        ? field with { Integer = IsIntegral(section.DtoType, field.Name) }
+                        : field)
+                    .ToArray()
+            })
+            .ToArray();
+
+    // Walks a dotted camelCase field name ("apple.teamId", "minimumConfidence") down to the
+    // property it binds to. A name that resolves to nothing returns false rather than throwing:
+    // SettingsSchemaTests is what fails the build on a field with no matching property, and it
+    // gives a far better message than a NullReferenceException during static initialization.
+    private static bool IsIntegral(Type dtoType, string fieldName)
+    {
+        var current = dtoType;
+        var segments = fieldName.Split('.');
+
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var property = current?.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(p => string.Equals(
+                    JsonNamingPolicy.CamelCase.ConvertName(p.Name), segments[i], StringComparison.Ordinal));
+
+            if (property is null) return false;
+
+            var underlying = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            if (i == segments.Length - 1)
+                return underlying == typeof(int) || underlying == typeof(long);
+
+            current = underlying;
+        }
+
+        return false;
+    }
 }

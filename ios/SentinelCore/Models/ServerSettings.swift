@@ -52,6 +52,13 @@ struct SettingsFieldSchema: Decodable, Identifiable, Hashable {
     let max: Double?
     let step: Double?
 
+    // Whether a "number" field holds a whole number, so 3.7 in a port box is caught here with a
+    // sentence rather than by the server as a model-binding failure. Optional, unlike secret and
+    // requiresRestart next to it, only because it was added later: against a server that predates
+    // it the value is nil, and nil has to mean "don't apply a restriction this server never asked
+    // for" rather than failing to decode the whole schema.
+    let integer: Bool?
+
     // What to use if you have no opinion, for the numeric settings where that is the honest
     // position - see SettingsFieldSchema.Recommended on the server. Absent on most fields, and
     // deliberately not the same thing as the shipped default.

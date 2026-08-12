@@ -1060,6 +1060,12 @@ class SentinelRepository(
                                     }
                                 }
                             } ?: emptyList(),
+                            // has() rather than optDouble's own default: 0 is a legal bound on
+                            // plenty of these fields, so an absent min must stay null and not
+                            // become a floor of zero.
+                            min = if (field.has("min") && !field.isNull("min")) field.getDouble("min") else null,
+                            max = if (field.has("max") && !field.isNull("max")) field.getDouble("max") else null,
+                            integer = if (field.has("integer")) field.getBoolean("integer") else null,
                             lookup = field.optJSONObject("lookup")?.let {
                                 SettingsLookup(
                                     label = it.getString("label"),

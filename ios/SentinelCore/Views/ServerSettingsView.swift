@@ -532,6 +532,23 @@ struct ServerSettingsSectionView: View {
         }
     }
 
+    // What is wrong with a number the user typed, or nil if nothing is. Only the fields that fall
+    // back to a keyboard can be wrong at all - a slider cannot leave its own range - but that is
+    // most of them: every port, size, count and timeout has more than 100 stops. See usesSlider.
+    //
+    // The server checks all of this again on arrival ([Range] on the DTOs); doing it here as well
+    // is what turns "400: The field Port must be between 1 and 65535" arriving after a round trip
+    // into a line under the box that says which box, before anything is sent.
+    private func boundsProblem(_ field: SettingsFieldSchema, _ number: Double) -> String? {
+        if field.integer == true, number.rounded() != number {
+            return "\(field.label) must be a whole number."
+        }
+        if let min = field.min, let max = field.max, number < min || number > max {
+            return "\(field.label) must be between \(formatted(min, step: field.step ?? 1)) and \(formatted(max, step: field.step ?? 1))."
+        }
+        return nil
+    }
+
     private func save() async {
         isSaving = true
         saveErrors = []
@@ -548,6 +565,10 @@ struct ServerSettingsSectionView: View {
                 let raw = text[field.name] ?? ""
                 guard let number = Double(raw.trimmingCharacters(in: .whitespaces)), raw.isEmpty == false else {
                     saveErrors.append("\(field.label) must be a number.")
+                    continue
+                }
+                if let problem = boundsProblem(field, number) {
+                    saveErrors.append(problem)
                     continue
                 }
                 value = .number(number)

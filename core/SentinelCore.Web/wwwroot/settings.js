@@ -297,7 +297,11 @@ window.GateWatchSettings = (function () {
     if (field.type === "number") {
       if (field.min !== undefined) input.min = field.min;
       if (field.max !== undefined) input.max = field.max;
-      input.step = field.step !== undefined ? field.step : "any";
+      // A whole-number field steps by 1 rather than "any", so the spinner arrows land on legal
+      // values and the browser's own red outline appears on 3.7 in a port box without waiting for
+      // save. Fields with no declared step that aren't integers (free space in GB, night-to-day
+      // ratio) stay on "any" - fractions are legal there.
+      input.step = field.step !== undefined ? field.step : (field.integer ? 1 : "any");
     }
     row.appendChild(field.lookup ? buildLookup(field, input) : input);
 
@@ -773,17 +777,67 @@ window.GateWatchSettings = (function () {
     return btn;
   }
 
+  // What is wrong with what's in a number box, or null if nothing is. Returns the message a user
+  // should read rather than a boolean, so the caller can list several at once the way a failed
+  // save from the server already does.
+  //
+  // The empty-string check is doing more work than it looks. A number input whose contents aren't
+  // a parseable number - "abc", "1.2.3", a lone "-" - reports value as "" and not as what was
+  // typed, so garbage and a genuinely blank box are indistinguishable from .value alone. This
+  // used to be read as `input.value === "" ? 0 : ...`, which meant typing letters into Minimum
+  // Confidence silently saved 0: not an error anywhere, since 0 is in range, just every alert
+  // through the door from then on. validity.badInput is what separates the two cases, and both
+  // are now refused rather than one of them being quietly rounded to zero.
+  function numberProblem(field, input) {
+    const label = field.label || field.name;
+
+    if (input.validity && input.validity.badInput) return `${label} must be a number.`;
+    if (input.value.trim() === "") return `${label} must be a number.`;
+
+    const value = Number(input.value);
+    if (!Number.isFinite(value)) return `${label} must be a number.`;
+
+    if (field.integer && !Number.isInteger(value)) return `${label} must be a whole number.`;
+
+    const min = field.min;
+    const max = field.max;
+    if (typeof min === "number" && typeof max === "number" && (value < min || value > max)) {
+      return `${label} must be between ${min} and ${max}.`;
+    }
+    if (typeof min === "number" && value < min) return `${label} must be ${min} or more.`;
+    if (typeof max === "number" && value > max) return `${label} must be ${max} or less.`;
+
+    return null;
+  }
+
   async function saveSection(schema, section, errorsEl, saveBtn) {
     const data = {};
+    const problems = [];
     for (const field of schema.fields) {
       const input = section.querySelector(`[data-field="${field.name}"]`);
       if (!input) continue;
       let value;
       if (field.type === "checkbox") value = input.checked;
-      else if (field.type === "number") value = input.value === "" ? 0 : Number(input.value);
+      else if (field.type === "number") {
+        const problem = numberProblem(field, input);
+        if (problem) {
+          problems.push(problem);
+          continue;
+        }
+        value = Number(input.value);
+      }
       else if (field.type === "csv") value = input.value.split(",").map(s => s.trim()).filter(s => s.length > 0);
       else value = input.value;
       writePath(data, field.name, value);
+    }
+
+    // Caught here rather than left to the server so the message names the box to go and fix, and
+    // so a value the server would reject never leaves the page. The server validates all of this
+    // again regardless - see SaveSectionAsync - since a client is free to skip these checks.
+    if (problems.length > 0) {
+      showFieldErrors(errorsEl, problems);
+      showToast(`${schema.title}: not saved`, false);
+      return;
     }
 
     await submit(schema.endpoint, data, schema.title, errorsEl, saveBtn);
@@ -1005,18 +1059,34 @@ window.GateWatchSettings = (function () {
       .map(i => i.value.trim())
       .filter(v => v.length > 0);
 
+    // Blank or unparseable crop edges are caught here because they are the one crop mistake the
+    // server can't describe well: parseFloat gives NaN, JSON.stringify writes it as null, and the
+    // save comes back as a model-binding failure rather than as the readable rule the endpoint
+    // has for everything else about a crop. Out-of-range and back-to-front edges are left to that
+    // rule, which says the whole of it in one sentence.
+    const problems = [];
     let crop = null;
     if (f.cropInput.checked) {
       crop = {};
       for (const input of f.cropGrid.querySelectorAll("[data-crop-field]")) {
-        crop[input.dataset.cropField] = parseFloat(input.value);
+        const edge = input.dataset.cropField;
+        const value = parseFloat(input.value);
+        if (!Number.isFinite(value)) {
+          problems.push(`Profile '${name || "(untitled)"}': crop ${edge} must be a number between 0 and 1.`);
+          continue;
+        }
+        crop[edge] = value;
       }
     }
 
     const licensePlateRecognitionEnabled = f.plateInput.checked;
     const faceRecognitionEnabled = f.faceInput.checked;
 
-    return { name, profile: { displayName, systemPrompt, questions, crop, licensePlateRecognitionEnabled, faceRecognitionEnabled } };
+    return {
+      name,
+      problems,
+      profile: { displayName, systemPrompt, questions, crop, licensePlateRecognitionEnabled, faceRecognitionEnabled }
+    };
   }
 
   function buildKnownVehicleRow(vehicle) {
@@ -1346,9 +1416,23 @@ window.GateWatchSettings = (function () {
     body.appendChild(footer);
 
     saveBtn.addEventListener("click", async () => {
+      // minimumConfidence is rendered above and so has to be read back here. This section builds
+      // its payload by hand rather than through saveSection - it is the one section with a QR
+      // pairing panel and no schema entry - and the field was missing from that list, which meant
+      // editing it did nothing and every save quietly wrote the DTO's own default over it.
+      const confidenceField = fields.find(f => f.name === "minimumConfidence");
+      const confidenceInput = section.querySelector('[data-field="minimumConfidence"]');
+      const problem = numberProblem(confidenceField, confidenceInput);
+      if (problem) {
+        showFieldErrors(errors, [problem]);
+        showToast("Apple HomeKit: not saved", false);
+        return;
+      }
+
       const payload = {
         enabled: section.querySelector('[data-field="enabled"]').checked,
         sidecarBaseUrl: section.querySelector('[data-field="sidecarBaseUrl"]').value,
+        minimumConfidence: Number(confidenceInput.value),
         timeoutSeconds: data.timeoutSeconds || 10
       };
       await submit("/api/settings/homekit", payload, "Apple HomeKit", errors, saveBtn);
@@ -2019,9 +2103,16 @@ window.GateWatchSettings = (function () {
 
     saveBtn.addEventListener("click", async () => {
       const dict = {};
+      const problems = [];
       for (const card of cardsWrap.querySelectorAll(".profile-card")) {
-        const { name, profile } = collectProfile(card);
+        const { name, profile, problems: cardProblems } = collectProfile(card);
+        problems.push(...cardProblems);
         if (name) dict[name] = profile;
+      }
+      if (problems.length > 0) {
+        showFieldErrors(errors, problems);
+        showToast("Prompt profiles: not saved", false);
+        return;
       }
       await submit("/api/settings/prompt-profiles", dict, "Prompt profiles", errors, saveBtn);
     });

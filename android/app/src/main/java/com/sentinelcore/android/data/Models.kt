@@ -593,6 +593,17 @@ data class SettingsField(
     val type: String,
     val tip: String,
     val options: List<SettingsFieldOption>,
+    // Bounds for a "number" field, mirroring the [Range] on the server's DTO property. Carried so
+    // this app can say "must be between 0 and 1" under the box instead of sending the value and
+    // relaying whatever the server's rejection said - the schema has always published these, and
+    // this app was simply dropping them on the floor.
+    val min: Double?,
+    val max: Double?,
+    // True when the number is a whole one (an int or long on the server). Without it there is no
+    // telling a port from a free-space threshold in GB: both are plain numbers with no step, and
+    // only one of them may be 3.7. Null against a server predating the flag, which has to mean
+    // "apply no extra restriction" rather than guessing.
+    val integer: Boolean?,
     // Absent on all but a handful of text fields - see SettingsLookup.
     val lookup: SettingsLookup?,
     val requiresRestart: Boolean,

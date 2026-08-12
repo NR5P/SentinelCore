@@ -1,5 +1,6 @@
 extern alias WebHost;
 
+using System.ComponentModel.DataAnnotations;
 using System.Net;
 using System.Net.Http.Json;
 using System.Reflection;
@@ -339,6 +340,89 @@ public sealed class SettingsSchemaTests
         }
     }
 
+    // The schema's bounds are what every client validates against before it sends anything; the
+    // DTO's [Range] is what the server enforces on arrival. They are written out twice, in two
+    // files, and nothing but this test stops them drifting - a schema max of 100 over a [Range(0,
+    // 1)] would put an inline "that's fine" under a value the save then rejects, and the looser
+    // direction is worse: a schema that permits less than the server does makes a legal setting
+    // unreachable from every UI at once.
+    [Fact]
+    public void NumberFieldBounds_MatchTheDtoRangeAttribute()
+    {
+        foreach (var section in SettingsSchema.Sections)
+        {
+            var properties = FlattenedPropertyInfos(section.DtoType);
+
+            foreach (var field in section.Fields.Where(f => f.Type == "number"))
+            {
+                var property = properties[field.Name];
+                var range = property.GetCustomAttribute<RangeAttribute>();
+
+                Assert.True(
+                    range is not null,
+                    $"Number field '{section.Key}.{field.Name}' declares bounds {field.Min}-{field.Max} in the " +
+                    $"schema, but {section.DtoType.Name}.{property.Name} has no [Range], so the server would " +
+                    "accept anything a client chose to send. Add the matching [Range].");
+
+                Assert.True(
+                    Convert.ToDouble(range!.Minimum) == field.Min && Convert.ToDouble(range.Maximum) == field.Max,
+                    $"Number field '{section.Key}.{field.Name}' says {field.Min}-{field.Max} in the schema but " +
+                    $"[Range({range.Minimum}, {range.Maximum})] on {section.DtoType.Name}.{property.Name}. Clients " +
+                    "validate against the schema and the server enforces the attribute, so these must agree.");
+            }
+        }
+    }
+
+    // Integer is derived rather than declared (see SettingsSchema.WithDerivedFlags); this pins the
+    // derivation, because it is what a client uses to tell "3.7" in a port box from "3.7" in a
+    // free-space-in-GB box - both are number fields with no step, and only one of them is wrong.
+    [Fact]
+    public void IntegerFlag_IsSetForExactlyTheWholeNumberFields()
+    {
+        foreach (var section in SettingsSchema.Sections)
+        {
+            var properties = FlattenedProperties(section.DtoType);
+
+            foreach (var field in section.Fields)
+            {
+                var underlying = properties[field.Name];
+                var expected = field.Type == "number"
+                    && (underlying == typeof(int) || underlying == typeof(long));
+
+                Assert.True(
+                    field.Integer == expected,
+                    $"Field '{section.Key}.{field.Name}' binds to {underlying.Name} but has integer={field.Integer}. " +
+                    "A client would reject whole numbers on a decimal field, or accept 3.7 on an integer one.");
+            }
+        }
+    }
+
+    // Same walk as FlattenedProperties, keeping the PropertyInfo so attributes can be read off it.
+    private static Dictionary<string, PropertyInfo> FlattenedPropertyInfos(Type dtoType, string prefix = "")
+    {
+        var result = new Dictionary<string, PropertyInfo>(StringComparer.Ordinal);
+        foreach (var property in dtoType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            var name = prefix + CamelCase(property.Name);
+            var underlying = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+
+            var isLeaf = underlying == typeof(string) || underlying == typeof(bool)
+                || underlying == typeof(int) || underlying == typeof(long) || underlying == typeof(double)
+                || underlying == typeof(List<string>);
+
+            if (!isLeaf && underlying.IsClass)
+            {
+                foreach (var (nestedName, nestedProperty) in FlattenedPropertyInfos(underlying, name + "."))
+                    result[nestedName] = nestedProperty;
+            }
+            else
+            {
+                result[name] = property;
+            }
+        }
+        return result;
+    }
+
     // Secret is derived from the field type rather than declared, so this pins the derivation:
     // Phase 3's masked read/write depends on exactly the password fields being the secret ones.
     [Fact]
@@ -436,6 +520,20 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
 
         var password = fields.Single(f => f.GetProperty("name").GetString() == "password");
         Assert.True(password.GetProperty("secret").GetBoolean());
+
+        // Every client's "must be a whole number" check reads this key off the wire, so the name
+        // and the camelCasing of it are part of the contract, not an implementation detail.
+        var brokerPort = fields.Single(f => f.GetProperty("name").GetString() == "brokerPort");
+        Assert.True(brokerPort.GetProperty("integer").GetBoolean());
+        Assert.Equal(1, brokerPort.GetProperty("min").GetDouble());
+        Assert.Equal(65535, brokerPort.GetProperty("max").GetDouble());
+
+        // The other half of the same contract: a double-backed number must not be flagged, or a
+        // client would refuse the 0.65 that a confidence threshold exists to hold.
+        var discord = sections.Single(s => s.GetProperty("key").GetString() == "discord");
+        var confidence = discord.GetProperty("fields").EnumerateArray()
+            .Single(f => f.GetProperty("name").GetString() == "minimumConfidence");
+        Assert.False(confidence.GetProperty("integer").GetBoolean());
 
         // DtoType is server-internal wiring for the drift tests. Serializing it would leak
         // assembly-qualified type names to every client for no benefit.
