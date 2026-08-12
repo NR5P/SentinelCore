@@ -75,9 +75,28 @@ struct SettingsSectionSchema: Decodable, Identifiable, Hashable {
     let fields: [SettingsFieldSchema]
     let extraAction: SettingsActionSchema?
 
+    // Which heading this section belongs under, and where that heading sorts. Both come from the
+    // server (SettingsGroups) so this app and the web dashboard divide the settings up the same
+    // way without either holding its own copy of the grouping.
+    //
+    // Optional purely so this app still renders against an older server that predates grouping -
+    // there, everything lands in one unnamed group, which is exactly the flat list it had before.
+    let group: String?
+    let groupOrder: Int?
+
+    // Which service has to restart for requiresRestart fields here to take effect. Defaults to
+    // the bridge, as every section but INTERNET EXPOSED MODE does.
+    let restartService: String?
+
+    // Where to GET this section's current values, when they aren't in the bulk /api/settings
+    // snapshot. Only INTERNET EXPOSED MODE sets it - see SettingsSectionSchema.DataEndpoint.
+    let dataEndpoint: String?
+
     var id: String { key }
 
     var needsRestart: Bool { fields.contains { $0.requiresRestart } }
+
+    var restartTarget: String { restartService ?? "bridge" }
 }
 
 // One JSON value of any shape. GET /api/settings mixes strings, numbers, booleans, arrays, and

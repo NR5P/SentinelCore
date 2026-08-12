@@ -38,8 +38,7 @@ public sealed class SettingsSchemaTests
         ["AuthSettingsDto"] = "Auth is driven by the account endpoints, not an editable settings section.",
         ["LegacyAuthSettingsDto"] = "Read-only shape kept for the one-time pre-multi-account migration.",
         ["LicenseSettingsDto"] = "Bootstrap-only; the license UI is its own page, not a settings section.",
-        ["HomeKitSettingsDto"] = "Rendered bespoke - the section includes a QR pairing code, not just fields.",
-        ["InternetExposedSettingsDto"] = "Lives in the Web project's own appsettings.json and has its own endpoint pair."
+        ["HomeKitSettingsDto"] = "Rendered bespoke - the section includes a QR pairing code, not just fields."
     };
 
     private static string CamelCase(string name) => JsonNamingPolicy.CamelCase.ConvertName(name);
@@ -262,6 +261,46 @@ public sealed class SettingsSchemaTests
         Assert.True(
             duplicateEndpoints.Length == 0,
             $"Two sections save to the same endpoint: {string.Join(", ", duplicateEndpoints)}.");
+    }
+
+    // A section whose group isn't one the clients know would sort to the bottom of every settings
+    // page - present, editable, and filed under nothing. Cheap to typo, invisible until someone
+    // goes looking for a setting that has quietly moved to the end.
+    [Fact]
+    public void EverySection_IsInAKnownGroup()
+    {
+        foreach (var section in SettingsSchema.Sections)
+        {
+            Assert.True(
+                SettingsGroups.Order.Contains(section.Group),
+                $"Section '{section.Key}' is in group '{section.Group}', which is not one of " +
+                $"SettingsGroups.Order: {string.Join(", ", SettingsGroups.Order)}.");
+        }
+
+        // The converse: a group nothing is in renders as an empty heading on every client.
+        var populated = SettingsSchema.Sections.Select(s => s.Group).ToHashSet(StringComparer.Ordinal);
+        var empty = SettingsGroups.Order.Where(g => !populated.Contains(g)).ToArray();
+        Assert.True(
+            empty.Length == 0,
+            $"These groups have no sections and would render as empty headings: {string.Join(", ", empty)}.");
+    }
+
+    // Both of these name something the client has to go and do - restart a named service, or fetch
+    // a second URL - so a wrong value fails at runtime on four platforms rather than here.
+    [Fact]
+    public void RestartServiceAndDataEndpoint_NameThingsThatExist()
+    {
+        foreach (var section in SettingsSchema.Sections)
+        {
+            Assert.True(
+                section.RestartService is "bridge" or "dashboard",
+                $"Section '{section.Key}' restarts '{section.RestartService}', which is neither service.");
+
+            if (section.DataEndpoint is not null)
+            {
+                Assert.StartsWith("/api/", section.DataEndpoint, StringComparison.Ordinal);
+            }
+        }
     }
 
     // Tips are what a client shows instead of the user having to read DEPLOYMENT.md. A blank one

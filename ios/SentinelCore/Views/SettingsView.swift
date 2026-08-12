@@ -77,15 +77,33 @@ struct SettingsView: View {
                         CameraAdminView()
                     }
                 }
-                Section("Accounts") {
+                Section {
                     NavigationLink("Manage Accounts") {
                         AccountAdminView()
                     }
+                    // The switch itself, as opposed to the accounts it governs - the web
+                    // dashboard's LOGIN section, which had no counterpart here until now.
+                    NavigationLink("Dashboard Login") {
+                        DashboardLoginView()
+                    }
+                } header: {
+                    Text("Accounts")
+                } footer: {
+                    Text("Whether opening the dashboard requires a login at all, and who can.")
                 }
                 Section("Known Faces") {
                     NavigationLink("Manage Known Faces") {
                         KnownFacesAdminView()
                     }
+                }
+                Section {
+                    NavigationLink("Known Vehicles") {
+                        KnownVehiclesAdminView()
+                    }
+                } header: {
+                    Text("Known Vehicles")
+                } footer: {
+                    Text("Number plates the AI treats as household rather than a stranger's.")
                 }
                 Section {
                     NavigationLink("Manage Schedules") {
@@ -102,6 +120,18 @@ struct SettingsView: View {
                 Section {
                     NavigationLink("Server Settings") {
                         ServerSettingsView()
+                    }
+                    NavigationLink("Prompt Profiles") {
+                        PromptProfilesAdminView()
+                    }
+                    NavigationLink("Apple HomeKit") {
+                        HomeKitAdminView()
+                    }
+                    NavigationLink("Backup") {
+                        BackupAdminView()
+                    }
+                    NavigationLink("License") {
+                        LicenseAdminView()
                     }
                 } header: {
                     Text("Server Configuration")

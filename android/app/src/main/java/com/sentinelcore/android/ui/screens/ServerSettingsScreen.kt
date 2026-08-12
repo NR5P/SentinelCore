@@ -77,13 +77,28 @@ fun ServerSettingsScreen(
 ) {
     var sections by remember { mutableStateOf<List<SettingsSection>>(emptyList()) }
     var snapshot by remember { mutableStateOf<JSONObject?>(null) }
+    // Values for the sections that keep them outside the bulk snapshot, keyed by section key.
+    var externalData by remember { mutableStateOf<Map<String, JSONObject>>(emptyMap()) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<SettingsSection?>(null) }
+    var search by remember { mutableStateOf("") }
+    var showAdvanced by remember { mutableStateOf(model.showAdvancedSettings) }
 
     LaunchedEffect(Unit) {
         try {
-            sections = model.settingsSchema()
+            val loaded = model.settingsSchema()
+            sections = loaded
             snapshot = model.settingsSnapshot()
+
+            // A failure here leaves that one section rendering empty rather than failing the whole
+            // screen - the same outcome a missing snapshot key already has, and better than losing
+            // the other 35 sections because one extra request didn't come back.
+            externalData = buildMap {
+                for (section in loaded) {
+                    val endpoint = section.dataEndpoint ?: continue
+                    runCatching { model.settingsSectionData(endpoint) }.getOrNull()?.let { put(section.key, it) }
+                }
+            }
         } catch (error: Exception) {
             loadError = error.message ?: "Could not load server settings."
         }
@@ -93,12 +108,31 @@ fun ServerSettingsScreen(
     if (openSection != null) {
         ServerSettingsSectionEditor(
             section = openSection,
-            initialData = snapshot?.optJSONObject(openSection.key),
+            initialData = if (openSection.dataEndpoint != null) {
+                externalData[openSection.key]
+            } else {
+                snapshot?.optJSONObject(openSection.key)
+            },
             model = model,
             onBack = { selected = null },
         )
         return
     }
+
+    // Both filters at once, because they interact: a search has to reach an advanced section while
+    // the list is in basic mode, or searching for "mqtt" in basic mode finds nothing and looks
+    // broken. A non-empty search therefore overrides the mode entirely.
+    val query = search.trim()
+    val visible = sections.filter { section ->
+        if (query.isNotEmpty()) section.matches(query) else showAdvanced || section.basic
+    }
+
+    // Sections keep their server order within a group - the descriptions lean on it ("see VISION
+    // ROUTING below"), so it isn't this app's to re-sort.
+    val groups = visible
+        .groupBy { it.group.ifEmpty { "Other" } }
+        .toList()
+        .sortedWith(compareBy({ entry -> entry.second.minOf { it.groupOrder } }, { it.first }))
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("Server Settings", state)
@@ -128,22 +162,78 @@ fun ServerSettingsScreen(
                         Text("Back to Settings", modifier = Modifier.weight(1f).padding(start = 8.dp))
                     }
                 }
-                items(sections, key = { it.key }) { section ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp)
-                            .clickable { selected = section },
+                item {
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        label = { Text("Search settings") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                    )
+                }
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(section.title, style = MaterialTheme.typography.titleSmall, color = SentinelGreen)
+                        Column(Modifier.weight(1f)) {
+                            Text("Show advanced settings", style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                section.description,
+                                "Basic shows the settings most people change. Searching looks through both.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
                             )
                         }
+                        Switch(
+                            checked = showAdvanced,
+                            onCheckedChange = {
+                                showAdvanced = it
+                                model.showAdvancedSettings = it
+                            },
+                        )
+                    }
+                }
+
+                // A heading, not another collapsible layer: nesting would put every field two taps
+                // away, and the web dashboard draws the same headings above flat accordions.
+                for ((groupName, groupSections) in groups) {
+                    item(key = "group-$groupName") {
+                        Text(
+                            groupName.uppercase(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = SentinelGreen,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 2.dp),
+                        )
+                    }
+                    items(groupSections, key = { it.key }) { section ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp)
+                                .clickable { selected = section },
+                        ) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(section.title, style = MaterialTheme.typography.titleSmall, color = SentinelGreen)
+                                Text(
+                                    section.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (groups.isEmpty()) {
+                    item {
+                        Text(
+                            "No settings match \"$search\".",
+                            modifier = Modifier.padding(24.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 item { Spacer(Modifier.padding(8.dp)) }
@@ -160,6 +250,11 @@ private fun ServerSettingsSectionEditor(
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+
+    // Restarting the dashboard is a different promise from restarting the bridge - this app is
+    // talking to the dashboard, so that one drops the connection in use rather than pausing alert
+    // processing in the background. Only INTERNET EXPOSED MODE restarts the dashboard.
+    val restartsDashboard = section.restartService == "dashboard"
 
     // Field values keyed by schema field name (dotted paths like "apple.teamId" stay flat here;
     // nesting is reassembled when building the save payload).
@@ -309,7 +404,8 @@ private fun ServerSettingsSectionEditor(
             try {
                 val restartRequired = model.saveSettingsSection(section.endpoint, payload)
                 statusMessage = if (restartRequired) {
-                    "Saved. Takes effect after the bridge service restarts - use the restart button below."
+                    val service = if (restartsDashboard) "dashboard" else "bridge"
+                    "Saved. Takes effect after the $service service restarts - use the restart button below."
                 } else {
                     "Saved."
                 }
@@ -411,7 +507,10 @@ private fun ServerSettingsSectionEditor(
                     }
                     if (section.needsRestart) {
                         OutlinedButton(onClick = { confirmRestart = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Restart Bridge Service", color = SentinelRed)
+                            Text(
+                                if (restartsDashboard) "Restart Dashboard" else "Restart Bridge Service",
+                                color = SentinelRed,
+                            )
                         }
                     }
                 }
@@ -429,11 +528,16 @@ private fun ServerSettingsSectionEditor(
     if (confirmRestart) {
         AlertDialog(
             onDismissRequest = { confirmRestart = false },
-            title = { Text("Restart bridge service?") },
+            title = { Text(if (restartsDashboard) "Restart dashboard service?" else "Restart bridge service?") },
             text = {
                 Text(
-                    "Saved restart-required settings take effect after the restart. Alert processing " +
-                        "pauses for a few seconds; running as a service, it comes back on its own.",
+                    if (restartsDashboard) {
+                        "Saved restart-required settings take effect after the restart. This app talks to " +
+                            "the dashboard, so it loses its connection for a few seconds and reconnects on its own."
+                    } else {
+                        "Saved restart-required settings take effect after the restart. Alert processing " +
+                            "pauses for a few seconds; running as a service, it comes back on its own."
+                    },
                 )
             },
             confirmButton = {
@@ -443,7 +547,7 @@ private fun ServerSettingsSectionEditor(
                         statusMessage = "Restarting - the server should be back in a few seconds…"
                         errors = emptyList()
                         try {
-                            model.restartServer("bridge")
+                            model.restartServer(section.restartService)
                         } catch (error: Exception) {
                             statusMessage = null
                             // The refusal for an unsupervised process is worth showing verbatim -

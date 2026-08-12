@@ -631,6 +631,21 @@ final class AppModel: ObservableObject {
         await syncPushRegistration()
     }
 
+    // Re-reads whether the server requires a login. Called after the Dashboard Login screen turns
+    // that requirement on or off, so the rest of the app (the Account section, the sign-in gate)
+    // stops describing the state it was in a moment ago.
+    func refreshAuthStatus() async {
+        authStatus = try? await client.authStatus()
+        connectionState = requiresLogin ? .authenticationRequired : .online
+    }
+
+    // Set by the License screen after a successful install, so the unlicensed watermark clears
+    // straight away rather than at the next full refresh. isLicensed is otherwise private(set)
+    // precisely so nothing else can decide this on its own.
+    func applyLicenseState(_ state: LicenseState) {
+        isLicensed = state.valid
+    }
+
     func signOut() async {
         CredentialStore.delete(for: serverURL)
         try? await client.logout()

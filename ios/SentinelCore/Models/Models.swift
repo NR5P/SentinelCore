@@ -548,6 +548,67 @@ struct LicenseState: Codable {
     var customerName: String?
 }
 
+// What a restore actually put back. Every count is optional because a backup taken before a given
+// feature existed simply has no such section, and reporting "0 camera groups" for one of those
+// would read like something went missing rather than like nothing was there.
+struct BackupRestoreResult: Decodable {
+    var camerasRestored: Int?
+    var cameraGroupsRestored: Int?
+    var triggerZonesRestored: Int?
+    var gateChecksRestored: Int?
+    var accountsRestored: Int?
+
+    // The non-empty parts, phrased for a sentence: "3 cameras, 1 trigger zone".
+    var summary: String {
+        let parts: [(Int?, String)] = [
+            (camerasRestored, "camera"),
+            (cameraGroupsRestored, "camera group"),
+            (triggerZonesRestored, "trigger zone"),
+            (gateChecksRestored, "gate check"),
+            (accountsRestored, "account")
+        ]
+        let described = parts.compactMap { count, noun -> String? in
+            guard let count, count > 0 else { return nil }
+            return "\(count) \(noun)\(count == 1 ? "" : "s")"
+        }
+        return described.isEmpty ? "settings" : described.joined(separator: ", ")
+    }
+}
+
+// What the HomeKit sidecar reports about itself. "running" and "published" are deliberately
+// separate: the sidecar runs for everyone, but only advertises on the network once HomeKit is
+// switched on, and the screen needs both to say anything useful.
+struct HomeKitStatus: Decodable {
+    let running: Bool
+    var enabled: Bool?
+    var published: Bool?
+    var paired: Bool?
+    var accessories: [String]?
+    var pairingCode: String?
+    var error: String?
+}
+
+// The four editable HomeKit settings. Hand-written rather than schema-driven because the useful
+// half of this section is the pairing code, which no schema can describe - see the note on
+// HomeKitSettingsDto in SettingsSchemaTests.
+struct HomeKitSettings: Codable {
+    var enabled: Bool
+    var sidecarBaseUrl: String
+    var timeoutSeconds: Int
+    var minimumConfidence: Double
+}
+
+// A number plate the AI should treat as household rather than a stranger's. Encodable as well as
+// Decodable because the save endpoint replaces the whole list - see saveKnownVehicles.
+struct KnownVehicle: Codable, Identifiable, Hashable {
+    var plate: String
+    var label: String
+
+    // The plate is the identity here - it's what the matcher compares against, and two rows with
+    // the same one would be the same vehicle twice.
+    var id: String { plate }
+}
+
 struct DeviceHubMetadata: Codable {
     var kinds: [String]
     var schemas: [String]

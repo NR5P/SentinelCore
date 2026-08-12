@@ -721,6 +721,77 @@ main {
   gap: 16px;
 }
 
+/* A group is a heading with its sections under it - deliberately not another collapsible layer.
+   Nesting the accordions two deep would put every field two clicks away and give the page a shape
+   the drill-down phone and Mac apps can't mirror; a heading costs nothing and makes 45 sections
+   scannable. The gap here is what separates one group from the next, so the sections inside stay
+   tighter to their own heading than to the neighbouring group. */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-group.hidden {
+  display: none;
+}
+
+/* The "nothing matched" line. Paired with its own selector because there is deliberately no
+   global .hidden in this stylesheet - every other use pairs it with an element too. */
+.empty-state.hidden {
+  display: none;
+}
+
+.settings-group-heading {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: normal;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--green-dim);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+/* First heading sits flush with the top of the list rather than paying for a separation from
+   nothing. */
+.settings-group:first-child .settings-group-heading {
+  margin-top: 0;
+}
+
+/* Matches .field-input, just smaller - it sits in the toolbar, not in a form. */
+.settings-search {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 9px;
+  width: 190px;
+}
+
+.settings-search:focus {
+  outline: none;
+  border-color: var(--border-bright);
+}
+
+.settings-search::placeholder {
+  color: var(--text-dim);
+}
+
+/* The toolbar runs out of room before the search box is worth losing. */
+@media (max-width: 720px) {
+  .settings-live-note {
+    display: none;
+  }
+
+  .settings-search {
+    width: 130px;
+  }
+}
+
 .settings-hint {
   font-size: 12px;
   color: var(--text-dim);

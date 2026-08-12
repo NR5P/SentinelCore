@@ -95,13 +95,79 @@ public sealed record SettingsFieldSchema
     public bool Secret => Type == "password";
 }
 
+// The seven headings the settings page is divided into. This exists because the section list grew
+// to 36 entries in build order, which meant the four trigger sections sat at positions 14, 17, 34
+// and 35 and everything that depends on Email being configured was spread across four corners of
+// the page. Grouping is deliberately a property of the schema rather than of any one client: the
+// web dashboard draws these as headings between accordions, the phone and Mac apps as section
+// headers in their list, and neither had to be told which section means what.
+//
+// A group is a heading, not a container - nothing collapses, and every section is still exactly
+// one click from the top of its page. Nesting the accordions two deep was the other option and is
+// worse on every surface: two clicks to reach any field, collapse state that's easy to lose track
+// of, and a shape the drill-down apps can't mirror anyway.
+public static class SettingsGroups
+{
+    public const string Alerts = "Alerts & Delivery";
+    public const string Ai = "AI & Detection";
+    public const string Cameras = "Cameras, Triggers & Recording";
+    public const string Automation = "Automation & Smart Home";
+    public const string Health = "Health & Monitoring";
+    public const string Access = "Access & Network";
+    public const string Maintenance = "Maintenance";
+
+    // The order the headings appear in, which is not alphabetical and shouldn't be: this runs from
+    // what a new install touches first (where do my alerts go?) to what it touches last, if ever.
+    // Clients render groups in this order and put anything they don't recognise at the end, so a
+    // group added here doesn't need a matching client release to avoid disappearing.
+    public static IReadOnlyList<string> Order { get; } =
+        [Alerts, Ai, Cameras, Automation, Health, Access, Maintenance];
+
+    private static readonly Dictionary<string, int> Positions =
+        Order.Select((group, index) => (group, index))
+             .ToDictionary(entry => entry.group, entry => entry.index, StringComparer.Ordinal);
+
+    // An unknown group sorts last rather than throwing: a client running against a newer server
+    // should show a group it doesn't recognise at the bottom, not refuse to draw the page.
+    public static int PositionOf(string group) =>
+        Positions.TryGetValue(group, out var position) ? position : Order.Count;
+}
+
 public sealed record SettingsSectionSchema
 {
     public required string Key { get; init; }
     public required string Title { get; init; }
 
+    // Which heading this section sits under - one of SettingsGroups. Required rather than
+    // optional: a section with no group would silently fall to the bottom of every client's page,
+    // which is exactly the drift this schema exists to prevent.
+    public required string Group { get; init; }
+
+    // The group's position in SettingsGroups.Order, serialized so a client can sort the headings
+    // into the intended order without a second request or its own hand-copied list of groups.
+    public int GroupOrder => SettingsGroups.PositionOf(Group);
+
     // Where a PUT of this section's values goes.
     public required string Endpoint { get; init; }
+
+    // Which service has to restart for this section's RequiresRestart fields to take effect.
+    // "bridge" for everything that configures the main app - which is all but one section, hence
+    // the default. INTERNET EXPOSED MODE is the exception: it binds this dashboard's own Kestrel
+    // port, so restarting the bridge would do nothing at all.
+    public string RestartService { get; init; } = "bridge";
+
+    // Where to GET this section's current values, for the sections that aren't part of the bulk
+    // /api/settings snapshot. Null for all but one, which is the point: a client fetches the
+    // snapshot once and reads every section out of it by key, and only falls back to a per-section
+    // request where a section says it needs one.
+    //
+    // INTERNET EXPOSED MODE is that section - it configures this dashboard project's own Kestrel
+    // binding and so lives in the Web project's appsettings.json rather than the main app's. The
+    // web dashboard used to handle this by hard-coding the whole section client-side, which is
+    // exactly why it was the one section the phone and Mac apps never had. Saying "fetch my values
+    // from here" in the schema instead costs one optional property and hands the section to every
+    // client at once.
+    public string? DataEndpoint { get; init; }
 
     // Whether the section shows in the dashboard's basic mode. Advanced sections are the ones a
     // typical install never needs to touch.
@@ -161,7 +227,8 @@ public static class SettingsSchema
         new()
         {
             Key = "bridge",
-            Title = "BRIDGE",
+            Title = "ALERT INTAKE & HISTORY",
+            Group = SettingsGroups.Cameras,
             Endpoint = "/api/settings/bridge",
             Basic = true,
             DtoType = typeof(BridgeSettingsDto),
@@ -186,6 +253,7 @@ public static class SettingsSchema
         {
             Key = "ollama",
             Title = "OLLAMA",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/ollama",
             Basic = false,
             DtoType = typeof(OllamaSettingsDto),
@@ -206,6 +274,7 @@ public static class SettingsSchema
         {
             Key = "cloudVision",
             Title = "CLOUD VISION",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/cloud-vision",
             Basic = false,
             DtoType = typeof(CloudVisionSettingsDto),
@@ -227,6 +296,7 @@ public static class SettingsSchema
         {
             Key = "fastLocal",
             Title = "FAST LOCAL DETECTION",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/fast-local",
             Basic = false,
             DtoType = typeof(FastLocalSettingsDto),
@@ -243,6 +313,7 @@ public static class SettingsSchema
         {
             Key = "visionRouting",
             Title = "VISION ROUTING",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/vision-routing",
             Basic = false,
             DtoType = typeof(VisionRoutingSettingsDto),
@@ -267,6 +338,7 @@ public static class SettingsSchema
         {
             Key = "imageProcessing",
             Title = "IMAGE PROCESSING",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/image-processing",
             Basic = false,
             DtoType = typeof(ImageProcessingSettingsDto),
@@ -284,6 +356,7 @@ public static class SettingsSchema
         {
             Key = "email",
             Title = "EMAIL",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/email",
             Basic = true,
             DtoType = typeof(EmailSettingsDto),
@@ -308,6 +381,7 @@ public static class SettingsSchema
         {
             Key = "dailySummary",
             Title = "DAILY SUMMARY",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/daily-summary",
             Basic = true,
             DtoType = typeof(DailySummarySettingsDto),
@@ -324,6 +398,7 @@ public static class SettingsSchema
         {
             Key = "telegram",
             Title = "TELEGRAM ALERTS",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/telegram",
             Basic = true,
             DtoType = typeof(TelegramSettingsDto),
@@ -343,6 +418,7 @@ public static class SettingsSchema
         {
             Key = "telegramChat",
             Title = "TELEGRAM CHAT",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/telegram-chat",
             Basic = false,
             DtoType = typeof(TelegramChatSettingsDto),
@@ -359,6 +435,7 @@ public static class SettingsSchema
         {
             Key = "discord",
             Title = "DISCORD ALERTS",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/discord",
             Basic = true,
             DtoType = typeof(DiscordSettingsDto),
@@ -377,6 +454,7 @@ public static class SettingsSchema
         {
             Key = "blueIris",
             Title = "BLUE IRIS MEDIA",
+            Group = SettingsGroups.Cameras,
             Endpoint = "/api/settings/blue-iris",
             Basic = false,
             DtoType = typeof(BlueIrisSettingsDto),
@@ -394,6 +472,7 @@ public static class SettingsSchema
         {
             Key = "multiFrameAnalysis",
             Title = "MULTI-FRAME ANALYSIS",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/multi-frame-analysis",
             Basic = false,
             DtoType = typeof(MultiFrameAnalysisSettingsDto),
@@ -409,6 +488,7 @@ public static class SettingsSchema
         {
             Key = "triggerRewind",
             Title = "TRIGGER REWIND",
+            Group = SettingsGroups.Cameras,
             Endpoint = "/api/settings/trigger-rewind",
             Basic = false,
             DtoType = typeof(TriggerRewindSettingsDto),
@@ -425,6 +505,7 @@ public static class SettingsSchema
         {
             Key = "scheduledRecording",
             Title = "SCHEDULED RECORDING",
+            Group = SettingsGroups.Cameras,
             Endpoint = "/api/settings/scheduled-recording",
             Basic = false,
             DtoType = typeof(ScheduledRecordingSettingsDto),
@@ -439,6 +520,7 @@ public static class SettingsSchema
         {
             Key = "packageTheftWatch",
             Title = "PACKAGE THEFT WATCH",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/package-theft-watch",
             Basic = false,
             DtoType = typeof(PackageTheftWatchSettingsDto),
@@ -453,6 +535,7 @@ public static class SettingsSchema
         {
             Key = "repeatAlerts",
             Title = "REPEAT ALERTS FROM ONE CAMERA",
+            Group = SettingsGroups.Cameras,
             Endpoint = "/api/settings/repeat-alerts",
             Basic = false,
             DtoType = typeof(RepeatAlertsSettingsDto),
@@ -467,6 +550,7 @@ public static class SettingsSchema
         {
             Key = "semanticSearch",
             Title = "SEMANTIC SEARCH",
+            Group = SettingsGroups.Ai,
             Endpoint = "/api/settings/semantic-search",
             Basic = false,
             DtoType = typeof(SemanticSearchSettingsDto),
@@ -483,6 +567,7 @@ public static class SettingsSchema
         {
             Key = "selfMonitoring",
             Title = "SELF-MONITORING",
+            Group = SettingsGroups.Health,
             Endpoint = "/api/settings/self-monitoring",
             Basic = false,
             DtoType = typeof(SelfMonitoringSettingsDto),
@@ -501,6 +586,7 @@ public static class SettingsSchema
         {
             Key = "startupNotification",
             Title = "OUTAGE ALERTS",
+            Group = SettingsGroups.Health,
             Endpoint = "/api/settings/startup-notification",
             Basic = true,
             DtoType = typeof(StartupNotificationSettingsDto),
@@ -516,6 +602,7 @@ public static class SettingsSchema
         {
             Key = "internetOutage",
             Title = "INTERNET OUTAGE ALERTS",
+            Group = SettingsGroups.Health,
             Endpoint = "/api/settings/internet-outage",
             Basic = true,
             DtoType = typeof(InternetOutageSettingsDto),
@@ -534,6 +621,7 @@ public static class SettingsSchema
         {
             Key = "location",
             Title = "LOCATION",
+            Group = SettingsGroups.Automation,
             Endpoint = "/api/settings/location",
             Basic = true,
             DtoType = typeof(LocationSettingsDto),
@@ -553,6 +641,7 @@ public static class SettingsSchema
         {
             Key = "schedules",
             Title = "SCHEDULES",
+            Group = SettingsGroups.Automation,
             Endpoint = "/api/settings/schedules",
             Basic = true,
             DtoType = typeof(ScheduleSettingsDto),
@@ -568,6 +657,7 @@ public static class SettingsSchema
         {
             Key = "quietHours",
             Title = "QUIET HOURS",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/quiet-hours",
             Basic = true,
             DtoType = typeof(QuietHoursSettingsDto),
@@ -584,6 +674,7 @@ public static class SettingsSchema
         {
             Key = "webhook",
             Title = "WEBHOOK",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/webhook",
             Basic = false,
             DtoType = typeof(WebhookSettingsDto),
@@ -601,6 +692,7 @@ public static class SettingsSchema
         {
             Key = "mqtt",
             Title = "MQTT / HOME ASSISTANT",
+            Group = SettingsGroups.Automation,
             Endpoint = "/api/settings/mqtt",
             Basic = false,
             DtoType = typeof(MqttSettingsDto),
@@ -625,6 +717,7 @@ public static class SettingsSchema
         {
             Key = "deviceHub",
             Title = "DEVICE HUB",
+            Group = SettingsGroups.Automation,
             Endpoint = "/api/settings/device-hub",
             Basic = false,
             DtoType = typeof(DeviceHubSettingsDto),
@@ -641,6 +734,7 @@ public static class SettingsSchema
         {
             Key = "pushNotifications",
             Title = "PUSH NOTIFICATIONS",
+            Group = SettingsGroups.Alerts,
             Endpoint = "/api/settings/push-notifications",
             Basic = true,
             DtoType = typeof(PushNotificationsSettingsDto),
@@ -667,6 +761,7 @@ public static class SettingsSchema
         {
             Key = "logging",
             Title = "LOGGING",
+            Group = SettingsGroups.Health,
             Endpoint = "/api/settings/logging",
             Basic = false,
             DtoType = typeof(LoggingSettingsDto),
@@ -695,6 +790,7 @@ public static class SettingsSchema
         {
             Key = "server",
             Title = "SERVER ADDRESS",
+            Group = SettingsGroups.Access,
             Endpoint = "/api/settings/server",
             Basic = false,
             DtoType = typeof(ServerSettingsDto),
@@ -713,8 +809,45 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "internetExposed",
+            Title = "INTERNET EXPOSED MODE",
+            Group = SettingsGroups.Access,
+            Endpoint = "/api/settings/internet-exposed",
+            // Not in the bulk snapshot, and not the bridge's port to rebind - see the two
+            // properties' own notes above. Both exceptions are declared rather than special-cased
+            // in any client.
+            DataEndpoint = "/api/settings/internet-exposed",
+            RestartService = "dashboard",
+            Basic = false,
+            DtoType = typeof(InternetExposedSettingsDto),
+            Description = "For reaching this dashboard from outside your home network - e.g. through a Cloudflare Tunnel. When enabled, this server listens on a SECOND port that always requires login and only accepts HTTPS connections, no matter how Login and HTTPS are configured. The normal port for local network use is completely unaffected by this - point your tunnel or reverse proxy at the new port instead, not the regular one. Requires local HTTPS to already be configured (see docs/DEPLOYMENT.md §14a) and at least one account to already exist. Takes effect after a restart.",
+            Fields =
+            [
+                new()
+                {
+                    Name = "enabled",
+                    Label = "Enabled",
+                    Type = "checkbox",
+                    Tip = "Turn on the dedicated internet-exposed port. Requires HTTPS to already be configured and at least one account to exist. Needs a restart to take effect - use the restart button below.",
+                    RequiresRestart = true
+                },
+                new()
+                {
+                    Name = "port",
+                    Label = "Port",
+                    Type = "number",
+                    Tip = "Port for internet-facing traffic. Point your Cloudflare Tunnel (or other reverse proxy) here instead of the normal port. Must be different from the HTTPS port. Needs a restart to take effect - use the restart button below.",
+                    Min = 1,
+                    Max = 65535,
+                    RequiresRestart = true
+                }
+            ]
+        },
+        new()
+        {
             Key = "bugReports",
             Title = "BUG REPORTS",
+            Group = SettingsGroups.Health,
             Endpoint = "/api/settings/bug-reports",
             Basic = true,
             DtoType = typeof(BugReportSettingsDto),
@@ -728,6 +861,7 @@ public static class SettingsSchema
         {
             Key = "loginAlerts",
             Title = "LOGIN ALERTS",
+            Group = SettingsGroups.Access,
             Endpoint = "/api/settings/login-alerts",
             Basic = true,
             DtoType = typeof(LoginAlertSettingsDto),
@@ -741,7 +875,8 @@ public static class SettingsSchema
         new()
         {
             Key = "nuisanceAdvisor",
-            Title = "SPIDER WEB & BUG ADVISOR",
+            Title = "SPIDER WEB & INSECT ADVISOR",
+            Group = SettingsGroups.Health,
             Endpoint = "/api/settings/nuisance-advisor",
             Basic = true,
             DtoType = typeof(NuisanceAdvisorSettingsDto),
@@ -759,6 +894,7 @@ public static class SettingsSchema
         {
             Key = "triggerApi",
             Title = "TRIGGER API",
+            Group = SettingsGroups.Cameras,
             Endpoint = "/api/settings/trigger-api",
             Basic = true,
             DtoType = typeof(TriggerApiSettingsDto),
@@ -778,6 +914,7 @@ public static class SettingsSchema
         {
             Key = "triggerConfirmation",
             Title = "AI-CONFIRMED TRIGGERS",
+            Group = SettingsGroups.Cameras,
             Endpoint = "/api/settings/trigger-confirmation",
             Basic = true,
             DtoType = typeof(TriggerConfirmationSettingsDto),
@@ -792,6 +929,7 @@ public static class SettingsSchema
         {
             Key = "hostReboot",
             Title = "REBOOT SERVER",
+            Group = SettingsGroups.Maintenance,
             Endpoint = "/api/settings/host-reboot",
             Basic = false,
             DtoType = typeof(HostRebootSettingsDto),

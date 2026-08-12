@@ -128,6 +128,142 @@ class SentinelRepository(
         JSONObject(request("/api/license/status")).optBoolean("valid")
     }
 
+    // Status plus the licence holder's name, for the License screen - licenseValid() above stays
+    // as it is because the watermark only ever needed the boolean.
+    suspend fun licenseStatus(): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/license/status"))
+        json.optBoolean("valid") to json.optString("customerName").ifEmpty { null }
+    }
+
+    // The raw contents of a .lic file as text/plain, which is what the install endpoint takes - it
+    // wants the file's bytes, not a path, since the server can't reach whatever device the licence
+    // was emailed to. Verified server-side before anything is written.
+    suspend fun installLicense(contents: String): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
+        val json = JSONObject(
+            request("/api/license/install", method = "POST", body = contents, contentType = "text/plain"),
+        )
+        json.optBoolean("valid") to json.optString("customerName").ifEmpty { null }
+    }
+
+    // Prompt profiles come and go as raw JSON rather than a Kotlin data class, and that is load
+    // bearing rather than laziness. The save endpoint replaces the whole PromptProfiles
+    // dictionary, so anything this app failed to model would be erased by the act of saving - a
+    // profile's crop region is a rectangle no phone form should be editing, but it must survive
+    // being edited here. The screen keeps the original object and overwrites only the fields it
+    // shows, so the rest round-trips untouched.
+    suspend fun promptProfiles(): JSONObject = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/settings")).optJSONObject("promptProfiles") ?: JSONObject()
+    }
+
+    suspend fun savePromptProfiles(profiles: JSONObject): Unit = withContext(Dispatchers.IO) {
+        request("/api/settings/prompt-profiles", method = "PUT", body = profiles.toString())
+        Unit
+    }
+
+    // The backup is deliberately kept as raw text: it is whatever the server considers its whole
+    // configuration, and parsing it into a fixed shape here would quietly drop any section added
+    // after this app was built - the one thing a backup must never do. It goes back exactly as it
+    // came.
+    suspend fun exportBackup(): String = withContext(Dispatchers.IO) {
+        request("/api/backup/export")
+    }
+
+    // The counts of what was actually restored, by noun. Absent sections are left out rather than
+    // reported as zero - a backup taken before camera groups existed hasn't lost any.
+    suspend fun importBackup(contents: String): List<Pair<Int, String>> = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/backup/import", method = "POST", body = contents))
+        listOf(
+            "camerasRestored" to "camera",
+            "cameraGroupsRestored" to "camera group",
+            "triggerZonesRestored" to "trigger zone",
+            "gateChecksRestored" to "gate check",
+            "accountsRestored" to "account",
+        ).mapNotNull { (key, noun) ->
+            val count = json.optInt(key)
+            if (count > 0) count to noun else null
+        }
+    }
+
+    suspend fun homeKitStatus(): HomeKitStatus = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/homekit/status"))
+        val accessories = json.optJSONArray("accessories") ?: JSONArray()
+        HomeKitStatus(
+            running = json.optBoolean("running"),
+            enabled = json.optBoolean("enabled"),
+            published = json.optBoolean("published"),
+            paired = json.optBoolean("paired"),
+            accessories = buildList {
+                for (index in 0 until accessories.length()) add(accessories.optString(index))
+            },
+            pairingCode = json.optString("pairingCode").ifEmpty { null },
+            error = json.optString("error").ifEmpty { null },
+        )
+    }
+
+    suspend fun homeKitSettings(): HomeKitSettings = withContext(Dispatchers.IO) {
+        val section = JSONObject(request("/api/settings")).optJSONObject("homeKit") ?: JSONObject()
+        HomeKitSettings(
+            enabled = section.optBoolean("enabled"),
+            sidecarBaseUrl = section.optString("sidecarBaseUrl").ifEmpty { "http://127.0.0.1:3321" },
+            timeoutSeconds = if (section.has("timeoutSeconds")) section.optInt("timeoutSeconds") else 10,
+            minimumConfidence = if (section.has("minimumConfidence")) section.optDouble("minimumConfidence") else 0.6,
+        )
+    }
+
+    suspend fun saveHomeKitSettings(settings: HomeKitSettings): Unit = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("enabled", settings.enabled)
+            .put("sidecarBaseUrl", settings.sidecarBaseUrl)
+            .put("timeoutSeconds", settings.timeoutSeconds)
+            .put("minimumConfidence", settings.minimumConfidence)
+        request("/api/settings/homekit", method = "PUT", body = body.toString())
+        Unit
+    }
+
+    // The literal "RESET" is what the endpoint requires - an explicit confirmation rather than a
+    // bare POST, since this drops the pairing and every Home app has to pair again.
+    suspend fun resetHomeKitPairing(): Unit = withContext(Dispatchers.IO) {
+        request("/api/homekit/reset", method = "POST", body = JSONObject().put("confirm", "RESET").toString())
+        Unit
+    }
+
+    suspend fun knownVehicles(): List<KnownVehicle> = withContext(Dispatchers.IO) {
+        val array = JSONObject(request("/api/settings")).optJSONArray("knownVehicles") ?: JSONArray()
+        buildList {
+            for (index in 0 until array.length()) {
+                val vehicle = array.getJSONObject(index)
+                add(KnownVehicle(vehicle.optString("plate"), vehicle.optString("label")))
+            }
+        }
+    }
+
+    // The whole list every time, which is what the endpoint takes - it replaces the section rather
+    // than patching it, so a partial send would delete the rest.
+    suspend fun saveKnownVehicles(vehicles: List<KnownVehicle>): Unit = withContext(Dispatchers.IO) {
+        val array = JSONArray()
+        for (vehicle in vehicles) {
+            array.put(JSONObject().put("plate", vehicle.plate).put("label", vehicle.label))
+        }
+        request("/api/settings/known-vehicles", method = "PUT", body = array.toString())
+        Unit
+    }
+
+    // Turning the dashboard's login requirement on creates the first admin account in the same
+    // step - there is deliberately no way to demand a login nobody can satisfy.
+    suspend fun enableDashboardLogin(username: String, password: String): Unit = withContext(Dispatchers.IO) {
+        request(
+            "/api/auth/enable",
+            method = "POST",
+            body = JSONObject().put("username", username).put("password", password).toString(),
+        )
+        Unit
+    }
+
+    suspend fun disableDashboardLogin(): Unit = withContext(Dispatchers.IO) {
+        request("/api/auth/disable", method = "POST")
+        Unit
+    }
+
     suspend fun devices(): List<HubDevice> = withContext(Dispatchers.IO) {
         val array = JSONArray(request("/api/devices"))
         buildList {
@@ -809,6 +945,14 @@ class SentinelRepository(
         JSONObject(request("/api/settings"))
     }
 
+    // The values for a section that isn't in the bulk snapshot, fetched from the dataEndpoint the
+    // schema gives it. Only INTERNET EXPOSED MODE needs this - it configures the dashboard
+    // project's own Kestrel binding and so lives in a different settings file - but nothing here
+    // knows that: the section says where its values are and this fetches them.
+    suspend fun settingsSectionData(endpoint: String): JSONObject = withContext(Dispatchers.IO) {
+        JSONObject(request(endpoint))
+    }
+
     // Returns whether the saved section needs a restart to take effect (the Urls section).
     suspend fun saveSettingsSection(endpoint: String, body: JSONObject): Boolean = withContext(Dispatchers.IO) {
         val json = JSONObject(request(endpoint, method = "PUT", body = body.toString()))
@@ -936,11 +1080,23 @@ class SentinelRepository(
                     method = it.optString("method", "POST"),
                 )
             },
+            group = json.optString("group"),
+            // A server that predates grouping sends neither, and the defaults put every section in
+            // one unnamed group at the end - the flat list this screen used to be.
+            groupOrder = if (json.has("groupOrder")) json.optInt("groupOrder") else Int.MAX_VALUE,
+            basic = json.optBoolean("basic"),
+            restartService = json.optString("restartService").ifEmpty { "bridge" },
+            dataEndpoint = json.optString("dataEndpoint").ifEmpty { null },
         )
     }
 
-    private fun request(path: String, method: String = "GET", body: String? = null): String {
-        val connection = openValidated(path, method, body)
+    private fun request(
+        path: String,
+        method: String = "GET",
+        body: String? = null,
+        contentType: String = "application/json",
+    ): String {
+        val connection = openValidated(path, method, body, contentType)
         return try {
             connection.inputStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
         } finally {
@@ -959,7 +1115,14 @@ class SentinelRepository(
         }
     }
 
-    private fun openValidated(path: String, method: String = "GET", body: String? = null): HttpURLConnection {
+    // contentType is all but always JSON; the licence install endpoint takes the raw .lic file as
+    // text/plain, which is the one caller that passes anything else.
+    private fun openValidated(
+        path: String,
+        method: String = "GET",
+        body: String? = null,
+        contentType: String = "application/json",
+    ): HttpURLConnection {
         val url = URL(absoluteUrl(path) ?: throw IllegalArgumentException(
             "Enter a valid server address, such as http://192.168.1.50:3320.",
         ))
@@ -972,7 +1135,7 @@ class SentinelRepository(
             connection.setRequestProperty("Accept", "application/json")
             if (body != null) {
                 connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
+                connection.setRequestProperty("Content-Type", contentType)
                 connection.outputStream.bufferedWriter(StandardCharsets.UTF_8).use { it.write(body) }
             }
 

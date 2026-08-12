@@ -60,7 +60,13 @@ import com.sentinelcore.android.ui.screens.DeviceHubScreen
 import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.ActivityDetailScreen
 import com.sentinelcore.android.ui.screens.EventFeedScreen
+import com.sentinelcore.android.ui.screens.BackupAdminScreen
+import com.sentinelcore.android.ui.screens.DashboardLoginScreen
+import com.sentinelcore.android.ui.screens.HomeKitAdminScreen
 import com.sentinelcore.android.ui.screens.KnownFaceAdminScreen
+import com.sentinelcore.android.ui.screens.KnownVehiclesScreen
+import com.sentinelcore.android.ui.screens.LicenseAdminScreen
+import com.sentinelcore.android.ui.screens.PromptProfilesScreen
 import com.sentinelcore.android.ui.screens.KnownFaceEditScreen
 import com.sentinelcore.android.ui.screens.LiveCamerasScreen
 import com.sentinelcore.android.ui.screens.LivePlayerScreen
@@ -357,7 +363,13 @@ private fun SentinelNavHost(
                 model = model,
                 onManageCameras = { navController.navigate("settings/cameras") },
                 onManageAccounts = { navController.navigate("settings/accounts") },
+                onDashboardLogin = { navController.navigate("settings/login") },
                 onManageKnownFaces = { navController.navigate("settings/faces") },
+                onKnownVehicles = { navController.navigate("settings/vehicles") },
+                onPromptProfiles = { navController.navigate("settings/prompts") },
+                onHomeKit = { navController.navigate("settings/homekit") },
+                onBackup = { navController.navigate("settings/backup") },
+                onLicense = { navController.navigate("settings/license") },
                 onManageSchedules = { navController.navigate("settings/schedules") },
                 onServerSettings = { navController.navigate("settings/server") },
             )
@@ -430,6 +442,54 @@ private fun SentinelNavHost(
             } else {
                 DetailLoading(onBack = { navController.popBackStack() })
             }
+        }
+
+        composable("settings/prompts") {
+            PromptProfilesScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/backup") {
+            BackupAdminScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/homekit") {
+            HomeKitAdminScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/license") {
+            LicenseAdminScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/vehicles") {
+            KnownVehiclesScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable("settings/login") {
+            DashboardLoginScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
         }
 
         composable("settings/accounts") {

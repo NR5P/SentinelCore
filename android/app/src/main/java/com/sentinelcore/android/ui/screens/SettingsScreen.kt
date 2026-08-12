@@ -64,7 +64,13 @@ fun SettingsScreen(
     model: SentinelViewModel,
     onManageCameras: () -> Unit,
     onManageAccounts: () -> Unit,
+    onDashboardLogin: () -> Unit,
     onManageKnownFaces: () -> Unit,
+    onKnownVehicles: () -> Unit,
+    onPromptProfiles: () -> Unit,
+    onHomeKit: () -> Unit,
+    onBackup: () -> Unit,
+    onLicense: () -> Unit,
     onManageSchedules: () -> Unit,
     onServerSettings: () -> Unit,
 ) {
@@ -195,6 +201,19 @@ fun SettingsScreen(
                         ) {
                             Text("Manage Accounts", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
+                        // The switch itself, as opposed to the accounts it governs - the web
+                        // dashboard's LOGIN section, which had no counterpart here until now.
+                        TextButton(
+                            onClick = onDashboardLogin,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Dashboard Login", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            "Whether opening the dashboard requires a login at all, and who can.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 item {
@@ -205,6 +224,21 @@ fun SettingsScreen(
                         ) {
                             Text("Manage Known Faces", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
+                    }
+                }
+                item {
+                    SettingsSection("Known Vehicles") {
+                        TextButton(
+                            onClick = onKnownVehicles,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Known Vehicles", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            "Number plates the AI treats as household rather than a stranger's.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 item {
@@ -229,6 +263,30 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("Server Settings", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        TextButton(
+                            onClick = onPromptProfiles,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Prompt Profiles", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        TextButton(
+                            onClick = onHomeKit,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Apple HomeKit", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        TextButton(
+                            onClick = onBackup,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Backup", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        TextButton(
+                            onClick = onLicense,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("License", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
                         Text(
                             "Every server setting the web dashboard has — alerts, AI backends, MQTT, Device Hub, and more.",

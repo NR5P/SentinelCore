@@ -23,9 +23,12 @@ import com.sentinelcore.android.data.DeviceScanSnapshot
 import com.sentinelcore.android.data.DeviceScanStartResult
 import com.sentinelcore.android.data.DiagnosticEntry
 import com.sentinelcore.android.data.DiagnosticLevel
+import com.sentinelcore.android.data.HomeKitSettings
+import com.sentinelcore.android.data.HomeKitStatus
 import com.sentinelcore.android.data.HubDevice
 import com.sentinelcore.android.data.HubDeviceInput
 import com.sentinelcore.android.data.KnownFace
+import com.sentinelcore.android.data.KnownVehicle
 import com.sentinelcore.android.data.LiveCameraOrder
 import com.sentinelcore.android.data.PromptProfileName
 import com.sentinelcore.android.data.PushStatus
@@ -601,6 +604,18 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun settingsSnapshot(): org.json.JSONObject = repository.settingsSnapshot()
 
+    suspend fun settingsSectionData(endpoint: String): org.json.JSONObject =
+        repository.settingsSectionData(endpoint)
+
+    // Whether the server settings list shows advanced sections. Remembered per device, like the
+    // web dashboard's own toggle - and purely a display preference: every setting is reachable
+    // either way, and searching ignores it entirely.
+    var showAdvancedSettings: Boolean
+        get() = preferences.getBoolean(ADVANCED_SETTINGS_KEY, false)
+        set(value) {
+            preferences.edit().putBoolean(ADVANCED_SETTINGS_KEY, value).apply()
+        }
+
     suspend fun saveSettingsSection(endpoint: String, body: org.json.JSONObject): Boolean =
         repository.saveSettingsSection(endpoint, body)
 
@@ -608,6 +623,59 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         repository.settingsLookup(lookup, query)
 
     suspend fun runSettingsAction(action: SettingsAction) = repository.runSettingsAction(action)
+
+    suspend fun licenseStatus(): Pair<Boolean, String?> = repository.licenseStatus()
+
+    // Also updates the watermark's own flag, so installing a licence clears it straight away
+    // rather than at the next full refresh.
+    suspend fun installLicense(contents: String): Pair<Boolean, String?> {
+        val result = repository.installLicense(contents)
+        _state.update { it.copy(isLicensed = result.first) }
+        return result
+    }
+
+    suspend fun promptProfiles(): org.json.JSONObject = repository.promptProfiles()
+
+    suspend fun savePromptProfiles(profiles: org.json.JSONObject) = repository.savePromptProfiles(profiles)
+
+    suspend fun exportBackup(): String = repository.exportBackup()
+
+    // Refreshes afterwards: a restore changes cameras, accounts and settings underneath the
+    // running app, so what's on screen is stale the moment it succeeds.
+    suspend fun importBackup(contents: String): List<Pair<Int, String>> {
+        val restored = repository.importBackup(contents)
+        refreshAll()
+        return restored
+    }
+
+    suspend fun homeKitStatus(): HomeKitStatus = repository.homeKitStatus()
+
+    suspend fun homeKitSettings(): HomeKitSettings = repository.homeKitSettings()
+
+    suspend fun saveHomeKitSettings(settings: HomeKitSettings) = repository.saveHomeKitSettings(settings)
+
+    suspend fun resetHomeKitPairing() = repository.resetHomeKitPairing()
+
+    suspend fun knownVehicles(): List<KnownVehicle> = repository.knownVehicles()
+
+    suspend fun saveKnownVehicles(vehicles: List<KnownVehicle>) = repository.saveKnownVehicles(vehicles)
+
+    // Both of these change whether the whole app needs a login, so each re-reads the auth status
+    // rather than assuming it landed - the sign-in gate reads the same field.
+    suspend fun enableDashboardLogin(username: String, password: String) {
+        repository.enableDashboardLogin(username, password)
+        refreshAuthStatus()
+    }
+
+    suspend fun disableDashboardLogin() {
+        repository.disableDashboardLogin()
+        refreshAuthStatus()
+    }
+
+    suspend fun refreshAuthStatus() {
+        val auth = runCatching { repository.authStatus() }.getOrNull()
+        _state.update { it.copy(authStatus = auth) }
+    }
 
     suspend fun restartServer(service: String) = repository.restartServer(service)
 
@@ -1053,5 +1121,6 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         private const val SERVER_URL_KEY = "server_url"
         private const val REMOTE_SERVER_URL_KEY = "remote_server_url"
         private const val PUSH_ENABLED_KEY = "push_registration_enabled"
+        private const val ADVANCED_SETTINGS_KEY = "settings_show_advanced"
     }
 }

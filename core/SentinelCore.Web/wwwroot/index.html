@@ -362,7 +362,10 @@
       <div class="toolbar">
         <div class="toolbar-label">SETTINGS</div>
         <div class="toolbar-actions">
-          <span class="event-count">changes apply live, no restart</span>
+          <span class="event-count settings-live-note">changes apply live, no restart</span>
+          <input type="search" id="settings-search" class="settings-search" placeholder="search settings…"
+                 autocomplete="off" spellcheck="false"
+                 data-tip-right data-tip="Filters by setting name and by the explanation under it, so plain words work - try 'spider', 'password', or 'port'. While searching, advanced settings are shown whatever the switch says." />
           <label class="mode-switch" data-tip-right data-tip="Basic shows the settings most people actually change. Advanced adds every tuning option - nothing is lost either way, and this choice is remembered on this device only.">
             <span id="mode-label" class="mode-label">basic</span>
             <span class="switch"><input type="checkbox" id="advanced-mode-toggle"><span class="switch-track"></span></span>

@@ -288,6 +288,122 @@ final class SentinelClient {
         try await get("/api/license/status")
     }
 
+    // The raw contents of a .lic file, sent as text/plain the way the install endpoint expects -
+    // it takes the file's bytes, not a path, because the server has no way to reach whatever
+    // machine the file was emailed to. Verified server-side against the embedded public key before
+    // anything is written, so a truncated pick can't clobber a working license.
+    func installLicense(contents: String) async throws -> LicenseState {
+        guard let url = url(path: "/api/license/install") else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(contents.utf8)
+        return try await perform(request)
+    }
+
+    // Prompt profiles arrive and leave as raw JSON rather than a Swift struct, and that is load
+    // bearing rather than laziness. The save endpoint replaces the whole PromptProfiles
+    // dictionary, so anything this app failed to model would be erased by the act of saving - a
+    // profile's crop region is a rectangle no phone form should be editing, but it must survive
+    // being edited here. Keeping the original object and writing back only the handful of fields
+    // this screen actually shows means the rest round-trips untouched.
+    func promptProfiles() async throws -> [String: SettingsValue] {
+        let snapshot: [String: SettingsValue] = try await get("/api/settings")
+        guard case .object(let profiles)? = snapshot["promptProfiles"] else { return [:] }
+        return profiles
+    }
+
+    func savePromptProfiles(_ profiles: [String: SettingsValue]) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/settings/prompt-profiles", method: "PUT", body: profiles)
+    }
+
+    // The backup is deliberately untyped here: it is whatever the server considers its whole
+    // configuration, and a client that decoded it into a fixed shape would quietly drop any
+    // section added after this app was built - which is the one thing a backup must never do. It
+    // travels through this app as raw bytes and goes back exactly as it came.
+    func exportBackup() async throws -> Data {
+        guard let url = url(path: "/api/backup/export") else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        return try await performData(request)
+    }
+
+    func importBackup(_ contents: Data) async throws -> BackupRestoreResult {
+        guard let url = url(path: "/api/backup/import") else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = contents
+        return try await perform(request)
+    }
+
+    func homeKitStatus() async throws -> HomeKitStatus {
+        try await get("/api/homekit/status")
+    }
+
+    func homeKitSettings() async throws -> HomeKitSettings {
+        let snapshot: [String: SettingsValue] = try await get("/api/settings")
+        guard case .object(let fields)? = snapshot["homeKit"] else {
+            return HomeKitSettings(
+                enabled: false, sidecarBaseUrl: "http://127.0.0.1:3321",
+                timeoutSeconds: 10, minimumConfidence: 0.6)
+        }
+        return HomeKitSettings(
+            enabled: fields["enabled"]?.boolValue ?? false,
+            sidecarBaseUrl: fields["sidecarBaseUrl"]?.displayString ?? "http://127.0.0.1:3321",
+            timeoutSeconds: Int(Double(fields["timeoutSeconds"]?.displayString ?? "") ?? 10),
+            minimumConfidence: Double(fields["minimumConfidence"]?.displayString ?? "") ?? 0.6)
+    }
+
+    func saveHomeKitSettings(_ settings: HomeKitSettings) async throws {
+        let _: EmptyResponse = try await send("/api/settings/homekit", method: "PUT", body: settings)
+    }
+
+    // The literal "RESET" is what the endpoint requires - an explicit confirmation string rather
+    // than a bare POST, since this drops the pairing and every Home app on the network has to
+    // pair again.
+    func resetHomeKitPairing() async throws {
+        let _: EmptyResponse = try await send(
+            "/api/homekit/reset", method: "POST", body: ["confirm": "RESET"])
+    }
+
+    func knownVehicles() async throws -> [KnownVehicle] {
+        let snapshot: [String: SettingsValue] = try await get("/api/settings")
+        guard case .array(let values)? = snapshot["knownVehicles"] else { return [] }
+        return values.compactMap { value in
+            guard case .object(let fields) = value else { return nil }
+            return KnownVehicle(
+                plate: fields["plate"]?.displayString ?? "",
+                label: fields["label"]?.displayString ?? "")
+        }
+    }
+
+    // The whole list every time, which is what the endpoint takes - it replaces the section rather
+    // than patching it, so a partial send would delete the rest.
+    func saveKnownVehicles(_ vehicles: [KnownVehicle]) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/settings/known-vehicles",
+            method: "PUT",
+            body: vehicles)
+    }
+
+    // Turning the dashboard's login requirement on creates the first admin account in the same
+    // step - there is deliberately no way to require a login with nobody able to satisfy it.
+    func enableDashboardLogin(username: String, password: String) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/auth/enable",
+            method: "POST",
+            body: ["username": username, "password": password])
+    }
+
+    func disableDashboardLogin() async throws {
+        let _: EmptyResponse = try await send(
+            "/api/auth/disable",
+            method: "POST",
+            body: Optional<String>.none)
+    }
+
     // MARK: - Device Hub
 
     // Whether the DEVICE HUB section should exist at all. Deliberately its own endpoint rather
@@ -416,6 +532,14 @@ final class SentinelClient {
     // masked (••••••••) and are sent back unchanged to mean "keep the stored value".
     func settingsSnapshot() async throws -> [String: SettingsValue] {
         try await get("/api/settings")
+    }
+
+    // The values for a section that isn't in the bulk snapshot, fetched from the dataEndpoint the
+    // schema gives it. Only INTERNET EXPOSED MODE needs this - it configures the dashboard
+    // project's own Kestrel binding and so lives in a different settings file - but nothing here
+    // knows that, which is the point: the section says where its values are and this fetches them.
+    func settingsSectionData(endpoint: String) async throws -> [String: SettingsValue] {
+        try await get(endpoint)
     }
 
     func saveSettingsSection(endpoint: String, values: [String: SettingsValue]) async throws -> SettingsSaveResult {

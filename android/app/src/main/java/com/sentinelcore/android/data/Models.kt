@@ -540,6 +540,32 @@ class SentinelApiException(
 // A settings section added on the server appears in this app with no update; these classes only
 // mirror the shapes, ServerSettingsScreen renders them.
 
+// What the HomeKit sidecar reports about itself. "running" and "published" are deliberately
+// separate: the sidecar runs for everyone but only advertises on the network once HomeKit is
+// switched on, and the screen needs both to say anything useful.
+data class HomeKitStatus(
+    val running: Boolean,
+    val enabled: Boolean = false,
+    val published: Boolean = false,
+    val paired: Boolean = false,
+    val accessories: List<String> = emptyList(),
+    val pairingCode: String? = null,
+    val error: String? = null,
+)
+
+// The four editable HomeKit settings. Hand-written rather than schema-driven because the useful
+// half of that section is the pairing code, which no schema can describe.
+data class HomeKitSettings(
+    val enabled: Boolean,
+    val sidecarBaseUrl: String,
+    val timeoutSeconds: Int,
+    val minimumConfidence: Double,
+)
+
+// A number plate the AI should treat as household rather than a stranger's. Matching ignores
+// spaces and punctuation server-side, so "ABC 123" and "ABC-123" are the same vehicle.
+data class KnownVehicle(val plate: String, val label: String)
+
 data class SettingsFieldOption(val value: String, val label: String)
 
 // A "look this up for me" button on a text field (today: LOCATION's Town or City, which fills in
@@ -588,8 +614,33 @@ data class SettingsSection(
     val description: String,
     val fields: List<SettingsField>,
     val extraAction: SettingsAction?,
+    // Which heading this section belongs under, and where that heading sorts. Both come from the
+    // server (SettingsGroups) so this app and the web dashboard divide the settings the same way
+    // without either holding its own copy of the grouping. Defaulted rather than nullable so an
+    // older server that predates grouping still renders - as one unnamed group, i.e. the flat list
+    // this screen had before.
+    val group: String = "",
+    val groupOrder: Int = Int.MAX_VALUE,
+    // Whether this section shows in basic mode. Advanced sections are the ones a typical install
+    // never needs to touch.
+    val basic: Boolean = false,
+    // Which service has to restart for requiresRestart fields here to take effect. Every section
+    // but INTERNET EXPOSED MODE is the bridge.
+    val restartService: String = "bridge",
+    // Where to GET this section's current values, when they aren't in the bulk /api/settings
+    // snapshot - only INTERNET EXPOSED MODE sets it.
+    val dataEndpoint: String? = null,
 ) {
     val needsRestart: Boolean get() = fields.any { it.requiresRestart }
+
+    // Field tips are searched as well as labels: they're where a setting is described in the words
+    // someone would actually type - nobody searches for "nuisanceAdvisor".
+    fun matches(query: String): Boolean =
+        title.contains(query, ignoreCase = true) ||
+            description.contains(query, ignoreCase = true) ||
+            fields.any {
+                it.label.contains(query, ignoreCase = true) || it.tip.contains(query, ignoreCase = true)
+            }
 }
 
 // Rebooting the machine the server runs on - mirrors HostRebootProbe in HostReboot.cs.

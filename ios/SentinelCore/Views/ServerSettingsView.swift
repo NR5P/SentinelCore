@@ -7,11 +7,59 @@ import SwiftUI
 //
 // Reached only through the Admin-gated part of SettingsView - the server would 403 a Viewer on
 // every endpoint used here anyway (the whole /api/settings group is AdminOnly).
+// One heading and the sections filed under it. Built from the group/groupOrder the server puts on
+// each section, so this app and the web dashboard divide the same 36 sections the same way.
+private struct SettingsSectionGroup: Identifiable {
+    let name: String
+    let order: Int
+    let sections: [SettingsSectionSchema]
+
+    var id: String { name }
+}
+
 struct ServerSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sections: [SettingsSectionSchema] = []
     @State private var snapshot: [String: SettingsValue] = [:]
+    @State private var externalData: [String: [String: SettingsValue]] = [:]
     @State private var loadError: String?
+    @State private var searchText = ""
+
+    // Matches the web dashboard's advanced toggle, including it being remembered per device: the
+    // full list is 36 sections, and most of them are tuning nobody touches twice. Searching
+    // overrides it, so a setting is never unreachable because of where this switch happens to be.
+    @AppStorage("settings.advanced") private var showAdvanced = false
+
+    private var visibleGroups: [SettingsSectionGroup] {
+        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+
+        let matching = sections.filter { section in
+            guard query.isEmpty else { return matches(section, query: query) }
+            return showAdvanced || section.basic
+        }
+
+        // Sections keep their server order within a group - the descriptions lean on it ("see
+        // VISION ROUTING below"), so it isn't this app's to re-sort.
+        let grouped = Dictionary(grouping: matching) { $0.group ?? "Other" }
+        return grouped
+            .map { name, sections in
+                SettingsSectionGroup(
+                    name: name,
+                    order: sections.compactMap(\.groupOrder).min() ?? Int.max,
+                    sections: sections)
+            }
+            .sorted { ($0.order, $0.name) < ($1.order, $1.name) }
+    }
+
+    // Field tips are searched as well as labels, because they're where a setting is described in
+    // the words someone would actually type - nobody searches for "nuisanceAdvisor".
+    private func matches(_ section: SettingsSectionSchema, query: String) -> Bool {
+        if section.title.lowercased().contains(query) { return true }
+        if section.description.lowercased().contains(query) { return true }
+        return section.fields.contains {
+            $0.label.lowercased().contains(query) || $0.tip.lowercased().contains(query)
+        }
+    }
 
     var body: some View {
         Group {
@@ -26,23 +74,41 @@ struct ServerSettingsView: View {
             } else if sections.isEmpty {
                 ProgressView("Loading settings…")
             } else {
-                List(sections) { section in
-                    NavigationLink {
-                        ServerSettingsSectionView(
-                            section: section,
-                            initialData: sectionData(for: section)
-                        )
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(section.title)
-                                .font(.body.smallCaps())
-                            Text(section.description)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                List {
+                    Section {
+                        Toggle("Show advanced settings", isOn: $showAdvanced)
+                    } footer: {
+                        Text("Basic shows the settings most people actually change. Advanced adds every tuning option. Searching looks through both.")
+                    }
+
+                    ForEach(visibleGroups) { group in
+                        Section(group.name) {
+                            ForEach(group.sections) { section in
+                                NavigationLink {
+                                    ServerSettingsSectionView(
+                                        section: section,
+                                        initialData: sectionData(for: section)
+                                    )
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(section.title)
+                                            .font(.body.smallCaps())
+                                        Text(section.description)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                }
+                            }
                         }
                     }
+
+                    if visibleGroups.isEmpty {
+                        Text("No settings match “\(searchText)”.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .searchable(text: $searchText, prompt: "Search settings")
             }
         }
         .navigationTitle("Server Settings")
@@ -51,6 +117,7 @@ struct ServerSettingsView: View {
     }
 
     private func sectionData(for section: SettingsSectionSchema) -> [String: SettingsValue] {
+        if section.dataEndpoint != nil { return externalData[section.key] ?? [:] }
         if case .object(let data)? = snapshot[section.key] { return data }
         return [:]
     }
@@ -60,8 +127,20 @@ struct ServerSettingsView: View {
         do {
             async let schema = model.client.settingsSchema()
             async let data = model.client.settingsSnapshot()
-            sections = try await schema
+            let loaded = try await schema
+            sections = loaded
             snapshot = try await data
+
+            // Sections that keep their values outside the bulk snapshot. A failure here leaves the
+            // section rendering empty rather than failing the whole screen - the same outcome a
+            // missing snapshot key already has, and better than losing the other 35 sections
+            // because one extra request didn't come back.
+            var fetched: [String: [String: SettingsValue]] = [:]
+            for section in loaded {
+                guard let endpoint = section.dataEndpoint else { continue }
+                fetched[section.key] = try? await model.client.settingsSectionData(endpoint: endpoint)
+            }
+            externalData = fetched
         } catch {
             loadError = error.localizedDescription
         }
@@ -130,9 +209,9 @@ struct ServerSettingsSectionView: View {
                 }
 
                 if section.needsRestart {
-                    Button("Restart Bridge Service", role: .destructive) { confirmingRestart = true }
+                    Button(restartButtonLabel, role: .destructive) { confirmingRestart = true }
                         .confirmationDialog(
-                            "Restart the main bridge service so saved restart-required settings take effect? Alert processing pauses for a few seconds; running as a service, it comes back on its own.",
+                            restartPrompt,
                             isPresented: $confirmingRestart,
                             titleVisibility: .visible
                         ) {
@@ -143,7 +222,7 @@ struct ServerSettingsSectionView: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     if section.needsRestart {
-                        Text("Fields marked “restart required” only take effect after the bridge service restarts.")
+                        Text("Fields marked “restart required” only take effect after the \(section.restartTarget) service restarts.")
                     }
                     if let statusMessage {
                         Text(statusMessage).foregroundStyle(SentinelTheme.green)
@@ -167,6 +246,19 @@ struct ServerSettingsSectionView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .onAppear(perform: seedOnce)
+    }
+
+    // Restarting the dashboard is a different promise from restarting the bridge - this app is
+    // talking to the dashboard, so that one drops the connection it's using and says so, rather
+    // than pausing alert processing in the background.
+    private var restartButtonLabel: String {
+        section.restartTarget == "dashboard" ? "Restart Dashboard" : "Restart Bridge Service"
+    }
+
+    private var restartPrompt: String {
+        section.restartTarget == "dashboard"
+            ? "Restart the dashboard service so saved restart-required settings take effect? This app talks to the dashboard, so it will lose its connection for a few seconds and reconnect on its own."
+            : "Restart the main bridge service so saved restart-required settings take effect? Alert processing pauses for a few seconds; running as a service, it comes back on its own."
     }
 
     @ViewBuilder
@@ -475,7 +567,7 @@ struct ServerSettingsSectionView: View {
         do {
             let result = try await model.client.saveSettingsSection(endpoint: section.endpoint, values: payload)
             statusMessage = result.restartRequired == true
-                ? "Saved. Takes effect after the bridge service restarts - use the restart button below."
+                ? "Saved. Takes effect after the \(section.restartTarget) service restarts - use the restart button below."
                 : "Saved."
         } catch {
             saveErrors = error.localizedDescription.components(separatedBy: "\n")
@@ -497,7 +589,9 @@ struct ServerSettingsSectionView: View {
         saveErrors = []
         statusMessage = "Restarting - the server should be back in a few seconds…"
         do {
-            try await model.client.restartServer(service: "bridge")
+            // Whichever service this section's fields actually belong to - the bridge for all but
+            // INTERNET EXPOSED MODE, which binds the dashboard's own port.
+            try await model.client.restartServer(service: section.restartTarget)
         } catch {
             statusMessage = nil
             // The refusal for an unsupervised process comes back as a plain server message and

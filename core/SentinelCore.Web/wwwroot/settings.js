@@ -161,22 +161,12 @@ window.GateWatchSettings = (function () {
     internetExposed: "A second, dedicated port for reaching this dashboard from outside your home network (e.g. through a Cloudflare Tunnel) - always requires login and HTTPS, regardless of the Login/HTTPS settings above."
   };
 
-  // Not part of the bulk /api/settings snapshot - it configures this project's own Kestrel
-  // binding (same reason LOGIN/HTTPS aren't either), so it fetches its own data. Rendered
-  // through the same generic renderSection() as the schema-driven sections above; only the data
-  // source differs.
-  const INTERNET_EXPOSED_SCHEMA = {
-    key: "internetExposed", title: "INTERNET EXPOSED MODE", endpoint: "/api/settings/internet-exposed",
-    basic: false,
-    // This dashboard process is the one that has to rebind, not the bridge - hence the
-    // "dashboard" restart target where every schema-served section defaults to "bridge".
-    restartService: "dashboard",
-    description: "For reaching this dashboard from outside your home network - e.g. through a Cloudflare Tunnel. When enabled, this server listens on a SECOND port that always requires login and only accepts HTTPS connections, no matter how Login and HTTPS above are configured. The normal port for local network use is completely unaffected by this - point your tunnel or reverse proxy at the new port instead, not the regular one. Requires local HTTPS to already be configured (see docs/DEPLOYMENT.md §14a) and at least one account to already exist. Takes effect after a restart.",
-    fields: [
-      { name: "enabled", label: "Enabled", type: "checkbox", requiresRestart: true, tip: "Turn on the dedicated internet-exposed port. Requires HTTPS to already be configured and at least one account to exist. Needs a restart to take effect - use the restart button below." },
-      { name: "port", label: "Port", type: "number", min: 1, max: 65535, requiresRestart: true, tip: "Port for internet-facing traffic. Point your Cloudflare Tunnel (or other reverse proxy) here instead of the normal port. Must be different from the HTTPS port. Needs a restart to take effect - use the restart button below." }
-    ]
-  };
+  // INTERNET EXPOSED MODE used to be hard-coded here, because it configures this project's own
+  // Kestrel binding and so isn't part of the bulk /api/settings snapshot. That hard-coding was
+  // also the reason it was the one section the phone and Mac apps never had. It now comes from
+  // SettingsSchema.cs like everything else, carrying `dataEndpoint` to say where its values are
+  // fetched from and `restartService: "dashboard"` to say who has to restart - both handled
+  // generically below, so no client needs to know which section is the odd one.
 
   function buildField(field, value) {
     const row = document.createElement("div");
@@ -331,9 +321,25 @@ window.GateWatchSettings = (function () {
     return row;
   }
 
-  // Which of the six hand-written sections belong in basic mode. The schema sections carry
+  // Which of the hand-written sections belong in basic mode. The schema sections carry
   // their own `basic` flag; these don't have a schema, so they're listed here instead.
   const BASIC_CUSTOM_SECTIONS = new Set(["APPLE HOMEKIT", "BACKUP", "LOGIN", "LICENSE", "SYSTEM HEALTH"]);
+
+  // Which heading each hand-written section sits under. The schema sections carry `group` and
+  // `groupOrder` from the server; these are rendered by hand here and so have to say for
+  // themselves. Keep the names character-for-character identical to SettingsGroups in
+  // SettingsSchema.cs - a typo doesn't error, it silently opens a second heading with the same
+  // name next to the real one.
+  const CUSTOM_SECTION_GROUPS = {
+    "KNOWN FACES": "AI & Detection",
+    "KNOWN VEHICLES": "AI & Detection",
+    "PROMPT PROFILES": "AI & Detection",
+    "APPLE HOMEKIT": "Automation & Smart Home",
+    "SYSTEM HEALTH": "Health & Monitoring",
+    "LOGIN": "Access & Network",
+    "BACKUP": "Maintenance",
+    "LICENSE": "Maintenance"
+  };
 
   // Advanced is opt-in and remembered per device, so the owner can run advanced on a desktop
   // while someone else's phone stays simple. Purely a display preference - nothing here is
@@ -358,11 +364,36 @@ window.GateWatchSettings = (function () {
     }
   }
 
+  // The current contents of the search box, lowercased. Kept here rather than read from the DOM
+  // inside applyMode so the advanced-mode toggle and the search box run through one filter.
+  let searchQuery = "";
+
+  // Both filters at once, because they interact: a search has to be able to reach an advanced
+  // section while the page is in basic mode, or searching for "mqtt" in basic mode finds nothing
+  // and looks broken. So a non-empty search overrides the mode filter entirely - if you typed the
+  // word, you want the section, whichever mode you happen to be in.
   function applyMode(advanced) {
     const root = document.getElementById("settings-root");
+    const searching = searchQuery.length > 0;
+
     for (const section of root.querySelectorAll(".settings-section")) {
-      section.classList.toggle("hidden", !advanced && section.dataset.basic !== "true");
+      const matchesSearch = !searching || (section.dataset.search || "").includes(searchQuery);
+      const allowedByMode = advanced || section.dataset.basic === "true";
+      section.classList.toggle("hidden", searching ? !matchesSearch : !allowedByMode);
     }
+
+    // A heading with nothing under it reads as a section that failed to load, which matters most
+    // while searching - that's when most groups are empty.
+    let visibleCount = 0;
+    for (const group of root.querySelectorAll(".settings-group")) {
+      const anyVisible = [...group.querySelectorAll(".settings-section")]
+        .some(section => !section.classList.contains("hidden"));
+      group.classList.toggle("hidden", !anyVisible);
+      if (anyVisible) visibleCount++;
+    }
+
+    const empty = document.getElementById("settings-no-matches");
+    if (empty) empty.classList.toggle("hidden", visibleCount > 0);
 
     // Every section starts collapsed, including the first one. Auto-opening whichever section
     // happened to be first only ever meant BRIDGE was permanently expanded, which reads as a
@@ -374,6 +405,44 @@ window.GateWatchSettings = (function () {
     // The MutationObserver in app.js only watches childList, so a class-only change like this
     // won't reposition tooltips on its own.
     window.GateWatchTooltips.schedule();
+  }
+
+  // Groups the rendered sections under their headings, in the order the server put the groups in
+  // (groupOrder). Sections keep their relative order within a group, which is the order they're
+  // declared in SettingsSchema.Sections - the descriptions lean on it ("see VISION ROUTING
+  // below"), so it isn't ours to re-sort.
+  function groupSections(entries) {
+    const groups = new Map();
+    for (const entry of entries) {
+      const name = entry.group || "Other";
+      if (!groups.has(name)) groups.set(name, { name, order: entry.groupOrder, sections: [] });
+      const group = groups.get(name);
+      // A group's position is the lowest any of its sections claims. Hand-written sections carry
+      // no groupOrder at all, so without this a group whose first entry is one of them would sort
+      // to the end regardless of where the server puts it.
+      if (entry.groupOrder != null && (group.order == null || entry.groupOrder < group.order)) {
+        group.order = entry.groupOrder;
+      }
+      group.sections.push(entry.element);
+    }
+
+    const fragment = document.createDocumentFragment();
+    const ordered = [...groups.values()].sort((a, b) =>
+      (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER));
+
+    for (const group of ordered) {
+      const wrap = document.createElement("div");
+      wrap.className = "settings-group";
+
+      const heading = document.createElement("h2");
+      heading.className = "settings-group-heading";
+      heading.textContent = group.name;
+      wrap.appendChild(heading);
+
+      for (const section of group.sections) wrap.appendChild(section);
+      fragment.appendChild(wrap);
+    }
+    return fragment;
   }
 
   // Real text rather than a tooltip: the per-field tips are hover-only by design (so a tap
@@ -390,6 +459,17 @@ window.GateWatchSettings = (function () {
     const section = document.createElement("div");
     section.className = "settings-section";
     if (schema.basic) section.dataset.basic = "true";
+    if (schema.group) section.dataset.group = schema.group;
+    if (typeof schema.groupOrder === "number") section.dataset.groupOrder = schema.groupOrder;
+
+    // What the search box matches against. The field tips are included deliberately: they're the
+    // only place a setting is described in the words someone would actually search for - nobody
+    // types "nuisanceAdvisor", they type "spider".
+    section.dataset.search = [
+      schema.title,
+      schema.description,
+      ...schema.fields.flatMap(f => [f.label, f.tip])
+    ].join(" ").toLowerCase();
 
     const header = document.createElement("div");
     header.className = "settings-section-header";
@@ -2010,25 +2090,53 @@ window.GateWatchSettings = (function () {
       const sections = await schemaResponse.json();
 
       root.innerHTML = "";
-      for (const schema of sections) {
-        root.appendChild(renderSection(schema, data[schema.key]));
-      }
-      root.appendChild(renderSystemStatusSection());
-      root.appendChild(renderHomeKitSection(data.homeKit));
-      root.appendChild(renderBackupSection());
-      root.appendChild(renderAuthSection());
-      const internetExposedData = await fetch("/api/settings/internet-exposed").then(r => r.ok ? r.json() : null).catch(() => null);
-      root.appendChild(renderSection(INTERNET_EXPOSED_SCHEMA, internetExposedData));
-      root.appendChild(renderLicenseSection());
-      root.appendChild(renderKnownVehiclesSection(data.knownVehicles));
-      root.appendChild(renderKnownFacesSection());
-      root.appendChild(renderPromptProfilesSection(data.promptProfiles));
 
-      // The hand-written sections don't go through renderSection, so tag them here by title.
-      for (const section of root.querySelectorAll(".settings-section")) {
-        const title = section.querySelector(".settings-section-title")?.textContent ?? "";
-        if (BASIC_CUSTOM_SECTIONS.has(title)) section.dataset.basic = "true";
+      // A section can say its values live somewhere other than the bulk snapshot (dataEndpoint).
+      // Only INTERNET EXPOSED MODE does today; fetching them together keeps that from adding a
+      // round trip per section if more ever do. A failed fetch yields null, which renders the
+      // section with empty values rather than dropping it - the same thing an absent snapshot key
+      // already does.
+      const external = new Map();
+      await Promise.all(sections.filter(s => s.dataEndpoint).map(async schema => {
+        const value = await fetch(schema.dataEndpoint)
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null);
+        external.set(schema.key, value);
+      }));
+
+      const entries = sections.map(schema => ({
+        element: renderSection(schema, schema.dataEndpoint ? external.get(schema.key) : data[schema.key]),
+        group: schema.group,
+        groupOrder: schema.groupOrder
+      }));
+
+      // The hand-written sections: built the same way as before, then tagged with the group and
+      // basic flag the schema would have carried for them.
+      for (const element of [
+        renderSystemStatusSection(),
+        renderHomeKitSection(data.homeKit),
+        renderBackupSection(),
+        renderAuthSection(),
+        renderLicenseSection(),
+        renderKnownVehiclesSection(data.knownVehicles),
+        renderKnownFacesSection(),
+        renderPromptProfilesSection(data.promptProfiles)
+      ]) {
+        const title = element.querySelector(".settings-section-title")?.textContent ?? "";
+        if (BASIC_CUSTOM_SECTIONS.has(title)) element.dataset.basic = "true";
+        // No schema to build a field list from, so the rendered text is what search matches on.
+        // Good enough - these sections are short, and their words are on screen.
+        element.dataset.search = element.textContent.toLowerCase();
+        entries.push({ element, group: CUSTOM_SECTION_GROUPS[title] });
       }
+
+      root.appendChild(groupSections(entries));
+
+      const empty = document.createElement("div");
+      empty.id = "settings-no-matches";
+      empty.className = "empty-state hidden";
+      empty.textContent = "no settings match that search.";
+      root.appendChild(empty);
 
       const toggle = document.getElementById("advanced-mode-toggle");
       if (toggle) {
@@ -2038,6 +2146,19 @@ window.GateWatchSettings = (function () {
           applyMode(toggle.checked);
         };
       }
+
+      // Searching matches field labels and tips, not just section titles, so "spider" finds the
+      // advisor and "port" finds every section that binds one. Not persisted like the mode
+      // toggle: a filter still applied on the next visit would be a page with settings missing.
+      const search = document.getElementById("settings-search");
+      if (search) {
+        search.value = "";
+        search.oninput = () => {
+          searchQuery = search.value.trim().toLowerCase();
+          applyMode(isAdvancedMode());
+        };
+      }
+
       applyMode(isAdvancedMode());
     } catch (err) {
       root.innerHTML = `<div class="empty-state">failed to load settings: ${err.message}</div>`;
