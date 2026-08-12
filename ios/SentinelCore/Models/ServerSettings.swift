@@ -102,7 +102,7 @@ struct SettingsSectionSchema: Decodable, Identifiable, Hashable {
 // One JSON value of any shape. GET /api/settings mixes strings, numbers, booleans, arrays, and
 // nested objects (PushNotifications' apple/firebase blocks) in a single payload whose shape the
 // app deliberately doesn't hard-code - that's the schema's job.
-enum SettingsValue: Codable, Equatable {
+enum SettingsValue: Codable, Equatable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
