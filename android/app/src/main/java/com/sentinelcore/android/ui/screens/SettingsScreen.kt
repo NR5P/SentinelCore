@@ -121,9 +121,14 @@ fun SettingsScreen(
                     ) {
                         Text("Status")
                         Spacer(Modifier.weight(1f))
-                        if (state.hasRemoteServerUrl) {
+                        if (state.hasRemoteServerUrl || state.isUsingHttpFallback) {
                             Text(
-                                if (state.isUsingRemote) "via Remote" else "via Local",
+                                when {
+                                    state.isUsingRemote -> "via Remote"
+                                    // Worth naming: the address says https, the connection isn't.
+                                    state.isUsingHttpFallback -> "via Local (HTTP)"
+                                    else -> "via Local"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(end = 8.dp),

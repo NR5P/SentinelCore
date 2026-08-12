@@ -32,6 +32,7 @@ import com.sentinelcore.android.data.KnownVehicle
 import com.sentinelcore.android.data.LiveCameraOrder
 import com.sentinelcore.android.data.PromptProfileName
 import com.sentinelcore.android.data.PushStatus
+import com.sentinelcore.android.data.Reachability
 import com.sentinelcore.android.data.RecordingTimelineDay
 import com.sentinelcore.android.data.Schedule
 import com.sentinelcore.android.data.ScheduleInput
@@ -44,6 +45,7 @@ import com.sentinelcore.android.data.ScanJobSnapshot
 import com.sentinelcore.android.data.SecurityEvent
 import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.SentinelRepository
+import com.sentinelcore.android.data.ServerAddress
 import com.sentinelcore.android.data.ServerCompatibility
 import com.sentinelcore.android.data.SettingsAction
 import com.sentinelcore.android.data.SettingsLookup
@@ -77,6 +79,10 @@ data class SentinelUiState(
     val remoteServerUrl: String = "",
     val activeServerUrl: String = "",
     val isUsingRemote: Boolean = false,
+    // Whether the local address was an https:// one this device wouldn't trust, and the app
+    // retried on the server's plain-HTTP port. Surfaced in Settings: the connection works, but
+    // it is unencrypted, and that shouldn't be silent.
+    val isUsingHttpFallback: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.NOT_CONFIGURED,
     // Whether the server this app is talking to is older than it expects. Advisory: nothing in the
     // app behaves differently, it just says so - see ServerCompatibility.
@@ -289,18 +295,66 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     // next reconnect without any WiFi/SSID detection.
     private suspend fun resolveActiveServerUrl() {
         val current = _state.value
-        if (!current.hasRemoteServerUrl) {
-            repository.baseUrl = current.serverUrl
-            _state.update { it.copy(activeServerUrl = current.serverUrl, isUsingRemote = false) }
+        val httpFallback = ServerAddress.httpFallback(current.serverUrl)
+
+        // Probing costs a round trip, and is only worth it when there is somewhere else to go.
+        if (!current.hasRemoteServerUrl && httpFallback == null) {
+            useServerUrl(current.serverUrl, isRemote = false, isHttpFallback = false)
             return
         }
-        if (repository.probeReachable(current.serverUrl)) {
-            repository.baseUrl = current.serverUrl
-            _state.update { it.copy(activeServerUrl = current.serverUrl, isUsingRemote = false) }
-        } else {
-            log("Local address unreachable; using remote address", DiagnosticLevel.INFO)
-            repository.baseUrl = current.remoteServerUrl
-            _state.update { it.copy(activeServerUrl = current.remoteServerUrl, isUsingRemote = true) }
+
+        when (repository.probe(current.serverUrl)) {
+            Reachability.REACHABLE -> {
+                useServerUrl(current.serverUrl, isRemote = false, isHttpFallback = false)
+                return
+            }
+            // Tried before the remote address, not after: an untrusted local certificate says
+            // nothing about which network this device is on, and the server's own plain-HTTP port
+            // is a better answer than sending home traffic out over the Internet and back.
+            //
+            // The fallback is derived from the local address only. Quietly dropping encryption on
+            // the remote address would be doing it across the open Internet, which is a different
+            // proposition entirely - and, when that address is fronted by a TLS-terminating proxy,
+            // lands on a Secure session cookie this app cannot return anyway.
+            Reachability.CERTIFICATE_UNTRUSTED -> if (httpFallback != null) {
+                log(
+                    "This device does not trust the server's HTTPS certificate; trying the " +
+                        "plain-HTTP port at $httpFallback",
+                    DiagnosticLevel.NOTICE,
+                )
+                if (repository.probe(httpFallback) == Reachability.REACHABLE) {
+                    log(
+                        "Using $httpFallback. To connect over HTTPS instead, install the server's " +
+                            "certificate authority (ca.crt) on this device - see DEPLOYMENT.md " +
+                            "section 14a.",
+                        DiagnosticLevel.NOTICE,
+                    )
+                    useServerUrl(httpFallback, isRemote = false, isHttpFallback = true)
+                    return
+                }
+                log("The plain-HTTP port at $httpFallback did not answer either", DiagnosticLevel.NOTICE)
+            }
+            Reachability.UNREACHABLE -> Unit
+        }
+
+        if (!current.hasRemoteServerUrl) {
+            // Nothing left to try. Go with the configured address anyway, so the connection that
+            // follows reports the server's own error rather than a probe's silent verdict.
+            useServerUrl(current.serverUrl, isRemote = false, isHttpFallback = false)
+            return
+        }
+        log("Local address unreachable; using remote address", DiagnosticLevel.INFO)
+        useServerUrl(current.remoteServerUrl, isRemote = true, isHttpFallback = false)
+    }
+
+    private fun useServerUrl(url: String, isRemote: Boolean, isHttpFallback: Boolean) {
+        repository.baseUrl = url
+        _state.update {
+            it.copy(
+                activeServerUrl = url,
+                isUsingRemote = isRemote,
+                isUsingHttpFallback = isHttpFallback,
+            )
         }
     }
 

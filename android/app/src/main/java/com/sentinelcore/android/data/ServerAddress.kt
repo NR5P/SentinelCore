@@ -23,6 +23,36 @@ internal object ServerAddress {
         if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return null
         return trimmed
     }
+
+    /**
+     * The plain-HTTP address to retry an untrusted https:// address on, or null if there isn't one.
+     *
+     * `https://host[:port]` -> `http://host:3320`, the plain-HTTP port the dashboard ships with.
+     * A custom HTTP port can't be derived from the HTTPS one, so the shipped default is the only
+     * sensible guess - callers probe the result before switching to it.
+     */
+    fun httpFallback(address: String): String? {
+        val uri = runCatching { URI(normalize(address) ?: return null) }.getOrNull() ?: return null
+        if (uri.scheme != "https") return null
+        val host = uri.host?.takeUnless(String::isBlank) ?: return null
+        return "http://$host:$DefaultHttpPort"
+    }
+
+    /**
+     * The https:// form of a plain-http address, or null when it can't be guessed.
+     *
+     * Deliberately narrow: swapping the scheme is only sound advice when no port is pinned. On
+     * `http://host:3320` the https counterpart is a *different* listener on a different port
+     * (3443), not the same one with TLS, so that case gets no guess rather than a wrong one.
+     */
+    fun httpsEquivalent(address: String): String? {
+        val uri = runCatching { URI(normalize(address) ?: return null) }.getOrNull() ?: return null
+        if (uri.scheme != "http" || uri.port != -1) return null
+        val host = uri.host?.takeUnless(String::isBlank) ?: return null
+        return "https://$host"
+    }
+
+    private const val DefaultHttpPort = 3320
 }
 
 internal object ServerTimestamp {

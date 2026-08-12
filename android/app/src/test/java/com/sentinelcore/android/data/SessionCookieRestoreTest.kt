@@ -1,6 +1,7 @@
 package com.sentinelcore.android.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.CookieManager
@@ -64,5 +65,40 @@ class SessionCookieRestoreTest {
         val atRoot = jar.cookieFor(origin)
         assertTrue(atRoot.contains(".SentinelCore.Auth=abc"))
         assertTrue(atRoot.contains("theme=dark"))
+    }
+
+    // The behaviour the detection exists for, pinned against the real CookieManager: a Secure
+    // cookie handed over an http:// URL is accepted without complaint and then never sent again.
+    @Test
+    fun `a secure cookie delivered over http is accepted and then withheld`() {
+        val jar = jar()
+        val insecureOrigin = URI("http://cam.example.com")
+        jar.put(insecureOrigin, mapOf("Set-Cookie" to listOf("session=abc; path=/; secure; httponly")))
+
+        assertEquals("", jar.cookieFor(insecureOrigin))
+        assertTrue(carriesUnusableSecureCookie("http", listOf("session=abc; path=/; secure; httponly")))
+    }
+
+    @Test
+    fun `a secure cookie over https is exactly what should happen`() {
+        assertFalse(carriesUnusableSecureCookie("https", listOf("session=abc; path=/; secure; httponly")))
+    }
+
+    @Test
+    fun `a plain cookie over http is not the problem being looked for`() {
+        assertFalse(carriesUnusableSecureCookie("http", listOf("session=abc; path=/; httponly")))
+        assertFalse(carriesUnusableSecureCookie("http", emptyList()))
+    }
+
+    // Logout answers with an expired, empty-valued cookie carrying the same Secure attribute.
+    // Reading that as a lost session would fail a sign-out that worked perfectly.
+    @Test
+    fun `a deletion cookie is not a lost session`() {
+        assertFalse(
+            carriesUnusableSecureCookie(
+                "http",
+                listOf("session=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; secure; samesite=lax; httponly"),
+            ),
+        )
     }
 }

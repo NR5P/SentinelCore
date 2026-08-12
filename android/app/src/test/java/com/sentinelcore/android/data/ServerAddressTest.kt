@@ -57,6 +57,33 @@ class ServerAddressTest {
     fun `rejects a scheme with no host`() {
         assertNull(ServerAddress.normalize("http://"))
     }
+
+    // The server's own certificate authority isn't trusted by a stock Android device, so the
+    // https address it advertises has to degrade to the plain-HTTP port it also listens on.
+    @Test
+    fun `derives the plain http port from an https address`() {
+        assertEquals("http://192.168.50.8:3320", ServerAddress.httpFallback("https://192.168.50.8:3443"))
+        assertEquals("http://media.local:3320", ServerAddress.httpFallback("https://media.local"))
+    }
+
+    @Test
+    fun `has no http fallback for an address that is already http`() {
+        assertNull(ServerAddress.httpFallback("http://192.168.50.8:3320"))
+        assertNull(ServerAddress.httpFallback("not an address"))
+    }
+
+    @Test
+    fun `suggests the https form of a portless http address`() {
+        assertEquals("https://cam.example.com", ServerAddress.httpsEquivalent("http://cam.example.com"))
+    }
+
+    // 3443 is a separate listener, not 3320 with TLS bolted on, so there is no honest guess to
+    // make here - and a wrong suggestion in an error message is worse than none.
+    @Test
+    fun `suggests nothing when the http address pins a port`() {
+        assertNull(ServerAddress.httpsEquivalent("http://192.168.50.8:3320"))
+        assertNull(ServerAddress.httpsEquivalent("https://cam.example.com"))
+    }
 }
 
 class ServerTimestampTest {

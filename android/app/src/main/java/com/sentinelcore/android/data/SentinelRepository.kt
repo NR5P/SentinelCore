@@ -11,12 +11,24 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.CookieManager
 import java.net.CookiePolicy
+import java.net.HttpCookie
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.cert.CertPathValidatorException
+import java.security.cert.CertificateException
 import java.time.Instant
 import java.time.OffsetDateTime
+import javax.net.ssl.SSLHandshakeException
+
+// The outcome of a reachability probe. CERTIFICATE_UNTRUSTED is split out from UNREACHABLE because
+// it is the one failure with somewhere else to go - the same host's plain-HTTP port.
+enum class Reachability {
+    REACHABLE,
+    CERTIFICATE_UNTRUSTED,
+    UNREACHABLE,
+}
 
 class SentinelRepository(
     context: Context,
@@ -27,6 +39,12 @@ class SentinelRepository(
 
     private val cookieManager = CookieManager(null, CookiePolicy.ACCEPT_ALL)
     private val sessionCookieStore = SessionCookieStore(context.applicationContext)
+
+    // Set by storeCookies when a response handed over a cookie the jar will never give back.
+    // Read by login(), where it is the whole difference between "wrong password" and "right
+    // password, unusable session" - two failures that otherwise look identical from the outside.
+    @Volatile
+    private var droppedSecureCookie = false
     private val imageCache = object : LruCache<String, Bitmap>(
         minOf(32 * 1024, (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt()),
     ) {
@@ -799,7 +817,25 @@ class SentinelRepository(
             .put("username", username)
             .put("password", password)
             .toString()
+        droppedSecureCookie = false
         request("/api/auth/login", method = "POST", body = body)
+        // HTTP 200 here proves the password was right, not that the session survived. When it
+        // didn't, every later request comes back 401 and the app reports the server's own wording
+        // for that - "This server requires you to sign in." - directly under a login that just
+        // succeeded, which reads as a rejected password and sends people off to reset one that
+        // was never wrong. Fail here instead, while the actual cause is still known.
+        if (droppedSecureCookie) throw IOException(secureCookieRejectedMessage())
+    }
+
+    private fun secureCookieRejectedMessage(): String {
+        val secureAddress = normalizedBaseUrl()?.let(ServerAddress::httpsEquivalent)
+        return "Signed in, but the server issued a secure session cookie, which cannot be sent " +
+            "back over an unencrypted http:// address - so every request after this one would be " +
+            "rejected. " + if (secureAddress != null) {
+            "Change this server's address to $secureAddress and sign in again."
+        } else {
+            "Use the https:// form of this server's address and sign in again."
+        }
     }
 
     suspend fun logout() = withContext(Dispatchers.IO) {
@@ -904,24 +940,41 @@ class SentinelRepository(
     // whether the host is reachable at all. Opens its own connection with a short timeout rather
     // than going through openConnection()/the shared baseUrl, so the real-request 15s/30s
     // timeouts used elsewhere stay untouched.
-    suspend fun probeReachable(urlString: String, timeoutMs: Int = 2500): Boolean =
+    suspend fun probe(urlString: String, timeoutMs: Int = 2500): Reachability =
         withContext(Dispatchers.IO) {
             val trimmed = urlString.trim().trimEnd('/')
-            if (trimmed.isBlank()) return@withContext false
-            val url = runCatching { URL("$trimmed/api/auth/status") }.getOrNull() ?: return@withContext false
+            if (trimmed.isBlank()) return@withContext Reachability.UNREACHABLE
+            val url = runCatching { URL("$trimmed/api/auth/status") }.getOrNull()
+                ?: return@withContext Reachability.UNREACHABLE
             var connection: HttpURLConnection? = null
             try {
                 connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = timeoutMs
                 connection.readTimeout = timeoutMs
                 connection.responseCode
-                true
+                Reachability.REACHABLE
             } catch (error: IOException) {
-                false
+                if (isCertificateTrustFailure(error)) Reachability.CERTIFICATE_UNTRUSTED
+                else Reachability.UNREACHABLE
             } finally {
                 connection?.disconnect()
             }
         }
+
+    // A certificate this device won't trust is worth telling apart from a host that isn't there:
+    // the first has a plain-HTTP port worth retrying, the second doesn't. Sentinel Core signs its
+    // certificate with a CA it generates on first run (DEPLOYMENT.md 14a), so a stock Android
+    // device rejects the local https:// address until that CA is installed - and to a bare
+    // reachability probe that looks exactly like being on someone else's network.
+    private fun isCertificateTrustFailure(error: Throwable): Boolean {
+        val seen = mutableSetOf<Throwable>()
+        var current: Throwable? = error
+        while (current != null && seen.add(current)) {
+            if (current is CertificateException || current is CertPathValidatorException) return true
+            current = current.cause
+        }
+        return error is SSLHandshakeException
+    }
 
     fun clearAuthenticationSession() {
         cookieManager.cookieStore.removeAll()
@@ -1303,10 +1356,28 @@ class SentinelRepository(
         runCatching {
             cookieManager.put(connection.url.toURI(), connection.headerFields)
             val cookies = cookieManager.get(connection.url.toURI(), emptyMap())["Cookie"]?.joinToString("; ")
-            if (cookies.isNullOrBlank()) sessionCookieStore.clear(connection.url)
-            else sessionCookieStore.save(connection.url, cookies)
+            if (cookies.isNullOrBlank()) {
+                // An empty jar right after a response that *did* set a cookie is the tell: the
+                // cookie was accepted and will never be handed back. Recorded rather than thrown
+                // from here, since only login() knows the difference between "no session yet"
+                // (every anonymous request) and "the session we just earned is unusable".
+                droppedSecureCookie = carriesUnusableSecureCookie(
+                    connection.url.protocol,
+                    setCookieValues(connection),
+                )
+                sessionCookieStore.clear(connection.url)
+            } else {
+                droppedSecureCookie = false
+                sessionCookieStore.save(connection.url, cookies)
+            }
         }
     }
+
+    private fun setCookieValues(connection: HttpURLConnection): List<String> =
+        connection.headerFields
+            .filterKeys { it != null && it.equals("Set-Cookie", ignoreCase = true) }
+            .values
+            .flatten()
 
     private fun normalizedBaseUrl(): String? = ServerAddress.normalize(baseUrl)
 
@@ -1712,3 +1783,24 @@ internal fun restoredSetCookieValues(storedHeader: String): List<String> =
         .map(String::trim)
         .filter(String::isNotEmpty)
         .map { "$it; Path=/" }
+
+// Whether these Set-Cookie values include a session cookie that this connection's scheme can never
+// send back: a Secure cookie delivered over plain http.
+//
+// java.net.CookieManager accepts such a cookie and then declines to return it on any http:// URL,
+// with no error raised anywhere - so a successful login is followed by an unbroken run of 401s.
+// The server marks its session cookie Secure whenever the request it answers arrived over https,
+// which includes arriving through a TLS-terminating proxy (a Cloudflare Tunnel, say) that this app
+// itself reaches over http. That combination is invisible from this side except right here.
+//
+// Deletion cookies are ignored on purpose: /api/auth/logout clears the session by setting an empty
+// value with a past expiry, and that carries the same Secure attribute without being a session
+// anyone is about to lose.
+internal fun carriesUnusableSecureCookie(scheme: String, setCookieValues: List<String>): Boolean {
+    if (!scheme.equals("http", ignoreCase = true)) return false
+    return setCookieValues.any { header ->
+        runCatching { HttpCookie.parse(header) }.getOrNull()
+            .orEmpty()
+            .any { it.secure && it.value.isNotBlank() }
+    }
+}
