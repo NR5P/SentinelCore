@@ -126,6 +126,45 @@ public static class TriggerRewind
         Func<string, DateTimeOffset>? closedAt) =>
         (at - RefinedStart(ordered, index, closedAt)).TotalSeconds;
 
+    // The segment whose first frame stands in for an instant that overshot the end of its own
+    // segment, or -1 when nothing may stand in for it.
+    //
+    // A segment's refined span is measured from when the muxer closed the files either side of it,
+    // and that wall-clock span runs slightly longer than the media actually in the file - these
+    // segments hold ~1.954s against a refined span that reaches ~1.99s. An instant landing in that
+    // sliver is inside the segment by the boundary math and past its last frame in the file, so the
+    // output seek runs off the end and ffmpeg writes nothing. RefinedStart already narrows this
+    // (it is what moved most instants into the right file at all), but it cannot close it: the two
+    // measurements are of different things.
+    //
+    // Measured on the live buffer over the 36 hours to 2026-08-12, 57 of 67 "produced no frame"
+    // failures asked for an offset between 1.84s and 2.02s of a ~1.95s file - and every one of them
+    // fell back to a live snapshot, a photograph of a moment seconds later, which is the exact
+    // substitution this lookup exists to prevent.
+    //
+    // The nearest real frame to an instant in that sliver is the FIRST frame of the next segment,
+    // milliseconds away on the other side of the boundary. That is only true across a boundary,
+    // though: a next segment starting more than one segment-length after the instant means a hole,
+    // and a frame from the far side of an outage is worse than no frame at all, so that returns -1
+    // and the caller keeps its honest live-snapshot fallback. In an intact buffer the instant is
+    // always within a segment-length of the next start, so the test only ever rejects real holes.
+    public static int FallForwardIndex(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index, DateTimeOffset at,
+        Func<string, DateTimeOffset>? closedAt = null)
+    {
+        var next = index + 1;
+        if (index < 0 || next >= ordered.Count) return -1;
+
+        var gap = GapToNextStart(ordered, index, at, closedAt);
+        return gap >= 0 && gap <= ClipRecorder.SegmentSeconds ? next : -1;
+    }
+
+    // How far after `at` the next segment opens - which is how stale the stand-in frame would be.
+    public static double GapToNextStart(
+        IReadOnlyList<(string Path, DateTimeOffset StartsAt)> ordered, int index, DateTimeOffset at,
+        Func<string, DateTimeOffset>? closedAt = null) =>
+        (RefinedStart(ordered, index + 1, closedAt) - at).TotalSeconds;
+
     // Which segment holds `at`, or -1 if the buffer has no cover for that instant.
     //
     // `ordered` is every segment on disk, oldest first. The newest is never selectable - ffmpeg is
@@ -277,28 +316,65 @@ public sealed class TriggerRewindService(
         CancellationToken cancellationToken)
     {
         var segment = ordered[index];
+        var offset = Math.Max(0, TriggerRewind.OffsetInto(ordered, index, at, ClosedAt));
+
+        var bytes = await ExtractFrameAsync(segment.Path, offset, cancellationToken);
+        if (bytes is not null) return bytes;
+
+        // ffmpeg exits 0 having written nothing when a seek finds no frame - the failure that used
+        // to arrive as a corrupt-looking encoder error rather than a missing file. The usual cause
+        // is an instant in the sliver between this file's last frame and where the next segment
+        // opens; see TriggerRewind.FallForwardIndex, which decides whether the next segment's first
+        // frame may stand in for it.
+        var fallForward = TriggerRewind.FallForwardIndex(ordered, index, at, ClosedAt);
+        if (fallForward < 0)
+        {
+            logger.LogWarning(
+                "Trigger rewind found the segment for {At:HH:mm:ss.fff} on camera stream {Segment} but ffmpeg " +
+                "produced no frame at {Offset:0.###}s into it, and no adjoining segment can stand in for it; " +
+                "using the live snapshot instead",
+                at, Path.GetFileName(segment.Path), offset);
+            return null;
+        }
+
+        // Offset 0 - the head of the file, which is complete from the muxer's first write, so this
+        // holds even when the next segment is the one still being written.
+        var next = ordered[fallForward];
+        bytes = await ExtractFrameAsync(next.Path, 0, cancellationToken);
+        if (bytes is null)
+        {
+            logger.LogWarning(
+                "Trigger rewind found no frame for {At:HH:mm:ss.fff} at {Offset:0.###}s into {Segment} nor at the " +
+                "head of {Next}; using the live snapshot instead",
+                at, offset, Path.GetFileName(segment.Path), Path.GetFileName(next.Path));
+            return null;
+        }
+
+        logger.LogInformation(
+            "Trigger rewind for {At:HH:mm:ss.fff} ran {Offset:0.###}s past the last frame of {Segment}; used the " +
+            "first frame of {Next} instead, {Gap:0.###}s away",
+            at, offset, Path.GetFileName(segment.Path), Path.GetFileName(next.Path),
+            TriggerRewind.GapToNextStart(ordered, index, at, ClosedAt));
+
+        return bytes;
+    }
+
+    // One ffmpeg run for one frame, or null if it did not produce a usable one. Null covers every
+    // way that can happen - a non-zero exit, the exit-0-wrote-nothing case a seek past the last
+    // frame produces, and a truncated JPEG - because the caller's next move is the same for all
+    // three.
+    private async Task<byte[]?> ExtractFrameAsync(
+        string segmentPath, double offsetSeconds, CancellationToken cancellationToken)
+    {
         var framePath = Path.Combine(Path.GetTempPath(), $"rewind-{Guid.NewGuid():N}.jpg");
 
         try
         {
-            var offset = Math.Max(0, TriggerRewind.OffsetInto(ordered, index, at, ClosedAt));
             var ok = await FfmpegProcess.RunAsync(
-                _ffmpegPath, TriggerRewind.BuildExtractArguments(segment.Path, offset, framePath),
+                _ffmpegPath, TriggerRewind.BuildExtractArguments(segmentPath, offsetSeconds, framePath),
                 ExtractTimeout, logger, "rewind frame fetch", RewindPriority, cancellationToken);
 
-            // ffmpeg exits 0 having written nothing when a seek finds no frame - the failure that
-            // used to arrive as a corrupt-looking encoder error rather than a missing file. Treat
-            // the absent file as the real signal and say so, because silently falling back to the
-            // live snapshot is what put a photograph of a different moment on the event in the
-            // first place.
-            if (!ok || !File.Exists(framePath))
-            {
-                logger.LogWarning(
-                    "Trigger rewind found the segment for {At:HH:mm:ss.fff} on camera stream {Segment} but ffmpeg " +
-                    "produced no frame at {Offset:0.###}s into it; using the live snapshot instead",
-                    at, Path.GetFileName(segment.Path), offset);
-                return null;
-            }
+            if (!ok || !File.Exists(framePath)) return null;
 
             var bytes = await File.ReadAllBytesAsync(framePath, cancellationToken);
             return TriggerImagePaths.IsCompleteJpeg(bytes) ? bytes : null;

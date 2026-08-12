@@ -161,6 +161,46 @@ public sealed class TriggerRewindTests
         Assert.Equal(Base, TriggerRewind.RefinedStart(ordered, 0, DriftedByNinePercent()));
     }
 
+    // --- overshooting the end of a segment ------------------------------------------------------
+
+    // A segment's refined span is measured between muxer closes and runs a little longer than the
+    // media in the file (~1.99s of span against ~1.954s of video), so an instant in that sliver is
+    // inside the segment by the boundary math and past its last frame on disk. The frame that
+    // actually covers it opens the next segment.
+    [Fact]
+    public void FallForwardIndex_OffersTheNextSegment_ForAnInstantPastThisOnesLastFrame()
+    {
+        var ordered = new[] { Seg(0), Seg(2), Seg(4), Seg(6) };
+
+        Assert.Equal(2, TriggerRewind.FallForwardIndex(ordered, 1, Base.AddSeconds(3.99)));
+        Assert.Equal(0.01, TriggerRewind.GapToNextStart(ordered, 1, Base.AddSeconds(3.99)), 3);
+    }
+
+    // The whole point of the -1 return. Standing in a frame from the far side of an outage would be
+    // presenting a different moment as the trigger, which is the failure the live-snapshot fallback
+    // at least does not lie about.
+    [Fact]
+    public void FallForwardIndex_RefusesToJumpAHole() =>
+        Assert.Equal(-1, TriggerRewind.FallForwardIndex(
+            [Seg(0), Seg(2), Seg(60), Seg(62)], 1, Base.AddSeconds(3.99)));
+
+    // Nothing adjoins the newest file, so there is nothing to fall forward to.
+    [Fact]
+    public void FallForwardIndex_AtTheEndOfTheBuffer_HasNowhereToGo() =>
+        Assert.Equal(-1, TriggerRewind.FallForwardIndex(
+            [Seg(0), Seg(2)], 1, Base.AddSeconds(3.99)));
+
+    // In an intact buffer every instant is within a segment-length of the next start, so the hole
+    // test never fires on the case it is not for.
+    [Fact]
+    public void FallForwardIndex_AcceptsEveryInstantInAnIntactSegment()
+    {
+        var ordered = new[] { Seg(0), Seg(2), Seg(4) };
+
+        foreach (var offset in new[] { 2.0, 2.5, 3.0, 3.5, 3.999 })
+            Assert.Equal(2, TriggerRewind.FallForwardIndex(ordered, 1, Base.AddSeconds(offset)));
+    }
+
     // -ss must come AFTER -i. Input seeking on these segments doesn't merely lose precision, it
     // returns nothing at all: a segment is commonly one GOP with a single keyframe at its head, so
     // seeking past that keyframe finds no later one and ffmpeg exits 0 having written no file.
@@ -273,6 +313,50 @@ public sealed class TriggerRewindTests
         Assert.Null(pick);
     }
 
+    // The regression this pair exists for: 67 fetches in the 36 hours to 2026-08-12 asked for an
+    // offset a few tens of milliseconds past the end of a ~1.95s file, ffmpeg wrote nothing, and
+    // every one of them put a live snapshot - a photograph taken seconds later - on the event.
+    [Fact]
+    public async Task TryFetchAsync_WhenTheOffsetOvershootsTheSegment_UsesTheNextSegmentsFirstFrame()
+    {
+        using var box = new StubBox();
+        var segmentStart = box.SeedSegments(count: 4);
+        box.WriteEndOfSegmentStub();
+
+        // Just short of the boundary: inside the segment by the buffer's arithmetic, past its last
+        // frame in the file.
+        var frameAt = segmentStart.AddSeconds(ClipRecorder.SegmentSeconds - 0.05);
+
+        var pick = await box.Service.TryFetchAsync(
+            box.CameraId, frameAt, lookbackSeconds: 6, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(pick);
+        Assert.NotEmpty(pick.ImageBytes);
+
+        // Two runs: the overshooting one, then the head of the next segment.
+        Assert.Equal(2, box.InvocationCount());
+        Assert.Equal(0, box.LastSeekOffset()!.Value, 3);
+
+        // The instant it reports is still the moment motion was detected - the stand-in frame is
+        // milliseconds away, and claiming a different time would corrupt the diagnostic.
+        Assert.Equal(frameAt, pick.ChosenAt);
+    }
+
+    // Falling forward must not become a way to paper over a real gap in the buffer.
+    [Fact]
+    public async Task TryFetchAsync_WhenTheOvershootWouldHaveToCrossAHole_StillReturnsNull()
+    {
+        using var box = new StubBox();
+        var segmentStart = box.SeedSegments(count: 4, holeBeforeNewest: true);
+        box.WriteEndOfSegmentStub();
+
+        var pick = await box.Service.TryFetchAsync(
+            box.CameraId, segmentStart.AddSeconds(ClipRecorder.SegmentSeconds - 0.05),
+            lookbackSeconds: 60, TestContext.Current.CancellationToken);
+
+        Assert.Null(pick);
+    }
+
     [Fact]
     public async Task TryExtractAtAsync_WhenTheBufferIsEmpty_ReturnsNull()
     {
@@ -317,10 +401,17 @@ public sealed class TriggerRewindTests
             Service = new TriggerRewindService(Clips, configuration, NullLogger<TriggerRewindService>.Instance);
         }
 
-        // Writes back-to-back 2s segments ending now, and returns an instant inside the run. The
-        // newest file is excluded by the service as mid-write, exactly as in production, so the
-        // returned instant sits inside the second-newest.
-        public DateTimeOffset SeedSegments(int count)
+        // Long enough to be an outage rather than one long segment - see
+        // ClipRecorder.MaxSegmentSpanSeconds.
+        private const int HoleSeconds = 30;
+
+        // Writes back-to-back 2s segments ending now, and returns the start of the newest one the
+        // service will actually select. The newest file of all is excluded as mid-write, exactly as
+        // in production, so that is the second-newest.
+        //
+        // holeBeforeNewest pushes the run back so the gap between it and the mid-write file is an
+        // outage: the same shape, but with nothing legitimate to fall forward onto.
+        public DateTimeOffset SeedSegments(int count, bool holeBeforeNewest = false)
         {
             var dir = Clips.BufferDirectory(CameraId);
 
@@ -329,14 +420,17 @@ public sealed class TriggerRewindTests
             // DateTime.Now instead left the sub-second remainder as a phantom seek offset.
             var now = DateTime.Now;
             var newest = now.AddTicks(-(now.Ticks % TimeSpan.TicksPerSecond));
+            var runEnd = newest.AddSeconds(-(holeBeforeNewest ? HoleSeconds : ClipRecorder.SegmentSeconds));
 
-            for (var i = 0; i < count; i++)
+            File.WriteAllText(Path.Combine(dir, $"seg_{newest:yyyyMMdd-HHmmss}.ts"), "x");
+
+            for (var i = 0; i < count - 1; i++)
             {
-                var startsAt = newest.AddSeconds(-ClipRecorder.SegmentSeconds * i);
+                var startsAt = runEnd.AddSeconds(-ClipRecorder.SegmentSeconds * i);
                 File.WriteAllText(Path.Combine(dir, $"seg_{startsAt:yyyyMMdd-HHmmss}.ts"), "x");
             }
 
-            return new DateTimeOffset(newest.AddSeconds(-ClipRecorder.SegmentSeconds));
+            return new DateTimeOffset(runEnd);
         }
 
         public void WriteStub()
@@ -351,6 +445,31 @@ public sealed class TriggerRewindTests
                 """);
             MakeExecutable();
         }
+
+        // ffmpeg as it behaves at the end of a segment: a seek past the last frame writes no file
+        // and still exits 0, so only a seek to the head of a file produces anything.
+        public void WriteEndOfSegmentStub()
+        {
+            File.WriteAllBytes(_jpegPath, JpegBytes());
+            File.WriteAllText(_stubPath, $"""
+                #!/bin/sh
+                echo "$@" >> "{_argsLog}"
+                for LAST in "$@"; do :; done
+                PREV=""
+                SS=""
+                for A in "$@"; do
+                  if [ "$PREV" = "-ss" ]; then SS="$A"; fi
+                  PREV="$A"
+                done
+                if [ "$SS" = "0" ]; then
+                  cp "{_jpegPath}" "$LAST"
+                fi
+                exit 0
+                """);
+            MakeExecutable();
+        }
+
+        public int InvocationCount() => File.Exists(_argsLog) ? File.ReadAllLines(_argsLog).Length : 0;
 
         public void WriteFailingStub()
         {
