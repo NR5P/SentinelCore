@@ -842,6 +842,27 @@ main {
   display: none;
 }
 
+/* A settings-section used as an open form rather than as a list row. The camera form sits directly
+   above the camera list and is built from the same card background and border, so without an edge
+   of its own it reads as the first camera in the list. */
+.form-panel {
+  border-left: 2px solid var(--cyan);
+  margin-bottom: 18px;
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.45);
+}
+
+.form-panel-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(75, 231, 255, 0.05);
+}
+
+/* Scoped, like every other .hidden in this sheet - see the note above .tab-pane.hidden. The webcam
+   form hides this button because a device that pushes its own video has no address to test. */
+#camera-test-btn.hidden {
+  display: none;
+}
+
 .settings-section-header {
   display: flex;
   justify-content: space-between;
@@ -990,6 +1011,11 @@ main {
 
 .field-checkbox-row {
   display: flex;
+  /* .field-row stacks its label above its input, which is right for a text field and wrong for a
+     switch - without this, a row carrying both classes puts the toggle above its own label and
+     centres it. Set here rather than dropped from the markup because the two classes are combined
+     deliberately: the row still wants .field-row's grid participation. */
+  flex-direction: row;
   align-items: center;
   gap: 10px;
 }

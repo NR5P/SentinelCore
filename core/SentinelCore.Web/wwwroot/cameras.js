@@ -282,6 +282,8 @@ window.GateWatchCameras = (function () {
 
     const wrap = document.getElementById("camera-form-wrap");
     const fields = document.getElementById("camera-form-fields");
+    document.getElementById("camera-form-title").textContent =
+      camera ? `edit webcam device - ${camera.name}` : "add webcam device";
     document.getElementById("camera-form-errors").innerHTML = "";
     fields.innerHTML = "";
     setTestStatus("", null);
@@ -292,7 +294,7 @@ window.GateWatchCameras = (function () {
       "Stream the device's microphone alongside its camera, into live view and saved clips."));
 
     const note = document.createElement("p");
-    note.className = "field-note";
+    note.className = "field-note field-row-wide";
     note.textContent =
       "After saving, open the publish page on the device itself and pick this camera. " +
       "That device has to stay awake with the page open for as long as you want the feed.";
@@ -321,6 +323,8 @@ window.GateWatchCameras = (function () {
     const wrap = document.getElementById("camera-form-wrap");
     const fields = document.getElementById("camera-form-fields");
     const errors = document.getElementById("camera-form-errors");
+    document.getElementById("camera-form-title").textContent =
+      camera ? `edit camera - ${camera.name}` : "add camera";
     errors.innerHTML = "";
     fields.innerHTML = "";
     setTestStatus("", null);
@@ -352,6 +356,11 @@ window.GateWatchCameras = (function () {
   function closeForm() {
     editingId = null;
     document.getElementById("camera-form-wrap").classList.add("hidden");
+    // Both panels share one footer, so a test-connection error left behind by the URL form would
+    // otherwise still be sitting there the next time the webcam form - which has nothing to test -
+    // is opened.
+    document.getElementById("camera-form-errors").innerHTML = "";
+    setTestStatus("", null);
   }
 
   function buildTextField(id, label, value, tip) {
