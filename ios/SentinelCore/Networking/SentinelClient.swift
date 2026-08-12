@@ -422,6 +422,16 @@ final class SentinelClient {
         try await send(endpoint, method: "PUT", body: values)
     }
 
+    // Runs a settings field's lookup (SettingsLookupSchema) - the endpoint and the meaning of the
+    // results both come from the schema, so this stays one method however many fields grow one.
+    func settingsLookup(_ lookup: SettingsLookupSchema, query: String) async throws -> [SettingsLookupCandidate] {
+        let response: SettingsLookupResponse = try await get(
+            lookup.endpoint,
+            query: [URLQueryItem(name: "query", value: query)]
+        )
+        return response.results
+    }
+
     func runSettingsAction(_ action: SettingsActionSchema) async throws {
         let _: EmptyResponse = try await send(action.endpoint, method: action.method, body: Optional<String>.none)
     }

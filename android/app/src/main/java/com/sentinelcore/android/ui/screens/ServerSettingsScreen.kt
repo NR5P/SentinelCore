@@ -48,6 +48,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.data.HostRebootProbe
 import com.sentinelcore.android.data.SettingsField
+import com.sentinelcore.android.data.SettingsLookup
+import com.sentinelcore.android.data.SettingsLookupCandidate
 import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
@@ -188,6 +190,12 @@ private fun ServerSettingsSectionEditor(
         }
     }
 
+    // Lookup state, keyed by the field the button belongs to rather than held as three loose
+    // properties - the schema can grow a second lookup field without this screen changing.
+    val lookupResults = remember(section.key) { mutableStateMapOf<String, List<SettingsLookupCandidate>>() }
+    val lookupNotes = remember(section.key) { mutableStateMapOf<String, LookupNote>() }
+    var lookupBusy by remember(section.key) { mutableStateOf<String?>(null) }
+
     var isSaving by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errors by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -212,6 +220,59 @@ private fun ServerSettingsSectionEditor(
                 hostReboot.remaining = current - 1
             }
         }
+    }
+
+    fun runLookup(field: SettingsField, lookup: SettingsLookup) {
+        val query = (text[field.name] ?: "").trim()
+        if (query.isEmpty()) {
+            lookupResults[field.name] = emptyList()
+            lookupNotes[field.name] = LookupNote("Type a town or city first.", isError = true)
+            return
+        }
+
+        scope.launch {
+            lookupBusy = field.name
+            lookupNotes.remove(field.name)
+            try {
+                val candidates = model.settingsLookup(lookup, query)
+                lookupResults[field.name] = candidates
+                if (candidates.isEmpty()) {
+                    lookupNotes[field.name] = LookupNote(
+                        "Nothing found for \"$query\". Try adding a state or country, or enter the " +
+                            "coordinates yourself.",
+                        isError = true,
+                    )
+                }
+            } catch (error: Exception) {
+                lookupResults[field.name] = emptyList()
+                // The server's message separates "this machine has no route to the internet" from
+                // "the lookup service said no", and each ends with what to do instead.
+                lookupNotes[field.name] = LookupNote(error.message ?: "The lookup failed.", isError = true)
+            } finally {
+                lookupBusy = null
+            }
+        }
+    }
+
+    // Writes into the section's *other* fields, which is the whole point: the values wanted are
+    // the ones nobody can type from memory. Names this section doesn't have are skipped, so a
+    // server that starts returning a third value can't upset an app that knows two.
+    fun applyCandidate(field: SettingsField, candidate: SettingsLookupCandidate) {
+        for ((name, value) in candidate.values) {
+            val target = section.fields.firstOrNull { it.name == name } ?: continue
+            if (target.type == "checkbox") {
+                flags[name] = value == true
+            } else {
+                text[name] = when {
+                    value == JSONObject.NULL -> ""
+                    // Same "don't show a port as 1883.0" rule the field seeding above uses.
+                    value is Double && value == value.toLong().toDouble() -> value.toLong().toString()
+                    else -> value.toString()
+                }
+            }
+        }
+        lookupResults[field.name] = emptyList()
+        lookupNotes[field.name] = LookupNote("Filled in from ${candidate.label}. Save to keep it.", isError = false)
     }
 
     fun save() {
@@ -296,6 +357,41 @@ private fun ServerSettingsSectionEditor(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+
+                    // Below the tip, not above it: the tip describes the box, and a candidate list
+                    // sitting between the two reads as though the explanation belongs to the
+                    // results.
+                    field.lookup?.let { lookup ->
+                        val busy = lookupBusy == field.name
+                        OutlinedButton(
+                            onClick = { runLookup(field, lookup) },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (busy) "Looking…" else lookup.label.replaceFirstChar(Char::uppercase))
+                        }
+                        lookupNotes[field.name]?.let { note ->
+                            Text(
+                                note.text,
+                                color = if (note.isError) SentinelRed else SentinelGreen,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        // A whole row each: the difference between the right Holland and the wrong
+                        // one is usually the county at the end of the name.
+                        for (candidate in lookupResults[field.name].orEmpty()) {
+                            TextButton(
+                                onClick = { applyCandidate(field, candidate) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    candidate.label,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
                 }
             }
             item {
@@ -388,6 +484,11 @@ private fun ServerSettingsSectionEditor(
         )
     }
 }
+
+// What a lookup has to say for itself between presses - "nothing found", "filled in from X", or
+// whatever the server explained went wrong. Kept apart from the section's save errors so a failed
+// lookup doesn't read as a failed save.
+private data class LookupNote(val text: String, val isError: Boolean)
 
 @Composable
 private fun SettingsFieldControl(

@@ -1016,6 +1016,63 @@ main {
   border-color: var(--border-bright);
 }
 
+/* A text field that can look itself up - the box, its Find button, and the candidates that come
+   back. See buildLookup() in settings.js. */
+.field-lookup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-lookup-row {
+  display: flex;
+  gap: 6px;
+}
+
+.field-lookup-row .field-input {
+  flex: 1;
+}
+
+.field-lookup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Each candidate is a full place name, so it gets a whole row rather than being truncated - the
+   difference between the right Holland and the wrong one is usually the county at the end. */
+.field-lookup-choice {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.field-lookup-choice:hover,
+.field-lookup-choice:focus-visible {
+  color: var(--text);
+  border-color: var(--green);
+}
+
+.field-lookup-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.field-lookup-error {
+  color: var(--red);
+}
+
 .field-checkbox-row {
   display: flex;
   /* .field-row stacks its label above its input, which is right for a text field and wrong for a

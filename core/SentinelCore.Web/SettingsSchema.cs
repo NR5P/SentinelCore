@@ -33,6 +33,21 @@ public sealed record SettingsActionSchema(
     string Endpoint,
     string Method);
 
+// A lookup a text field offers: type something into the field, press the button, and pick from
+// what comes back to fill in *other* fields of the same section. Pure data like ExtraAction - an
+// endpoint, not a callback - so this stays platform-neutral and a client that hasn't implemented
+// it renders an ordinary text box, exactly as every client did before this existed.
+//
+// The endpoint takes ?query= and answers either
+//   { "results": [ { "label": "Holland, Bell County, Texas", "values": { "latitude": 31.0932, "longitude": -97.4025 } } ] }
+// or, for anything the user should be told about, an { "error": "..." } with a non-2xx status.
+// Keys in "values" are field names in this same section; a client applies the ones it recognises
+// and ignores the rest.
+public sealed record SettingsLookupSchema(
+    string Label,
+    string Tip,
+    string Endpoint);
+
 public sealed record SettingsFieldSchema
 {
     public required string Name { get; init; }
@@ -64,6 +79,10 @@ public sealed record SettingsFieldSchema
 
     // Only for Type == "select".
     public IReadOnlyList<SettingsFieldOption>? Options { get; init; }
+
+    // Only for Type == "text": an optional "look this up for me" button that fills in sibling
+    // fields. Optional on every client - the field is still an editable text box without it.
+    public SettingsLookupSchema? Lookup { get; init; }
 
     // True for the handful of fields that bind a socket or otherwise only read their value at
     // startup. A client should tell the user the change won't apply until the server restarts.
@@ -104,8 +123,9 @@ public sealed record SettingsSectionSchema
 
 public static class SettingsSchema
 {
-    private static SettingsFieldSchema Text(string name, string label, string tip) =>
-        new() { Name = name, Label = label, Type = "text", Tip = tip };
+    private static SettingsFieldSchema Text(
+        string name, string label, string tip, SettingsLookupSchema? lookup = null) =>
+        new() { Name = name, Label = label, Type = "text", Tip = tip, Lookup = lookup };
 
     private static SettingsFieldSchema Password(string name, string label, string tip) =>
         new() { Name = name, Label = label, Type = "password", Tip = tip };
@@ -520,7 +540,11 @@ public static class SettingsSchema
             Description = "Where this server is, used for one thing only: working out when the sun rises and sets here, so a schedule can fire at sunset or \"when it gets dark\" instead of at a fixed clock time that drifts out of step through the year. Nothing is sent anywhere - the calculation happens on this machine. You can type a town to fill the coordinates in, or enter them yourself; only the numbers are saved.",
             Fields =
             [
-                Text("label", "Town or City", "A place name to look up, e.g. \"Louisville, KY\". Filling this in and pressing Find sets the two coordinates below. Only ever a convenience - entering the coordinates directly works just as well, and is the only option on a server with no internet access."),
+                Text("label", "Town or City", "A place name to look up, e.g. \"Louisville, KY\". Filling this in and pressing Find sets the two coordinates below. Only ever a convenience - entering the coordinates directly works just as well, and is the only option on a server with no internet access.",
+                    new SettingsLookupSchema(
+                        "find",
+                        "Look this place up and fill in the coordinates below. This is the one part of the app that asks anything of the internet, and only when pressed - if this server has no route out, type the coordinates yourself instead.",
+                        "/api/settings/location/lookup")),
                 Number("latitude", "Latitude", "Degrees north of the equator, negative for south. Leave this and longitude at 0 if you would rather not set a location - schedules that follow the sun simply won't run.", -90, 90, 0.0001),
                 Number("longitude", "Longitude", "Degrees east of Greenwich, negative for west.", -180, 180, 0.0001)
             ]

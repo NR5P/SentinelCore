@@ -27,6 +27,105 @@ window.GateWatchSettings = (function () {
 
   const WIDE_TYPES = new Set(["checkbox", "password", "csv"]);
 
+  // A text field that can look itself up (schema field.lookup): the box gets a button beside it,
+  // and what comes back fills in *other* fields of the same section - LOCATION's Town or City
+  // setting latitude and longitude is the one that exists today. Nothing here knows that; the
+  // candidate says which field names it sets, and this writes to whichever of them are on screen.
+  function buildLookup(field, input) {
+    const wrap = document.createElement("div");
+    wrap.className = "field-lookup";
+
+    const row = document.createElement("div");
+    row.className = "field-lookup-row";
+    const findBtn = document.createElement("button");
+    findBtn.type = "button";
+    findBtn.className = "field-toggle-btn";
+    findBtn.textContent = field.lookup.label;
+    findBtn.dataset.tip = field.lookup.tip;
+    findBtn.setAttribute("data-tip-right", "");
+    row.append(input, findBtn);
+
+    const results = document.createElement("div");
+    results.className = "field-lookup-results";
+    wrap.append(row, results);
+
+    function say(message, isError) {
+      results.textContent = "";
+      const note = document.createElement("p");
+      note.className = "field-lookup-note" + (isError ? " field-lookup-error" : "");
+      note.textContent = message;
+      results.appendChild(note);
+    }
+
+    // Writing into siblings rather than into this field: a lookup exists precisely because the
+    // values you want are not the thing you can type. Anything the candidate names that isn't
+    // rendered here is skipped, so an older dashboard meeting a newer server writes what it can.
+    function apply(candidate) {
+      const grid = wrap.closest(".field-grid");
+      for (const [name, value] of Object.entries(candidate.values || {})) {
+        const target = grid && grid.querySelector(`[data-field="${name}"]`);
+        if (!target) continue;
+        target.value = value;
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      say(`Filled in from ${candidate.label}. Press save to keep it.`, false);
+    }
+
+    async function find() {
+      const query = input.value.trim();
+      if (!query) {
+        say("Type a town or city first.", true);
+        input.focus();
+        return;
+      }
+
+      findBtn.disabled = true;
+      say("Looking…", false);
+      try {
+        const response = await fetch(`${field.lookup.endpoint}?query=${encodeURIComponent(query)}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          // The server's own message is the useful one here - it distinguishes "this machine has
+          // no route to the internet" from "the lookup service said no", and says what to do.
+          say((payload && payload.error) || `Lookup failed (HTTP ${response.status}).`, true);
+          return;
+        }
+        const candidates = (payload && payload.results) || [];
+        if (candidates.length === 0) {
+          say(`Nothing found for "${query}". Try adding a state or country, or enter the coordinates yourself.`, true);
+          return;
+        }
+
+        results.textContent = "";
+        const list = document.createElement("ul");
+        list.className = "field-lookup-list";
+        for (const candidate of candidates) {
+          const item = document.createElement("li");
+          const choice = document.createElement("button");
+          choice.type = "button";
+          choice.className = "field-lookup-choice";
+          choice.textContent = candidate.label;
+          choice.addEventListener("click", () => apply(candidate));
+          item.appendChild(choice);
+          list.appendChild(item);
+        }
+        results.appendChild(list);
+      } catch {
+        say("Couldn't reach this server to run the lookup. Check the connection, or enter the coordinates yourself.", true);
+      } finally {
+        findBtn.disabled = false;
+      }
+    }
+
+    findBtn.addEventListener("click", find);
+    // Enter is what a search box invites. There's no <form> here, so nothing to suppress.
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter") find();
+    });
+
+    return wrap;
+  }
+
   // Must stay identical to SettingsSecrets.Mask on the server: a saved secret is sent out as
   // this, and a save that sends it back untouched means "keep what's stored".
   const SECRET_MASK = "••••••••";
@@ -81,7 +180,10 @@ window.GateWatchSettings = (function () {
 
   function buildField(field, value) {
     const row = document.createElement("div");
-    row.className = "field-row" + (WIDE_TYPES.has(field.type) ? " field-row-wide" : "");
+    // A lookup field spans the grid whatever its type: the candidate list underneath it is full
+    // place names ("Holland, Bell County, Texas, 76534, United States"), unreadable in a column.
+    const wide = WIDE_TYPES.has(field.type) || !!field.lookup;
+    row.className = "field-row" + (wide ? " field-row-wide" : "");
     // The tip lives on the row because <input> can't render the ::after pseudo-element.
     if (field.tip) row.dataset.tip = field.tip;
 
@@ -207,7 +309,7 @@ window.GateWatchSettings = (function () {
       if (field.max !== undefined) input.max = field.max;
       input.step = field.step !== undefined ? field.step : "any";
     }
-    row.appendChild(input);
+    row.appendChild(field.lookup ? buildLookup(field, input) : input);
 
     // What to put in the box, for the fields where the tip explains what the number does without
     // ever answering that - a confidence threshold means nothing until you have watched this

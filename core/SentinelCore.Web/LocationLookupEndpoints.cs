@@ -26,6 +26,12 @@ public static class LocationLookupEndpoints
 
     private const int MaximumResults = 5;
 
+    // Matches the step on the latitude/longitude fields in SettingsSchema, and is about eleven
+    // metres - far finer than a sunrise calculation can tell apart, and it keeps the value the
+    // form receives one a number input with step=0.0001 considers valid. Nominatim's seven
+    // decimals would round-trip as 31.0932154 and read as false precision about where you live.
+    private const int CoordinateDecimals = 4;
+
     public static void MapLocationLookupEndpoints(this WebApplication app)
     {
         // AdminOnly to match the rest of /api/settings, of which this is a helper.
@@ -71,9 +77,9 @@ public static class LocationLookupEndpoints
         .RequireAuthorization("AdminOnly");
     }
 
-    private static List<LocationCandidate> Parse(string body)
+    private static List<SettingsLookupCandidate> Parse(string body)
     {
-        var candidates = new List<LocationCandidate>();
+        var candidates = new List<SettingsLookupCandidate>();
 
         using var document = JsonDocument.Parse(body);
         if (document.RootElement.ValueKind != JsonValueKind.Array) return candidates;
@@ -92,11 +98,20 @@ public static class LocationLookupEndpoints
                 ? displayName.GetString() ?? ""
                 : "";
 
-            candidates.Add(new LocationCandidate(label, parsedLatitude, parsedLongitude));
+            // Keyed by the field names in the LOCATION section of SettingsSchema, which is the
+            // whole contract a client needs: it applies the values to the fields it knows by
+            // those names without this endpoint or that client knowing anything about the other.
+            candidates.Add(new SettingsLookupCandidate(label, new Dictionary<string, double>
+            {
+                ["latitude"] = Math.Round(parsedLatitude, CoordinateDecimals),
+                ["longitude"] = Math.Round(parsedLongitude, CoordinateDecimals)
+            }));
         }
 
         return candidates;
     }
 }
 
-public sealed record LocationCandidate(string Label, double Latitude, double Longitude);
+// One option a settings-field lookup came back with: something to show in a list, and the field
+// values to write if it's the one picked. See SettingsLookupSchema for the wire contract.
+public sealed record SettingsLookupCandidate(string Label, IReadOnlyDictionary<string, double> Values);

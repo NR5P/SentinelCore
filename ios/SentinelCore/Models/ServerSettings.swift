@@ -20,6 +20,27 @@ struct SettingsActionSchema: Decodable, Hashable {
     let method: String
 }
 
+// A "look this up for me" button on a text field (today: LOCATION's Town or City, which fills in
+// latitude and longitude). Pure data like SettingsActionSchema - an endpoint taking ?query= - so
+// nothing here is location-specific, and a field without one is just a text box.
+struct SettingsLookupSchema: Decodable, Hashable {
+    let label: String
+    let tip: String
+    let endpoint: String
+}
+
+// One option a lookup came back with: something to show in the list, and the field values to
+// write if it's picked. The keys are field names in the same section; a client applies the ones
+// it recognises and ignores the rest, so a newer server can't break an older app.
+struct SettingsLookupCandidate: Decodable {
+    let label: String
+    let values: [String: SettingsValue]
+}
+
+struct SettingsLookupResponse: Decodable {
+    let results: [SettingsLookupCandidate]
+}
+
 struct SettingsFieldSchema: Decodable, Identifiable, Hashable {
     let name: String
     let label: String
@@ -36,6 +57,9 @@ struct SettingsFieldSchema: Decodable, Identifiable, Hashable {
     // deliberately not the same thing as the shipped default.
     let recommended: Double?
     let options: [SettingsFieldOption]?
+
+    // Absent on all but a handful of text fields - see SettingsLookupSchema.
+    let lookup: SettingsLookupSchema?
     let requiresRestart: Bool
     let secret: Bool
 

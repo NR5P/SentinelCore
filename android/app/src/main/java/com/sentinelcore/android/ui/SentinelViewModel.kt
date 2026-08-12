@@ -43,6 +43,8 @@ import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.SentinelRepository
 import com.sentinelcore.android.data.ServerCompatibility
 import com.sentinelcore.android.data.SettingsAction
+import com.sentinelcore.android.data.SettingsLookup
+import com.sentinelcore.android.data.SettingsLookupCandidate
 import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.data.SystemStatus
 import com.sentinelcore.android.data.TriggerConfig
@@ -601,6 +603,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun saveSettingsSection(endpoint: String, body: org.json.JSONObject): Boolean =
         repository.saveSettingsSection(endpoint, body)
+
+    suspend fun settingsLookup(lookup: SettingsLookup, query: String): List<SettingsLookupCandidate> =
+        repository.settingsLookup(lookup, query)
 
     suspend fun runSettingsAction(action: SettingsAction) = repository.runSettingsAction(action)
 

@@ -815,6 +815,28 @@ class SentinelRepository(
         json.optBoolean("restartRequired")
     }
 
+    // Runs a settings field's lookup (SettingsLookup). The endpoint and what the values mean both
+    // come from the schema, so this stays one method however many fields grow one.
+    suspend fun settingsLookup(lookup: SettingsLookup, query: String): List<SettingsLookupCandidate> =
+        withContext(Dispatchers.IO) {
+            val json = JSONObject(request("${lookup.endpoint}?query=${queryValue(query)}"))
+            val results = json.optJSONArray("results") ?: JSONArray()
+            buildList {
+                for (index in 0 until results.length()) {
+                    val candidate = results.getJSONObject(index)
+                    val values = candidate.optJSONObject("values") ?: JSONObject()
+                    add(
+                        SettingsLookupCandidate(
+                            label = candidate.optString("label"),
+                            values = buildMap {
+                                for (key in values.keys()) put(key, values.get(key))
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+
     suspend fun runSettingsAction(action: SettingsAction): Unit = withContext(Dispatchers.IO) {
         request(action.endpoint, method = action.method)
         Unit
@@ -894,6 +916,13 @@ class SentinelRepository(
                                     }
                                 }
                             } ?: emptyList(),
+                            lookup = field.optJSONObject("lookup")?.let {
+                                SettingsLookup(
+                                    label = it.getString("label"),
+                                    tip = it.optString("tip"),
+                                    endpoint = it.getString("endpoint"),
+                                )
+                            },
                             requiresRestart = field.optBoolean("requiresRestart"),
                         ),
                     )

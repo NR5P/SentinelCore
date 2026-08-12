@@ -313,6 +313,33 @@ public sealed class SettingsSchemaTests
             }
         }
     }
+
+    // A lookup is a promise in the tip - "press Find and the coordinates fill in" - and LOCATION's
+    // spent a release making exactly that promise with no button behind it anywhere. The parts a
+    // unit test can hold to account are these: a lookup belongs to a text field (nothing else has
+    // a query to send), and it has to say what its button is called and what it warns about.
+    [Fact]
+    public void LookupFields_AreTextFields_AndSayWhatTheirButtonDoes()
+    {
+        foreach (var section in SettingsSchema.Sections)
+        {
+            foreach (var field in section.Fields.Where(f => f.Lookup is not null))
+            {
+                var lookup = field.Lookup!;
+                Assert.True(
+                    field.Type == "text",
+                    $"Field '{section.Key}.{field.Name}' has a lookup but is type '{field.Type}'. " +
+                    "A lookup sends the field's own text as the query, so only text fields can carry one.");
+                Assert.False(
+                    string.IsNullOrWhiteSpace(lookup.Label),
+                    $"Lookup on '{section.Key}.{field.Name}' has no button label.");
+                Assert.False(
+                    string.IsNullOrWhiteSpace(lookup.Tip),
+                    $"Lookup on '{section.Key}.{field.Name}' has no tip.");
+                Assert.StartsWith("/api/", lookup.Endpoint, StringComparison.Ordinal);
+            }
+        }
+    }
 }
 
 // The endpoint half: the schema must actually reach clients in a shape they can parse, and only
@@ -374,6 +401,36 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
         // DtoType is server-internal wiring for the drift tests. Serializing it would leak
         // assembly-qualified type names to every client for no benefit.
         Assert.False(mqtt.TryGetProperty("dtoType", out _));
+    }
+
+    // Every lookup the schema advertises has to be a route that exists. The empty query is what
+    // makes this checkable without a network: the endpoint rejects it before it would ever reach
+    // a geocoder, so a 400 proves the route is really mapped while a 404 proves it isn't - which
+    // is the failure a client would otherwise meet as a Find button that does nothing.
+    [Fact]
+    public async Task EveryLookupEndpointInTheSchema_IsMapped()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var lookups = SettingsSchema.Sections
+            .SelectMany(section => section.Fields
+                .Where(field => field.Lookup is not null)
+                .Select(field => (Section: section.Key, field.Name, field.Lookup!.Endpoint)))
+            .ToArray();
+
+        Assert.NotEmpty(lookups);
+
+        foreach (var lookup in lookups)
+        {
+            using var response = await client.GetAsync(lookup.Endpoint, ct);
+            Assert.True(
+                response.StatusCode == HttpStatusCode.BadRequest,
+                $"Lookup for '{lookup.Section}.{lookup.Name}' points at {lookup.Endpoint}, which answered " +
+                $"{(int)response.StatusCode} to a query-less request instead of 400. A client's Find button " +
+                "would do nothing.");
+        }
     }
 
     [Fact]

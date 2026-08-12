@@ -68,6 +68,19 @@ struct ServerSettingsView: View {
     }
 }
 
+// What a lookup has to say for itself between presses - "nothing found", "filled in from X", or
+// whatever the server explained went wrong. Kept apart from saveErrors so a failed lookup doesn't
+// read as a failed save.
+private struct LookupNote {
+    let text: String
+    let isError: Bool
+
+    init(_ text: String, isError: Bool) {
+        self.text = text
+        self.isError = isError
+    }
+}
+
 struct ServerSettingsSectionView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -78,6 +91,12 @@ struct ServerSettingsSectionView: View {
     // reassembled when building the save payload).
     @State private var text: [String: String] = [:]
     @State private var flags: [String: Bool] = [:]
+
+    // Lookup state, keyed by the field the button belongs to rather than held as three loose
+    // properties - the schema can grow a second lookup field without this view changing.
+    @State private var lookupResults: [String: [SettingsLookupCandidate]] = [:]
+    @State private var lookupNotes: [String: LookupNote] = [:]
+    @State private var lookupBusy: String?
 
     @State private var isSaving = false
     @State private var saveErrors: [String] = []
@@ -189,6 +208,13 @@ struct ServerSettingsSectionView: View {
                         #if os(iOS)
                         .textInputAutocapitalization(.never)
                         #endif
+                        .onSubmit {
+                            // Return runs the lookup, which is what a box with a Find button
+                            // beside it invites. Harmless on the fields without one.
+                            if let lookup = field.lookup {
+                                Task { await runLookup(field, lookup) }
+                            }
+                        }
                 }
 
             default:
@@ -201,7 +227,98 @@ struct ServerSettingsSectionView: View {
             Text(field.requiresRestart ? "\(field.tip) (Restart required.)" : field.tip)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            // Below the tip, not above it: the tip describes the box, and a candidate list
+            // sitting between the two reads as though the explanation belongs to the results.
+            if let lookup = field.lookup {
+                lookupControls(field, lookup)
+            }
         }
+    }
+
+    // The button, whatever the last attempt had to say, and the candidates to choose from. Laid
+    // out down the row rather than in a sheet: a place name is long, there are at most five of
+    // them, and picking one is a single tap either way.
+    @ViewBuilder
+    private func lookupControls(_ field: SettingsFieldSchema, _ lookup: SettingsLookupSchema) -> some View {
+        let busy = lookupBusy == field.name
+
+        HStack {
+            Button(busy ? "Looking…" : lookup.label.capitalized) {
+                Task { await runLookup(field, lookup) }
+            }
+            .buttonStyle(.borderless)
+            .disabled(busy)
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 4)
+
+        if let note = lookupNotes[field.name] {
+            Text(note.text)
+                .font(.caption2)
+                .foregroundStyle(note.isError ? SentinelTheme.red : SentinelTheme.green)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        // Indexed because two candidates can share a display name (there is more than one
+        // Springfield, and Nominatim will happily return both).
+        ForEach(Array((lookupResults[field.name] ?? []).enumerated()), id: \.offset) { _, candidate in
+            Button {
+                apply(candidate, from: field)
+            } label: {
+                Text(candidate.label)
+                    .font(.caption)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private func runLookup(_ field: SettingsFieldSchema, _ lookup: SettingsLookupSchema) async {
+        let query = (text[field.name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            lookupResults[field.name] = []
+            lookupNotes[field.name] = LookupNote("Type a town or city first.", isError: true)
+            return
+        }
+
+        lookupBusy = field.name
+        lookupNotes[field.name] = nil
+        defer { lookupBusy = nil }
+
+        do {
+            let candidates = try await model.client.settingsLookup(lookup, query: query)
+            lookupResults[field.name] = candidates
+            if candidates.isEmpty {
+                lookupNotes[field.name] = LookupNote(
+                    "Nothing found for “\(query)”. Try adding a state or country, or enter the coordinates yourself.",
+                    isError: true)
+            }
+        } catch {
+            lookupResults[field.name] = []
+            // The server's message separates "this machine has no route to the internet" from
+            // "the lookup service said no", and each ends with what to do instead - better than
+            // anything this app could say without knowing which happened.
+            lookupNotes[field.name] = LookupNote(error.localizedDescription, isError: true)
+        }
+    }
+
+    // Writes into the section's *other* fields, which is the whole point: the values wanted are
+    // the ones nobody can type from memory. Names this section doesn't have are skipped, so a
+    // server that starts returning a third value can't upset an app that knows two.
+    private func apply(_ candidate: SettingsLookupCandidate, from field: SettingsFieldSchema) {
+        for (name, value) in candidate.values {
+            guard let target = section.fields.first(where: { $0.name == name }) else { continue }
+            if target.type == "checkbox" {
+                flags[name] = value.boolValue
+            } else {
+                text[name] = value.displayString
+            }
+        }
+        lookupResults[field.name] = []
+        lookupNotes[field.name] = LookupNote("Filled in from \(candidate.label). Save to keep it.", isError: false)
     }
 
     // LabeledContent gives its label whatever width is left over and then lays the row out at the

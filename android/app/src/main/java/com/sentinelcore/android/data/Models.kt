@@ -542,6 +542,23 @@ class SentinelApiException(
 
 data class SettingsFieldOption(val value: String, val label: String)
 
+// A "look this up for me" button on a text field (today: LOCATION's Town or City, which fills in
+// latitude and longitude). Pure data like SettingsAction - an endpoint taking ?query= - so nothing
+// here is location-specific, and a field without one is just a text box.
+data class SettingsLookup(
+    val label: String,
+    val tip: String,
+    val endpoint: String,
+)
+
+// One option a lookup came back with: something to show in the list, and the field values to write
+// if it's picked. The keys are field names in the same section; this app applies the ones it
+// recognises and ignores the rest, so a newer server can't break an older build.
+data class SettingsLookupCandidate(
+    val label: String,
+    val values: Map<String, Any>,
+)
+
 data class SettingsField(
     val name: String,
     val label: String,
@@ -550,6 +567,8 @@ data class SettingsField(
     val type: String,
     val tip: String,
     val options: List<SettingsFieldOption>,
+    // Absent on all but a handful of text fields - see SettingsLookup.
+    val lookup: SettingsLookup?,
     val requiresRestart: Boolean,
 )
 
