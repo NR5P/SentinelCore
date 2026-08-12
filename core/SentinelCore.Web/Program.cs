@@ -414,6 +414,7 @@ app.MapSystemStatusEndpoints();
 app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
+app.MapNotificationTestProxyEndpoints();
 app.MapDeviceHubProxyEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();

@@ -33,7 +33,16 @@ public sealed record SettingsActionSchema(
     string Label,
     string Tip,
     string Endpoint,
-    string Method);
+    string Method)
+{
+    // Whether the client should reload the page after the action succeeds. Only "re-run setup
+    // wizard" needs it - the wizard can't reappear without one - and the web dashboard used to
+    // reload after every action because it was the only action there was. A test send has
+    // something to say when it finishes, and reloading throws it away, so this is opt-in rather
+    // than the default. Clients that don't have a page to reload (the phone and Mac apps) ignore
+    // it entirely.
+    public bool ReloadAfter { get; init; }
+}
 
 // A lookup a text field offers: type something into the field, press the button, and pick from
 // what comes back to fill in *other* fields of the same section. Pure data like ExtraAction - an
@@ -262,7 +271,7 @@ public static class SettingsSchema
                 "re-run setup wizard",
                 "Bring back the first-run setup wizard (vision backend, a camera, notifications) without losing anything already configured.",
                 "/api/setup/reset",
-                "POST")
+                "POST") { ReloadAfter = true }
         },
         new()
         {
@@ -390,7 +399,13 @@ public static class SettingsSchema
                 Number("duplicateCooldownMinutes", "Duplicate Cooldown (min)", "Suppress repeat emails about the same kind of event for this long, so one visitor doesn't fill your inbox.", 0, 1440),
                 Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before emailing. Raise it if you get false alarms, lower it if real events slip through.", 0, 1, 0.05, recommended: 0.7),
                 Check("attachImage", "Attach Image", "Include the snapshot in the email rather than text only.")
-            ]
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "sendTestEmail",
+                "send test email",
+                "Send a plain test message to the To Address using the settings above, and say what the mail server answered. Save first - this tests what is saved, not what is currently typed in the boxes. It ignores Enabled and Minimum Confidence, so it sends even while email alerts are switched off.",
+                "/api/notifications/test/email",
+                "POST")
         },
         new()
         {
@@ -427,7 +442,13 @@ public static class SettingsSchema
                 Number("minimumConfidence", "Minimum Confidence", "How sure the AI must be before messaging you.", 0, 1, 0.05, recommended: 0.7),
                 Check("attachImage", "Attach Image", "Send the snapshot with the message rather than text only."),
                 Number("duplicateCooldownMinutes", "Duplicate Cooldown (min)", "Suppress repeat Telegram messages about the same kind of event for this long, so one vehicle sitting at the gate doesn't message you over and over. 0 disables this.", 0, 1440)
-            ]
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "sendTestTelegram",
+                "send test message",
+                "Send a test message to the Chat ID using the token above, and show what Telegram said if it refuses - which is how a wrong chat ID or a bot that was never started tells you so. Save first - this tests what is saved, not what is currently typed in the boxes. It ignores Enabled and Minimum Confidence, so it sends even while Telegram alerts are switched off.",
+                "/api/notifications/test/telegram",
+                "POST")
         },
         new()
         {
@@ -600,7 +621,10 @@ public static class SettingsSchema
         new()
         {
             Key = "startupNotification",
-            Title = "OUTAGE ALERTS",
+            // "SERVER" is doing real work in this title: INTERNET OUTAGE ALERTS sits directly
+            // below it, both are basic, and "OUTAGE ALERTS" on its own gave no way to tell which
+            // outage each one meant.
+            Title = "SERVER OUTAGE ALERTS",
             Group = SettingsGroups.Health,
             Endpoint = "/api/settings/startup-notification",
             Basic = true,

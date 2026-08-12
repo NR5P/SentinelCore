@@ -20,6 +20,14 @@ struct SettingsActionSchema: Decodable, Hashable {
     let method: String
 }
 
+// What an action reports back. Only the test sends fill this in ("Test email sent to …"), and
+// only they need to: an action whose whole result is "it worked" says it with its status code.
+// The schema's own reloadAfter is deliberately not modelled here - it tells a browser to reload
+// the page, which this app has no equivalent of.
+struct SettingsActionResult: Decodable {
+    let detail: String?
+}
+
 // A "look this up for me" button on a text field (today: LOCATION's Town or City, which fills in
 // latitude and longitude). Pure data like SettingsActionSchema - an endpoint taking ?query= - so
 // nothing here is location-specific, and a field without one is just a text box.

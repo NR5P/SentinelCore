@@ -733,6 +733,7 @@ app.MapPost("/api/queue/clear", async (IAlertQueue queue, IEventStore eventStore
 app.MapAutomationRuleEndpoints();
 app.MapScheduleEndpoints();
 app.MapDeviceHubEndpoints();
+app.MapNotificationTestEndpoints();
 
 app.MapPost("/api/chat/ask", async (ChatQuestionRequest request, ChatAnswerService chatAnswers, CancellationToken ct) =>
 {

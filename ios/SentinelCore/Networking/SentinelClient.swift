@@ -556,8 +556,14 @@ final class SentinelClient {
         return response.results
     }
 
-    func runSettingsAction(_ action: SettingsActionSchema) async throws {
-        let _: EmptyResponse = try await send(action.endpoint, method: action.method, body: Optional<String>.none)
+    // Returns whatever the action had to say for itself, when it says anything. The test sends
+    // report which address the mail actually went to; the setup reset has nothing to report and
+    // answers with a body of a different shape entirely. So the detail is decoded leniently - an
+    // action that succeeded but couldn't be read is still an action that succeeded, and a failure
+    // has already been thrown by then with the server's own message.
+    func runSettingsAction(_ action: SettingsActionSchema) async throws -> String? {
+        let data = try await sendForData(action.endpoint, method: action.method)
+        return (try? JSONDecoder.sentinel.decode(SettingsActionResult.self, from: data))?.detail
     }
 
     // service is "bridge" or "dashboard". The server answers 202 and restarts only when running
@@ -604,6 +610,16 @@ final class SentinelClient {
         components.queryItems = query.isEmpty ? nil : query
         guard let url = components.url else { throw ClientError.invalidServerAddress }
         return try await perform(URLRequest(url: url))
+    }
+
+    // Like send, but hands back the raw body rather than decoding it - for a caller that has to
+    // cope with an answer of any shape, including none. See runSettingsAction.
+    private func sendForData(_ path: String, method: String) async throws -> Data {
+        guard let url = url(path: path) else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        return try await performData(request)
     }
 
     private func send<T: Decodable, Body: Encodable>(

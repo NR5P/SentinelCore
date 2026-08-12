@@ -599,8 +599,9 @@ struct ServerSettingsSectionView: View {
         saveErrors = []
         statusMessage = nil
         do {
-            try await model.client.runSettingsAction(action)
-            statusMessage = "Done."
+            // The server's own sentence when it has one - "Test email sent to you@example.com."
+            // is the answer someone pressed the button for, and "Done." throws it away.
+            statusMessage = try await model.client.runSettingsAction(action) ?? "Done."
         } catch {
             saveErrors = [error.localizedDescription]
         }

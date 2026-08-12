@@ -584,8 +584,9 @@ private fun ServerSettingsSectionEditor(
                     confirmAction = false
                     scope.launch {
                         try {
-                            model.runSettingsAction(action)
-                            statusMessage = "Done."
+                            // The server's own sentence when it has one - "Test email sent to
+                            // you@example.com." is what someone pressed the button to find out.
+                            statusMessage = model.runSettingsAction(action) ?: "Done."
                         } catch (error: Exception) {
                             errors = listOf(error.message ?: "Action failed.")
                         }

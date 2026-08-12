@@ -622,7 +622,10 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     suspend fun settingsLookup(lookup: SettingsLookup, query: String): List<SettingsLookupCandidate> =
         repository.settingsLookup(lookup, query)
 
-    suspend fun runSettingsAction(action: SettingsAction) = repository.runSettingsAction(action)
+    // String? rather than an inferred type: what an action reports back is part of this screen's
+    // contract now that the test sends have something to say, and the neighbours here spell
+    // theirs out for the same reason.
+    suspend fun runSettingsAction(action: SettingsAction): String? = repository.runSettingsAction(action)
 
     suspend fun licenseStatus(): Pair<Boolean, String?> = repository.licenseStatus()
 

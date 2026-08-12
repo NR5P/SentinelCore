@@ -570,6 +570,70 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
         }
     }
 
+    // reloadAfter only means anything if it actually reaches the browser, and it is the one thing
+    // standing between a test send and the page reloading over its own answer. Checked on the
+    // wire rather than on the C# object because the bug it guards against - a property that
+    // doesn't serialize, or serializes under a name no client reads - is invisible from inside.
+    [Fact]
+    public async Task ExtraActions_CarryReloadAfter_OnlyWhereTheClientHasToReload()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/api/settings/schema", ct);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var sections = document.RootElement.EnumerateArray().ToArray();
+
+        // The setup wizard cannot reappear without a reload, so it is the one action that asks.
+        var setupReset = sections.Single(s => s.GetProperty("key").GetString() == "bridge")
+            .GetProperty("extraAction");
+        Assert.Equal("/api/setup/reset", setupReset.GetProperty("endpoint").GetString());
+        Assert.True(setupReset.GetProperty("reloadAfter").GetBoolean());
+
+        // The test sends have something to report, and a reload would throw it away.
+        foreach (var key in (string[])["email", "telegram"])
+        {
+            var action = sections.Single(s => s.GetProperty("key").GetString() == key)
+                .GetProperty("extraAction");
+            Assert.Equal($"/api/notifications/test/{key}", action.GetProperty("endpoint").GetString());
+            Assert.Equal("POST", action.GetProperty("method").GetString());
+            Assert.False(action.GetProperty("reloadAfter").GetBoolean());
+        }
+    }
+
+    // The same guarantee for the action buttons. What each one answers depends on what it does -
+    // the setup reset really resets (harmlessly, against this test's temporary settings file),
+    // while the test sends have to reach the main app and can't, so they fail somewhere in the
+    // 5xx range. Neither outcome is the point: only 404 and 405 are, because those two are what a
+    // button wired to a route nobody mapped looks like, and on the web that used to be a page
+    // that silently reloaded itself.
+    [Fact]
+    public async Task EveryExtraActionEndpointInTheSchema_IsMapped()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var actions = SettingsSchema.Sections
+            .Where(section => section.ExtraAction is not null)
+            .Select(section => (Section: section.Key, Action: section.ExtraAction!))
+            .ToArray();
+
+        Assert.NotEmpty(actions);
+
+        foreach (var (sectionKey, action) in actions)
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(action.Method), action.Endpoint);
+            using var response = await client.SendAsync(request, ct);
+
+            Assert.True(
+                response.StatusCode is not (HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed),
+                $"Action '{action.Key}' on section '{sectionKey}' points at {action.Method} {action.Endpoint}, " +
+                $"which answered {(int)response.StatusCode}. Its button would do nothing on every client.");
+        }
+    }
+
     [Fact]
     public async Task Schema_IsAdminOnly_OnceLoginIsEnabled()
     {

@@ -981,9 +981,13 @@ class SentinelRepository(
             }
         }
 
-    suspend fun runSettingsAction(action: SettingsAction): Unit = withContext(Dispatchers.IO) {
-        request(action.endpoint, method = action.method)
-        Unit
+    // Returns whatever the action had to say for itself, or null when it had nothing. The test
+    // sends report which address the mail actually went to; the setup reset answers with a body of
+    // a different shape entirely, and an unreadable answer to a call that succeeded still means it
+    // succeeded - a failure has already thrown by here, carrying the server's own message.
+    suspend fun runSettingsAction(action: SettingsAction): String? = withContext(Dispatchers.IO) {
+        val body = request(action.endpoint, method = action.method)
+        runCatching { JSONObject(body).optString("detail").ifEmpty { null } }.getOrNull()
     }
 
     // service is "bridge" or "dashboard". The server answers 202 and restarts only when running

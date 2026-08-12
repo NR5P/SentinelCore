@@ -516,15 +516,47 @@ window.GateWatchSettings = (function () {
     footer.append(saveBtn);
     if (schema.extraAction) {
       // Pure data from the schema - an endpoint to POST to - so the same definition works for
-      // every client. Reloading afterwards is right for the only current action (re-running the
-      // setup wizard) and harmless in general: an action just changed server-side state.
+      // every client. What comes back is shown rather than thrown away: the test sends report
+      // whether the mail server or Telegram actually accepted the message, and that answer is the
+      // entire point of pressing the button. Only an action that says reloadAfter gets a reload
+      // (re-running the setup wizard, which can't reappear without one) - this used to reload
+      // unconditionally, back when that was the only action there was.
       const actionBtn = document.createElement("button");
       actionBtn.className = "btn";
       actionBtn.textContent = schema.extraAction.label;
       if (schema.extraAction.tip) actionBtn.dataset.tip = schema.extraAction.tip;
       actionBtn.addEventListener("click", async () => {
-        await fetch(schema.extraAction.endpoint, { method: schema.extraAction.method || "POST" });
-        window.location.reload();
+        const original = actionBtn.textContent;
+        actionBtn.disabled = true;
+        actionBtn.textContent = "working…";
+        showFieldErrors(errors, []);
+        try {
+          const response = await fetch(schema.extraAction.endpoint, {
+            method: schema.extraAction.method || "POST"
+          });
+          // Endpoints that answer with no body at all are legal - "did it work" is the status.
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            const message = payload.error || `That didn't work (${response.status}).`;
+            showFieldErrors(errors, [message]);
+            showToast(message, false);
+            return;
+          }
+
+          if (schema.extraAction.reloadAfter) {
+            window.location.reload();
+            return;
+          }
+          showToast(payload.detail || "Done.", true);
+        } catch {
+          const message = "Could not reach the server.";
+          showFieldErrors(errors, [message]);
+          showToast(message, false);
+        } finally {
+          actionBtn.disabled = false;
+          actionBtn.textContent = original;
+        }
       });
       footer.append(actionBtn);
     }
