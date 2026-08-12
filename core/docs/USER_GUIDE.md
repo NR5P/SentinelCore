@@ -21,6 +21,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
 6ab. [Schedules — doing something at a time, at sunset, or when it gets dark](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark)
 6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
+6c. [One arrival, not four alerts — repeat triggers from one camera](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera)
 7. [The SETTINGS tab](#7-the-settings-tab)
 7a. [System health — how hard the server is working](#7a-system-health--how-hard-the-server-is-working)
 8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
@@ -173,6 +174,10 @@ What else a card shows depends on whether anything analysed the frame:
   instead of an event type. Nothing described it because nothing looked at it: that camera has
   "Send triggers to the AI and alert pipeline" switched off, or the hand-off was refused. Turn
   that toggle on for the camera (section 6) if you want descriptions for it.
+- **Superseded** — no description either, but for a different reason: a newer frame from the same
+  camera overtook this one in the queue before it was analysed, so it was stood down deliberately.
+  The clip and the still are kept, and the newer card describes the same moment. See
+  [section 6c](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera).
 
 If an analysed card has no image, either `Bridge:SaveImages` is off or the image failed to save;
 the AI's text analysis is still recorded either way.
@@ -723,6 +728,53 @@ the AI and alert pipeline** turned on (see [section 6](#6-motion-zones-on-your-o
 Blue Iris alerts always arrive as a single image and are unaffected either way. Camera Groups'
 optional companion-camera analysis (previous section) also always uses a single frame regardless
 of this setting, to keep its own added cost predictable.
+
+## 6c. One arrival, not four alerts — repeat triggers from one camera
+
+*Added 2026-08-11. On by default — if you were running an earlier version, the behaviour below is
+new, and it is the reason a burst of triggers now produces one clip and one message instead of
+several.*
+
+Somebody arriving doesn't fire a zone once. A vehicle stops outside the gate, pulls in, a door
+opens, someone walks up: that's one arrival and four triggers over half a minute. Treated as four
+separate events it produced four near-identical clips, four cards in EVENTS that each read like a
+separate visit, four analyses queued one behind the other, and four notifications.
+
+**Nothing here deletes footage.** Every trigger and every second of video is still recorded and
+still visible. These three behaviours only change what gets its own clip file, what is worth
+spending an analysis on, and what is worth interrupting you for.
+
+**One clip for the whole arrival.** A trigger that lands while a clip from the same camera is
+still recording extends that clip instead of starting a second one, and every trigger in the
+window points at the same file — so opening any of those cards plays the whole arrival rather
+than one slice of it. There's a 90-second ceiling: past that the next trigger opens a fresh clip,
+so a camera pointed at something that moves all day can't produce one endless file.
+
+**Stale frames in the queue are skipped.** Analyses run one at a time and each one takes as long
+as it takes — minutes, on a modest local machine. So when a camera sends a new frame while an
+earlier frame from that *same* camera is still sitting in the queue unanalysed, the older one is
+stood down and the newer one is analysed instead. The frame being dropped is seconds older than
+the one replacing it, its video is kept either way, and the frame you actually care about — the
+later one, usually the one with a person in it — stops waiting behind its own near-duplicates.
+
+An analysis already **underway** is never interrupted. A stood-down alert appears in EVENTS as
+`superseded`: it has no description, because nothing described it, and it records which alert
+replaced it. Its trigger still gets a verdict, inherited from whatever the replacing analysis
+concluded, so it doesn't sit unjudged in the "only real triggers" view.
+
+**Re-notifying only on a change.** Within a short window, one camera notifies again only if what
+is actually in frame has changed — a person appearing beside the truck is worth telling you
+about, the truck having moved twenty feet is not.
+
+**Settings → Advanced → Repeat Alerts From One Camera** holds the two switches:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Skip Stale Frames In The Queue | on | The queue behaviour above. Off means every frame is analysed, however far behind the queue has fallen. |
+| Only Re-Notify On A Change Within (s) | 90 | The window for the change test. **0 turns it off**, restoring the old behaviour of considering a notification after every analysis and leaving suppression entirely to the per-channel duplicate cooldowns in [section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained). |
+
+Clip merging is not a setting — it follows the pre-roll and post-roll you already set per zone in
+[section 6](#6-motion-zones-on-your-own-cameras).
 
 ## 7. The SETTINGS tab
 
@@ -1348,6 +1400,13 @@ didn't alert when you expected it to, it's almost always one of these:
    profile whose questions don't match what's actually in frame (e.g. a driveway camera using
    the chicken-coop profile), you may get an analysis that never flags anything as
    alert-worthy simply because it's asking the wrong questions.
+9. **Repeat triggers from one camera** (Settings → Advanced → Repeat Alerts, on by default) —
+   within 90 seconds, one camera only notifies again if what's in frame has actually changed, so
+   the second and third triggers of a single arrival stay quiet. A frame can also be stood down
+   in the queue before it is ever analysed, when a newer frame from the same camera overtakes it;
+   that shows in EVENTS as `superseded`. See
+   [section 6c](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera), which also
+   covers how to turn both off.
 
 Note that license plate recognition ([section 10](#10-license-plate-recognition--known-vehicles))
 is *not* in this list on purpose — a known or unknown plate never suppresses or forces an
