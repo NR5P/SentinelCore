@@ -799,7 +799,7 @@ without having switched to advanced still finds it.
 
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
 shows only the settings most people actually change: Alert Intake & History, Email, Daily
-Summary, Telegram Alerts, Discord Alerts, Push Notifications, Outage Alerts, Internet Outage
+Summary, Telegram Alerts, Discord Alerts, Push Notifications, Server Outage Alerts, Internet Outage
 Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
 Insect Advisor, Login Alerts, Bug Reports, System Health, Apple HomeKit, Backup, Login and
 License. **Advanced** adds everything else: the AI tuning knobs, image processing,
@@ -809,6 +809,23 @@ and prompt profiles.
 Nothing is ever lost or reset by switching — advanced settings keep working exactly as
 configured while hidden, and the choice is remembered on that device only, so a phone can stay
 simple while a desktop shows everything. A search overrides the switch either way.
+
+**Send a test.** Email and Telegram each have a button that sends one message right now, so you
+can find out whether an SMTP app password or a bot token is right without waiting for something
+to walk past a camera — a channel that silently fails looks exactly like a quiet night. Three
+things about it are deliberate:
+
+- It **tests what's saved**, not what's currently typed in the boxes, so save the section first.
+- It **ignores every gate** a real alert goes through — the confidence bar, quiet hours, the
+  duplicate cooldown, and whether the channel is switched on at all. A test that quietly declined
+  to send would answer the opposite of what pressing the button looked like.
+- Because of that last one, it **works while the channel is off**, which is the main reason to use
+  it — checking a password before switching Email on. When that happens the reply says so, so a
+  successful test can't be mistaken for alerts now flowing.
+
+If it fails, the message you get is the mail server's or Telegram's own words ("No such host is
+known", "chat not found") rather than a paraphrase, because those are the ones worth searching
+for. The same button appears in the iPhone, Mac, and Android apps.
 
 The full list below covers both modes:
 
@@ -849,14 +866,14 @@ The full list below covers both modes:
   insect drifting across the lens, and tells you which camera needs wiping rather than letting
   you tune thresholds against it. See [section 16a](#16a-spider-webs-and-insects-on-the-lens).
 - **Logging** — how much detail the server writes to its own log, and per-component overrides.
-- **Outage Alerts** — emails you (at the same address as your alerts) when the server starts up
+- **Server Outage Alerts** — emails you (at the same address as your alerts) when the server starts up
   after having been off for a while, so a power cut doesn't go unnoticed until you next open the
   Feed. The email says how long it was down and whether it was shut down deliberately or lost
   power. Two settings: a minimum downtime, so ordinary restarts and updates stay silent, and how
   often the server records that it's alive. Note the limit: this can only tell you the server
   *came back*. If the machine stays off, nothing is running to send the email — for that you'd
   need something outside the house watching.
-- **Internet Outage Alerts** — **off by default.** The same idea as Outage Alerts, but for the
+- **Internet Outage Alerts** — **off by default.** The same idea as Server Outage Alerts, but for the
   line rather than the machine: every minute the server checks that it can still reach the
   internet, and once the connection comes back it emails you *and* messages your Telegram chat
   saying how long you were offline. Sentinel Core itself keeps running and recording throughout —
@@ -1221,7 +1238,10 @@ more chances to be wrong.
 
 Once **Telegram Alerts** is configured (bot token from [@BotFather](https://t.me/BotFather),
 your chat ID), the bot pushes a message — and the photo, if enabled — for every alert-worthy
-event, so you get it anywhere you have cell signal.
+event, so you get it anywhere you have cell signal. Save the section and use its **send-test
+button** to confirm the token and chat ID before relying on it (see
+[section 7](#7-the-settings-tab)); a wrong chat ID fails with Telegram's own "chat not found"
+rather than silently going nowhere.
 
 With **Telegram Chat** also enabled, you can message the bot free-text questions like *"what
 happened at the gate today?"* or *"was anyone here last night?"* and it answers using recent
@@ -1252,6 +1272,12 @@ anyone who has it can post to that channel.
 and confidence threshold. **Daily Summary** is a separate, additional digest email — sent
 twice a day (configurable hours) regardless of whether individual alerts fired — covering
 everything that happened, with a capped number of attached images so it doesn't get huge.
+
+Save the section, then use its **send-test button** to confirm the server and app password
+actually work before an alert depends on them — see
+[section 7](#7-the-settings-tab). Most first-time failures here are an app password: with
+2-factor authentication on, Gmail and most other providers reject your normal account password
+for SMTP and need a separate generated one.
 
 ## 13. MQTT & Home Assistant
 
