@@ -784,28 +784,49 @@ what it's for and whether you're likely to need it. Hovering a field label gives
 explanation of that specific setting (on a desktop — hover tips don't exist on a touchscreen,
 which is why the section paragraphs are there).
 
+**Grouped headings.** The sections sit under seven headings, in this order: **Alerts &
+Delivery**, **AI & Detection**, **Cameras, Triggers & Recording**, **Automation & Smart Home**,
+**Health & Monitoring**, **Access & Network**, and **Maintenance**. A heading is a label, not a
+second thing to click — every section still expands and saves on its own, exactly as before. The
+iPhone, Mac, and Android apps use the same grouping, so a setting is filed in the same place
+whichever one you have open. A heading with nothing visible beneath it hides itself.
+
+**Searching.** The box at the top of the tab filters sections as you type, matching section
+titles, field labels, *and* the hover tips — the tips are where a setting is described in the
+words you'd actually search for, so "cooldown" or "how often" finds things the titles alone
+don't. A search reaches advanced sections even while the page is in basic mode: searching "mqtt"
+without having switched to advanced still finds it.
+
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
-shows only the settings most people actually change: Bridge, Email, Daily Summary, Telegram
-Alerts, Discord Alerts, Outage Alerts, Internet Outage Alerts, Quiet Hours, Bug Reports, Apple
-HomeKit, Backup, Login and License. **Advanced** adds everything else: the AI tuning knobs,
-image processing, self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces,
-multi-frame analysis, and prompt profiles.
+shows only the settings most people actually change: Alert Intake & History, Email, Daily
+Summary, Telegram Alerts, Discord Alerts, Push Notifications, Outage Alerts, Internet Outage
+Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
+Insect Advisor, Login Alerts, Bug Reports, System Health, Apple HomeKit, Backup, Login and
+License. **Advanced** adds everything else: the AI tuning knobs, image processing,
+self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces, multi-frame analysis,
+and prompt profiles.
 
 Nothing is ever lost or reset by switching — advanced settings keep working exactly as
 configured while hidden, and the choice is remembered on that device only, so a phone can stay
-simple while a desktop shows everything.
+simple while a desktop shows everything. A search overrides the switch either way.
 
 The full list below covers both modes:
 
-- **Bridge** — the API key Blue Iris authenticates with, the max accepted image size, how
-  long events/images are kept before automatic cleanup, whether images are saved at all, and
-  which image content-types are accepted.
+- **Alert Intake & History** — the API key Blue Iris authenticates with, the max accepted image
+  size, how long events/images are kept before automatic cleanup, whether images are saved at
+  all, and which image content-types are accepted. (This section was called **Bridge** in
+  earlier versions, which described how it was built rather than what it does.)
 - **Ollama** — which local vision model analyzes snapshots (must already be pulled in
   Ollama), how long it's kept loaded in memory between alerts, and inference tuning
   (temperature, top-K/top-P, output token limit, retries).
 - **Cloud Vision** and **Vision Routing** — an offsite AI model (OpenAI, Anthropic, or Google)
   that can analyze alerts instead of, or as an automatic backup for, the local Ollama model.
   Its own section below. See
+  [section 8](#8-vision-analysis-backend--local-cloud-or-both).
+- **Fast Local Detection** — a small object detector that runs on the snapshot first and answers
+  "is there a person, vehicle, or animal here at all?" in a fraction of a second, so the much
+  slower vision model is only asked about frames that have something in them. Its score
+  threshold decides what counts as a detection and what gets escalated. See
   [section 8](#8-vision-analysis-backend--local-cloud-or-both).
 - **Image Processing** — whether/how snapshots are resized before the AI sees them (usually
   faster with no real accuracy loss), and JPEG quality.
@@ -819,9 +840,15 @@ The full list below covers both modes:
   back it looks, how many events it considers, and which Ollama model answers.
 - **Discord Alerts** — posts alert cards and optional snapshots to a Discord channel using one
   incoming webhook URL; no bot application is required.
-- **Blue Iris Snapshot** — lets the `/photo` bot command pull a live image straight from Blue
-  Iris on demand.
+- **Blue Iris Media** — lets the `/photo` bot command pull a live image straight from Blue
+  Iris on demand. (Called **Blue Iris Snapshot** in earlier versions.)
+- **Push Notifications** — native push alerts to the iPhone, Android, and Apple TV apps, with
+  their own confidence gate. See [PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md).
 - **Self-Monitoring** — watches the bridge's own health; see [section 16](#16-self-monitoring).
+- **Spider Web & Insect Advisor** — spots the overnight flood of triggers caused by a web or an
+  insect drifting across the lens, and tells you which camera needs wiping rather than letting
+  you tune thresholds against it. See [section 16a](#16a-spider-webs-and-insects-on-the-lens).
+- **Logging** — how much detail the server writes to its own log, and per-component overrides.
 - **Outage Alerts** — emails you (at the same address as your alerts) when the server starts up
   after having been off for a while, so a power cut doesn't go unnoticed until you next open the
   Feed. The email says how long it was down and whether it was shut down deliberately or lost
@@ -854,10 +881,21 @@ The full list below covers both modes:
   digest, or self-monitoring, which all keep working exactly as normal. See
   [section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
   fits with the other rate-limiting layers.
+- **Location** — the latitude/longitude used to work out sunrise and sunset, so schedules and
+  anything else that runs "at dusk" know when that is here. See
+  [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark).
+- **Schedules** — run something at a time of day, at sunset, or when it gets dark. Its own
+  section below. See
+  [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark).
 - **Known Vehicles** — the list a transcribed license plate is checked against. Its own
   section below. See [section 10](#10-license-plate-recognition--known-vehicles).
 - **Known Faces** — enroll people so the system can note when it recognizes them. Its own
   section below. See [section 10a](#10a-known-faces--local-face-recognition).
+- **Package Theft Watch** — notices a delivery that was there and then wasn't. Its own section
+  below. See [section 10b](#10b-package-theft-watch--noticing-a-delivery-that-disappears).
+- **Semantic Search** — encodes each analyzed snapshot so the Events search box can match on what
+  the picture shows rather than only on the words the AI wrote. See
+  [section 3b](#3b-semantic-search--finding-events-by-what-the-picture-shows).
 - **Multi-Frame Analysis** — has the AI look at a couple of frames per trigger instead of one, to
   cut down on shadow/reflection false positives. See
   [section 6b](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame).
@@ -874,6 +912,17 @@ The full list below covers both modes:
   extends that to cameras not recording clips. The buffer is copied rather than re-encoded so it
   costs almost no CPU, but it is a continuous write at the camera's full bitrate, worth weighing on
   a small or heavily-worn SSD.
+- **Scheduled Recording** — governs the recordings made by the timed windows set on each camera's
+  trigger screen ("record the driveway 8–8:30pm every Tuesday"). These are by a wide margin the
+  largest files this app writes — full-bitrate main-stream video, where an hour costs roughly what
+  a month of trigger clips does — so its retention settings are the ones to watch on a small disk.
+- **AI-Confirmed Triggers** — **on by default.** Keeps the Triggers tab to things that turned out
+  to be real: motion alone can't tell a person from a branch in the wind or a moth on the lens, so
+  a trigger is held back until the AI has looked at the frame and only appears if it found a
+  person, vehicle, package, or animal. See [section 6](#6-motion-zones-on-your-own-cameras).
+- **Repeat Alerts From One Camera** — collapses one arrival that fires the same zone several times
+  into a single alert. See
+  [section 6c](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera).
 - **System Health** — a read-only view of CPU, memory, disk, queue depth, and vision-backend
   reachability. See [section 7a](#7a-system-health--how-hard-the-server-is-working).
 - **MQTT / Home Assistant** — publishes events over MQTT with Home Assistant auto-discovery,
@@ -898,6 +947,17 @@ The full list below covers both modes:
   images. Backups from older versions still restore; they simply bring the sections they have.
 - **Login** — an optional username/password gate for this dashboard, off by default. See
   [section 2](#2-opening-the-dashboard).
+- **Login Alerts** — tells you when someone fails to sign in to the dashboard, which is the one
+  thing worth knowing about promptly if you have opened it to the internet.
+- **Server Address** — the address and port the main bridge service listens on. Takes effect on
+  restart, and getting it wrong means the service comes back unreachable — recoverable only by
+  editing `appsettings.json` on the server itself, so check it twice before saving.
+- **Internet Exposed Mode** — for reaching the dashboard from outside your own network. This is
+  the one section that rebinds the dashboard's own port, so **saving it restarts the dashboard**
+  rather than applying live like everything else on this page.
+- **License** — the license key, if you have one.
+- **Reboot Server** — restarts the machine this runs on, from here. See
+  [section 7b](#7b-restarting-the-server-machine).
 - **Prompt Profiles** — the actual instructions given to the AI, per camera. Its own section
   below, since there's a lot here.
 
@@ -1171,7 +1231,7 @@ in Settings — anyone else who finds and messages the bot is silently ignored.
 Two special commands:
 
 - `/photo` or `/snapshot` — pulls a fresh, live image straight from Blue Iris on demand (needs
-  **Blue Iris Snapshot** configured in Settings), separate from the history-based Q&A above.
+  **Blue Iris Media** configured in Settings), separate from the history-based Q&A above.
 
 Everything else you type is treated as a free-text question.
 
