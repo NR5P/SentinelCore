@@ -1,9 +1,10 @@
 # Overnight trigger pause — client notes
 
 A camera's trigger zone can now be told to **hold back every motion trigger between two hours of
-the day**. Server and web dashboard are done, built and tested on the Linux box. iOS, tvOS and
-Android have no control for it yet — that is the outstanding work, and it needs a machine with the
-Swift and Android toolchains.
+the day**. Server, web dashboard, iOS/macOS and Android all have it. **tvOS is the one surface
+still without a control** — it decodes the config and has a `saveTriggerConfig` on its client, but
+no trigger editor to put the switch in; it sends none of the three keys, which the merge rule below
+makes safe.
 
 **The clients are not broken without it.** The wire contract was built so an app that knows nothing
 about this feature cannot damage it (see [Wire format](#wire-format)). Adding the control is an
@@ -119,21 +120,33 @@ back the next night.
 
 So: either send all three keys with the user's real choice, or send none of them.
 
-## What to build
+## Where the control lives
 
-A checkbox and two hour fields in the trigger zone editor, alongside the existing
-"Save a video clip around each trigger" / "Send triggers to the AI and alert pipeline" switches:
+An "Overnight Pause" section in each trigger zone editor — a switch, and two hour controls that
+only appear once it's on:
 
-- `ios/SentinelCore/Views/TriggerZoneEditorView.swift`
-- `android/app/src/main/java/com/sentinelcore/android/ui/screens/CameraZoneEditorScreen.kt`
+| Surface | File |
+|---|---|
+| Web | `core/SentinelCore.Web/wwwroot/index.html` (search `zone-night-window`), wired in `wwwroot/triggers.js` |
+| iOS / macOS | `ios/SentinelCore/Views/TriggerZoneEditorView.swift`, fields in `ios/SentinelCore/Models/Models.swift` |
+| Android | `android/app/src/main/java/com/sentinelcore/android/ui/screens/CameraZoneEditorScreen.kt`, fields in `data/Models.kt`, JSON in `data/SentinelRepository.kt` |
+| tvOS | **not built** — no trigger editor exists there |
 
-The web dashboard's version is in `core/SentinelCore.Web/wwwroot/index.html` (search
-`zone-night-window`) with its load/save wiring in `wwwroot/triggers.js` — worth reading for the
-copy, and for the `hourOrDefault` helper, which exists because the usual `parseInt(...) || 0` idiom
-silently turns a legitimate hour 0 into a fallback.
+Neither app uses a free-text number field: the range is 24 discrete values, so iOS uses a `Picker`
+and Android an `HourStepper` that wraps 23 → 00 (the hour someone wants next to midnight is 23:00,
+for the same reason the window itself wraps). Both spell the result back out — "Triggers pause at
+21:00 and resume at 07:00 - 10 hours a night, on the server's clock" — which is the sanity check on
+whether the two numbers say what was meant, and the reminder that the clock isn't the phone's.
 
-An hour stepper or a wheel picker is a better fit than a free-text number field on a phone. The
-range is 24 discrete values; there is no reason to let someone type `47`.
+Both read the three keys through a `resolvedNightWindow` helper that mirrors the existing
+`resolvedZones`: absent keys become the server's own defaults (off, 21:00–07:00) rather than 0/0.
+Watch the same trap the web's `hourOrDefault` exists for — the usual `?: 21` / `parseInt(...) || 0`
+idiom silently turns a legitimate hour 0 into a fallback.
+
+Client-side checks worth keeping if these are rewritten: `TriggerNightWindowTest` (Android, the
+absent-vs-off distinction and hour 0), and for Swift the standalone `Models.swift` decode check
+described in the repo's verification notes — it's what proves nil still *omits* the keys rather
+than encoding `false`.
 
 ## Server-side reference
 

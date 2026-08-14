@@ -63,6 +63,21 @@ private func nudgedArea(_ area: Double, by direction: Double) -> Double {
     return triggerArea(detectorPixels: pixels + direction * step)
 }
 
+// Whole hours on a 24-hour clock, which is how the server stores and reads them. Written out
+// rather than run through a DateFormatter because these are bare hour numbers with no date behind
+// them, and a locale that formats 21 as "9 PM" would still have to round-trip back to 21.
+private func hourLabel(_ hour: Int) -> String {
+    String(format: "%02d:00", hour)
+}
+
+// Length of the pause, wrapping past midnight exactly as TriggerNightWindow.IsActive does: 21 -> 7
+// is ten hours, not minus fourteen. Zero means start == end, the zero-width window the server
+// refuses to save while the feature is on.
+private func nightWindowHours(from start: Int, to end: Int) -> Int {
+    let span = end - start
+    return span > 0 ? span : span + 24
+}
+
 struct TriggerZoneEditorView: View {
     @EnvironmentObject private var model: AppModel
     let camera: Camera
@@ -85,6 +100,13 @@ struct TriggerZoneEditorView: View {
     @State private var sendToAlerts = false
     @State private var alertProfile = "default"
     @State private var profileNames: [PromptProfileName] = []
+
+    // Whole-camera, not per-zone: the server holds one window per trigger config. Defaults match
+    // TriggerConfig's - off, 21:00-07:00 - so a server that doesn't know about the feature shows
+    // the same thing a freshly migrated one does.
+    @State private var nightWindowEnabled = false
+    @State private var nightStartHour = 21
+    @State private var nightEndHour = 7
 
     // Not editable here, only carried: the sensor binding is set up on the web dashboard, and the
     // PUT overwrites the whole record, so dropping these would unbind the camera's sensor every
@@ -153,6 +175,30 @@ struct TriggerZoneEditorView: View {
                         VStack(alignment: .leading) {
                             Text("Shadow Sensitivity: \(Int(shadowSensitivity))")
                             Slider(value: $shadowSensitivity, in: 0...100)
+                        }
+                    }
+
+                    Section("Overnight Pause") {
+                        Toggle("Pause Triggers Overnight", isOn: $nightWindowEnabled)
+                        Text("Holds back every motion trigger between the hours below. Meant for a camera whose IR light picks up a spider web, insects or condensation close to the lens after dark: those blobs measure the same on screen as a person further away, so no minimum size can tell them apart - but the time of day can. Nothing is captured, recorded or analysed while paused. A sensor binding still fires normally.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if nightWindowEnabled {
+                            // A picker rather than a text field: there are 24 legal values and no
+                            // reason to let someone type 47 and find out at save time.
+                            Picker("Pause From", selection: $nightStartHour) {
+                                ForEach(0..<24, id: \.self) { hour in
+                                    Text(hourLabel(hour)).tag(hour)
+                                }
+                            }
+                            Picker("Resume At", selection: $nightEndHour) {
+                                ForEach(0..<24, id: \.self) { hour in
+                                    Text(hourLabel(hour)).tag(hour)
+                                }
+                            }
+                            Text(nightWindowSummary)
+                                .font(.caption2)
+                                .foregroundStyle(nightStartHour == nightEndHour ? SentinelTheme.red : .secondary)
                         }
                     }
 
@@ -243,6 +289,18 @@ struct TriggerZoneEditorView: View {
             }
             .padding(.vertical, 2)
         }
+    }
+
+    // Spelling the window back out is the whole point of this line: 21 -> 7 wraps past midnight,
+    // and "10 hours a night" is the sanity check on whether the two numbers say what was meant.
+    // The hours are the server's clock, not this device's - a phone in another timezone would
+    // otherwise read them as its own.
+    private var nightWindowSummary: String {
+        if nightStartHour == nightEndHour {
+            return "Start and end are the same hour, which is a window zero hours long - triggers would never pause. Pick different hours."
+        }
+        let hours = nightWindowHours(from: nightStartHour, to: nightEndHour)
+        return "Triggers pause at \(hourLabel(nightStartHour)) and resume at \(hourLabel(nightEndHour)) - \(hours) hour\(hours == 1 ? "" : "s") a night, on the server's clock."
     }
 
     private var activeZoneName: String {
@@ -347,6 +405,9 @@ struct TriggerZoneEditorView: View {
         sensorDeviceId = config.sensorDeviceId
         sensorTriggerOn = config.sensorTriggerOn
         sensorCooldownSeconds = config.sensorCooldownSeconds
+        // resolvedNightWindow, not the raw optionals: a server predating the feature sends none of
+        // the three, and the editor still has to show a window.
+        (nightWindowEnabled, nightStartHour, nightEndHour) = config.resolvedNightWindow
     }
 
     // Mirrors the server's own validation so the common mistakes are caught before a round-trip,
@@ -360,6 +421,11 @@ struct TriggerZoneEditorView: View {
         }
         if recordClips && clipPreSeconds + clipPostSeconds <= 0 {
             return "Set at least one second of pre-roll or post-roll to record clips."
+        }
+        // The server refuses this combination outright rather than reading it as "all day" - see
+        // TriggerNightWindow. Catching it here says so next to the two pickers that caused it.
+        if nightWindowEnabled && nightStartHour == nightEndHour {
+            return "The overnight pause can't start and end at the same hour - that window is zero hours long."
         }
         return nil
     }
@@ -392,7 +458,13 @@ struct TriggerZoneEditorView: View {
             alertProfile: alertProfile,
             sensorDeviceId: sensorDeviceId,
             sensorTriggerOn: sensorTriggerOn,
-            sensorCooldownSeconds: sensorCooldownSeconds
+            sensorCooldownSeconds: sensorCooldownSeconds,
+            // All three, always, and never nil from here: the server merges each key it doesn't
+            // receive against the stored row, so sending a partial set would save half of what's
+            // on screen. See core/docs/NIGHT_WINDOW_HANDOFF.md.
+            nightWindowEnabled: nightWindowEnabled,
+            nightStartHour: nightStartHour,
+            nightEndHour: nightEndHour
         )
         do {
             let saved = try await model.client.saveTriggerConfig(cameraId: camera.id, config)

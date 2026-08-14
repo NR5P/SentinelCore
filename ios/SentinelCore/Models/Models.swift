@@ -163,12 +163,35 @@ struct TriggerConfig: Codable, Equatable {
     var sensorTriggerOn: String = "on"
     var sensorCooldownSeconds: Int = 30
 
+    // The overnight trigger pause - see core/docs/NIGHT_WINDOW_HANDOFF.md. Optional for the same
+    // reason `zones` is, and it's the same trap: nil omits the key (encodeIfPresent), which the
+    // server reads as "this client doesn't know about the night window" and merges against the
+    // stored row - it does NOT mean "turn it off". A build that sent a plain `false` on every save
+    // would switch someone's window off whenever they nudged a polygon from their phone, and
+    // nothing anywhere would say so; the flood would just come back the next night.
+    //
+    // The editor knows about the feature, so it loads all three and sends all three back. nil is
+    // what a server older than the night window looks like; read it through `resolvedNightWindow`
+    // below, which supplies the same defaults the server would.
+    var nightWindowEnabled: Bool?
+    var nightStartHour: Int?
+    var nightEndHour: Int?
+
     // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
     // written before multi-zone reads as a single zone built from the legacy pair, so the editor
     // never has to special-case the migration.
     var resolvedZones: [TriggerZone] {
         if let zones, !zones.isEmpty { return zones }
         return [TriggerZone(name: TriggerZone.defaultName, polygon: zonePolygon, minTriggerArea: minTriggerArea)]
+    }
+
+    // Same shape as resolvedZones, for the same reason: a server older than the night window sends
+    // none of the three keys, and the editor needs values to show either way. The fallbacks match
+    // the server's own defaults (TriggerConfig in TriggerStore.cs) - off, and 21:00-07:00 rather
+    // than 0/0, so switching the feature on offers the window someone would actually have asked
+    // for instead of a zero-width one that appears to do nothing.
+    var resolvedNightWindow: (enabled: Bool, startHour: Int, endHour: Int) {
+        (nightWindowEnabled ?? false, nightStartHour ?? 21, nightEndHour ?? 7)
     }
 }
 

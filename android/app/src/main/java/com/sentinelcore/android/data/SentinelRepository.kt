@@ -1688,6 +1688,13 @@ class SentinelRepository(
             sensorDeviceId = json.optString("sensorDeviceId", ""),
             sensorTriggerOn = json.optString("sensorTriggerOn", "on"),
             sensorCooldownSeconds = json.optInt("sensorCooldownSeconds", 30),
+            // Left null rather than defaulted when the server didn't send them, so a response from
+            // a server older than the night window stays distinguishable from one that really did
+            // say "off at 21:00" - see TriggerConfig. optBoolean/optInt would collapse both to a
+            // value here and the difference would be gone by the time it mattered.
+            nightWindowEnabled = if (json.isNull("nightWindowEnabled")) null else json.optBoolean("nightWindowEnabled"),
+            nightStartHour = if (json.isNull("nightStartHour")) null else json.optInt("nightStartHour"),
+            nightEndHour = if (json.isNull("nightEndHour")) null else json.optInt("nightEndHour"),
         )
     }
 
@@ -1743,6 +1750,17 @@ class SentinelRepository(
                 )
             }
             json.put("zones", array)
+        }
+
+        // All three keys or none of them. The server merges each key it doesn't receive against
+        // the stored row, so a partial set would save half of what the user chose and leave the
+        // rest at whatever was there before - and an absent key is specifically NOT "off". The
+        // editor always has all three; this guard is what stops a future caller building a config
+        // with only one of them set from silently half-saving it.
+        if (nightWindowEnabled != null && nightStartHour != null && nightEndHour != null) {
+            json.put("nightWindowEnabled", nightWindowEnabled)
+                .put("nightStartHour", nightStartHour)
+                .put("nightEndHour", nightEndHour)
         }
         return json
     }

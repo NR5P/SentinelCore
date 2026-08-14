@@ -122,6 +122,19 @@ private fun nudgedArea(area: Double, direction: Int): Double {
     return triggerAreaOf(pixels + direction * step)
 }
 
+// Whole hours on a 24-hour clock, which is how the server stores and reads them. Formatted here
+// rather than through the device's time format because these are bare hour numbers with no date
+// behind them, and a locale that shows 21 as "9 PM" would still have to round-trip back to 21.
+private fun hourLabel(hour: Int): String = "%02d:00".format(hour)
+
+// Length of the pause, wrapping past midnight exactly as TriggerNightWindow.IsActive does: 21 -> 7
+// is ten hours, not minus fourteen. Zero means start == end, the zero-width window the server
+// refuses to save while the feature is on.
+private fun nightWindowHours(start: Int, end: Int): Int {
+    val span = end - start
+    return if (span > 0) span else span + 24
+}
+
 @Composable
 fun CameraZoneEditorScreen(
     camera: Camera,
@@ -148,6 +161,13 @@ fun CameraZoneEditorScreen(
     var sendToAlerts by remember { mutableStateOf(false) }
     var alertProfile by remember { mutableStateOf("default") }
     var profileNames by remember { mutableStateOf<List<PromptProfileName>>(emptyList()) }
+
+    // Whole-camera, not per-zone: the server holds one window per trigger config. Defaults match
+    // TriggerConfig's - off, 21:00-07:00 - so a server that doesn't know about the feature shows
+    // the same thing a freshly migrated one does.
+    var nightWindowEnabled by remember { mutableStateOf(false) }
+    var nightStartHour by remember { mutableIntStateOf(21) }
+    var nightEndHour by remember { mutableIntStateOf(7) }
 
     // Not editable here, only carried: the sensor binding is set up on the web dashboard, and the
     // PUT overwrites the whole record, so dropping these would unbind the camera's sensor every
@@ -186,6 +206,12 @@ fun CameraZoneEditorScreen(
         sensorDeviceId = config.sensorDeviceId
         sensorTriggerOn = config.sensorTriggerOn
         sensorCooldownSeconds = config.sensorCooldownSeconds
+        // resolvedNightWindow(), not the raw nullables: a server predating the feature sends none
+        // of the three, and the editor still has to show a window.
+        val nightWindow = config.resolvedNightWindow()
+        nightWindowEnabled = nightWindow.enabled
+        nightStartHour = nightWindow.startHour
+        nightEndHour = nightWindow.endHour
     }
 
     suspend fun load() {
@@ -229,6 +255,11 @@ fun CameraZoneEditorScreen(
         if (recordClips && clipPreSeconds + clipPostSeconds <= 0) {
             return "Set at least one second of pre-roll or post-roll to record clips."
         }
+        // The server refuses this combination outright rather than reading it as "all day" - see
+        // TriggerNightWindow. Catching it here says so next to the two steppers that caused it.
+        if (nightWindowEnabled && nightStartHour == nightEndHour) {
+            return "The overnight pause can't start and end at the same hour - that window is zero hours long."
+        }
         return null
     }
 
@@ -265,6 +296,12 @@ fun CameraZoneEditorScreen(
                     sensorDeviceId = sensorDeviceId,
                     sensorTriggerOn = sensorTriggerOn,
                     sensorCooldownSeconds = sensorCooldownSeconds,
+                    // All three, always, and never null from here: the server merges each key it
+                    // doesn't receive against the stored row, so sending a partial set would save
+                    // half of what's on screen. See core/docs/NIGHT_WINDOW_HANDOFF.md.
+                    nightWindowEnabled = nightWindowEnabled,
+                    nightStartHour = nightStartHour,
+                    nightEndHour = nightEndHour,
                 )
                 val saved = model.saveTriggerConfig(camera.id, config)
                 apply(saved)
@@ -501,6 +538,71 @@ fun CameraZoneEditorScreen(
                                     value = shadowSensitivity,
                                     onValueChange = { shadowSensitivity = it },
                                     valueRange = 0f..100f,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Card(Modifier.fillMaxWidth().widthIn(max = 900.dp)) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text("Overnight Pause", style = MaterialTheme.typography.titleSmall)
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("Pause Triggers Overnight", modifier = Modifier.weight(1f))
+                                Switch(
+                                    checked = nightWindowEnabled,
+                                    onCheckedChange = { nightWindowEnabled = it },
+                                )
+                            }
+                            Text(
+                                "Holds back every motion trigger between the hours below. Meant " +
+                                    "for a camera whose IR light picks up a spider web, insects " +
+                                    "or condensation close to the lens after dark: those blobs " +
+                                    "measure the same on screen as a person further away, so no " +
+                                    "minimum size can tell them apart - but the time of day can. " +
+                                    "Nothing is captured, recorded or analysed while paused. A " +
+                                    "sensor binding still fires normally.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (nightWindowEnabled) {
+                                HourStepper(
+                                    label = "Pause From",
+                                    hour = nightStartHour,
+                                    onHourChange = { nightStartHour = it },
+                                )
+                                HourStepper(
+                                    label = "Resume At",
+                                    hour = nightEndHour,
+                                    onHourChange = { nightEndHour = it },
+                                )
+                                // Spelling the window back out is the point of this line: 21 -> 7
+                                // wraps past midnight, and "10 hours a night" is the sanity check
+                                // on whether the two numbers say what was meant. The hours are the
+                                // server's clock, not this device's - a phone in another timezone
+                                // would otherwise read them as its own.
+                                val zeroWidth = nightStartHour == nightEndHour
+                                val hours = nightWindowHours(nightStartHour, nightEndHour)
+                                Text(
+                                    if (zeroWidth) {
+                                        "Start and end are the same hour, which is a window zero " +
+                                            "hours long - triggers would never pause. Pick " +
+                                            "different hours."
+                                    } else {
+                                        "Triggers pause at ${hourLabel(nightStartHour)} and " +
+                                            "resume at ${hourLabel(nightEndHour)} - $hours " +
+                                            "hour${if (hours == 1) "" else "s"} a night, on the " +
+                                            "server's clock."
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (zeroWidth) SentinelRed else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -792,6 +894,29 @@ private fun NumberStepper(
         OutlinedButton(
             onClick = { onValueChange((value + 1).coerceIn(range)) },
             enabled = value < range.last,
+            modifier = Modifier.padding(start = 8.dp),
+        ) { Text("+") }
+    }
+}
+
+// A stepper rather than a text field: there are 24 legal values and no reason to let someone type
+// 47 and find out at save time. It wraps rather than clamping, because hours are a cycle and the
+// hour someone wants next to 00:00 is 23:00 - the same reason the window itself wraps past
+// midnight.
+@Composable
+private fun HourStepper(
+    label: String,
+    hour: Int,
+    onHourChange: (Int) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("$label: ${hourLabel(hour)}", modifier = Modifier.weight(1f))
+        OutlinedButton(onClick = { onHourChange((hour + 23) % 24) }) { Text("−") }
+        OutlinedButton(
+            onClick = { onHourChange((hour + 1) % 24) },
             modifier = Modifier.padding(start = 8.dp),
         ) { Text("+") }
     }
