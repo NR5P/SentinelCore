@@ -44,6 +44,15 @@ public sealed class TriggerConfigDto
     public string SensorMeasurement { get; set; } = "";
     public double SensorThreshold { get; set; }
 
+    // Nullable for the same reason Zones is, and it is the same trap: the shipped mobile builds
+    // send none of these three keys, so a plain `bool` would read as false on every zone edit made
+    // from a phone and silently switch the night window back off. Null means "this client doesn't
+    // know about the night window" - NOT "turn it off". Resolved against the stored row in the PUT
+    // handler. See TriggerNightWindow.
+    public bool? NightWindowEnabled { get; set; }
+    public int? NightStartHour { get; set; }
+    public int? NightEndHour { get; set; }
+
     public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
 
     public bool UsesThreshold =>
@@ -86,6 +95,20 @@ public static class TriggerEndpoints
         return [primary, .. existing.ResolvedZones.Skip(1)];
     }
 
+    // The night window's version of the old-client merge rule, and public for the same reason
+    // ResolveZonesAsync is: getting it wrong is silent. A phone sends no night-window keys at all,
+    // so treating absent as false would switch the window off every time someone nudged a zone
+    // from the app, and nothing anywhere would say so - the camera would just start flooding again
+    // the following night.
+    //
+    // existing is null for a camera that has never been configured, which falls back to the
+    // record's own defaults (off, 21:00-07:00).
+    public static (bool Enabled, int StartHour, int EndHour) ResolveNightWindow(
+        TriggerConfigDto dto, TriggerConfig? existing) =>
+        (dto.NightWindowEnabled ?? existing?.NightWindowEnabled ?? false,
+         dto.NightStartHour ?? existing?.NightStartHour ?? 21,
+         dto.NightEndHour ?? existing?.NightEndHour ?? 7);
+
     public static void MapTriggerEndpoints(this WebApplication app)
     {
         app.MapGet("/api/cameras/{id:guid}/trigger-config", async (Guid id, ITriggerConfigStore store, CancellationToken ct) =>
@@ -101,11 +124,17 @@ public static class TriggerEndpoints
 
             var zones = await ResolveZonesAsync(id, dto, store, ct);
 
+            // Whatever the row already said, for any of the three night-window keys this client
+            // didn't send - see ResolveNightWindow.
+            var (nightEnabled, nightStart, nightEnd) =
+                ResolveNightWindow(dto, await store.GetAsync(id, ct));
+
             var profile = string.IsNullOrWhiteSpace(dto.AlertProfile) ? "default" : dto.AlertProfile.Trim();
             var config = new TriggerConfig(id, dto.Enabled, zones[0].Polygon, zones[0].MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
                 dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile,
                 dto.SensorDeviceId.Trim(), dto.SensorTriggerOn.Trim().ToLowerInvariant(), dto.SensorCooldownSeconds, zones,
-                dto.SensorMeasurement.Trim(), dto.SensorThreshold);
+                dto.SensorMeasurement.Trim(), dto.SensorThreshold,
+                nightEnabled, nightStart, nightEnd);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         }).RequireAuthorization("AdminOnly");
@@ -253,6 +282,15 @@ public static class TriggerEndpoints
 
         if (dto.AlertProfile.Length > 100)
             errors.Add("Profile name is too long.");
+
+        if (dto.NightStartHour is < 0 or > 23 || dto.NightEndHour is < 0 or > 23)
+            errors.Add("Night window hours must be between 0 and 23.");
+
+        // Equal hours is a zero-width window that suppresses nothing (see TriggerNightWindow), so
+        // saving it while the feature is on would look like it had been turned on and done nothing.
+        // Refuse at the door rather than let that be discovered at 3am.
+        if (dto.NightWindowEnabled == true && dto.NightStartHour is { } s && dto.NightEndHour is { } e && s == e)
+            errors.Add("The night window's start and end hours can't be the same - that window is zero hours long.");
 
         return errors;
     }

@@ -50,6 +50,10 @@ public sealed class TriggerZoneMonitor(
     public const double NearMissRatio = 0.4;
     private static readonly TimeSpan NearMissLogInterval = TimeSpan.FromMinutes(1);
 
+    // Longer than the near-miss interval: this one is a reminder that a setting is on, not a
+    // tuning aid, so a handful of lines across a night is plenty.
+    private static readonly TimeSpan NightSuppressionLogInterval = TimeSpan.FromMinutes(30);
+
     // Detection frames per second. Every zone's MinTriggerArea is implicitly calibrated against
     // this, because a blob's size depends on how far apart the two differenced frames are.
     public const int DetectionFps = 2;
@@ -611,6 +615,32 @@ public sealed class TriggerZoneMonitor(
             camera.Id, camera.Name, zones[zoneIndex].Name, measured, threshold, ratio);
     }
 
+    // A camera that has stopped triggering is indistinguishable from a camera that has broken, and
+    // this feature deliberately makes one look like the other for ten hours a night. So say so -
+    // with the count held back and the hour it resumes, so the log answers "is it off or is it
+    // dead?" without anyone having to remember the setting exists.
+    //
+    // Rate-limited like LogNearMiss, and for the same reason: the flood this suppresses is roughly
+    // a hundred triggers a night, and a line each would bury everything else in the journal.
+    private void LogNightSuppression(Camera camera, DetectionSession session, DateTimeOffset now)
+    {
+        int suppressed;
+        lock (session.TriggerLock)
+        {
+            session.NightSuppressedCount++;
+            if (session.LastNightLogAt is { } last && now - last < NightSuppressionLogInterval) return;
+            session.LastNightLogAt = now;
+            suppressed = session.NightSuppressedCount;
+            session.NightSuppressedCount = 0;
+        }
+
+        logger.LogInformation(
+            "Camera {CameraId} ({Name}): motion triggers are paused by the night window ({Start:00}:00-{End:00}:00) " +
+            "and resume at {Resumes:HH:mm}. {Suppressed} trigger(s) held back since the last note.",
+            camera.Id, camera.Name, session.Config.NightStartHour, session.Config.NightEndHour,
+            TriggerNightWindow.EndsAt(session.Config, now).ToLocalTime(), suppressed);
+    }
+
     // frameAt is when the frame that fired this was captured, not when we got round to handling it.
     // Everything downstream is anchored to it - the image pulled from the buffer, the trigger row,
     // the clip window, the alert - so a single moment describes the event no matter how busy the
@@ -621,6 +651,17 @@ public sealed class TriggerZoneMonitor(
         DateTimeOffset frameAt, CancellationToken cancellationToken)
     {
         var now = frameAt;
+
+        // Before the cooldown reservation, not after: a suppressed trigger should not consume a
+        // rate-limit slot that a real one might want the moment the window closes. This is also
+        // the earliest point where dropping out costs nothing - the frame diff has already been
+        // computed either way, but the snapshot, the clip, the database row and the forward to the
+        // AI pipeline are all still ahead of us, and those are the expensive parts.
+        if (TriggerNightWindow.IsActive(session.Config, now))
+        {
+            LogNightSuppression(camera, session, now);
+            return;
+        }
 
         lock (session.TriggerLock)
         {
@@ -1120,6 +1161,13 @@ public sealed class TriggerZoneMonitor(
         if (a.SendToAlerts != b.SendToAlerts) return false;
         if (a.AlertProfile != b.AlertProfile) return false;
 
+        // The running session holds its own copy of the config, so leaving these out would mean
+        // editing the window in the UI did nothing until the next restart - and the symptom would
+        // be a camera that keeps flooding at 3am after you just told it not to.
+        if (a.NightWindowEnabled != b.NightWindowEnabled) return false;
+        if (a.NightStartHour != b.NightStartHour) return false;
+        if (a.NightEndHour != b.NightEndHour) return false;
+
         // The whole zone list, not just the primary polygon: this is what decides whether the
         // reconcile loop tears down and rebuilds the detection session, so a field missed here is
         // an edit the user makes in the UI that silently never takes effect until the next restart.
@@ -1195,6 +1243,8 @@ public sealed class TriggerZoneMonitor(
         public readonly object TriggerLock = new();
         public DateTimeOffset? LastTriggerAt;
         public DateTimeOffset? LastNearMissLogAt;
+        public DateTimeOffset? LastNightLogAt;
+        public int NightSuppressedCount;
         public readonly Queue<DateTimeOffset> RecentTriggers = new();
 
         // The one-deep hand-off between the capture loop and the processing loop. Everything about

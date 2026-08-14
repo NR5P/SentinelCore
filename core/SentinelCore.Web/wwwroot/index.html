@@ -467,6 +467,18 @@
               <label class="field-label" for="zone-alert-profile">Alert prompt profile</label>
               <select id="zone-alert-profile" class="field-input"></select>
             </div>
+            <div class="field-row field-row-wide field-checkbox-row" data-tip="Pauses motion triggers between the hours below. Meant for a camera whose night-time IR picks up a spider web, insects or condensation close to the lens: those blobs are the same size on screen as a real person further away, so no minimum object size can tell them apart - but the time of day can. Nothing is captured, recorded or analysed while paused, and a sensor binding still fires normally. Off by default.">
+              <label class="switch"><input type="checkbox" id="zone-night-window" /><span class="switch-track"></span></label>
+              <span class="field-label">Pause triggers overnight</span>
+            </div>
+            <div class="field-row" data-tip="Hour the pause starts, on the server's clock. 21 means 9pm.">
+              <label class="field-label" for="zone-night-start">Pause from (hour)</label>
+              <input type="number" id="zone-night-start" class="field-input" min="0" max="23" step="1" />
+            </div>
+            <div class="field-row" data-tip-right data-tip="Hour the pause ends and triggers resume, on the server's clock. 7 means 7am. A window that runs past midnight is fine - 21 to 7 is what you want for overnight.">
+              <label class="field-label" for="zone-night-end">Resume at (hour)</label>
+              <input type="number" id="zone-night-end" class="field-input" min="0" max="23" step="1" />
+            </div>
             <div class="field-row field-checkbox-row" data-tip="Master switch for this zone. Off means nothing is watched or recorded, but your shape and settings are kept.">
               <label class="switch"><input type="checkbox" id="zone-enabled" /><span class="switch-track"></span></label>
               <span class="field-label">Enabled</span>

@@ -76,7 +76,21 @@ public sealed record TriggerConfig(
     // matter. The cost is that a typo here is a binding that never fires, which is why
     // SensorTriggerWatcher logs the keys it did see when a lookup misses.
     string SensorMeasurement = "",
-    double SensorThreshold = 0)
+    double SensorThreshold = 0,
+    // Hold back every motion trigger from this camera between NightStartHour and NightEndHour -
+    // see TriggerNightWindow for why time of day is the only axis that separates the gate camera's
+    // after-dark IR noise from real subjects. Off unless someone turns it on: a camera that stops
+    // watching for ten hours a day is not something to start doing on anyone's behalf.
+    //
+    // Appended at the end with defaults for the same reason Zones was - this record is built
+    // positionally in several places, and inserting a field mid-list shifts every later argument
+    // silently.
+    bool NightWindowEnabled = false,
+    // Only read when NightWindowEnabled. The defaults describe the measured flood (21:00-07:00)
+    // rather than 0/0, so switching the feature on gives a sensible window instead of a
+    // zero-width one that appears to do nothing.
+    int NightStartHour = 21,
+    int NightEndHour = 7)
 {
     public const string DefaultZoneName = "Zone 1";
 
@@ -311,6 +325,12 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         // the Events tab rather than being guessed at by camera and timestamp.
         AddColumnIfMissing("TriggerEvents", "AlertId", "TEXT");
         AddColumnIfMissing("TriggerEvents", "CaptureDelaySeconds", "REAL");
+        // Off on every existing row. The hours still get their real defaults rather than 0/0 so
+        // that a row migrated today and enabled tomorrow suppresses the window someone would
+        // actually have asked for - but with Enabled 0 they are inert either way.
+        AddColumnIfMissing("TriggerConfigs", "NightWindowEnabled", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing("TriggerConfigs", "NightStartHour", "INTEGER NOT NULL DEFAULT 21");
+        AddColumnIfMissing("TriggerConfigs", "NightEndHour", "INTEGER NOT NULL DEFAULT 7");
 
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = """
@@ -354,7 +374,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                        SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
-                       SensorMeasurement, SensorThreshold
+                       SensorMeasurement, SensorThreshold,
+                       NightWindowEnabled, NightStartHour, NightEndHour
                 FROM TriggerConfigs WHERE CameraId = $cameraId;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -378,7 +399,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                        SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
-                       SensorMeasurement, SensorThreshold
+                       SensorMeasurement, SensorThreshold,
+                       NightWindowEnabled, NightStartHour, NightEndHour
                 FROM TriggerConfigs WHERE Enabled = 1;
                 """;
 
@@ -405,7 +427,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 SELECT CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                        SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
-                       SensorMeasurement, SensorThreshold
+                       SensorMeasurement, SensorThreshold,
+                       NightWindowEnabled, NightStartHour, NightEndHour
                 FROM TriggerConfigs;
                 """;
 
@@ -432,11 +455,13 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 INSERT INTO TriggerConfigs (CameraId, Enabled, ZonePolygon, MinTriggerArea, CooldownSeconds, MaxTriggersPerMinute, ShadowSensitivity,
                                             RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                                             SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
-                                            SensorMeasurement, SensorThreshold)
+                                            SensorMeasurement, SensorThreshold,
+                                            NightWindowEnabled, NightStartHour, NightEndHour)
                 VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity,
                         $recordClips, $clipPreSeconds, $clipPostSeconds, $sendToAlerts, $alertProfile,
                         $sensorDeviceId, $sensorTriggerOn, $sensorCooldownSeconds, $zones,
-                        $sensorMeasurement, $sensorThreshold)
+                        $sensorMeasurement, $sensorThreshold,
+                        $nightWindowEnabled, $nightStartHour, $nightEndHour)
                 ON CONFLICT(CameraId) DO UPDATE SET
                     Enabled = excluded.Enabled,
                     ZonePolygon = excluded.ZonePolygon,
@@ -454,7 +479,10 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                     SensorCooldownSeconds = excluded.SensorCooldownSeconds,
                     Zones = excluded.Zones,
                     SensorMeasurement = excluded.SensorMeasurement,
-                    SensorThreshold = excluded.SensorThreshold;
+                    SensorThreshold = excluded.SensorThreshold,
+                    NightWindowEnabled = excluded.NightWindowEnabled,
+                    NightStartHour = excluded.NightStartHour,
+                    NightEndHour = excluded.NightEndHour;
                 """;
 
             // Zones is the source of truth; the legacy ZonePolygon/MinTriggerArea columns are
@@ -481,6 +509,9 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$zones", JsonSerializer.Serialize(zones));
             command.Parameters.AddWithValue("$sensorMeasurement", config.SensorMeasurement);
             command.Parameters.AddWithValue("$sensorThreshold", config.SensorThreshold);
+            command.Parameters.AddWithValue("$nightWindowEnabled", config.NightWindowEnabled ? 1 : 0);
+            command.Parameters.AddWithValue("$nightStartHour", config.NightStartHour);
+            command.Parameters.AddWithValue("$nightEndHour", config.NightEndHour);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -834,7 +865,10 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         // single zone from the legacy columns above rather than this being a missing-data case.
         reader.IsDBNull(15) ? null : JsonSerializer.Deserialize<IReadOnlyList<TriggerZone>>(reader.GetString(15)),
         reader.GetString(16),
-        reader.GetDouble(17));
+        reader.GetDouble(17),
+        reader.GetInt64(18) != 0,
+        (int)reader.GetInt64(19),
+        (int)reader.GetInt64(20));
 
     private static TriggerEvent ReadEvent(SqliteDataReader reader) => new(
         Guid.ParseExact(reader.GetString(0), "N"),

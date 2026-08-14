@@ -127,6 +127,9 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-sensor-cooldown").value = config.sensorCooldownSeconds ?? 30;
         document.getElementById("zone-sensor-threshold").value = config.sensorThreshold ?? 0;
         sensorMeasurement = config.sensorMeasurement || "";
+        document.getElementById("zone-night-window").checked = !!config.nightWindowEnabled;
+        document.getElementById("zone-night-start").value = config.nightStartHour ?? 21;
+        document.getElementById("zone-night-end").value = config.nightEndHour ?? 7;
       }
 
       const profileNames = profilesResp.ok ? await profilesResp.json() : [];
@@ -442,6 +445,14 @@ window.GateWatchTriggers = (function () {
     document.getElementById("zone-shadow-sensitivity-value").textContent = e.target.value;
   });
 
+  // An hour box, read so that 0 survives and anything unusable falls back to the caller's default
+  // rather than to midnight. Out-of-range values are left alone for the server to reject with a
+  // message, which is more use than clamping them silently to something the user didn't type.
+  function hourOrDefault(elementId, fallback) {
+    const parsed = parseInt(document.getElementById(elementId).value, 10);
+    return Number.isNaN(parsed) ? fallback : parsed;
+  }
+
   document.getElementById("zone-undo-point").addEventListener("click", () => {
     const zone = activeZoneOrNull();
     if (!zone) return;
@@ -534,7 +545,12 @@ window.GateWatchTriggers = (function () {
       sensorTriggerOn: document.getElementById("zone-sensor-state").value || "on",
       sensorCooldownSeconds: parseInt(document.getElementById("zone-sensor-cooldown").value, 10) || 0,
       sensorMeasurement: document.getElementById("zone-sensor-measurement").value || "",
-      sensorThreshold: parseFloat(document.getElementById("zone-sensor-threshold").value) || 0
+      sensorThreshold: parseFloat(document.getElementById("zone-sensor-threshold").value) || 0,
+      nightWindowEnabled: document.getElementById("zone-night-window").checked,
+      // Not the `|| 0` idiom used above: hour 0 is a legitimate value that `||` would swallow, and
+      // an empty box should fall back to the shipped window rather than silently to midnight.
+      nightStartHour: hourOrDefault("zone-night-start", 21),
+      nightEndHour: hourOrDefault("zone-night-end", 7)
     };
 
     try {
