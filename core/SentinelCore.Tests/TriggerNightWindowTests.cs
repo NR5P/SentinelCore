@@ -222,4 +222,70 @@ public sealed class TriggerNightWindowTests
         for (var hour = 0; hour < 24; hour++)
             Assert.False(TriggerNightWindow.IsActive(after, LocalAt(hour)));
     }
+
+    // --- The zero-width guard ------------------------------------------------------------------
+    //
+    // An enabled window whose hours are equal suppresses nothing, so it fails by looking like it
+    // worked. The guard has to judge the MERGED window, because a client is free to send the
+    // toggle and only one of the two hours - which is how a check written against the request's
+    // own fields gets walked straight past.
+
+    private static TriggerConfigDto Dto(bool? enabled, int? start, int? end) => new()
+    {
+        Enabled = true,
+        ZonePolygon = [new(0, 0), new(1, 0), new(1, 1)],
+        SensorTriggerOn = "on",
+        NightWindowEnabled = enabled,
+        NightStartHour = start,
+        NightEndHour = end
+    };
+
+    private const string ZeroWidthError =
+        "The night window's start and end hours can't be the same - that window is zero hours long.";
+
+    [Fact]
+    public void AnEnabledZeroWidthWindowIsRefused()
+    {
+        var (enabled, start, end) = TriggerEndpoints.ResolveNightWindow(Dto(true, 9, 9), existing: null);
+
+        Assert.Contains(ZeroWidthError, TriggerEndpoints.Validate(Dto(true, 9, 9), enabled, start, end));
+    }
+
+    // The regression: only one hour in the request, the other inherited from the stored row and
+    // equal to it. Judged on the DTO alone this passes validation and stores a window that is on
+    // and does nothing.
+    [Fact]
+    public void AZeroWidthWindowAssembledFromAPartialRequestIsRefused()
+    {
+        var stored = Config(enabled: true, start: 9, end: 7);
+        var dto = Dto(true, null, 9); // sends the end hour only; start inherits 9 from the row
+
+        var (enabled, start, end) = TriggerEndpoints.ResolveNightWindow(dto, stored);
+
+        Assert.Equal((true, 9, 9), (enabled, start, end));
+        Assert.Contains(ZeroWidthError, TriggerEndpoints.Validate(dto, enabled, start, end));
+    }
+
+    // Off, so equal hours mean nothing and there is nothing to refuse. Rejecting this would block
+    // saving an unrelated zone edit on a camera whose hours happen to match.
+    [Fact]
+    public void ADisabledZeroWidthWindowIsAllowed()
+    {
+        var (enabled, start, end) = TriggerEndpoints.ResolveNightWindow(Dto(false, 9, 9), existing: null);
+
+        Assert.DoesNotContain(ZeroWidthError, TriggerEndpoints.Validate(Dto(false, 9, 9), enabled, start, end));
+    }
+
+    // The ordinary phone PUT: no night-window keys at all, inheriting a real window from the row.
+    [Fact]
+    public void AClientThatSendsNoNightKeysStillValidates()
+    {
+        var stored = Config(enabled: true, start: 21, end: 7);
+        var dto = Dto(null, null, null);
+
+        var (enabled, start, end) = TriggerEndpoints.ResolveNightWindow(dto, stored);
+
+        Assert.Equal((true, 21, 7), (enabled, start, end));
+        Assert.DoesNotContain(ZeroWidthError, TriggerEndpoints.Validate(dto, enabled, start, end));
+    }
 }

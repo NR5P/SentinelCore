@@ -119,15 +119,21 @@ public static class TriggerEndpoints
             var camera = await cameraStore.GetAsync(id, ct);
             if (camera is null) return Results.NotFound();
 
-            var errors = Validate(dto);
-            if (errors.Count > 0) return Results.BadRequest(new { errors });
-
-            var zones = await ResolveZonesAsync(id, dto, store, ct);
+            var existing = await store.GetAsync(id, ct);
 
             // Whatever the row already said, for any of the three night-window keys this client
             // didn't send - see ResolveNightWindow.
-            var (nightEnabled, nightStart, nightEnd) =
-                ResolveNightWindow(dto, await store.GetAsync(id, ct));
+            var (nightEnabled, nightStart, nightEnd) = ResolveNightWindow(dto, existing);
+
+            // Validated against the RESOLVED window, not the raw DTO. The zero-width check needs
+            // the merged values or it can be walked straight past: a client that sends
+            // NightWindowEnabled with only one of the two hours leaves the other null, the DTO-only
+            // check skips itself for want of a pair, and an enabled zero-width window gets stored -
+            // exactly the "turned it on and it did nothing" state the check exists to refuse.
+            var errors = Validate(dto, nightEnabled, nightStart, nightEnd);
+            if (errors.Count > 0) return Results.BadRequest(new { errors });
+
+            var zones = await ResolveZonesAsync(id, dto, store, ct);
 
             var profile = string.IsNullOrWhiteSpace(dto.AlertProfile) ? "default" : dto.AlertProfile.Trim();
             var config = new TriggerConfig(id, dto.Enabled, zones[0].Polygon, zones[0].MinTriggerArea, dto.CooldownSeconds, dto.MaxTriggersPerMinute,
@@ -206,7 +212,11 @@ public static class TriggerEndpoints
         }).RequireAuthorization();
     }
 
-    private static List<string> Validate(TriggerConfigDto dto)
+    // Takes the already-merged night window alongside the DTO, because those three are the only
+    // fields whose stored value can differ from what the request carried - see ResolveNightWindow.
+    // Public for the same reason ResolveNightWindow is: it's the gate in front of a setting whose
+    // failure mode is silence, so it needs to be assertable directly.
+    public static List<string> Validate(TriggerConfigDto dto, bool nightEnabled, int nightStartHour, int nightEndHour)
     {
         var errors = new List<string>();
 
@@ -289,7 +299,13 @@ public static class TriggerEndpoints
         // Equal hours is a zero-width window that suppresses nothing (see TriggerNightWindow), so
         // saving it while the feature is on would look like it had been turned on and done nothing.
         // Refuse at the door rather than let that be discovered at 3am.
-        if (dto.NightWindowEnabled == true && dto.NightStartHour is { } s && dto.NightEndHour is { } e && s == e)
+        //
+        // Judged on the resolved window rather than the DTO's own fields, because the two can
+        // differ: a client that sends the toggle and only one hour inherits the other from the
+        // stored row, and a check that needed both keys present in the request would wave that
+        // through. The web dashboard always sends all three, so today this only differs for a
+        // partial client - which is precisely the client nobody would think to test.
+        if (nightEnabled && nightStartHour == nightEndHour)
             errors.Add("The night window's start and end hours can't be the same - that window is zero hours long.");
 
         return errors;
