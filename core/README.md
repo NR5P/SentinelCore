@@ -366,7 +366,7 @@ The dashboard writes separately, under `SentinelCore.Web/data/` (`CamerasDataDir
 Two retention passes run, and they cover different data:
 
 - `Bridge:RetentionDays` — every 12 hours, prunes saved alert images and result JSON. It does not remove old rows from `events.db`.
-- `Bridge:UnverifiedMotionRetentionDays` (default 3) — prunes motion that was never confirmed as a real subject: it deletes those rows from `triggers.db` as well as their clips and images, then sweeps any file under the trigger directories that no row points at any more. This is what keeps `trigger-clips` at a steady size rather than growing without limit.
+- `Bridge:UnverifiedMotionRetentionDays` (default 3, 0 keeps everything) — prunes motion that was never confirmed as a real subject: it deletes those rows from `triggers.db` as well as their clips and images, then sweeps any file under the trigger directories that no row points at any more. This is what keeps `trigger-clips` at a steady size rather than growing without limit. Confirmed and still-pending triggers are never pruned here — they age out under `RetentionDays` above. Note that a clip file is not owned by exactly one trigger: two triggers firing within one clip window share it, so a rejected trigger's clip is kept if a confirmed one still points at the same file.
 
 Query the history with `sqlite3` or any SQLite client, for example:
 

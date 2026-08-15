@@ -493,6 +493,7 @@ Below that, the settings for this zone:
 | **Send triggers to the AI and alert pipeline** | Off by default. When on, a trigger from this zone is sent through the *same* AI analysis and the *same* alert actions (email, Telegram, webhook) that Blue Iris alerts already use — see below. |
 | Alert prompt profile | Which prompt profile (see [section 9](#9-prompt-profiles--what-the-ai-is-told-to-look-for)) analyzes this camera's triggers. Only shown/used when the toggle above is on. |
 | Enabled | Master switch for the whole zone. Off means nothing is watched or recorded, but your shape and settings are kept. |
+| **Pause triggers overnight** | Off by default. Stops this camera triggering at all between the two hours you set — see below. |
 | Trigger from a sensor | Fires this camera when a Device Hub sensor reports — see below. |
 | Fire when the sensor reads / Sensor cooldown | Which sensor reading fires the camera, and how long to ignore repeats afterwards. |
 | Reading to compare / Value | Only shown for the two threshold options below. Which of the sensor's numbers to watch, and the number to compare it against. |
@@ -527,14 +528,63 @@ A few things worth knowing:
   ever analyzes the frames from the other cameras, so their triggers appear immediately, as
   before. If you turn this on and a camera's triggers are still noisy, that camera's send-to-AI
   toggle is the thing to check.
-- **Nothing is ever deleted.** Rejected triggers and their clips stay on disk. The **show
+- **Hiding is not deleting, but rejected triggers don't stay forever.** Nothing is deleted at
+  the moment the AI rejects it — the snapshot and clip are both still there, and the **show
   hidden** button on the EVENTS tab lists them, marked ⚠ nothing found, so you can check the
-  filter isn't hiding things it shouldn't.
+  filter isn't hiding things it shouldn't. They are then pruned on a timer: **Unverified Motion
+  Retention Days** (SETTINGS → BRIDGE, **default 3**) deletes rejected triggers along with their
+  clips and images once they're older than that. The window exists because the rejects are the
+  only evidence for whether a zone is tuned right — a threshold firing on a spider web looks
+  identical to a perfect one until you can see what it fired *on* — but they're also the bulk of
+  what fills the disk. Set it to 0 to keep everything. **Confirmed triggers are never touched by
+  this**; they age out under **Retention Days** instead, which is a much longer window.
 - **Triggers appear with a delay** — as long as the analysis takes, which on a CPU-only box can
   be a minute or more. Until then they're marked "… checking" under **show hidden**.
 - **It fails toward showing you things.** If the analysis is slow, errors, or can't be reached,
   the trigger is shown unjudged rather than hidden. Only the AI actually looking and finding
   nothing hides a trigger. "Give up after" sets how long to wait before giving up that way.
+
+### Pausing a camera overnight
+
+Some cameras see nothing but their own IR illuminator after dark. If it's lighting up a spider
+web, a strand of silk, dust, or condensation close to the lens, that camera can fire a hundred
+or more times a night and be right about none of them — and each one still costs a snapshot, a
+clip, a database row, and a full AI analysis that can take minutes.
+
+**Pause triggers overnight** (in the zone settings above, **off by default**) stops that camera
+triggering at all between two hours you set. Nothing is watched, so nothing is recorded,
+analyzed, or alerted on in that window.
+
+Reach for this only when the smallest-object size can't do the job — that's the better tool
+whenever it works, because it doesn't blind the camera. It often can't here: the thing making
+the noise is inches from the lens, so it covers the same number of detector pixels as a person
+at the gate does, and raising the floor far enough to lose the web loses the people too. Time of
+day is sometimes the only axis on which the two differ.
+
+Worth knowing before you switch it on:
+
+- **This is a real blind spot, not a filter.** Nothing is held back for later review, because
+  nothing is captured. If someone walks up during the paused hours, there will be no snapshot,
+  no clip, and no alert. That is the whole point of it, and the reason it ships off.
+- **The hours may cross midnight.** A start later than the end reads as a window through the
+  night, so 21 → 7 means 21:00 until 07:00 the next morning. They're whole hours on a 24-hour
+  clock, on the server's local time.
+- **Equal hours are refused.** A window from 9 to 9 is zero hours long, which would look like
+  the feature was on and quietly do nothing, so it won't save.
+- **It's per camera**, set on that camera's zone screen — not a system-wide quiet period.
+- **The journal says when a camera is paused**, roughly every half hour, with how many triggers
+  were held back and the time it resumes. A camera that's been told to be quiet would otherwise
+  be indistinguishable from one that has died.
+
+This is not the same thing as **Quiet Hours** (SETTINGS), which leaves the cameras watching and
+raises the confidence bar an event has to clear before it's allowed to *notify* you. Quiet Hours
+changes who gets woken up; this changes whether anything is looked at in the first place. If the
+overnight noise is real motion you simply don't want to be told about at 3am, Quiet Hours is the
+one you want.
+
+[Spider webs and insects on the lens](#16a-spider-webs-and-insects-on-the-lens) is what usually
+points at this setting: it watches for exactly this pattern and tells you which camera is doing
+it.
 
 ### Triggering a camera from something other than motion
 
@@ -1514,10 +1564,15 @@ cameras sent to your own address, and the problem it names otherwise goes unnoti
 
 A camera's own infrared light draws moths, moths draw spiders, and both end up sitting close
 enough to the lens to be huge, white, out of focus, and never quite still. Motion fires all night
-on an empty driveway. **No setting fixes this**: at that distance a single strand of silk covers
-about as many pixels as a person at the gate does, so any threshold that ignores the web also
-ignores people. The fix is physical — a broom — and this exists to tell you when it's worth
-going out with one.
+on an empty driveway. **No threshold fixes this**: at that distance a single strand of silk covers
+about as many pixels as a person at the gate does, so any size or sensitivity setting that ignores
+the web also ignores people. The fix is physical — a broom — and this exists to tell you when it's
+worth going out with one.
+
+If the broom isn't practical on some camera, [Pause triggers
+overnight](#pausing-a-camera-overnight) on that camera's zone screen is the fallback: it stops the
+flood by not watching during those hours, which also means not seeing anything real. It trades the
+problem rather than solving it, so reach for it second.
 
 Each morning it looks at the night just gone and speaks up only when a camera was **busy after
 dark, quiet in daylight, and the AI found almost nothing real in any of it**. It sends through
