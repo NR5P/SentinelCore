@@ -291,6 +291,71 @@ public sealed class TriggerConfirmationTests
         Assert.Contains(recentRejected.Id, ids);
     }
 
+    // Two triggers close enough together land inside one clip window and get patched with the same
+    // ClipPath. The AI then judges them independently and routinely disagrees, so "this row is
+    // rejected" is NOT the same statement as "nothing else needs this file" - and acting as though
+    // it were deletes confirmed footage while leaving the confirmed row pointing at the hole.
+    // Found in production on 2026-08-15: three confirmed gate events had already lost their clips.
+    [Fact]
+    public async Task DeleteUnconfirmedBeforeAsync_KeepsAClipAConfirmedRowStillShares()
+    {
+        using var store = NewStore(out _);
+        ITriggerEventStore events = store;
+        var cameraId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        const string shared = "/clips/shared.mp4";
+
+        // Same clip, same moment, opposite verdicts - the rejected one is old enough to sweep.
+        var rejected = await store.AddAsync(
+            cameraId, "rejected.jpg", 0.1, null, TriggerConfirmation.Rejected,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        var confirmed = await store.AddAsync(
+            cameraId, "confirmed.jpg", 0.1, null, TriggerConfirmation.Confirmed,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        await store.SetClipPathAsync(rejected.Id, shared, CancellationToken.None);
+        await store.SetClipPathAsync(confirmed.Id, shared, CancellationToken.None);
+
+        // A clip owned only by the rejected row, to prove the sweep still reclaims the usual case.
+        var soleRejected = await store.AddAsync(
+            cameraId, "sole-rejected.jpg", 0.1, null, TriggerConfirmation.Rejected,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        await store.SetClipPathAsync(soleRejected.Id, "/clips/sole.mp4", CancellationToken.None);
+
+        var files = await events.DeleteUnconfirmedBeforeAsync(now.AddDays(-3), CancellationToken.None);
+
+        Assert.DoesNotContain(shared, files);
+        Assert.Contains("/clips/sole.mp4", files);
+        // The rows still go; it is only the unlinking that has to respect the survivor.
+        var ids = (await store.GetRecentAsync(50, null, includeUnconfirmed: true, CancellationToken.None))
+            .Select(e => e.Id).ToList();
+        Assert.DoesNotContain(rejected.Id, ids);
+        Assert.Contains(confirmed.Id, ids);
+    }
+
+    // Two rejected rows sharing one clip should hand it back once, not once per row - the count
+    // goes straight into the "removed N files" log line the sweep is judged by.
+    [Fact]
+    public async Task DeleteUnconfirmedBeforeAsync_ReturnsASharedClipOnlyOnce()
+    {
+        using var store = NewStore(out _);
+        ITriggerEventStore events = store;
+        var cameraId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        const string shared = "/clips/both-rejected.mp4";
+
+        foreach (var name in new[] { "a.jpg", "b.jpg" })
+        {
+            var row = await store.AddAsync(
+                cameraId, name, 0.1, null, TriggerConfirmation.Rejected,
+                CancellationToken.None, occurredAt: now.AddDays(-10));
+            await store.SetClipPathAsync(row.Id, shared, CancellationToken.None);
+        }
+
+        var files = await events.DeleteUnconfirmedBeforeAsync(now.AddDays(-3), CancellationToken.None);
+
+        Assert.Single(files, f => f == shared);
+    }
+
     // --- Orphan sweep ---------------------------------------------------------------------------
     //
     // Files with no row can only be found by diffing the directory against the database, which

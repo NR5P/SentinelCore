@@ -248,6 +248,10 @@ public interface ITriggerEventStore
     // Rows and files are separate deletions on purpose, and the row goes first: a row pointing at
     // a file that is already gone renders as a missing thumbnail, while a file with no row is
     // invisible and unreclaimable. Losing the race in that direction is the recoverable one.
+    //
+    // The returned paths exclude anything a surviving row still points at. Neighbouring triggers
+    // share a clip file, so a rejected row's ClipPath is frequently a confirmed row's ClipPath too,
+    // and unlinking on row ownership alone destroys confirmed footage.
     Task<IReadOnlyList<string>> DeleteUnconfirmedBeforeAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
 
     // Every image and clip path any row still points at. The retention sweep diffs this against
@@ -805,14 +809,48 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                 }
             }
 
-            using var delete = _connection.CreateCommand();
-            delete.CommandText =
-                "DELETE FROM TriggerEvents " +
-                "WHERE Confirmation NOT IN ('confirmed', 'pending') AND OccurredAt < $cutoff;";
-            delete.Parameters.AddWithValue("$cutoff", cutoff);
-            await delete.ExecuteNonQueryAsync(cancellationToken);
+            using (var delete = _connection.CreateCommand())
+            {
+                delete.CommandText =
+                    "DELETE FROM TriggerEvents " +
+                    "WHERE Confirmation NOT IN ('confirmed', 'pending') AND OccurredAt < $cutoff;";
+                delete.Parameters.AddWithValue("$cutoff", cutoff);
+                await delete.ExecuteNonQueryAsync(cancellationToken);
+            }
 
-            return files;
+            // A clip covers a span of time, not an instant, so two triggers that fire inside one
+            // clip window are patched with the SAME ClipPath - and the AI routinely confirms one
+            // and rejects the other. Returning every path the deleted rows held would therefore
+            // unlink a clip a surviving CONFIRMED row still points at, which is the one file this
+            // sweep is never allowed to touch. It fails silently too: the row keeps its path and
+            // only renders as a dead video link, so nothing surfaces the loss.
+            //
+            // Not hypothetical - measured on the gate camera on 2026-08-15: three confirmed events
+            // had already lost their clip this way, and seventeen more were queued to.
+            //
+            // Asked after the DELETE so "still referenced" means exactly the rows that survived.
+            // Deliberately an inline query rather than a call to GetAllReferencedFilesAsync: that
+            // one takes _lock, which is a non-reentrant SemaphoreSlim we are already holding, so
+            // reusing it here would deadlock the sweep.
+            var stillReferenced = new HashSet<string>(StringComparer.Ordinal);
+            using (var survivors = _connection.CreateCommand())
+            {
+                survivors.CommandText = "SELECT ImagePath, ClipPath FROM TriggerEvents;";
+
+                await using var reader = await survivors.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    if (!reader.IsDBNull(0)) stillReferenced.Add(reader.GetString(0));
+                    if (!reader.IsDBNull(1)) stillReferenced.Add(reader.GetString(1));
+                }
+            }
+
+            // Distinct as well: two rejected rows sharing one clip would otherwise hand it back
+            // twice and double-count it in the sweep's "removed N files" log line.
+            return files
+                .Where(path => !stillReferenced.Contains(path))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
         }
         finally
         {
