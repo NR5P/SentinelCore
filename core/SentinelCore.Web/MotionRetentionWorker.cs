@@ -14,9 +14,23 @@ namespace SentinelCore.Web;
 // window is what makes both true at once: the false triggers are reviewable while they still tell
 // you something about the current settings, and gone before they cost real disk.
 //
-// Confirmed events are not touched here. Those age out under the main app's RetentionDays, which
-// is a much longer window and a different question - one is "how much history do I keep", the
-// other is "how long do I need to debug my zones".
+// Confirmed events are not touched here - and, as things stand, not anywhere else either, so
+// their clips are kept permanently.
+//
+// This comment used to claim they "age out under the main app's RetentionDays". They cannot:
+// RetentionDays walks only images/ and results/ under the INGEST service's data root, and the
+// paragraph four lines above is the reason - that worker deliberately never leaves its own root,
+// while trigger-images and trigger-clips live under this app's CamerasDataDirectory. Neither of
+// the two deletions below reaches them either: SweepAsync only deletes rows whose Confirmation is
+// neither 'confirmed' nor 'pending', and SweepOrphansAsync only removes files no row points at,
+// while a confirmed row goes on pointing at its clip forever.
+//
+// Measured on the gate camera 2026-08-16: 8.3 GB of confirmed clips accumulated in 10 days, about
+// 0.8 GB/day, with nothing able to remove any of it. Keeping confirmed footage is the right
+// default - it is the footage worth having - but it is unbounded, which is a sizing fact the
+// operator has to know rather than something to discover when the disk fills. Adding a real
+// window for it is a product decision (how much history do I keep?) and deliberately not taken
+// here; see README "Data" for the levers that do exist today.
 public sealed class MotionRetentionWorker(
     ITriggerEventStore triggers,
     AppSettingsFile appSettings,

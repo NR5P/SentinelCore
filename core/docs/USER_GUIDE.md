@@ -537,7 +537,13 @@ A few things worth knowing:
   only evidence for whether a zone is tuned right — a threshold firing on a spider web looks
   identical to a perfect one until you can see what it fired *on* — but they're also the bulk of
   what fills the disk. Set it to 0 to keep everything. **Confirmed triggers are never touched by
-  this**; they age out under **Retention Days** instead, which is a much longer window.
+  this** — and nothing else touches them either. **Retention Days** does not reach them: it
+  prunes the AI service's own saved alert images and result files, not the dashboard's trigger
+  clips and snapshots, which live somewhere else. A confirmed trigger's clip is kept for good.
+  That is the safe direction to fail — it's the footage you'd actually want — but it does mean
+  the confirmed clips grow forever, at roughly **0.8 GB a day** on a single busy camera here. If
+  disk is a concern, the levers are **Clip post-roll seconds** (shorter clips), turning **Record
+  clips** off for cameras where the snapshot is enough, or deleting old clips yourself.
 - **Triggers appear with a delay** — as long as the analysis takes, which on a CPU-only box can
   be a minute or more. Until then they're marked "… checking" under **show hidden**.
 - **It fails toward showing you things.** If the analysis is slow, errors, or can't be reached,
