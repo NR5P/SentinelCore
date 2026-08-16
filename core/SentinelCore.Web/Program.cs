@@ -243,9 +243,15 @@ builder.Services.AddAuthorization(options =>
 // Trigger zones have their own detection database and image folder, separate from the main
 // app's. What happens after a trigger fires is opt-in per camera - see AlertForwarder for the
 // (off by default) bridge into the main app's own Ollama analysis + email/Telegram/webhook pipeline.
-var triggerStore = new SqliteTriggerStore(camerasRoot);
-builder.Services.AddSingleton<ITriggerConfigStore>(triggerStore);
-builder.Services.AddSingleton<ITriggerEventStore>(triggerStore);
+// Built by the container rather than newed up here so it can be handed the app's own logger -
+// it has one thing to report (see SqliteTriggerStore's filter in DeleteUnconfirmedBeforeAsync)
+// and no logger exists yet at this point in startup. Both interfaces resolve the single
+// concrete registration, so this is still exactly one store over one SQLite connection.
+builder.Services.AddSingleton<SqliteTriggerStore>(serviceProvider => new SqliteTriggerStore(
+    camerasRoot,
+    serviceProvider.GetRequiredService<ILogger<SqliteTriggerStore>>()));
+builder.Services.AddSingleton<ITriggerConfigStore>(sp => sp.GetRequiredService<SqliteTriggerStore>());
+builder.Services.AddSingleton<ITriggerEventStore>(sp => sp.GetRequiredService<SqliteTriggerStore>());
 builder.Services.AddSingleton<ClipRecorder>();
 builder.Services.AddSingleton<TriggerRewindService>();
 builder.Services.AddHttpClient();

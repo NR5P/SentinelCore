@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using SentinelCore.Web;
 using Xunit;
 
@@ -330,6 +331,70 @@ public sealed class TriggerConfirmationTests
             .Select(e => e.Id).ToList();
         Assert.DoesNotContain(rejected.Id, ids);
         Assert.Contains(confirmed.Id, ids);
+    }
+
+    // The sweep's own "removed N files" line only ever sees the post-filter list, so a preserved
+    // clip looks identical there to one that was never a candidate. Since this guarantee already
+    // failed silently in production once, the store says so itself - and that line is the only
+    // evidence a later reader gets, so it is worth pinning.
+    [Fact]
+    public async Task DeleteUnconfirmedBeforeAsync_ReportsTheFilesItHeldBack()
+    {
+        var logger = new CapturingLogger();
+        var root = Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}");
+        using var store = new SqliteTriggerStore(root, logger);
+        ITriggerEventStore events = store;
+        var cameraId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+
+        var rejected = await store.AddAsync(
+            cameraId, "rejected.jpg", 0.1, null, TriggerConfirmation.Rejected,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        var confirmed = await store.AddAsync(
+            cameraId, "confirmed.jpg", 0.1, null, TriggerConfirmation.Confirmed,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        await store.SetClipPathAsync(rejected.Id, "/clips/shared.mp4", CancellationToken.None);
+        await store.SetClipPathAsync(confirmed.Id, "/clips/shared.mp4", CancellationToken.None);
+
+        await events.DeleteUnconfirmedBeforeAsync(now.AddDays(-3), CancellationToken.None);
+
+        var line = Assert.Single(logger.Messages);
+        Assert.Contains("kept 1 file(s)", line);
+    }
+
+    // ...and stays quiet the rest of the time. A line on every sweep would be noise that stops
+    // being read, which is the same failure as not logging it at all.
+    [Fact]
+    public async Task DeleteUnconfirmedBeforeAsync_SaysNothingWhenNoFileWasShared()
+    {
+        var logger = new CapturingLogger();
+        var root = Path.Combine(Path.GetTempPath(), $"trig-{Guid.NewGuid():N}");
+        using var store = new SqliteTriggerStore(root, logger);
+        ITriggerEventStore events = store;
+        var now = DateTimeOffset.UtcNow;
+
+        var rejected = await store.AddAsync(
+            Guid.NewGuid(), "rejected.jpg", 0.1, null, TriggerConfirmation.Rejected,
+            CancellationToken.None, occurredAt: now.AddDays(-10));
+        await store.SetClipPathAsync(rejected.Id, "/clips/sole.mp4", CancellationToken.None);
+
+        var files = await events.DeleteUnconfirmedBeforeAsync(now.AddDays(-3), CancellationToken.None);
+
+        Assert.Contains("/clips/sole.mp4", files);
+        Assert.Empty(logger.Messages);
+    }
+
+    private sealed class CapturingLogger : ILogger<SqliteTriggerStore>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 
     // Two rejected rows sharing one clip should hand it back once, not once per row - the count

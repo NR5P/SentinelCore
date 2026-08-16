@@ -266,8 +266,14 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
     private readonly SqliteConnection _connection;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public SqliteTriggerStore(string dataDirectory)
+    // Optional purely so the tests can keep constructing this with a directory and nothing else.
+    // The one thing it reports is the retention sweep holding a clip back - see the note in
+    // DeleteUnconfirmedBeforeAsync for why that event is worth a line in the journal.
+    private readonly ILogger<SqliteTriggerStore>? _logger;
+
+    public SqliteTriggerStore(string dataDirectory, ILogger<SqliteTriggerStore>? logger = null)
     {
+        _logger = logger;
         Directory.CreateDirectory(dataDirectory);
         var dbPath = Path.Combine(dataDirectory, "triggers.db");
 
@@ -847,10 +853,26 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
             // Distinct as well: two rejected rows sharing one clip would otherwise hand it back
             // twice and double-count it in the sweep's "removed N files" log line.
-            return files
+            var unlinkable = files
                 .Where(path => !stillReferenced.Contains(path))
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
+
+            // Say so when the filter above actually saved something. The sweep's own log line
+            // can't: it only ever sees the post-filter list, so a preserved clip is indis-
+            // tinguishable there from a clip that was never a candidate. That matters because
+            // this guarantee already failed silently once (three confirmed gate events lost
+            // their footage before 2026-08-15), and the only way to check it afterwards was to
+            // diff triggers.db against the disk by hand. One line per sweep, only when non-zero.
+            var preserved = files.Distinct(StringComparer.Ordinal).Count() - unlinkable.Count;
+            if (preserved > 0)
+            {
+                _logger?.LogInformation(
+                    "Motion retention: kept {Preserved} file(s) a confirmed or pending trigger still shares with the rejected motion being pruned",
+                    preserved);
+            }
+
+            return unlinkable;
         }
         finally
         {
