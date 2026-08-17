@@ -2430,6 +2430,61 @@ public sealed class BasicTests
         Directory.Delete(root, recursive: true);
     }
 
+    // The sweep's log line is the only evidence anyone gets that retention ran, so the counts
+    // behind it are worth pinning: bytes are summed from the files actually removed, and the ones
+    // kept contribute nothing to either figure.
+    [Fact]
+    public void RetentionWorker_PruneExpiredFiles_ReportsWhatItRemoved()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "images"));
+        Directory.CreateDirectory(Path.Combine(root, "results"));
+
+        var stale = DateTime.UtcNow.AddDays(-400);
+        var expiredImage = Path.Combine(root, "images", "old.jpg");
+        var expiredResult = Path.Combine(root, "results", "old.json");
+        foreach (var path in new[] { expiredImage, expiredResult })
+        {
+            File.WriteAllBytes(path, new byte[1024]);
+            File.SetLastWriteTimeUtc(path, stale);
+        }
+
+        // Kept, and so must not be counted in either the file count or the byte total.
+        var fresh = Path.Combine(root, "images", "recent.jpg");
+        File.WriteAllBytes(fresh, new byte[4096]);
+        File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow.AddDays(-1));
+
+        var outcome = RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
+
+        Assert.Equal(2, outcome.FilesDeleted);
+        Assert.Equal(2048, outcome.BytesReclaimed);
+        Assert.Equal(0, outcome.FilesFailed);
+
+        Directory.Delete(root, recursive: true);
+    }
+
+    // Nothing expired is the common case twice a day, and it has to be distinguishable from a
+    // sweep that never ran - both used to look identical in the journal, which is the whole reason
+    // the line exists.
+    [Fact]
+    public void RetentionWorker_PruneExpiredFiles_ReportsZeroWhenNothingExpired()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "images"));
+
+        var fresh = Path.Combine(root, "images", "recent.jpg");
+        File.WriteAllBytes(fresh, new byte[512]);
+        File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow.AddDays(-1));
+
+        var outcome = RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
+
+        Assert.Equal(0, outcome.FilesDeleted);
+        Assert.Equal(0, outcome.BytesReclaimed);
+        Assert.Equal(0, outcome.FilesFailed);
+
+        Directory.Delete(root, recursive: true);
+    }
+
     [Fact]
     public async Task HomeKitAlertAction_WhenEnabledAndNotificationRecommended_TriggersSidecar()
     {
