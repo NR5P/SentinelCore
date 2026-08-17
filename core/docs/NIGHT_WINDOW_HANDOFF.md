@@ -22,6 +22,48 @@ Night was 21% of the motion and produced **not one** confirmed subject. The caus
 illuminator lighting up something close to the lens — a spider web, dust, condensation; sampled
 night frames show heavy IR haze and large soft halos.
 
+> **Update 2026-08-17 — the zero above is real but it is a four-night stretch, not a property of
+> nights. Do not build the client control believing the window is free.**
+>
+> The table measures 2026-08-11 → 08-14, and those four nights genuinely confirmed nothing. Over
+> the whole post-calibration record the number is not zero:
+>
+> | Window (since 2026-08-06) | Triggers | AI-confirmed | Rate |
+> |---|---|---|---|
+> | Day 07:00–20:59 | 2,500 | 321 | 12.8% |
+> | Night 21:00–06:59 | 1,510 | **12** | **0.79%** |
+>
+> Twelve confirmed subjects fall inside the *default* 21→7 window, and every one of them is a
+> `gemma3:4b` escalation at 0.7–0.8 confidence describing a person or a vehicle at the gate — not
+> fastlocal noise that slipped through:
+>
+> ```
+> 08-05 22:20  a person standing on the right side of the gate
+> 08-05 22:20  a vehicle parked near the gate, a person outside it
+> 08-07 22:35  a person standing in the driveway near the gate
+> 08-08 06:39  a motorcycle parked in the narrow entrance outside the gate
+> 08-10 05:44  a person walking on the inside driveway towards the gate   (x3)
+> 08-15 22:35  an unidentified person on the property side of the gate
+> 08-16 06:22  a person walking on the driveway side of the gate
+> 08-16 06:25  a person standing near the gate on the driveway side
+> 08-16 21:21  a person standing on the property side of the gate
+> 08-16 21:23  a person standing on the outside of the gate
+> ```
+>
+> Five of those twelve landed in the two most recent nights, so this is not only an artefact of
+> older data — the rate is low, not nil, and the events it discards are exactly the ones the camera
+> is there for. An enabled window gives them no snapshot, no clip and no alert.
+>
+> None of this argues the feature is wrong. A 0.79% night rate against 12.8% by day is still a
+> ~16x difference, and 1,498 of those 1,510 night triggers were noise. It argues that the honest
+> framing is a **trade** — roughly one confirmed subject lost every four nights in exchange for
+> ~99% less overnight noise — rather than the free win "not one confirmed subject" implies. Whoever
+> adds the client control should surface it as such, and it is worth reading alongside the
+> `MaximumConfirmedPercent` guard the spider-web advisor uses for the same reason.
+>
+> The feature remains **off** on the only configured camera (`NightWindowEnabled=0`); nothing about
+> the shipped behaviour changed with this note.
+
 The reason this needed a *new* control rather than a tuning change is the part worth carrying
 forward: **minimum object size cannot separate the night noise from real subjects.** Over that
 window confirmed blobs averaged 67 detector pixels while rejected ones averaged 84 — the noise is
