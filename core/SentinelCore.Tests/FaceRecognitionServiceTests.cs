@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.ML.OnnxRuntime;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.PixelFormats;
@@ -81,5 +82,33 @@ public sealed class FaceRecognitionServiceTests
 
         Assert.Empty(embeddings);
         Assert.Single(logger.Warnings);
+    }
+
+    // YuNet's decode indexes twelve outputs by name (cls_/obj_/bbox_/kps_ per stride). Get one
+    // wrong - or swap in a differently-exported YuNet - and DetectFaces throws KeyNotFoundException
+    // deep inside a per-alert path where DetectFaceEmbeddings catches everything and logs a
+    // warning, so face recognition would silently find nobody while looking healthy. This asserts
+    // the contract against the model file actually shipping in the build output.
+    [Fact]
+    public void ShippedDetectorModelExposesEveryOutputTheDecodeIndexes()
+    {
+        var modelPath = Path.Combine(AppContext.BaseDirectory, "onnx", "face_detection_yunet_2023mar.onnx");
+        Assert.True(File.Exists(modelPath), $"Detector model missing from the build output at {modelPath}");
+
+        using var session = new InferenceSession(modelPath);
+        var outputs = session.OutputMetadata.Keys.ToHashSet(StringComparer.Ordinal);
+
+        foreach (var stride in new[] { 8, 16, 32 })
+        {
+            Assert.Contains($"cls_{stride}", outputs);
+            Assert.Contains($"obj_{stride}", outputs);
+            Assert.Contains($"bbox_{stride}", outputs);
+            Assert.Contains($"kps_{stride}", outputs);
+        }
+
+        // The decode letterboxes to a fixed 640x640 because this export's input is static. If a
+        // future model file is dynamic (or a different size), YuNetFaceDetector.InputSize and the
+        // stride grids have to move with it rather than silently mis-scaling every coordinate.
+        Assert.Equal([1, 3, 640, 640], session.InputMetadata.Values.Single().Dimensions);
     }
 }

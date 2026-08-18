@@ -1,0 +1,102 @@
+SentinelCore - Third-Party Notices
+==================================
+
+SentinelCore redistributes the components listed below. Each is used under the license
+shown, and the required notices are reproduced here.
+
+This file covers what actually ships inside a SentinelCore release archive. Components
+that SentinelCore merely talks to, and that the operator installs themselves through
+their own package manager - notably ffmpeg, go2rtc and Ollama - are not redistributed
+and are not covered here; they remain under their own licenses as installed.
+
+Two models are downloaded on first use rather than shipped, and so are also not
+redistributed by us: RF-DETR Nano (fast local detection) and CLIP (semantic search).
+
+
+-------------------------------------------------------------------------------
+YuNet face detection model  (onnx/face_detection_yunet_2023mar.onnx)
+https://github.com/opencv/opencv_zoo - models/face_detection_yunet
+-------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2020 Shiqi Yu <shiqi.yu@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+-------------------------------------------------------------------------------
+ArcFace face embedding model  (onnx/arcfaceresnet100-11-int8.onnx)
+ONNX Model Zoo, packaged as FaceAiSharp.Models.ArcFace.LResNet100E-IR-int8
+-------------------------------------------------------------------------------
+
+Licensed under the Apache License, Version 2.0.
+http://www.apache.org/licenses/LICENSE-2.0
+
+
+-------------------------------------------------------------------------------
+hls.js  (wwwroot/vendor/hls.min.js)
+https://github.com/video-dev/hls.js
+-------------------------------------------------------------------------------
+
+Copyright (c) Dailymotion. Licensed under the Apache License, Version 2.0.
+http://www.apache.org/licenses/LICENSE-2.0
+
+
+-------------------------------------------------------------------------------
+.NET libraries
+-------------------------------------------------------------------------------
+
+FaceAiSharp                      MIT        https://github.com/georg-jung/FaceAiSharp
+Microsoft.ML.OnnxRuntime         MIT        https://github.com/microsoft/onnxruntime
+MQTTnet / MQTTnet.Server         MIT        https://github.com/dotnet/MQTTnet
+Cronos                           MIT        https://github.com/HangfireIO/Cronos
+Markdig                          BSD-2      https://github.com/xoofx/markdig
+Makaretu.Dns.Multicast.New       MIT        https://github.com/richardschneider/net-mdns
+Microsoft.Data.Sqlite            MIT        https://github.com/dotnet/efcore
+SQLitePCLRaw                     Apache-2.0 https://github.com/ericsink/SQLitePCL.raw
+ElBruno.LocalEmbeddings          MIT        https://github.com/elbruno/LocalEmbeddings
+Microsoft.Extensions.*           MIT        https://github.com/dotnet/runtime
+
+SixLabors.ImageSharp             Six Labors Split License, used under its Apache-2.0
+                                 terms.  https://github.com/SixLabors/ImageSharp
+
+QuestPDF                         Dual-licensed; used under the Community License.
+                                 https://www.questpdf.com/license
+
+
+-------------------------------------------------------------------------------
+HomeKit bridge (Node.js sidecar)
+-------------------------------------------------------------------------------
+
+@homebridge/hap-nodejs           Apache-2.0 https://github.com/homebridge/HAP-NodeJS
+qrcode                           MIT        https://github.com/soldair/node-qrcode
+
+Their transitive dependencies ship in homekit-bridge/node_modules and are licensed
+under MIT, ISC, Apache-2.0, BSD-3-Clause, 0BSD, BlueOak-1.0.0 and Unlicense. Each
+package retains its own LICENSE file in its directory.
+
+
+-------------------------------------------------------------------------------
+Mobile and TV apps
+-------------------------------------------------------------------------------
+
+The Android app uses AndroidX, Jetpack Compose, Media3/ExoPlayer and Firebase
+Cloud Messaging, all licensed under the Apache License, Version 2.0.
+
+The iOS and Apple TV apps use no third-party libraries.

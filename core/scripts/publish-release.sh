@@ -277,6 +277,11 @@ for platform in $PLATFORMS; do
   mkdir -p "$stage/docs"
   cp "$ROOT_DIR/docs/DEPLOYMENT.md" "$ROOT_DIR/docs/USER_GUIDE.md" "$ROOT_DIR/docs/PUSH_NOTIFICATIONS.md" "$stage/docs/"
 
+  # Attribution for the bundled third-party components. Several of them - the YuNet model (MIT),
+  # hls.js and the ArcFace model (both Apache-2.0) - require their notices to travel with any
+  # copy, so this belongs in the archive rather than only in the repo.
+  cp "$ROOT_DIR/THIRD-PARTY-NOTICES.txt" "$stage/"
+
   # The appsettings.json files `dotnet publish` just copied are the ones checked into this repo
   # - which double as this maintainer's own live configuration for the in-place git-checkout
   # deployment (see docs/DEPLOYMENT.md section 3). That means they carry a real Bridge:ApiKey,

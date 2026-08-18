@@ -13,7 +13,13 @@
     <PackageReference Include="ElBruno.LocalEmbeddings.ImageEmbeddings" Version="1.5.3" />
     <PackageReference Include="ElBruno.LocalEmbeddings.ImageEmbeddings.Downloader" Version="1.5.3" />
     <PackageReference Include="FaceAiSharp" Version="0.6.35" />
-    <PackageReference Include="FaceAiSharp.Bundle" Version="0.6.35" />
+    <!-- Deliberately NOT FaceAiSharp.Bundle. That metapackage also pulls in
+         FaceAiSharp.Models.Scrfd.2dot5g_kps, whose weights come from InsightFace under
+         "non-commercial research purposes only" - it shipped in every dist/ zip, which is not
+         something we can distribute in a paid product. The ArcFace weights are referenced
+         directly instead (Apache-2.0, from the ONNX Model Zoo), and detection is now YuNet
+         (MIT) via YuNetFaceDetector. -->
+    <PackageReference Include="FaceAiSharp.Models.ArcFace.LResNet100E-IR-int8" Version="0.20230419.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
@@ -30,6 +36,13 @@
        folder next to this project (events.db, images, push-devices.db, ...) as Content purely
        because it's inside the project directory - confirmed accidentally shipping data/
        heartbeat.json into a `dotnet publish` output. None of it belongs in a build output. -->
+  <!-- YuNet's weights are committed rather than pulled from NuGet: there is no package for them,
+       and at 227KB bundling keeps face recognition working offline out of the box. Copied to
+       onnx/ so it lands beside the ArcFace model that its NuGet package puts there, which is
+       where FaceRecognitionService.ModelPath looks in both normal and single-file publishes. -->
+  <ItemGroup>
+    <Content Include="models/face_detection_yunet_2023mar.onnx" Link="onnx/face_detection_yunet_2023mar.onnx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
   <ItemGroup>
     <Content Remove="data/**" />
     <None Remove="data/**" />
