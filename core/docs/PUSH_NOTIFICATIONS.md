@@ -60,6 +60,20 @@ Use `UseSandbox: true` for development builds and development provisioning. Chan
 it to `false` for production/TestFlight/App Store builds. Development and production
 device tokens are separate.
 
+**A Release *configuration* is not a production *signature*.** The Xcode project sets
+`APS_ENVIRONMENT = production` for Release, but automatic signing resolves to the
+Development team provisioning profile and rewrites the signed entitlement back to
+`development`. So a locally built `-configuration Release` app installed with
+`devicectl` still produces **sandbox** tokens and still needs `UseSandbox: true`.
+Only a distribution-signed archive (TestFlight/App Store) yields production tokens.
+
+Check the signed entitlement rather than the build setting - this is the definitive
+answer for which environment a given build will register in:
+
+```
+codesign -d --entitlements - --xml /path/to/SentinelCore.app | plutil -p - | grep aps
+```
+
 Apple reference:
 [Communicating with APNs](https://developer.apple.com/documentation/usernotifications/setting_up_a_remote_notification_server/sending_notification_requests_to_apns)
 
@@ -153,7 +167,10 @@ also written to the normal Core logs.
 Common failures:
 
 - `BadDeviceToken`: APNs sandbox/production mismatch, wrong bundle ID, or an
-  incorrectly provisioned build.
+  incorrectly provisioned build. Before suspecting the token, confirm the build's
+  signed `aps-environment` matches `UseSandbox` using the `codesign` check in the
+  Apple setup section above - a Release build is development-signed unless it was
+  distribution-signed, which is the most common cause of this error.
 - Apple provider unavailable: verify team ID, key ID, absolute `.p8` path, and file
   permissions.
 - Firebase unavailable: verify the project ID, service-account path, API enablement,
