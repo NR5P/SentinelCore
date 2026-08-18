@@ -282,6 +282,11 @@ for platform in $PLATFORMS; do
   # copy, so this belongs in the archive rather than only in the repo.
   cp "$ROOT_DIR/THIRD-PARTY-NOTICES.txt" "$stage/"
 
+  # The licence terms travel with the software they cover - someone who only has this .zip has to
+  # be able to read what they agreed to, and Section 10 in particular (face recognition, biometric
+  # and recording compliance) is something an operator needs before they switch that feature on.
+  cp "$ROOT_DIR/EULA.md" "$stage/"
+
   # The appsettings.json files `dotnet publish` just copied are the ones checked into this repo
   # - which double as this maintainer's own live configuration for the in-place git-checkout
   # deployment (see docs/DEPLOYMENT.md section 3). That means they carry a real Bridge:ApiKey,
