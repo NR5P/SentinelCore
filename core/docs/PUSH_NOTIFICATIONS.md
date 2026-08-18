@@ -179,3 +179,19 @@ Common failures:
   the app, and use a device or emulator with Google Play services.
 - Notification arrives but the event does not open: reconnect to the Sentinel Core
   LAN or its VPN, then tap the notification again.
+- A device silently stops receiving pushes: when a provider reports a token as
+  `Unregistered` (APNs HTTP 410) or `UNREGISTERED` (FCM), Core deletes that
+  registration from `push-devices.db` and logs a warning naming the device:
+
+  ```
+  Removed the push registration for apple device Apple TV (<id>) because the provider
+  reported its token is no longer valid - that device receives no further pushes until
+  its app re-registers on next launch
+  ```
+
+  This is normal after reinstalling an app, restoring a device from backup, or
+  leaving one unused long enough for its token to be reissued. The removal is
+  permanent: the device reappears only when its app next launches and calls
+  `/api/push/devices/register`. Watch for it after any alert whose log line reports a
+  partial delivery (`delivered to 1/2 registered devices`) — with more than one device
+  registered, that line alone looks like a transient failure.

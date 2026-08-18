@@ -109,6 +109,25 @@ public sealed class PushNotificationDispatcher(
             {
                 await devices.RemoveAsync(device.Platform, device.Token, cancellationToken);
                 removed++;
+
+                // Logged here, at the point the row is actually deleted, rather than left to the
+                // callers - neither of them reads PushDeliveryReport.Removed, so this permanent
+                // change to the device store had no record anywhere. It matters most in the case
+                // that reads as harmless: with two devices registered and one token gone stale,
+                // PushAlertAction reports "delivered to 1/2 registered devices", which is
+                // indistinguishable from a transient partial failure even though that device has
+                // been dropped for good and will never be attempted again. Re-registration only
+                // happens when the app next launches and calls /api/push/devices/register, so
+                // without this line a phone or Apple TV can stop receiving alerts indefinitely
+                // and the journal's only hint is a rejection warning that says nothing about the
+                // registration being removed.
+                logger.LogWarning(
+                    "Removed the push registration for {Platform} device {DeviceName} ({DeviceId}) because the provider " +
+                    "reported its token is no longer valid - that device receives no further pushes until its app " +
+                    "re-registers on next launch",
+                    device.Platform,
+                    string.IsNullOrWhiteSpace(device.DeviceName) ? "unnamed" : device.DeviceName,
+                    device.Id);
             }
         }
 
