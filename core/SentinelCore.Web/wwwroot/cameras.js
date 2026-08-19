@@ -1374,24 +1374,67 @@ window.GateWatchCameras = (function () {
     button.addEventListener("pointercancel", release);
   }
 
-  async function sendPtzMove(cameraId, pan, tilt, zoom) {
-    try {
-      await fetch(`/api/cameras/${cameraId}/ptz/move`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pan, tilt, zoom })
-      });
-    } catch { /* best effort - see comment above */ }
+  // PTZ commands for one camera run one at a time, in the order they were issued.
+  //
+  // Firing them independently is two requests with no ordering between them, and press and
+  // release are milliseconds apart on a quick tap. Whenever the stop won that race the camera was
+  // sent stop-then-move and kept turning - a coin flip on request timing, invisible on a long
+  // press (where the release lands long after the move) and common on a tap. Chained per camera
+  // rather than globally, so driving one camera never waits on another's request.
+  const ptzChains = new Map();
+
+  function enqueuePtz(cameraId, operation) {
+    // catch() before the chain step: an operation that rejects must not poison the chain, or the
+    // next command would be dropped - and the command most likely to follow a failed move is the
+    // stop that ends it.
+    const previous = ptzChains.get(cameraId) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(operation);
+    ptzChains.set(cameraId, next);
+    return next;
   }
 
-  async function sendPtzStop(cameraId) {
-    await sendPtzCommand(cameraId, "stop");
+  function sendPtzMove(cameraId, pan, tilt, zoom) {
+    return enqueuePtz(cameraId, async () => {
+      try {
+        await fetch(`/api/cameras/${cameraId}/ptz/move`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pan, tilt, zoom })
+        });
+      } catch { /* best effort - see comment above */ }
+    });
   }
 
-  async function sendPtzCommand(cameraId, action) {
-    try {
-      await fetch(`/api/cameras/${cameraId}/ptz/${action}`, { method: "POST" });
-    } catch { /* best effort - see comment above */ }
+  // How many times a stop is attempted before giving up, and the first gap between attempts
+  // (doubling). The whole sequence is under a second: a camera that is still turning is not
+  // something to be patient about.
+  const PTZ_STOP_ATTEMPTS = 3;
+  const PTZ_STOP_BACKOFF_MS = 150;
+
+  // A stop is retried where a move is not. Every other PTZ command here is best-effort because a
+  // command that didn't land shows up as a camera that didn't move, which the video makes
+  // obvious. A stop is the exception: when it doesn't land the camera keeps going, and no amount
+  // of looking at the picture fixes that.
+  function sendPtzStop(cameraId) {
+    return enqueuePtz(cameraId, async () => {
+      for (let attempt = 0; attempt < PTZ_STOP_ATTEMPTS; attempt += 1) {
+        try {
+          const response = await fetch(`/api/cameras/${cameraId}/ptz/stop`, { method: "POST" });
+          if (response.ok) return;
+        } catch { /* fall through to the retry */ }
+        if (attempt < PTZ_STOP_ATTEMPTS - 1) {
+          await new Promise((resolve) => setTimeout(resolve, PTZ_STOP_BACKOFF_MS << attempt));
+        }
+      }
+    });
+  }
+
+  function sendPtzCommand(cameraId, action) {
+    return enqueuePtz(cameraId, async () => {
+      try {
+        await fetch(`/api/cameras/${cameraId}/ptz/${action}`, { method: "POST" });
+      } catch { /* best effort - see comment above */ }
+    });
   }
 
   // Which tier each tile is currently playing on, shown on the tile itself. The server log answers

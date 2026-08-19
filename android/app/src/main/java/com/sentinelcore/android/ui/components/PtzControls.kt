@@ -24,7 +24,11 @@ import androidx.compose.material.icons.filled.SouthWest
 import androidx.compose.material.icons.filled.West
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,29 +38,30 @@ import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.theme.SentinelCyan
 import com.sentinelcore.android.ui.theme.SentinelGreen
-import kotlinx.coroutines.launch
 
 // Continuous-move semantics: pressing a direction starts the camera moving at a fixed moderate
 // speed, and it keeps moving until released - there's no ONVIF "move this far and stop
-// automatically" in this mode. Errors are swallowed on purpose (fire-and-forget) - a dropped PTZ
-// command just means the camera didn't move that instant, which is self-evident from the video
-// itself, not something worth surfacing as an error over.
+// automatically" in this mode. That makes the release the load-bearing command: a dropped move
+// means the camera didn't budge, which is self-evident from the video, but a dropped stop means a
+// camera that keeps turning. Ordering, retrying and scoping of the commands therefore live in the
+// ViewModel (see enqueuePtz) rather than here.
 private const val PTZ_SPEED = 0.5
+private val PTZ_BUTTON_SIZE = 48.dp
+private val PTZ_BUTTON_GAP = 6.dp
 
 @Composable
 fun PtzControls(cameraId: String, model: SentinelViewModel, modifier: Modifier = Modifier) {
-    val scope = rememberCoroutineScope()
+    fun move(pan: Double, tilt: Double, zoom: Double) = model.startPtzMove(cameraId, pan, tilt, zoom)
 
-    fun move(pan: Double, tilt: Double, zoom: Double) {
-        scope.launch { runCatching { model.movePtz(cameraId, pan, tilt, zoom) } }
-    }
+    fun stop() = model.endPtzMove(cameraId)
 
-    fun stop() {
-        scope.launch { runCatching { model.stopPtz(cameraId) } }
-    }
+    fun home() = model.goPtzHome(cameraId)
 
-    fun home() {
-        scope.launch { runCatching { model.homePtz(cameraId) } }
+    // Belt and braces alongside the finally block in PtzButton: if this control leaves the
+    // composition while a button is held, send a stop on the way out. A stop with nothing moving
+    // is a no-op, so this costs nothing when the press ended normally.
+    DisposableEffect(cameraId) {
+        onDispose { stop() }
     }
 
     Row(
@@ -72,9 +77,9 @@ fun PtzControls(cameraId: String, model: SentinelViewModel, modifier: Modifier =
             Triple(-1.0, 0.0, Icons.Default.West), null, Triple(1.0, 0.0, Icons.Default.East),
             Triple(-1.0, -1.0, Icons.Default.SouthWest), Triple(0.0, -1.0, Icons.Default.South), Triple(1.0, -1.0, Icons.Default.SouthEast),
         )
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(PTZ_BUTTON_GAP)) {
             directions.chunked(3).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PTZ_BUTTON_GAP)) {
                     for (dir in row) {
                         if (dir == null) {
                             PtzButton(Icons.Default.Home, tint = SentinelCyan, onPress = ::home, onRelease = {})
@@ -86,7 +91,7 @@ fun PtzControls(cameraId: String, model: SentinelViewModel, modifier: Modifier =
                 }
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(PTZ_BUTTON_GAP)) {
             PtzButton(Icons.Default.Add, onPress = { move(0.0, 0.0, PTZ_SPEED) }, onRelease = ::stop)
             PtzButton(Icons.Default.Remove, onPress = { move(0.0, 0.0, -PTZ_SPEED) }, onRelease = ::stop)
         }
@@ -104,18 +109,30 @@ private fun PtzButton(
     onPress: () -> Unit,
     onRelease: () -> Unit,
 ) {
+    var pressed by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
-            .size(30.dp)
-            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
-            .border(1.dp, tint.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
+            // 48dp is Material's minimum touch target. These were 30dp with 3dp between them, in a
+            // 3x3 grid of arrows - small enough that hitting a neighbouring direction was routine.
+            .size(PTZ_BUTTON_SIZE)
+            .background(
+                Color.Black.copy(alpha = if (pressed) 0.85f else 0.55f),
+                RoundedCornerShape(6.dp),
+            )
+            .border(
+                if (pressed) 2.dp else 1.dp,
+                tint.copy(alpha = if (pressed) 1f else 0.4f),
+                RoundedCornerShape(6.dp),
+            )
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
+                        pressed = true
                         onPress()
                         try {
                             awaitRelease()
                         } finally {
+                            pressed = false
                             onRelease()
                         }
                     },
@@ -123,6 +140,6 @@ private fun PtzButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
     }
 }

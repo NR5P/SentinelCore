@@ -13,6 +13,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.sentinelcore.android.data.Account
 import com.sentinelcore.android.data.ActivityItem
 import com.sentinelcore.android.data.AuthStatus
+import com.sentinelcore.android.data.PtzCommandQueue
 import com.sentinelcore.android.data.Camera
 import com.sentinelcore.android.data.CameraInput
 import com.sentinelcore.android.data.CameraProbeRequest
@@ -66,6 +67,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -793,12 +795,38 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     // called - there's no "move by this much and stop automatically" in this mode. Fire-and-
     // forget by design (see the joystick UI, which swallows these exceptions) - a dropped PTZ
     // command just means the camera didn't move that instant, not something worth an error over.
-    suspend fun movePtz(cameraId: String, pan: Double, tilt: Double, zoom: Double) =
-        repository.ptzMove(cameraId, pan, tilt, zoom)
+    // PTZ commands run one at a time, in the order they were issued, and from the ViewModel's
+    // scope rather than a composable's.
+    //
+    // Both properties matter and neither was true before. Ordering: a press and a release used to
+    // launch independent coroutines, so on a quick tap the two HTTP requests raced, and whenever
+    // the stop won the camera was sent stop-then-move and kept turning - the intermittent
+    // "sticks and spins" this was reported for. Scope: the release used to be launched from
+    // rememberCoroutineScope, which is cancelled when the composable leaves, so navigating away
+    // mid-press could cancel the very stop that press depended on.
+    private val ptzCommands = PtzCommandQueue(viewModelScope)
 
-    suspend fun stopPtz(cameraId: String) = repository.ptzStop(cameraId)
+    private fun enqueuePtz(block: suspend () -> Unit) = ptzCommands.enqueue(block)
 
-    suspend fun homePtz(cameraId: String) = repository.ptzHome(cameraId)
+    fun startPtzMove(cameraId: String, pan: Double, tilt: Double, zoom: Double) =
+        enqueuePtz { repository.ptzMove(cameraId, pan, tilt, zoom) }
+
+    fun endPtzMove(cameraId: String) = enqueuePtz { stopPtzWithRetry(cameraId) }
+
+    fun goPtzHome(cameraId: String) = enqueuePtz { repository.ptzHome(cameraId) }
+
+    // A failed stop is retried; a failed move is not. Every other PTZ command is fire-and-forget
+    // because a command that didn't land shows up as a camera that didn't move, which the video
+    // makes obvious. A stop is the exception: when it doesn't land the camera keeps going, and
+    // nothing about watching the picture fixes that.
+    private suspend fun stopPtzWithRetry(cameraId: String) {
+        repeat(PTZ_STOP_ATTEMPTS) { attempt ->
+            if (runCatching { repository.ptzStop(cameraId) }.isSuccess) return
+            // Short and doubling - the whole sequence is under a second, because a camera that is
+            // still turning is not something to be patient about.
+            if (attempt < PTZ_STOP_ATTEMPTS - 1) delay(PTZ_STOP_BACKOFF_MS shl attempt)
+        }
+    }
 
     // Optimistic remove with rollback on failure, rather than a full refetch.
     suspend fun deleteCamera(camera: Camera) {
@@ -1175,6 +1203,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         error.message?.takeIf(String::isNotBlank) ?: "Could not connect to Sentinel Core."
 
     companion object {
+        private const val PTZ_STOP_ATTEMPTS = 3
+        private const val PTZ_STOP_BACKOFF_MS = 150L
+
         private const val SERVER_URL_KEY = "server_url"
         private const val REMOTE_SERVER_URL_KEY = "remote_server_url"
         private const val PUSH_ENABLED_KEY = "push_registration_enabled"
