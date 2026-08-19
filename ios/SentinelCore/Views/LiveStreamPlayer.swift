@@ -136,13 +136,19 @@ final class LiveStreamPlayer: ObservableObject {
         // dry on a loop. Automatic lets AVFoundation size the buffer against the target duration
         // it actually parsed out of the playlist.
         item.preferredForwardBufferDuration = 0
-        // configuredTimeOffsetFromLive is likewise left unset, so the player uses the stream's own
-        // recommendedTimeOffsetFromLive (three target durations for a plain, non-low-latency
-        // playlist - which this is). Pinning it to a hardcoded 3s asked to sit closer to the edge
-        // than a single segment in many cases, which no amount of buffering can sustain.
-        // automaticallyPreservesTimeOffsetFromLive keeps that offset across a stall rather than
-        // letting each one permanently push the tile further behind; checkDriftFromLive below is
-        // the backstop for when the player can't re-establish it on its own.
+        // configuredTimeOffsetFromLive is not set here, because the value worth setting isn't
+        // known yet - it is derived from the stream's own recommendation once the playlist has
+        // been parsed. See tightenLiveOffset, which does it at the first advancing frame.
+        //
+        // It used to be pinned to a hardcoded 3s here, and that was wrong for a reason worth
+        // keeping: 3s is closer to the live edge than a single segment on a camera with a 4s
+        // keyframe interval, and no amount of buffering can sustain an offset smaller than the
+        // quantum the stream arrives in. Anything that sets this has to be expressed relative to
+        // the stream's own timing rather than as an absolute number of seconds.
+        //
+        // automaticallyPreservesTimeOffsetFromLive keeps whatever offset we end up at across a
+        // stall rather than letting each one permanently push the tile further behind;
+        // checkDriftFromLive below is the backstop for when the player can't re-establish it.
         item.automaticallyPreservesTimeOffsetFromLive = true
         player.replaceCurrentItem(with: item)
         observe(item)
@@ -159,6 +165,7 @@ final class LiveStreamPlayer: ObservableObject {
                 guard let self, !self.isVideoReady, time.seconds > 0 else { return }
                 self.isVideoReady = true
                 self.reconnectAttempts = 0
+                self.tightenLiveOffset(on: item)
                 self.removeTimeObserver()
             }
         }
@@ -192,6 +199,49 @@ final class LiveStreamPlayer: ObservableObject {
                 MainActor.assumeIsolated { self?.player.play() }
             }
         )
+    }
+
+    // How close to the live edge to ask to sit, as a fraction of what the stream itself
+    // recommends. AVFoundation's recommendation for a plain (non-low-latency) playlist is three
+    // target durations, which on a camera with a 2s keyframe interval is a six-second delay -
+    // and that delay is the whole reason driving a PTZ camera from this app is unpleasant: you
+    // nudge, wait, and overshoot because the picture you are steering by is six seconds old.
+    //
+    // Two thirds of the recommendation keeps two full segments of cushion instead of three. That
+    // is a real reduction in margin, so it is bounded rather than pushed as far as it will go:
+    // one segment of cushion is the point at which any hiccup becomes a visible rebuffer, and the
+    // floor below keeps a slow camera from being asked for something structurally impossible.
+    private static let liveOffsetFractionOfRecommended = 2.0 / 3.0
+
+    // Never ask to sit closer to live than this regardless of what the fraction works out to.
+    // Two seconds is one segment on a 1s-GOP camera and half a segment on a 2s one, which is
+    // already the floor of what a segmented transport can hold; below this the answer is not a
+    // smaller number here but a different transport (WebRTC), which the dashboard uses and this
+    // player has no access to.
+    private static let minimumLiveOffsetSeconds = 2.0
+
+    // Asks the player to sit closer to the live edge than AVFoundation would by default. Done
+    // here rather than in loadItem because recommendedTimeOffsetFromLive is only meaningful once
+    // the playlist has been parsed, and the first advancing frame is proof that it has been.
+    //
+    // Everything is derived from the stream's own recommendation, so a camera with a long
+    // keyframe interval is still given room proportional to how coarsely its video arrives -
+    // this cannot reintroduce the hardcoded-3s failure described in loadItem.
+    private func tightenLiveOffset(on item: AVPlayerItem) {
+        let recommended = item.recommendedTimeOffsetFromLive
+        // A stream that recommends nothing usable (not yet parsed, or an indefinite/invalid time)
+        // gets left entirely alone - the default behaviour is the safe one.
+        guard recommended.isNumeric, recommended.seconds > 0 else { return }
+
+        let tightened = max(
+            recommended.seconds * Self.liveOffsetFractionOfRecommended,
+            Self.minimumLiveOffsetSeconds)
+
+        // Only ever move closer to live. On a stream whose recommendation is already at or inside
+        // the floor - a low-latency playlist, or a camera with a very short GOP - this would
+        // otherwise push the picture further behind than it needs to be.
+        guard tightened < recommended.seconds else { return }
+        item.configuredTimeOffsetFromLive = CMTime(seconds: tightened, preferredTimescale: 600)
     }
 
     // Catches playback that has silently stopped advancing while the player still reports

@@ -545,15 +545,34 @@ private fun SentinelPlayer(
         // means the player starts, drains, and rebuffers on a loop on a link with no problem at
         // all. Five seconds keeps a couple of segments in hand while still being far below
         // ExoPlayer's on-demand defaults.
+        //
+        // The 5s minimum came down to 3s alongside the live offset below. The two are coupled and
+        // it is not safe to move one alone: a player asked to sit 4s behind the live edge cannot
+        // also hold 5s of buffer, because only about 4s of media exists ahead of where it is
+        // playing. Left at 5s it would spend its life below its own minimum, which is the state
+        // ExoPlayer treats as buffering. 3s still keeps a segment or more in hand on the 2s-GOP
+        // cameras here, and the playback thresholds are unchanged.
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(5_000, 30_000, 1_500, 3_000)
+            .setBufferDurationsMs(3_000, 30_000, 1_500, 3_000)
             .build()
         // Tells ExoPlayer this is a live stream to be tracked at a target offset rather than
         // simply played, and - the important part - lets it hold that offset by nudging playback
         // speed a few percent either way. Without a live configuration its only tool for a tile
         // that has fallen behind is to seek, and every seek is a visible stall.
+        //
+        // 6s was three segments behind live on a 2s-GOP camera - the same figure AVFoundation
+        // picks by default, and the reason driving a PTZ camera from any of these apps meant
+        // nudging, waiting, and overshooting. 4s is two segments, matching the two-thirds
+        // reduction the iOS/macOS and tvOS players now apply to AVFoundation's recommendation, so
+        // the tablet doesn't sit visibly further behind than the phone beside it.
+        //
+        // Not pushed lower: below two segments the offset is inside the quantum the video
+        // actually arrives in, and the fix for that is a different transport rather than a
+        // smaller number here. The speed-tracking window below is what absorbs the reduced margin
+        // - it lets ExoPlayer hold the tighter offset by nudging playback speed instead of
+        // seeking, and a seek is the visible stall this is trying to avoid.
         val liveConfiguration = MediaItem.LiveConfiguration.Builder()
-            .setTargetOffsetMs(6_000)
+            .setTargetOffsetMs(4_000)
             .setMinPlaybackSpeed(0.97f)
             .setMaxPlaybackSpeed(1.03f)
             .build()
