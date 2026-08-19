@@ -45,16 +45,16 @@ final class LiveStreamPlayer: ObservableObject {
     private static let frozenPlaybackTimeout: TimeInterval = 6
 
     // Fallback for how far behind the live edge to sit, used only until the stream tells us its
-    // own recommendation - see targetOffsetFromLive(). The floor is the camera's keyframe
-    // interval: the server can only cut an HLS segment on a keyframe while copying video, so a
-    // camera with a 4s GOP produces 4s segments and no amount of client-side seeking gets closer
-    // than that.
-    private static let fallbackOffsetFromLive: TimeInterval = 6
+    // own recommendation - see targetOffsetFromLive(). One segment on a 2s-GOP camera, which is
+    // the shortest cushion a segmented transport can actually hold.
+    private static let fallbackOffsetFromLive: TimeInterval = 2.5
 
     // How much further behind than the target we tolerate before hauling the playhead back.
     // Seeking is itself a rebuffer, so this wants to be wide enough that only real staleness
-    // trips it, not the ordinary breathing room a live player keeps.
-    private static let driftAllowance: TimeInterval = 6
+    // trips it, not the ordinary breathing room a live player keeps. Sized against the offset
+    // itself now rather than the old flat six seconds, which on a tightened offset would have
+    // let a tile sit three times its target behind before anything noticed.
+    private static let driftAllowance: TimeInterval = 2.5
 
     private var url: URL?
     private var timeObserver: Any?
@@ -207,18 +207,23 @@ final class LiveStreamPlayer: ObservableObject {
     // and that delay is the whole reason driving a PTZ camera from this app is unpleasant: you
     // nudge, wait, and overshoot because the picture you are steering by is six seconds old.
     //
-    // Two thirds of the recommendation keeps two full segments of cushion instead of three. That
-    // is a real reduction in margin, so it is bounded rather than pushed as far as it will go:
-    // one segment of cushion is the point at which any hiccup becomes a visible rebuffer, and the
-    // floor below keeps a slow camera from being asked for something structurally impossible.
-    private static let liveOffsetFractionOfRecommended = 2.0 / 3.0
+    // How many segments of cushion to keep, expressed in segments because that is the quantum
+    // this transport actually arrives in. AVFoundation's recommendation for a plain live playlist
+    // is three target durations; on these 2s-GOP cameras that is a six-second-old picture, and
+    // six seconds is very nearly the whole of the PTZ lag. Measured end to end on 2026-08-19
+    // against the camera's own burned-in clock: the picture in the app was 7.4s behind reality,
+    // of which only ~1.0s was the server (camera -> RTSP -> ffmpeg -> completed segment on disk).
+    // Everything else was this offset.
+    //
+    // One segment is deliberately the floor of what is sane rather than a comfortable margin: it
+    // is the point where any hiccup becomes a visible rebuffer, which is why the drift watchdog
+    // and the reconnect path below matter more at this setting than they did at three.
+    private static let liveOffsetSegments = 1.0
 
-    // Never ask to sit closer to live than this regardless of what the fraction works out to.
-    // Two seconds is one segment on a 1s-GOP camera and half a segment on a 2s one, which is
-    // already the floor of what a segmented transport can hold; below this the answer is not a
-    // smaller number here but a different transport (WebRTC), which the dashboard uses and this
-    // player has no access to.
-    private static let minimumLiveOffsetSeconds = 2.0
+    // Never ask to sit closer to live than this regardless of what the segment maths works out
+    // to. Below this the answer is not a smaller number here but a different transport (WebRTC),
+    // which the dashboard uses and this player has no access to.
+    private static let minimumLiveOffsetSeconds = 1.5
 
     // Asks the player to sit closer to the live edge than AVFoundation would by default. Done
     // here rather than in loadItem because recommendedTimeOffsetFromLive is only meaningful once
@@ -233,15 +238,26 @@ final class LiveStreamPlayer: ObservableObject {
         // gets left entirely alone - the default behaviour is the safe one.
         guard recommended.isNumeric, recommended.seconds > 0 else { return }
 
-        let tightened = max(
-            recommended.seconds * Self.liveOffsetFractionOfRecommended,
-            Self.minimumLiveOffsetSeconds)
+        let tightened = Self.desiredOffset(forRecommended: recommended.seconds)
 
         // Only ever move closer to live. On a stream whose recommendation is already at or inside
         // the floor - a low-latency playlist, or a camera with a very short GOP - this would
         // otherwise push the picture further behind than it needs to be.
         guard tightened < recommended.seconds else { return }
         item.configuredTimeOffsetFromLive = CMTime(seconds: tightened, preferredTimescale: 600)
+    }
+
+    // The one place the target offset is decided, so the value the player is asked to hold and
+    // the value the drift watchdog measures against can never disagree. They used to: the offset
+    // was tightened to two thirds of the recommendation while the watchdog went on comparing
+    // against the full recommendation, so the watchdog's idea of "correct" was the very position
+    // the tightening existed to move away from - and seekToLiveEdge would put it back there.
+    //
+    // The recommendation is three target durations, so dividing by three recovers the segment
+    // length the stream is actually arriving in without having to parse the playlist.
+    private static func desiredOffset(forRecommended recommended: TimeInterval) -> TimeInterval {
+        let segment = recommended / 3.0
+        return max(segment * liveOffsetSegments, minimumLiveOffsetSeconds)
     }
 
     // Catches playback that has silently stopped advancing while the player still reports
@@ -275,8 +291,8 @@ final class LiveStreamPlayer: ObservableObject {
         seekToLiveEdge()
     }
 
-    // Where this stream says a player should sit: three target durations back for a plain live
-    // playlist, so it tracks the camera's actual segment length instead of a number picked here.
+    // Where this player intends to sit: derived from the stream's own recommendation, so it
+    // tracks the camera's actual segment length instead of a number picked here.
     // Comparing drift against a hardcoded 3s target - as this used to - meant that on any camera
     // with a GOP of 2s or more the player's own healthy resting position already counted as
     // "drifted", so the watchdog seeked to the live edge every two seconds, forever. Each of those
@@ -286,7 +302,7 @@ final class LiveStreamPlayer: ObservableObject {
               recommended.isValid, recommended.isNumeric, recommended.seconds > 0 else {
             return Self.fallbackOffsetFromLive
         }
-        return max(recommended.seconds, Self.fallbackOffsetFromLive)
+        return Self.desiredOffset(forRecommended: recommended.seconds)
     }
 
     private func secondsBehindLive() -> TimeInterval {

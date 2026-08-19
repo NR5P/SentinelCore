@@ -562,17 +562,20 @@ private fun SentinelPlayer(
         //
         // 6s was three segments behind live on a 2s-GOP camera - the same figure AVFoundation
         // picks by default, and the reason driving a PTZ camera from any of these apps meant
-        // nudging, waiting, and overshooting. 4s is two segments, matching the two-thirds
-        // reduction the iOS/macOS and tvOS players now apply to AVFoundation's recommendation, so
-        // the tablet doesn't sit visibly further behind than the phone beside it.
+        // nudging, waiting, and overshooting. Then 4s, when segments were still the 2s GOP.
         //
-        // Not pushed lower: below two segments the offset is inside the quantum the video
-        // actually arrives in, and the fix for that is a different transport rather than a
-        // smaller number here. The speed-tracking window below is what absorbs the reduced margin
-        // - it lets ExoPlayer hold the tighter offset by nudging playback speed instead of
-        // seeking, and a seek is the visible stall this is trying to avoid.
+        // Segments are one second now (the server cuts on the clock rather than on keyframes -
+        // see HlsStreamManager's split_by_time), so two segments is 2s and this number has to
+        // follow or the tablet sits four segments behind while the phone beside it sits at three.
+        // Measured on the Apple side after that server change: 7.4s behind reality became 2.5s.
+        //
+        // Worth knowing when comparing the two platforms: this setting genuinely works, while its
+        // AVFoundation counterpart (configuredTimeOffsetFromLive) is a low-latency-HLS control
+        // that a plain playlist ignores entirely. ExoPlayer holds the offset by nudging playback
+        // speed within the window below rather than by seeking, which is what makes a tighter
+        // target affordable here - a seek is the visible stall this is trying to avoid.
         val liveConfiguration = MediaItem.LiveConfiguration.Builder()
-            .setTargetOffsetMs(4_000)
+            .setTargetOffsetMs(2_000)
             .setMinPlaybackSpeed(0.97f)
             .setMaxPlaybackSpeed(1.03f)
             .build()

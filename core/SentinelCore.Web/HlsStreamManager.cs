@@ -502,22 +502,55 @@ public sealed class HlsStreamManager : IDisposable
             args.Add("-an");
         args.AddRange([
             "-f", "hls",
+            // One-second segments, made real by split_by_time below - without that flag this
+            // number is only a floor and the camera's keyframe interval wins, which is what used
+            // to make these 2s (and 4s on a camera set to 2x). Segment length is the single
+            // biggest term in live latency, because a plain HLS player parks three target
+            // durations behind the live edge and there is no way to talk it out of that:
+            // configuredTimeOffsetFromLive is a low-latency-HLS control and does nothing to a
+            // playlist like this one (measured 2026-08-19 - setting it moved the picture not at
+            // all). Measured end to end in the app against the PTZ camera's own burned-in clock:
+            // 7.4s behind before, 4.6s after.
+            //
+            // **Do not lower this to get closer.** It buys nothing and breaks cameras. What the
+            // player actually parks against is TARGETDURATION, which is an integer ffmpeg writes
+            // as lrint(longest segment) - so anything from ~0.5s to ~1.4s produces the same
+            // TARGETDURATION:1 and the same 3s of parking. Half-second segments were tried first
+            // and cost a whole camera: sources that hit exactly 0.500000 (the gate camera, an
+            // HTTP-FLV input rather than RTSP) round to **TARGETDURATION:0**, which is invalid
+            // HLS, and AVPlayer refuses the playlist outright - the tile sits on "Starting
+            // stream..." forever. Measured 2026-08-19: gate at 0.5 -> TARGETDURATION:0, gate at
+            // 1 -> 1, PTZ at 1 -> 1. One second sits in the middle of the rounding bucket
+            // instead of exactly on its edge, which is the whole reason to prefer it.
+            //
+            // 3 x 1s is the floor for this transport. Below it needs WebRTC, not a smaller
+            // number here.
             "-hls_time", "1",
             // The playlist window, in segments. This is the margin a viewer has to fall behind by
             // before the segment it is asking for has rolled off the playlist entirely - at which
             // point its only move is to jump back to the live edge, which is a visible rebuffer.
             // Six segments was thin: on a camera with a 2s GOP that is a twelve-second window, and
             // a player deliberately sitting near the live edge spends most of it already used up.
-            // Counted in segments rather than seconds, so halving the segment length above would
-            // have quietly halved this window too - twenty keeps the same ~20s of margin, and the
-            // same disk footprint, since each segment is now half the size.
+            // Counted in segments rather than seconds, so shortening the segment length above
+            // would have quietly shortened this window too - twenty one-second segments is the
+            // ~20s of margin that made the live grid stop stuttering.
             "-hls_list_size", "20",
             // temp_file: write each segment under a scratch name and rename it into place when
             // it's complete, so a viewer can never fetch a half-written .ts and stall on it.
-            // independent_segments: every segment starts on a keyframe (guaranteed here, since
-            // copying video can only cut there), which lets a player start on any segment rather
-            // than hunting backwards for one it can decode from.
-            "-hls_flags", "delete_segments+omit_endlist+independent_segments+temp_file",
+            //
+            // split_by_time: cut on the clock rather than only on keyframes. Copying video can
+            // normally only cut where the camera put a keyframe, which is what made -hls_time a
+            // floor and pinned segment length to the GOP - 2s on the PTZ camera here, 4s on a
+            // camera set to 2x. With this flag the segments come out at -hls_time regardless, and
+            // the latency above follows.
+            //
+            // independent_segments is therefore gone, and its removal is the point rather than an
+            // oversight: it promises every segment begins at a keyframe, which is exactly what
+            // split_by_time stops being true. Leaving it in would be a lie told to the player
+            // about video it is about to decode. The cost of dropping it is that a player joining
+            // mid-stream may need to wait for the next keyframe before it has a decodable
+            // starting point - at most one GOP, and unnoticeable next to the seconds this saves.
+            "-hls_flags", "delete_segments+omit_endlist+split_by_time+temp_file",
             // Keep a few segments on disk past the point they roll off the playlist. A viewer
             // that is momentarily behind - a phone coming back from a locked screen, a slow
             // cellular fetch - then gets the segment it asks for instead of a 404 that costs it

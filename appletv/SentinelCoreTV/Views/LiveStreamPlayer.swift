@@ -29,16 +29,16 @@ final class LiveStreamPlayer: ObservableObject {
     private static let frozenPlaybackTimeout: TimeInterval = 6
 
     // Fallback for how far behind the live edge to sit, used only until the stream tells us its
-    // own recommendation - see targetOffsetFromLive(). The floor is the camera's keyframe
-    // interval: the server can only cut an HLS segment on a keyframe while copying video, so a
-    // camera with a 4s GOP produces 4s segments and no amount of client-side seeking gets closer
-    // than that.
-    private static let fallbackOffsetFromLive: TimeInterval = 6
+    // own recommendation - see targetOffsetFromLive(). One segment on a 2s-GOP camera, which is
+    // the shortest cushion a segmented transport can actually hold.
+    private static let fallbackOffsetFromLive: TimeInterval = 2.5
 
     // How much further behind than the target we tolerate before hauling the playhead back.
     // Seeking is itself a rebuffer, so this wants to be wide enough that only real staleness
-    // trips it, not the ordinary breathing room a live player keeps.
-    private static let driftAllowance: TimeInterval = 6
+    // trips it, not the ordinary breathing room a live player keeps. Sized against the offset
+    // itself now rather than the old flat six seconds, which on a tightened offset would have
+    // let a tile sit three times its target behind before anything noticed.
+    private static let driftAllowance: TimeInterval = 2.5
 
     private var url: URL?
     private var timeObserver: Any?
@@ -189,18 +189,17 @@ final class LiveStreamPlayer: ObservableObject {
     // .playing. None of the failure notifications fire in that state, and it can't be done from
     // the periodic time observer either - that only fires *as playback time advances*, so a
     // frozen clock silences the very thing that would notice it. Hence a wall-clock timer.
-    // How close to the live edge to ask to sit, as a fraction of what the stream itself
-    // recommends. AVFoundation's recommendation for a plain (non-low-latency) playlist is three
-    // target durations, which on a camera with a 2s keyframe interval is a six-second delay.
-    // Kept identical to the iOS/macOS player deliberately - the two are separate files, and a TV
-    // showing the same camera several seconds further behind than the phone next to it reads as
-    // a bug in whichever one the viewer is looking at.
-    private static let liveOffsetFractionOfRecommended = 2.0 / 3.0
+    // How many segments of cushion to keep, expressed in segments because that is the quantum
+    // this transport actually arrives in. AVFoundation's recommendation for a plain
+    // (non-low-latency) playlist is three target durations. Kept identical to the iOS/macOS
+    // player deliberately - the two are separate files, and a TV showing the same camera several
+    // seconds further behind than the phone next to it reads as a bug in whichever one the
+    // viewer is looking at.
+    private static let liveOffsetSegments = 1.0
 
-    // Never ask to sit closer to live than this regardless of what the fraction works out to.
-    // Two seconds is one segment on a 1s-GOP camera and half a segment on a 2s one, which is
-    // already the floor of what a segmented transport can hold.
-    private static let minimumLiveOffsetSeconds = 2.0
+    // Never ask to sit closer to live than this regardless of what the segment maths works out
+    // to. Below this the answer is not a smaller number here but a different transport.
+    private static let minimumLiveOffsetSeconds = 1.5
 
     // Asks the player to sit closer to the live edge than AVFoundation would by default. Done
     // here rather than in loadItem because recommendedTimeOffsetFromLive is only meaningful once
@@ -209,13 +208,22 @@ final class LiveStreamPlayer: ObservableObject {
         let recommended = item.recommendedTimeOffsetFromLive
         guard recommended.isNumeric, recommended.seconds > 0 else { return }
 
-        let tightened = max(
-            recommended.seconds * Self.liveOffsetFractionOfRecommended,
-            Self.minimumLiveOffsetSeconds)
+        let tightened = Self.desiredOffset(forRecommended: recommended.seconds)
 
         // Only ever move closer to live, never further away.
         guard tightened < recommended.seconds else { return }
         item.configuredTimeOffsetFromLive = CMTime(seconds: tightened, preferredTimescale: 600)
+    }
+
+    // The one place the target offset is decided, so the value the player is asked to hold and
+    // the value the drift watchdog measures against can never disagree. They used to: the offset
+    // was tightened while the watchdog went on comparing against the full recommendation, so the
+    // watchdog's idea of "correct" was the very position the tightening existed to move away
+    // from. The recommendation is three target durations, so dividing by three recovers the
+    // segment length the stream is arriving in without parsing the playlist.
+    private static func desiredOffset(forRecommended recommended: TimeInterval) -> TimeInterval {
+        let segment = recommended / 3.0
+        return max(segment * liveOffsetSegments, minimumLiveOffsetSeconds)
     }
 
     private func startFrozenPlaybackWatchdog() {
@@ -245,8 +253,8 @@ final class LiveStreamPlayer: ObservableObject {
         seekToLiveEdge()
     }
 
-    // Where this stream says a player should sit: three target durations back for a plain live
-    // playlist, so it tracks the camera's actual segment length instead of a number picked here.
+    // Where this player intends to sit: derived from the stream's own recommendation, so it
+    // tracks the camera's actual segment length instead of a number picked here.
     // Comparing drift against a hardcoded 3s target - as this used to - meant that on any camera
     // with a GOP of 2s or more the player's own healthy resting position already counted as
     // "drifted", so the watchdog seeked to the live edge every two seconds, forever. Each of those
@@ -256,7 +264,7 @@ final class LiveStreamPlayer: ObservableObject {
               recommended.isValid, recommended.isNumeric, recommended.seconds > 0 else {
             return Self.fallbackOffsetFromLive
         }
-        return max(recommended.seconds, Self.fallbackOffsetFromLive)
+        return Self.desiredOffset(forRecommended: recommended.seconds)
     }
 
     private func secondsBehindLive() -> TimeInterval {

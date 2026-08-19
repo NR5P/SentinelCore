@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -4352,18 +4353,43 @@ public sealed class BasicTests
 
         var flags = args[args.IndexOf("-hls_flags") + 1].Split('+');
         Assert.Contains("temp_file", flags);
-        Assert.Contains("independent_segments", flags);
         Assert.Contains("delete_segments", flags);
         Assert.Contains("omit_endlist", flags);
+
+        // split_by_time is what makes -hls_time mean anything while copying video: without it
+        // ffmpeg can only cut on a keyframe, so segments come out at the camera's GOP no matter
+        // what is asked for, and the player's three-target-duration parking distance follows the
+        // GOP straight into multi-second latency.
+        Assert.Contains("split_by_time", flags);
+
+        // And independent_segments must NOT be there, because split_by_time makes it false: a
+        // segment cut on the clock does not necessarily begin at a keyframe, and claiming
+        // otherwise misleads the player about video it is about to decode.
+        Assert.DoesNotContain("independent_segments", flags);
         Assert.Equal("5", args[args.IndexOf("-hls_delete_threshold") + 1]);
 
-        // Short segments are what make the Live tab appear quickly, because a player waits for
-        // several of them to be PRODUCED before it has enough to start. Measured cold against a
-        // real camera: 5.00s to a usable playlist at 2s segments, 2.29s at 1s. On a camera whose
-        // GOP is longer this is moot - copying video can only cut on a keyframe, so hls_time is
-        // only ever a floor.
-        var segmentSeconds = int.Parse(args[args.IndexOf("-hls_time") + 1]);
-        Assert.Equal(1, segmentSeconds);
+        // Short segments are what make the Live tab appear quickly (a player waits for several to
+        // be PRODUCED before it can start) and, far more importantly, what sets live latency: a
+        // plain-HLS player sits three target durations behind the live edge and offers no way to
+        // ask for less. Measured against the PTZ camera's burned-in clock, 2026-08-19: 2s
+        // segments put the picture 7.8s behind, 0.5s segments 3.3s behind.
+        var segmentSeconds = double.Parse(
+            args[args.IndexOf("-hls_time") + 1], CultureInfo.InvariantCulture);
+
+        // Both bounds are load-bearing, and the lower one is the one that bites.
+        //
+        // Upper: a player parks three TARGETDURATIONs behind live, so segments longer than a
+        // second put the picture more than three seconds late and PTZ goes back to being
+        // unsteerable.
+        //
+        // Lower: TARGETDURATION is an integer, written by ffmpeg as lrint(longest segment). Ask
+        // for 0.5 and a source that lands on exactly 0.500000 - the gate camera does, being
+        // HTTP-FLV rather than RTSP - rounds to TARGETDURATION:0, which is invalid HLS that
+        // AVPlayer refuses outright, leaving the tile on "Starting stream..." forever. Anything
+        // from ~0.5 to ~1.4 yields the same TARGETDURATION:1 anyway, so there is nothing to win
+        // by going below a second and a whole camera to lose.
+        Assert.True(segmentSeconds <= 1.0, $"segments are {segmentSeconds}s, which is too long to steer a PTZ camera by");
+        Assert.True(segmentSeconds >= 0.75, $"{segmentSeconds}s segments risk rounding to TARGETDURATION:0, which AVPlayer refuses");
 
         // The playlist window a viewer has to fall behind by before its next segment has rolled
         // off and its only recourse is a jump back to the live edge - which viewers see as the
@@ -4371,8 +4397,8 @@ public sealed class BasicTests
         // stop stuttering.
         //
         // Asserted in SECONDS, not segments, because that is the thing that actually matters:
-        // hls_list_size counts segments, so halving hls_time above would otherwise have halved
-        // this window silently while the old assertion still passed.
+        // hls_list_size counts segments, so shortening hls_time above would otherwise have
+        // shortened this window silently while the old assertion still passed.
         var windowSeconds = segmentSeconds * int.Parse(args[args.IndexOf("-hls_list_size") + 1]);
         Assert.True(windowSeconds >= 20, $"playlist window is only {windowSeconds}s");
 
