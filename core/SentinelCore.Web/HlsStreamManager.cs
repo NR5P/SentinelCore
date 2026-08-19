@@ -1,13 +1,16 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace SentinelCore.Web;
 
 // Starts an ffmpeg process per camera on first request, remuxing whatever RTSP/HTTP source
 // the camera speaks into HLS segments a browser can actually play (browsers have no native
-// RTSP support). Video is copied, not re-encoded, so this is cheap as long as the source is
-// H.264 - true of the overwhelming majority of IP cameras. Streams nobody is watching are
-// killed after a short idle period so this doesn't burn CPU on cameras left unwatched.
+// RTSP support). Video is copied, not re-encoded, so this is cheap whatever the camera sends -
+// but not every codec may be packaged the same way, and an H.265 camera has to be segmented as
+// fragmented MP4 rather than MPEG-TS to be playable at all (see BuildFfmpegArguments). Streams
+// nobody is watching are killed after a short idle period so this doesn't burn CPU on cameras
+// left unwatched.
 public sealed class HlsStreamManager : IDisposable
 {
     // Was 30s, but that meant switching away from the Live tab for half a minute (or the app
@@ -69,6 +72,18 @@ public sealed class HlsStreamManager : IDisposable
     // list warms every camera on each fetch), short enough that a transient failure doesn't cost
     // a viewer the low rendition for the rest of the day.
     private static readonly TimeSpan LowResRetryInterval = TimeSpan.FromMinutes(10);
+
+    // Renditions last seen carrying H.265, which have to be segmented as fragmented MP4 rather
+    // than MPEG-TS. Keyed per rendition, not per camera, because the two commonly differ: the
+    // camera this was written for serves H.265 on its main stream and H.264 on its sub.
+    //
+    // This is a cache of an observation, never a setting, and it is allowed to be wrong - a
+    // session whose ffmpeg reports a codec that contradicts it corrects the entry and restarts
+    // itself (see StartAndWaitAsync). That is what keeps the packaging right when someone changes
+    // the encoder in the camera's own web UI, which is a thing that happens to this install and
+    // which nothing here would otherwise hear about.
+    private readonly ConcurrentDictionary<SessionKey, bool> _hevcSources = new();
+
     private readonly CameraSource _cameraSource;
     private readonly Go2RtcManager _go2rtc;
     private readonly string _ffmpegPath;
@@ -141,10 +156,58 @@ public sealed class HlsStreamManager : IDisposable
             : StreamQuality.Sub;
     }
 
+    // The packaging a session was started with is a guess on the first sighting of a rendition,
+    // and a stale cache entry on every later one. ffmpeg settles it: it names the input's video
+    // codec on stderr while opening the stream, which the session parses out of the log it is
+    // already keeping. If that contradicts the guess, the entry is corrected and the session
+    // restarted with the right muxer.
+    //
+    // Deliberately done this way round rather than by probing the camera with ffprobe before every
+    // cold start. A probe would be simpler, but it would put an RTSP round-trip in front of every
+    // camera on every cold start - measured elsewhere in this file, the whole budget from launch
+    // to a playlist a player can use is about 2.3s, and that is the number anyone notices when
+    // they open the Live tab. Reading a line ffmpeg prints anyway costs nothing, and the cost of
+    // being wrong falls only on H.265 cameras, only on a cold start, and only once per change.
     private async Task<string> StartAndWaitAsync(
         Camera camera, StreamQuality quality, CancellationToken cancellationToken)
     {
         var key = new SessionKey(camera.Id, quality);
+        var playlistPath = await StartAndWaitOnceAsync(camera, key, cancellationToken);
+
+        if (!_sessions.TryGetValue(key, out var started) || !NeedsRepackaging(started))
+            return playlistPath;
+
+        var actuallyHevc = IsHevc(started.SourceVideoCodec!);
+        _hevcSources[key] = actuallyHevc;
+        _logger.LogInformation(
+            "Camera {CameraId} ({Name}, {Quality}) sends {Codec}; restarting its stream as {Packaging} " +
+            "so players can decode it.",
+            camera.Id, camera.Name, key.Quality, started.SourceVideoCodec,
+            actuallyHevc ? "fragmented MP4" : "MPEG-TS");
+
+        // Compare-and-remove for the same reason the death path uses one: only the caller that
+        // actually takes this session out of the dictionary may kill it.
+        if (_sessions.TryRemove(new KeyValuePair<SessionKey, StreamSession>(key, started)))
+            KillSession(started);
+
+        // At most one correction per request: the replacement is started from a now-correct entry,
+        // so its own codec line agrees with it and this cannot bounce.
+        return await StartAndWaitOnceAsync(camera, key, cancellationToken);
+    }
+
+    // Only ever true once ffmpeg has actually said what the codec is - an unparsed log (a session
+    // that died before printing one, a future ffmpeg that words the line differently) leaves the
+    // guess in place rather than flip-flopping the packaging on no evidence.
+    private static bool NeedsRepackaging(StreamSession session) =>
+        session.SourceVideoCodec is { } codec && IsHevc(codec) != session.HevcSource;
+
+    private static bool IsHevc(string codec) =>
+        codec.Equals("hevc", StringComparison.OrdinalIgnoreCase) ||
+        codec.Equals("h265", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<string> StartAndWaitOnceAsync(
+        Camera camera, SessionKey key, CancellationToken cancellationToken)
+    {
         var session = GetOrStartLiveSession(camera, key);
 
         var playlistPath = Path.Combine(session.OutputDirectory, "stream.m3u8");
@@ -224,7 +287,8 @@ public sealed class HlsStreamManager : IDisposable
             _restartBlockedUntil.TryRemove(key, out _);
         }
 
-        var session = _sessions.GetOrAdd(key, k => StartSession(camera, k.Quality));
+        var session = _sessions.GetOrAdd(
+            key, k => StartSession(camera, k.Quality, _hevcSources.TryGetValue(k, out var hevc) && hevc));
         session.LastAccessed = DateTimeOffset.UtcNow;
         return session;
     }
@@ -306,9 +370,15 @@ public sealed class HlsStreamManager : IDisposable
         // An edit may well be the fix for the missing low stream, so let the camera prove itself
         // again immediately rather than serving main until the retry interval is up.
         _lowResRetryAfter.TryRemove(cameraId, out _);
+
+        // Same reasoning for the observed codec: an edit can repoint the camera at a different
+        // stream entirely, and a remembered packaging from the old one is worse than no memory at
+        // all. Dropping it costs one self-correcting restart if the guess comes back wrong.
+        foreach (var quality in new[] { StreamQuality.Main, StreamQuality.Sub })
+            _hevcSources.TryRemove(new SessionKey(cameraId, quality), out _);
     }
 
-    private StreamSession StartSession(Camera camera, StreamQuality quality)
+    private StreamSession StartSession(Camera camera, StreamQuality quality, bool hevcSource)
     {
         var outputDir = Path.Combine(
             _workingRoot,
@@ -317,7 +387,7 @@ public sealed class HlsStreamManager : IDisposable
         Directory.CreateDirectory(outputDir);
 
         var sourceUrl = _cameraSource.ResolveUrl(camera, quality);
-        var args = BuildFfmpegArguments(sourceUrl, camera.IncludeAudio, outputDir);
+        var args = BuildFfmpegArguments(sourceUrl, camera.IncludeAudio, outputDir, hevcSource);
 
         var psi = new ProcessStartInfo
         {
@@ -332,7 +402,7 @@ public sealed class HlsStreamManager : IDisposable
         var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ffmpeg.");
         _logger.LogInformation("Started HLS stream for camera {CameraId} ({Name}), pid {Pid}", camera.Id, camera.Name, process.Id);
 
-        var session = new StreamSession(process, outputDir) { LastAccessed = DateTimeOffset.UtcNow };
+        var session = new StreamSession(process, outputDir, hevcSource) { LastAccessed = DateTimeOffset.UtcNow };
         _ = DrainAsync(process.StandardOutput, session);
         _ = DrainAsync(process.StandardError, session);
 
@@ -371,7 +441,8 @@ public sealed class HlsStreamManager : IDisposable
 
     public const string ThumbnailFileName = "thumb.jpg";
 
-    public static List<string> BuildFfmpegArguments(string sourceUrl, bool includeAudio, string outputDir)
+    public static List<string> BuildFfmpegArguments(
+        string sourceUrl, bool includeAudio, string outputDir, bool hevcSource = false)
     {
         var args = new List<string>();
         // -rtsp_transport is an RTSP-demuxer-only option; ffmpeg errors out ("Option not found")
@@ -420,6 +491,11 @@ public sealed class HlsStreamManager : IDisposable
         // On a camera with a GOP of 2s or more this changes nothing either way - copying video can
         // only cut on a keyframe, so the GOP wins and hls_time is only ever a floor.
         args.AddRange(["-map", "0:v:0", "-c:v", "copy"]);
+        // Apple will not decode an H.265 track tagged hev1, which is what ffmpeg's MP4 muxer
+        // writes by default; hvc1 is the tag its HLS authoring rules require and the only one
+        // AVPlayer accepts. Wrong for H.264, hence only on this branch.
+        if (hevcSource)
+            args.AddRange(["-tag:v", "hvc1"]);
         if (includeAudio)
             args.AddRange(["-map", "0:a:0?", "-c:a", "aac", "-ac", "1"]);
         else
@@ -447,9 +523,34 @@ public sealed class HlsStreamManager : IDisposable
             // cellular fetch - then gets the segment it asks for instead of a 404 that costs it
             // a full reconnect. Costs a few MB per camera.
             "-hls_delete_threshold", "5",
-            "-hls_segment_filename", Path.Combine(outputDir, "seg_%03d.ts"),
-            Path.Combine(outputDir, "stream.m3u8")
         ]);
+
+        // Segment container. MPEG-TS is HLS's original and is what every H.264 camera here has
+        // always used, but HEVC in MPEG-TS is not something Apple ever taught AVFoundation to
+        // play: HEVC arrived in HLS together with fragmented MP4 and is only supported there.
+        // The failure is silent and total - iOS and macOS render a black tile, log nothing, and
+        // report no error - so this is not a quality tradeoff to make lazily, it is the difference
+        // between video and no video. Browsers are less strict about the container but have their
+        // own patchy HEVC decoding, which is a separate matter and unaffected by this choice.
+        if (hevcSource)
+        {
+            args.AddRange([
+                "-hls_segment_type", "fmp4",
+                // Bare filename on purpose. ffmpeg writes the init segment next to the playlist
+                // and copies this string verbatim into the playlist's #EXT-X-MAP URI, which a
+                // player then resolves relative to the playlist's own URL - so it comes back as a
+                // sibling request and is served by the same route as the segments. An absolute
+                // path here would end up in the playlist as a server path no client can fetch.
+                "-hls_fmp4_init_filename", "init.mp4",
+                "-hls_segment_filename", Path.Combine(outputDir, "seg_%03d.m4s")
+            ]);
+        }
+        else
+        {
+            args.AddRange(["-hls_segment_filename", Path.Combine(outputDir, "seg_%03d.ts")]);
+        }
+
+        args.Add(Path.Combine(outputDir, "stream.m3u8"));
 
         // Secondary output: a small JPEG this same process overwrites every few seconds, so a
         // viewer opening this camera gets an instant poster frame instead of a blank tile while
@@ -585,15 +686,37 @@ public sealed class HlsStreamManager : IDisposable
         _sessions.Clear();
     }
 
-    private sealed class StreamSession(Process process, string outputDirectory)
+    // ffmpeg names the input's streams as it opens them, one per line:
+    //   Stream #0:0: Video: hevc (Main), yuv420p(tv), 3840x2160 [SAR 1:1 DAR 16:9], 25 fps
+    // Public so a test can pin the parsing against real ffmpeg output without running ffmpeg.
+    public static string? TryParseSourceVideoCodec(string logLine)
+    {
+        var match = SourceVideoCodecPattern.Match(logLine);
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private static readonly Regex SourceVideoCodecPattern =
+        new(@"^\s*Stream #\d+:\d+.*?: Video: ([A-Za-z0-9]+)", RegexOptions.Compiled);
+
+    private sealed class StreamSession(Process process, string outputDirectory, bool hevcSource)
     {
         private const int MaxLogLines = 20;
         private readonly object _logLock = new();
         private readonly Queue<string> _log = new();
+        private string? _sourceVideoCodec;
 
         public Process Process { get; } = process;
         public string OutputDirectory { get; } = outputDirectory;
         public DateTimeOffset LastAccessed { get; set; }
+
+        // What this session's arguments assumed, so a contradiction is detectable.
+        public bool HevcSource { get; } = hevcSource;
+
+        // What ffmpeg said the camera is actually sending, or null until it says so.
+        public string? SourceVideoCodec
+        {
+            get { lock (_logLock) return _sourceVideoCodec; }
+        }
 
         // When ffmpeg was launched, so a session that dies immediately can be told apart from one
         // that ran for a while and then dropped - only the latter is worth restarting on sight.
@@ -603,6 +726,10 @@ public sealed class HlsStreamManager : IDisposable
         {
             lock (_logLock)
             {
+                // First match only. ffmpeg describes the input's streams before the output's, and
+                // the outputs include a filtered MJPEG poster frame whose own "Video: mjpeg" line
+                // would otherwise overwrite the answer with the codec of the thumbnail.
+                _sourceVideoCodec ??= TryParseSourceVideoCodec(line);
                 _log.Enqueue(line);
                 while (_log.Count > MaxLogLines) _log.Dequeue();
             }

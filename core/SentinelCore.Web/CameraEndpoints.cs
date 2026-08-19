@@ -345,8 +345,19 @@ public static class CameraEndpoints
         var segmentPath = streams.GetSegmentPath(id, quality, file);
         if (segmentPath is null || !File.Exists(segmentPath)) return Results.NotFound();
 
-        return Results.File(segmentPath, "video/mp2t");
+        return Results.File(segmentPath, SegmentContentType(file));
     }
+
+    // An H.265 camera's stream is segmented as fragmented MP4 rather than MPEG-TS (see
+    // HlsStreamManager.BuildFfmpegArguments), and its playlist additionally points every player at
+    // an init.mp4 to be fetched before the first segment. Both arrive on this route, and handing
+    // them back as video/mp2t is the kind of mislabelling a strict player refuses outright.
+    private static string SegmentContentType(string file) =>
+        Path.GetExtension(file).ToLowerInvariant() switch
+        {
+            ".m4s" or ".mp4" => "video/mp4",
+            _ => "video/mp2t"
+        };
 
     private static async Task PumpWebSocketAsync(
         System.Net.WebSockets.WebSocket from, System.Net.WebSockets.WebSocket to, CancellationToken cancellationToken)

@@ -44,7 +44,15 @@ public sealed class HlsStreamManagerTests : IDisposable
     // serve: real ffmpeg refuses an input it can't open and quits before writing anything, so the
     // stub has to quit before the playlist too - exiting *after* writing one is a working stream
     // that merely stopped, which is a different case entirely.
-    private void WriteFfmpegStub(bool stayAlive, bool emptySegment = false, string? refuseUrlContaining = null)
+    // announceCodec stands in for the line real ffmpeg prints on stderr as it opens the input.
+    // HlsStreamManager reads the codec out of that line to decide whether the session it just
+    // started is packaging the stream the way this camera actually needs - so a stub that never
+    // prints one is a camera whose codec is never established, which is the existing behaviour
+    // every other test here relies on. The pause before the playlist mirrors real ffmpeg, which
+    // announces the input well before it has cut a first segment.
+    private void WriteFfmpegStub(
+        bool stayAlive, bool emptySegment = false, string? refuseUrlContaining = null,
+        string? announceCodec = null)
     {
         var refusal = refuseUrlContaining is null
             ? ""
@@ -52,15 +60,19 @@ public sealed class HlsStreamManagerTests : IDisposable
               case "$*" in *{refuseUrlContaining}*) exit 1;; esac
               """;
         var segmentBody = emptySegment ? "" : "printf '\\x47fake-segment-payload' > \"$OUTDIR/seg_000.ts\"";
+        var announcement = announceCodec is null
+            ? ""
+            : $"echo \"  Stream #0:0: Video: {announceCodec} (Main), yuv420p(tv), 3840x2160, 25 fps\" >&2\nsleep 0.3";
         // The final argument is the thumbnail, not the playlist (BuildFfmpegArguments appends the
         // poster-frame output last), so the output directory is derived from it and the playlist
         // written alongside by name.
         File.WriteAllText(_stubPath, $"""
             #!/bin/sh
-            echo started >> "{_invocationLog}"
+            echo "$@" >> "{_invocationLog}"
             {refusal}
             for LAST in "$@"; do :; done
             OUTDIR=$(dirname "$LAST")
+            {announcement}
             {segmentBody}
             printf '#EXTM3U\nseg_000.ts\n' > "$OUTDIR/stream.m3u8"
             {(stayAlive ? "while true; do sleep 1; done" : "exit 0")}
@@ -371,6 +383,150 @@ public sealed class HlsStreamManagerTests : IDisposable
         var map = (System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset>)field.GetValue(manager)!;
         Assert.True(map.ContainsKey(cameraId), "the failed low-resolution attempt should have been remembered");
         map[cameraId] = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(1);
+    }
+
+    // The bug this covers: an H.265 camera streamed as MPEG-TS plays nowhere on Apple's players.
+    // HEVC only ever entered HLS alongside fragmented MP4 and AVFoundation supports it only there,
+    // so iOS and macOS answer a TS-wrapped HEVC stream with a black tile, no error and no log line
+    // - which is indistinguishable from a broken camera until someone probes the segments by hand.
+    [Fact]
+    public async Task RestartsAsFragmentedMp4WhenTheCameraTurnsOutToSendHevc()
+    {
+        WriteFfmpegStub(stayAlive: true, announceCodec: "hevc");
+        using var manager = CreateManager();
+        var camera = TestCamera();
+
+        await manager.EnsureStreamStartedAsync(camera, TestContext.Current.CancellationToken);
+
+        var invocations = File.ReadAllLines(_invocationLog);
+        Assert.Equal(2, invocations.Length);
+
+        // The first attempt is the ordinary one - nothing about a camera is known before ffmpeg
+        // has opened it, so nobody pays for H.265 packaging on the guess that they might need it.
+        Assert.Contains("seg_%03d.ts", invocations[0]);
+        Assert.DoesNotContain("fmp4", invocations[0]);
+
+        // The second is the corrected one.
+        Assert.Contains("-hls_segment_type fmp4", invocations[1]);
+        Assert.Contains("-hls_fmp4_init_filename init.mp4", invocations[1]);
+        Assert.Contains("seg_%03d.m4s", invocations[1]);
+        Assert.Contains("-tag:v hvc1", invocations[1]);
+    }
+
+    // ...and settles there. The replacement is started from the corrected entry, so its own codec
+    // line agrees with it - if it did not, every request for an H.265 camera would restart ffmpeg.
+    [Fact]
+    public async Task TheHevcRestartHappensOnceRatherThanOnEveryRequest()
+    {
+        WriteFfmpegStub(stayAlive: true, announceCodec: "hevc");
+        using var manager = CreateManager();
+        var camera = TestCamera();
+
+        await manager.EnsureStreamStartedAsync(camera, TestContext.Current.CancellationToken);
+        await manager.EnsureStreamStartedAsync(camera, TestContext.Current.CancellationToken);
+        await manager.EnsureStreamStartedAsync(camera, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, InvocationCount());
+    }
+
+    // The mirror image, and the reason the correction is driven by what ffmpeg reports rather than
+    // by a remembered flag: change the encoder back to H.264 in the camera's own web UI and
+    // nothing tells this server about it, so a session started from the stale entry has to notice
+    // it is now wrapping H.264 in an hvc1 tag and undo itself.
+    [Fact]
+    public async Task RestartsBackToMpegTsWhenAnHevcCameraIsSwitchedToH264()
+    {
+        WriteFfmpegStub(stayAlive: true, announceCodec: "h264");
+        using var manager = CreateManager();
+        var camera = TestCamera();
+        RememberHevc(manager, camera.Id);
+
+        await manager.EnsureStreamStartedAsync(camera, TestContext.Current.CancellationToken);
+
+        var invocations = File.ReadAllLines(_invocationLog);
+        Assert.Equal(2, invocations.Length);
+        Assert.Contains("-hls_segment_type fmp4", invocations[0]);
+        Assert.Contains("seg_%03d.ts", invocations[1]);
+        Assert.DoesNotContain("hvc1", invocations[1]);
+    }
+
+    // A session that dies before saying anything, or a future ffmpeg that words the line
+    // differently, leaves the codec unestablished. That has to mean "keep what you have" rather
+    // than "assume H.264": flipping the packaging on no evidence would restart every stream on
+    // every request, including the H.265 ones this exists to serve.
+    [Fact]
+    public async Task LeavesPackagingAloneWhenFfmpegNeverNamesTheCodec()
+    {
+        WriteFfmpegStub(stayAlive: true);
+        using var manager = CreateManager();
+        var camera = TestCamera();
+        RememberHevc(manager, camera.Id);
+
+        await manager.EnsureStreamStartedAsync(camera, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, InvocationCount());
+        Assert.Contains("-hls_segment_type fmp4", File.ReadAllLines(_invocationLog)[0]);
+    }
+
+    [Theory]
+    // Real lines, as ffmpeg prints them for the cameras on this install.
+    [InlineData("  Stream #0:0: Video: hevc (Main), yuv420p(tv), 3840x2160 [SAR 1:1 DAR 16:9], 25 fps, 25 tbr", "hevc")]
+    [InlineData("    Stream #0:0: Video: h264 (High), yuv420p(progressive), 2560x1920, 30 fps, 30 tbr, 90k tbn", "h264")]
+    // The poster-frame output ffmpeg also announces - parsed the same, and it is AppendLog's
+    // first-match-wins rule rather than this method that keeps it from being mistaken for the
+    // input's codec.
+    [InlineData("  Stream #0:1: Video: mjpeg, yuvj420p(pc), 480x270, q=2-31, 200 kb/s", "mjpeg")]
+    [InlineData("  Stream #0:1: Audio: aac (LC), 16000 Hz, mono, fltp", null)]
+    [InlineData("frame=  120 fps= 25 q=-1.0 size=N/A time=00:00:04.80 bitrate=N/A speed=1.0x", null)]
+    public void ParsesTheInputVideoCodecOutOfFfmpegsLog(string line, string? expected)
+    {
+        Assert.Equal(expected, HlsStreamManager.TryParseSourceVideoCodec(line));
+    }
+
+    [Fact]
+    public void BuildsMpegTsArgumentsForAnOrdinaryH264Camera()
+    {
+        var args = HlsStreamManager.BuildFfmpegArguments("rtsp://camera/stream", includeAudio: false, "/out");
+
+        Assert.Contains(Path.Combine("/out", "seg_%03d.ts"), args);
+        Assert.DoesNotContain("-hls_segment_type", args);
+        Assert.DoesNotContain("-tag:v", args);
+    }
+
+    [Fact]
+    public void BuildsFragmentedMp4ArgumentsForAnHevcCamera()
+    {
+        var args = HlsStreamManager.BuildFfmpegArguments(
+            "rtsp://camera/stream", includeAudio: false, "/out", hevcSource: true);
+
+        Assert.Contains(Path.Combine("/out", "seg_%03d.m4s"), args);
+        Assert.DoesNotContain(Path.Combine("/out", "seg_%03d.ts"), args);
+        Assert.Equal("fmp4", args[args.IndexOf("-hls_segment_type") + 1]);
+
+        // Bare, not a path: ffmpeg copies this string straight into the playlist's #EXT-X-MAP URI,
+        // where a player resolves it against the playlist's own URL. An absolute path would be
+        // published to every client as a server path none of them can fetch.
+        Assert.Equal("init.mp4", args[args.IndexOf("-hls_fmp4_init_filename") + 1]);
+
+        // hev1 - ffmpeg's default tag - is the one tag AVFoundation refuses.
+        Assert.Equal("hvc1", args[args.IndexOf("-tag:v") + 1]);
+
+        // The thumbnail stays the last argument overall - the stub ffmpeg in these tests derives
+        // its output directory from it, as does the comment in WriteFfmpegStub.
+        Assert.EndsWith("thumb.jpg", args[^1]);
+    }
+
+    // Seeds the remembered-codec cache the way a previous session would have, so the tests above
+    // can start from a camera this server already believes it knows the packaging for.
+    private static void RememberHevc(HlsStreamManager manager, Guid cameraId)
+    {
+        var field = typeof(HlsStreamManager)
+            .GetField("_hevcSources", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var map = field.GetValue(manager)!;
+        var keyType = typeof(HlsStreamManager)
+            .GetNestedType("SessionKey", System.Reflection.BindingFlags.NonPublic)!;
+        var key = Activator.CreateInstance(keyType, cameraId, StreamQuality.Main)!;
+        map.GetType().GetProperty("Item")!.SetValue(map, true, [key]);
     }
 
     private sealed class StubEnvironment(string contentRoot) : IHostEnvironment
