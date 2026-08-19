@@ -28,6 +28,13 @@ certs/
 # source, never worth committing.
 dist/
 
+# Timestamped copies of a live appsettings.json, made by hand before a risky config change
+# (appsettings.json.bak-pretv-20260817-221248 and friends). appsettings.json itself is tracked
+# and carries the shipped defaults, so these backups are full copies of one machine's local
+# config - broker hosts, SMTP and bot credentials, camera URLs. Untracked but unignored, they
+# were one `git add -A` away from being committed.
+appsettings.json.bak*
+
 # Output of the automated 6am review (scripts/daily-review/). These must stay untracked:
 # the review refuses to commit anything when the working tree is already dirty, so a tracked
 # report file would make it permanently unable to ship its own fixes.
