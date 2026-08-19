@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -3724,6 +3725,120 @@ public sealed class BasicTests
         Assert.Contains("http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe", text);
     }
 
+    // --- Camera discovery: WS-Discovery scopes --------------------------------------------------
+
+    [Fact]
+    public void WsDiscoveryClient_TryParseProbeMatch_CapturesScopes()
+    {
+        var messageId = "uuid:11111111-1111-1111-1111-111111111111";
+        var reply = $$"""
+            <e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+                        xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <e:Header><w:RelatesTo>{{messageId}}</w:RelatesTo></e:Header>
+              <e:Body>
+                <d:ProbeMatches>
+                  <d:ProbeMatch>
+                    <w:EndpointReference><w:Address>urn:uuid:x</w:Address></w:EndpointReference>
+                    <d:Scopes>onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/hardware/RLC-823S1</d:Scopes>
+                    <d:XAddrs>http://192.168.50.146:8000/onvif/device_service</d:XAddrs>
+                  </d:ProbeMatch>
+                </d:ProbeMatches>
+              </e:Body>
+            </e:Envelope>
+            """;
+
+        Assert.True(WsDiscoveryClient.TryParseProbeMatch(System.Text.Encoding.UTF8.GetBytes(reply), messageId, out var match));
+        Assert.Equal(
+            ["onvif://www.onvif.org/type/video_encoder", "onvif://www.onvif.org/hardware/RLC-823S1"],
+            match!.Scopes);
+    }
+
+    [Fact]
+    public void WsDiscoveryClient_TryParseProbeMatch_WithNoScopesElement_StillParses()
+    {
+        // Scopes are optional in the spec; a camera that omits them is usable, just unnamed.
+        var messageId = "uuid:11111111-1111-1111-1111-111111111111";
+        var reply = $$"""
+            <e:Envelope xmlns:e="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:w="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+                        xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <e:Header><w:RelatesTo>{{messageId}}</w:RelatesTo></e:Header>
+              <e:Body>
+                <d:ProbeMatches>
+                  <d:ProbeMatch>
+                    <w:EndpointReference><w:Address>urn:uuid:x</w:Address></w:EndpointReference>
+                    <d:XAddrs>http://192.168.1.50/onvif/device_service</d:XAddrs>
+                  </d:ProbeMatch>
+                </d:ProbeMatches>
+              </e:Body>
+            </e:Envelope>
+            """;
+
+        Assert.True(WsDiscoveryClient.TryParseProbeMatch(System.Text.Encoding.UTF8.GetBytes(reply), messageId, out var match));
+        Assert.Empty(match!.Scopes);
+    }
+
+    [Fact]
+    public void WsDiscoveryClient_ParseScopes_ExtractsNameHardwareAndLocation()
+    {
+        // The exact scope set a Reolink RLC-823S1 sends, captured off the wire. It's the case that
+        // motivated reading scopes at all: this camera answers GetDeviceInformation with
+        // ter:NotAuthorized, so without scopes the scan can only call it "Camera at <ip>".
+        var info = WsDiscoveryClient.ParseScopes([
+            "onvif://www.onvif.org/type/video_encoder",
+            "onvif://www.onvif.org/location/country/china",
+            "onvif://www.onvif.org/type/network_video_transmitter",
+            "onvif://www.onvif.org/Profile/Streaming",
+            "onvif://www.onvif.org/Profile/T",
+            "onvif://www.onvif.org/name/IPC-BO",
+            "onvif://www.onvif.org/hardware/RLC-823S1",
+            "onvif://www.onvif.org/name/IPC"
+        ]);
+
+        Assert.Equal("IPC-BO", info.Name);
+        Assert.Equal("RLC-823S1", info.Hardware);
+        // Location is the one category the spec defines as a hierarchy, so inner slashes survive.
+        Assert.Equal("country/china", info.Location);
+    }
+
+    [Fact]
+    public void WsDiscoveryClient_ParseScopes_ForARepeatedCategory_KeepsTheFirstValue()
+    {
+        // Real firmware does send the same category twice (the RLC-823S1 sends both name/IPC-BO
+        // and name/IPC). First-wins, rather than the last one silently overwriting the first.
+        var info = WsDiscoveryClient.ParseScopes([
+            "onvif://www.onvif.org/name/IPC-BO",
+            "onvif://www.onvif.org/name/IPC"
+        ]);
+
+        Assert.Equal("IPC-BO", info.Name);
+    }
+
+    [Fact]
+    public void WsDiscoveryClient_ParseScopes_UnescapesPercentEncodedValues()
+    {
+        // The spec requires scope values be percent-encoded, so a camera the user named
+        // "Front Door" arrives as Front%20Door and must not be shown that way.
+        var info = WsDiscoveryClient.ParseScopes(["onvif://www.onvif.org/name/Front%20Door"]);
+
+        Assert.Equal("Front Door", info.Name);
+    }
+
+    [Theory]
+    [InlineData("not a uri at all")]
+    [InlineData("onvif://www.onvif.org/name")]   // category with no value
+    [InlineData("onvif://www.onvif.org/name/")]  // trailing slash, empty value
+    [InlineData("onvif://www.onvif.org/")]
+    public void WsDiscoveryClient_ParseScopes_IgnoresMalformedScopes(string scope)
+    {
+        var info = WsDiscoveryClient.ParseScopes([scope]);
+
+        Assert.Null(info.Name);
+        Assert.Null(info.Hardware);
+        Assert.Null(info.Location);
+    }
+
     // --- Camera discovery: ffprobe JSON parsing -------------------------------------------------
 
     [Fact]
@@ -3806,6 +3921,56 @@ public sealed class BasicTests
         Assert.NotNull(snapshot);
         Assert.Equal(ScanStatus.Completed, snapshot.Status);
         Assert.Empty(snapshot.Results);
+    }
+
+    [Theory]
+    [InlineData("Reolink", "RLC-823S1", "Reolink RLC-823S1")]
+    [InlineData(null, "RLC-823S1", "RLC-823S1")]        // scopes gave the model but nothing else
+    [InlineData("Reolink", null, "Reolink")]
+    [InlineData("Unknown", "Unknown", "Camera at 192.168.50.146")] // what ONVIF substitutes for omitted fields
+    [InlineData(null, null, "Camera at 192.168.50.146")]
+    [InlineData("", "  ", "Camera at 192.168.50.146")]
+    public void CameraDiscoveryService_BuildSuggestedName_FallsBackToTheAddressOnlyWhenNothingIsKnown(
+        string? manufacturer, string? model, string expected) =>
+        Assert.Equal(expected, CameraDiscoveryService.BuildSuggestedName(manufacturer, model, "192.168.50.146"));
+
+    [Fact]
+    public void CameraDiscoveryService_EnumerateSubnetHosts_ForASlash24_SkipsNetworkAndBroadcast()
+    {
+        var hosts = CameraDiscoveryService.EnumerateSubnetHosts(IPAddress.Parse("192.168.50.8"), 24, 1024);
+
+        Assert.Equal(254, hosts.Count);
+        Assert.Equal("192.168.50.1", hosts[0].ToString());
+        Assert.Equal("192.168.50.254", hosts[^1].ToString());
+        Assert.DoesNotContain(hosts, ip => ip.ToString() == "192.168.50.0");
+        Assert.DoesNotContain(hosts, ip => ip.ToString() == "192.168.50.255");
+        // The address that motivated all this had better actually be in the sweep.
+        Assert.Contains(hosts, ip => ip.ToString() == "192.168.50.146");
+    }
+
+    [Fact]
+    public void CameraDiscoveryService_EnumerateSubnetHosts_ForASlash30_ReturnsTheTwoUsableHosts()
+    {
+        var hosts = CameraDiscoveryService.EnumerateSubnetHosts(IPAddress.Parse("10.0.0.5"), 30, 1024);
+
+        Assert.Equal(["10.0.0.5", "10.0.0.6"], hosts.Select(h => h.ToString()));
+    }
+
+    [Theory]
+    [InlineData("192.168.0.1", 16)]  // 65k hosts - past the ceiling, so not swept at all
+    [InlineData("192.168.50.8", 31)] // no usable host range
+    [InlineData("192.168.50.8", 32)]
+    [InlineData("192.168.50.8", 0)]
+    [InlineData("192.168.50.8", -1)]
+    public void CameraDiscoveryService_EnumerateSubnetHosts_RefusesSubnetsNotWorthSweeping(string address, int prefix) =>
+        Assert.Empty(CameraDiscoveryService.EnumerateSubnetHosts(IPAddress.Parse(address), prefix, 1024));
+
+    [Fact]
+    public void CameraDiscoveryService_EnumerateSubnetHosts_IgnoresIpv6()
+    {
+        // The sweep is IPv4-only by construction; a v6 interface must return empty rather than
+        // throwing on GetAddressBytes returning 16 bytes.
+        Assert.Empty(CameraDiscoveryService.EnumerateSubnetHosts(IPAddress.Parse("fe80::1"), 64, 1024));
     }
 
     [Fact]

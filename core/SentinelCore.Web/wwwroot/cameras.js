@@ -639,14 +639,19 @@ window.GateWatchCameras = (function () {
       return;
     }
 
-    setDiscoveryStatus("scanning…", null);
+    const deepScan = document.getElementById("discovery-deep-scan").checked;
+
+    // The deep scan contacts every address on the subnet, so it runs for tens of seconds rather
+    // than the broadcast's two - say so up front instead of leaving a bare "scanning…" that looks
+    // hung. Results stream in as they're found either way.
+    setDiscoveryStatus(deepScan ? "scanning every address - this takes a while…" : "scanning…", null);
     document.getElementById("discovery-results-root").innerHTML = "";
 
     try {
       const response = await fetch("/api/cameras/discovery/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interfaceAddresses: selected })
+        body: JSON.stringify({ interfaceAddresses: selected, deepScan })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -702,8 +707,10 @@ window.GateWatchCameras = (function () {
 
       const info = document.createElement("div");
       info.className = "camera-card-info";
+      // The make/model is already the card's name whenever it's known, so repeating it here just
+      // prints it twice - now that the discovery scopes name almost every camera, that's the
+      // common case rather than the rare one.
       const details = [
-        item.manufacturer && item.model ? `${item.manufacturer} ${item.model}` : null,
         item.needsCredentials ? "needs credentials" : null
       ].filter(Boolean).join(" - ");
       info.innerHTML = `
