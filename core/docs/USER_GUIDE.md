@@ -1253,6 +1253,13 @@ if you need to fix a typo.
 **Turning it on for a camera:** open the relevant prompt profile (see
 [section 9](#9-prompt-profiles--what-the-ai-is-told-to-look-for)) and enable **Face recognition**.
 
+**How close is close enough:** the detector works on a 640×640 copy of the alert image, so what
+matters is how much of the *frame* the face fills, not how many pixels it has in the original. The
+practical floor is roughly **a face 1/64th of the frame width** — about 60 pixels on a 4K camera,
+30 on a 1080p one. A doorbell or a gate camera someone walks up to will clear that easily; a wide
+driveway or yard view generally will not, and enabling it there mostly costs you processing for
+faces that are never found.
+
 **What happens:** every alert image from a face-recognition-enabled profile is checked against
 your enrolled faces entirely on-device — this runs locally regardless of whether Ollama or a
 Cloud Vision provider is doing the descriptive analysis for that same alert, and no image or face
