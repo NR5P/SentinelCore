@@ -235,6 +235,10 @@
       <div id="camera-discovery-wrap" class="settings-section hidden">
         <div class="settings-section-body" style="display:flex; flex-direction:column; gap:12px;">
           <div id="discovery-interfaces-root"></div>
+          <label class="field-checkbox-row" data-tip="Also try every address on the selected networks, for cameras that don't answer the broadcast - either because ONVIF is turned off in their settings, or because their WiFi access point doesn't pass broadcasts through. Slower, and it briefly contacts every device on the network.">
+            <input type="checkbox" id="discovery-deep-scan" />
+            <span>also check every address (finds cameras that ignore the broadcast)</span>
+          </label>
           <div class="settings-section-footer">
             <button id="discovery-scan-btn" class="btn" data-tip="Send a network discovery broadcast on the selected interfaces and list any cameras that answer.">scan</button>
             <button id="discovery-cancel-btn" class="btn" data-tip="Close this panel.">close</button>

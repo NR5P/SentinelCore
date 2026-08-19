@@ -21,7 +21,47 @@ public static class WsDiscoveryClient
     private static readonly XNamespace Wsdd = "http://schemas.xmlsoap.org/ws/2005/04/discovery";
     private static readonly XNamespace Dn = "http://www.onvif.org/ver10/network/wsdl";
 
-    public sealed record ProbeMatch(string EndpointAddress, IReadOnlyList<string> XAddrs);
+    public sealed record ProbeMatch(string EndpointAddress, IReadOnlyList<string> XAddrs, IReadOnlyList<string> Scopes);
+
+    // What a camera volunteers about itself in its Probe reply, before any authentication.
+    // Worth having because GetDeviceInformation - the "proper" way to ask the same question -
+    // requires WS-Security credentials on most firmware (every Reolink tested here answers it
+    // with ter:NotAuthorized), so a scan that only has ONVIF to go on can do no better than
+    // "Camera at 192.168.1.50" for a camera that is perfectly happy to say it's an RLC-823S1.
+    public sealed record ScopeInfo(string? Name, string? Hardware, string? Location);
+
+    // Scope URIs look like onvif://www.onvif.org/hardware/RLC-823S1 - a category path plus a
+    // value, percent-encoded per the ONVIF spec (a camera named "Front Door" sends Front%20Door).
+    //
+    // Cameras really do send the same category twice - the RLC-823S1 advertises both
+    // name/IPC-BO and name/IPC - so first-wins rather than last-wins or concatenating, which
+    // matches how the value is used: a display hint, not an identity.
+    public static ScopeInfo ParseScopes(IEnumerable<string> scopes)
+    {
+        string? name = null, hardware = null, location = null;
+
+        foreach (var scope in scopes)
+        {
+            if (!Uri.TryCreate(scope, UriKind.Absolute, out var uri)) continue;
+
+            // AbsolutePath keeps the leading slash: "/hardware/RLC-823S1". Location is
+            // deliberately allowed to keep inner slashes ("country/china") - it's the one
+            // category the spec defines as a hierarchy rather than a single token.
+            var path = uri.AbsolutePath.TrimStart('/');
+            var separator = path.IndexOf('/');
+            if (separator <= 0 || separator == path.Length - 1) continue;
+
+            var category = path[..separator];
+            var value = Uri.UnescapeDataString(path[(separator + 1)..]).Trim();
+            if (value.Length == 0) continue;
+
+            if (name is null && category.Equals("name", StringComparison.OrdinalIgnoreCase)) name = value;
+            else if (hardware is null && category.Equals("hardware", StringComparison.OrdinalIgnoreCase)) hardware = value;
+            else if (location is null && category.Equals("location", StringComparison.OrdinalIgnoreCase)) location = value;
+        }
+
+        return new ScopeInfo(name, hardware, location);
+    }
 
     // Straight to one host, no multicast join required. Most ONVIF cameras answer a unicast
     // Probe exactly like a multicast one - unicast vs multicast only affects how the request
@@ -143,7 +183,14 @@ public static class WsDiscoveryClient
             var xAddrs = xAddrsRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (xAddrs.Length == 0) return false;
 
-            match = new ProbeMatch(address, xAddrs);
+            // Scopes are optional in the spec and absent on some firmware - a missing element is
+            // an empty list, never a parse failure, since XAddrs alone is enough to use the camera.
+            var scopesRaw = probeMatch.Element(Wsdd + "Scopes")?.Value;
+            var scopes = string.IsNullOrWhiteSpace(scopesRaw)
+                ? []
+                : scopesRaw.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            match = new ProbeMatch(address, xAddrs, scopes);
             return true;
         }
         catch (Exception ex) when (ex is System.Xml.XmlException or FormatException)

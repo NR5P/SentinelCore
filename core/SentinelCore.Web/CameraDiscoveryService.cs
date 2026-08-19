@@ -82,6 +82,19 @@ public sealed class CameraDiscoveryService
 
     private static readonly TimeSpan JobRetention = TimeSpan.FromMinutes(5);
 
+    // RTSP, and the port most ONVIF implementations put the device service on. Checked in that
+    // order and the host accepted on the first hit, so a camera normally costs one connect.
+    //
+    // Port 80 is deliberately NOT here, though nearly every camera has it open. Measured against
+    // this LAN, adding it took a sweep from 4 hits to 13: the extra nine were the router, the
+    // gateway, and assorted laptops and appliances with a web page on them. A list where two
+    // thirds of the "cameras" are a printer is worse than a list that misses an HTTP-only camera -
+    // especially as a camera exposing neither RTSP nor ONVIF is one this app couldn't stream anyway.
+    private static readonly int[] DeepScanPorts = [RtspDefaultPort, 8000];
+    private static readonly TimeSpan DeepScanPortTimeout = TimeSpan.FromMilliseconds(500);
+    private const int DeepScanMaxHosts = 1024;
+    private const int DeepScanConcurrency = 64;
+
     // Naming/description substrings for common virtual adapters (Docker, VPN clients, WSL,
     // Hyper-V's internal switch). Necessarily incomplete - VPN client adapter names vary widely -
     // which is exactly why this only informs LooksVirtual rather than silently excluding anything.
@@ -347,13 +360,14 @@ public sealed class CameraDiscoveryService
 
     // --- Network scan -----------------------------------------------------------------------
     //
-    // Deliberately WS-Discovery multicast only, no TCP subnet sweep - a single UDP broadcast per
-    // interface doesn't touch individual hosts at all, so it needs no size ceiling, no per-host
-    // consent, and stays a good citizen on someone else's LAN. A TCP-sweep "deep scan" for
-    // non-ONVIF cameras is real future work, deliberately left out of this first pass.
+    // Two passes. The default is WS-Discovery multicast only: a single UDP broadcast per interface
+    // that doesn't touch individual hosts at all, so it needs no size ceiling and stays a good
+    // citizen on someone else's LAN. The opt-in deep scan (RunDeepScanAsync) adds a bounded TCP
+    // sweep for cameras that can't answer a multicast Probe at all - see the note there for why
+    // it's a checkbox and not the default.
     //
-    // This never runs on its own - only in direct response to StartScan being called, which only
-    // happens from a button click via CameraDiscoveryEndpoints. No timer, no background loop.
+    // Neither ever runs on its own - only in direct response to StartScan being called, which
+    // only happens from a button click via CameraDiscoveryEndpoints. No timer, no background loop.
 
     // Public so the heuristic itself is directly testable without needing to fabricate a real
     // NetworkInterface, which .NET gives no supported way to construct outside the OS.
@@ -385,7 +399,7 @@ public sealed class CameraDiscoveryService
     // Fire-and-forget by design: the caller gets a job id back immediately and polls
     // GetScanStatus for progress, the same job-tracking shape HlsStreamManager already uses for
     // its per-camera sessions.
-    public Guid StartScan(IReadOnlyList<IPAddress> interfaceAddresses)
+    public Guid StartScan(IReadOnlyList<IPAddress> interfaceAddresses, bool deepScan = false)
     {
         PruneStaleJobs();
 
@@ -393,24 +407,34 @@ public sealed class CameraDiscoveryService
         var job = new ScanJob();
         _scans[jobId] = job;
 
-        _ = RunScanAsync(job, interfaceAddresses);
+        _ = RunScanAsync(job, interfaceAddresses, deepScan);
 
         return jobId;
     }
 
     public ScanJobSnapshot? GetScanStatus(Guid jobId) =>
-        _scans.TryGetValue(jobId, out var job) ? new ScanJobSnapshot(job.Status, job.Results.ToList()) : null;
+        _scans.TryGetValue(jobId, out var job) ? new ScanJobSnapshot(job.Status, job.Snapshot()) : null;
 
-    private async Task RunScanAsync(ScanJob job, IReadOnlyList<IPAddress> interfaceAddresses)
+    private async Task RunScanAsync(ScanJob job, IReadOnlyList<IPAddress> interfaceAddresses, bool deepScan)
     {
         try
         {
-            var matches = await WsDiscoveryClient.ProbeMulticastAsync(interfaceAddresses, WsDiscoveryTimeout, CancellationToken.None);
-            var existingHosts = (await _cameraStore.GetAllAsync(CancellationToken.None))
+            var cameras = await _cameraStore.GetAllAsync(CancellationToken.None);
+            var existingHosts = cameras
                 .Select(camera => TryExtractHost(camera.StreamUrl))
                 .Where(host => host is not null)
+                .Select(host => host!)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+            // Credentials the admin has already proven work on this LAN. A second camera from the
+            // same vendor is overwhelmingly likely to share them, and trying them turns an
+            // anonymous "needs credentials" row into a fully identified one. Anonymous first, so
+            // a camera that needs no auth never gets a stray failed login attempt against it.
+            var knownCredentials = CollectKnownCredentials(cameras);
+
+            var matches = await WsDiscoveryClient.ProbeMulticastAsync(interfaceAddresses, WsDiscoveryTimeout, CancellationToken.None);
+
+            var seenHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var match in matches)
             {
                 var deviceServiceUrl = match.XAddrs.FirstOrDefault();
@@ -418,20 +442,15 @@ public sealed class CameraDiscoveryService
                     continue;
 
                 var ip = deviceUri.Host;
+                if (!seenHosts.Add(ip)) continue;
 
-                // No credentials at scan time - there's no way to ask for them per-camera before
-                // even knowing how many cameras are out there. Many cameras still answer
-                // GetDeviceInformation without auth even when GetStreamUri requires it, which is
-                // enough to suggest a name; NeedsCredentials tells the UI to ask before the user
-                // tries to add it.
-                var deviceInfo = await _onvif.GetDeviceInformationAsync(deviceServiceUrl, null, null, CancellationToken.None);
-                var suggestedName = deviceInfo is not null && (deviceInfo.Manufacturer != "Unknown" || deviceInfo.Model != "Unknown")
-                    ? $"{deviceInfo.Manufacturer} {deviceInfo.Model}".Trim()
-                    : $"Camera at {ip}";
+                job.AddResult(await DescribeOnvifCameraAsync(
+                    ip, deviceServiceUrl, match.Scopes, knownCredentials, existingHosts));
+            }
 
-                job.Results.Add(new ScanResultCamera(
-                    ip, deviceInfo?.Manufacturer, deviceInfo?.Model, suggestedName,
-                    NeedsCredentials: deviceInfo is null, existingHosts.Contains(ip)));
+            if (deepScan)
+            {
+                await RunDeepScanAsync(job, interfaceAddresses, seenHosts, knownCredentials, existingHosts);
             }
         }
         catch (Exception ex)
@@ -442,6 +461,185 @@ public sealed class CameraDiscoveryService
         {
             job.Status = ScanStatus.Completed;
         }
+    }
+
+    // Turns a known ONVIF device address into a display row, preferring what the camera says
+    // when asked properly (GetDeviceInformation) and falling back to what it already volunteered
+    // in its unauthenticated Probe reply (Scopes).
+    private async Task<ScanResultCamera> DescribeOnvifCameraAsync(
+        string ip,
+        string deviceServiceUrl,
+        IReadOnlyList<string> scopes,
+        IReadOnlyList<(string User, string? Password)> knownCredentials,
+        HashSet<string> existingHosts)
+    {
+        var deviceInfo = await _onvif.GetDeviceInformationAsync(deviceServiceUrl, null, null, CancellationToken.None);
+        foreach (var (user, password) in knownCredentials)
+        {
+            if (deviceInfo is not null) break;
+            deviceInfo = await _onvif.GetDeviceInformationAsync(deviceServiceUrl, user, password, CancellationToken.None);
+        }
+
+        var scopeInfo = WsDiscoveryClient.ParseScopes(scopes);
+
+        // "Unknown" is what GetDeviceInformationAsync substitutes for a field the camera omitted,
+        // so it must not shadow a real value the scopes carry.
+        var manufacturer = Prefer(deviceInfo?.Manufacturer, scopeInfo.Name);
+        var model = Prefer(deviceInfo?.Model, scopeInfo.Hardware);
+
+        return new ScanResultCamera(
+            ip, manufacturer, model, BuildSuggestedName(manufacturer, model, ip),
+            NeedsCredentials: deviceInfo is null, existingHosts.Contains(ip));
+    }
+
+    private static string? Prefer(string? authoritative, string? fallback) =>
+        string.IsNullOrWhiteSpace(authoritative) || authoritative == "Unknown" ? fallback : authoritative;
+
+    // Public so the naming rules are testable without a camera - "Camera at <ip>" is the only
+    // acceptable output when nothing identifying is known, and a half-known camera should still
+    // show the half it knows rather than falling all the way back to the address.
+    public static string BuildSuggestedName(string? manufacturer, string? model, string ip)
+    {
+        var name = string.Join(' ', new[] { manufacturer, model }
+            .Where(part => !string.IsNullOrWhiteSpace(part) && part != "Unknown"))
+            .Trim();
+        return name.Length == 0 ? $"Camera at {ip}" : name;
+    }
+
+    private static List<(string User, string? Password)> CollectKnownCredentials(IReadOnlyList<Camera> cameras)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var results = new List<(string, string?)>();
+        foreach (var camera in cameras)
+        {
+            if (string.IsNullOrWhiteSpace(camera.Username)) continue;
+            if (!seen.Add($"{camera.Username}\n{camera.Password}")) continue;
+            results.Add((camera.Username!, camera.Password));
+        }
+        return results;
+    }
+
+    // --- Deep scan --------------------------------------------------------------------------
+    //
+    // The opt-in second pass, for the cameras WS-Discovery structurally cannot find: firmware
+    // shipped with ONVIF switched off, and - more commonly on a real home network - a camera on
+    // a WiFi segment or VLAN whose AP does not forward multicast, which makes the Probe simply
+    // never arrive. Neither case is a bug in the multicast pass; there is no reply to miss.
+    //
+    // This does touch every host in the subnet, which the multicast pass deliberately avoids, so
+    // it stays behind an explicit checkbox rather than becoming the default. A single TCP connect
+    // to a camera port is the same thing any camera app does, but it is still a port scan, and on
+    // a network that isn't yours that is a rude thing to do unasked.
+    private async Task RunDeepScanAsync(
+        ScanJob job,
+        IReadOnlyList<IPAddress> interfaceAddresses,
+        HashSet<string> seenHosts,
+        IReadOnlyList<(string User, string? Password)> knownCredentials,
+        HashSet<string> existingHosts)
+    {
+        var interfaces = GetCandidateInterfaces();
+        var localAddresses = interfaceAddresses.Select(a => a.ToString()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var address in interfaceAddresses)
+        {
+            var prefixLength = interfaces
+                .FirstOrDefault(i => string.Equals(i.Address, address.ToString(), StringComparison.OrdinalIgnoreCase))
+                ?.PrefixLength ?? 0;
+
+            var hosts = EnumerateSubnetHosts(address, prefixLength, DeepScanMaxHosts);
+            if (hosts.Count == 0)
+            {
+                _logger.LogInformation(
+                    "Deep scan skipped {Address}/{Prefix} - not a scannable IPv4 subnet, or larger than {Max} hosts",
+                    address, prefixLength, DeepScanMaxHosts);
+                continue;
+            }
+
+            var open = await FindHostsWithCameraPortsAsync(hosts, localAddresses, seenHosts);
+
+            foreach (var host in open)
+            {
+                var ip = host.ToString();
+                if (!seenHosts.Add(ip)) continue;
+
+                // Multicast may simply not have reached us; a unicast Probe straight at the host
+                // is the same question asked in a way no AP can drop, and it still yields the
+                // camera's real ONVIF address and scopes when it works.
+                var match = await WsDiscoveryClient.ProbeUnicastAsync(host, WsDiscoveryTimeout, CancellationToken.None);
+                var deviceServiceUrl = match?.XAddrs.FirstOrDefault();
+
+                var result = deviceServiceUrl is not null
+                    ? await DescribeOnvifCameraAsync(ip, deviceServiceUrl, match!.Scopes, knownCredentials, existingHosts)
+                    // No ONVIF at all - all that's really known is "something is listening on a
+                    // camera port here". Reported rather than dropped so the user can point Test
+                    // Connection at it, which is the only thing that can identify it from here.
+                    : new ScanResultCamera(
+                        ip, null, null, $"Camera at {ip}",
+                        NeedsCredentials: true, existingHosts.Contains(ip));
+
+                job.AddResult(result);
+            }
+        }
+    }
+
+    private static async Task<List<IPAddress>> FindHostsWithCameraPortsAsync(
+        IReadOnlyList<IPAddress> hosts, HashSet<string> localAddresses, HashSet<string> seenHosts)
+    {
+        var open = new List<IPAddress>();
+        using var gate = new SemaphoreSlim(DeepScanConcurrency);
+
+        var probes = hosts.Select(async host =>
+        {
+            var ip = host.ToString();
+            if (localAddresses.Contains(ip) || seenHosts.Contains(ip)) return;
+
+            await gate.WaitAsync();
+            try
+            {
+                foreach (var port in DeepScanPorts)
+                {
+                    if (!await IsPortOpenAsync(host, port, DeepScanPortTimeout, CancellationToken.None)) continue;
+                    lock (open) open.Add(host);
+                    return;
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
+        });
+
+        await Task.WhenAll(probes);
+        return open;
+    }
+
+    // Public so the subnet arithmetic - the part with the off-by-one and the sizing guard - is
+    // testable without a NIC. Returns empty rather than throwing for anything not worth
+    // sweeping: IPv6, a nonsensical prefix, a /31 or /32 with no host range, or a subnet wider
+    // than maxHosts (a /16 is 65k connects, which is a different feature with different consent).
+    public static IReadOnlyList<IPAddress> EnumerateSubnetHosts(IPAddress address, int prefixLength, int maxHosts)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork) return [];
+        if (prefixLength is < 1 or > 30) return [];
+
+        var bytes = address.GetAddressBytes();
+        var host = ((uint)bytes[0] << 24) | ((uint)bytes[1] << 16) | ((uint)bytes[2] << 8) | bytes[3];
+        var mask = uint.MaxValue << (32 - prefixLength);
+        var network = host & mask;
+        var broadcast = network | ~mask;
+
+        var count = broadcast - network - 1;
+        if (count == 0 || count > (uint)maxHosts) return [];
+
+        var results = new List<IPAddress>((int)count);
+        for (var current = network + 1; current < broadcast; current++)
+        {
+            results.Add(new IPAddress(new[]
+            {
+                (byte)(current >> 24), (byte)(current >> 16), (byte)(current >> 8), (byte)current
+            }));
+        }
+        return results;
     }
 
     private static string? TryExtractHost(string? streamUrl) =>
@@ -457,10 +655,24 @@ public sealed class CameraDiscoveryService
         }
     }
 
+    // Results are appended by the scan and read by the UI's 1s poll at the same time, and the deep
+    // scan appends from several probe tasks at once - so the list is never touched outside the
+    // lock. A plain List<T> read via ToList() mid-Add can throw or return a torn snapshot.
     private sealed class ScanJob
     {
+        private readonly List<ScanResultCamera> _results = [];
+
         public ScanStatus Status { get; set; } = ScanStatus.Running;
-        public List<ScanResultCamera> Results { get; } = [];
         public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
+
+        public void AddResult(ScanResultCamera result)
+        {
+            lock (_results) _results.Add(result);
+        }
+
+        public IReadOnlyList<ScanResultCamera> Snapshot()
+        {
+            lock (_results) return _results.ToList();
+        }
     }
 }

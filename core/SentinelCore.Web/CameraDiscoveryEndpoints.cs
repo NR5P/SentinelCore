@@ -19,6 +19,11 @@ public sealed class CameraScanRequestDto
     // to use, rather than the server silently guessing. Deliberately not defaulted to "all
     // interfaces" for the same reason.
     public List<string> InterfaceAddresses { get; set; } = [];
+
+    // Opt-in TCP sweep of the selected subnets for cameras that never answer the multicast Probe -
+    // ONVIF disabled in firmware, or multicast not forwarded by an AP. Defaults to false so the
+    // ordinary scan stays a single broadcast that touches no individual host.
+    public bool DeepScan { get; set; }
 }
 
 public static class CameraDiscoveryEndpoints
@@ -53,7 +58,7 @@ public static class CameraDiscoveryEndpoints
             if (addresses.Count == 0)
                 return Results.BadRequest(new { errors = new[] { "Select at least one network interface to scan." } });
 
-            var scanId = discovery.StartScan(addresses);
+            var scanId = discovery.StartScan(addresses, dto.DeepScan);
             return Results.Ok(new { scanId });
         }).RequireAuthorization("AdminOnly");
 
