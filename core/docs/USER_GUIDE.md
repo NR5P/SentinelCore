@@ -356,12 +356,29 @@ always has, whether or not you add any cameras here.
 - **Discover Cameras**, next to Add Camera — scans your network for cameras all at once, the
   same way. It only runs when you click it — nothing scans automatically or on a schedule. You'll
   be asked which network adapter to scan on machines with more than one; cameras it already knows
-  about are marked so they don't show up as new. Cameras it finds that need a login can't be
-  added straight from the scan (there's no way to ask for creds for every camera before knowing
-  how many there are) — click **add** and use Test Connection on the form to supply them.
+  about are marked so they don't show up as new. Most cameras name themselves in the broadcast
+  they answer with, so the list usually reads "Reolink RLC-823S1" rather than a bare IP address —
+  and it does that *before* any login, since that part of the reply isn't protected. Cameras it
+  finds that need a login can't be added straight from the scan (there's no way to ask for creds
+  for every camera before knowing how many there are) — click **add** and use Test Connection on
+  the form to supply them.
 
-Either way, this only ever probes addresses you asked about — a single IP for Test Connection,
-or the network segments you explicitly selected for Discover Cameras.
+**"also check every address" — the checkbox under the adapter list.** The normal scan works by
+shouting a question onto the network and listing whoever answers. Two kinds of camera never
+answer it: ones with ONVIF switched off in their own settings, and ones on a WiFi access point
+that doesn't pass broadcasts through to the wired side. Tick this box and the scan additionally
+tries each address on the networks you selected, one at a time, and asks anything with a camera
+port open directly.
+
+Use it when you know a camera is there and the normal scan didn't find it. It's off by default
+for two reasons: it takes tens of seconds instead of two, and it briefly contacts **every device
+on your network**, not just cameras — your router, printers, thermostats and so on all get a
+connection attempt. Nothing is sent to them beyond opening and closing a port, but if you're on a
+network that isn't yours to scan, that's the difference worth knowing about.
+
+Either way, this only ever touches the networks you picked — a single IP for Test Connection, or
+the segments you explicitly selected for Discover Cameras. The plain scan talks only to cameras
+that answered; the deep scan talks to every address in those segments.
 
 ## 5a. Pan/Tilt/Zoom (PTZ) — moving cameras that support it
 
