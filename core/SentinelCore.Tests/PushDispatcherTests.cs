@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -90,6 +91,92 @@ public sealed class PushDispatcherTests
         File.Delete(keyPath);
     }
 
+    // Android had no coverage at all, and two things about the FCM leg are easy to break without
+    // anything failing loudly. The HTTP v1 target field for a Firebase Installation ID is `fid`
+    // (`token` is the deprecated spelling that only still accepts an FID during the transition),
+    // and the channel id in the payload has to match the one the app creates -
+    // android/app/src/main/res/values/strings.xml, security_alert_channel_id. Get the channel
+    // wrong and a backgrounded phone still shows the alert, just silently, in a default channel
+    // with none of the app's importance or vibration settings.
+    [Fact]
+    public async Task SendAsync_ForAnAndroidDevice_TargetsTheInstallationIdOnTheAppsChannel()
+    {
+        using var key = NewServiceAccountKey(out var accountPath);
+        var store = new FakePushDeviceStore(NewDevice("android", "installation-id", "Pixel 8"));
+        var handler = new FirebaseHandler();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        var report = await dispatcher.SendAsync(
+            NewFirebaseOptions(accountPath), PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Delivered);
+        Assert.Equal("/v1/projects/sentinel-core-test/messages:send", handler.SendUri!.AbsolutePath);
+        Assert.Equal("ya29.test-access-token", handler.SendAuthorization);
+
+        var message = JsonDocument.Parse(handler.SendBody!).RootElement.GetProperty("message");
+        Assert.Equal("installation-id", message.GetProperty("fid").GetString());
+        Assert.False(message.TryGetProperty("token", out _));
+
+        var android = message.GetProperty("android");
+        Assert.Equal("high", android.GetProperty("priority").GetString());
+        Assert.Equal(
+            "security_alerts",
+            android.GetProperty("notification").GetProperty("channel_id").GetString());
+
+        File.Delete(accountPath);
+    }
+
+    // FCM reports a dead installation as HTTP 404 with an UNREGISTERED error code rather than
+    // APNs' 410, so the removal path has to recognise a shape it shares nothing with.
+    [Fact]
+    public async Task SendAsync_WhenFcmReportsTheInstallationIsGone_RemovesTheDeviceAndSaysSo()
+    {
+        using var key = NewServiceAccountKey(out var accountPath);
+        var store = new FakePushDeviceStore(NewDevice("android", "stale-installation", "Pixel 8"));
+        var logger = new CapturingLogger();
+        var handler = new FirebaseHandler(
+            HttpStatusCode.NotFound,
+            """
+            {"error":{"code":404,"status":"NOT_FOUND","details":[
+              {"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}
+            """);
+        var dispatcher = NewDispatcher(store, handler, logger);
+
+        var report = await dispatcher.SendAsync(
+            NewFirebaseOptions(accountPath), PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Removed);
+        Assert.Empty(store.Devices);
+
+        var line = Assert.Single(logger.Warnings, m => m.Contains("Removed the push registration"));
+        Assert.Contains("Pixel 8", line);
+
+        File.Delete(accountPath);
+    }
+
+    // A quota or payload rejection costs one push, not the registration.
+    [Fact]
+    public async Task SendAsync_WhenFcmRejectsForAnotherReason_KeepsTheDevice()
+    {
+        using var key = NewServiceAccountKey(out var accountPath);
+        var store = new FakePushDeviceStore(NewDevice("android", "good-installation", "Pixel 8"));
+        var logger = new CapturingLogger();
+        var handler = new FirebaseHandler(
+            HttpStatusCode.TooManyRequests,
+            """{"error":{"status":"RESOURCE_EXHAUSTED"}}""");
+        var dispatcher = NewDispatcher(store, handler, logger);
+
+        var report = await dispatcher.SendAsync(
+            NewFirebaseOptions(accountPath), PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Failed);
+        Assert.Equal(0, report.Removed);
+        Assert.Single(store.Devices);
+        Assert.DoesNotContain(logger.Warnings, m => m.Contains("Removed the push registration"));
+
+        File.Delete(accountPath);
+    }
+
     private static PushNotificationDispatcher NewDispatcher(
         IPushDeviceStore store, HttpMessageHandler handler, ILogger<PushNotificationDispatcher> logger) =>
         new(store, new SingleClientFactory(handler), new FakeEnvironment(), logger);
@@ -117,6 +204,32 @@ public sealed class PushDispatcherTests
         }
     };
 
+    // Same reason as NewSigningKey above: the service-account assertion is signed for real (RS256)
+    // on the way to Google's OAuth endpoint, so the JSON has to carry a usable private key.
+    private static RSA NewServiceAccountKey(out string path)
+    {
+        var key = RSA.Create(2048);
+        path = Path.Combine(Path.GetTempPath(), $"fcm-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            client_email = "sentinel@sentinel-core-test.iam.gserviceaccount.com",
+            private_key = key.ExportPkcs8PrivateKeyPem(),
+            token_uri = "https://oauth2.googleapis.com/token"
+        }));
+        return key;
+    }
+
+    private static PushNotificationOptions NewFirebaseOptions(string accountPath) => new()
+    {
+        Enabled = true,
+        Firebase = new FirebasePushOptions
+        {
+            Enabled = true,
+            ProjectId = "sentinel-core-test",
+            ServiceAccountPath = accountPath
+        }
+    };
+
     private static PushDevice NewDevice(string platform, string token, string name) =>
         new(Guid.NewGuid(), platform, token, name, "ios", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 
@@ -134,6 +247,41 @@ public sealed class PushDispatcherTests
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             });
+        }
+    }
+
+    // One Firebase send is two requests: the service-account JWT is exchanged for an OAuth access
+    // token first, then the message goes to FCM. Only the second is worth asserting on, so the
+    // OAuth leg always answers with the same fixed token.
+    private sealed class FirebaseHandler(
+        HttpStatusCode sendStatus = HttpStatusCode.OK,
+        string sendBody = "{}") : HttpMessageHandler
+    {
+        public Uri? SendUri { get; private set; }
+        public string? SendBody { get; private set; }
+        public string? SendAuthorization { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.Host == "oauth2.googleapis.com")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"access_token":"ya29.test-access-token","expires_in":3600}""",
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            SendUri = request.RequestUri;
+            SendAuthorization = request.Headers.Authorization?.Parameter;
+            SendBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(sendStatus)
+            {
+                Content = new StringContent(sendBody, Encoding.UTF8, "application/json")
+            };
         }
     }
 
