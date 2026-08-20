@@ -214,8 +214,35 @@ public sealed class TriggerRewindTests
         Assert.Equal("/tmp/seg_0.ts", args[args.IndexOf("-i") + 1]);
         Assert.Equal("1.5", args[args.IndexOf("-ss") + 1]);
         Assert.Equal("1", args[args.IndexOf("-frames:v") + 1]);
-        Assert.Equal("1", args[args.IndexOf("-threads") + 1]);
         Assert.DoesNotContain("concat", args);
+    }
+
+    // -threads is per-context and lands in whichever context it precedes, so one copy throttles
+    // half the job: before -i it reaches the h264 decoder, after it the mjpeg encoder. Only the
+    // decoder was capped for a long time, leaving the encoder on ffmpeg's one-thread-per-core
+    // default - nine mjpeg contexts to write one JPEG on an eight-core box, on the machine whose
+    // spare CPU keeps the detection loop live.
+    //
+    // The correctness half matters more than the CPU. Multi-threaded encoding clones the encoder
+    // context per worker, and the clone does not reliably inherit the full-range flag the
+    // filtergraph negotiated, so mjpeg rejects it ("Non full-range YUV is non-standard") and ffmpeg
+    // exits 234. Measured 6 times in 493 fetches over the 24h to 2026-08-20, every one from a
+    // cloned context - each costing a trigger the rewound frame and falling back to a live snapshot
+    // taken seconds late, which is the exact failure this file exists to prevent.
+    [Fact]
+    public void BuildExtractArguments_CapsThreadsOnBothTheDecoderAndTheEncoder()
+    {
+        var args = TriggerRewind.BuildExtractArguments("/tmp/seg_0.ts", 1.5, "/tmp/out.jpg");
+
+        var threadFlags = args.Select((a, i) => (a, i)).Where(x => x.a == "-threads").Select(x => x.i).ToList();
+        Assert.Equal(2, threadFlags.Count);
+        Assert.All(threadFlags, i => Assert.Equal("1", args[i + 1]));
+
+        // One on each side of -i, which is the whole point - two in front would cap the decoder
+        // twice and leave the encoder exactly as unbounded as it was.
+        var input = args.IndexOf("-i");
+        Assert.True(threadFlags[0] < input, "the decoder's -threads must come before -i");
+        Assert.True(threadFlags[1] > input, "the encoder's -threads must come after -i");
     }
 
     [Fact]

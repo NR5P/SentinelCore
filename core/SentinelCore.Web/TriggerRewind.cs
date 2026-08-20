@@ -44,13 +44,34 @@ public static class TriggerRewind
     // Decoding a whole ~2s segment to drop most of it is exactly the waste input seeking was meant
     // to avoid. At this size that waste is 0.8s and bounded; it does not grow with the buffer.
     //
-    // -threads 1 is deliberate: fetching a frame must always yield to the capture loop.
+    // -threads 1 is deliberate: fetching a frame must always yield to the capture loop. It has to
+    // appear on BOTH sides of -i, because -threads is a per-context option and which context it
+    // lands in depends entirely on where it sits: before -i it configures the h264 DECODER, after
+    // it the mjpeg ENCODER. With it only in front, the encoder kept ffmpeg's default of one thread
+    // per core, so writing a single 2560x1920 JPEG spun up nine mjpeg contexts on this eight-core
+    // box - the opposite of yielding, on the machine whose spare capacity is the whole reason the
+    // detection loop stays live.
+    //
+    // That was also silently costing ~1.2% of every trigger its rewound frame. Multi-threaded
+    // encoding routes through ff_frame_thread_encoder_init, which clones the encoder context per
+    // worker, and the clone does not reliably inherit the full-range flag the filtergraph
+    // negotiated on the parent. When it doesn't, mjpeg refuses the clone outright - "Non full-range
+    // YUV is non-standard, set strict_std_compliance to at most unofficial to use it" - ffmpeg
+    // exits 234 and the caller falls back to a live snapshot taken seconds after the moment that
+    // actually mattered, which is precisely the failure this whole file exists to prevent.
+    //
+    // Measured in the 24h to 2026-08-20: 6 failures in 493 fetches, and every one of the six
+    // reported from a cloned worker context rather than the parent (the addresses all land in the
+    // frame-thread encoder's mmap'd region). Single-threaded encoding removes that path entirely -
+    // there is one mjpeg context and nothing to clone. Output is byte-identical at four offsets
+    // across a real segment, and user CPU over 20 runs drops from 10.12s to 8.57s.
     public static List<string> BuildExtractArguments(string segmentPath, double offsetSeconds, string outputPath) =>
     [
         "-v", "error",
         "-threads", "1",
         "-i", segmentPath,
         "-ss", FormatSeconds(offsetSeconds),
+        "-threads", "1",
         "-frames:v", "1",
         "-q:v", "2",
         "-y", outputPath
