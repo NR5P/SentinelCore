@@ -397,7 +397,56 @@ dashboard, look at the bottom-right corner of its tile directly) — a small joy
 eight directional arrows around a home button, plus separate zoom in/out buttons. Press and hold
 a direction to move the camera that way; release to stop. The camera keeps moving the whole time
 a button is held down, the same way a physical joystick would, rather than moving a fixed amount
-per tap. The home button (⌂) returns to the camera's saved home position, if it has one.
+per tap.
+
+**Home (⌂) — and how to set it.** The home button sends the camera back to a fixed view. It looks
+for a preset named **"SentinelCore Home"** in the camera's own preset list first, and only falls
+back to the camera's built-in home position if there isn't one.
+
+That order exists because plenty of PTZ hardware has no home position at all. Cameras that report
+`HomeSupported=false` answer the standard "go home" command with an error every single time, which
+is indistinguishable from a dead button — press it, nothing moves, no explanation. Storing home as
+an ordinary preset works on anything with preset slots, which is nearly everything.
+
+**To save a home position, point the camera where you want home to be and press and hold the home
+button in the iPhone/iPad app.** That gesture is only in the app right now — the web dashboard's
+home button can *go* home but cannot set it. If you only use the dashboard and your camera has no
+home position of its own, the home button will have nothing to go to until you save one from a
+phone once.
+
+Home lives on the camera, not in this app's database, so removing and re-adding the camera here
+keeps the same home, and anyone looking at the camera's preset list can see what put it there.
+
+**A PTZ camera sends itself home when you stop driving it.** After **3 minutes** with no PTZ
+command, a camera that has been moved returns to its home position by itself. Only cameras that
+actually have motion zones configured (section 6) are moved this way — a camera nobody is running
+detection on is left exactly where you left it.
+
+This is not tidiness, it is what turns detection back on; see the warning in section 6 about zones
+on a moving camera. If you would rather the camera stayed wherever you left it, set
+`"PtzHoming": { "Enabled": false }` in `SentinelCore.Web/appsettings.json` — but be aware that a
+camera parked away from home then has its zones off until somebody presses Home. `IdleMinutes` in
+the same section changes the 3 minutes.
+
+**Recording what you're watching.** The live view in the iPhone/iPad app has a record button. It
+saves a clip covering roughly 8 seconds either side of the press — the look-back is the point,
+since you press this *after* seeing something — and files it as an ordinary trigger event: same
+Feed card, same AI analysis, same notification path as a motion trigger, rather than a second kind
+of recording to go hunting for. It works on any camera you can see live, whether or not that camera
+has motion zones. This button is app-only; there is no equivalent on the web dashboard yet.
+
+**Following a subject automatically (off by default).** The server can drive the camera to keep a
+person (or another object class) centred after a zone fires, then send it home. It is off unless
+you turn it on, deliberately: a security camera that moves for reasons its owner didn't ask for is
+worse than one that doesn't. There is no switch for this in the dashboard — it is
+`"PtzTracking": { "Enabled": true }` in `SentinelCore.Web/appsettings.json`, with `Track` taking a
+list of class names (`["person"]` by default, `["person", "car", "dog"]` and so on also work).
+
+Note that most PTZ cameras already have tracking of their own, and the camera's version is smoother
+because it runs on the sensor with no network in the loop. What the camera's version cannot do is
+tell this server where it has pointed, so trigger zones carry on measuring a view that has moved.
+Use the server's if you want detection, homing and clips to stay in agreement about where the
+camera is looking; use the camera's if you only care about the picture.
 
 PTZ movement is treated the same as adding/editing/deleting a camera — it requires an admin
 account when login is turned on, not just a viewer login.
@@ -463,6 +512,17 @@ whatever each camera was already going to do on its own.
 
 This is where you set up motion detection on cameras you added in the CAMERAS tab. Click a
 camera's trigger-zone icon to open the zone editor, which has two parts:
+
+> **On a PTZ camera, zones only watch while the camera is at home.** A zone is a shape drawn over
+> the *picture*, not over the world, so once the camera has been panned somewhere else that same
+> rectangle of frame is a different piece of reality — the zone carries on measuring, nothing
+> errors, and it is watching the wrong thing until somebody notices. Detection is therefore paused
+> whenever a PTZ camera is away from its home position or still settling after arriving, and it
+> resumes once it is home and steady. Since the camera also sends itself home after 3 minutes idle
+> (section 5a), driving it around costs you a few minutes of detection rather than turning it off
+> until you remember. A PTZ camera with zones and no saved home position never resumes, which is
+> the one case worth watching for — the log says so once per check, and section 5a covers saving
+> one.
 
 **Draw the zone** — click points on the reference frame to outline the area that should be
 watched. Three or more points make a shape; anything outside it is ignored, so you can leave

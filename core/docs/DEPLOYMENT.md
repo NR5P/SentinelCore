@@ -247,6 +247,47 @@ it yourself.
   for `ffprobe` in the same location), which is correct for the overwhelming majority of installs
   since the two ship side by side. Only set this if `ffprobe` lives somewhere `ffmpeg` doesn't.
 
+#### PTZ sections (both omitted above — code defaults are the intended setup)
+
+Neither section appears in the shipped `appsettings.json`. They are listed here because one of them
+moves your camera on its own by default, which is not something to discover from the log.
+
+```json
+  "PtzHoming": { "Enabled": true, "IdleMinutes": 3 },
+  "PtzTracking": {
+    "Enabled": false,
+    "Track": ["person"],
+    "MinimumScore": 0.5,
+    "Deadzone": 0.12,
+    "Speed": 0.35,
+    "NudgeMilliseconds": 350,
+    "PollMilliseconds": 500,
+    "LostSeconds": 8,
+    "RestSeconds": 30,
+    "MaxTrackSeconds": 120
+  }
+```
+
+- **`PtzHoming` is on by default.** A PTZ camera that has been driven somewhere returns to its home
+  position after `IdleMinutes` with no PTZ command. Only cameras with trigger zones configured are
+  moved, because the reason for homing is to restore detection — detection on a PTZ camera runs
+  only while it is settled at home (see
+  [USER_GUIDE.md § PTZ](USER_GUIDE.md#5a-pantiltzoom-ptz--moving-cameras-that-support-it)).
+  `Enabled: false` leaves the camera where it was left, and its zones off until somebody presses
+  Home.
+
+- **`PtzTracking` is off by default** and stays off unless you set `Enabled: true` — it drives the
+  camera to follow whatever a zone caught, then sends it home. `Track` takes COCO class names, or
+  bare numeric ids for classes with no name in the table (`PtzTrackClasses`), so it isn't limited
+  to what the camera's own AI supports. `Deadzone` is the number worth tuning first: the control
+  loop is a frame, then inference, then a network round trip, so too tight a deadzone makes the
+  camera hunt around the subject instead of settling. `MaxTrackSeconds` must stay comfortably below
+  `PtzHoming:IdleMinutes` so the two never race for the same camera.
+
+  Turning tracking on loads the local detection model into the dashboard process — the same
+  ~100 MB RF-DETR the `fastlocal` backend uses, downloaded once on first use. A default install
+  never pays for it.
+
 Also do not expose port 3320 to the internet — there's no login on the dashboard.
 
 ## 7. Running interactively (no systemd)

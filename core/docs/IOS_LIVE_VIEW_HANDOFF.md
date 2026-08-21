@@ -1,5 +1,14 @@
 # iPhone live view stuttering — handoff notes
 
+> **Historical as of 2026-08-20. Nothing here is outstanding work.** This whole file is about
+> getting HLS to behave on the phone, and the phone stopped depending on HLS: `ba0cb42` gave the
+> iOS/macOS apps a native MSE tier (fragmented MP4 from go2rtc decoded into `CMSampleBuffer`s),
+> and `7dc353c` did the same for the Apple TV. Both now climb the same ladder the dashboard does
+> and only fall back to HLS if MSE fails — measured full-screen latency went from 2.5s to
+> 0.25–0.5s against the cameras' burned-in clocks. The AVPlayer parking-three-TARGETDURATIONs
+> behaviour this file spends its length working around is no longer on the path anyone normally
+> takes. Read it for the reasoning and the server-side measurements; don't pick anything up from it.
+
 Written 2026-08-05 from the Linux server. Everything below was measured on the server side; nothing
 has been tried on a Mac or a real device yet, because building and installing the app needs Xcode.
 
