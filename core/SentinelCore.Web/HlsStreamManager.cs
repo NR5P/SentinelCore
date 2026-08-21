@@ -344,6 +344,39 @@ public sealed class HlsStreamManager : IDisposable
     // Any warm session's poster frame will do - both renditions show the same scene, and a tile
     // covered by an 896x672 still while its video starts is no worse off than one covered by a
     // 2560x1920 one. Main first only because it is the likelier one to exist.
+    // The live stream's segments currently on disk, oldest first - a rolling window about
+    // hls_list_size seconds wide (see BuildFfmpegArguments), kept for any camera somebody is
+    // watching. The manual record button builds its clip out of these.
+    //
+    // Start times come from the file's write time rather than its name, because these segments are
+    // numbered (seg_%03d) rather than stamped: ffmpeg finishes writing a segment when it ends, so
+    // the write time is its end and its start is one -hls_time earlier. Good enough for choosing
+    // which segments cover a window, which is all SelectSegmentsCovering needs.
+    //
+    // Only the MPEG-TS renditions. An H.265 camera is packaged as fMP4 (see the hevc branch in
+    // BuildFfmpegArguments), and the concat demuxer cannot splice those into a playable MP4 without
+    // re-muxing work this doesn't do - so those cameras get the trigger event without a clip rather
+    // than a corrupt file.
+    public IReadOnlyList<(string Path, DateTimeOffset StartsAt)> BufferedSegments(Guid cameraId)
+    {
+        foreach (var quality in new[] { StreamQuality.Main, StreamQuality.Sub })
+        {
+            if (!_sessions.TryGetValue(new SessionKey(cameraId, quality), out var session)) continue;
+
+            var files = Directory.Exists(session.OutputDirectory)
+                ? Directory.EnumerateFiles(session.OutputDirectory, "seg_*.ts").ToList()
+                : [];
+            if (files.Count == 0) continue;
+
+            return files
+                .Select(path => (Path: path, StartsAt: (DateTimeOffset)File.GetLastWriteTimeUtc(path) - TimeSpan.FromSeconds(1)))
+                .OrderBy(segment => segment.StartsAt)
+                .ToList();
+        }
+
+        return [];
+    }
+
     public string? GetThumbnailPath(Guid cameraId)
     {
         foreach (var quality in new[] { StreamQuality.Main, StreamQuality.Sub })

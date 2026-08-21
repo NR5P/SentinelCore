@@ -21,11 +21,23 @@ public sealed class TriggerZoneMonitor(
     TriggerConfirmationService triggerConfirmation,
     AppSettingsFile mainAppSettings,
     CameraSource cameraSource,
+    PtzActivityTracker ptzActivity,
     IConfiguration configuration,
     IHostEnvironment environment,
     ILogger<TriggerZoneMonitor> logger) : BackgroundService
 {
     private static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(10);
+
+    // How long after a PTZ camera stops moving before its detection resumes. It covers the gap
+    // between the camera saying it stopped and the picture actually being still: these cameras
+    // overshoot slightly and coast, so frames taken immediately after a stop are still full-frame
+    // motion. Long enough to cover that coast, short enough that a quick look-and-return doesn't
+    // leave a hole in coverage.
+    private static readonly TimeSpan PtzSettleDelay = TimeSpan.FromSeconds(2);
+
+    // A camera parked away from home logs its reason at most this often. Detection runs at 2fps, so
+    // an evening spent pointed elsewhere would otherwise write tens of thousands of identical lines.
+    private static readonly TimeSpan PtzSuppressionLogInterval = TimeSpan.FromMinutes(5);
 
     // Detection frames arrive twice a second (fps=2 below). Anything approaching this long without
     // one means the feed is gone, whatever the ffmpeg process claims - see ReconcileCameraAsync.
@@ -486,6 +498,31 @@ public sealed class TriggerZoneMonitor(
         {
             await foreach (var (buffer, frameAt) in session.ReadFramesAsync(cancellationToken))
             {
+                // A PTZ camera only detects while it is settled at home - see PtzActivityTracker.
+                // The frame is still read and returned rather than skipped upstream, because the
+                // capture loop hands over one frame at a time and would otherwise block.
+                if (camera.PtzEnabled && !ptzActivity.IsSettledAtHome(camera.Id, PtzSettleDelay, out var suppressedBecause))
+                {
+                    session.ReturnFrameBuffer(buffer);
+                    // Clearing the reference frame here rather than on the way back out means it is
+                    // already gone by the time detection resumes, whichever frame that turns out to
+                    // be - so the first live frame becomes the new baseline instead of being
+                    // compared against the view from before the camera moved.
+                    session.Detector.Rebaseline();
+                    session.PtzSuppressed = true;
+                    LogPtzSuppression(camera, session, suppressedBecause);
+                    continue;
+                }
+
+                if (session.PtzSuppressed)
+                {
+                    session.PtzSuppressed = false;
+                    session.PtzSuppressedFrames = 0;
+                    logger.LogInformation(
+                        "{Name} is back at its home position and settled; trigger zone detection has resumed.",
+                        camera.Name);
+                }
+
                 double[]? blobFractions;
                 try
                 {
@@ -622,6 +659,25 @@ public sealed class TriggerZoneMonitor(
     //
     // Rate-limited like LogNearMiss, and for the same reason: the flood this suppresses is roughly
     // a hundred triggers a night, and a line each would bury everything else in the journal.
+    // Rate-limited like LogNightSuppression, and for the same reason - but this one matters more,
+    // because a camera left pointed away is not detecting and nothing else on screen says so.
+    private void LogPtzSuppression(Camera camera, DetectionSession session, string reason)
+    {
+        var now = DateTimeOffset.UtcNow;
+        int skipped;
+        lock (session.TriggerLock)
+        {
+            session.PtzSuppressedFrames++;
+            if (session.LastPtzLogAt is { } last && now - last < PtzSuppressionLogInterval) return;
+            session.LastPtzLogAt = now;
+            skipped = session.PtzSuppressedFrames;
+        }
+
+        logger.LogInformation(
+            "Trigger zone detection for {Name} is paused because {Reason}; {Skipped} frame(s) not examined since the last note.",
+            camera.Name, reason, skipped);
+    }
+
     private void LogNightSuppression(Camera camera, DetectionSession session, DateTimeOffset now)
     {
         int suppressed;
@@ -1245,6 +1301,12 @@ public sealed class TriggerZoneMonitor(
         public DateTimeOffset? LastNearMissLogAt;
         public DateTimeOffset? LastNightLogAt;
         public int NightSuppressedCount;
+
+        // Whether the last frame was dropped because the camera is moving or parked away from home,
+        // so the resumption can be logged exactly once rather than per frame.
+        public bool PtzSuppressed;
+        public DateTimeOffset? LastPtzLogAt;
+        public int PtzSuppressedFrames;
         public readonly Queue<DateTimeOffset> RecentTriggers = new();
 
         // The one-deep hand-off between the capture loop and the processing loop. Everything about

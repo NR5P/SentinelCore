@@ -197,6 +197,10 @@ builder.Services.AddHostedService<Go2RtcWarmUpService>();
 // that aren't rather than let a single bad IP stall out a user-facing request.
 builder.Services.AddHttpClient<OnvifClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddSingleton<CameraDiscoveryService>();
+builder.Services.AddSingleton<PtzActivityTracker>();
+builder.Services.AddSingleton<PtzHomeService>();
+builder.Services.Configure<PtzHomingOptions>(builder.Configuration.GetSection(PtzHomingOptions.SectionName));
+builder.Services.AddHostedService<PtzHomingWorker>();
 
 // Dashboard accounts - separate from the main app's data for the same reason cameras are. Also
 // backs the cookie authentication handler's session storage below (same instance, same reason

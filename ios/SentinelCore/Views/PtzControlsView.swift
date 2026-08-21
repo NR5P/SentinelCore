@@ -19,9 +19,6 @@ struct PtzControlsView: View {
     // all on a camera with no home position of its own, and nothing else in the UI mentions it.
     private static let saveHomeHold: Duration = .milliseconds(1200)
 
-    // How long the outcome of a Home press stays on screen.
-    private static let noticeDuration: Duration = .seconds(4)
-
     // Commands are queued rather than fired independently. Two unstructured Tasks - one per
     // press, one per release - are two HTTP requests with no ordering between them, and on a
     // quick tap they are in flight at the same time. Whenever the stop won that race the camera
@@ -34,26 +31,19 @@ struct PtzControlsView: View {
     // didn't land is obvious from the picture - but Home is the one command whose failure looks
     // exactly like success: the picture doesn't change either way. It used to swallow the error
     // outright, which is how a button that the camera rejects every time reads as doing nothing.
-    @State private var notice: String?
-    @State private var noticeTask: Task<Void, Never>?
+    @StateObject private var notice = NoticeState()
     @State private var homeHold: Task<Void, Never>?
     @State private var homeSaved = false
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
-            if let notice {
-                Text(notice)
-                    .font(.caption)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+            if let text = notice.text {
+                TransientNotice(text: text)
                     .frame(maxWidth: 260, alignment: .trailing)
-                    .transition(.opacity)
             }
             controls
         }
-        .animation(.easeOut(duration: 0.15), value: notice)
+        .animation(.easeOut(duration: 0.15), value: notice.text)
     }
 
     private var controls: some View {
@@ -69,7 +59,7 @@ struct PtzControlsView: View {
         .onDisappear {
             stop()
             homeHold?.cancel()
-            noticeTask?.cancel()
+            notice.cancel()
         }
         .onChange(of: scenePhase) { _, phase in
             // Backgrounding mid-press: the gesture is torn down with the view hierarchy, and a
@@ -153,7 +143,7 @@ struct PtzControlsView: View {
             do {
                 try await client.ptzHome(cameraId: id)
             } catch {
-                await MainActor.run { show(describe(error)) }
+                await MainActor.run { notice.show(describe(error)) }
             }
         }
     }
@@ -164,25 +154,15 @@ struct PtzControlsView: View {
         commands.enqueue {
             do {
                 try await client.ptzSaveHome(cameraId: id)
-                await MainActor.run { show("Saved this view as home.") }
+                await MainActor.run { notice.show("Saved this view as home.") }
             } catch {
-                await MainActor.run { show(describe(error)) }
+                await MainActor.run { notice.show(describe(error)) }
             }
         }
     }
 
     private func describe(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? "The camera did not accept that."
-    }
-
-    private func show(_ message: String) {
-        notice = message
-        noticeTask?.cancel()
-        noticeTask = Task {
-            try? await Task.sleep(for: Self.noticeDuration)
-            guard !Task.isCancelled else { return }
-            notice = nil
-        }
     }
 
     private func move(pan: Double, tilt: Double, zoom: Double) {

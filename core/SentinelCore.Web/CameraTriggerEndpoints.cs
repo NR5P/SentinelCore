@@ -19,6 +19,7 @@ public static class CameraTriggerEndpoints
     public static void MapCameraTriggerEndpoints(this WebApplication app)
     {
         MapTriggerUrl(app);
+        MapManualRecord(app);
 
         // No RequireAuthorization on purpose - the key check below is the gate. AuthGateMiddleware
         // still runs first, but all it can do is hand out a synthetic Admin when login is off,
@@ -94,6 +95,107 @@ public static class CameraTriggerEndpoints
                 key = options?.ApiKey ?? string.Empty
             });
         }).RequireAuthorization("AdminOnly");
+    }
+
+    // How much video either side of the press the clip covers. The look-back is the point: you
+    // press this *after* seeing something, so a clip that starts at the press has already missed it.
+    // Both sit comfortably inside the live stream's rolling segment window.
+    private const int ManualClipPreRollSeconds = 8;
+    private const int ManualClipPostRollSeconds = 8;
+
+    // Long enough to swallow a double-tap, short enough that deliberately recording twice in a row
+    // works. Deliberately not the camera's configured motion cooldown - that number is tuned for a
+    // detector that fires repeatedly at one event, and a person pressing a button is not that.
+    private const int ManualTriggerCooldownSeconds = 5;
+
+    // "Record this now" from the live view, for any camera - the thing you press when you are
+    // looking at something and want it kept.
+    //
+    // It goes through CameraTriggerService rather than doing something of its own, which is what
+    // makes it land where the user expects: the same TriggerEvent row, the same Feed card, the same
+    // analysis and notification path a zone trigger takes. The one thing that service does not do
+    // is cut video, because its other callers (the HTTP trigger API, a Device Hub sensor) fire at
+    // cameras nobody is watching and have no buffer to cut from. Here there is one - the live HLS
+    // stream the viewer is already pulling - so the clip is attached afterwards.
+    private static void MapManualRecord(WebApplication app)
+    {
+        app.MapPost("/api/cameras/{id:guid}/record", async (
+            Guid id,
+            ICameraStore store,
+            CameraTriggerService triggers,
+            ClipRecorder clips,
+            HlsStreamManager streams,
+            ITriggerEventStore events,
+            ILoggerFactory loggerFactory,
+            CancellationToken ct) =>
+        {
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            var pressedAt = DateTimeOffset.UtcNow;
+            var result = await triggers.TriggerAsync(
+                camera,
+                new CameraTriggerRequest("the app's record button", AlertProfile: null, ManualTriggerCooldownSeconds),
+                ct);
+
+            if (result.Status == CameraTriggerStatus.Cooldown)
+                return Results.Problem(result.Detail, statusCode: 429);
+            if (!result.Triggered)
+                return Results.Problem(result.Detail, statusCode: 502);
+
+            // Deliberately not awaited, and deliberately not on the request's token: the clip cannot
+            // be built until the post-roll has actually been recorded, and nobody should be holding
+            // an HTTP connection open for that. The event and its still image already exist, so the
+            // press has been honoured whatever happens next.
+            if (result.TriggerEventId is { } triggerId)
+            {
+                var logger = loggerFactory.CreateLogger("SentinelCore.Web.ManualRecord");
+                _ = AttachManualClipAsync(camera, triggerId, pressedAt, clips, streams, events, logger);
+            }
+
+            return Results.Ok(new { success = true });
+        }).RequireAuthorization();
+    }
+
+    private static async Task AttachManualClipAsync(
+        Camera camera, Guid triggerId, DateTimeOffset pressedAt,
+        ClipRecorder clips, HlsStreamManager streams, ITriggerEventStore events, ILogger logger)
+    {
+        try
+        {
+            // Wait for the far side of the window to exist on disk, plus a segment's grace so the
+            // last one has been closed rather than still being written.
+            await Task.Delay(TimeSpan.FromSeconds(ManualClipPostRollSeconds + 2));
+
+            var segments = streams.BufferedSegments(camera.Id);
+            if (segments.Count == 0)
+            {
+                logger.LogInformation(
+                    "Recorded a manual trigger for {Name}, but no live video buffer was on disk to cut a clip from - " +
+                    "the still image is on the event either way.",
+                    camera.Name);
+                return;
+            }
+
+            var clipPath = await clips.BuildClipAsync(
+                camera.Id,
+                segments,
+                pressedAt,
+                pressedAt.AddSeconds(-ManualClipPreRollSeconds),
+                pressedAt.AddSeconds(ManualClipPostRollSeconds),
+                CancellationToken.None);
+
+            if (clipPath is null) return;
+
+            await events.SetClipPathAsync(triggerId, clipPath, CancellationToken.None);
+            logger.LogInformation(
+                "Saved a {Seconds}s clip for {Name} from the record button.",
+                ManualClipPreRollSeconds + ManualClipPostRollSeconds, camera.Name);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not attach a clip to the manual trigger for camera {CameraId}", camera.Id);
+        }
     }
 
     // Same fixed-time comparison the main app's ApiKeyMiddleware uses - a key checked with an

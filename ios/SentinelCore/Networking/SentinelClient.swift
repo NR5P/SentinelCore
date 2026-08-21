@@ -122,6 +122,15 @@ final class SentinelClient {
     // Continuous-move semantics: the camera keeps moving at this velocity until ptzStop is
     // called - there's no "move by this much and stop automatically" in this mode, so the
     // joystick UI is expected to call ptzStop on release, not just ptzMove once.
+    // "Record this now" from the live view. The server turns it into the same kind of trigger a
+    // motion zone produces - same event, same Feed card - and attaches a clip covering the seconds
+    // either side of the press.
+    func recordNow(cameraId: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/cameras/\(cameraId.uuidString)/record", method: "POST", body: Optional<String>.none
+        )
+    }
+
     // Which live transport a tile actually landed on, and why. Logged by the server, not stored -
     // the question it answers ("was the phone on MSE or HLS at 9pm, and what pushed it down") is
     // asked of the log alongside the go2rtc and ffmpeg lines that explain it.

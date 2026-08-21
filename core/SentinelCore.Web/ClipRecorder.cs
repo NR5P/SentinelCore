@@ -98,8 +98,17 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
     // triggers extended has an end its anchor knows nothing about - see
     // TriggerZoneMonitor.StartOrExtendClip. anchoredAt only names the file, and stays the moment
     // of the trigger that opened the clip so the filename still sorts and reads as that event.
+    public Task<string?> BuildClipAsync(
+        Guid cameraId, DateTimeOffset anchoredAt, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
+        BuildClipAsync(cameraId, BufferedSegments(cameraId), anchoredAt, from, to, cancellationToken);
+
+    // Same clip build against a segment buffer somebody else owns. The manual record button uses
+    // this against the live HLS stream's segments: a camera being watched has ~20s of them on disk
+    // whether or not it has trigger zones, which is what lets that button reach back before the
+    // press on every camera rather than only on the ones running detection.
     public async Task<string?> BuildClipAsync(
-        Guid cameraId, DateTimeOffset anchoredAt, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken)
+        Guid cameraId, IReadOnlyList<(string Path, DateTimeOffset StartsAt)> available,
+        DateTimeOffset anchoredAt, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken)
     {
         // A segment runs until the next one starts. That matters more than it looks: the muxer can
         // only cut on a keyframe, so with -c copy the real segment length is the camera's GOP
@@ -110,7 +119,7 @@ public sealed class ClipRecorder(IConfiguration configuration, IHostEnvironment 
         // of five seconds before it, with nothing logged, because the rest of the window was still
         // covered. The last segment has no successor to measure against, so it falls back to the
         // nominal length.
-        var segments = SelectSegmentsCovering(BufferedSegments(cameraId), from, to);
+        var segments = SelectSegmentsCovering(available, from, to);
 
         if (segments.Count == 0)
         {

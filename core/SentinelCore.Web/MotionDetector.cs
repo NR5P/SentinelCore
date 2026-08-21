@@ -81,6 +81,15 @@ public sealed class MotionDetector
     // caller that did the natural thing and reused its buffer would have made `frame` and
     // `_previousFrame` the same array, so every diff would come out as zero and the camera would
     // silently never trigger again. Owning the copy makes that impossible to get wrong.
+    // Throws away the reference frame, so the next frame becomes the new one and produces no
+    // detection of its own (ProcessFrame returns null while there is nothing to compare against).
+    //
+    // This is what makes suspending detection safe rather than merely quiet. A PTZ camera that has
+    // been panned is looking at a different scene, and the first frame after detection resumes would
+    // otherwise be compared against the view from before the move - a whole-frame difference, and an
+    // instant trigger. Pausing without this just moves the false trigger to the moment you stop.
+    public void Rebaseline() => _previousFrame = null;
+
     public double[]? ProcessFrame(byte[] frame)
     {
         if (frame.Length != FrameSizeBytes)

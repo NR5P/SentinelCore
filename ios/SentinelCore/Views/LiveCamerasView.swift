@@ -262,6 +262,8 @@ struct LivePlayerView: View {
     @StateObject private var stream = LiveStreamPlayer(muted: false)
 
     @State private var zoom = DigitalZoomState()
+    @StateObject private var notice = NoticeState()
+    @State private var isRecording = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -296,22 +298,17 @@ struct LivePlayerView: View {
         // LiveVideoView), and a camera with audio would otherwise play into the room with no way
         // to stop it short of leaving the screen.
         .overlay(alignment: .topTrailing) {
-            Button {
-                stream.isMuted.toggle()
-            } label: {
-                Label(
-                    stream.isMuted ? "Unmute" : "Mute",
-                    systemImage: stream.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-                )
-                .labelStyle(.iconOnly)
-                .padding(8)
+            VStack(alignment: .trailing, spacing: 8) {
+                HStack(spacing: 8) {
+                    recordButton
+                    muteButton
+                }
+                if let text = notice.text {
+                    TransientNotice(text: text)
+                }
             }
-            .buttonStyle(.plain)
-            // The video behind it is arbitrary camera footage, so the control carries its own
-            // backdrop rather than trusting whatever it happens to sit on.
-            .background(.black.opacity(0.5), in: .circle)
-            .foregroundStyle(.white)
             .padding()
+            .animation(.easeOut(duration: 0.15), value: notice.text)
         }
         .overlay(alignment: .bottomLeading) {
             DigitalZoomControls(state: $zoom)
@@ -334,7 +331,62 @@ struct LivePlayerView: View {
             }
             stream.start(source, client: model.client)
         }
-        .onDisappear { stream.stop() }
+        .onDisappear {
+            stream.stop()
+            notice.cancel()
+        }
+    }
+
+    // Every camera gets this, not just the PTZ one: the moment worth keeping is just as likely on a
+    // fixed camera you happened to be looking at. The server turns it into an ordinary trigger, so
+    // what comes out the other end is a card in the Feed exactly like a motion event.
+    private var recordButton: some View {
+        Button {
+            record()
+        } label: {
+            Label("Record now", systemImage: isRecording ? "record.circle.fill" : "record.circle")
+                .labelStyle(.iconOnly)
+                .padding(8)
+        }
+        .buttonStyle(.plain)
+        .disabled(isRecording)
+        .background(.black.opacity(0.5), in: .circle)
+        .foregroundStyle(isRecording ? SentinelTheme.red : .white)
+        .accessibilityLabel("Record now")
+    }
+
+    private var muteButton: some View {
+            Button {
+                stream.isMuted.toggle()
+            } label: {
+                Label(
+                    stream.isMuted ? "Unmute" : "Mute",
+                    systemImage: stream.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+                )
+                .labelStyle(.iconOnly)
+                .padding(8)
+            }
+            .buttonStyle(.plain)
+            // The video behind it is arbitrary camera footage, so the control carries its own
+            // backdrop rather than trusting whatever it happens to sit on.
+            .background(.black.opacity(0.5), in: .circle)
+            .foregroundStyle(.white)
+    }
+
+    private func record() {
+        guard !isRecording else { return }
+        isRecording = true
+        let client = model.client
+        let id = camera.id
+        Task {
+            do {
+                try await client.recordNow(cameraId: id)
+                notice.show("Recording saved to the feed.")
+            } catch {
+                notice.show((error as? LocalizedError)?.errorDescription ?? "Could not record that.")
+            }
+            isRecording = false
+        }
     }
 
     private var streamRequest: LiveStreamRequest {
