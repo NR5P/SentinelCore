@@ -21,13 +21,16 @@ public class PtzTrackerTests
     // Only the bookkeeping - start/abort/rest - is exercised here; nothing in these cases lets the
     // loop reach the detector or the camera, which is why the stubs can be this thin.
     private static PtzTracker BuildTracker(PtzTrackingOptions options) =>
-        new(new UnusedDetector(),
+        BuildTracker(options, new UnusedDetector());
+
+    private static PtzTracker BuildTracker(PtzTrackingOptions options, IFastLocalDetector detector, string? contentRoot = null) =>
+        new(detector,
             new OnvifClient(new HttpClient()),
             new PtzHomeService(new OnvifClient(new HttpClient()), new PtzActivityTracker(),
                 NullLogger<PtzHomeService>.Instance),
             new PtzActivityTracker(),
             new ConfigurationBuilder().Build(),
-            new StubEnvironment(),
+            new StubEnvironment { ContentRootPath = contentRoot ?? Path.GetTempPath() },
             new StaticMonitor(options),
             NullLogger<PtzTracker>.Instance);
 
@@ -148,6 +151,79 @@ public class PtzTrackerTests
         tracker.Start(camera);
 
         Assert.False(tracker.IsTracking(camera.Id));
+    }
+
+    // The one that produced a core dump rather than a bug report.
+    //
+    // The tracking loop is a detached task, so host shutdown does not stop it - it keeps calling the
+    // detector while ffmpeg and go2rtc are drained, which takes around 25 seconds on the real box.
+    // The container then disposes PtzTracker and, straight afterwards, FastLocalDetector, whose
+    // Dispose frees the native ONNX session. A loop still inside session.Run() at that moment is
+    // reading freed memory from another thread: sentinelcore-web died with SIGSEGV on 2026-08-20 at
+    // 22:12:43, the only shutdown in its history that landed while a track was running.
+    //
+    // The detector is stubbed to block the way the real one does - a synchronous native call that
+    // ignores the cancellation token - because that is the whole reason cancelling is not enough on
+    // its own and the wait has to be real.
+    [Fact]
+    public async Task DisposeWaitsForATrackToLetGoOfTheDetectorBeforeAnythingCanFreeIt()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var root = Path.Combine(Path.GetTempPath(), $"ptz-tracker-{Guid.NewGuid():N}");
+        var camera = PtzCamera();
+        var frame = Path.Combine(root, "data", "trigger-images", camera.Id.ToString("N"));
+        Directory.CreateDirectory(frame);
+        // The smallest thing TriggerImagePaths.IsCompleteJpeg will accept, so the loop gets past
+        // reading a frame and actually reaches the detector.
+        await File.WriteAllBytesAsync(Path.Combine(frame, "_latest.jpg"), [0xFF, 0xD8, 0xFF, 0xD9, 0xFF, 0xD9], token);
+
+        var detector = new BlockingDetector();
+        try
+        {
+            var tracker = BuildTracker(new PtzTrackingOptions { Enabled = true }, detector, root);
+
+            tracker.Start(camera);
+            await detector.Entered.WaitAsync(TimeSpan.FromSeconds(10), token);
+
+            var disposed = Task.Run(tracker.Dispose, token);
+
+            // Cancellation cannot reach into a native inference, so this must still be running.
+            var raced = await Task.WhenAny(disposed, Task.Delay(TimeSpan.FromMilliseconds(300), token));
+            Assert.NotSame(disposed, raced);
+
+            detector.Release();
+            await disposed.WaitAsync(TimeSpan.FromSeconds(10), token);
+            Assert.False(tracker.IsTracking(camera.Id));
+        }
+        finally
+        {
+            detector.Release();
+            try { Directory.Delete(root, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    private sealed class BlockingDetector : IFastLocalDetector
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _release = new(false);
+
+        public Task Entered => _entered.Task;
+
+        public void Release() => _release.Set();
+
+        public Task<IReadOnlyList<FastLocalDetection>> DetectAsync(byte[] imageBytes, CropRegion? crop, CancellationToken cancellationToken)
+        {
+            _entered.TrySetResult();
+            // Blocks the calling thread and ignores the token, because InferenceSession.Run does
+            // both - which is the whole reason cancelling a track is not the same as it having
+            // stopped touching the detector.
+            _release.Wait(TimeSpan.FromSeconds(30));
+            return Task.FromResult<IReadOnlyList<FastLocalDetection>>([]);
+        }
+
+        public Task<bool> IsReadyAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public string ModelName => "blocking";
     }
 
     [Fact]
