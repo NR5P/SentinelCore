@@ -198,6 +198,12 @@ builder.Services.AddHostedService<Go2RtcWarmUpService>();
 builder.Services.AddHttpClient<OnvifClient>(client => client.Timeout = TimeSpan.FromSeconds(3));
 builder.Services.AddSingleton<CameraDiscoveryService>();
 builder.Services.AddSingleton<PtzActivityTracker>();
+// Only ever constructed lazily by PtzTracker, and only when tracking is switched on - so a default
+// install never loads a second copy of the ~100MB detection model into this process.
+builder.Services.AddHttpClient<IFastLocalDetector, FastLocalDetector>();
+builder.Services.Configure<FastLocalOptions>(builder.Configuration.GetSection(FastLocalOptions.SectionName));
+builder.Services.Configure<PtzTrackingOptions>(builder.Configuration.GetSection(PtzTrackingOptions.SectionName));
+builder.Services.AddSingleton<PtzTracker>();
 builder.Services.AddSingleton<PtzHomeService>();
 builder.Services.Configure<PtzHomingOptions>(builder.Configuration.GetSection(PtzHomingOptions.SectionName));
 builder.Services.AddHostedService<PtzHomingWorker>();

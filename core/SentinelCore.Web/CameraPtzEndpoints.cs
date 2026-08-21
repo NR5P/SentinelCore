@@ -19,15 +19,18 @@ public static class CameraPtzEndpoints
     {
         app.MapPost("/api/cameras/{id:guid}/ptz/move", async (
             Guid id, PtzMoveRequestDto dto, ICameraStore store, OnvifClient onvif,
-            PtzActivityTracker activity, CancellationToken ct) =>
+            PtzActivityTracker activity, PtzTracker tracking, CancellationToken ct) =>
         {
             var (camera, error) = await ResolvePtzCameraAsync(id, store, ct);
             if (error is not null) return error;
 
+            // Whoever is holding the button outranks anything following a subject on its own.
+            tracking.AbortForManualControl(camera!.Id);
+
             // Before the command, not after: detection has to be suspended by the time the camera
             // starts moving, and a slow ONVIF round trip would otherwise leave a window of
             // full-frame "motion" that fires a trigger.
-            activity.RecordMoveStarted(camera!.Id);
+            activity.RecordMoveStarted(camera.Id);
 
             var ok = await onvif.ContinuousMoveAsync(
                 camera.OnvifPtzServiceUrl!, camera.OnvifProfileToken!,
@@ -66,12 +69,13 @@ public static class CameraPtzEndpoints
         // camera: re-adding the camera here, or pointing a second install at it, finds the same
         // home, and anyone looking at the camera's own preset list can see what put it there.
         app.MapPost("/api/cameras/{id:guid}/ptz/home", async (
-            Guid id, ICameraStore store, PtzHomeService home, CancellationToken ct) =>
+            Guid id, ICameraStore store, PtzHomeService home, PtzTracker tracking, CancellationToken ct) =>
         {
             var (camera, error) = await ResolvePtzCameraAsync(id, store, ct);
             if (error is not null) return error;
 
-            return await home.GoHomeAsync(camera!, ct) switch
+            tracking.AbortForManualControl(camera!.Id);
+            return await home.GoHomeAsync(camera, ct) switch
             {
                 PtzHomeService.HomeOutcome.Moved => Results.Ok(new { success = true }),
                 PtzHomeService.HomeOutcome.NoHomeSaved => Results.Problem(

@@ -22,6 +22,7 @@ public sealed class TriggerZoneMonitor(
     AppSettingsFile mainAppSettings,
     CameraSource cameraSource,
     PtzActivityTracker ptzActivity,
+    PtzTracker ptzTracking,
     IConfiguration configuration,
     IHostEnvironment environment,
     ILogger<TriggerZoneMonitor> logger) : BackgroundService
@@ -797,6 +798,12 @@ public sealed class TriggerZoneMonitor(
 
             if (session.Config.RecordClips)
                 StartOrExtendClip(camera, trigger, session.Config, now);
+
+                // Something is in the zone, so there is something to follow. No-op unless PTZ
+                // tracking is switched on, which it is not by default. Deliberately after the
+                // trigger has been recorded: the still and the clip describe the camera's home
+                // view, which is the frame the zone was drawn against.
+                ptzTracking.Start(camera);
 
             // Fast (file reads/writes and SQLite inserts, no network/wait), so it's fine to await
             // inline here like the rest of this method - only each companion's actual clip build

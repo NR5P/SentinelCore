@@ -55,6 +55,12 @@ public sealed class PtzActivityTracker
 
     public void RecordHomeReached(Guid cameraId) => Update(cameraId, Position.Home, isMoving: false);
 
+    // PtzTracker is following something. Position-wise this is no different from any other
+    // away-from-home state, but it has to keep the idle clock fresh: a track that holds a subject
+    // centred issues no move commands at all, and without this the homing worker would decide the
+    // camera had been abandoned and drive it home mid-track.
+    public void RecordTrackingTick(Guid cameraId) => Update(cameraId, Position.Away, isMoving: false);
+
     // A home command the camera refused. Position is whatever it was; what matters is clearing the
     // moving flag so a failed home doesn't wedge detection off forever.
     public void RecordHomingFailed(Guid cameraId)
