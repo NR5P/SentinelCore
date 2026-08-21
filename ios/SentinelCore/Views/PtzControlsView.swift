@@ -13,6 +13,15 @@ struct PtzControlsView: View {
 
     private static let speed = 0.5
 
+    // How long the Home button has to be held before it means "save this position" rather than
+    // "go to the saved one". Long enough not to fire on a normal press, short enough to discover
+    // by accident - which matters, because saving home is the only way to make the button work at
+    // all on a camera with no home position of its own, and nothing else in the UI mentions it.
+    private static let saveHomeHold: Duration = .milliseconds(1200)
+
+    // How long the outcome of a Home press stays on screen.
+    private static let noticeDuration: Duration = .seconds(4)
+
     // Commands are queued rather than fired independently. Two unstructured Tasks - one per
     // press, one per release - are two HTTP requests with no ordering between them, and on a
     // quick tap they are in flight at the same time. Whenever the stop won that race the camera
@@ -21,7 +30,33 @@ struct PtzControlsView: View {
     // press (where the release lands long after the move) and frequent on a quick tap.
     @StateObject private var commands = PtzCommandQueue()
 
+    // What the last Home press did. PTZ is otherwise fire-and-forget on purpose - a move that
+    // didn't land is obvious from the picture - but Home is the one command whose failure looks
+    // exactly like success: the picture doesn't change either way. It used to swallow the error
+    // outright, which is how a button that the camera rejects every time reads as doing nothing.
+    @State private var notice: String?
+    @State private var noticeTask: Task<Void, Never>?
+    @State private var homeHold: Task<Void, Never>?
+    @State private var homeSaved = false
+
     var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            if let notice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+                    .frame(maxWidth: 260, alignment: .trailing)
+                    .transition(.opacity)
+            }
+            controls
+        }
+        .animation(.easeOut(duration: 0.15), value: notice)
+    }
+
+    private var controls: some View {
         HStack(alignment: .bottom, spacing: 6) {
             padGrid
             zoomStack
@@ -31,7 +66,11 @@ struct PtzControlsView: View {
         // Two backstops for a press whose release never arrives as a release. Sending a stop when
         // nothing is moving is harmless - Stop on an idle camera is a no-op - so neither of these
         // needs to know whether a button is actually held.
-        .onDisappear { stop() }
+        .onDisappear {
+            stop()
+            homeHold?.cancel()
+            noticeTask?.cancel()
+        }
         .onChange(of: scenePhase) { _, phase in
             // Backgrounding mid-press: the gesture is torn down with the view hierarchy, and a
             // camera left turning while the phone is in a pocket is the worst version of this bug.
@@ -57,12 +96,11 @@ struct PtzControlsView: View {
                         stop()
                     }
                 } else {
-                    PtzButton(systemImage: "house.fill", tint: SentinelTheme.cyan) {
-                        // Home is a one-shot goto, not a continuous move, so it needs no release -
-                        // but it still goes through the queue so it can't overtake a stop.
-                        let client = model.client
-                        commands.enqueue { try? await client.ptzHome(cameraId: cameraId) }
-                    } onRelease: {}
+                    PtzButton(systemImage: homeSaved ? "house.circle.fill" : "house.fill", tint: SentinelTheme.cyan) {
+                        beginHomePress()
+                    } onRelease: {
+                        endHomePress()
+                    }
                 }
             }
         }
@@ -80,6 +118,70 @@ struct PtzControlsView: View {
             } onRelease: {
                 stop()
             }
+        }
+    }
+
+    // Home is a one-shot goto, not a continuous move, so it has no stop to pair with - but the
+    // press still has to be held open, because holding it past saveHomeHold means the opposite
+    // thing. The hold fires on its own timer rather than on release, so the camera saves the
+    // moment the threshold passes and the finger coming up afterwards is not another command.
+    private func beginHomePress() {
+        homeHold?.cancel()
+        homeSaved = false
+        homeHold = Task {
+            try? await Task.sleep(for: Self.saveHomeHold)
+            guard !Task.isCancelled else { return }
+            homeSaved = true
+            saveHome()
+        }
+    }
+
+    private func endHomePress() {
+        let didSave = homeSaved
+        homeHold?.cancel()
+        homeHold = nil
+        homeSaved = false
+        guard !didSave else { return }
+        goHome()
+    }
+
+    private func goHome() {
+        let client = model.client
+        let id = cameraId
+        // Through the queue like everything else, so it can't overtake a stop.
+        commands.enqueue {
+            do {
+                try await client.ptzHome(cameraId: id)
+            } catch {
+                await MainActor.run { show(describe(error)) }
+            }
+        }
+    }
+
+    private func saveHome() {
+        let client = model.client
+        let id = cameraId
+        commands.enqueue {
+            do {
+                try await client.ptzSaveHome(cameraId: id)
+                await MainActor.run { show("Saved this view as home.") }
+            } catch {
+                await MainActor.run { show(describe(error)) }
+            }
+        }
+    }
+
+    private func describe(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? "The camera did not accept that."
+    }
+
+    private func show(_ message: String) {
+        notice = message
+        noticeTask?.cancel()
+        noticeTask = Task {
+            try? await Task.sleep(for: Self.noticeDuration)
+            guard !Task.isCancelled else { return }
+            notice = nil
         }
     }
 

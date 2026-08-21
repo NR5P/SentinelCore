@@ -3638,6 +3638,125 @@ public sealed class BasicTests
         Assert.Empty(envelope.Descendants(wsse + "UsernameToken"));
     }
 
+    // --- PTZ presets, which are what "home" is actually built out of ---------------------------
+    //
+    // Plenty of PTZ hardware has no home position: the camera this was written against reports
+    // HomeSupported=false and answers GotoHomePosition with a SOAP Fault, so the Home button sent
+    // a command that could never work. Home is a named preset first and the native home position
+    // only as a fallback, which makes the preset parsing below load-bearing.
+
+    private const string PresetsResponse = """
+        <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+                    xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"
+                    xmlns:tt="http://www.onvif.org/ver10/schema">
+          <s:Body>
+            <tptz:GetPresetsResponse>
+              <tptz:Preset token="000"><tt:Name>pos1</tt:Name></tptz:Preset>
+              <tptz:Preset token="007"><tt:Name>SentinelCore Home</tt:Name></tptz:Preset>
+              <tptz:Preset><tt:Name>nameless slot with no token</tt:Name></tptz:Preset>
+            </tptz:GetPresetsResponse>
+          </s:Body>
+        </s:Envelope>
+        """;
+
+    [Fact]
+    public async Task OnvifClient_GetPresets_ReadsTheTokenFromTheAttributeNotAnElement()
+    {
+        var onvif = new OnvifClient(new HttpClient(new CannedSoapHandler(PresetsResponse)));
+
+        var presets = await onvif.GetPresetsAsync(
+            "http://camera/onvif/ptz_service", "000", "admin", "secret", TestContext.Current.CancellationToken);
+
+        // The token is an attribute on <Preset>, not a child element - reading it as an element
+        // yields an empty token, and GotoPreset against an empty token is a silent no-op.
+        Assert.Equal(2, presets.Count);
+        Assert.Equal("000", presets[0].Token);
+        Assert.Equal("SentinelCore Home", presets[1].Name);
+        Assert.Equal("007", presets[1].Token);
+
+        // A slot with no token is dropped rather than returned with an empty one, so the caller
+        // can't be handed something it has no way to go back to.
+        Assert.DoesNotContain(presets, preset => preset.Token.Length == 0);
+    }
+
+    [Fact]
+    public async Task OnvifClient_SetPreset_ReusesTheSlotItIsGivenAndReportsTheOneItGetsBack()
+    {
+        const string response = """
+            <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
+              <s:Body><tptz:SetPresetResponse><tptz:PresetToken>007</tptz:PresetToken></tptz:SetPresetResponse></s:Body>
+            </s:Envelope>
+            """;
+        var handler = new CannedSoapHandler(response);
+        var onvif = new OnvifClient(new HttpClient(handler));
+
+        var token = await onvif.SetPresetAsync(
+            "http://camera/onvif/ptz_service", "000", "SentinelCore Home", existingPresetToken: "007",
+            "admin", "secret", TestContext.Current.CancellationToken);
+
+        Assert.Equal("007", token);
+        // Passing the existing token is what stops a repeatedly-pressed "save home" walking
+        // through the camera's finite preset list - the slot count is 64 on this hardware.
+        Assert.Contains("<tptz:PresetToken>007</tptz:PresetToken>", handler.LastRequestBody);
+        Assert.Contains("SentinelCore Home", handler.LastRequestBody);
+    }
+
+    [Fact]
+    public async Task OnvifClient_SetPreset_KeepsTheKnownTokenWhenTheCameraDoesNotEchoOneBack()
+    {
+        const string terse = """
+            <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl">
+              <s:Body><tptz:SetPresetResponse/></s:Body>
+            </s:Envelope>
+            """;
+        var onvif = new OnvifClient(new HttpClient(new CannedSoapHandler(terse)));
+
+        var token = await onvif.SetPresetAsync(
+            "http://camera/onvif/ptz_service", "000", "SentinelCore Home", existingPresetToken: "007",
+            "admin", "secret", TestContext.Current.CancellationToken);
+
+        Assert.Equal("007", token);
+    }
+
+    [Fact]
+    public async Task OnvifClient_SetPreset_TreatsASoapFaultAsFailureRatherThanAnEmptyToken()
+    {
+        // A well-formed 200 can still carry a Fault, which is exactly how this camera refuses
+        // GotoHomePosition - so a Fault must not be read as "saved, token unknown".
+        const string fault = """
+            <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
+              <s:Body><s:Fault><s:Reason><s:Text>ter:ActionNotSupported</s:Text></s:Reason></s:Fault></s:Body>
+            </s:Envelope>
+            """;
+        var onvif = new OnvifClient(new HttpClient(new CannedSoapHandler(fault)));
+
+        var token = await onvif.SetPresetAsync(
+            "http://camera/onvif/ptz_service", "000", "SentinelCore Home", existingPresetToken: null,
+            "admin", "secret", TestContext.Current.CancellationToken);
+
+        Assert.Null(token);
+    }
+
+    private sealed class CannedSoapHandler(string response) : HttpMessageHandler
+    {
+        public string LastRequestBody { get; private set; } = string.Empty;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequestBody = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response, System.Text.Encoding.UTF8, "application/soap+xml")
+            };
+        }
+    }
+
     // --- Camera discovery: WS-Discovery probe/parse --------------------------------------------
 
     [Fact]

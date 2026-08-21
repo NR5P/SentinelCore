@@ -155,6 +155,15 @@ final class SentinelClient {
         )
     }
 
+    // Saves wherever the camera is pointing right now as its home position. Separate from
+    // ptzHome for the same reason the server splits POST from PUT: one reads the stored position,
+    // the other replaces it.
+    func ptzSaveHome(cameraId: UUID) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/cameras/\(cameraId.uuidString)/ptz/home", method: "PUT", body: Optional<String>.none
+        )
+    }
+
     func fetchScanInterfaces() async throws -> [ScanInterface] {
         try await get("/api/cameras/discovery/interfaces")
     }
@@ -715,7 +724,7 @@ final class SentinelClient {
         model.log("\(method) \(http.statusCode) in \(elapsed(from: started))")
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? JSONDecoder.sentinel.decode(APIError.self, from: data))
-                .flatMap { $0.error ?? $0.errors?.joined(separator: "\n") }
+                .flatMap { $0.error ?? $0.errors?.joined(separator: "\n") ?? $0.detail }
             if http.statusCode == 401 { throw ClientError.authenticationRequired }
             throw ClientError.server(status: http.statusCode, message: message)
         }

@@ -43,16 +43,77 @@ public static class CameraPtzEndpoints
                       : Results.Problem("The camera did not respond to the stop command.", statusCode: 502);
         }).RequireAuthorization("AdminOnly");
 
+        // "Home" is a saved preset first and the camera's own home position second, in that order,
+        // because plenty of PTZ hardware has no home position at all. The camera this was built
+        // against reports HomeSupported=false and answers GotoHomePosition with a SOAP Fault - so
+        // the button sent a command that could never work, and PtzControlsView discarded the error,
+        // which is why it read as doing nothing rather than as being unsupported.
+        //
+        // Deliberately keyed on the preset's *name* rather than a token in our database. It costs
+        // one extra round trip per press, and in exchange the home position lives entirely on the
+        // camera: re-adding the camera here, or pointing a second install at it, finds the same
+        // home, and anyone looking at the camera's own preset list can see what put it there.
         app.MapPost("/api/cameras/{id:guid}/ptz/home", async (
             Guid id, ICameraStore store, OnvifClient onvif, CancellationToken ct) =>
         {
             var (camera, error) = await ResolvePtzCameraAsync(id, store, ct);
             if (error is not null) return error;
 
-            var ok = await onvif.GotoHomePositionAsync(camera!.OnvifPtzServiceUrl!, camera.OnvifProfileToken!, camera.Username, camera.Password, ct);
-            return ok ? Results.Ok(new { success = true })
-                      : Results.Problem("The camera did not respond to the home command.", statusCode: 502);
+            var saved = await FindHomePresetAsync(camera!, onvif, ct);
+            if (saved is not null)
+            {
+                var went = await onvif.GotoPresetAsync(
+                    camera!.OnvifPtzServiceUrl!, camera.OnvifProfileToken!, saved.Token,
+                    camera.Username, camera.Password, ct);
+                return went ? Results.Ok(new { success = true })
+                            : Results.Problem("The camera did not move to the saved home position.", statusCode: 502);
+            }
+
+            if (await onvif.GotoHomePositionAsync(
+                    camera!.OnvifPtzServiceUrl!, camera.OnvifProfileToken!, camera.Username, camera.Password, ct))
+            {
+                return Results.Ok(new { success = true });
+            }
+
+            // The one failure a user can actually do something about, so it says what.
+            return Results.Problem(
+                "This camera has no home position. Point it where you want home to be, then press and hold Home to save it.",
+                statusCode: 409);
         }).RequireAuthorization("AdminOnly");
+
+        // Save wherever the camera is pointing right now as home. PUT rather than a second POST
+        // path: it is idempotent and it overwrites one named slot, which is exactly what it does.
+        app.MapPut("/api/cameras/{id:guid}/ptz/home", async (
+            Guid id, ICameraStore store, OnvifClient onvif, CancellationToken ct) =>
+        {
+            var (camera, error) = await ResolvePtzCameraAsync(id, store, ct);
+            if (error is not null) return error;
+
+            // Reuse the slot if home has been saved before, so pressing this repeatedly doesn't
+            // walk through the camera's finite preset list.
+            var existing = await FindHomePresetAsync(camera!, onvif, ct);
+            var token = await onvif.SetPresetAsync(
+                camera!.OnvifPtzServiceUrl!, camera.OnvifProfileToken!, HomePresetName, existing?.Token,
+                camera.Username, camera.Password, ct);
+
+            return token is not null
+                ? Results.Ok(new { success = true })
+                : Results.Problem("The camera would not save this position as a preset.", statusCode: 502);
+        }).RequireAuthorization("AdminOnly");
+    }
+
+    // What the app's home position is called in the camera's own preset list. Matched
+    // case-insensitively so a camera that normalises the name it was given still resolves.
+    private const string HomePresetName = "SentinelCore Home";
+
+    private static async Task<OnvifClient.OnvifPreset?> FindHomePresetAsync(
+        Camera camera, OnvifClient onvif, CancellationToken ct)
+    {
+        var presets = await onvif.GetPresetsAsync(
+            camera.OnvifPtzServiceUrl!, camera.OnvifProfileToken!, camera.Username, camera.Password, ct);
+
+        return presets.FirstOrDefault(
+            preset => string.Equals(preset.Name, HomePresetName, StringComparison.OrdinalIgnoreCase));
     }
 
     // Shared validation for all three PTZ commands: camera has to exist, have PTZ turned on, and

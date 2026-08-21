@@ -49,8 +49,9 @@ public static class OnvifUsernameToken
 
 // Minimal ONVIF SOAP client: just the operations needed to turn a discovered device address into
 // a real, working RTSP stream URL (GetDeviceInformation/GetCapabilities/GetProfiles/GetStreamUri),
-// plus PTZ control (GetCapabilities again for the PTZ service, ContinuousMove/Stop/
-// GotoHomePosition) for cameras that support it. Hand-rolled rather than a generated WSDL client -
+// plus PTZ control (GetCapabilities again for the PTZ service, ContinuousMove/Stop, and the
+// preset operations that stand in for a home position) for cameras that support it. Hand-rolled
+// rather than a generated WSDL client -
 // the full ONVIF service surface is enormous, and this app needs a handful of operations out of it.
 public sealed class OnvifClient(HttpClient httpClient)
 {
@@ -153,6 +154,63 @@ public sealed class OnvifClient(HttpClient httpClient)
             new XElement(Tptz + "ProfileToken", profileToken),
             new XElement(Tptz + "PanTilt", "true"),
             new XElement(Tptz + "Zoom", "true"));
+
+        return await SendCommandAsync(ptzServiceUrl, body, username, password, cancellationToken);
+    }
+
+    public sealed record OnvifPreset(string Token, string Name);
+
+    // A preset is a named position the camera stores itself, and on hardware with no home position
+    // it is what "home" has to be built out of. The token is an attribute rather than an element -
+    // <tptz:Preset token="000"><tt:Name>...</tt:Name></tptz:Preset> - which is easy to miss.
+    public async Task<IReadOnlyList<OnvifPreset>> GetPresetsAsync(
+        string ptzServiceUrl, string profileToken, string? username, string? password, CancellationToken cancellationToken)
+    {
+        var body = new XElement(Tptz + "GetPresets", new XElement(Tptz + "ProfileToken", profileToken));
+        var response = await SendAsync(ptzServiceUrl, body, username, password, cancellationToken);
+        if (response is null) return [];
+
+        return response.Descendants(Tptz + "Preset")
+            .Select(preset => new OnvifPreset(
+                preset.Attribute("token")?.Value ?? string.Empty,
+                preset.Element(Tt + "Name")?.Value ?? string.Empty))
+            .Where(preset => preset.Token.Length > 0)
+            .ToList();
+    }
+
+    // Stores wherever the camera is pointing right now, and returns the token the camera filed it
+    // under. Passing an existing token overwrites that slot instead of consuming a new one, which
+    // matters because the slots are finite (64 on the camera this was written against) and a
+    // "save home" the user presses repeatedly would otherwise fill them all.
+    //
+    // Returns null on failure, and empty-string tokens are treated as failure too: a camera that
+    // answers without naming the slot leaves the caller nothing it could go back to.
+    public async Task<string?> SetPresetAsync(
+        string ptzServiceUrl, string profileToken, string presetName, string? existingPresetToken,
+        string? username, string? password, CancellationToken cancellationToken)
+    {
+        var body = new XElement(Tptz + "SetPreset",
+            new XElement(Tptz + "ProfileToken", profileToken),
+            new XElement(Tptz + "PresetName", presetName));
+        if (!string.IsNullOrWhiteSpace(existingPresetToken))
+            body.Add(new XElement(Tptz + "PresetToken", existingPresetToken));
+
+        var response = await SendAsync(ptzServiceUrl, body, username, password, cancellationToken);
+        if (response is null || response.Descendants(Soap + "Fault").Any()) return null;
+
+        var token = response.Descendants(Tptz + "PresetToken").FirstOrDefault()?.Value;
+        // Some cameras answer a token-reusing SetPreset without echoing the token back; the one
+        // that was passed in is still the right answer.
+        return string.IsNullOrWhiteSpace(token) ? existingPresetToken : token;
+    }
+
+    public async Task<bool> GotoPresetAsync(
+        string ptzServiceUrl, string profileToken, string presetToken,
+        string? username, string? password, CancellationToken cancellationToken)
+    {
+        var body = new XElement(Tptz + "GotoPreset",
+            new XElement(Tptz + "ProfileToken", profileToken),
+            new XElement(Tptz + "PresetToken", presetToken));
 
         return await SendCommandAsync(ptzServiceUrl, body, username, password, cancellationToken);
     }

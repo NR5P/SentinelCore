@@ -282,9 +282,15 @@ struct HealthResponse: Codable {
     let timestamp: Date?
 }
 
+// The server answers a bad request two different ways: its own {error}/{errors} shape from the
+// validation paths, and ASP.NET's RFC 7807 ProblemDetails from Results.Problem, whose message
+// lives in `detail`. Only the first two were read, so every Results.Problem in the app surfaced as
+// a bare "Server request failed (HTTP 502)" with the sentence explaining what to do about it
+// thrown away.
 struct APIError: Codable {
     let error: String?
     let errors: [String]?
+    let detail: String?
 }
 
 struct LoginBody: Encodable {
