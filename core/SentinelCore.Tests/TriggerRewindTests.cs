@@ -217,18 +217,32 @@ public sealed class TriggerRewindTests
         Assert.DoesNotContain("concat", args);
     }
 
+    // mjpeg refuses a frame that is not full-range - "Non full-range YUV is non-standard" - and
+    // then never opens the encoder, so ffmpeg exits 234 having written nothing and the trigger
+    // falls back to a live snapshot taken seconds after the moment that mattered. Whether that
+    // happens is decided by the range the decoded frame carries, which is the camera's SPS and not
+    // anything this process controls, so it presents as ~1% of fetches failing for no local reason.
+    //
+    // A yuvj pixel format is full-range by definition, so naming it means the conversion always
+    // happens and the refusal has nothing to fire on. It is inert otherwise: yuvj420p is what the
+    // negotiation already picked on all 90 healthy fetches this was measured against, byte for byte.
+    [Fact]
+    public void BuildExtractArguments_PinsTheJpegToAFullRangePixelFormat()
+    {
+        var args = TriggerRewind.BuildExtractArguments("/tmp/seg_0.ts", 1.5, "/tmp/out.jpg");
+
+        Assert.Equal("yuvj420p", args[args.IndexOf("-pix_fmt") + 1]);
+
+        // An output option, so it has to sit after -i - in front it would be read as a demuxer
+        // hint and leave the encoder negotiating exactly as freely as before.
+        Assert.True(args.IndexOf("-pix_fmt") > args.IndexOf("-i"), "-pix_fmt must come after -i to reach the encoder");
+    }
+
     // -threads is per-context and lands in whichever context it precedes, so one copy throttles
     // half the job: before -i it reaches the h264 decoder, after it the mjpeg encoder. Only the
     // decoder was capped for a long time, leaving the encoder on ffmpeg's one-thread-per-core
     // default - nine mjpeg contexts to write one JPEG on an eight-core box, on the machine whose
-    // spare CPU keeps the detection loop live.
-    //
-    // The correctness half matters more than the CPU. Multi-threaded encoding clones the encoder
-    // context per worker, and the clone does not reliably inherit the full-range flag the
-    // filtergraph negotiated, so mjpeg rejects it ("Non full-range YUV is non-standard") and ffmpeg
-    // exits 234. Measured 6 times in 493 fetches over the 24h to 2026-08-20, every one from a
-    // cloned context - each costing a trigger the rewound frame and falling back to a live snapshot
-    // taken seconds late, which is the exact failure this file exists to prevent.
+    // spare CPU keeps the detection loop live. User CPU over 20 runs: 10.12s to 8.57s.
     [Fact]
     public void BuildExtractArguments_CapsThreadsOnBothTheDecoderAndTheEncoder()
     {

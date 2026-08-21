@@ -379,6 +379,17 @@ public sealed class TriggerZoneMonitor(
             "-",
             "-map", $"{mainInput}:v:0",
             "-vf", $"fps={snapshotFps}",
+            // Naming the JPEG's pixel format matters far more here than on a one-shot grab, and it
+            // is not about the picture. mjpeg refuses a frame that is not full-range outright, and
+            // when it does the encoder never opens - which fails THIS WHOLE PROCESS, taking
+            // detection and the clip-segment buffer down with the snapshot, on a camera that was
+            // working a frame earlier. The range comes from the SPS the camera emits, so a stream
+            // that starts signalling limited range after re-initialising its encoder (a day/night
+            // switch will do it) is enough. A yuvj format is full-range by definition, so the
+            // conversion always happens and there is nothing left to refuse. Verified against the
+            // real two-output command shape: forced to limited range without this flag, ffmpeg
+            // exits 234 and writes neither output; with it, both are written unchanged.
+            "-pix_fmt", "yuvj420p",
             "-update", "1",
             "-y", LatestSnapshotPath(camera.Id)
         ]);
@@ -799,11 +810,14 @@ public sealed class TriggerZoneMonitor(
             if (session.Config.RecordClips)
                 StartOrExtendClip(camera, trigger, session.Config, now);
 
-                // Something is in the zone, so there is something to follow. No-op unless PTZ
-                // tracking is switched on, which it is not by default. Deliberately after the
-                // trigger has been recorded: the still and the clip describe the camera's home
-                // view, which is the frame the zone was drawn against.
-                ptzTracking.Start(camera);
+            // Something is in the zone, so there is something to follow. No-op unless PTZ tracking
+            // is switched on, which it is not by default. Deliberately after the trigger has been
+            // recorded: the still and the clip describe the camera's home view, which is the frame
+            // the zone was drawn against.
+            //
+            // Not part of the branch above, despite once being indented as though it were: whether
+            // to follow a subject has nothing to do with whether clips are being recorded.
+            ptzTracking.Start(camera);
 
             // Fast (file reads/writes and SQLite inserts, no network/wait), so it's fine to await
             // inline here like the rest of this method - only each companion's actual clip build

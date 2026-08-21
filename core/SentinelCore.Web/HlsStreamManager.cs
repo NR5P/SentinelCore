@@ -336,14 +336,6 @@ public sealed class HlsStreamManager : IDisposable
         return path;
     }
 
-    // Poster frame for a camera that already has a warm session - ffmpeg overwrites this file
-    // every few seconds as a side output of the same process (see BuildFfmpegArguments), so
-    // reading it is just a file read, not another camera round-trip. Null if there's no running
-    // session or it hasn't written a first frame yet; callers should fall back to
-    // CaptureSnapshotAsync in that case.
-    // Any warm session's poster frame will do - both renditions show the same scene, and a tile
-    // covered by an 896x672 still while its video starts is no worse off than one covered by a
-    // 2560x1920 one. Main first only because it is the likelier one to exist.
     // The live stream's segments currently on disk, oldest first - a rolling window about
     // hls_list_size seconds wide (see BuildFfmpegArguments), kept for any camera somebody is
     // watching. The manual record button builds its clip out of these.
@@ -377,6 +369,15 @@ public sealed class HlsStreamManager : IDisposable
         return [];
     }
 
+    // Poster frame for a camera that already has a warm session - ffmpeg overwrites this file
+    // every few seconds as a side output of the same process (see BuildFfmpegArguments), so
+    // reading it is just a file read, not another camera round-trip. Null if there's no running
+    // session or it hasn't written a first frame yet; callers should fall back to
+    // CaptureSnapshotAsync in that case.
+    //
+    // Any warm session's poster frame will do - both renditions show the same scene, and a tile
+    // covered by an 896x672 still while its video starts is no worse off than one covered by a
+    // 2560x1920 one. Main first only because it is the likelier one to exist.
     public string? GetThumbnailPath(Guid cameraId)
     {
         foreach (var quality in new[] { StreamQuality.Main, StreamQuality.Sub })
@@ -627,6 +628,12 @@ public sealed class HlsStreamManager : IDisposable
         args.AddRange([
             "-map", "0:v:0",
             "-vf", "fps=1/3,scale=480:-2",
+            // Same reasoning as TriggerZoneMonitor's snapshot output: mjpeg refuses a frame that is
+            // not full-range, and the refusal kills the process rather than the output - so a
+            // camera that starts signalling limited range would lose its live stream, not just its
+            // poster frame. yuvj420p is full-range by definition and is already what the format
+            // negotiation picks here anyway; saying so removes the failure rather than the picture.
+            "-pix_fmt", "yuvj420p",
             "-update", "1",
             "-y",
             Path.Combine(outputDir, ThumbnailFileName)
@@ -678,7 +685,11 @@ public sealed class HlsStreamManager : IDisposable
         var snapshotArgs = new List<string>();
         if (IsRtspUrl(sourceUrl))
             snapshotArgs.AddRange(["-rtsp_transport", "tcp"]);
-        snapshotArgs.AddRange(["-i", sourceUrl, "-frames:v", "1", "-y", tempPath]);
+        // -pix_fmt yuvj420p for the same reason as every other JPEG this app writes: mjpeg refuses a
+        // frame that is not full-range and exits without an image. This is the fallback a trigger
+        // falls back TO when the rewind can't produce a frame, so a failure here is a trigger with
+        // no picture at all.
+        snapshotArgs.AddRange(["-i", sourceUrl, "-frames:v", "1", "-pix_fmt", "yuvj420p", "-y", tempPath]);
         foreach (var arg in snapshotArgs)
             psi.ArgumentList.Add(arg);
 
