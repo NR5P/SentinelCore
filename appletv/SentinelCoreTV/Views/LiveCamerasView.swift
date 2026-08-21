@@ -87,7 +87,7 @@ private struct CameraCard: View {
 
 private struct LiveStreamRequest: Hashable {
     let isActive: Bool
-    let url: URL?
+    let source: LiveStreamSource?
 }
 
 private struct LiveCameraPreview: View {
@@ -97,6 +97,7 @@ private struct LiveCameraPreview: View {
     private static let teardownGrace: Duration = .seconds(90)
 
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     let camera: Camera
     let isActive: Bool
     @StateObject private var stream = LiveStreamPlayer(muted: true)
@@ -113,7 +114,7 @@ private struct LiveCameraPreview: View {
                 } placeholder: { Color.clear }
                 .opacity(stream.isVideoReady ? 0 : 1)
             }
-            VideoPlayer(player: stream.player)
+            LiveVideoView(stream: stream)
                 .allowsHitTesting(false)
                 .opacity(stream.isVideoReady ? 1 : 0)
             LiveStatusChip(isVideoReady: stream.isVideoReady)
@@ -125,7 +126,7 @@ private struct LiveCameraPreview: View {
         .task(id: streamRequest) {
             let request = streamRequest
             if request.isActive {
-                if let url = request.url { stream.start(url: url) }
+                if let source = request.source { stream.start(source, client: model.client) }
             } else {
                 stream.pause()
                 do {
@@ -150,8 +151,23 @@ private struct LiveCameraPreview: View {
         model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/sub/stream.m3u8")
     }
 
+    // The same low rendition, over the transport that isn't seconds behind. A tile is muted and
+    // has no way not to be, so it never asks for audio.
+    private var mseURL: URL? {
+        model.client.webSocketURL(path: "/api/cameras/\(camera.id.uuidString)/mse/sub")
+    }
+
+    // Backgrounded counts as inactive, which the tab selection alone never noticed. An Apple TV
+    // that has been put to sleep can't decode, so the socket would keep being fed frames nothing
+    // was drawing until the watchdog wrote the whole tier off.
+    private var isStreaming: Bool { isActive && scenePhase != .background }
+
     private var streamRequest: LiveStreamRequest {
-        LiveStreamRequest(isActive: isActive, url: streamURL)
+        guard let streamURL else { return LiveStreamRequest(isActive: isStreaming, source: nil) }
+        return LiveStreamRequest(
+            isActive: isStreaming,
+            source: LiveStreamSource(
+                cameraId: camera.id, mse: mseURL, hls: streamURL, wantsAudio: false))
     }
 }
 
@@ -169,6 +185,7 @@ private struct LiveStatusChip: View {
 
 struct LivePlayerView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     let camera: Camera
     @StateObject private var stream = LiveStreamPlayer(muted: false)
 
@@ -181,7 +198,7 @@ struct LivePlayerView: View {
                 } placeholder: { Color.clear }
                 .opacity(stream.isVideoReady ? 0 : 1)
             }
-            VideoPlayer(player: stream.player)
+            LiveVideoView(stream: stream)
                 .opacity(stream.isVideoReady ? 1 : 0)
             if !stream.isVideoReady {
                 ProgressView("Starting stream…")
@@ -192,14 +209,29 @@ struct LivePlayerView: View {
         .unlicensedWatermark()
         .ignoresSafeArea()
         .navigationTitle(camera.name)
-        .task(id: streamURL) {
-            guard let url = streamURL else { return }
-            stream.start(url: url)
+        .task(id: streamRequest) {
+            guard streamRequest.isActive, let source else {
+                stream.pause()
+                return
+            }
+            stream.start(source, client: model.client)
         }
         .onDisappear { stream.stop() }
     }
 
-    private var streamURL: URL? {
-        model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
+    private var streamRequest: LiveStreamRequest {
+        LiveStreamRequest(isActive: scenePhase != .background, source: source)
+    }
+
+    private var source: LiveStreamSource? {
+        guard let hls = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
+        else { return nil }
+        return LiveStreamSource(
+            cameraId: camera.id,
+            mse: model.client.webSocketURL(path: "/api/cameras/\(camera.id.uuidString)/mse"),
+            hls: hls,
+            // Only where there is something to hear: asking go2rtc for an audio track it then has
+            // to carry costs bandwidth on every camera, and only some of these have audio at all.
+            wantsAudio: camera.includeAudio == true)
     }
 }

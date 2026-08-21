@@ -350,6 +350,15 @@ struct PtzMoveBody: Encodable {
     let zoom: Double
 }
 
+// Telemetry for the live ladder - see SentinelClient.reportLivePath. Tier is "mse" or "hls" from
+// this app (the dashboard also reports "webrtc"); outcome is "playing", "failed" or "degraded".
+struct LivePathReportBody: Encodable {
+    let tier: String
+    let outcome: String
+    let reason: String?
+    let elapsedMs: Int
+}
+
 // MARK: - Device Hub
 
 // Apple TV is control-only for the Device Hub: devices are added and configured on the web

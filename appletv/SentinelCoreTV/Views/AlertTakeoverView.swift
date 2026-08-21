@@ -23,7 +23,7 @@ struct AlertTakeoverView: View {
                 SentinelRemoteImage(url: imageURL, contentMode: .fit)
                     .ignoresSafeArea()
             }
-            VideoPlayer(player: stream.player)
+            LiveVideoView(stream: stream)
                 .ignoresSafeArea()
                 .opacity(stream.isVideoReady ? 1 : 0)
 
@@ -86,11 +86,19 @@ struct AlertTakeoverView: View {
         .background(.black.opacity(0.5), in: Capsule())
     }
 
+    // The takeover is the one screen where being seconds behind is worst: it appears *because*
+    // something just happened, and the whole point is to see it. So it takes the fast rung too.
     private func startLivePlaybackIfAvailable() {
         guard let camera = model.cameras.first(where: { $0.name == event.camera }),
-              let url = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
+              let hls = model.client.url(path: "/api/cameras/\(camera.id.uuidString)/stream/stream.m3u8")
         else { return }
-        stream.start(url: url)
+        stream.start(
+            LiveStreamSource(
+                cameraId: camera.id,
+                mse: model.client.webSocketURL(path: "/api/cameras/\(camera.id.uuidString)/mse"),
+                hls: hls,
+                wantsAudio: camera.includeAudio == true),
+            client: model.client)
     }
 
     private var imageURL: URL? {

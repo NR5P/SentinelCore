@@ -16,8 +16,14 @@ import Foundation
 // a "LIVE" badge that is now lying. Watching for the stall/failure notifications and
 // rebuilding the item is what lets a tile recover on its own, which matters far more on an
 // Apple TV left running for hours than it does on a phone.
+//
+// The slow rung of the live ladder, and now only the fallback one: LiveStreamPlayer tries
+// MseLiveStream first, which is roughly five times closer to the camera. This is what a tile lands
+// on when the server has no go2rtc sidecar, or when the MSE socket can't be made to work.
+//
+// Twin of ios/SentinelCore/Live/HlsLiveStream.swift - keep the two in sync.
 @MainActor
-final class LiveStreamPlayer: ObservableObject {
+final class HlsLiveStream: ObservableObject {
     // Hidden until playback actually advances past zero - `readyToPlay` alone still leaves a
     // black frame on screen briefly, which is what the poster frame is there to cover.
     @Published private(set) var isVideoReady = false
@@ -52,7 +58,15 @@ final class LiveStreamPlayer: ObservableObject {
 
     // The stream URL isn't known at init - it depends on the AppModel the view only reaches
     // through the environment - so it arrives with the first start(url:) instead.
+    // Mirrors the player's own mute state so the ladder above can bind to it. AVPlayer.isMuted
+    // isn't observable from SwiftUI, and now that live video is drawn as a layer rather than by
+    // AVKit's VideoPlayer, this is the only thing that silences a feed.
+    @Published var isMuted: Bool {
+        didSet { player.isMuted = isMuted }
+    }
+
     init(muted: Bool) {
+        isMuted = muted
         player.isMuted = muted
         // Deliberately NOT setting automaticallyWaitsToMinimizeStalling = false here. It reads
         // like the right knob for "show the newest frame, don't build a cushion", and it is for

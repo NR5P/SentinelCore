@@ -120,6 +120,19 @@ final class SentinelClient {
     // Continuous-move semantics: the camera keeps moving at this velocity until ptzStop is
     // called - there's no "move by this much and stop automatically" in this mode, so the
     // joystick UI is expected to call ptzStop on release, not just ptzMove once.
+    // Which live transport a tile actually landed on, and why. Logged by the server, not stored -
+    // the question it answers ("was the TV on MSE or HLS at 9pm, and what pushed it down") is asked
+    // of the log alongside the go2rtc and ffmpeg lines that explain it.
+    func reportLivePath(
+        cameraId: UUID, tier: String, outcome: String, reason: String?, elapsedMs: Int
+    ) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/cameras/\(cameraId.uuidString)/live-path",
+            method: "POST",
+            body: LivePathReportBody(tier: tier, outcome: outcome, reason: reason, elapsedMs: elapsedMs)
+        )
+    }
+
     func ptzMove(cameraId: UUID, pan: Double, tilt: Double, zoom: Double) async throws {
         let _: EmptyResponse = try await send(
             "/api/cameras/\(cameraId.uuidString)/ptz/move",
@@ -275,6 +288,17 @@ final class SentinelClient {
 
     func testPushNotification() async throws -> PushDeliveryReport {
         try await send("/api/push/test", method: "POST", body: Optional<String>.none)
+    }
+
+    // The ws:// or wss:// form of url(path:), for the MSE live socket. Same host, port and path
+    // rules - and the same cookie, since URLSession carries the shared storage onto a WebSocket
+    // task exactly as it does onto a data task.
+    func webSocketURL(path: String) -> URL? {
+        guard var components = URLComponents(string: model.activeServerURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = components.scheme else { return nil }
+        components.scheme = scheme == "https" ? "wss" : "ws"
+        components.path = path
+        return components.url
     }
 
     func url(path: String, query: [URLQueryItem] = []) -> URL? {
