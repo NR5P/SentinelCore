@@ -63,7 +63,7 @@ public sealed class Go2RtcManager : IDisposable
     // Which source string each camera is currently registered under in the running go2rtc, so a
     // camera edit re-registers but an unchanged camera doesn't - re-PUTting the same stream
     // recreates it inside go2rtc and would drop every viewer currently connected to it.
-    private readonly Dictionary<Guid, string> _registeredSources = new();
+    private readonly Dictionary<(Guid Camera, StreamQuality Quality), string> _registeredSources = new();
 
     private Process? _process;
     private DateTimeOffset _unavailableUntil = DateTimeOffset.MinValue;
@@ -138,15 +138,17 @@ public sealed class Go2RtcManager : IDisposable
     // is registered with it, hand go2rtc the browser's SDP offer, return go2rtc's answer. The
     // answer contains go2rtc's ICE candidates (it gathers before responding), after which media
     // flows browser<->go2rtc directly and this server is out of the path.
-    public async Task<string> ExchangeOfferAsync(Camera camera, string sdpOffer, CancellationToken cancellationToken)
+    public async Task<string> ExchangeOfferAsync(
+        Camera camera, string sdpOffer, StreamQuality quality, CancellationToken cancellationToken)
     {
         await EnsureStartedAsync(cancellationToken);
-        await RegisterStreamAsync(camera, cancellationToken);
+        var effective = EffectiveQuality(camera, quality);
+        await RegisterStreamAsync(camera, effective, cancellationToken);
 
         var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
         using var content = new StringContent(sdpOffer, Encoding.UTF8, "application/sdp");
         using var response = await client.PostAsync(
-            $"http://127.0.0.1:{_apiPort}/api/webrtc?src={StreamName(camera.Id)}", content, cancellationToken);
+            $"http://127.0.0.1:{_apiPort}/api/webrtc?src={StreamName(camera.Id, effective)}", content, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"go2rtc rejected the WebRTC offer ({(int)response.StatusCode}): {body}");
@@ -261,16 +263,18 @@ public sealed class Go2RtcManager : IDisposable
     // media itself flows through this server, which is exactly the point - it rides the same
     // origin and port as the dashboard, so it works wherever the dashboard itself is reachable
     // (VPNs, tunnels, proxies) where WebRTC's separate media port often isn't.
-    public async Task<System.Net.WebSockets.ClientWebSocket> ConnectMseAsync(Camera camera, CancellationToken cancellationToken)
+    public async Task<System.Net.WebSockets.ClientWebSocket> ConnectMseAsync(
+        Camera camera, StreamQuality quality, CancellationToken cancellationToken)
     {
         await EnsureStartedAsync(cancellationToken);
-        await RegisterStreamAsync(camera, cancellationToken);
+        var effective = EffectiveQuality(camera, quality);
+        await RegisterStreamAsync(camera, effective, cancellationToken);
 
         var socket = new System.Net.WebSockets.ClientWebSocket();
         try
         {
             await socket.ConnectAsync(
-                new Uri($"ws://127.0.0.1:{_apiPort}/api/ws?src={StreamName(camera.Id)}"), cancellationToken);
+                new Uri($"ws://127.0.0.1:{_apiPort}/api/ws?src={StreamName(camera.Id, effective)}"), cancellationToken);
             return socket;
         }
         catch
@@ -284,24 +288,34 @@ public sealed class Go2RtcManager : IDisposable
     // next viewer registers the new URL instead of streaming from the old one.
     public void ForgetStream(Guid cameraId)
     {
+        List<StreamQuality> dropped;
         lock (_registeredSources)
         {
-            if (!_registeredSources.Remove(cameraId)) return;
+            // Both renditions, not just Main: a camera edit that changes the URL invalidates the
+            // low-rendition registration derived from it just as much, and leaving that one behind
+            // meant every tile kept streaming the old address while the full-screen view moved on.
+            dropped = _registeredSources.Keys
+                .Where(key => key.Camera == cameraId)
+                .Select(key => key.Quality)
+                .ToList();
+            foreach (var quality in dropped) _registeredSources.Remove((cameraId, quality));
         }
+
+        if (dropped.Count == 0) return;
 
         // Best effort: if the sidecar isn't running there's nothing to unregister anyway.
         var process = _process;
         if (process is null || process.HasExited) return;
-        _ = DeleteStreamAsync(cameraId);
+        foreach (var quality in dropped) _ = DeleteStreamAsync(cameraId, quality);
     }
 
-    private async Task DeleteStreamAsync(Guid cameraId)
+    private async Task DeleteStreamAsync(Guid cameraId, StreamQuality quality)
     {
         try
         {
             var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
             using var response = await client.DeleteAsync(
-                $"http://127.0.0.1:{_apiPort}/api/streams?src={StreamName(cameraId)}");
+                $"http://127.0.0.1:{_apiPort}/api/streams?src={StreamName(cameraId, quality)}");
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
@@ -309,19 +323,42 @@ public sealed class Go2RtcManager : IDisposable
         }
     }
 
-    private static string StreamName(Guid cameraId) => cameraId.ToString("N");
+    private static string StreamName(Guid cameraId) => StreamName(cameraId, StreamQuality.Main);
 
-    private async Task RegisterStreamAsync(Camera camera, CancellationToken cancellationToken)
+    // go2rtc knows a camera's two renditions as two streams, so they need two names. The suffix
+    // matches the one HlsStreamManager gives its low-rendition session directory, so a name seen
+    // in a go2rtc log line and one seen in a stream path mean the same thing.
+    private static string StreamName(Guid cameraId, StreamQuality quality) =>
+        quality == StreamQuality.Main ? cameraId.ToString("N") : $"{cameraId:N}-sub";
+
+    // Whether asking for Sub can actually be honoured. A camera whose URL yields no low-res
+    // companion is served Main - and, importantly, is served it under the *Main* stream name
+    // rather than a second stream pointing at the same address. Two go2rtc streams on one URL
+    // means two connections to the camera, and on these Reolinks the concurrent-connection budget
+    // is already tight enough that the detection pipeline competes with the live view.
+    private static StreamQuality EffectiveQuality(Camera camera, StreamQuality requested)
     {
-        var sources = BuildStreamSources(camera);
+        if (requested == StreamQuality.Main) return StreamQuality.Main;
+        if (camera.IsBrowserPublished) return StreamQuality.Main;
+        return CameraSource.TryDeriveLowResUrl(HlsStreamManager.BuildAuthenticatedUrl(camera)) is null
+            ? StreamQuality.Main
+            : StreamQuality.Sub;
+    }
+
+    private Task RegisterStreamAsync(Camera camera, CancellationToken cancellationToken) =>
+        RegisterStreamAsync(camera, StreamQuality.Main, cancellationToken);
+
+    private async Task RegisterStreamAsync(Camera camera, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        var sources = BuildStreamSources(camera, quality);
         var sourceKey = string.Join('\n', sources);
         lock (_registeredSources)
         {
-            if (_registeredSources.TryGetValue(camera.Id, out var existing) && existing == sourceKey)
+            if (_registeredSources.TryGetValue((camera.Id, quality), out var existing) && existing == sourceKey)
                 return;
         }
 
-        var query = new StringBuilder($"name={StreamName(camera.Id)}");
+        var query = new StringBuilder($"name={StreamName(camera.Id, quality)}");
         foreach (var source in sources)
             query.Append("&src=").Append(Uri.EscapeDataString(source));
 
@@ -336,7 +373,7 @@ public sealed class Go2RtcManager : IDisposable
 
         lock (_registeredSources)
         {
-            _registeredSources[camera.Id] = sourceKey;
+            _registeredSources[(camera.Id, quality)] = sourceKey;
         }
     }
 
@@ -349,11 +386,23 @@ public sealed class Go2RtcManager : IDisposable
     // audio-only Opus transcode, which it only actually starts if a viewer's offer wants audio
     // the direct source can't satisfy. Video in that source is explicitly absent: it comes from
     // the direct source, matched up by go2rtc.
-    public static List<string> BuildStreamSources(Camera camera)
+    public static List<string> BuildStreamSources(Camera camera) =>
+        BuildStreamSources(camera, StreamQuality.Main);
+
+    public static List<string> BuildStreamSources(Camera camera, StreamQuality quality)
     {
         if (camera.IsBrowserPublished) return [PublishPlaceholderSource];
 
-        var sources = new List<string> { HlsStreamManager.BuildAuthenticatedUrl(camera) };
+        var mainUrl = HlsStreamManager.BuildAuthenticatedUrl(camera);
+
+        // The low rendition is video for a tile a few hundred points wide, and nothing else. No
+        // Opus companion: the transcode exists for browsers that can't take the camera's AAC over
+        // WebRTC, and a grid tile is muted, so registering it here would put an ffmpeg process
+        // behind every tile for audio nobody is listening to.
+        if (quality == StreamQuality.Sub)
+            return [CameraSource.TryDeriveLowResUrl(mainUrl) ?? mainUrl];
+
+        var sources = new List<string> { mainUrl };
         if (camera.IncludeAudio)
             sources.Add($"ffmpeg:{StreamName(camera.Id)}#audio=opus");
         return sources;

@@ -4456,6 +4456,35 @@ public sealed class BasicTests
         Assert.Equal($"ffmpeg:{id:N}#audio=opus", withAudio[1]);
     }
 
+    [Fact]
+    public void Go2RtcStreamSources_ServeTheLowRenditionVideoOnlyWhenTheCameraHasOne()
+    {
+        var id = Guid.NewGuid();
+        Camera Make(string streamUrl) => new(
+            id, "Gate", streamUrl, "user", "secret", IncludeAudio: true,
+            PtzEnabled: false, OnvifPtzServiceUrl: null, OnvifProfileToken: null,
+            IsBrowserPublished: false, DateTimeOffset.UtcNow);
+
+        // A phone's live grid pulls one stream per tile, and pulling the main rendition into six
+        // of them is what saturated the Wi-Fi when live view only ever served Main. The low
+        // rendition is the same fix detection already got.
+        var reolink = Make("rtsp://cam/h264Preview_01_main");
+        var sub = Assert.Single(Go2RtcManager.BuildStreamSources(reolink, StreamQuality.Sub));
+        Assert.Equal(
+            CameraSource.TryDeriveLowResUrl(HlsStreamManager.BuildAuthenticatedUrl(reolink)), sub);
+        Assert.Contains("h264Preview_01_sub", sub);
+
+        // No Opus companion on the low rendition even though this camera has audio on: a tile is
+        // muted, and the transcode source exists for browsers that can't take the camera's AAC.
+        Assert.DoesNotContain("audio=opus", sub);
+
+        // A camera whose URL yields no low rendition keeps its main stream, exactly as before.
+        var unrecognised = Make("rtsp://cam/whatever");
+        Assert.Equal(
+            HlsStreamManager.BuildAuthenticatedUrl(unrecognised),
+            Assert.Single(Go2RtcManager.BuildStreamSources(unrecognised, StreamQuality.Sub)));
+    }
+
     // --- Triggering a camera from outside the motion detector -----------------------------
     //
     // Two sources land in the same place (CameraTriggerService): the key-authenticated HTTP

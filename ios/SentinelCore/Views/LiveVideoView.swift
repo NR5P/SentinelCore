@@ -31,13 +31,125 @@ import UIKit
 //
 // Recorded playback (RecordingTimelineView, ActivityDetailView) still uses VideoPlayer - those
 // clips have a real duration, the scrubber is the point, and they don't take this path.
+//
+// It draws whichever transport the ladder settled on. Both are CALayers with the same
+// `videoGravity` letterboxing, so the digital-zoom transform and the PTZ overlay that sit around
+// this view behave identically either way - which is what made moving off AVPlayer possible at all.
 struct LiveVideoView: View {
-    let player: AVPlayer
+    @ObservedObject var stream: LiveStreamPlayer
 
     var body: some View {
-        PlayerLayerView(player: player)
+        switch stream.transport {
+        case .mse(let mse):
+            SampleBufferLayerView(layer: mse.displayLayer)
+        case .hls:
+            PlayerLayerView(player: stream.player)
+        }
     }
 }
+
+// The MSE rung renders into an AVSampleBufferDisplayLayer that MseLiveStream owns and keeps across
+// reconnects, so unlike PlayerLayerView below this can't make the layer its own backing layer -
+// it hosts it and follows its own bounds.
+#if os(macOS)
+private struct SampleBufferLayerView: NSViewRepresentable {
+    let layer: AVSampleBufferDisplayLayer
+
+    func makeNSView(context: Context) -> SampleBufferBackingView {
+        let view = SampleBufferBackingView()
+        view.videoLayer = layer
+        return view
+    }
+
+    func updateNSView(_ view: SampleBufferBackingView, context: Context) {
+        if view.videoLayer !== layer { view.videoLayer = layer }
+    }
+
+    static func dismantleNSView(_ view: SampleBufferBackingView, coordinator: ()) {
+        view.videoLayer = nil
+    }
+}
+
+final class SampleBufferBackingView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = .black
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var videoLayer: AVSampleBufferDisplayLayer? {
+        didSet {
+            oldValue?.removeFromSuperlayer()
+            guard let videoLayer else { return }
+            videoLayer.frame = bounds
+            layer?.addSublayer(videoLayer)
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        // The hosted layer isn't the backing layer, so nothing resizes it for us. Without the
+        // transaction the resize animates, which on a rotation or a window drag shows the picture
+        // sliding into place a third of a second behind the frame around it.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        videoLayer?.frame = bounds
+        CATransaction.commit()
+    }
+}
+#else
+private struct SampleBufferLayerView: UIViewRepresentable {
+    let layer: AVSampleBufferDisplayLayer
+
+    func makeUIView(context: Context) -> SampleBufferBackingView {
+        let view = SampleBufferBackingView()
+        view.videoLayer = layer
+        return view
+    }
+
+    func updateUIView(_ view: SampleBufferBackingView, context: Context) {
+        if view.videoLayer !== layer { view.videoLayer = layer }
+    }
+
+    static func dismantleUIView(_ view: SampleBufferBackingView, coordinator: ()) {
+        view.videoLayer = nil
+    }
+}
+
+final class SampleBufferBackingView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    var videoLayer: AVSampleBufferDisplayLayer? {
+        didSet {
+            oldValue?.removeFromSuperlayer()
+            guard let videoLayer else { return }
+            videoLayer.frame = bounds
+            layer.addSublayer(videoLayer)
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        videoLayer?.frame = bounds
+        CATransaction.commit()
+    }
+}
+#endif
 
 #if os(macOS)
 private struct PlayerLayerView: NSViewRepresentable {

@@ -166,7 +166,17 @@ public static class CameraEndpoints
         // 503 is the deliberate "not on this install" answer - go2rtc missing or unstartable - and
         // the dashboard reacts by attaching the HLS player instead, so a plain install without
         // go2rtc behaves exactly as it did before this endpoint existed.
-        app.MapPost("/api/cameras/{id:guid}/webrtc", async (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+        app.MapPost("/api/cameras/{id:guid}/webrtc", (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+                ServeWebRtcAsync(id, StreamQuality.Main, http, store, webrtc, ct))
+            .RequireAuthorization();
+
+        app.MapPost("/api/cameras/{id:guid}/webrtc/{quality:regex(^(main|sub)$)}",
+            (Guid id, string quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+                ServeWebRtcAsync(id, ParseQuality(quality), http, store, webrtc, ct))
+            .RequireAuthorization();
+
+        static async Task<IResult> ServeWebRtcAsync(
+            Guid id, StreamQuality quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct)
         {
             var camera = await store.GetAsync(id, ct);
             if (camera is null) return Results.NotFound();
@@ -179,7 +189,7 @@ public static class CameraEndpoints
 
             try
             {
-                var answer = await webrtc.ExchangeOfferAsync(camera, offer, ct);
+                var answer = await webrtc.ExchangeOfferAsync(camera, offer, quality, ct);
                 return Results.Text(answer, "application/sdp");
             }
             catch (Go2RtcUnavailableException ex)
@@ -190,7 +200,7 @@ public static class CameraEndpoints
             {
                 return Results.Problem(ex.Message, statusCode: 502);
             }
-        }).RequireAuthorization();
+        }
 
         // MSE live view: the dashboard opens a WebSocket here and this server bridges it to
         // go2rtc's MSE endpoint on loopback (go2rtc's own API carries no auth, so it is never
@@ -202,7 +212,20 @@ public static class CameraEndpoints
         // media port reachable from the viewer (blocked by tunnels, VPNs and strict firewalls),
         // while MSE rides this very HTTP connection - if the dashboard loads, MSE streams. The
         // dashboard tries WebRTC first (lower latency), then this, then HLS.
-        app.Map("/api/cameras/{id:guid}/mse", async (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+        app.Map("/api/cameras/{id:guid}/mse", (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+                ServeMseAsync(id, StreamQuality.Main, http, store, webrtc, ct))
+            .RequireAuthorization();
+
+        // Same two-route shape as the HLS playlist above, and for the same reason: an app built
+        // before this existed keeps asking for the unqualified path and keeps getting the main
+        // stream, while a grid of tiles asks for the cheap rendition by name.
+        app.Map("/api/cameras/{id:guid}/mse/{quality:regex(^(main|sub)$)}",
+            (Guid id, string quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+                ServeMseAsync(id, ParseQuality(quality), http, store, webrtc, ct))
+            .RequireAuthorization();
+
+        static async Task<IResult> ServeMseAsync(
+            Guid id, StreamQuality quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct)
         {
             if (!http.WebSockets.IsWebSocketRequest)
                 return Results.BadRequest(new { errors = new[] { "Expected a WebSocket request." } });
@@ -213,7 +236,7 @@ public static class CameraEndpoints
             System.Net.WebSockets.ClientWebSocket upstream;
             try
             {
-                upstream = await webrtc.ConnectMseAsync(camera, ct);
+                upstream = await webrtc.ConnectMseAsync(camera, quality, ct);
             }
             catch (Go2RtcUnavailableException ex)
             {
@@ -240,7 +263,7 @@ public static class CameraEndpoints
             }
 
             return Results.Empty;
-        }).RequireAuthorization();
+        }
 
         // Where the live grid reports which tier each tile landed on - see LivePathReportDto for
         // why. Cheap enough to call on every transition: one small POST per tile per tier change,
@@ -314,9 +337,10 @@ public static class CameraEndpoints
         }).RequireAuthorization();
     }
 
-    // One direction of the MSE bridge: copy messages (type and message boundaries preserved)
-    // until the source closes or errors. 64KB fits go2rtc's fMP4 segments comfortably; larger
-    // messages arrive in parts and are forwarded part by part with EndOfMessage carried through.
+    // The {quality} route segment, which the route constraint has already limited to main|sub.
+    private static StreamQuality ParseQuality(string quality) =>
+        quality.Equals("sub", StringComparison.OrdinalIgnoreCase) ? StreamQuality.Sub : StreamQuality.Main;
+
     private static async Task<IResult> ServeHlsAsync(
         Guid id, StreamQuality quality, string file, HttpContext http,
         ICameraStore store, HlsStreamManager streams, CancellationToken ct)
@@ -359,6 +383,9 @@ public static class CameraEndpoints
             _ => "video/mp2t"
         };
 
+    // One direction of the MSE bridge: copy messages (type and message boundaries preserved)
+    // until the source closes or errors. 64KB fits go2rtc's fMP4 segments comfortably; larger
+    // messages arrive in parts and are forwarded part by part with EndOfMessage carried through.
     private static async Task PumpWebSocketAsync(
         System.Net.WebSockets.WebSocket from, System.Net.WebSockets.WebSocket to, CancellationToken cancellationToken)
     {

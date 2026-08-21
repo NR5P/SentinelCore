@@ -5,9 +5,16 @@ import Foundation
 // Owns the AVPlayer for one camera's live HLS feed, along with the observers that drive the
 // poster-frame handoff and automatic reconnection.
 //
-// Twin of appletv/SentinelCoreTV/Views/LiveStreamPlayer.swift - keep the two in sync. Nothing
-// here is platform-specific; both apps hit the same HLS endpoint with the same warm-up and
-// reconnect needs.
+// The slow rung of the live ladder, and now only the fallback one: LiveStreamPlayer below tries
+// MseLiveStream first, which is roughly ten times closer to the camera. This is what a tile lands
+// on when the server has no go2rtc sidecar, or when the MSE socket can't be made to work.
+//
+// Was a twin of appletv/SentinelCoreTV/Views/LiveStreamPlayer.swift, and the two have now
+// diverged: the tvOS app has no MSE rung above this one, so its copy is still the whole of its
+// live view rather than the fallback half of a ladder. Fixes to the reconnect and drift logic
+// below still belong in both. Giving tvOS the fast rung too is a separate change - it draws live
+// video with AVKit's VideoPlayer, which can host an AVPlayer and nothing else, so it needs the
+// layer-hosting view this app grew in LiveVideoView before it can host a sample buffer renderer.
 //
 // Why this is a class instead of the per-view @State and inline closures it replaces: the
 // periodic time observer needs a definite owner. The previous version captured its own token
@@ -26,7 +33,7 @@ import Foundation
 // a "LIVE" badge that is now lying. Watching for the stall/failure notifications and
 // rebuilding the item is what lets a tile recover on its own.
 @MainActor
-final class LiveStreamPlayer: ObservableObject {
+final class HlsLiveStream: ObservableObject {
     // Hidden until playback actually advances past zero - `readyToPlay` alone still leaves a
     // black frame on screen briefly, which is what the poster frame is there to cover.
     @Published private(set) var isVideoReady = false

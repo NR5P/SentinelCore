@@ -74,7 +74,7 @@ public sealed class Go2RtcManagerTests : IDisposable
         // Whatever the caller sees, it must not be at the cost of a stray process. The request
         // token no longer cancels the start at all, so this ends at the startup timeout.
         await Assert.ThrowsAnyAsync<Exception>(
-            () => manager.ExchangeOfferAsync(TestCamera(), "v=0", viewerGoneAway.Token));
+            () => manager.ExchangeOfferAsync(TestCamera(), "v=0", StreamQuality.Main, viewerGoneAway.Token));
 
         Assert.True(File.Exists(_pidFile), "the stub sidecar never started - this test is not measuring what it thinks");
         var pid = ReadStubPid();
@@ -99,7 +99,7 @@ public sealed class Go2RtcManagerTests : IDisposable
     public async Task DisposingWhileTheSidecarIsStillComingUp_KillsItPromptly()
     {
         var manager = CreateManager();
-        var exchange = manager.ExchangeOfferAsync(TestCamera(), "v=0", CancellationToken.None);
+        var exchange = manager.ExchangeOfferAsync(TestCamera(), "v=0", StreamQuality.Main, CancellationToken.None);
 
         // Let it get as far as a running process that hasn't answered its API yet.
         while (!File.Exists(_pidFile))
