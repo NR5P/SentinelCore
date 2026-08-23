@@ -217,6 +217,37 @@ for TLS on an untrusted network. The same applies to port 3320/the dashboard log
 username/password over plain HTTP unless you put a TLS-terminating reverse proxy in front of
 it yourself.
 
+#### The two `Ollama` keys the Settings UI can't set
+
+Most of the `Ollama` block is editable from **Settings → OLLAMA** and applies within a
+couple of seconds, no restart. Two keys are deliberately not in the UI, because both are baked
+into the `HttpClient` once at startup and can only be changed by hand here:
+
+```json
+"Ollama": {
+  "BaseUrl": "http://127.0.0.1:11434",
+  "RequestTimeoutSeconds": 300
+}
+```
+
+- `Ollama:BaseUrl` — where Ollama is listening. Change this only if Ollama runs on another
+  machine or a non-default port. **Restart the service after editing.**
+- `Ollama:RequestTimeoutSeconds` — how long one request to Ollama may take before it's
+  abandoned and retried (default `300`, allowed range 5–1800). This is a ceiling, not a
+  target, but on CPU-only hardware it is not a generous one: on the reference box a
+  `gemma3:4b` alert takes **150–190 s** end to end (queue wait included) with a single alert
+  in flight, so a slower machine or a larger model can reach 300 s. If analyses fail on
+  timeout rather than on a model error, raise this before changing anything else.
+  **Restart the service after editing.**
+
+The rest of the block — `Model`, `KeepAlive`, `Temperature`, `MaximumOutputTokens`, `TopK`,
+`TopP`, `MaximumRetries`, `RetryDelaySeconds` — is described in
+[USER_GUIDE.md § The SETTINGS tab](USER_GUIDE.md#7-the-settings-tab) and is better
+changed there. One of them is worth knowing about at deploy time: `KeepAlive` (default `1h`)
+is how long Ollama holds the model in RAM between alerts. On a busy install the interval
+between alerts never reaches it, so the model process is effectively never unloaded — which is
+fine if you have the RAM to spare and a problem if you don't.
+
 ### Web dashboard — `SentinelCore.Web/appsettings.json`
 
 ```json
