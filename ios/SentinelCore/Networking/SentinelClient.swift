@@ -587,6 +587,14 @@ final class SentinelClient {
         return response.results
     }
 
+    // Fetches the values a settings field can hold (SettingsOptionsSource). Same shape of method
+    // as settingsLookup above and for the same reason: the endpoint comes from the schema, so one
+    // method serves however many fields grow a list.
+    func settingsOptions(_ source: SettingsOptionsSource) async throws -> [SettingsFieldOption] {
+        let response: SettingsOptionsResponse = try await get(source.endpoint)
+        return response.options
+    }
+
     // Returns whatever the action had to say for itself, when it says anything. The test sends
     // report which address the mail actually went to; the setup reset has nothing to report and
     // answers with a body of a different shape entirely. So the detail is decoded leniently - an

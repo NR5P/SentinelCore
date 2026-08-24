@@ -1144,6 +1144,20 @@ main {
   color: var(--red);
 }
 
+/* A text field the server can offer a list of values for - the dropdown, the box it falls back
+   to, and the button back to the list. See buildOptionsSource() in settings.js. Only one of the
+   select and the input is ever shown, so they share the row's whole width either way. */
+.field-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-options .field-input {
+  flex: 1;
+  min-width: 0;
+}
+
 .field-checkbox-row {
   display: flex;
   /* .field-row stacks its label above its input, which is right for a text field and wrong for a

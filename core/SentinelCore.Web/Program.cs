@@ -273,6 +273,10 @@ builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout =
 // Short, because the overwhelmingly likely failure is a server with no route out at all, and
 // the Settings form should say so promptly rather than appearing to hang.
 builder.Services.AddHttpClient(nameof(LocationLookupEndpoints), client => client.Timeout = TimeSpan.FromSeconds(8));
+// Same reasoning, shorter: listing what Ollama has pulled is a local call to a process that is
+// either running and instant or not running at all, and the Model dropdown should fall back to a
+// plain text box quickly rather than making someone wait to find out.
+builder.Services.AddHttpClient(nameof(OllamaModelEndpoints), client => client.Timeout = TimeSpan.FromSeconds(5));
 // The HomeKit sidecar is on loopback and only ever asked for a status blob or a small PNG, so a
 // short timeout is right here - if it's not answering promptly it's not running, and the settings
 // UI should say so immediately rather than hanging.
@@ -430,6 +434,7 @@ app.MapSystemStatusEndpoints();
 app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
+app.MapOllamaModelEndpoints();
 app.MapNotificationTestProxyEndpoints();
 app.MapDeviceHubProxyEndpoints();
 app.MapHomeKitEndpoints();

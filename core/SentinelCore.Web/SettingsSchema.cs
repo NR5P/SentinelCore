@@ -59,6 +59,34 @@ public sealed record SettingsLookupSchema(
     string Tip,
     string Endpoint);
 
+// The other half of that idea, for a text field whose legal values are a list the server can go
+// and find: OLLAMA's Model box, filled from the models actually pulled on the machine running
+// Ollama, so nobody has to remember whether they pulled gemma3:4b or gemma3:4b-it-qat. Pure data
+// again - an endpoint, not a callback - so this stays platform-neutral.
+//
+// The endpoint takes no parameters and answers either
+//   { "options": [ { "value": "gemma3:4b", "label": "gemma3:4b - 3.3 GB" } ] }
+// or, for anything the user should be told about, an { "error": "..." } with a non-2xx status.
+// It is the same shape as a select's own options, on purpose: a client that can draw one can
+// draw the other.
+//
+// Three rules a client has to keep, because they are what make this safe to attach to a field
+// that was a free text box yesterday:
+//   - Whatever the field is set to now must appear in the list even if the server didn't return
+//     it, or opening the dropdown would silently change a working setting.
+//   - There must still be a way to type a value that isn't listed. The list is what's installed
+//     at this moment, and naming a model you are about to pull is a legitimate thing to do.
+//   - If the fetch fails - Ollama down, older client, no route - fall back to the plain text box
+//     and say why. That is exactly what every client did before this existed, so nothing is lost.
+public sealed record SettingsOptionsSourceSchema(
+    string Label,
+    string Tip,
+    string Endpoint,
+    // What to show when the endpoint succeeds but the list is empty. Here rather than in the
+    // client because it is the one message that has to name the thing the user should go and do
+    // ("ollama pull ..."), and no client should have to know that.
+    string EmptyMessage);
+
 public sealed record SettingsFieldSchema
 {
     public required string Name { get; init; }
@@ -104,6 +132,12 @@ public sealed record SettingsFieldSchema
     // Only for Type == "text": an optional "look this up for me" button that fills in sibling
     // fields. Optional on every client - the field is still an editable text box without it.
     public SettingsLookupSchema? Lookup { get; init; }
+
+    // Only for Type == "text": where to fetch the values this field is likely to hold, so the
+    // client can offer a list to pick from instead of asking someone to type an exact model tag.
+    // Optional on every client, and the field stays typeable either way - see
+    // SettingsOptionsSourceSchema.
+    public SettingsOptionsSourceSchema? OptionsSource { get; init; }
 
     // True for the handful of fields that bind a socket or otherwise only read their value at
     // startup. A client should tell the user the change won't apply until the server restarts.
@@ -211,8 +245,22 @@ public sealed record SettingsSectionSchema
 public static class SettingsSchema
 {
     private static SettingsFieldSchema Text(
-        string name, string label, string tip, SettingsLookupSchema? lookup = null) =>
-        new() { Name = name, Label = label, Type = "text", Tip = tip, Lookup = lookup };
+        string name, string label, string tip, SettingsLookupSchema? lookup = null,
+        SettingsOptionsSourceSchema? optionsSource = null) =>
+        new()
+        {
+            Name = name, Label = label, Type = "text", Tip = tip,
+            Lookup = lookup, OptionsSource = optionsSource
+        };
+
+    // Both model boxes in the app name a model on the same Ollama server, so both offer the same
+    // list. Written once here rather than twice inline so the two can't drift into describing the
+    // same button differently.
+    private static readonly SettingsOptionsSourceSchema OllamaModels = new(
+        "installed models",
+        "Lists the models already pulled on the machine running Ollama, so you can pick one instead of typing its exact tag. Typing a name that isn't listed still works - that's how you point at a model you're about to pull.",
+        "/api/settings/ollama/models",
+        "Ollama answered, but no models are pulled on that machine yet. Run \"ollama pull gemma3:4b\" there, then check again.");
 
     private static SettingsFieldSchema Password(string name, string label, string tip) =>
         new() { Name = name, Label = label, Type = "password", Tip = tip };
@@ -284,7 +332,8 @@ public static class SettingsSchema
             Description = "Tuning for the local AI that looks at your snapshots. The defaults are picked to keep descriptions literal and consistent, which is what you want for security alerts. You can ignore this section entirely unless answers are coming back wrong or too slowly.",
             Fields =
             [
-                Text("model", "Model", "Which local vision model analyses the snapshots, e.g. gemma3:4b. It must already be pulled in Ollama."),
+                Text("model", "Model", "Which local vision model analyses the snapshots, e.g. gemma3:4b. It must already be pulled in Ollama - pick one from the list to be sure of the exact tag. Not every model can see images; a text-only one saves fine here and then fails on every alert.",
+                    optionsSource: OllamaModels),
                 Text("keepAlive", "Keep Alive", "How long Ollama keeps the model loaded in memory between alerts, e.g. 5m. Longer means faster replies but more RAM held."),
                 Number("temperature", "Temperature", "How much the model is allowed to improvise. Low values keep descriptions consistent and literal, which is what you want here.", 0, 2, 0.1),
                 Number("maximumOutputTokens", "Max Output Tokens", "Ceiling on the length of the model's reply. Too low and the analysis gets cut off mid-sentence.", 32, 4096),
@@ -465,7 +514,8 @@ public static class SettingsSchema
                 Check("enabled", "Enabled", "Let you message the bot and ask questions about recent gate activity."),
                 Number("lookbackDays", "Lookback Days", "How far back the bot looks when answering a question.", 1, 30),
                 Number("maxEventsInContext", "Max Events In Context", "How many events the bot can consider at once. Higher gives fuller answers but is slower.", 1, 500),
-                Text("model", "Model", "Which Ollama model answers your questions. Can differ from the vision model used for images.")
+                Text("model", "Model", "Which Ollama model answers your questions. Can differ from the vision model used for images - this one only ever reads text, so a small text-only model is a fine choice here.",
+                    optionsSource: OllamaModels)
             ]
         },
         new()

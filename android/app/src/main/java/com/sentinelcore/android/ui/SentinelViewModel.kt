@@ -49,8 +49,10 @@ import com.sentinelcore.android.data.SentinelRepository
 import com.sentinelcore.android.data.ServerAddress
 import com.sentinelcore.android.data.ServerCompatibility
 import com.sentinelcore.android.data.SettingsAction
+import com.sentinelcore.android.data.SettingsFieldOption
 import com.sentinelcore.android.data.SettingsLookup
 import com.sentinelcore.android.data.SettingsLookupCandidate
+import com.sentinelcore.android.data.SettingsOptionsSource
 import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.data.SystemStatus
 import com.sentinelcore.android.data.TriggerConfig
@@ -677,6 +679,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun settingsLookup(lookup: SettingsLookup, query: String): List<SettingsLookupCandidate> =
         repository.settingsLookup(lookup, query)
+
+    suspend fun settingsOptions(source: SettingsOptionsSource): List<SettingsFieldOption> =
+        repository.settingsOptions(source)
 
     // String? rather than an inferred type: what an action reports back is part of this screen's
     // contract now that the test sends have something to say, and the neighbours here spell

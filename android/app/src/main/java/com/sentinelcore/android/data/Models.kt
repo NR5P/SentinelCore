@@ -608,6 +608,22 @@ data class SettingsLookupCandidate(
     val values: Map<String, Any>,
 )
 
+// Where a text field's likely values can be fetched from (today: the models pulled on the Ollama
+// machine, for the two Model boxes). Pure data like SettingsLookup - an endpoint taking no
+// parameters - so nothing here is Ollama-specific.
+//
+// A field carrying one is drawn as a dropdown, but never as a plain one: whatever is saved now is
+// always in the list, and "type a name instead" is always the last entry. The list is only what is
+// installed at this moment, and naming a model you are about to pull has to keep working.
+data class SettingsOptionsSource(
+    val label: String,
+    val tip: String,
+    val endpoint: String,
+    // Shown when the endpoint answers with an empty list. From the server because it is the one
+    // message that names what to go and do ("ollama pull ..."), which this app shouldn't know.
+    val emptyMessage: String,
+)
+
 data class SettingsField(
     val name: String,
     val label: String,
@@ -629,6 +645,9 @@ data class SettingsField(
     val integer: Boolean?,
     // Absent on all but a handful of text fields - see SettingsLookup.
     val lookup: SettingsLookup?,
+    // Absent on all but a handful of text fields - see SettingsOptionsSource. Null against a
+    // server that predates it, which has to mean "an ordinary text box".
+    val optionsSource: SettingsOptionsSource?,
     val requiresRestart: Boolean,
 )
 

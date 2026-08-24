@@ -1034,6 +1034,21 @@ class SentinelRepository(
             }
         }
 
+    // Fetches the values a settings field can hold (SettingsOptionsSource). Same shape as
+    // settingsLookup above and for the same reason: the endpoint comes from the schema, so one
+    // method serves however many fields grow a list.
+    suspend fun settingsOptions(source: SettingsOptionsSource): List<SettingsFieldOption> =
+        withContext(Dispatchers.IO) {
+            val json = JSONObject(request(source.endpoint))
+            val options = json.optJSONArray("options") ?: JSONArray()
+            buildList {
+                for (index in 0 until options.length()) {
+                    val option = options.getJSONObject(index)
+                    add(SettingsFieldOption(option.getString("value"), option.optString("label")))
+                }
+            }
+        }
+
     // Returns whatever the action had to say for itself, or null when it had nothing. The test
     // sends report which address the mail actually went to; the setup reset answers with a body of
     // a different shape entirely, and an unreadable answer to a call that succeeded still means it
@@ -1128,6 +1143,14 @@ class SentinelRepository(
                                     label = it.getString("label"),
                                     tip = it.optString("tip"),
                                     endpoint = it.getString("endpoint"),
+                                )
+                            },
+                            optionsSource = field.optJSONObject("optionsSource")?.let {
+                                SettingsOptionsSource(
+                                    label = it.getString("label"),
+                                    tip = it.optString("tip"),
+                                    endpoint = it.getString("endpoint"),
+                                    emptyMessage = it.optString("emptyMessage"),
                                 )
                             },
                             requiresRestart = field.optBoolean("requiresRestart"),

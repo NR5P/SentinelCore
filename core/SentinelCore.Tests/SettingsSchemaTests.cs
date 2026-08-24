@@ -463,6 +463,72 @@ public sealed class SettingsSchemaTests
             }
         }
     }
+
+    // Same idea for the other half of "this box doesn't have to be typed from memory". An options
+    // source replaces a text box with a dropdown on every client, so the pieces each client needs
+    // to draw one - what to call the list, what to say when it comes back empty, where to get it -
+    // all have to be there, and it only belongs on a field that was a text box to begin with.
+    [Fact]
+    public void OptionsSourceFields_AreTextFields_AndSayWhereTheirListComesFrom()
+    {
+        foreach (var section in SettingsSchema.Sections)
+        {
+            foreach (var field in section.Fields.Where(f => f.OptionsSource is not null))
+            {
+                var source = field.OptionsSource!;
+                Assert.True(
+                    field.Type == "text",
+                    $"Field '{section.Key}.{field.Name}' has an options source but is type '{field.Type}'. " +
+                    "A select already carries its own options, and nothing else can fall back to a text box.");
+                Assert.False(
+                    string.IsNullOrWhiteSpace(source.Label),
+                    $"Options source on '{section.Key}.{field.Name}' has no name for its list.");
+                Assert.False(
+                    string.IsNullOrWhiteSpace(source.Tip),
+                    $"Options source on '{section.Key}.{field.Name}' has no tip.");
+                // The one message no client can write for itself: it has to name what to go and
+                // do about an empty list, which is server-side knowledge.
+                Assert.False(
+                    string.IsNullOrWhiteSpace(source.EmptyMessage),
+                    $"Options source on '{section.Key}.{field.Name}' has nothing to say when the list is empty.");
+                Assert.StartsWith("/api/", source.Endpoint, StringComparison.Ordinal);
+            }
+        }
+    }
+
+    // The models Ollama reports, turned into the list a dropdown shows. Held to account here
+    // because the two rules in it are invisible from the endpoint: the value has to be the tag
+    // exactly as Ollama gives it (anything else saves a model name that doesn't exist), and the
+    // order has to be alphabetical rather than the recently-modified order Ollama answers in.
+    [Fact]
+    public void OllamaModelList_KeepsTheExactTag_AndSortsForReading()
+    {
+        var options = OllamaModelEndpoints.ParseModels("""
+            {
+              "models": [
+                { "name": "qwen2.5vl:7b", "size": 6000000000 },
+                { "name": "gemma3:4b", "size": 3338801804 },
+                { "name": "nosize" },
+                { "size": 123 }
+              ]
+            }
+            """);
+
+        Assert.Equal(["gemma3:4b", "nosize", "qwen2.5vl:7b"], options.Select(o => o.Value));
+        Assert.Equal("gemma3:4b - 3.1 GB", options[0].Label);
+        // No size reported is no size shown, rather than "nosize - 0 GB".
+        Assert.Equal("nosize", options[1].Label);
+    }
+
+    // An answer that isn't the shape expected is an empty list, not an exception: a client meeting
+    // one falls back to its text box, which is the same place a client meeting an error lands.
+    [Fact]
+    public void OllamaModelList_IsEmpty_WhenTheAnswerIsntAModelList()
+    {
+        Assert.Empty(OllamaModelEndpoints.ParseModels("{}"));
+        Assert.Empty(OllamaModelEndpoints.ParseModels("""{ "models": "none" }"""));
+        Assert.Empty(OllamaModelEndpoints.ParseModels("[]"));
+    }
 }
 
 // The endpoint half: the schema must actually reach clients in a shape they can parse, and only
@@ -568,6 +634,85 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
                 $"{(int)response.StatusCode} to a query-less request instead of 400. A client's Find button " +
                 "would do nothing.");
         }
+    }
+
+    // The same for an options source: a dropdown whose endpoint isn't mapped is a field that sits
+    // there saying "reading installed models…" and then falls back to a text box, on every client
+    // at once. Nothing here needs Ollama to be running - what's being checked is that the route
+    // exists, so the pass condition is "answered like the endpoint" rather than any one status:
+    // 200 with a list where Ollama is up, 502 with an explanation where it isn't, and a 404 only
+    // if the route was never mapped.
+    [Fact]
+    public async Task EveryOptionsEndpointInTheSchema_IsMapped()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var sources = SettingsSchema.Sections
+            .SelectMany(section => section.Fields
+                .Where(field => field.OptionsSource is not null)
+                .Select(field => (Section: section.Key, field.Name, field.OptionsSource!.Endpoint)))
+            .ToArray();
+
+        Assert.NotEmpty(sources);
+
+        foreach (var source in sources)
+        {
+            using var response = await client.GetAsync(source.Endpoint, ct);
+            Assert.True(
+                response.StatusCode is HttpStatusCode.OK or HttpStatusCode.BadGateway,
+                $"Options source for '{source.Section}.{source.Name}' points at {source.Endpoint}, which " +
+                $"answered {(int)response.StatusCode}. A client would show a dropdown that never fills in.");
+
+            // Whichever way it went, it has to be something a client can read - a list to show, or
+            // a sentence to print under the box that fell back.
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var key = response.StatusCode == HttpStatusCode.OK ? "options" : "error";
+            Assert.True(
+                document.RootElement.TryGetProperty(key, out _),
+                $"{source.Endpoint} answered {(int)response.StatusCode} without a '{key}' to show.");
+        }
+    }
+
+    // The keys every client reads an options source by. Checked on the wire rather than on the C#
+    // object for the same reason as the neighbours here: a property that doesn't serialize, or
+    // serializes under a name no client looks for, is invisible from inside the server and shows
+    // up as a dropdown that never appears on three platforms at once.
+    [Fact]
+    public async Task Schema_CarriesTheOptionsSource_OnTheModelFields()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/api/settings/schema", ct);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var sections = document.RootElement.EnumerateArray().ToArray();
+
+        foreach (var key in (string[])["ollama", "telegramChat"])
+        {
+            var model = sections.Single(s => s.GetProperty("key").GetString() == key)
+                .GetProperty("fields").EnumerateArray()
+                .Single(f => f.GetProperty("name").GetString() == "model");
+
+            // Still a text field on the wire: the dropdown is an offer a client makes on top of
+            // one, and a client that can't reach the list has to be left with a box to type in.
+            Assert.Equal("text", model.GetProperty("type").GetString());
+
+            var source = model.GetProperty("optionsSource");
+            Assert.Equal("/api/settings/ollama/models", source.GetProperty("endpoint").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("label").GetString()));
+            Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("emptyMessage").GetString()));
+        }
+
+        // And the other half: a field with no list is sent without the key at all, so a client
+        // can tell "no list here" from "a list I failed to read".
+        var keepAlive = sections.Single(s => s.GetProperty("key").GetString() == "ollama")
+            .GetProperty("fields").EnumerateArray()
+            .Single(f => f.GetProperty("name").GetString() == "keepAlive");
+        Assert.False(keepAlive.TryGetProperty("optionsSource", out var absent) &&
+                     absent.ValueKind != JsonValueKind.Null);
     }
 
     // reloadAfter only means anything if it actually reaches the browser, and it is the one thing

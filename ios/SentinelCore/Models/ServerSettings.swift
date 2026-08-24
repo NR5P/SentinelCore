@@ -49,6 +49,26 @@ struct SettingsLookupResponse: Decodable {
     let results: [SettingsLookupCandidate]
 }
 
+// Where a text field's likely values can be fetched from (today: the models pulled on the Ollama
+// machine, for the two Model boxes). Pure data like SettingsLookupSchema - an endpoint taking no
+// parameters - so nothing here is Ollama-specific.
+//
+// A field carrying one is drawn as a picker, but never as a plain picker: the value that is saved
+// now is always in the list, and "Type a name instead…" is always the last entry. The list is only
+// what is installed at this moment, and naming a model you are about to pull has to keep working.
+struct SettingsOptionsSource: Decodable, Hashable {
+    let label: String
+    let tip: String
+    let endpoint: String
+    // Shown when the endpoint answers with an empty list. From the server because it is the one
+    // message that names what to go and do ("ollama pull …"), which this app shouldn't know.
+    let emptyMessage: String
+}
+
+struct SettingsOptionsResponse: Decodable {
+    let options: [SettingsFieldOption]
+}
+
 struct SettingsFieldSchema: Decodable, Identifiable, Hashable {
     let name: String
     let label: String
@@ -75,6 +95,11 @@ struct SettingsFieldSchema: Decodable, Identifiable, Hashable {
 
     // Absent on all but a handful of text fields - see SettingsLookupSchema.
     let lookup: SettingsLookupSchema?
+
+    // Absent on all but a handful of text fields - see SettingsOptionsSource. Optional for the
+    // same reason `integer` above is: against a server that predates it the key is simply missing,
+    // and that has to mean "an ordinary text box", not "fail to decode the whole schema".
+    let optionsSource: SettingsOptionsSource?
     let requiresRestart: Bool
     let secret: Bool
 

@@ -48,8 +48,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.data.HostRebootProbe
 import com.sentinelcore.android.data.SettingsField
+import com.sentinelcore.android.data.SettingsFieldOption
 import com.sentinelcore.android.data.SettingsLookup
 import com.sentinelcore.android.data.SettingsLookupCandidate
+import com.sentinelcore.android.data.SettingsOptionsSource
 import com.sentinelcore.android.data.SettingsSection
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
@@ -291,6 +293,16 @@ private fun ServerSettingsSectionEditor(
     val lookupNotes = remember(section.key) { mutableStateMapOf<String, LookupNote>() }
     var lookupBusy by remember(section.key) { mutableStateOf<String?>(null) }
 
+    // The values fetched for the fields that carry an optionsSource (OLLAMA's Model, from what is
+    // pulled on the box). A field with no entry here falls back to its plain text box - which is
+    // exactly what it was before this existed, so a server that can't answer costs nothing.
+    val fieldOptions = remember(section.key) { mutableStateMapOf<String, List<SettingsFieldOption>>() }
+    val optionsNotes = remember(section.key) { mutableStateMapOf<String, LookupNote>() }
+
+    // Fields where the dropdown has been swapped for the keyboard on purpose, because the wanted
+    // value isn't installed yet. Never sticky beyond this screen.
+    val typingManually = remember(section.key) { mutableStateMapOf<String, Boolean>() }
+
     var isSaving by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errors by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -302,6 +314,30 @@ private fun ServerSettingsSectionEditor(
     // view, which would abandon a running reboot countdown and close the confirm dialog mid-
     // scroll. The panel below is pure rendering; the state and the timers live at screen scope.
     val hostReboot = remember(section.key) { HostRebootState() }
+
+    // One request per field that asks for one, when this section is opened - the phone reaches a
+    // section by drilling into it, so there is nothing further to defer. A failure is not worth a
+    // banner: the field stays the text box it has always been, with the server's own explanation
+    // underneath it.
+    LaunchedEffect(section.key) {
+        for (field in section.fields) {
+            val source = field.optionsSource ?: continue
+            try {
+                val options = model.settingsOptions(source)
+                if (options.isEmpty()) {
+                    optionsNotes[field.name] = LookupNote(source.emptyMessage, isError = false)
+                } else {
+                    fieldOptions[field.name] = options
+                    optionsNotes.remove(field.name)
+                }
+            } catch (error: Exception) {
+                optionsNotes[field.name] = LookupNote(
+                    error.message ?: "Couldn't read the list from the server.",
+                    isError = true,
+                )
+            }
+        }
+    }
 
     if (section.key == "hostReboot") {
         LaunchedEffect(Unit) { hostReboot.refresh(model) }
@@ -455,7 +491,39 @@ private fun ServerSettingsSectionEditor(
                         onText = { text[field.name] = it },
                         flagValue = flags[field.name] ?: false,
                         onFlag = { flags[field.name] = it },
+                        // Null keeps the plain text box: no list fetched, or the fetch failed.
+                        fetchedOptions = fieldOptions[field.name]
+                            ?.takeIf { typingManually[field.name] != true },
+                        onTypeManually = {
+                            typingManually[field.name] = true
+                            optionsNotes[field.name] = LookupNote(
+                                "Type the model's exact name, tag and all - e.g. gemma3:4b.",
+                                isError = false,
+                            )
+                        },
                     )
+
+                    // Why there's a box here rather than the promised list, and the way back to it
+                    // once there is one.
+                    field.optionsSource?.let { source ->
+                        optionsNotes[field.name]?.let { note ->
+                            Text(
+                                note.text,
+                                color = if (note.isError) SentinelRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (typingManually[field.name] == true && fieldOptions[field.name] != null) {
+                            TextButton(
+                                onClick = {
+                                    typingManually[field.name] = false
+                                    optionsNotes.remove(field.name)
+                                },
+                            ) {
+                                Text("Back to ${source.label}")
+                            }
+                        }
+                    }
                     Text(
                         if (field.requiresRestart) "${field.tip} (Restart required.)" else field.tip,
                         style = MaterialTheme.typography.labelSmall,
@@ -610,6 +678,11 @@ private fun SettingsFieldControl(
     onText: (String) -> Unit,
     flagValue: Boolean,
     onFlag: (Boolean) -> Unit,
+    // What the server says this field's value can be (SettingsOptionsSource), when it could be
+    // asked and the user hasn't chosen to type instead. Null everywhere else, which is every
+    // field but two and every server older than this feature.
+    fetchedOptions: List<SettingsFieldOption>? = null,
+    onTypeManually: () -> Unit = {},
 ) {
     when (field.type) {
         "checkbox" -> Row(
@@ -641,18 +714,22 @@ private fun SettingsFieldControl(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         )
 
-        "text", "csv" -> OutlinedTextField(
-            value = textValue,
-            onValueChange = onText,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(field.label) },
-            singleLine = true,
-            placeholder = if (field.type == "csv") {
-                { Text("comma, separated") }
-            } else {
-                null
-            },
-        )
+        "text", "csv" -> if (fetchedOptions != null) {
+            SettingsFetchedOptionsField(field, fetchedOptions, textValue, onText, onTypeManually)
+        } else {
+            OutlinedTextField(
+                value = textValue,
+                onValueChange = onText,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(field.label) },
+                singleLine = true,
+                placeholder = if (field.type == "csv") {
+                    { Text("comma, separated") }
+                } else {
+                    null
+                },
+            )
+        }
 
         // A field type this app version doesn't know - shown read-only rather than guessed at.
         else -> Row(Modifier.fillMaxWidth()) {
@@ -687,6 +764,59 @@ private fun SettingsSelectField(field: SettingsField, value: String, onValue: (S
                     },
                 )
             }
+        }
+    }
+}
+
+// A field whose values the server went and fetched - OLLAMA's Model, from what is pulled on the
+// box. A dropdown, with two things that keep it honest: whatever is saved now is always in the
+// list even if the server didn't return it (so opening it can't quietly change a working
+// setting), and the last entry always hands the field back to the keyboard (so a model you are
+// about to pull can still be named).
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsFetchedOptionsField(
+    field: SettingsField,
+    options: List<SettingsFieldOption>,
+    value: String,
+    onValue: (String) -> Unit,
+    onTypeManually: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    val entries = if (options.any { it.value == value } || value.isEmpty()) {
+        options
+    } else {
+        listOf(SettingsFieldOption(value, "$value (not installed)")) + options
+    }
+    val selectedLabel = entries.firstOrNull { it.value == value }?.label ?: value
+
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(field.label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            for (option in entries) {
+                DropdownMenuItem(
+                    text = { Text(option.label) },
+                    onClick = {
+                        onValue(option.value)
+                        expanded = false
+                    },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("Type a name instead…") },
+                onClick = {
+                    onTypeManually()
+                    expanded = false
+                },
+            )
         }
     }
 }

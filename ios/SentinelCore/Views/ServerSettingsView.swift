@@ -177,6 +177,16 @@ struct ServerSettingsSectionView: View {
     @State private var lookupNotes: [String: LookupNote] = [:]
     @State private var lookupBusy: String?
 
+    // The values fetched for the fields that carry an optionsSource (OLLAMA's Model, from what's
+    // pulled on the box). An entry missing means "not fetched, or the fetch failed" and the field
+    // falls back to its plain text box - which is exactly what it was before this existed.
+    @State private var fieldOptions: [String: [SettingsFieldOption]] = [:]
+    @State private var optionsNotes: [String: LookupNote] = [:]
+
+    // Fields where the picker has been swapped for the keyboard on purpose, because the wanted
+    // value isn't installed yet. Never sticky beyond this screen.
+    @State private var typingManually: Set<String> = []
+
     @State private var isSaving = false
     @State private var saveErrors: [String] = []
     @State private var statusMessage: String?
@@ -246,6 +256,9 @@ struct ServerSettingsSectionView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .onAppear(perform: seedOnce)
+        // Only the section being looked at asks, and only when it is opened - this app reaches a
+        // section by drilling into it, so there is nothing further to defer.
+        .task { await loadFieldOptions() }
     }
 
     // Restarting the dashboard is a different promise from restarting the bridge - this app is
@@ -295,18 +308,39 @@ struct ServerSettingsSectionView: View {
             case "text", "csv":
                 VStack(alignment: .leading, spacing: 2) {
                     Text(field.label)
-                    TextField(field.type == "csv" ? "comma, separated" : "", text: textBinding(field.name))
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                        .onSubmit {
-                            // Return runs the lookup, which is what a box with a Find button
-                            // beside it invites. Harmless on the fields without one.
-                            if let lookup = field.lookup {
-                                Task { await runLookup(field, lookup) }
+                    // A field whose values the server can list is a picker instead of a keyboard,
+                    // for as long as there is a list and the user hasn't asked to type - see
+                    // optionsPicker.
+                    if let source = field.optionsSource,
+                       let options = fieldOptions[field.name],
+                       !typingManually.contains(field.name) {
+                        optionsPicker(field, source, options)
+                    } else {
+                        TextField(field.type == "csv" ? "comma, separated" : "", text: textBinding(field.name))
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                            .onSubmit {
+                                // Return runs the lookup, which is what a box with a Find button
+                                // beside it invites. Harmless on the fields without one.
+                                if let lookup = field.lookup {
+                                    Task { await runLookup(field, lookup) }
+                                }
                             }
+
+                        // Why there's a box here rather than the promised list, or the way back to
+                        // it once there is one.
+                        if let note = optionsNotes[field.name] {
+                            Text(note.text)
+                                .font(.caption2)
+                                .foregroundStyle(note.isError ? SentinelTheme.red : .secondary)
                         }
+                        if let source = field.optionsSource, fieldOptions[field.name] != nil {
+                            Button("Back to \(source.label)") { typingManually.remove(field.name) }
+                                .font(.caption)
+                        }
+                    }
                 }
 
             default:
@@ -419,6 +453,72 @@ struct ServerSettingsSectionView: View {
     // fixedSize makes the label's own intrinsic height authoritative, so the row grows to fit it.
     private func wrappingLabel(_ label: String) -> some View {
         Text(label).fixedSize(horizontal: false, vertical: true)
+    }
+
+    // A field's value picked from what the server says is installed, with two things that keep it
+    // honest: whatever is saved now is always in the list even if the server didn't return it (so
+    // opening the picker can't quietly change a working setting), and the last entry always goes
+    // back to the keyboard (so a model you are about to pull can still be named).
+    @ViewBuilder
+    private func optionsPicker(
+        _ field: SettingsFieldSchema,
+        _ source: SettingsOptionsSource,
+        _ options: [SettingsFieldOption]
+    ) -> some View {
+        let current = text[field.name] ?? ""
+        let entries = options.contains(where: { $0.value == current }) || current.isEmpty
+            ? options
+            : [SettingsFieldOption(value: current, label: "\(current) (not installed)")] + options
+
+        Picker(source.label, selection: pickerBinding(field.name)) {
+            ForEach(entries, id: \.value) { option in
+                Text(option.label).tag(option.value)
+            }
+            Text("Type a name instead…").tag(Self.typeItYourself)
+        }
+        .labelsHidden()
+    }
+
+    // The last entry's tag. A NUL can't collide with a model name, so no list the server returns
+    // can shadow it.
+    private static let typeItYourself = "\u{0}type-it"
+
+    // Selecting "type a name instead" must not write itself into the setting - it swaps the
+    // control, and leaves the value alone for the keyboard to edit.
+    private func pickerBinding(_ name: String) -> Binding<String> {
+        Binding(
+            get: { text[name] ?? "" },
+            set: { selected in
+                if selected == Self.typeItYourself {
+                    typingManually.insert(name)
+                    optionsNotes[name] = LookupNote(
+                        "Type the model's exact name, tag and all - e.g. gemma3:4b.",
+                        isError: false)
+                } else {
+                    text[name] = selected
+                }
+            }
+        )
+    }
+
+    // One request per field that asks for one, when the section opens. A failure is not an error
+    // worth a banner: the field simply stays the text box it has always been, with the server's
+    // own explanation under it.
+    private func loadFieldOptions() async {
+        for field in section.fields {
+            guard let source = field.optionsSource, fieldOptions[field.name] == nil else { continue }
+            do {
+                let options = try await model.client.settingsOptions(source)
+                if options.isEmpty {
+                    optionsNotes[field.name] = LookupNote(source.emptyMessage, isError: false)
+                } else {
+                    fieldOptions[field.name] = options
+                    optionsNotes[field.name] = nil
+                }
+            } catch {
+                optionsNotes[field.name] = LookupNote(error.localizedDescription, isError: true)
+            }
+        }
     }
 
     // A slider where dragging one really is better than typing, and a keyboard everywhere else.

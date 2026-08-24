@@ -126,6 +126,149 @@ window.GateWatchSettings = (function () {
     return wrap;
   }
 
+  // A text field whose likely values the server can go and fetch (schema field.optionsSource):
+  // OLLAMA's Model box, filled from the models actually pulled on the Ollama machine. Rendered as
+  // a dropdown *plus* a way back to the text box, never as a plain select - the list is only what
+  // is installed at this moment, and naming a model you are about to pull has to keep working.
+  //
+  // The <input> stays in the DOM and stays the one thing carrying data-field, so saveSection is
+  // untouched by any of this: the dropdown writes into the box, exactly as the "use recommended"
+  // button does. If the fetch fails, or this dashboard is talking to a server too old to have the
+  // endpoint, what's left on screen is that box - which is all this field ever was before.
+  function buildOptionsSource(field, input, loaders) {
+    const source = field.optionsSource;
+
+    const wrap = document.createElement("div");
+    wrap.className = "field-options";
+
+    const select = document.createElement("select");
+    select.className = "field-input";
+    select.hidden = true;
+    // Deliberately no data-field: two elements answering to the same name would leave saveSection
+    // picking whichever came first in the DOM.
+    select.dataset.tip = source.tip;
+
+    // The escape hatch's own value. A NUL can't collide with a real model tag, so no list this
+    // endpoint returns can ever shadow it.
+    const TYPE_IT = "\u0000type-it";
+
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "field-toggle-btn";
+    back.textContent = `back to ${source.label}`;
+    back.dataset.tip = "Go back to picking from the list.";
+    back.setAttribute("data-tip-right", "");
+    back.hidden = true;
+
+    const note = document.createElement("p");
+    note.className = "field-lookup-note";
+    note.hidden = true;
+
+    const row = document.createElement("div");
+    row.className = "field-lookup-row";
+    row.append(select, input, back);
+    wrap.append(row, note);
+
+    let loaded = null;
+
+    function say(message, isError) {
+      note.textContent = message || "";
+      note.hidden = !message;
+      note.classList.toggle("field-lookup-error", !!isError);
+    }
+
+    // The box, for a value that isn't in the list - or because there is no list to be had.
+    function showBox(message, isError) {
+      select.hidden = true;
+      input.hidden = false;
+      back.hidden = !loaded;
+      say(message, isError);
+    }
+
+    function showList() {
+      select.hidden = false;
+      input.hidden = true;
+      back.hidden = true;
+      say("", false);
+    }
+
+    function populate(options) {
+      select.textContent = "";
+      const current = (input.value || "").trim();
+
+      // Whatever is saved goes in the list even when the server didn't return it - a model pulled
+      // on a machine that's currently off, say. Without this, opening the dropdown would quietly
+      // land on someone else's model and a later save would keep it.
+      const values = options.map(option => option.value);
+      const entries = values.includes(current) || current === ""
+        ? options
+        : [{ value: current, label: `${current} (not installed)` }, ...options];
+
+      for (const option of entries) {
+        const opt = document.createElement("option");
+        opt.value = option.value;
+        opt.textContent = option.label || option.value;
+        select.appendChild(opt);
+      }
+
+      const typeIt = document.createElement("option");
+      typeIt.value = TYPE_IT;
+      typeIt.textContent = "type a name instead…";
+      select.appendChild(typeIt);
+
+      select.value = current;
+    }
+
+    select.addEventListener("change", () => {
+      if (select.value === TYPE_IT) {
+        showBox("Type the model's exact name, tag and all - e.g. gemma3:4b.", false);
+        input.focus();
+        input.select();
+        return;
+      }
+      input.value = select.value;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    back.addEventListener("click", () => {
+      populate(loaded || []);
+      showList();
+    });
+
+    async function load() {
+      say(`Reading ${source.label}…`, false);
+      try {
+        const response = await fetch(source.endpoint);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          // The server's message is the useful one - it names the address it tried and says what
+          // to do instead, which "HTTP 502" does not.
+          showBox((payload && payload.error) || `Couldn't list ${source.label} (HTTP ${response.status}).`, true);
+          return;
+        }
+        const options = (payload && payload.options) || [];
+        if (options.length === 0) {
+          showBox(source.emptyMessage, false);
+          return;
+        }
+        loaded = options;
+        populate(options);
+        showList();
+      } catch {
+        showBox(`Couldn't reach this server to list ${source.label}. Type the name instead.`, true);
+      }
+    }
+
+    // Not fetched here: every section on this page is built up front, and the sections are
+    // collapsed, so loading on build would ask Ollama for its model list on every visit to
+    // Settings whether or not anyone opens this section. renderSection runs these the first time
+    // its section is opened instead.
+    if (loaders) loaders.push(load);
+    else load();
+
+    return wrap;
+  }
+
   // Must stay identical to SettingsSecrets.Mask on the server: a saved secret is sent out as
   // this, and a save that sends it back untouched means "keep what's stored".
   const SECRET_MASK = "••••••••";
@@ -168,11 +311,11 @@ window.GateWatchSettings = (function () {
   // fetched from and `restartService: "dashboard"` to say who has to restart - both handled
   // generically below, so no client needs to know which section is the odd one.
 
-  function buildField(field, value) {
+  function buildField(field, value, loaders) {
     const row = document.createElement("div");
-    // A lookup field spans the grid whatever its type: the candidate list underneath it is full
-    // place names ("Holland, Bell County, Texas, 76534, United States"), unreadable in a column.
-    const wide = WIDE_TYPES.has(field.type) || !!field.lookup;
+    // A lookup or a dropdown-backed field spans the grid whatever its type: both grow a second
+    // line underneath (candidates, or a note about why there's no list), unreadable in a column.
+    const wide = WIDE_TYPES.has(field.type) || !!field.lookup || !!field.optionsSource;
     row.className = "field-row" + (wide ? " field-row-wide" : "");
     // The tip lives on the row because <input> can't render the ::after pseudo-element.
     if (field.tip) row.dataset.tip = field.tip;
@@ -303,7 +446,9 @@ window.GateWatchSettings = (function () {
       // ratio) stay on "any" - fractions are legal there.
       input.step = field.step !== undefined ? field.step : (field.integer ? 1 : "any");
     }
-    row.appendChild(field.lookup ? buildLookup(field, input) : input);
+    if (field.lookup) row.appendChild(buildLookup(field, input));
+    else if (field.optionsSource) row.appendChild(buildOptionsSource(field, input, loaders));
+    else row.appendChild(input);
 
     // What to put in the box, for the fields where the tip explains what the number does without
     // ever answering that - a confidence threshold means nothing until you have watched this
@@ -479,8 +624,16 @@ window.GateWatchSettings = (function () {
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">${schema.title}</span><span class="settings-section-caret">&#9656;</span>`;
     if (SECTION_TIPS[schema.key]) header.dataset.tip = SECTION_TIPS[schema.key];
+    // Anything a field wants fetched from the server, deferred until this section is first
+    // opened - see buildOptionsSource. Every section on this page is built up front, so doing it
+    // any earlier would mean asking Ollama for its model list on every visit to Settings.
+    const loaders = [];
+
     header.addEventListener("click", () => {
       section.classList.toggle("open");
+      if (section.classList.contains("open") && loaders.length > 0) {
+        for (const load of loaders.splice(0)) load();
+      }
       window.GateWatchTooltips.schedule();
     });
 
@@ -492,7 +645,7 @@ window.GateWatchSettings = (function () {
     const grid = document.createElement("div");
     grid.className = "field-grid";
     for (const field of schema.fields) {
-      grid.appendChild(buildField(field, readPath(data, field.name)));
+      grid.appendChild(buildField(field, readPath(data, field.name), loaders));
     }
     body.appendChild(grid);
 

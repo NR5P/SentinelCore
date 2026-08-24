@@ -968,7 +968,10 @@ The full list below covers both modes:
   earlier versions, which described how it was built rather than what it does.)
 - **Ollama** — which local vision model analyzes snapshots (must already be pulled in
   Ollama), how long it's kept loaded in memory between alerts, and inference tuning
-  (temperature, top-K/top-P, output token limit, retries).
+  (temperature, top-K/top-P, output token limit, retries). The **Model** box is a dropdown of
+  the models actually pulled on the machine running Ollama, so you don't have to remember the
+  exact tag — pick "type a name instead" to name one you haven't pulled yet, and if Ollama
+  can't be reached the box stays an ordinary one you can type into.
 - **Cloud Vision** and **Vision Routing** — an offsite AI model (OpenAI, Anthropic, or Google)
   that can analyze alerts instead of, or as an automatic backup for, the local Ollama model.
   Its own section below. See
@@ -987,7 +990,8 @@ The full list below covers both modes:
 - **Telegram Alerts** — push alerts to your phone via a Telegram bot: token, chat ID,
   confidence gate, duplicate cooldown, and whether to attach the image.
 - **Telegram Chat** — lets you text the bot questions about recent activity; how many days
-  back it looks, how many events it considers, and which Ollama model answers.
+  back it looks, how many events it considers, and which Ollama model answers (the same
+  dropdown of installed models as the Ollama section above).
 - **Discord Alerts** — posts alert cards and optional snapshots to a Discord channel using one
   incoming webhook URL; no bot application is required.
 - **Blue Iris Media** — lets the `/photo` bot command pull a live image straight from Blue
