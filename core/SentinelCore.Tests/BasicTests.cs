@@ -1,4 +1,5 @@
 using System.Globalization;
+using MailKit.Security;
 using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -4769,5 +4770,113 @@ public sealed class BasicTests
         using var buffer = new MemoryStream();
         image.Save(buffer, new JpegEncoder());
         return buffer.ToArray();
+    }
+
+    // Email was written against one provider and quietly assumed its shape everywhere: STARTTLS
+    // on 587, credentials always sent, and a username that is itself an address. These pin the
+    // three shapes that used to be impossible to configure - implicit TLS on 465, a relay with no
+    // login at all, and a service whose username is a key rather than an email address.
+
+    private static EmailOptions Smtp(int port = 587, bool ssl = true, string user = "sender@example.com",
+        string password = "app-password", string from = "", string to = "owner@example.com") => new()
+    {
+        Enabled = true,
+        SmtpHost = "smtp.example.com",
+        SmtpPort = port,
+        EnableSsl = ssl,
+        Username = user,
+        AppPassword = password,
+        FromAddress = from,
+        ToAddress = to
+    };
+
+    [Theory]
+    [InlineData(587, true, SecureSocketOptions.StartTls)]     // Gmail, Outlook, Fastmail, SES
+    [InlineData(465, true, SecureSocketOptions.SslOnConnect)] // Yandex, Mail.ru, most cPanel hosts
+    [InlineData(2525, true, SecureSocketOptions.StartTls)]    // the usual fallback when 587 is blocked
+    [InlineData(25, false, SecureSocketOptions.None)]         // a relay on the LAN with no certificate
+    public void SmtpMailer_PicksTheTransportTheProviderActuallySpeaks(int port, bool ssl, SecureSocketOptions expected) =>
+        Assert.Equal(expected, SmtpMailer.SecurityFor(Smtp(port, ssl)));
+
+    // StartTlsWhenAvailable would have been the forgiving choice, and it is exactly the wrong one:
+    // a server that has lost its certificate would silently start taking the password in the clear.
+    [Fact]
+    public void SmtpMailer_WithSslOn_RequiresEncryptionRatherThanDowngradingQuietly() =>
+        Assert.Equal(SecureSocketOptions.StartTls, SmtpMailer.SecurityFor(Smtp(587, ssl: true)));
+
+    [Fact]
+    public void SmtpMailer_WithNoUsername_DoesNotOfferToAuthenticate()
+    {
+        Assert.False(SmtpMailer.UsesAuthentication(Smtp(user: "", password: "")));
+        Assert.True(SmtpMailer.UsesAuthentication(Smtp()));
+    }
+
+    [Fact]
+    public void SmtpMailer_FromAddress_PrefersTheExplicitOneAndFallsBackOnlyToAUsernameThatIsAnAddress()
+    {
+        Assert.Equal("alerts@example.com", SmtpMailer.FromAddressFor(Smtp(from: "alerts@example.com")));
+        Assert.Equal("sender@example.com", SmtpMailer.FromAddressFor(Smtp()));
+
+        // SendGrid's username is the literal word "apikey", SES's is an access key. Putting either
+        // in the From line built a message no server would accept.
+        Assert.Equal(string.Empty, SmtpMailer.FromAddressFor(Smtp(user: "apikey")));
+        Assert.Equal("alerts@example.com", SmtpMailer.FromAddressFor(Smtp(user: "apikey", from: "alerts@example.com")));
+    }
+
+    [Fact]
+    public void EmailValidation_AcceptsTheProviderShapesThatUsedToBeRejected()
+    {
+        Assert.Null(SmtpMailer.ValidateDeliverable(Smtp()));                                       // Gmail
+        Assert.Null(SmtpMailer.ValidateDeliverable(Smtp(465)));                                    // implicit TLS
+        Assert.Null(SmtpMailer.ValidateDeliverable(Smtp(user: "apikey", from: "alerts@example.com")));  // SendGrid
+        Assert.Null(SmtpMailer.ValidateDeliverable(                                                // an open relay
+            Smtp(25, ssl: false, user: "", password: "", from: "alerts@example.com")));
+    }
+
+    [Fact]
+    public void EmailValidation_StillRejectsWhatCannotBeSent()
+    {
+        // A key for a username and nothing to put in the From line.
+        Assert.Contains("FromAddress is required", SmtpMailer.ValidateDeliverable(Smtp(user: "apikey")));
+        Assert.Contains("ToAddress", SmtpMailer.ValidateDeliverable(Smtp(to: "not-an-address")));
+        Assert.Contains("AppPassword", SmtpMailer.ValidateDeliverable(Smtp(password: "")));
+        // 465 is encrypted from the first byte; there is no plaintext greeting to be had there.
+        Assert.Contains("EnableSsl", SmtpMailer.ValidateDeliverable(Smtp(465, ssl: false)));
+    }
+
+    // An Email section is only judged once it's switched on, so a half-filled one can be saved and
+    // finished later - and the settings form and the server's own startup check say the same thing
+    // about it, which they didn't when they were two hand-maintained lists.
+    [Fact]
+    public void EmailValidation_SaysNothingAboutASectionThatIsSwitchedOff()
+    {
+        var validator = new EmailOptionsValidator();
+        Assert.True(validator.Validate(null, new EmailOptions { Enabled = false }).Succeeded);
+        Assert.True(validator.Validate(null, Smtp()).Succeeded);
+
+        var failed = validator.Validate(null, Smtp(to: "not-an-address"));
+        Assert.True(failed.Failed);
+        Assert.Contains("Email:ToAddress", failed.FailureMessage);
+    }
+
+    [Fact]
+    public void EmailSettingsDto_RoundTripsEveryFieldValidationJudges()
+    {
+        var dto = new EmailSettingsDto
+        {
+            Enabled = true,
+            SmtpHost = "smtp.example.com",
+            SmtpPort = 465,
+            EnableSsl = true,
+            Username = "apikey",
+            AppPassword = "secret",
+            FromAddress = "alerts@example.com",
+            ToAddress = "owner@example.com",
+            TimeoutSeconds = 45
+        };
+
+        Assert.Null(SmtpMailer.ValidateDeliverable(dto.ToOptions()));
+        Assert.Equal(SecureSocketOptions.SslOnConnect, SmtpMailer.SecurityFor(dto.ToOptions()));
+        Assert.Equal(45, dto.ToOptions().TimeoutSeconds);
     }
 }

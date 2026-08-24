@@ -114,13 +114,9 @@ public static class SettingsEndpoints
             await SaveSectionAsync(dto, appSettings, "Email", ct, extra =>
             {
                 if (!dto.Enabled) return;
-                if (string.IsNullOrWhiteSpace(dto.Username)) extra.Add("Username is required when email is enabled.");
-                if (string.IsNullOrWhiteSpace(dto.AppPassword)) extra.Add("AppPassword is required when email is enabled.");
-                if (string.IsNullOrWhiteSpace(dto.ToAddress)) extra.Add("ToAddress is required when email is enabled.");
-                if (!string.IsNullOrWhiteSpace(dto.Username) && !new EmailAddressAttribute().IsValid(dto.Username))
-                    extra.Add("Username must be a valid email address.");
-                if (!string.IsNullOrWhiteSpace(dto.ToAddress) && !new EmailAddressAttribute().IsValid(dto.ToAddress))
-                    extra.Add("ToAddress must be a valid email address.");
+                // Deliberately the same call the server makes at startup, so a form that saves
+                // cleanly here can never be a config the service then refuses to boot on.
+                if (SmtpMailer.ValidateDeliverable(dto.ToOptions()) is { } problem) extra.Add(problem);
             }));
 
         settings.MapPut("/daily-summary", async (DailySummarySettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>

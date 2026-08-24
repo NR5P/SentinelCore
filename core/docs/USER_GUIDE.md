@@ -1419,6 +1419,20 @@ actually work before an alert depends on them — see
 2-factor authentication on, Gmail and most other providers reject your normal account password
 for SMTP and need a separate generated one.
 
+**Any SMTP provider works.** Fill in the host, port and login exactly as your provider's own
+instructions give them:
+
+- **Port 587 or 465.** 587 (STARTTLS) is the more common of the two, but 465 — encrypted from
+  the first byte — is what Yandex, Mail.ru and a lot of shared hosting ask for, and both work.
+  Leave **Enable SSL** on for either. If the server never answers, the port is the first thing
+  to change.
+- **The username doesn't have to be an email address.** Amazon SES gives you an access key,
+  SendGrid wants the literal word `apikey`. When the username isn't an address, fill in **From
+  Address** as well — there's nothing for it to fall back on otherwise.
+- **A relay on your own network** that wants no login at all works too: leave Username and
+  Password blank, and turn Enable SSL off if it has no certificate. Nothing is sent that such a
+  server would refuse.
+
 ## 13. MQTT & Home Assistant
 
 Off by default. When enabled, every processed event — Blue Iris or a trigger zone routed

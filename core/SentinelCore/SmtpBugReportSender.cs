@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Net;
 using System.Net.Mail;
 using Microsoft.Extensions.Options;
 
@@ -35,15 +34,7 @@ public sealed class SmtpBugReportSender(
         try
         {
             using var message = BugReportEmail.Build(email, report);
-            using var client = new SmtpClient(email.SmtpHost, email.SmtpPort)
-            {
-                EnableSsl = email.EnableSsl,
-                UseDefaultCredentials = false,
-                Credentials = new NetworkCredential(email.Username, email.AppPassword),
-                DeliveryMethod = SmtpDeliveryMethod.Network
-            };
-
-            await client.SendMailAsync(message).WaitAsync(cancellationToken);
+            await SmtpMailer.SendAsync(email, message, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -58,7 +49,7 @@ public static class BugReportEmail
 {
     public static MailMessage Build(EmailOptions email, BugReport report)
     {
-        var fromAddress = string.IsNullOrWhiteSpace(email.FromAddress) ? email.Username : email.FromAddress;
+        var fromAddress = SmtpMailer.FromAddressFor(email);
         var message = new MailMessage
         {
             From = new MailAddress(fromAddress, "Sentinel Core Bug Reports"),

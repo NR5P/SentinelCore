@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Mail;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -322,15 +321,7 @@ public sealed class InternetOutageWorker : BackgroundService
         EmailOptions email, InternetOutageReport report, CancellationToken cancellationToken)
     {
         using var message = InternetOutageNotification.BuildEmail(email, report);
-        using var client = new SmtpClient(email.SmtpHost, email.SmtpPort)
-        {
-            EnableSsl = email.EnableSsl,
-            UseDefaultCredentials = false,
-            Credentials = new NetworkCredential(email.Username, email.AppPassword),
-            DeliveryMethod = SmtpDeliveryMethod.Network
-        };
-
-        await client.SendMailAsync(message).WaitAsync(cancellationToken);
+        await SmtpMailer.SendAsync(email, message, cancellationToken);
     }
 
     private async Task SendTelegramAsync(
@@ -418,7 +409,7 @@ public static class InternetOutageNotification
     // routine alerts, and "you were unreachable for three hours" is not routine.
     public static MailMessage BuildEmail(EmailOptions email, InternetOutageReport report)
     {
-        var fromAddress = string.IsNullOrWhiteSpace(email.FromAddress) ? email.Username : email.FromAddress;
+        var fromAddress = SmtpMailer.FromAddressFor(email);
         var duration = OutageEmail.Describe(report.Downtime);
 
         var message = new MailMessage

@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Mail;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -222,15 +221,7 @@ public sealed class StartupNotificationWorker : BackgroundService
         try
         {
             using var message = OutageEmail.Build(email, diagnosis);
-            using var client = new SmtpClient(email.SmtpHost, email.SmtpPort)
-            {
-                EnableSsl = email.EnableSsl,
-                UseDefaultCredentials = false,
-                Credentials = new NetworkCredential(email.Username, email.AppPassword),
-                DeliveryMethod = SmtpDeliveryMethod.Network
-            };
-
-            await client.SendMailAsync(message).WaitAsync(cancellationToken);
+            await SmtpMailer.SendAsync(email, message, cancellationToken);
             _logger.LogInformation(
                 "Sent an outage email: server was down for {Downtime} ({Kind})",
                 OutageEmail.Describe(diagnosis.Downtime), diagnosis.Kind);
@@ -250,7 +241,7 @@ public static class OutageEmail
     // outage notice is the opposite of routine.
     public static MailMessage Build(EmailOptions email, StartupDiagnosis diagnosis)
     {
-        var fromAddress = string.IsNullOrWhiteSpace(email.FromAddress) ? email.Username : email.FromAddress;
+        var fromAddress = SmtpMailer.FromAddressFor(email);
         var duration = Describe(diagnosis.Downtime);
 
         var cause = diagnosis.Kind == OutageKind.Unexpected

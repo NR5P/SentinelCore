@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using SentinelCore;
 
 namespace SentinelCore.Web;
 
@@ -139,6 +140,11 @@ public sealed class EmailSettingsDto
     public string FromName { get; set; } = string.Empty;
     public string ToAddress { get; set; } = string.Empty;
 
+    // One of the few TimeoutSeconds the note at the top of this file doesn't exclude: nothing
+    // holds an SMTP connection open between sends, so it's read fresh on the next email.
+    [Range(5, 300)]
+    public int TimeoutSeconds { get; set; } = 30;
+
     [Range(0, 1440)]
     public int DuplicateCooldownMinutes { get; set; }
 
@@ -146,6 +152,22 @@ public sealed class EmailSettingsDto
     public double MinimumConfidence { get; set; }
 
     public bool AttachImage { get; set; } = true;
+
+    // Lets the saved form be judged by SmtpMailer.ValidateDeliverable, the same code that decides
+    // whether the server will boot with this Email section - see SettingsEndpoints' /email PUT.
+    public EmailOptions ToOptions() => new()
+    {
+        Enabled = Enabled,
+        SmtpHost = SmtpHost,
+        SmtpPort = SmtpPort,
+        EnableSsl = EnableSsl,
+        Username = Username,
+        AppPassword = AppPassword,
+        FromAddress = FromAddress,
+        FromName = FromName,
+        ToAddress = ToAddress,
+        TimeoutSeconds = TimeoutSeconds
+    };
 }
 
 public sealed class DailySummarySettingsDto

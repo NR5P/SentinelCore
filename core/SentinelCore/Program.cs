@@ -77,15 +77,14 @@ builder.Services.AddOptions<WebhookOptions>()
     .ValidateDataAnnotations()
     .Validate(o => !o.Enabled || Uri.TryCreate(o.Url, UriKind.Absolute, out _), "Webhook:Url must be valid when enabled.")
     .ValidateOnStart();
-    builder.Services.AddOptions<EmailOptions>()
+// The rules themselves live in SmtpMailer.ValidateDeliverable, registered below as an
+// IValidateOptions so a hand-edited appsettings.json and a settings form saved from a phone are
+// judged by exactly the same code - they used to be two lists that had drifted apart.
+builder.Services.AddOptions<EmailOptions>()
     .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
     .ValidateDataAnnotations()
-    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.Username), "Email:Username is required when email is enabled.")
-    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.AppPassword), "Email:AppPassword is required when email is enabled.")
-    .Validate(o => !o.Enabled || !string.IsNullOrWhiteSpace(o.ToAddress), "Email:ToAddress is required when email is enabled.")
-    .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.Username), "Email:Username must be a valid email address.")
-    .Validate(o => !o.Enabled || new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(o.ToAddress), "Email:ToAddress must be a valid email address.")
     .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<EmailOptions>, EmailOptionsValidator>();
 builder.Services.AddOptions<DailySummaryOptions>()
     .Bind(builder.Configuration.GetSection(DailySummaryOptions.SectionName))
     .ValidateDataAnnotations()

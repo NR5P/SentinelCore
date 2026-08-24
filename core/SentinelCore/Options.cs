@@ -543,16 +543,27 @@ public sealed class EmailOptions
     [Required]
     public string SmtpHost { get; init; } = "smtp.gmail.com";
 
+    // 587 (STARTTLS) is what most providers document first, but 465 (TLS from the first byte) and
+    // 25/2525 for a relay on the LAN all work - see SmtpMailer.SecurityFor.
     [Range(1, 65535)]
     public int SmtpPort { get; init; } = 587;
 
     public bool EnableSsl { get; init; } = true;
 
+    // Blank means the server wants no login, which is normal for a relay on your own network.
+    // It does not have to be an email address: SES uses an access key, SendGrid the literal word
+    // "apikey". Whenever it isn't one, FromAddress has to be filled in instead.
     public string Username { get; init; } = string.Empty;
     public string AppPassword { get; init; } = string.Empty;
     public string FromAddress { get; init; } = string.Empty;
     public string FromName { get; init; } = "Gate Camera";
     public string ToAddress { get; init; } = string.Empty;
+
+    // The whole exchange, not just the connection. Long enough for a slow server to accept a
+    // summary email with several photos on it, short enough that a wrong port fails while
+    // someone is still sitting in front of the settings page waiting for the answer.
+    [Range(5, 300)]
+    public int TimeoutSeconds { get; init; } = 30;
 
     [Range(0, 1440)]
     public int DuplicateCooldownMinutes { get; init; } = 10;

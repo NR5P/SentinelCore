@@ -347,15 +347,7 @@ public sealed class EmailAlertAction : IAlertAction
         var cropOverlay = await TryBuildCropOverlayAsync(result, cancellationToken);
 
         using var message = BuildMessage(options, result, notification, cropOverlay);
-        using var client = new SmtpClient(options.SmtpHost, options.SmtpPort)
-        {
-            EnableSsl = options.EnableSsl,
-            UseDefaultCredentials = false,
-            Credentials = new NetworkCredential(options.Username, options.AppPassword),
-            DeliveryMethod = SmtpDeliveryMethod.Network
-        };
-
-        await client.SendMailAsync(message).WaitAsync(cancellationToken);
+        await SmtpMailer.SendAsync(options, message, cancellationToken);
         _lastSent[cooldownKey] = DateTimeOffset.UtcNow;
 
         _logger.LogInformation(
@@ -394,9 +386,7 @@ public sealed class EmailAlertAction : IAlertAction
     // once" guarantee is directly testable, the same way BugReportEmail.Build is.
     public static MailMessage BuildMessage(EmailOptions options, AlertResult result, EmailNotification notification, byte[]? cropOverlay)
     {
-        var fromAddress = string.IsNullOrWhiteSpace(options.FromAddress)
-            ? options.Username
-            : options.FromAddress;
+        var fromAddress = SmtpMailer.FromAddressFor(options);
 
         var message = new MailMessage
         {

@@ -121,15 +121,7 @@ public sealed class DailySummaryWorker : BackgroundService
         var analyzed = events.Where(e => string.Equals(e.Status, "completed", StringComparison.OrdinalIgnoreCase)).ToList();
 
         using var message = await BuildMessageAsync(title, from, to, analyzed, cancellationToken);
-        using var client = new SmtpClient(emailOptions.SmtpHost, emailOptions.SmtpPort)
-        {
-            EnableSsl = emailOptions.EnableSsl,
-            UseDefaultCredentials = false,
-            Credentials = new NetworkCredential(emailOptions.Username, emailOptions.AppPassword),
-            DeliveryMethod = SmtpDeliveryMethod.Network
-        };
-
-        await client.SendMailAsync(message).WaitAsync(cancellationToken);
+        await SmtpMailer.SendAsync(emailOptions, message, cancellationToken);
 
         _logger.LogInformation(
             "Sent {Kind} summary email covering {From} to {To}: {Count} analyzed event(s)",
@@ -144,7 +136,7 @@ public sealed class DailySummaryWorker : BackgroundService
         CancellationToken cancellationToken)
     {
         var emailOptions = _emailOptionsMonitor.CurrentValue;
-        var fromAddress = string.IsNullOrWhiteSpace(emailOptions.FromAddress) ? emailOptions.Username : emailOptions.FromAddress;
+        var fromAddress = SmtpMailer.FromAddressFor(emailOptions);
         var message = new MailMessage
         {
             From = new MailAddress(fromAddress, emailOptions.FromName),

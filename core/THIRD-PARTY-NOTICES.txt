@@ -68,6 +68,8 @@ MQTTnet / MQTTnet.Server         MIT        https://github.com/dotnet/MQTTnet
 Cronos                           MIT        https://github.com/HangfireIO/Cronos
 Markdig                          BSD-2      https://github.com/xoofx/markdig
 Makaretu.Dns.Multicast.New       MIT        https://github.com/richardschneider/net-mdns
+MailKit / MimeKit                MIT        https://github.com/jstedfast/MailKit
+BouncyCastle.Cryptography        MIT        https://github.com/bcgit/bc-csharp
 Microsoft.Data.Sqlite            MIT        https://github.com/dotnet/efcore
 SQLitePCLRaw                     Apache-2.0 https://github.com/ericsink/SQLitePCL.raw
 ElBruno.LocalEmbeddings          MIT        https://github.com/elbruno/LocalEmbeddings

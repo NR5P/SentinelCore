@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Net;
 using System.Net.Mail;
 using SentinelCore;
 
@@ -66,15 +65,7 @@ public sealed class LoginAlertSender(
         try
         {
             using var message = LoginAlertNotification.BuildEmail(email, report);
-            using var client = new SmtpClient(email.SmtpHost, email.SmtpPort)
-            {
-                EnableSsl = email.EnableSsl,
-                UseDefaultCredentials = false,
-                Credentials = new NetworkCredential(email.Username, email.AppPassword),
-                DeliveryMethod = SmtpDeliveryMethod.Network
-            };
-
-            await client.SendMailAsync(message).WaitAsync(cancellationToken);
+            await SmtpMailer.SendAsync(email, message, cancellationToken);
             logger.LogInformation("Sent an invalid-login email for {Ip}", report.Ip);
             return true;
         }
@@ -132,7 +123,7 @@ public static class LoginAlertNotification
 {
     public static MailMessage BuildEmail(EmailOptions email, LoginAlertReport report)
     {
-        var fromAddress = string.IsNullOrWhiteSpace(email.FromAddress) ? email.Username : email.FromAddress;
+        var fromAddress = SmtpMailer.FromAddressFor(email);
 
         var message = new MailMessage
         {

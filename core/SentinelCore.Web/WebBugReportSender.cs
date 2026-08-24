@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Net;
 using System.Net.Mail;
 using SentinelCore;
 
@@ -33,15 +32,7 @@ public sealed class WebBugReportSender(AppSettingsFile settings, ILogger<WebBugR
         try
         {
             using var message = BugReportEmail.Build(email, report);
-            using var client = new SmtpClient(email.SmtpHost, email.SmtpPort)
-            {
-                EnableSsl = email.EnableSsl,
-                UseDefaultCredentials = false,
-                Credentials = new NetworkCredential(email.Username, email.AppPassword),
-                DeliveryMethod = SmtpDeliveryMethod.Network
-            };
-
-            await client.SendMailAsync(message).WaitAsync(cancellationToken);
+            await SmtpMailer.SendAsync(email, message, cancellationToken);
         }
         catch (Exception ex)
         {

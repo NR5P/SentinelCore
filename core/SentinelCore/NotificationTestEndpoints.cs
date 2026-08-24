@@ -58,14 +58,12 @@ public static class NotificationTester
     public static async Task<(bool Success, string Detail)> SendTestEmailAsync(
         EmailOptions options, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.SmtpHost))
-            return (false, "No SMTP Host is set. Fill the Email section in and save it, then try again.");
-        if (string.IsNullOrWhiteSpace(options.ToAddress))
-            return (false, "No To Address is set. Fill the Email section in and save it, then try again.");
+        // Checked against saved settings rather than the boxes on screen, and the section can be
+        // saved with Enabled off - so this can legitimately be reached half-filled-in.
+        if (SmtpMailer.ValidateDeliverable(options) is { } problem)
+            return (false, $"{problem} Fill the Email section in and save it, then try again.");
 
-        var fromAddress = string.IsNullOrWhiteSpace(options.FromAddress) ? options.Username : options.FromAddress;
-        if (string.IsNullOrWhiteSpace(fromAddress))
-            return (false, "No From Address or Username is set, so there is nothing to send from.");
+        var fromAddress = SmtpMailer.FromAddressFor(options);
 
         try
         {
@@ -82,15 +80,7 @@ public static class NotificationTester
             };
             message.To.Add(options.ToAddress);
 
-            using var client = new SmtpClient(options.SmtpHost, options.SmtpPort)
-            {
-                EnableSsl = options.EnableSsl,
-                UseDefaultCredentials = false,
-                Credentials = new NetworkCredential(options.Username, options.AppPassword),
-                DeliveryMethod = SmtpDeliveryMethod.Network
-            };
-
-            await client.SendMailAsync(message).WaitAsync(cancellationToken);
+            await SmtpMailer.SendAsync(options, message, cancellationToken);
             return (true, $"Test email sent to {options.ToAddress}.{DisabledNote(options.Enabled, "Email")}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -164,6 +154,10 @@ public static class NotificationTester
     // and the outer message on its own is the same generic line for every possible cause.
     private static string Explain(Exception exception)
     {
+        // The two failures worth naming, because the server's own wording for them is useless to
+        // someone who has never configured SMTP before. Everything else gets reported verbatim.
+        if (HintFor(exception) is { } hint) return Truncate(hint);
+
         var messages = new List<string>();
         for (var current = exception; current is not null; current = current.InnerException)
         {
@@ -172,6 +166,26 @@ public static class NotificationTester
         }
 
         return Truncate(string.Join(" ", messages));
+    }
+
+    // A timeout here is nearly always the port: a provider that wants 465 leaves a connection to
+    // 587 hanging with no reply at all, and vice versa. An auth rejection is nearly always the
+    // password: the major consumer providers all refuse the normal account password over SMTP.
+    private static string? HintFor(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is TimeoutException or System.Net.Sockets.SocketException)
+                return "The mail server never answered. That usually means the wrong SMTP Port - " +
+                       "587 and 465 are the two in common use, and providers differ on which they want - " +
+                       "or an SMTP Host with a typo in it.";
+            if (current is MailKit.Security.AuthenticationException)
+                return "The mail server rejected the username and password. Gmail, Outlook, iCloud and " +
+                       "Yahoo all refuse your normal account password here: generate an app password in " +
+                       "the provider's security settings and use that instead. " + current.Message;
+        }
+
+        return null;
     }
 
     // These end up in a toast and under a form field, and an SMTP server having a bad day can

@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Mail;
 using SentinelCore;
 
@@ -150,7 +149,7 @@ public sealed class NuisanceAdvisorWorker(
 
         try
         {
-            var fromAddress = string.IsNullOrWhiteSpace(email.FromAddress) ? email.Username : email.FromAddress;
+            var fromAddress = SmtpMailer.FromAddressFor(email);
             using var message = new MailMessage
             {
                 From = new MailAddress(fromAddress, email.FromName),
@@ -160,15 +159,7 @@ public sealed class NuisanceAdvisorWorker(
             };
             message.To.Add(email.ToAddress);
 
-            using var client = new SmtpClient(email.SmtpHost, email.SmtpPort)
-            {
-                EnableSsl = email.EnableSsl,
-                UseDefaultCredentials = false,
-                Credentials = new NetworkCredential(email.Username, email.AppPassword),
-                DeliveryMethod = SmtpDeliveryMethod.Network
-            };
-
-            await client.SendMailAsync(message).WaitAsync(cancellationToken);
+            await SmtpMailer.SendAsync(email, message, cancellationToken);
             logger.LogInformation("Sent a nuisance advisory email for {Camera}", finding.CameraName);
             return true;
         }

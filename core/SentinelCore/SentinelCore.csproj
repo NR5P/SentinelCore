@@ -20,6 +20,14 @@
          directly instead (Apache-2.0, from the ONNX Model Zoo), and detection is now YuNet
          (MIT) via YuNetFaceDetector. -->
     <PackageReference Include="FaceAiSharp.Models.ArcFace.LResNet100E-IR-int8" Version="0.20230419.1" />
+    <!-- The SMTP client. System.Net.Mail.SmtpClient can only do STARTTLS, so a provider that
+         offers implicit TLS on port 465 and nothing else (Yandex, Mail.ru, a great many shared
+         hosts) simply could not be configured - the connection hung until it timed out. MailKit
+         speaks both, and lets a server that wants no authentication at all be used as a relay.
+         MIT, as is the BouncyCastle.Cryptography it drags in through MimeKit for S/MIME we
+         never use. Messages are still built as System.Net.Mail.MailMessage and converted at
+         the point of sending - see SmtpMailer. -->
+    <PackageReference Include="MailKit" Version="4.17.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />

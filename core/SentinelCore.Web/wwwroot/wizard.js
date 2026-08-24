@@ -199,8 +199,10 @@ window.GateWatchWizard = (function () {
           </div>
           <div id="wizard-email-fields" class="hidden">
             <div class="field-row"><label class="field-label">SMTP Host</label><input type="text" id="wizard-email-host" class="field-input" value="smtp.gmail.com" /></div>
+            <div class="field-row"><label class="field-label">SMTP Port</label><input type="number" id="wizard-email-port" class="field-input" value="587" min="1" max="65535" /></div>
             <div class="field-row"><label class="field-label">Username</label><input type="text" id="wizard-email-user" class="field-input" /></div>
-            <div class="field-row"><label class="field-label">App Password</label><input type="password" id="wizard-email-pass" class="field-input" autocomplete="off" /></div>
+            <div class="field-row"><label class="field-label">Password</label><input type="password" id="wizard-email-pass" class="field-input" autocomplete="off" /></div>
+            <div class="field-row"><label class="field-label">From Address</label><input type="text" id="wizard-email-from" class="field-input" placeholder="same as username" /></div>
             <div class="field-row"><label class="field-label">To Address</label><input type="text" id="wizard-email-to" class="field-input" /></div>
           </div>
           <div class="field-row field-row-wide field-checkbox-row">
@@ -227,13 +229,14 @@ window.GateWatchWizard = (function () {
           const ok = await put("/api/settings/email", {
             enabled: true,
             smtpHost: document.getElementById("wizard-email-host").value.trim(),
-            smtpPort: 587,
+            smtpPort: Number(document.getElementById("wizard-email-port").value) || 587,
             enableSsl: true,
             username: document.getElementById("wizard-email-user").value.trim(),
             appPassword: document.getElementById("wizard-email-pass").value,
-            fromAddress: "",
+            fromAddress: document.getElementById("wizard-email-from").value.trim(),
             fromName: "Gate Camera",
             toAddress: document.getElementById("wizard-email-to").value.trim(),
+            timeoutSeconds: 30,
             duplicateCooldownMinutes: 10,
             minimumConfidence: 0.6,
             attachImage: true
