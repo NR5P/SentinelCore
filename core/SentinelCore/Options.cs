@@ -521,6 +521,11 @@ public sealed class HomeKitOptions
     // default rather than letting low-confidence readings through. Quiet hours can raise it.
     [Range(0, 1)]
     public double MinimumConfidence { get; init; } = 0.6;
+
+    // Nothing in this app reads this - the sidecar polls appsettings.json for it directly, the
+    // same way it polls Enabled. It lives here so the setting is bound, validated and documented
+    // alongside the rest of the HomeKit section rather than existing only as a loose JSON key.
+    public bool IncludeDevices { get; init; }
 }
 
 public sealed class WebhookOptions
