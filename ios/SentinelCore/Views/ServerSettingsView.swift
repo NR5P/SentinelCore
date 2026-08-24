@@ -468,9 +468,9 @@ struct ServerSettingsSectionView: View {
         let current = text[field.name] ?? ""
         let entries = options.contains(where: { $0.value == current }) || current.isEmpty
             ? options
-            : [SettingsFieldOption(value: current, label: "\(current) (not installed)")] + options
+            : [SettingsFieldOption(value: current, label: "\(current) (not listed)")] + options
 
-        Picker(source.label, selection: pickerBinding(field.name)) {
+        Picker(source.label, selection: pickerBinding(field.name, source.typeItMessage)) {
             ForEach(entries, id: \.value) { option in
                 Text(option.label).tag(option.value)
             }
@@ -485,15 +485,13 @@ struct ServerSettingsSectionView: View {
 
     // Selecting "type a name instead" must not write itself into the setting - it swaps the
     // control, and leaves the value alone for the keyboard to edit.
-    private func pickerBinding(_ name: String) -> Binding<String> {
+    private func pickerBinding(_ name: String, _ typeItMessage: String) -> Binding<String> {
         Binding(
             get: { text[name] ?? "" },
             set: { selected in
                 if selected == Self.typeItYourself {
                     typingManually.insert(name)
-                    optionsNotes[name] = LookupNote(
-                        "Type the model's exact name, tag and all - e.g. gemma3:4b.",
-                        isError: false)
+                    optionsNotes[name] = LookupNote(typeItMessage, isError: false)
                 } else {
                     text[name] = selected
                 }

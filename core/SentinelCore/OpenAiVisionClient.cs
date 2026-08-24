@@ -70,7 +70,7 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
         {
             try
             {
-                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
+                using var httpRequest = new HttpRequestMessage(HttpMethod.Post, ResolveUri(options, "chat/completions"))
                 {
                     // request is statically typed `object` (it's an anonymous type, which can't
                     // be named), so JsonContent.Create must be given the runtime type explicitly -
@@ -127,7 +127,7 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "models");
+            using var request = new HttpRequestMessage(HttpMethod.Get, ResolveUri(options, "models"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiKey);
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             return response.IsSuccessStatusCode;
@@ -136,6 +136,34 @@ public sealed class OpenAiVisionClient : IVisionAnalysisClient
         {
             return false;
         }
+    }
+
+    // CloudVision:BaseUrl is editable in Settings, so the address is resolved per request rather
+    // than left to HttpClient.BaseAddress, which was fixed when this client was constructed at
+    // startup. Same reasoning as ApiKey being read from the monitor above: pointing this at a
+    // different OpenAI-compatible provider is an ordinary thing to do, and the alternative was
+    // hand-editing appsettings.json and restarting the service.
+    //
+    // The trailing slash matters. Uri's relative resolution replaces the last path segment, so
+    // "https://openrouter.ai/api/v1" + "chat/completions" would resolve to ".../api/chat/completions"
+    // and 404 - the same trap OllamaModelEndpoints guards against.
+    //
+    // Anything unparseable falls back to BaseAddress rather than throwing. [Url] on the setting
+    // already rejects that at the point of saving, and an alert mid-flight is the wrong place to
+    // discover a bad address.
+    private Uri ResolveUri(CloudVisionOptions options, string path)
+    {
+        var baseUrl = options.BaseUrl?.Trim();
+        if (!string.IsNullOrEmpty(baseUrl))
+        {
+            if (!baseUrl.EndsWith('/')) baseUrl += "/";
+            if (Uri.TryCreate(baseUrl, UriKind.Absolute, out var root)) return new Uri(root, path);
+            _logger.LogWarning(
+                "CloudVision:BaseUrl is not a valid absolute address ({BaseUrl}); using {Fallback}",
+                baseUrl, _httpClient.BaseAddress);
+        }
+
+        return new Uri(_httpClient.BaseAddress!, path);
     }
 
     // Public so tests can confirm the request shape without a live API call - particularly that

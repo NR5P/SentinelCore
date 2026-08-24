@@ -529,6 +529,85 @@ public sealed class SettingsSchemaTests
         Assert.Empty(OllamaModelEndpoints.ParseModels("""{ "models": "none" }"""));
         Assert.Empty(OllamaModelEndpoints.ParseModels("[]"));
     }
+
+    // The cloud counterpart, which has to map three different response shapes onto the one list a
+    // dropdown shows. Each provider gets its own test because each has its own trap.
+
+    // OpenAI's is the plain case - the id is the string the setting holds, and nothing is filtered,
+    // because nothing in this response says which models can see images and the compatible
+    // endpoints this mostly exists to serve wouldn't answer consistently if it did.
+    [Fact]
+    public void CloudModelList_OpenAi_KeepsTheIdAndSorts()
+    {
+        var options = CloudVisionModelEndpoints.ParseModels("openai", """
+            {
+              "data": [
+                { "id": "gpt-4o-mini" },
+                { "id": "dall-e-3" },
+                { "id": "" },
+                { "object": "model" }
+              ]
+            }
+            """);
+
+        Assert.Equal(["dall-e-3", "gpt-4o-mini"], options.Select(o => o.Value));
+        Assert.Equal("gpt-4o-mini", options[1].Label);
+    }
+
+    // Anthropic's trap is display_name: it makes the list far easier to scan, but the id is still
+    // the only thing that may be saved, so it belongs in the label and never in the value.
+    [Fact]
+    public void CloudModelList_Anthropic_SavesTheIdAndShowsTheDisplayName()
+    {
+        var options = CloudVisionModelEndpoints.ParseModels("anthropic", """
+            {
+              "data": [
+                { "id": "claude-opus-4-1", "display_name": "Claude Opus 4.1" },
+                { "id": "claude-haiku-4-5" }
+              ]
+            }
+            """);
+
+        Assert.Equal(["claude-haiku-4-5", "claude-opus-4-1"], options.Select(o => o.Value));
+        Assert.Equal("claude-haiku-4-5", options[0].Label);
+        Assert.Equal("claude-opus-4-1 - Claude Opus 4.1", options[1].Label);
+    }
+
+    // Google has both traps at once. The "models/" prefix must come off - GoogleVisionClient builds
+    // "models/{Model}:generateContent" itself, so saving it whole yields "models/models/..." and a
+    // 404 on every alert - and it is the one provider that says which models generateContent can be
+    // called on, so the ones it can't are dropped rather than offered.
+    [Fact]
+    public void CloudModelList_Google_StripsThePrefixAndDropsWhatCantBeCalled()
+    {
+        var options = CloudVisionModelEndpoints.ParseModels("google", """
+            {
+              "models": [
+                { "name": "models/gemini-2.0-flash", "displayName": "Gemini 2.0 Flash",
+                  "supportedGenerationMethods": ["generateContent", "countTokens"] },
+                { "name": "models/text-embedding-004", "displayName": "Text Embedding",
+                  "supportedGenerationMethods": ["embedContent"] },
+                { "name": "models/no-methods-listed" }
+              ]
+            }
+            """);
+
+        Assert.Equal(["gemini-2.0-flash", "no-methods-listed"], options.Select(o => o.Value));
+        Assert.Equal("gemini-2.0-flash - Gemini 2.0 Flash", options[0].Label);
+    }
+
+    // Same contract as the Ollama list: an unexpected shape is an empty list, not an exception, so
+    // a client lands on its text box rather than on an error it can do nothing about.
+    [Fact]
+    public void CloudModelList_IsEmpty_WhenTheAnswerIsntAModelList()
+    {
+        foreach (var provider in (string[])["openai", "anthropic", "google"])
+        {
+            Assert.Empty(CloudVisionModelEndpoints.ParseModels(provider, "{}"));
+            Assert.Empty(CloudVisionModelEndpoints.ParseModels(provider, """{ "data": "none" }"""));
+            Assert.Empty(CloudVisionModelEndpoints.ParseModels(provider, "[]"));
+        }
+    }
 }
 
 // The endpoint half: the schema must actually reach clients in a shape they can parse, and only
@@ -704,7 +783,32 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
             Assert.Equal("/api/settings/ollama/models", source.GetProperty("endpoint").GetString());
             Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("label").GetString()));
             Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("emptyMessage").GetString()));
+            Assert.False(string.IsNullOrWhiteSpace(source.GetProperty("typeItMessage").GetString()));
         }
+
+        // CLOUD VISION's two boxes ride the same mechanism but point somewhere else, and the
+        // model one is the reason the mechanism had to be more than Ollama's: it is the field
+        // that has to name models nobody here has heard of.
+        var cloudVision = sections.Single(s => s.GetProperty("key").GetString() == "cloudVision");
+        var cloudFields = cloudVision.GetProperty("fields").EnumerateArray().ToArray();
+
+        var cloudModel = cloudFields.Single(f => f.GetProperty("name").GetString() == "model");
+        Assert.Equal("text", cloudModel.GetProperty("type").GetString());
+        Assert.Equal(
+            "/api/settings/cloud-vision/models",
+            cloudModel.GetProperty("optionsSource").GetProperty("endpoint").GetString());
+
+        var cloudBaseUrl = cloudFields.Single(f => f.GetProperty("name").GetString() == "baseUrl");
+        Assert.Equal("text", cloudBaseUrl.GetProperty("type").GetString());
+        Assert.Equal(
+            "/api/settings/cloud-vision/base-urls",
+            cloudBaseUrl.GetProperty("optionsSource").GetProperty("endpoint").GetString());
+
+        // Each source says something different once someone picks "type a name instead" - which is
+        // the whole reason that message moved out of the three client renderers and onto the wire.
+        Assert.NotEqual(
+            cloudModel.GetProperty("optionsSource").GetProperty("typeItMessage").GetString(),
+            cloudBaseUrl.GetProperty("optionsSource").GetProperty("typeItMessage").GetString());
 
         // And the other half: a field with no list is sent without the key at all, so a client
         // can tell "no list here" from "a list I failed to read".
@@ -745,6 +849,46 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
             Assert.Equal("POST", action.GetProperty("method").GetString());
             Assert.False(action.GetProperty("reloadAfter").GetBoolean());
         }
+
+        // Cloud vision's test is the same kind of button for the same kind of reason, and has the
+        // same reason not to reload: what it reports is the provider's own answer.
+        var cloudTest = sections.Single(s => s.GetProperty("key").GetString() == "cloudVision")
+            .GetProperty("extraAction");
+        Assert.Equal("/api/settings/cloud-vision/test", cloudTest.GetProperty("endpoint").GetString());
+        Assert.Equal("POST", cloudTest.GetProperty("method").GetString());
+        Assert.False(cloudTest.GetProperty("reloadAfter").GetBoolean());
+    }
+
+    // BaseUrl became a saved, [Required] field in this change, and the setup wizard has never sent
+    // it - it offers a provider and a key and nothing else. Left to itself that would have made a
+    // first run through the wizard's Cloud Vision path fail validation on a field the wizard has no
+    // box for, which is the worst possible place to meet a new required field. The DTO's default
+    // covers it; this is that guarantee, held where the wizard's payload can't drift away from it.
+    [Fact]
+    public async Task CloudVision_SavesFromTheWizardsPayload_WhichCarriesNoBaseUrl()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        // Exactly what wizard.js posts - see saveVisionFields there.
+        using var response = await client.PutAsJsonAsync("/api/settings/cloud-vision", new
+        {
+            enabled = true,
+            provider = "openai",
+            apiKey = "sk-test-key-not-real",
+            model = "gpt-4o-mini",
+            maximumRetries = 2,
+            retryDelaySeconds = 3
+        }, ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // And it lands as a usable address rather than an empty string that would fail on the
+        // first alert - the wizard's user never saw a box to fill in.
+        using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(_settingsPath, ct));
+        var baseUrl = saved.RootElement.GetProperty("CloudVision").GetProperty("BaseUrl").GetString();
+        Assert.True(Uri.TryCreate(baseUrl, UriKind.Absolute, out _), $"BaseUrl saved as '{baseUrl}'.");
     }
 
     // The same guarantee for the action buttons. What each one answers depends on what it does -

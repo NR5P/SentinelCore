@@ -733,6 +733,7 @@ app.MapAutomationRuleEndpoints();
 app.MapScheduleEndpoints();
 app.MapDeviceHubEndpoints();
 app.MapNotificationTestEndpoints();
+app.MapCloudVisionTestEndpoints();
 
 app.MapPost("/api/chat/ask", async (ChatQuestionRequest request, ChatAnswerService chatAnswers, CancellationToken ct) =>
 {

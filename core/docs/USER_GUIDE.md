@@ -972,9 +972,10 @@ The full list below covers both modes:
   the models actually pulled on the machine running Ollama, so you don't have to remember the
   exact tag — pick "type a name instead" to name one you haven't pulled yet, and if Ollama
   can't be reached the box stays an ordinary one you can type into.
-- **Cloud Vision** and **Vision Routing** — an offsite AI model (OpenAI, Anthropic, or Google)
-  that can analyze alerts instead of, or as an automatic backup for, the local Ollama model.
-  Its own section below. See
+- **Cloud Vision** and **Vision Routing** — an offsite AI model that can analyze alerts instead
+  of, or as an automatic backup for, the local Ollama model. Anthropic, Google, and OpenAI or
+  anything else speaking its format, with a **test cloud vision** button to prove the account
+  works before you rely on it. Its own section below. See
   [section 8](#8-vision-analysis-backend--local-cloud-or-both).
 - **Fast Local Detection** — a small object detector that runs on the snapshot first and answers
   "is there a person, vehicle, or animal here at all?" in a fraction of a second, so the much
@@ -1176,22 +1177,31 @@ vision backend:
   The detector model (~100MB) downloads automatically the first time it's used. It can't
   describe the scene, tell one animal species from another, read gate state, or spot packages;
   the escalation option below exists to fill exactly that gap.
-- **Cloud Vision** — an offsite model, one of:
-  - **OpenAI** (e.g. `gpt-4o-mini`)
-  - **Anthropic** (e.g. `claude-3-5-sonnet-latest`)
-  - **Google** (e.g. `gemini-1.5-flash`)
+- **Cloud Vision** — an offsite model. Needs internet access and sends each snapshot to that
+  provider's servers, but works well on any machine regardless of local hardware, and is usually
+  faster than a slow local GPU (or none at all) - this is the point of using it if your computer
+  is on the slower side.
 
-  Pick which via the **Provider** field, with an API key for that provider. Needs internet
-  access and sends each snapshot to that provider's servers, but works well on any machine
-  regardless of local hardware, and is usually faster than a slow local GPU (or none at all) -
-  this is the point of using it if your computer is on the slower side.
+  Three fields decide which service you're actually talking to:
 
-If you run something else that speaks OpenAI's request format - Azure OpenAI, OpenRouter,
-Together.ai, Groq, or a self-hosted server like vLLM/LM Studio/LocalAI - set **Provider** to
-OpenAI and point `CloudVision:BaseUrl` in `appsettings.json` at it instead of the default
-`https://api.openai.com/v1/`. This needs a restart to take effect, the same as Ollama's own
-address - see [DEPLOYMENT.md](DEPLOYMENT.md). Anthropic and Google each only have the one real
-endpoint, so there's no equivalent override for those.
+  - **Provider** — which *request format* the service speaks, not which company it is.
+    **Anthropic** and **Google** each speak their own, and each has one fixed address.
+    **OpenAI (or compatible)** covers OpenAI itself and everything else that talks the same way.
+  - **API Base URL** — which service, when the provider is OpenAI (or compatible). The box
+    offers the common ones - OpenAI, OpenRouter, Groq, Together, Fireworks, DeepInfra, and
+    local LM Studio / vLLM / Ollama's OpenAI-compatible port - and you can type any other
+    address a compatible provider gives you. Ignored for Anthropic and Google. Changes apply
+    to the next alert; no restart needed.
+  - **Model** — press the dropdown and the app asks the provider itself what your account can
+    use, so you don't have to track model names by hand. Save the provider and key first, since
+    that's what it asks with. A model the list doesn't mention can still be typed in, which is
+    how you point at something released after your provider's list caught up.
+
+  It must be a model that can **see images**. A text-only one saves without complaint and then
+  fails on every alert - which is what the **test cloud vision** button is for. It sends one
+  small test image and shows you what came back, so a wrong key, a blind model, or an address
+  that never answers says so immediately instead of looking like a quiet night. It works while
+  Cloud Vision is still switched off, and costs whatever one image costs on your account.
 
 **Vision Routing** decides which one actually gets used:
 

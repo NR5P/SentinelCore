@@ -1151,6 +1151,7 @@ class SentinelRepository(
                                     tip = it.optString("tip"),
                                     endpoint = it.getString("endpoint"),
                                     emptyMessage = it.optString("emptyMessage"),
+                                    typeItMessage = it.optString("typeItMessage"),
                                 )
                             },
                             requiresRestart = field.optBoolean("requiresRestart"),

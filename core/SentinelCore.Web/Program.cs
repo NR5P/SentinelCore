@@ -277,6 +277,10 @@ builder.Services.AddHttpClient(nameof(LocationLookupEndpoints), client => client
 // either running and instant or not running at all, and the Model dropdown should fall back to a
 // plain text box quickly rather than making someone wait to find out.
 builder.Services.AddHttpClient(nameof(OllamaModelEndpoints), client => client.Timeout = TimeSpan.FromSeconds(5));
+// Longer than Ollama's, shorter than an alert's: this one crosses the internet to a provider that
+// is either going to answer a trivial GET promptly or not at all, and the Model dropdown should
+// fall back to a plain text box rather than leave someone watching a spinner.
+builder.Services.AddHttpClient(nameof(CloudVisionModelEndpoints), client => client.Timeout = TimeSpan.FromSeconds(15));
 // The HomeKit sidecar is on loopback and only ever asked for a status blob or a small PNG, so a
 // short timeout is right here - if it's not answering promptly it's not running, and the settings
 // UI should say so immediately rather than hanging.
@@ -435,6 +439,7 @@ app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
 app.MapOllamaModelEndpoints();
+app.MapCloudVisionModelEndpoints();
 app.MapNotificationTestProxyEndpoints();
 app.MapDeviceHubProxyEndpoints();
 app.MapHomeKitEndpoints();

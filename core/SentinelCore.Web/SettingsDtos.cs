@@ -69,6 +69,16 @@ public sealed class CloudVisionSettingsDto
     [Required]
     public string Model { get; set; } = string.Empty;
 
+    // Only consulted when Provider is "openai" - that slot is also every other endpoint speaking
+    // the same dialect, and which one it is, is precisely this value. Editable here rather than
+    // appsettings.json-only because switching providers is the ordinary path through this section,
+    // not an edge case.
+    // Unlike the other *BaseUrl fields the note at the top of this file excludes, this one is not
+    // baked into an HttpClient at startup: OpenAiVisionClient resolves it per request, precisely
+    // so it can live here and apply live like everything else.
+    [Required, Url]
+    public string BaseUrl { get; set; } = "https://api.openai.com/v1/";
+
     [Range(0, 10)]
     public int MaximumRetries { get; set; }
 

@@ -202,7 +202,7 @@ window.GateWatchSettings = (function () {
       const values = options.map(option => option.value);
       const entries = values.includes(current) || current === ""
         ? options
-        : [{ value: current, label: `${current} (not installed)` }, ...options];
+        : [{ value: current, label: `${current} (not listed)` }, ...options];
 
       for (const option of entries) {
         const opt = document.createElement("option");
@@ -221,7 +221,7 @@ window.GateWatchSettings = (function () {
 
     select.addEventListener("change", () => {
       if (select.value === TYPE_IT) {
-        showBox("Type the model's exact name, tag and all - e.g. gemma3:4b.", false);
+        showBox(source.typeItMessage, false);
         input.focus();
         input.select();
         return;

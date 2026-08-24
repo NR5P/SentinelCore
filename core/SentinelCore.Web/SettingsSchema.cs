@@ -85,7 +85,12 @@ public sealed record SettingsOptionsSourceSchema(
     // What to show when the endpoint succeeds but the list is empty. Here rather than in the
     // client because it is the one message that has to name the thing the user should go and do
     // ("ollama pull ..."), and no client should have to know that.
-    string EmptyMessage);
+    string EmptyMessage,
+    // What to show once someone picks "type a name instead", for the same reason. This started as
+    // one hardcoded line about Ollama tags in each of the three client renderers, which was
+    // accurate while Ollama's model box was the only field using this - and silently wrong for
+    // every field added afterwards. A model tag, a model id and a URL want different advice.
+    string TypeItMessage);
 
 public sealed record SettingsFieldSchema
 {
@@ -260,7 +265,30 @@ public static class SettingsSchema
         "installed models",
         "Lists the models already pulled on the machine running Ollama, so you can pick one instead of typing its exact tag. Typing a name that isn't listed still works - that's how you point at a model you're about to pull.",
         "/api/settings/ollama/models",
-        "Ollama answered, but no models are pulled on that machine yet. Run \"ollama pull gemma3:4b\" there, then check again.");
+        "Ollama answered, but no models are pulled on that machine yet. Run \"ollama pull gemma3:4b\" there, then check again.",
+        "Type the model's exact name, tag and all - e.g. gemma3:4b.");
+
+    // The cloud counterpart. Same contract, and deliberately the same mechanism: the provider is
+    // asked what it has rather than this app carrying a list of model names that goes stale every
+    // time somebody ships one. That is the only version of this that can name a model nobody here
+    // has heard of, which is the whole requirement.
+    private static readonly SettingsOptionsSourceSchema CloudModels = new(
+        "the provider's models",
+        "Asks the provider above, using the key above, what models the account can actually use - so you don't have to track model names by hand. Typing a name that isn't listed still works. Save the provider and key first: this asks with what's saved, not with what's currently typed in the boxes.",
+        "/api/settings/cloud-vision/models",
+        "The provider answered, but listed no models for this account. That usually means the key is valid but has no model access yet - check the account's billing or model permissions.",
+        "Type the model's exact name as the provider writes it - e.g. gpt-4o-mini, claude-haiku-4-5, or gemini-2.0-flash.");
+
+    // Unlike the two above, this list is static and known here rather than fetched from anywhere -
+    // an address can't be asked what it is. It rides the same mechanism anyway so the four client
+    // renderers need no new concept, and so "type a name instead" stays the escape hatch for the
+    // endpoint that isn't on the list, which is the case that has to keep working.
+    private static readonly SettingsOptionsSourceSchema CloudEndpoints = new(
+        "known providers",
+        "Common OpenAI-compatible endpoints, so picking one is quicker than looking its address up. The list is a convenience, not a limit - any endpoint speaking the same dialect works, typed in directly.",
+        "/api/settings/cloud-vision/base-urls",
+        "No known endpoints to suggest - type the address the provider gave you.",
+        "Type the full address up to and including the version, e.g. https://api.example.com/v1/ - the same one the provider's own docs show in a curl example.");
 
     private static SettingsFieldSchema Password(string name, string label, string tip) =>
         new() { Name = name, Label = label, Type = "password", Tip = tip };
@@ -355,15 +383,24 @@ public static class SettingsSchema
             Fields =
             [
                 Check("enabled", "Enabled", "Allow this cloud account to be used for alert analysis, either as the primary backend or as a fallback - see VISION ROUTING below to choose which."),
-                Select("provider", "Provider", "Which cloud AI account the API key and model below belong to. 'OpenAI (or compatible)' also covers any other endpoint that speaks the same request format - Azure OpenAI, OpenRouter, Together.ai, Groq, or a self-hosted vLLM/LM Studio/LocalAI server - by changing CloudVision:BaseUrl in appsettings.json (needs a restart, same as Ollama's own address).",
+                Select("provider", "Provider", "Which request format the service below speaks - not which company it is. 'OpenAI (or compatible)' covers OpenAI itself and everything else that talks the same way: OpenRouter, Groq, Together, Fireworks, Azure OpenAI, or a self-hosted vLLM/LM Studio/LocalAI box. Pick that one and set the API Base URL below to say which. Anthropic and Google each speak their own format and always use their own address.",
                     ("openai", "OpenAI (or compatible)"),
                     ("anthropic", "Anthropic"),
                     ("google", "Google")),
-                Password("apiKey", "API Key", "An API key for the provider selected above, with access to a vision-capable model."),
-                Text("model", "Model", "Which model analyses the snapshots - must match the provider above, e.g. gpt-4o-mini (OpenAI), claude-3-5-sonnet-latest (Anthropic), or gemini-1.5-flash (Google)."),
+                Text("baseUrl", "API Base URL", "The address requests go to, e.g. https://api.openai.com/v1/. This is what makes 'OpenAI (or compatible)' above mean a particular service - pick a known one from the list, or type the address any other compatible provider gave you. Ignored when the provider is Anthropic or Google, which each have one fixed address. Takes effect on the next alert; no restart needed.",
+                    optionsSource: CloudEndpoints),
+                Password("apiKey", "API Key", "An API key for the service above, with access to a vision-capable model."),
+                Text("model", "Model", "Which model analyses the snapshots. Pick from the provider's own list to be sure of the exact name, or type one it hasn't listed yet. It must be a model that can see images - a text-only one saves fine here and then fails on every alert, which is what the test button below is for.",
+                    optionsSource: CloudModels),
                 Number("maximumRetries", "Max Retries", "How many times to retry when the provider fails or returns something unparseable.", 0, 10),
                 Number("retryDelaySeconds", "Retry Delay (s)", "How long to wait between those retries.", 1, 300)
-            ]
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "testCloudVision",
+                "test cloud vision",
+                "Send one small test image to the provider and show what came back - which is how a wrong key, a model that can't see images, or an address that never answers tells you so, instead of it looking like a quiet night. Save first: this tests what is saved, not what is currently typed in the boxes. It ignores Enabled, so it works while cloud vision is still switched off, and it costs whatever one image costs on your account.",
+                "/api/settings/cloud-vision/test",
+                "POST")
         },
         new()
         {
@@ -395,7 +432,7 @@ public static class SettingsSchema
             [
                 Select("primary", "Primary Backend", "Which backend analyses alerts first. Fast Local Detection is the right choice for hardware too slow to run Ollama's full model - pair it with escalation below so alerts with something in them still get a full description. If Cloud Vision is picked but not enabled/configured above, Ollama is used instead automatically. Gate/door open checks always use a full AI (cloud if configured, otherwise Ollama) - a plain detector can't read whether a gate is open.",
                     ("ollama", "Ollama (local)"),
-                    ("cloud", "Cloud Vision (OpenAI)"),
+                    ("cloud", "Cloud Vision"),
                     ("fastlocal", "Fast Local Detection")),
                 Check("fallbackEnabled", "Fall Back To Another Backend", "If the primary backend fails after its own retries, automatically retry once against another one before giving up - slower, but the alert still gets analyzed instead of being lost."),
                 Check("escalationEnabled", "Escalate Fast Detections For Full Analysis", "Only applies when the primary is Fast Local Detection: when the detector finds a person, vehicle, or animal, re-analyze that alert with a full AI to get the detailed description (delivery company, gate state, animal species). Empty alerts - the vast majority - never reach the expensive model at all. If escalation fails, the fast result still stands."),

@@ -496,10 +496,9 @@ private fun ServerSettingsSectionEditor(
                             ?.takeIf { typingManually[field.name] != true },
                         onTypeManually = {
                             typingManually[field.name] = true
-                            optionsNotes[field.name] = LookupNote(
-                                "Type the model's exact name, tag and all - e.g. gemma3:4b.",
-                                isError = false,
-                            )
+                            field.optionsSource?.let { source ->
+                                optionsNotes[field.name] = LookupNote(source.typeItMessage, isError = false)
+                            }
                         },
                     )
 
@@ -787,7 +786,7 @@ private fun SettingsFetchedOptionsField(
     val entries = if (options.any { it.value == value } || value.isEmpty()) {
         options
     } else {
-        listOf(SettingsFieldOption(value, "$value (not installed)")) + options
+        listOf(SettingsFieldOption(value, "$value (not listed)")) + options
     }
     val selectedLabel = entries.firstOrNull { it.value == value }?.label ?: value
 

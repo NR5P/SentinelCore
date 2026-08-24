@@ -25,6 +25,16 @@ public static class NotificationTestProxyEndpoints
                 ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, $"/api/notifications/test/{channel}", ct))
                 .RequireAuthorization("AdminOnly");
         }
+
+        // Not a notification channel, but the same arrangement for the same reason: the vision
+        // clients and the saved credentials both live in the main app, and the CLOUD VISION
+        // section's test button needs the provider's own wording to be worth pressing. Spends
+        // real money on the configured account, so AdminOnly like its neighbours.
+        app.MapPost("/api/settings/cloud-vision/test", (
+            IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,
+            ILogger<NotificationTestProxyLog> logger, CancellationToken ct) =>
+            ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, "/api/settings/cloud-vision/test", ct))
+            .RequireAuthorization("AdminOnly");
     }
 
     private static async Task<IResult> ForwardAsync(

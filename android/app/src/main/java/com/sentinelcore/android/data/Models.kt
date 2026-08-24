@@ -622,6 +622,9 @@ data class SettingsOptionsSource(
     // Shown when the endpoint answers with an empty list. From the server because it is the one
     // message that names what to go and do ("ollama pull ..."), which this app shouldn't know.
     val emptyMessage: String,
+    // Shown after picking "type a name instead", from the server for the same reason: a model tag,
+    // a model id and a URL each want different advice, and this app shouldn't know which is which.
+    val typeItMessage: String,
 )
 
 data class SettingsField(
