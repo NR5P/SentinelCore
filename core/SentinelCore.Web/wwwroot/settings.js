@@ -517,10 +517,10 @@ window.GateWatchSettings = (function () {
     if (schema.extraAction) {
       // Pure data from the schema - an endpoint to POST to - so the same definition works for
       // every client. What comes back is shown rather than thrown away: the test sends report
-      // whether the mail server or Telegram actually accepted the message, and that answer is the
-      // entire point of pressing the button. Only an action that says reloadAfter gets a reload
-      // (re-running the setup wizard, which can't reappear without one) - this used to reload
-      // unconditionally, back when that was the only action there was.
+      // whether the mail server, Telegram or the webhook receiver actually accepted it, and that
+      // answer is the entire point of pressing the button. Only an action that says reloadAfter
+      // gets a reload (re-running the setup wizard, which can't reappear without one) - this used
+      // to reload unconditionally, back when that was the only action there was.
       const actionBtn = document.createElement("button");
       actionBtn.className = "btn";
       actionBtn.textContent = schema.extraAction.label;
