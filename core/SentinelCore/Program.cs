@@ -340,26 +340,17 @@ builder.Services.AddSingleton<IVisionAnalysisClient>(sp => new FailoverVisionCli
     sp.GetRequiredService<IOptionsMonitor<VisionRoutingOptions>>(),
     sp.GetRequiredService<IOptionsMonitor<CloudVisionOptions>>(),
     sp.GetRequiredService<ILogger<FailoverVisionClient>>()));
+// All four share TClient = IAlertAction, so they must be registered with explicit, distinct
+// client names or they collapse into one - see AlertActionHttpClients for what that cost.
 var webhookSettings = builder.Configuration.GetSection(WebhookOptions.SectionName).Get<WebhookOptions>() ?? new();
-builder.Services.AddHttpClient<IAlertAction, WebhookAlertAction>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(webhookSettings.TimeoutSeconds);
-});
 var telegramSettings = builder.Configuration.GetSection(TelegramOptions.SectionName).Get<TelegramOptions>() ?? new();
-builder.Services.AddHttpClient<IAlertAction, TelegramAlertAction>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(telegramSettings.TimeoutSeconds);
-});
 var discordSettings = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>() ?? new();
-builder.Services.AddHttpClient<IAlertAction, DiscordAlertAction>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(discordSettings.TimeoutSeconds);
-});
 var homeKitSettings = builder.Configuration.GetSection(HomeKitOptions.SectionName).Get<HomeKitOptions>() ?? new();
-builder.Services.AddHttpClient<IAlertAction, HomeKitAlertAction>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(homeKitSettings.TimeoutSeconds);
-});
+builder.Services.AddAlertActionHttpClients(
+    webhookSettings.TimeoutSeconds,
+    telegramSettings.TimeoutSeconds,
+    discordSettings.TimeoutSeconds,
+    homeKitSettings.TimeoutSeconds);
 // The one place MQTT publishes, webhook calls and Device Hub commands are actually carried out,
 // shared by the alert-driven rules below and the clock-driven ScheduleWorker.
 builder.Services.AddHttpClient<AutomationActionDispatcher>(client =>

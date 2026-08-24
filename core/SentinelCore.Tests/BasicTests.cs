@@ -1120,6 +1120,58 @@ public sealed class BasicTests
         Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(20_000 * gb, 10_000, currentlyDegraded: false));
     }
 
+    // Regression: all four alert actions used to be registered with
+    // AddHttpClient<IAlertAction, TFoo>() and no explicit name. The default name comes from
+    // TClient, which is IAlertAction for every one of them, so all four collapsed into a single
+    // named client and the last configure delegate to run set the timeout for the lot. HomeKit is
+    // registered last and uses 10s for a sidecar on localhost, which silently became Telegram's
+    // and the webhook's internet-facing timeout too.
+    //
+    // Deliberately calls the same AddAlertActionHttpClients the app calls, rather than repeating
+    // its four registrations here - a copy would keep passing after someone dropped the names
+    // from the real one. Four distinct timeouts, so a collapse back to one shared client shows up
+    // as three of them reading 10s.
+    [Fact]
+    public void EachAlertAction_KeepsItsOwnHttpTimeout_RatherThanTheLastOneRegistered()
+    {
+        using var provider = new ServiceCollection()
+            .AddAlertActionHttpClients(
+                webhookTimeoutSeconds: 21,
+                telegramTimeoutSeconds: 22,
+                discordTimeoutSeconds: 23,
+                homeKitTimeoutSeconds: 10)
+            .BuildServiceProvider();
+
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        Assert.Equal(TimeSpan.FromSeconds(21), factory.CreateClient(AlertActionHttpClients.Webhook).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(22), factory.CreateClient(AlertActionHttpClients.Telegram).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(23), factory.CreateClient(AlertActionHttpClients.Discord).Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(10), factory.CreateClient(AlertActionHttpClients.HomeKit).Timeout);
+
+        // The name they used to collide on must be configured by nobody now. An unnamed
+        // registration would have left all four writing to this one, so it reading as .NET's
+        // untouched 100s default is what says the collision is really gone.
+        Assert.Equal(TimeSpan.FromSeconds(100), factory.CreateClient(nameof(IAlertAction)).Timeout);
+    }
+
+    // All four still resolve as IAlertAction, which is how AlertProcessor gets them - naming the
+    // clients must not have changed what the DI container hands out.
+    [Fact]
+    public void AllFourAlertActions_AreStillResolvableAsIAlertAction()
+    {
+        using var provider = new ServiceCollection()
+            .AddAlertActionHttpClients(20, 20, 20, 10)
+            .BuildServiceProvider();
+
+        var registered = provider.GetServices<IAlertAction>().Select(a => a.GetType()).ToHashSet();
+
+        Assert.Contains(typeof(WebhookAlertAction), registered);
+        Assert.Contains(typeof(TelegramAlertAction), registered);
+        Assert.Contains(typeof(DiscordAlertAction), registered);
+        Assert.Contains(typeof(HomeKitAlertAction), registered);
+    }
+
     [Fact]
     public void TelegramChatWorker_IsAuthorizedChat_OnlyMatchesConfiguredChatId()
     {
