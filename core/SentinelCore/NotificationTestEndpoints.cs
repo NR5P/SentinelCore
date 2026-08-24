@@ -94,7 +94,7 @@ public static class NotificationTester
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return (false, Explain(ex));
+            return (false, ExplainSmtp(ex));
         }
     }
 
@@ -239,10 +239,6 @@ public static class NotificationTester
     // and the outer message on its own is the same generic line for every possible cause.
     private static string Explain(Exception exception)
     {
-        // The two failures worth naming, because the server's own wording for them is useless to
-        // someone who has never configured SMTP before. Everything else gets reported verbatim.
-        if (HintFor(exception) is { } hint) return Truncate(hint);
-
         var messages = new List<string>();
         for (var current = exception; current is not null; current = current.InnerException)
         {
@@ -252,6 +248,14 @@ public static class NotificationTester
 
         return Truncate(string.Join(" ", messages));
     }
+
+    // The email-only version. The two SMTP failures worth naming are named, because the server's
+    // own wording for them is useless to someone who has never configured SMTP before; anything
+    // else falls through to the channel-neutral Explain above. Deliberately not wired into
+    // Explain itself - Telegram and the webhook share that, and "check your SMTP Port" would be
+    // a confusing thing to say about an HTTP endpoint that timed out.
+    private static string ExplainSmtp(Exception exception) =>
+        HintFor(exception) is { } hint ? Truncate(hint) : Explain(exception);
 
     // A timeout here is nearly always the port: a provider that wants 465 leaves a connection to
     // 587 hanging with no reply at all, and vice versa. An auth rejection is nearly always the
