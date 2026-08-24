@@ -39,6 +39,15 @@ public static class NotificationTestEndpoints
             client.Timeout = TimeSpan.FromSeconds(telegram.TimeoutSeconds);
             return Respond(await NotificationTester.SendTestTelegramAsync(client, telegram, ct));
         });
+
+        group.MapPost("/webhook", async (
+            IHttpClientFactory httpClientFactory, IOptionsMonitor<WebhookOptions> options, CancellationToken ct) =>
+        {
+            var webhook = options.CurrentValue;
+            var client = httpClientFactory.CreateClient(nameof(NotificationTestEndpoints));
+            client.Timeout = TimeSpan.FromSeconds(webhook.TimeoutSeconds);
+            return Respond(await NotificationTester.SendTestWebhookAsync(client, webhook, ct));
+        });
     }
 
     // 502 rather than 400 on failure: the settings are legal, something downstream refused them.
@@ -127,6 +136,82 @@ public static class NotificationTester
                 return (false, DescribeTelegramFailure(response.StatusCode, body));
 
             return (true, $"Test message sent to chat {options.ChatId}.{DisabledNote(options.Enabled, "Telegram")}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (false, Explain(ex));
+        }
+    }
+
+    // Unlike email and Telegram, there is no service on the far end that knows what a test is -
+    // whatever is listening gets a real event and may act on it, so the payload says plainly what
+    // it is in every field a receiver is likely to read (camera name and summary both), and the
+    // camera is a name no real camera has. An automation that fires on this fires visibly.
+    //
+    // The body is built by WebhookAlertAction.BuildRequest, not assembled here: the whole point of
+    // the button is to show the receiving end the exact shape real alerts arrive in, and two
+    // separately-maintained payloads would eventually disagree about that.
+    public static async Task<(bool Success, string Detail)> SendTestWebhookAsync(
+        HttpClient httpClient, WebhookOptions options, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(options.Url))
+            return (false, "No URL is set. Fill the Webhook section in and save it, then try again.");
+        if (!Uri.TryCreate(options.Url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return (false, $"\"{Truncate(options.Url)}\" is not a valid http:// or https:// URL.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var result = new AlertResult
+        {
+            Id = Guid.NewGuid(),
+            Camera = "Sentinel Core test camera",
+            OccurredAt = now,
+            ReceivedAt = now,
+            CompletedAt = now,
+            Profile = "test",
+            Model = "test",
+            Status = "complete",
+            Analysis = new VisionAnalysis
+            {
+                NotificationRecommended = true,
+                Confidence = 1,
+                EventType = "test",
+                Summary = "This is a test event from Sentinel Core's Webhook settings, not something a "
+                    + "camera saw. Real alerts arrive in exactly this shape.",
+                NotificationReason = "Someone pressed the send test webhook button."
+            }
+        };
+
+        try
+        {
+            using var request = WebhookAlertAction.BuildRequest(options, result);
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                // A webhook receiver is usually something the person reading this wrote, so its own
+                // reply is the most useful thing on offer - but plenty answer a bare status code
+                // with an empty body, and "answered 404:" trailing off says less than nothing.
+                var explanation = string.IsNullOrWhiteSpace(body)
+                    ? $"{uri.Host} answered {(int)response.StatusCode} ({response.ReasonPhrase}) with an empty body."
+                    : $"{uri.Host} answered {(int)response.StatusCode}: {Truncate(body)}";
+                return (false, explanation);
+            }
+
+            return (true, $"Test event posted to {uri.Host}, which answered {(int)response.StatusCode}."
+                + DisabledNote(options.Enabled, "Webhook"));
+        }
+        // HttpClient reports its own timeout as a cancellation, so this has to be told apart from
+        // the caller actually giving up. A wrong host on the LAN doesn't refuse the connection, it
+        // just never answers - the most likely way to mistype this setting, and without this the
+        // button would sit there for the timeout and then fail with no explanation at all.
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return (false, $"No answer from {uri.Host} within {options.TimeoutSeconds} seconds. "
+                + "Check the host and port are right and that it is reachable from this machine.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

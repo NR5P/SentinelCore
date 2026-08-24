@@ -1,8 +1,8 @@
 namespace SentinelCore.Web;
 
-// Proxies the "send a test" buttons on the EMAIL and TELEGRAM settings sections to the main app,
-// where the senders and the saved credentials both live (see NotificationTestEndpoints.cs in the
-// SentinelCore project). Same forwarding pattern as AutomationRuleProxyEndpoints: read the API
+// Proxies the "send a test" buttons on the EMAIL, TELEGRAM and WEBHOOK settings sections to the
+// main app, where the senders and the saved credentials both live (see NotificationTestEndpoints.cs
+// in the SentinelCore project). Same forwarding pattern as AutomationRuleProxyEndpoints: read the API
 // key out of the shared appsettings.json, forward, pass the response straight through - the
 // clients need the main app's own wording ("chat not found", "No such host is known"), and a
 // paraphrase here would only lose it.
@@ -15,8 +15,9 @@ public static class NotificationTestProxyEndpoints
     public static void MapNotificationTestProxyEndpoints(this WebApplication app)
     {
         // AdminOnly, the same bar as the settings themselves: this sends real mail through the
-        // configured account and messages a real chat.
-        foreach (var channel in (string[])["email", "telegram"])
+        // configured account, messages a real chat, and posts a real event to whatever the webhook
+        // URL points at - which may be something that switches on a light when it arrives.
+        foreach (var channel in (string[])["email", "telegram", "webhook"])
         {
             app.MapPost($"/api/notifications/test/{channel}", (
                 IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,

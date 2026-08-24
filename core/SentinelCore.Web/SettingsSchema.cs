@@ -725,7 +725,13 @@ public static class SettingsSchema
                 Text("apiKeyHeaderName", "API Key Header Name", "Name of the header the key is sent in, e.g. X-API-Key. Whatever the receiving end expects."),
                 Password("apiKey", "API Key", "Secret sent in that header so the receiving end knows it's you."),
                 Check("onlyWhenNotificationRecommended", "Only When Notification Recommended", "Only post events the AI flagged as notable, rather than every one.")
-            ]
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "sendTestWebhook",
+                "send test webhook",
+                "POST one test event to the URL above, in exactly the shape real alerts arrive in, and show what came back - which is how a wrong address, a rejected key or an endpoint that never answers tells you so. Save first - this tests what is saved, not what is currently typed in the boxes. It ignores Enabled, so it posts even while the webhook is switched off, and whatever is listening receives a real event it may act on.",
+                "/api/notifications/test/webhook",
+                "POST")
         },
         new()
         {

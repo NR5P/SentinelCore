@@ -592,7 +592,7 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
         Assert.True(setupReset.GetProperty("reloadAfter").GetBoolean());
 
         // The test sends have something to report, and a reload would throw it away.
-        foreach (var key in (string[])["email", "telegram"])
+        foreach (var key in (string[])["email", "telegram", "webhook"])
         {
             var action = sections.Single(s => s.GetProperty("key").GetString() == key)
                 .GetProperty("extraAction");

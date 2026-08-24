@@ -32,12 +32,7 @@ public sealed class WebhookAlertAction : IAlertAction
         if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.Url)) return;
         if (_options.OnlyWhenNotificationRecommended && !AlertNotificationPolicy.ShouldNotify(result)) return;
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, _options.Url)
-        {
-            Content = JsonContent.Create(result)
-        };
-        if (!string.IsNullOrWhiteSpace(_options.ApiKey))
-            request.Headers.TryAddWithoutValidation(_options.ApiKeyHeaderName, _options.ApiKey);
+        using var request = BuildRequest(_options, result);
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
@@ -45,6 +40,21 @@ public sealed class WebhookAlertAction : IAlertAction
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogWarning("Webhook returned {StatusCode}: {Body}", (int)response.StatusCode, body);
         }
+    }
+
+    // Shared with the "send test webhook" button (NotificationTester.SendTestWebhookAsync) so the
+    // test posts a byte-for-byte real request rather than an approximation of one. A test send
+    // that shaped its own payload would keep passing after this method changed, which is the one
+    // thing it exists to catch - the receiving end parses this body, not a description of it.
+    public static HttpRequestMessage BuildRequest(WebhookOptions options, AlertResult result)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, options.Url)
+        {
+            Content = JsonContent.Create(result)
+        };
+        if (!string.IsNullOrWhiteSpace(options.ApiKey))
+            request.Headers.TryAddWithoutValidation(options.ApiKeyHeaderName, options.ApiKey);
+        return request;
     }
 }
 
