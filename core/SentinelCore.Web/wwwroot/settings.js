@@ -1285,7 +1285,7 @@ window.GateWatchSettings = (function () {
     const header = document.createElement("div");
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">APPLE HOMEKIT</span><span class="settings-section-caret">&#9656;</span>`;
-    header.dataset.tip = "Show your cameras in the Apple Home app and get iPhone notifications when an alert fires. Scan the pairing code below with your iPhone. Live video isn't included - HomeKit only gets motion alerts.";
+    header.dataset.tip = "Show your cameras and Device Hub devices in the Apple Home app, and get iPhone notifications when an alert fires. Scan the pairing code below with your iPhone. Live video isn't included - HomeKit only gets motion alerts.";
     header.addEventListener("click", () => {
       section.classList.toggle("open");
       window.GateWatchTooltips.schedule();
@@ -1293,12 +1293,16 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
-    body.appendChild(buildSectionIntro("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications. Live video isn't included - that needs Apple's paid HomeKit Secure Video licensing - but everything else works. Nothing is put on your network until you turn this on."));
+    body.appendChild(buildSectionIntro("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications - and, with 'include device hub' on, your MQTT lights, switches and gates as accessories you can control from Home. Live video isn't included - that needs Apple's paid HomeKit Secure Video licensing - but everything else works. Nothing is put on your network until you turn this on. A HomeKit sensor is silent until you turn on Allow Notifications for it in the Home app."));
 
     const fields = [
       {
         name: "enabled", label: "enabled", type: "checkbox",
         tip: "Send a motion alert to Apple Home whenever an alert is worth notifying you about. Needs the HomeKit sidecar service running."
+      },
+      {
+        name: "includeDevices", label: "include device hub", type: "checkbox",
+        tip: "Also put your Device Hub devices in Apple Home - lights, switches, outlets, fans, locks and gates become real HomeKit accessories you can control and use in Home automations. Needs MQTT and the Device Hub turned on."
       },
       {
         name: "sidecarBaseUrl", label: "sidecar url", type: "text",
@@ -1463,6 +1467,7 @@ window.GateWatchSettings = (function () {
 
       const payload = {
         enabled: section.querySelector('[data-field="enabled"]').checked,
+        includeDevices: section.querySelector('[data-field="includeDevices"]').checked,
         sidecarBaseUrl: section.querySelector('[data-field="sidecarBaseUrl"]').value,
         minimumConfidence: Number(confidenceInput.value),
         timeoutSeconds: data.timeoutSeconds || 10
