@@ -1083,7 +1083,8 @@ The full list below covers both modes:
   Its own section below. See
   [section 13a](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices).
 - **Apple HomeKit** — shows your cameras in Apple's Home app as motion sensors, for native
-  iPhone notifications. Shows the pairing QR code here. Its own section below. See
+  iPhone notifications, and optionally your Device Hub devices as accessories you can control
+  from Home. Shows the pairing QR code here. Its own section below. See
   [section 14](#14-apple-homekit).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
 - **Backup** — exports everything on this list, plus cameras, camera groups, trigger zones, gate
@@ -1562,6 +1563,35 @@ the HomeKit bridge publishes. Any other camera is learned on its first alert and
 `homekit-bridge/persist/cameras.json`, then restored before every later publish. This keeps
 HomeKit accessory IDs stable across restarts and prevents the first motion event from racing
 Apple Home's accessory synchronization.
+
+**Your Device Hub devices in Home.** Turn on **include device hub** in the same settings section
+and every device from the
+[Device Hub](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices) becomes a real
+HomeKit accessory too, so
+Apple Home can switch your MQTT lights and plugs and use them in Home automations — *when a
+person is seen at the gate after sunset, turn on the porch light* is then a Home automation
+rather than something you have to build here. Each Device Hub kind maps to the HomeKit service
+that fits it:
+
+| Device Hub kind | In Apple Home |
+| --- | --- |
+| `light` | Lightbulb (with a brightness slider when the device reports brightness) |
+| `switch`, `button` | Switch |
+| `outlet` | Outlet |
+| `fan` | Fan |
+| `lock` | Lock |
+| `cover`, `gate`, `garage` | Garage Door — or a Switch, if the device is momentary |
+| `sensor` | *not bridged* — a read-only MQTT sensor carries arbitrary measurements, and there's no honest generic HomeKit service for "some number" |
+
+A **momentary** device (a pulse relay: a gate remote, a doorbell push) deliberately becomes a
+Switch that springs back off a few seconds after you tap it, not a Garage Door. A door tile in
+Home promises an open/closed state, and a pulse relay never reports one — it would sit on
+"Opening…" forever. The switch is the honest control.
+
+Devices are off by default even when HomeKit is on, because turning them on changes the shape of
+an already-paired bridge. Turning HomeKit itself off takes the devices off the network too — they
+ride on the same pairing. If a device's MQTT availability topic goes quiet, its tile shows
+**No Response** rather than cheerfully reporting "off" for something that's unplugged.
 
 **What triggers a notification.** Only events that would also have alerted Email/Telegram —
 the same judgement described in

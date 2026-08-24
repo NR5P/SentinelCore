@@ -2,7 +2,7 @@
   "name": "sentinelcore-homekit-bridge",
   "version": "1.0.0",
   "private": true,
-  "description": "HomeKit sidecar for Sentinel Core - exposes each camera as a motion sensor in Apple Home.",
+  "description": "HomeKit sidecar for Sentinel Core - exposes each camera as a motion sensor, and optionally each Device Hub device as an accessory, in Apple Home.",
   "main": "index.js",
   "type": "commonjs",
   "engines": {

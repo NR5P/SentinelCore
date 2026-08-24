@@ -443,6 +443,11 @@ public sealed class HomeKitSettingsDto
 
     [Range(0, 1)]
     public double MinimumConfidence { get; set; } = 0.6;
+
+    // Read by the HomeKit sidecar, not by this app - see core/homekit-bridge. Off by default
+    // because it changes the shape of an already-paired bridge: turning it on adds an accessory
+    // per Device Hub device to Apple Home, which is a pleasant surprise only if it was asked for.
+    public bool IncludeDevices { get; set; }
 }
 
 public sealed class MqttSettingsDto
