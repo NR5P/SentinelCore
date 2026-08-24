@@ -320,6 +320,9 @@ public sealed class SelfMonitoringSettingsDto
     [Range(1, 20)]
     public int ConsecutiveBacklogChecksBeforeAlert { get; set; }
 
+    [Range(0, 10_000)]
+    public int FreeDiskWarningGigabytes { get; set; } = 10;
+
     public bool NotifyOnRecovery { get; set; } = true;
 }
 

@@ -43,19 +43,31 @@ public sealed class DegradationTracker(int consecutiveBeforeAlert)
     }
 }
 
-// Watches for the two ways this service can silently stop protecting the gate: the vision
-// analysis backend becoming unreachable, or the alert queue backing up faster than it's
-// processed. Pushes a Telegram alert only on state transitions, not on every check, so it
-// doesn't spam.
+// Watches for the three ways this service can silently stop protecting the gate: the vision
+// analysis backend becoming unreachable, the alert queue backing up faster than it's
+// processed, or the disk filling up underneath all of it. Pushes a Telegram alert only on
+// state transitions, not on every check, so it doesn't spam.
 public sealed class SelfMonitoringWorker : BackgroundService
 {
     private const string ApiBaseUrl = "https://api.telegram.org";
+
+    private const long BytesPerGigabyte = 1024L * 1024 * 1024;
+
+    // How far free space has to climb back above the warning threshold before the disk counts as
+    // recovered. Without a margin this flaps: the motion retention sweep runs every 12 hours and
+    // reclaims between 0.5 and 5 GB in a single pass (measured on this deployment), so a disk
+    // sitting near the threshold would cross it in both directions and alert every time. A one-way
+    // margin is the right shape - go degraded the moment you're under, come back only once you're
+    // clear of it - because the alert exists to be acted on, not to track the boundary precisely.
+    private const double RecoveryMargin = 1.10;
 
     private readonly IVisionAnalysisClient _vision;
     private readonly IAlertQueue _queue;
     private readonly HttpClient _httpClient;
     private readonly IOptionsMonitor<TelegramOptions> _telegramOptionsMonitor;
     private readonly IOptionsMonitor<SelfMonitoringOptions> _optionsMonitor;
+    private readonly IOptionsMonitor<BridgeOptions> _bridgeOptionsMonitor;
+    private readonly IHostEnvironment _environment;
     private readonly ILogger<SelfMonitoringWorker> _logger;
 
     // Rebuilt whenever ConsecutiveFailuresBeforeAlert/ConsecutiveBacklogChecksBeforeAlert
@@ -65,12 +77,20 @@ public sealed class SelfMonitoringWorker : BackgroundService
     private int _ollamaTrackerThreshold;
     private int _queueTrackerThreshold;
 
+    // Fixed at 1: unlike a flaky backend or a momentary queue spike, a disk that reads as low is
+    // low. Waiting for repeat observations would only delay the warning. The flapping this would
+    // otherwise invite is handled by RecoveryMargin instead, which is the axis it actually happens
+    // on.
+    private readonly DegradationTracker _diskTracker = new(1);
+
     public SelfMonitoringWorker(
         IVisionAnalysisClient vision,
         IAlertQueue queue,
         IHttpClientFactory httpClientFactory,
         IOptionsMonitor<TelegramOptions> telegramOptions,
         IOptionsMonitor<SelfMonitoringOptions> options,
+        IOptionsMonitor<BridgeOptions> bridgeOptions,
+        IHostEnvironment environment,
         ILogger<SelfMonitoringWorker> logger)
     {
         _vision = vision;
@@ -78,6 +98,8 @@ public sealed class SelfMonitoringWorker : BackgroundService
         _httpClient = httpClientFactory.CreateClient(nameof(SelfMonitoringWorker));
         _telegramOptionsMonitor = telegramOptions;
         _optionsMonitor = options;
+        _bridgeOptionsMonitor = bridgeOptions;
+        _environment = environment;
         _logger = logger;
 
         var initial = options.CurrentValue;
@@ -176,6 +198,79 @@ public sealed class SelfMonitoringWorker : BackgroundService
             recoveryText: $"The alert queue has caught back up ({queueCount} pending).",
             options.NotifyOnRecovery,
             cancellationToken);
+
+        await CheckDiskAsync(options, telegramOptions, canNotify, cancellationToken);
+    }
+
+    // The disk is the one resource here that nothing reclaims on its own. Clips for confirmed
+    // motion are kept permanently by design, so free space is monotonically decreasing until
+    // someone intervenes - which makes "you have N GB left" a thing you want pushed at you rather
+    // than something to notice on the dashboard. Nothing else in either service warns about this:
+    // ScheduledRecorder has a floor, but it only refuses to start a recording once you are already
+    // there, and SystemStatsSampler measures free space purely to display it.
+    private async Task CheckDiskAsync(
+        SelfMonitoringOptions options,
+        TelegramOptions telegramOptions,
+        bool canNotify,
+        CancellationToken cancellationToken)
+    {
+        if (options.FreeDiskWarningGigabytes <= 0) return;
+
+        var freeBytes = TryGetFreeDiskBytes();
+
+        // A disk we could not measure is not a disk we know to be full. Skipping the observation
+        // entirely - rather than reporting healthy - also leaves an existing warning standing,
+        // since a measurement that starts failing is no reason to announce recovery.
+        if (freeBytes is not { } free) return;
+
+        var healthy = IsFreeSpaceHealthy(free, options.FreeDiskWarningGigabytes, _diskTracker.IsDegraded);
+        await HandleTransitionAsync(
+            _diskTracker,
+            healthy,
+            canNotify,
+            telegramOptions,
+            alertText:
+                $"Free disk space is down to {DescribeGigabytes(free)}, below the {options.FreeDiskWarningGigabytes} GB " +
+                "warning level. Saved clips for confirmed motion are never deleted automatically, so this will not " +
+                "recover on its own.",
+            recoveryText: $"Free disk space has recovered to {DescribeGigabytes(free)}.",
+            options.NotifyOnRecovery,
+            cancellationToken);
+    }
+
+    // Pure and public for the tests. The asymmetry is the whole point: the threshold decides when
+    // to start warning, the threshold plus RecoveryMargin decides when to stop.
+    public static bool IsFreeSpaceHealthy(long freeBytes, int warnGigabytes, bool currentlyDegraded)
+    {
+        if (warnGigabytes <= 0) return true;
+
+        var threshold = warnGigabytes * (double)BytesPerGigabyte;
+        return freeBytes >= (currentlyDegraded ? threshold * RecoveryMargin : threshold);
+    }
+
+    private static string DescribeGigabytes(long bytes) =>
+        $"{bytes / (double)BytesPerGigabyte:0.0} GB";
+
+    // Resolved the same way SystemStatsSampler and RetentionWorker resolve it, so all three agree
+    // on which disk "the disk" means. Note this is the INGEST service's data root - on a split
+    // install the dashboard's trigger clips, which are the bulk of the footprint, may sit on a
+    // different volume that this check would not see.
+    private long? TryGetFreeDiskBytes()
+    {
+        try
+        {
+            var configured = _bridgeOptionsMonitor.CurrentValue.DataDirectory;
+            var root = Path.IsPathRooted(configured) ? configured : Path.Combine(_environment.ContentRootPath, configured);
+            var driveRoot = Path.GetPathRoot(Path.GetFullPath(root));
+            if (string.IsNullOrEmpty(driveRoot)) return null;
+
+            return new DriveInfo(driveRoot).AvailableFreeSpace;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not measure free disk space; skipping the disk check this cycle");
+            return null;
+        }
     }
 
     private async Task HandleTransitionAsync(

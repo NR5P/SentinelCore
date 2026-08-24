@@ -25,12 +25,20 @@ namespace SentinelCore.Web;
 // neither 'confirmed' nor 'pending', and SweepOrphansAsync only removes files no row points at,
 // while a confirmed row goes on pointing at its clip forever.
 //
-// Measured on the gate camera 2026-08-16: 8.3 GB of confirmed clips accumulated in 10 days, about
-// 0.8 GB/day, with nothing able to remove any of it. Keeping confirmed footage is the right
-// default - it is the footage worth having - but it is unbounded, which is a sizing fact the
-// operator has to know rather than something to discover when the disk fills. Adding a real
-// window for it is a product decision (how much history do I keep?) and deliberately not taken
-// here; see README "Data" for the levers that do exist today.
+// Measured on the gate camera 2026-08-16: 8.3 GB of confirmed clips in 10 days, about 0.8 GB/day.
+// Re-measured 2026-08-24 over 18 days: 24.3 GB, a mean of 1.4 GB/day, a recent 7-day mean of
+// 2.0 GB/day, and single days between 0.3 and 4.4 GB. The per-clip size did not move (~19 MB both
+// times) - the count did, because it tracks how much really happens in front of the camera. So the
+// rate is not a property of this code to be quoted as one number, and the first measurement was
+// taken over a stretch that turned out to be quiet.
+//
+// Keeping confirmed footage is the right default - it is the footage worth having - but it is
+// unbounded, which is a sizing fact the operator has to know rather than something to discover
+// when the disk fills. Adding a real window for it is a product decision (how much history do I
+// keep?) and deliberately still not taken here; see README "Data" for the levers that do exist.
+// What did get added, since a range this wide makes "budget for it up front" poor advice on its
+// own, is SelfMonitoring:FreeDiskWarningGigabytes - it does not prune anything, it just means the
+// disk filling is something you are told about rather than something you find.
 public sealed class MotionRetentionWorker(
     ITriggerEventStore triggers,
     AppSettingsFile appSettings,

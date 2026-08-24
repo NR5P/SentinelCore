@@ -618,9 +618,13 @@ A few things worth knowing:
   prunes the AI service's own saved alert images and result files, not the dashboard's trigger
   clips and snapshots, which live somewhere else. A confirmed trigger's clip is kept for good.
   That is the safe direction to fail — it's the footage you'd actually want — but it does mean
-  the confirmed clips grow forever, at roughly **0.8 GB a day** on a single busy camera here. If
-  disk is a concern, the levers are **Clip post-roll seconds** (shorter clips), turning **Record
-  clips** off for cameras where the snapshot is enough, or deleting old clips yourself.
+  the confirmed clips grow forever. On a single busy camera here that has measured **0.3 to 4.4 GB
+  a day** — a clip is a steady ~19 MB, so what moves the number is how much really happens in front
+  of the camera, not the clip length. Plan against a busy day, around **2 GB**, rather than an
+  average. If disk is a concern, the levers are **Clip post-roll seconds** (shorter clips), turning
+  **Record clips** off for cameras where the snapshot is enough, or deleting old clips yourself.
+  Either way, set **Warn Below Free Space (GB)** under SETTINGS → SELF-MONITORING so you hear about
+  it in advance; see [section 16](#16-self-monitoring).
 - **Triggers appear with a delay** — as long as the analysis takes, which on a CPU-only box can
   be a minute or more. Until then they're marked "… checking" under **show hidden**.
 - **It fails toward showing you things.** If the analysis is slow, errors, or can't be reached,
@@ -1698,12 +1702,20 @@ alert, it only annotates one that was already going to fire.
 
 ## 16. Self-monitoring
 
-Watches for the two ways the bridge can silently stop protecting you: Ollama becoming
-unreachable, or the alert queue backing up faster than it's processed. It only messages you
-(via the same Telegram bot) when the state actually *changes* — not on every check — so a
-momentary blip doesn't page you, but real degradation gets caught before you'd otherwise
-notice by just... not getting alerts. It also tells you when things recover, if
+Watches for the three ways the bridge can silently stop protecting you: Ollama becoming
+unreachable, the alert queue backing up faster than it's processed, or the disk running out of
+room. It only messages you (via the same Telegram bot) when the state actually *changes* — not
+on every check — so a momentary blip doesn't page you, but real degradation gets caught before
+you'd otherwise notice by just... not getting alerts. It also tells you when things recover, if
 **Notify On Recovery** is on.
+
+**Warn Below Free Space (GB)** (default 10, 0 turns it off) is the odd one out, because it is
+the only one that will not fix itself. Ollama comes back and queues drain; a full disk does not
+un-fill. Clips for confirmed motion are kept permanently by design, so free space only ever goes
+down until you prune it — which means the warning is worth acting on the first time you see it,
+not waiting to see whether it clears. The default leaves several days of room at the rate a busy
+camera actually accumulates clips, and is set above the point where scheduled recordings start
+refusing to run, so you hear about it before something else breaks first.
 
 ## 16a. Spider webs and insects on the lens
 

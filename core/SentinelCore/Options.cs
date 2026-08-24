@@ -873,6 +873,17 @@ public sealed class SelfMonitoringOptions
     [Range(1, 20)]
     public int ConsecutiveBacklogChecksBeforeAlert { get; init; } = 3;
 
+    // Warn when the disk holding the data directory drops below this. 0 disables the check.
+    //
+    // The default sits deliberately above ScheduledRecordingOptions.MinimumFreeGigabytes (5), which
+    // is the point at which a scheduled recording refuses to start. That floor is the first thing
+    // that visibly breaks, and by then the databases and the clip recorder are already close to
+    // having nowhere to write - so a warning that fires at the same number is a warning that
+    // arrives too late to act on. 10 GB buys several days at the accumulation rate confirmed
+    // trigger clips actually run at (see README "Data"), which is enough time to prune by hand.
+    [Range(0, 10_000)]
+    public int FreeDiskWarningGigabytes { get; init; } = 10;
+
     public bool NotifyOnRecovery { get; init; } = true;
 }
 

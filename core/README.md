@@ -254,7 +254,7 @@ Text `/photo` or `/snapshot` to the bot to get a live image pulled straight from
 
 ## Self-monitoring
 
-Watches for the two ways this service can silently stop protecting the camera: Ollama becoming unreachable, or the alert queue backing up faster than it's processed. Sends a Telegram message (using the same `Telegram:BotToken`/`ChatId` as above) only when the state actually *changes* - not on every check - and sends a follow-up when it recovers, so you're not paged on a momentary blip but you do find out about real degradation before you'd otherwise notice by just not getting alerts.
+Watches for the three ways this service can silently stop protecting the camera: Ollama becoming unreachable, the alert queue backing up faster than it's processed, or the disk filling up. Sends a Telegram message (using the same `Telegram:BotToken`/`ChatId` as above) only when the state actually *changes* - not on every check - and sends a follow-up when it recovers, so you're not paged on a momentary blip but you do find out about real degradation before you'd otherwise notice by just not getting alerts.
 
 ```json
 "SelfMonitoring": {
@@ -263,9 +263,14 @@ Watches for the two ways this service can silently stop protecting the camera: O
   "ConsecutiveFailuresBeforeAlert": 3,
   "QueueBacklogThreshold": 5,
   "ConsecutiveBacklogChecksBeforeAlert": 3,
+  "FreeDiskWarningGigabytes": 10,
   "NotifyOnRecovery": true
 }
 ```
+
+`FreeDiskWarningGigabytes` (0 disables it) warns when free space on the volume holding `Bridge:DataDirectory` drops below the given figure. It is the only one of the three that will not recover on its own: clips for confirmed motion are kept permanently (see [Data](#data)), so free space only moves one way until you prune it. The default of 10 GB is deliberately above `ScheduledRecording:MinimumFreeGigabytes` (5), which is where a scheduled recording starts refusing to run - by that point the databases and the clip recorder are also nearly out of room, so a warning at the same number would arrive too late to act on. Recovery is declared only once free space is 10% clear of the threshold, because the motion retention sweep reclaims whole gigabytes at a time and a disk resting exactly on the line would otherwise alert on every sweep.
+
+Note this measures the **ingest** service's data root. On a split install where the dashboard's `CamerasDataDirectory` is on a different volume, the trigger clips - which are the bulk of the footprint - are on a disk this check does not see.
 
 ## Web UI
 
@@ -368,7 +373,11 @@ Two retention passes run, and they cover different data:
 - `Bridge:RetentionDays` — every 12 hours, prunes saved alert images and result JSON. It does not remove old rows from `events.db`.
 - `Bridge:UnverifiedMotionRetentionDays` (default 3, 0 keeps everything) — prunes motion that was never confirmed as a real subject: it deletes those rows from `triggers.db` as well as their clips and images, then sweeps any file under the trigger directories that no row points at any more. This is what keeps the *rejected* share of `trigger-clips` at a steady size rather than growing without limit. Note that a clip file is not owned by exactly one trigger: two triggers firing within one clip window share it, so a rejected trigger's clip is kept if a confirmed one still points at the same file.
 
-**Confirmed and still-pending triggers are never pruned by anything, and their clips grow without bound.** This is worth knowing before sizing a disk. `RetentionDays` above does *not* cover them: it walks only `images/` and `results/` under the **ingest service's** data root, and `trigger-clips`/`trigger-images` live under the dashboard's `CamerasDataDirectory` — a different root entirely, which `RetentionWorker` deliberately never leaves. The unverified pass deletes only rows whose confirmation is neither `confirmed` nor `pending`, and the orphan sweep only removes files no row points at — a confirmed row keeps pointing at its clip forever. So every confirmed trigger's clip is kept permanently. On the gate camera this accumulates at roughly **0.8 GB/day** (~19 MB per clip). If that is not what you want, lower `ClipPostSeconds`, turn `RecordClips` off for cameras that don't need video, or prune `trigger-clips` yourself on a schedule.
+**Confirmed and still-pending triggers are never pruned by anything, and their clips grow without bound.** This is worth knowing before sizing a disk. `RetentionDays` above does *not* cover them: it walks only `images/` and `results/` under the **ingest service's** data root, and `trigger-clips`/`trigger-images` live under the dashboard's `CamerasDataDirectory` — a different root entirely, which `RetentionWorker` deliberately never leaves. The unverified pass deletes only rows whose confirmation is neither `confirmed` nor `pending`, and the orphan sweep only removes files no row points at — a confirmed row keeps pointing at its clip forever. So every confirmed trigger's clip is kept permanently.
+
+Size this from clips per day, not from a single average. A clip is a stable **~19 MB**, but how many of them you keep is set by how much real activity the camera sees, and that varies by more than an order of magnitude day to day. Measured on the gate camera over 18 days: **24 GB of confirmed clips**, a mean of **~1.4 GB/day**, a recent 7-day mean of **~2 GB/day**, and individual days ranging from **0.3 GB to 4.4 GB**. Budget against the busy days — a quiet stretch is not the number that fills a disk. (Earlier revisions of this document quoted 0.8 GB/day from a 10-day sample; that window happened to be a quiet one, and the figure was low by roughly half.)
+
+If that is not what you want, lower `ClipPostSeconds`, turn `RecordClips` off for cameras that don't need video, or prune `trigger-clips` yourself on a schedule. Set `SelfMonitoring:FreeDiskWarningGigabytes` (see [Self-monitoring](#self-monitoring)) so you are told before the disk runs out rather than after.
 
 Query the history with `sqlite3` or any SQLite client, for example:
 

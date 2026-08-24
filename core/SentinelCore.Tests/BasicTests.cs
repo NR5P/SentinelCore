@@ -1068,6 +1068,58 @@ public sealed class BasicTests
         Assert.False(tracker.IsDegraded);
     }
 
+    // 0 is the documented "off" value, and the check runs on every cycle of a worker that is
+    // enabled by default - so a threshold of 0 reading as "warn below 0 bytes" would be a warning
+    // nobody asked for on every install that never touched this setting.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void FreeSpace_IsAlwaysHealthy_WhenTheWarningIsDisabled(int warnGigabytes)
+    {
+        Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(0, warnGigabytes, currentlyDegraded: false));
+        Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(0, warnGigabytes, currentlyDegraded: true));
+    }
+
+    [Fact]
+    public void FreeSpace_IsUnhealthy_OnlyOnceItIsActuallyBelowTheThreshold()
+    {
+        const long gb = 1024L * 1024 * 1024;
+
+        Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(11 * gb, 10, currentlyDegraded: false));
+        // Exactly at the threshold still counts as healthy - the setting reads as "warn below".
+        Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(10 * gb, 10, currentlyDegraded: false));
+        Assert.False(SelfMonitoringWorker.IsFreeSpaceHealthy(10 * gb - 1, 10, currentlyDegraded: false));
+        Assert.False(SelfMonitoringWorker.IsFreeSpaceHealthy(2 * gb, 10, currentlyDegraded: false));
+    }
+
+    // The retention sweep reclaims whole gigabytes in one pass every 12 hours, so a disk resting
+    // near the threshold crosses it in both directions. Without the recovery margin that is an
+    // alert and an all-clear on every sweep, indefinitely.
+    [Fact]
+    public void FreeSpace_OnceDegraded_StaysDegradedUntilItIsClearOfTheThreshold()
+    {
+        const long gb = 1024L * 1024 * 1024;
+
+        // Back above the threshold, but only just - not yet recovered.
+        Assert.False(SelfMonitoringWorker.IsFreeSpaceHealthy(10 * gb, 10, currentlyDegraded: true));
+        Assert.False(SelfMonitoringWorker.IsFreeSpaceHealthy((long)(10.9 * gb), 10, currentlyDegraded: true));
+
+        // Clear of it by the full margin - recovered.
+        Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(11 * gb, 10, currentlyDegraded: true));
+        Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(50 * gb, 10, currentlyDegraded: true));
+    }
+
+    // A whole-disk value in bytes overflows an int and is close to overflowing arithmetic done in
+    // gigabytes-as-int, which is why the comparison is done in double against a long.
+    [Fact]
+    public void FreeSpace_HandlesThresholdsLargeEnoughToOverflowIntArithmetic()
+    {
+        const long gb = 1024L * 1024 * 1024;
+
+        Assert.False(SelfMonitoringWorker.IsFreeSpaceHealthy(5000 * gb, 10_000, currentlyDegraded: false));
+        Assert.True(SelfMonitoringWorker.IsFreeSpaceHealthy(20_000 * gb, 10_000, currentlyDegraded: false));
+    }
+
     [Fact]
     public void TelegramChatWorker_IsAuthorizedChat_OnlyMatchesConfiguredChatId()
     {

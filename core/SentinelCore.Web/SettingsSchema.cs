@@ -703,6 +703,7 @@ public static class SettingsSchema
                 Number("consecutiveFailuresBeforeAlert", "Consecutive Failures Before Alert", "How many checks must fail in a row before you're told, so one hiccup doesn't wake you.", 1, 20),
                 Number("queueBacklogThreshold", "Queue Backlog Threshold", "How many unprocessed alerts count as falling behind. Usually means the AI can't keep up.", 1, 10000),
                 Number("consecutiveBacklogChecksBeforeAlert", "Consecutive Backlog Checks Before Alert", "How many checks in a row must show a backlog before alerting, ignoring brief bursts.", 1, 20),
+                Number("freeDiskWarningGigabytes", "Warn Below Free Space (GB)", "Tell you when the disk is running out, while there is still time to do something about it. Saved clips for confirmed motion are never deleted automatically, so free space only goes one way unless you prune it. 0 turns the warning off.", 0, 10000),
                 Check("notifyOnRecovery", "Notify On Recovery", "Also tell you when things go back to normal, not just when they break.")
             ]
         },
