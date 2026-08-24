@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Options;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Metadata;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
@@ -19,6 +21,11 @@ public sealed record OptimizedImage(byte[] Bytes, int OriginalWidth, int Origina
 
 public sealed class ImageOptimizer : IImageOptimizer
 {
+    // Quality for the re-encode a crop or an orientation fix forces while optimization is off.
+    // High enough to be visually lossless, because the configured JpegQuality is a size/speed
+    // setting and size is precisely what has been switched off.
+    private const int PassthroughJpegQuality = 95;
+
     private readonly IOptionsMonitor<ImageProcessingOptions> _options;
     private readonly ILogger<ImageOptimizer> _logger;
 
@@ -32,18 +39,27 @@ public sealed class ImageOptimizer : IImageOptimizer
     {
         var options = _options.CurrentValue;
 
-        // If optimization is disabled, return the original image unchanged.
+        // Enabled governs the downscale and the JPEG re-encode below - the speed knobs - and
+        // nothing else. Cropping and auto-orient are not optimizations: the crop decides what part of
+        // the scene the model is shown at all, and a sideways frame reads worse at any size. Turning
+        // shrinking off to give the AI a better picture must not silently drop a region of
+        // interest someone set per camera, so those two still apply here.
         if (!options.Enabled)
         {
             var info = Image.Identify(sourceBytes)
                        ?? throw new InvalidOperationException("Unable to identify image.");
 
-            return new OptimizedImage(
-                sourceBytes,
-                info.Width,
-                info.Height,
-                info.Width,
-                info.Height);
+            // With neither to do there is no reason to decode: the camera's own JPEG goes out
+            // byte for byte, which is the no-generation-loss path someone disabling this wants.
+            if (crop is null && !NeedsOrientationFix(info.Metadata, options))
+            {
+                return new OptimizedImage(
+                    sourceBytes,
+                    info.Width,
+                    info.Height,
+                    info.Width,
+                    info.Height);
+            }
         }
 
         await using var input = new MemoryStream(sourceBytes, writable: false);
@@ -64,7 +80,7 @@ public sealed class ImageOptimizer : IImageOptimizer
                     context.Crop(region);
             }
 
-            if (image.Width > options.MaxWidth || image.Height > options.MaxHeight)
+            if (options.Enabled && (image.Width > options.MaxWidth || image.Height > options.MaxHeight))
             {
                 context.Resize(new ResizeOptions
                 {
@@ -80,7 +96,10 @@ public sealed class ImageOptimizer : IImageOptimizer
             output,
             new JpegEncoder
             {
-                Quality = options.JpegQuality
+                // Only reaches the re-encode with optimization off when a crop or an orientation
+                // fix forced a decode, and then the configured quality is the wrong number to
+                // apply - it is the size/speed setting, and size is exactly what is switched off.
+                Quality = options.Enabled ? options.JpegQuality : PassthroughJpegQuality
             },
             cancellationToken);
 
@@ -121,7 +140,12 @@ public sealed class ImageOptimizer : IImageOptimizer
         }
 
         await using var output = new MemoryStream();
-        await image.SaveAsJpegAsync(output, new JpegEncoder { Quality = options.JpegQuality }, cancellationToken);
+        // Same rule as the inference path: JpegQuality is the size/speed knob, so it only
+        // applies while optimization is on.
+        await image.SaveAsJpegAsync(
+            output,
+            new JpegEncoder { Quality = options.Enabled ? options.JpegQuality : PassthroughJpegQuality },
+            cancellationToken);
         return output.ToArray();
     }
 
@@ -147,6 +171,24 @@ public sealed class ImageOptimizer : IImageOptimizer
                 }
             }
         });
+    }
+
+    // Whether AutoOrient would actually change anything, so a frame that is already upright
+    // doesn't get decoded and re-encoded for nothing when optimization is off.
+    private static bool NeedsOrientationFix(ImageMetadata metadata, ImageProcessingOptions options)
+    {
+        if (!options.AutoOrient)
+            return false;
+
+        if (metadata.ExifProfile is not { } exif)
+            return false;
+
+        if (!exif.TryGetValue(ExifTag.Orientation, out var orientation))
+            return false;
+
+        // 0 is an unset tag and 1 is "already upright"; everything up to 8 is a rotation,
+        // a mirror, or both, all of which AutoOrient has real work to do on.
+        return orientation.Value > 1;
     }
 
     private static Rectangle ToPixelRectangle(CropRegion crop, int width, int height)

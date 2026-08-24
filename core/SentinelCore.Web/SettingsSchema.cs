@@ -455,10 +455,10 @@ public static class SettingsSchema
             Description = "Snapshots are shrunk before going to the AI, which is faster and usually just as accurate. Lower quality means quicker answers but a blurrier image for the model to read. Best left alone unless analysis is too slow or the AI is missing obvious things.",
             Fields =
             [
-                Check("enabled", "Enabled", "Shrink snapshots before sending them to the AI. Usually faster with no real loss in accuracy."),
-                Number("maxWidth", "Max Width", "Images wider than this are scaled down before analysis.", 256, 4096),
-                Number("maxHeight", "Max Height", "Images taller than this are scaled down before analysis.", 256, 4096),
-                Number("jpegQuality", "JPEG Quality", "Quality of the resized image. Lower means smaller and faster but blurrier for the model to read.", 1, 100),
+                Check("enabled", "Enabled", "Shrink snapshots before sending them to the AI. Usually faster with no real loss in accuracy. Off, the camera's full-size original goes to the AI instead - slower, and large enough that some cloud providers reject it outright. This is only about size: a profile's crop region and Auto Orient below still apply either way, so turning this off never changes which part of the scene the AI is shown."),
+                Number("maxWidth", "Max Width", "Images wider than this are scaled down before analysis. Width and height together describe a box the image is fitted inside, so the smaller of the two limits is usually the one doing the work. The shape is always kept - an image is never stretched or squashed to fill the box, and one smaller than it is left alone rather than blown up.", 256, 4096),
+                Number("maxHeight", "Max Height", "Images taller than this are scaled down before analysis. Works with Max Width as a box to fit inside, on the same terms.", 256, 4096),
+                Number("jpegQuality", "JPEG Quality", "Quality of the resized image. Lower means smaller and faster but blurrier for the model to read. Ignored while Enabled is off, since that is the setting asking for the picture not to be shrunk in the first place.", 1, 100),
                 Check("autoOrient", "Auto Orient", "Rotate images upright based on their orientation tag, so the model isn't looking at a sideways scene.")
             ]
         },
