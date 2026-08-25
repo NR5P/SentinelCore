@@ -2616,6 +2616,63 @@ main {
   color: var(--bg);
 }
 
+/* This machine's own address, under the SERVER ADDRESS settings section. The addresses are
+   meant to be read off a screen and typed into a phone, so they get the mono face and stay on
+   one line each - a wrapped IP is one somebody mistypes. */
+.local-address {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-card);
+}
+
+.local-address-status {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.local-address-status[data-state="ok"] { color: var(--green); }
+.local-address-status[data-state="none"] { color: var(--text-dim); }
+
+.local-address-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.local-address-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.local-address-url {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  user-select: all;
+}
+
+.local-address-interface {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.local-address-note { margin: 0; }
+
 /* ---- Publisher page (publish.html) --------------------------------------------------------
    A device streaming its own webcam into the dashboard. Sized for the two places it actually
    runs: a laptop propped up somewhere, and a phone held in one hand - hence the single centred

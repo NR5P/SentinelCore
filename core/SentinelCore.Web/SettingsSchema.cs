@@ -928,7 +928,7 @@ public static class SettingsSchema
             Endpoint = "/api/settings/server",
             Basic = false,
             DtoType = typeof(ServerSettingsDto),
-            Description = "The address and port the main bridge service listens on. Get this wrong and the service comes back unreachable after its next restart - fixable only by editing appsettings.json on the server itself, so double-check before saving. Takes effect on restart.",
+            Description = "The address and port the main bridge service listens on. Get this wrong and the service comes back unreachable after its next restart - fixable only by editing appsettings.json on the server itself, so double-check before saving. Takes effect on restart. The dashboard also shows this machine's own IP address here - that's the address to type into the phone apps, and it isn't a setting.",
             Fields =
             [
                 new()

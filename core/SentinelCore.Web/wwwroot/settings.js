@@ -654,6 +654,11 @@ window.GateWatchSettings = (function () {
     // system will actually permit a reboot. So this section grows a live panel underneath it.
     if (schema.key === "hostReboot") body.appendChild(buildHostRebootPanel());
 
+    // Same idea, different question: the field above says where the bridge should listen, which
+    // is not what someone typing an address into the phone app needs to know. The server is the
+    // only side that can see what addresses this machine actually has, so it gets asked.
+    if (schema.key === "server") body.appendChild(buildLocalAddressPanel(loaders));
+
     const needsRestart = schema.fields.some(f => f.requiresRestart);
 
     const footer = document.createElement("div");
@@ -921,6 +926,107 @@ window.GateWatchSettings = (function () {
     });
 
     probe();
+    return panel;
+  }
+
+  // Under SERVER ADDRESS: what this machine's address on the network actually is, so nobody has
+  // to go and find it with ifconfig or in the router's client list before they can set a phone
+  // up. Read-only - the field above is the setting, this is only ever a report - and asked for
+  // when the section is opened rather than on every visit to Settings.
+  function buildLocalAddressPanel(loaders) {
+    const panel = document.createElement("div");
+    panel.className = "local-address";
+
+    const status = document.createElement("div");
+    status.className = "local-address-status";
+    status.textContent = "checking\u2026";
+
+    const list = document.createElement("ul");
+    list.className = "local-address-list";
+
+    const note = document.createElement("p");
+    note.className = "settings-hint local-address-note";
+    note.hidden = true;
+
+    panel.append(status, list, note);
+
+    // Interface names come from the operating system, and the addresses are assembled by the
+    // server, so every one of these goes in as text rather than markup.
+    function buildRow(entry) {
+      const row = document.createElement("li");
+
+      const url = document.createElement("code");
+      url.className = "local-address-url";
+      url.textContent = entry.url;
+
+      const label = document.createElement("span");
+      label.className = "local-address-interface";
+      label.textContent = entry.looksVirtual ? `${entry.interface} (virtual adapter)` : entry.interface;
+
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "btn";
+      copyBtn.textContent = "copy";
+      copyBtn.dataset.tip = "Copy this address to paste into the phone app or a browser.";
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(entry.url);
+          showToast("Address copied", true);
+        } catch {
+          // Browsers refuse clipboard access on plain HTTP, which is exactly how a LAN
+          // dashboard is usually reached - the same fallback the reboot panel uses.
+          const range = document.createRange();
+          range.selectNodeContents(url);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          showToast("Couldn't copy automatically - the address is selected, press Ctrl+C", false);
+        }
+      });
+
+      row.append(url, label, copyBtn);
+      return row;
+    }
+
+    function render(payload) {
+      const addresses = payload.addresses || [];
+      list.replaceChildren(...addresses.map(buildRow));
+
+      if (addresses.length === 0) {
+        status.dataset.state = "none";
+        status.textContent = "This machine has no network address at the moment, so nothing else on your network can reach it.";
+        note.hidden = true;
+        return;
+      }
+
+      // First in the list is the plain LAN address on a real adapter, if there is one - the
+      // server sorts them that way, so this line can just take the head of it.
+      const primary = addresses[0];
+      status.dataset.state = "ok";
+      status.textContent = `This computer is ${payload.hostName} at ${primary.address} - apps and browsers on your network reach it at ${primary.url}.`;
+
+      note.hidden = false;
+      note.textContent =
+        `Most devices can use ${payload.scheme}://${payload.hostName}.local:${payload.port} instead, which is easier to remember and keeps working if the address changes. ` +
+        "That address comes from your router, so it can be a different one after a power cut - give this machine a fixed (reserved) address there if you'd rather it never moved.";
+    }
+
+    async function probe() {
+      try {
+        const response = await fetch("/api/system/addresses");
+        if (!response.ok) {
+          status.dataset.state = "none";
+          status.textContent = "Could not ask the server for its address.";
+          return;
+        }
+        render(await response.json());
+      } catch {
+        status.dataset.state = "none";
+        status.textContent = "Could not reach the server.";
+      }
+    }
+
+    loaders.push(probe);
     return panel;
   }
 

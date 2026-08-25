@@ -435,6 +435,7 @@ app.MapBackupEndpoints();
 app.MapChatEndpoints();
 app.MapQueueEndpoints();
 app.MapSystemStatusEndpoints();
+app.MapLocalAddressEndpoints();
 app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
