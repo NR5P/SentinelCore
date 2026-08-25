@@ -67,6 +67,7 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
     private DateTimeOffset _setupUnavailableUntil = DateTimeOffset.MinValue;
 
     private CancellationTokenSource? _lifetimeCts;
+    private bool _disposed;
     private IDisposable? _mqttSubscription;
     private IDisposable? _hubSubscription;
     private object? _connectionKey;
@@ -146,8 +147,18 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
         }
     }
 
+    // Dispose may run before StopAsync as well as after it - the DI container owns this
+    // instance's lifetime and the host owns its start/stop, and nothing orders the two against
+    // each other. Both orders have to be safe, and this one was not: StopAsync touched a
+    // CancellationTokenSource and a SemaphoreSlim that Dispose had already released, so shutdown
+    // threw ObjectDisposedException out of Host.StopAsync. Disposal also has to tolerate being
+    // called more than once, which .NET's own guidance requires and which this type gets for
+    // real: it is registered three times (concrete, interface, hosted service) and the container
+    // tracks each registration separately.
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        if (_disposed) return;
+
         _mqttSubscription?.Dispose();
         _mqttSubscription = null;
         _hubSubscription?.Dispose();
@@ -605,6 +616,9 @@ public sealed class MqttDeviceBus : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         _mqttSubscription?.Dispose();
         _hubSubscription?.Dispose();
         _client.ApplicationMessageReceivedAsync -= OnMessageReceivedAsync;

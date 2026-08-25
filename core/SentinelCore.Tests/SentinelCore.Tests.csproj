@@ -13,10 +13,11 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../SentinelCore/SentinelCore.csproj" />
     <!-- Both projects are top-level-statement executables, so each has its own global::Program -
-         referencing both here would make "Program" ambiguous without this alias (see
-         WebApplicationFactory usage in WebAuthorizationTests.cs). -->
+         referencing both here would make "Program" ambiguous without these aliases (see
+         WebApplicationFactory usage in WebAuthorizationTests.cs and MainAppEndpointTests.cs).
+         Each keeps "global" as well so ordinary types from both are usable unqualified. -->
+    <ProjectReference Include="../SentinelCore/SentinelCore.csproj" Aliases="global,MainApp" />
     <ProjectReference Include="../SentinelCore.Web/SentinelCore.Web.csproj" Aliases="global,WebHost" />
   </ItemGroup>
 </Project>

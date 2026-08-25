@@ -450,7 +450,9 @@ app.MapPost("/api/blueiris/alert", async (
     if (!request.HasFormContentType)
         return Results.BadRequest(new { error = "Use multipart/form-data with an image field." });
 
-    var form = await request.ReadFormAsync(ct);
+    if (await AlertFormReader.TryReadAsync(request, logger, ct) is not { } form)
+        return Results.BadRequest(new { error = AlertFormReader.MalformedBodyMessage });
+
     var image = form.Files.GetFile("image") ?? form.Files.FirstOrDefault();
     if (image is null || image.Length == 0)
         return Results.BadRequest(new { error = "No image was supplied." });
@@ -567,12 +569,14 @@ app.MapPost("/api/blueiris/alert", async (
 // Forwarded from SentinelCore.Web's GateCheckMonitor - a periodic per-camera snapshot, not a
 // Blue Iris alert, so this is deliberately synchronous (no queue) and returns the caller's own
 // last-known state back for it to persist (see GateCheckAnalyzer's own comment on the split).
-app.MapPost("/api/gate-check", async (HttpRequest request, GateCheckAnalyzer analyzer, IOptionsMonitor<BridgeOptions> bridgeOptions, CancellationToken ct) =>
+app.MapPost("/api/gate-check", async (HttpRequest request, GateCheckAnalyzer analyzer, IOptionsMonitor<BridgeOptions> bridgeOptions, ILogger<Program> logger, CancellationToken ct) =>
 {
     if (!request.HasFormContentType)
         return Results.BadRequest(new { error = "Use multipart/form-data with an image field." });
 
-    var form = await request.ReadFormAsync(ct);
+    if (await AlertFormReader.TryReadAsync(request, logger, ct) is not { } form)
+        return Results.BadRequest(new { error = AlertFormReader.MalformedBodyMessage });
+
     var image = form.Files.GetFile("image") ?? form.Files.FirstOrDefault();
     if (image is null || image.Length == 0)
         return Results.BadRequest(new { error = "No image was supplied." });

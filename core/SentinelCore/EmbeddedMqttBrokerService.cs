@@ -21,6 +21,7 @@ public sealed class EmbeddedMqttBrokerService(
     private readonly SemaphoreSlim _reconcileLock = new(1, 1);
     private MqttServer? _server;
     private int _runningPort;
+    private bool _disposed;
     private IDisposable? _optionsSubscription;
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -33,8 +34,18 @@ public sealed class EmbeddedMqttBrokerService(
         _optionsSubscription = options.OnChange((_, _) => _ = ReconcileSafelyAsync());
     }
 
+    // Dispose may run before StopAsync as well as after it - the DI container owns this
+    // instance's lifetime and the host owns its start/stop, and nothing orders the two against
+    // each other. Both orders have to be safe, and this one was not: StopAsync touched a
+    // CancellationTokenSource and a SemaphoreSlim that Dispose had already released, so shutdown
+    // threw ObjectDisposedException out of Host.StopAsync. Disposal also has to tolerate being
+    // called more than once, which .NET's own guidance requires and which this type gets for
+    // real: it is registered three times (concrete, interface, hosted service) and the container
+    // tracks each registration separately.
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        if (_disposed) return;
+
         _optionsSubscription?.Dispose();
         _optionsSubscription = null;
 
@@ -51,6 +62,9 @@ public sealed class EmbeddedMqttBrokerService(
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         _optionsSubscription?.Dispose();
         _reconcileLock.Dispose();
     }
