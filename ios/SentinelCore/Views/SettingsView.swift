@@ -10,12 +10,21 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Server") {
-                TextField("Dashboard address", text: $address)
+                // Both addresses are typed in by hand, and the label has to survive being filled
+                // in: a bare TextField in a Form draws no box, and its placeholder - the only
+                // thing naming it - disappears the moment there's an address in it.
+                SentinelTextField(
+                    label: "Dashboard address",
+                    prompt: "http://192.168.1.50:3320",
+                    text: $address)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
-                TextField("Remote address (optional)", text: $remoteAddress)
+                SentinelTextField(
+                    label: "Remote address (optional)",
+                    prompt: "https://sentinel.example.com",
+                    text: $remoteAddress)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
@@ -311,9 +320,9 @@ private struct ChangePasswordSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    SecureField("Current password", text: $currentPassword)
-                    SecureField("New password (min. 8 characters)", text: $newPassword)
-                    SecureField("Confirm new password", text: $confirmPassword)
+                    SentinelTextField(label: "Current password", text: $currentPassword, secure: true)
+                    SentinelTextField(label: "New password", prompt: "At least 8 characters", text: $newPassword, secure: true)
+                    SentinelTextField(label: "Confirm new password", text: $confirmPassword, secure: true)
                 }
                 if !confirmPassword.isEmpty && newPassword != confirmPassword {
                     Section {

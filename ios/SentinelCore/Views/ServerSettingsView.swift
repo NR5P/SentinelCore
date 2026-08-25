@@ -187,6 +187,10 @@ struct ServerSettingsSectionView: View {
     // value isn't installed yet. Never sticky beyond this screen.
     @State private var typingManually: Set<String> = []
 
+    // Which field the keyboard is in. Drives the highlight on that field's box, and lets a tap
+    // anywhere in the box - not just on the line of text - start typing.
+    @FocusState private var focusedField: String?
+
     @State private var isSaving = false
     @State private var saveErrors: [String] = []
     @State private var statusMessage: String?
@@ -289,25 +293,33 @@ struct ServerSettingsSectionView: View {
                 }
 
             case "password":
-                LabeledContent {
-                    SecureField("not set", text: textBinding(field.name))
-                        .multilineTextAlignment(.trailing)
+                // Label above the box rather than beside it, like every other typed field here:
+                // a value squeezed into what is left of the row reads as a piece of text the row
+                // is reporting, not as somewhere to type. See wrappingLabel for why the label
+                // needs its intrinsic height.
+                VStack(alignment: .leading, spacing: 4) {
+                    wrappingLabel(field.label)
+                    // prompt:, not the title argument: macOS draws a TextField's title as a
+                    // label beside the box and only prompt: as placeholder text inside it, so
+                    // the title form would put the hint in the wrong place there.
+                    SecureField("", text: textBinding(field.name), prompt: Text("Not set — \(SentinelInput.typeVerbLower)"))
+                        .labelsHidden()
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .textInputAutocapitalization(.never)
                         #endif
-                } label: {
-                    // See wrappingLabel: a label long enough to wrap otherwise draws over the
-                    // tip underneath it rather than making the row taller.
-                    wrappingLabel(field.label)
+                        .focused($focusedField, equals: field.name)
+                        .sentinelInputBox(focused: focusedField == field.name) {
+                            focusedField = field.name
+                        }
                 }
 
             case "number":
                 numberField(field)
 
             case "text", "csv":
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(field.label)
+                VStack(alignment: .leading, spacing: 4) {
+                    wrappingLabel(field.label)
                     // A field whose values the server can list is a picker instead of a keyboard,
                     // for as long as there is a list and the user hasn't asked to type - see
                     // optionsPicker.
@@ -316,17 +328,23 @@ struct ServerSettingsSectionView: View {
                        !typingManually.contains(field.name) {
                         optionsPicker(field, source, options)
                     } else {
-                        TextField(field.type == "csv" ? "comma, separated" : "", text: textBinding(field.name))
+                        // See the password field above for why the hint goes in prompt:.
+                        TextField("", text: textBinding(field.name), prompt: Text(placeholder(for: field)))
+                            .labelsHidden()
                             .autocorrectionDisabled()
                             #if os(iOS)
                             .textInputAutocapitalization(.never)
                             #endif
+                            .focused($focusedField, equals: field.name)
                             .onSubmit {
                                 // Return runs the lookup, which is what a box with a Find button
                                 // beside it invites. Harmless on the fields without one.
                                 if let lookup = field.lookup {
                                     Task { await runLookup(field, lookup) }
                                 }
+                            }
+                            .sentinelInputBox(focused: focusedField == field.name) {
+                                focusedField = field.name
                             }
 
                         // Why there's a box here rather than the promised list, or the way back to
@@ -455,6 +473,18 @@ struct ServerSettingsSectionView: View {
         Text(label).fixedSize(horizontal: false, vertical: true)
     }
 
+    // Every typed field says so, because a box with nothing in it still leaves "am I meant to
+    // type here, or is this waiting on something?" open. Worded for the gesture the platform
+    // actually has, and for a number it says a number, so "Latitude" doesn't read as a box to
+    // paste a place name into.
+    private func placeholder(for field: SettingsFieldSchema) -> String {
+        switch field.type {
+        case "csv": return "\(SentinelInput.typeVerb) — comma, separated"
+        case "number": return "\(SentinelInput.typeVerb) a number"
+        default: return SentinelInput.typeVerb
+        }
+    }
+
     // A field's value picked from what the server says is installed, with two things that keep it
     // honest: whatever is saved now is always in the list even if the server didn't return it (so
     // opening the picker can't quietly change a working setting), and the last entry always goes
@@ -547,12 +577,17 @@ struct ServerSettingsSectionView: View {
                 recommendation(field, step: step)
             }
         } else {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 wrappingLabel(field.label)
-                TextField("0", text: textBinding(field.name))
+                TextField("", text: textBinding(field.name), prompt: Text(placeholder(for: field)))
+                    .labelsHidden()
                     #if os(iOS)
                     .keyboardType(.numbersAndPunctuation)
                     #endif
+                    .focused($focusedField, equals: field.name)
+                    .sentinelInputBox(focused: focusedField == field.name) {
+                        focusedField = field.name
+                    }
                 recommendation(field, step: field.step ?? 1)
             }
         }

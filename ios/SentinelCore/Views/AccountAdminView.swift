@@ -85,12 +85,16 @@ struct AccountEditView: View {
     var body: some View {
         Form {
             Section("New Account") {
-                TextField("Username", text: $username)
+                SentinelTextField(label: "Username", text: $username)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     #endif
-                SecureField("Password (min. 8 characters)", text: $password)
-                TextField("Display name (optional)", text: $displayName)
+                SentinelTextField(
+                    label: "Password",
+                    prompt: "At least 8 characters",
+                    text: $password,
+                    secure: true)
+                SentinelTextField(label: "Display name (optional)", text: $displayName)
                 Picker("Role", selection: $role) {
                     Text("Viewer").tag("Viewer")
                     Text("Admin").tag("Admin")

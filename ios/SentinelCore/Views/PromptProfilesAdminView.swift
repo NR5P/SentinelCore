@@ -117,7 +117,7 @@ private struct PromptProfileEditView: View {
     var body: some View {
         Form {
             Section {
-                TextField("Display name", text: $displayName)
+                SentinelTextField(label: "Display name", text: $displayName)
             } header: {
                 Text("Name")
             } footer: {
@@ -142,7 +142,7 @@ private struct PromptProfileEditView: View {
                         }
                 }
                 HStack {
-                    TextField("Add a question", text: $newQuestion)
+                    SentinelInlineField(prompt: "Add a question", text: $newQuestion)
                     Button("Add") {
                         questions.append(newQuestion.trimmingCharacters(in: .whitespacesAndNewlines))
                         newQuestion = ""

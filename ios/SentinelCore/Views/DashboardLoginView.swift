@@ -44,13 +44,17 @@ struct DashboardLoginView: View {
                 }
             } else {
                 Section("Create the First Account") {
-                    TextField("Username", text: $username)
+                    SentinelTextField(label: "Username", text: $username)
                         .autocorrectionDisabled()
                         #if os(iOS)
                         .textInputAutocapitalization(.never)
                         #endif
-                    SecureField("Password (min. 8 characters)", text: $password)
-                    SecureField("Confirm password", text: $confirmPassword)
+                    SentinelTextField(
+                        label: "Password",
+                        prompt: "At least 8 characters",
+                        text: $password,
+                        secure: true)
+                    SentinelTextField(label: "Confirm password", text: $confirmPassword, secure: true)
                     Button(isWorking ? "Working…" : "Require Login") { Task { await enable() } }
                         .disabled(isWorking || !canEnable)
                 }

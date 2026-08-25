@@ -36,17 +36,20 @@ struct CameraEditView: View {
     var body: some View {
         Form {
             Section("Camera") {
-                TextField("Name", text: $name)
-                TextField("Stream URL or address", text: $streamUrl)
+                SentinelTextField(label: "Name", prompt: "e.g. Driveway", text: $name)
+                SentinelTextField(
+                    label: "Stream URL or address",
+                    prompt: "rtsp://192.168.1.64:554/h264",
+                    text: $streamUrl)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
-                TextField("Username (optional)", text: $username)
+                SentinelTextField(label: "Username (optional)", text: $username)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     #endif
-                SecureField("Password (optional)", text: $password)
+                SentinelTextField(label: "Password (optional)", text: $password, secure: true)
                 Toggle("Include Audio", isOn: $includeAudio)
                 Toggle("Pan/Tilt/Zoom (PTZ) Joystick", isOn: $ptzEnabled)
                 Text("Shows on-screen directional controls in Live view for cameras that can physically move. Turned on automatically when Test Connection detects an ONVIF PTZ service - you can also turn it on by hand, but the controls won't do anything without one.")

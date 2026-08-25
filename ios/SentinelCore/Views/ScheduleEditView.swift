@@ -69,7 +69,7 @@ struct ScheduleEditView: View {
     var body: some View {
         Form {
             Section("Schedule") {
-                TextField("Name", text: $name)
+                SentinelTextField(label: "Name", prompt: "e.g. Close the coop at dusk", text: $name)
                 Toggle("Enabled", isOn: $enabled)
             }
 
@@ -133,7 +133,7 @@ struct ScheduleEditView: View {
                 }
 
             case "cron":
-                TextField("Cron expression", text: $cronExpression)
+                SentinelTextField(label: "Cron expression", prompt: "0 6 * * 1-5", text: $cronExpression)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -262,16 +262,16 @@ struct ScheduleEditView: View {
                 }
 
             case "mqtt":
-                TextField("Topic", text: $mqttTopic)
+                SentinelTextField(label: "Topic", prompt: "home/garage/door/set", text: $mqttTopic)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     #endif
-                TextField("Payload", text: $mqttPayload, axis: .vertical)
+                SentinelTextField(label: "Payload", text: $mqttPayload, axis: .vertical)
                 Toggle("Retain", isOn: $mqttRetain)
 
             default:
-                TextField("URL", text: $webhookUrl)
+                SentinelTextField(label: "URL", prompt: "https://example.com/hook", text: $webhookUrl)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -281,9 +281,9 @@ struct ScheduleEditView: View {
                         Text(method).tag(method)
                     }
                 }
-                TextField("Content-Type", text: $webhookContentType)
-                TextField("Extra headers (one per line)", text: $webhookHeaders, axis: .vertical)
-                TextField("Body", text: $webhookBody, axis: .vertical)
+                SentinelTextField(label: "Content-Type", prompt: "application/json", text: $webhookContentType)
+                SentinelTextField(label: "Extra headers (one per line)", text: $webhookHeaders, axis: .vertical)
+                SentinelTextField(label: "Body", text: $webhookBody, axis: .vertical)
             }
         }
     }

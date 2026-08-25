@@ -63,17 +63,17 @@ struct HomeKitAdminView: View {
                     Toggle("Enabled", isOn: Binding(
                         get: { current.enabled },
                         set: { settings?.enabled = $0 }))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Sidecar Address")
-                        TextField("http://127.0.0.1:3321", text: Binding(
+                    SentinelTextField(
+                        label: "Sidecar Address",
+                        prompt: "http://127.0.0.1:3321",
+                        text: Binding(
                             get: { current.sidecarBaseUrl },
                             set: { settings?.sidecarBaseUrl = $0 }))
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.URL)
-                            #endif
-                    }
+                        .autocorrectionDisabled()
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        #endif
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Timeout")

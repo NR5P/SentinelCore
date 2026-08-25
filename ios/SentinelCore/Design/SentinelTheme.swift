@@ -40,6 +40,107 @@ extension View {
     func sentinelCard() -> some View { modifier(SentinelCard()) }
 }
 
+// A text box that looks like one. Inside a grouped Form, SwiftUI's TextField draws no border of
+// its own, so an empty field is a blank gap under its label with nothing about it to say it can
+// be typed in - which is exactly the "where am I supposed to tap?" that the Location section's
+// town and coordinates kept provoking. This draws the box: full row width, a faint fill, and a
+// border that turns green and thickens while the field has the keyboard. The whole box is the
+// tap target, not just the line of text inside it.
+struct SentinelInputBox: ViewModifier {
+    var isFocused: Bool
+    var onTap: () -> Void
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 8) }
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.05), in: shape)
+            .overlay {
+                shape.strokeBorder(
+                    isFocused ? SentinelTheme.green : Color.secondary.opacity(0.4),
+                    lineWidth: isFocused ? 2 : 1)
+            }
+            .contentShape(shape)
+            .onTapGesture(perform: onTap)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+
+extension View {
+    func sentinelInputBox(focused: Bool = false, onTap: @escaping () -> Void = {}) -> some View {
+        modifier(SentinelInputBox(isFocused: focused, onTap: onTap))
+    }
+}
+
+// The gesture this platform actually has, so a hint can name it. Here rather than in any one
+// screen because every typed field in the app says the same thing.
+enum SentinelInput {
+    #if os(macOS)
+    static let typeVerb = "Click to type"
+    static let typeVerbLower = "click to type"
+    #else
+    static let typeVerb = "Tap to type"
+    static let typeVerbLower = "tap to type"
+    #endif
+}
+
+// One field the user fills in by hand: its name above it, and a box below that looks like
+// somewhere to type even when it is empty. The name stays visible once there is a value in the
+// box - a placeholder doing double duty as the label vanishes the moment you type, which leaves
+// a row of text with nothing saying what it is.
+//
+// Keyboard modifiers belong at the call site: .keyboardType, .textContentType and
+// .textInputAutocapitalization all travel down the environment and reach the field inside.
+// The same box without a label above it, for the handful of fields that sit in a row beside the
+// button that acts on them - "Add a question" next to Add - where the button already says what
+// the field is for and a label on top would only make the row taller.
+struct SentinelInlineField: View {
+    let prompt: String
+    @Binding var text: String
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: $text, prompt: Text(prompt))
+            .labelsHidden()
+            .focused($focused)
+            .sentinelInputBox(focused: focused) { focused = true }
+    }
+}
+
+struct SentinelTextField: View {
+    let label: String
+    var prompt: String = SentinelInput.typeVerb
+    @Binding var text: String
+    var secure = false
+    var axis: Axis = .horizontal
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // fixedSize so a label long enough to wrap makes the row taller instead of drawing
+            // over whatever sits under it.
+            Text(label).fixedSize(horizontal: false, vertical: true)
+            Group {
+                if secure {
+                    // prompt:, not the title argument: macOS draws a field's title as a label
+                    // beside the box and only prompt: as placeholder text inside it.
+                    SecureField("", text: $text, prompt: Text(prompt))
+                } else {
+                    TextField("", text: $text, prompt: Text(prompt), axis: axis)
+                }
+            }
+            .labelsHidden()
+            .focused($focused)
+            .sentinelInputBox(focused: focused) { focused = true }
+        }
+    }
+}
+
 extension Color {
     /// A color that resolves differently per light/dark appearance, defined here in code
     /// (rather than the asset catalog) so the whole brand palette lives in one file.

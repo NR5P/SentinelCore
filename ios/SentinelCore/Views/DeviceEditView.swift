@@ -59,8 +59,8 @@ struct DeviceEditView: View {
             }
 
             Section("Device") {
-                TextField("Name", text: $input.name)
-                TextField("Room (optional)", text: $input.room)
+                SentinelTextField(label: "Name", prompt: "e.g. Garage Door", text: $input.name)
+                SentinelTextField(label: "Room (optional)", prompt: "e.g. Garage", text: $input.room)
                 Picker("Kind", selection: $input.kind) {
                     ForEach(kinds, id: \.self) { kind in
                         Text(kind.capitalized).tag(kind)
@@ -78,9 +78,9 @@ struct DeviceEditView: View {
             }
 
             Section {
-                TextField("Command Topic", text: $input.commandTopic)
+                SentinelTextField(label: "Command Topic", prompt: "cmnd/kitchen/POWER", text: $input.commandTopic)
                     .textFieldStyleForTopic()
-                TextField("State Topic", text: $input.stateTopic)
+                SentinelTextField(label: "State Topic", prompt: "stat/kitchen/POWER", text: $input.stateTopic)
                     .textFieldStyleForTopic()
             } header: {
                 Text("MQTT Topics")
@@ -90,7 +90,7 @@ struct DeviceEditView: View {
 
             if isCoverLike && !isMomentary {
                 Section {
-                    TextField("Payload for Stop (optional)", text: $input.payloadStop)
+                    SentinelTextField(label: "Payload for Stop (optional)", prompt: "STOP", text: $input.payloadStop)
                         .textFieldStyleForTopic()
                 } footer: {
                     Text("Some motors take a third command to halt mid-travel - STOP for a Home Assistant cover. Leave blank if this one doesn't, and no Stop button is shown.")
@@ -101,9 +101,9 @@ struct DeviceEditView: View {
             Section("Brightness") {
                 Toggle("Supports brightness", isOn: $input.supportsBrightness)
                 if input.supportsBrightness {
-                    TextField("Brightness Command Topic", text: $input.brightnessCommandTopic)
+                    SentinelTextField(label: "Brightness Command Topic", text: $input.brightnessCommandTopic)
                         .textFieldStyleForTopic()
-                    TextField("Brightness State Topic", text: $input.brightnessStateTopic)
+                    SentinelTextField(label: "Brightness State Topic", text: $input.brightnessStateTopic)
                         .textFieldStyleForTopic()
                     Stepper("Scale: \(input.brightnessScale)", value: $input.brightnessScale, in: 1...65535, step: 1)
                     Text("The device's own value for full brightness - 255 for most Zigbee bulbs, 254 for Zigbee2MQTT, 100 for Tasmota. The slider is always 0-100 and is converted for you.")
@@ -119,17 +119,17 @@ struct DeviceEditView: View {
                     Text("JSON").tag("json")
                 }
                 if input.schema == "json" {
-                    TextField("State Value Key", text: $input.stateValueTemplate)
+                    SentinelTextField(label: "State Value Key", prompt: "POWER", text: $input.stateValueTemplate)
                         .textFieldStyleForTopic()
                 }
-                TextField("Availability Topic", text: $input.availabilityTopic)
+                SentinelTextField(label: "Availability Topic", prompt: "tele/kitchen/LWT", text: $input.availabilityTopic)
                     .textFieldStyleForTopic()
-                TextField(onLabel, text: $input.payloadOn).textFieldStyleForTopic()
+                SentinelTextField(label: onLabel, text: $input.payloadOn).textFieldStyleForTopic()
                 if !isMomentary {
-                    TextField(offLabel, text: $input.payloadOff).textFieldStyleForTopic()
+                    SentinelTextField(label: offLabel, text: $input.payloadOff).textFieldStyleForTopic()
                 }
-                TextField("Payload for online", text: $input.payloadAvailable).textFieldStyleForTopic()
-                TextField("Payload for offline", text: $input.payloadNotAvailable).textFieldStyleForTopic()
+                SentinelTextField(label: "Payload for online", prompt: "Online", text: $input.payloadAvailable).textFieldStyleForTopic()
+                SentinelTextField(label: "Payload for offline", prompt: "Offline", text: $input.payloadNotAvailable).textFieldStyleForTopic()
                 Toggle("Optimistic", isOn: $input.optimistic)
                 Text("Optimistic assumes a command worked instead of waiting for the device to confirm. Needed for devices that never report their state.")
                     .font(.caption)

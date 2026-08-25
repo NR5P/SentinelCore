@@ -54,12 +54,12 @@ struct KnownVehiclesAdminView: View {
             }
 
             Section("Add a Vehicle") {
-                TextField("Plate", text: $newPlate)
+                SentinelTextField(label: "Plate", prompt: "ABC 123", text: $newPlate)
                     .autocorrectionDisabled()
                     #if os(iOS)
                     .textInputAutocapitalization(.characters)
                     #endif
-                TextField("Label, e.g. Dad's truck", text: $newLabel)
+                SentinelTextField(label: "Label", prompt: "e.g. Dad's truck", text: $newLabel)
                 Button("Add") {
                     vehicles.append(KnownVehicle(plate: trimmedPlate, label: newLabel.trimmingCharacters(in: .whitespacesAndNewlines)))
                     newPlate = ""
