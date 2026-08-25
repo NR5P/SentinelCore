@@ -570,6 +570,72 @@ public sealed class BackupCoverageTests : IDisposable
         Assert.Equal(21, restored.GetProperty("nightStartHour").GetInt32());
     }
 
+    // Two guarantees this file's header makes that nothing was checking. Restoring the same file
+    // twice has to update what it created rather than duplicate it - which only holds because
+    // cameras and groups are restored under their original ids - and a restored install has to
+    // export back to the document it was restored from. The second is the stronger property: it
+    // says nothing is quietly transformed on the way in, which is exactly the class of thing that
+    // goes unnoticed until somebody restores a backup of a backup.
+    [Fact]
+    public async Task RestoringTwiceChangesNothing_AndTheRestoredInstallExportsTheSameDocument()
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        using var source = CreateFactory(TempDirectory());
+        using var sourceClient = source.CreateClient();
+
+        var gate = await AddCameraAsync(sourceClient, "Gate", ct);
+        var door = await AddCameraAsync(sourceClient, "Front Door", ct);
+
+        using (var group = await sourceClient.PostAsJsonAsync("/api/camera-groups", new
+        {
+            Name = "Front of house", CameraIds = new[] { gate, door }, CorrelationWindowSeconds = 25,
+            RecordCompanionClips = true, AnalyzeCompanionCaptures = false
+        }, ct))
+            group.EnsureSuccessStatusCode();
+
+        using (var zone = await sourceClient.PutAsJsonAsync($"/api/cameras/{gate}/trigger-config", new
+        {
+            Enabled = true,
+            ZonePolygon = new[] { new { X = 0.1, Y = 0.1 }, new { X = 0.9, Y = 0.1 }, new { X = 0.9, Y = 0.9 } },
+            MinTriggerArea = 0.02, CooldownSeconds = 30, MaxTriggersPerMinute = 6, ShadowSensitivity = 50,
+            RecordClips = false, ClipPreSeconds = 5, ClipPostSeconds = 10, SendToAlerts = false,
+            AlertProfile = "default", SensorDeviceId = "", SensorTriggerOn = "on", SensorCooldownSeconds = 30,
+            SensorMeasurement = "", SensorThreshold = 0.0,
+            NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7
+        }, ct))
+            zone.EnsureSuccessStatusCode();
+
+        using var exported = await sourceClient.GetAsync("/api/backup/export", ct);
+        var original = await exported.Content.ReadAsStringAsync(ct);
+
+        using var destination = CreateFactory(TempDirectory());
+        using var destinationClient = destination.CreateClient();
+
+        for (var pass = 1; pass <= 2; pass++)
+        {
+            using var imported = await destinationClient.PostAsync("/api/backup/import",
+                new StringContent(original, System.Text.Encoding.UTF8, "application/json"), ct);
+            Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
+        }
+
+        Assert.Equal(2, (await destinationClient.GetFromJsonAsync<JsonElement>("/api/cameras", ct)).GetArrayLength());
+        Assert.Equal(1, (await destinationClient.GetFromJsonAsync<JsonElement>("/api/camera-groups", ct)).GetArrayLength());
+
+        using var reExported = await destinationClient.GetAsync("/api/backup/export", ct);
+        var again = await reExported.Content.ReadAsStringAsync(ct);
+
+        // ExportedAt is stamped per export and is the one field expected to differ.
+        static string WithoutTimestamp(string json)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            node.Remove("exportedAt");
+            return node.ToJsonString();
+        }
+
+        Assert.Equal(WithoutTimestamp(original), WithoutTimestamp(again));
+    }
+
     private static async Task<Guid> AddCameraAsync(HttpClient client, string name, CancellationToken ct)
     {
         using var response = await client.PostAsJsonAsync("/api/cameras",
