@@ -39,7 +39,12 @@ public static class GateCheckDecision
         var wasOpen = string.Equals(previousState, "open", StringComparison.OrdinalIgnoreCase);
         if (!wasOpen) return true;
 
-        if (remindIfStillOpenAfterHours is not { } hours) return false;
+        // Non-positive means "no reminder", not "remind constantly". The endpoint refuses
+        // anything under an hour, but config restore writes a GateCheckConfig straight to the
+        // store without going through it, so a zero from an old or hand-edited backup would
+        // otherwise make every single check a fresh notification for as long as the gate stayed
+        // open - which is the one thing a reminder interval exists to prevent.
+        if (remindIfStillOpenAfterHours is not { } hours || hours <= 0) return false;
         if (lastNotifiedAt is null) return true;
         return now - lastNotifiedAt.Value >= TimeSpan.FromHours(hours);
     }

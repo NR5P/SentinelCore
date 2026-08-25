@@ -4388,6 +4388,29 @@ public sealed class BasicTests
         Assert.Equal(expected, result);
     }
 
+    // The endpoint refuses a reminder interval under an hour, but config restore writes a
+    // GateCheckConfig straight to the store without passing through it. A zero from an old or
+    // hand-edited backup used to mean "the elapsed time is always at least zero", so a gate left
+    // open notified on every single check until somebody shut it.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void GateCheckDecision_AStillOpenGate_DoesNotRemindOnANonPositiveInterval(int hours)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.False(GateCheckDecision.ShouldNotifyOpen("open", "open", now.AddSeconds(-30), hours, now));
+    }
+
+    [Fact]
+    public void GateCheckDecision_AStillOpenGate_RemindsOnceARealIntervalHasElapsed()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.False(GateCheckDecision.ShouldNotifyOpen("open", "open", now.AddHours(-1), 6, now));
+        Assert.True(GateCheckDecision.ShouldNotifyOpen("open", "open", now.AddHours(-7), 6, now));
+    }
+
     [Fact]
     public void GateCheckDecision_ShouldNotifyOpen_UnknownReadingNeverNotifies()
     {
