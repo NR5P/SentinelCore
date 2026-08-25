@@ -110,6 +110,7 @@ public sealed class MotionRetentionWorker(
 
         var bytes = 0L;
         var deleted = 0;
+        var failed = 0;
         foreach (var path in files)
         {
             try
@@ -123,14 +124,24 @@ public sealed class MotionRetentionWorker(
             }
             // A file that won't delete is a file that gets picked up on a later sweep only if its
             // row still exists - and the row is already gone. That leaks one file rather than
-            // failing the whole sweep, which is the right trade for a cleanup task.
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            // failing the whole sweep, which is the right trade for a cleanup task. Counted, so
+            // the leak is visible: the orphan sweep below is what eventually collects these, and
+            // a count that keeps climbing says it is not managing to.
+            catch (IOException) { failed++; }
+            catch (UnauthorizedAccessException) { failed++; }
         }
 
         logger.LogInformation(
             "Motion retention: pruned unconfirmed motion older than {Days}d - {Deleted} of {Referenced} referenced files removed, {Megabytes:0.0} MB reclaimed",
             days, deleted, files.Count, bytes / 1024d / 1024d);
+
+        if (failed > 0)
+        {
+            logger.LogWarning(
+                "Motion retention: {Failed} file(s) whose rows were already removed could not be deleted - " +
+                "they are now orphans, and the orphan sweep is what has to collect them",
+                failed);
+        }
     }
 
     // Deletes files under the trigger directories that no row points at any more.
@@ -173,6 +184,7 @@ public sealed class MotionRetentionWorker(
 
         var bytes = 0L;
         var deleted = 0;
+        var failed = 0;
         foreach (var path in orphans)
         {
             try
@@ -184,13 +196,28 @@ public sealed class MotionRetentionWorker(
                 bytes += size;
                 deleted++;
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            // Counted rather than swallowed. Nothing will come back for these: the row that would
+            // have named them is already gone, so an orphan that cannot be deleted is one this
+            // sweep will find again on every future pass and fail on again every time.
+            catch (IOException) { failed++; }
+            catch (UnauthorizedAccessException) { failed++; }
         }
 
         logger.LogInformation(
-            "Motion retention: removed {Deleted} orphaned files with no database row, {Megabytes:0.0} MB reclaimed",
-            deleted, bytes / 1024d / 1024d);
+            "Motion retention: removed {Deleted} of {Found} orphaned files with no database row, {Megabytes:0.0} MB reclaimed",
+            deleted, orphans.Count, bytes / 1024d / 1024d);
+
+        // The same warning RetentionWorker raises, for the same reason and on the larger pile.
+        // This sweep exists because 4.7 GB of orphans accumulated unnoticed on a real deployment;
+        // a permissions or lock problem that stops it reclaiming would put it right back there,
+        // and the line above would go on reporting a successful sweep while it happened.
+        if (failed > 0)
+        {
+            logger.LogWarning(
+                "Motion retention: {Failed} orphaned file(s) could not be deleted and will be retried on the next sweep - " +
+                "if this count is not falling, the sweep has stopped reclaiming space",
+                failed);
+        }
     }
 
     // Pure, and public for the tests, for the same reason RetentionWorker.PruneExpiredFiles is:
