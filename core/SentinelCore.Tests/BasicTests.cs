@@ -4983,4 +4983,79 @@ public sealed class BasicTests
         Assert.Equal(SecureSocketOptions.SslOnConnect, SmtpMailer.SecurityFor(dto.ToOptions()));
         Assert.Equal(45, dto.ToOptions().TimeoutSeconds);
     }
+
+    // Asks the question the way the logging pipeline asks it, rather than inspecting the rules:
+    // the categories below are verbatim what HttpClientFactory derives from an
+    // AddHttpClient("TelegramChatWorker") registration, and IsEnabled is what actually decides
+    // whether a line is written.
+    private static ILoggerFactory PollingFilteredLoggerFactory() =>
+        LoggerFactory.Create(logging =>
+        {
+            logging.SetMinimumLevel(LogLevel.Trace);
+            // A provider that enables everything, so the filter under test is the only thing that
+            // can turn a category off. Without any provider registered IsEnabled is false for
+            // every category - which would make these tests pass no matter what the filter did.
+            logging.AddProvider(new AlwaysEnabledProvider());
+            logging.AddPollingHttpClientFilters();
+        });
+
+    private sealed class AlwaysEnabledProvider : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new AlwaysEnabled();
+        public void Dispose() { }
+
+        private sealed class AlwaysEnabled : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter) { }
+        }
+    }
+
+    [Fact]
+    public void PollingHttpClients_DoNotLogTheirRoutineRequests()
+    {
+        using var factory = PollingFilteredLoggerFactory();
+
+        // Both handler categories, because the factory logs each request through both and it is
+        // the pair that made this 83% of the journal rather than 41%.
+        foreach (var category in new[]
+                 {
+                     "System.Net.Http.HttpClient.TelegramChatWorker.LogicalHandler",
+                     "System.Net.Http.HttpClient.TelegramChatWorker.ClientHandler",
+                     "System.Net.Http.HttpClient.InternetOutageWorker.LogicalHandler",
+                     "System.Net.Http.HttpClient.InternetOutageWorker.ClientHandler",
+                 })
+        {
+            Assert.False(factory.CreateLogger(category).IsEnabled(LogLevel.Information), category);
+            // The whole point of filtering rather than removing the loggers.
+            Assert.True(factory.CreateLogger(category).IsEnabled(LogLevel.Warning), category);
+        }
+    }
+
+    [Fact]
+    public void QuietingThePollersLeavesEveryOtherHttpClientAlone()
+    {
+        using var factory = PollingFilteredLoggerFactory();
+
+        // Inference latency is read off the first of these and a dropped notification is traced
+        // through the rest, so a broad "System.Net.Http.HttpClient" rule would have cost real
+        // diagnostics. This is the test that fails if anyone widens the filter to the prefix.
+        foreach (var category in new[]
+                 {
+                     "System.Net.Http.HttpClient.OllamaVisionClient.LogicalHandler",
+                     "System.Net.Http.HttpClient.TelegramAlertAction.LogicalHandler",
+                     "System.Net.Http.HttpClient.HomeKitAlertAction.LogicalHandler",
+                     "System.Net.Http.HttpClient.PushNotificationDispatcher.LogicalHandler",
+                 })
+        {
+            Assert.True(factory.CreateLogger(category).IsEnabled(LogLevel.Information), category);
+        }
+
+        // The workers' own warnings live under a different category and are how a broken poll is
+        // actually reported - filtering the transport must not reach them.
+        Assert.True(factory.CreateLogger("SentinelCore.TelegramChatWorker").IsEnabled(LogLevel.Information));
+        Assert.True(factory.CreateLogger("SentinelCore.InternetOutageWorker").IsEnabled(LogLevel.Information));
+    }
 }

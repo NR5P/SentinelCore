@@ -21,6 +21,11 @@ var builder = WebApplication.CreateBuilder(args);
 if (HostUrls.ResolveOverride(args, Environment.GetEnvironmentVariable(HostUrls.EnvironmentVariable)) is { } urlsOverride)
     builder.Configuration[HostUrls.ConfigurationKey] = urlsOverride;
 
+// Drops the routine per-request logging of the two polling HttpClients, which would otherwise be
+// 83% of this service's journal. See PollingHttpClientLogging for the measurements and for why
+// this is scoped to two named clients rather than to HttpClient as a whole.
+builder.Logging.AddPollingHttpClientFilters();
+
 // Lets the same binaries run as a Windows Service or a systemd unit without a separate build.
 // Both are no-ops when the process wasn't started by that service manager - including when it's
 // run straight from a terminal - so this is safe on every platform.
