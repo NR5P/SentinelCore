@@ -823,9 +823,9 @@ public sealed class TriggerZoneMonitor(
             // inline here like the rest of this method - only each companion's actual clip build
             // (comparatively slow, waits out the post-roll) is fire-and-forget, same as the
             // triggering camera's own clip above.
-            var companionRewind = session.Rewind.ApplyToCompanions ? pick?.CaptureDelaySeconds : null;
+            var companionAt = CompanionCaptureAt(pick, session.Rewind.ApplyToCompanions);
             var linkedCameraNames = group is { RecordCompanionClips: true } or { AnalyzeCompanionCaptures: true }
-                ? await RecordCompanionCamerasAsync(camera, group, incidentId!, now, companionRewind, cancellationToken)
+                ? await RecordCompanionCamerasAsync(camera, group, incidentId!, now, companionAt, cancellationToken)
                 : [];
 
             if (session.Config.SendToAlerts)
@@ -839,14 +839,42 @@ public sealed class TriggerZoneMonitor(
         }
     }
 
-    // Captures each OTHER group member's current frame and records it as its own TriggerEvent
-    // under the shared incident, so the Triggers tab shows footage from the whole group even
-    // though only one camera actually detected motion. A member with no active buffer (no
-    // enabled trigger zone of its own) is silently skipped - nothing to pull from. Returns the
+    // The instant a companion's frame is fetched for, or null to leave it on the live snapshot.
+    //
+    // A companion has no motion of its own to date the event by, so it borrows the instant from the
+    // camera that did fire - and borrowing an instant means using it, not adjusting it. Both ends of
+    // the lookup are stamped by this server rather than by the cameras (frameAt by the detection
+    // capture loop, the segment boundaries by ffmpeg's strftime), so it is one clock throughout and
+    // the instant carries from one camera to another unchanged. There is nothing to correct for.
+    //
+    // Reading it off the pick rather than recomputing it is the point: `pick.ChosenAt` IS the frame
+    // the triggering camera's own image was taken from, so a companion is aligned to that same
+    // frame by construction, with no arithmetic in between that could drift.
+    //
+    // It used to be `occurredAt - pick.CaptureDelaySeconds`, which was right when that number meant
+    // "how far back this reached from now". Since a trigger's OccurredAt became the frame's own
+    // capture time the number means how long the FETCH took - dominated by waiting for the muxer to
+    // close the segment holding the frame - so subtracting it pulled every companion that far back
+    // BEFORE the moment: across the 1,708 rewound triggers in the last week here, a mean of 2.32s
+    // and 1-3s on 96% of them. The setting's own description ("Fetch the same moment from the other
+    // cameras") described what was intended rather than what happened.
+    //
+    // Null when the triggering camera has no pick, and deliberately so even though `occurredAt`
+    // would still name a real instant: TryFetchAsync is where a wildly wrong timestamp gets caught
+    // (a clock step, a camera reconnecting - see its lookback check), and TryExtractAtAsync has no
+    // such guard of its own. A pick is the proof that this instant was sane and the buffer could
+    // serve it; without one, the companions keep the honest live snapshot.
+    public static DateTimeOffset? CompanionCaptureAt(RewindPick? pick, bool applyToCompanions) =>
+        applyToCompanions && pick is not null ? pick.ChosenAt : null;
+
+    // Captures each OTHER group member's frame for that instant and records it as its own
+    // TriggerEvent under the shared incident, so the Triggers tab shows footage from the whole
+    // group even though only one camera actually detected motion. A member with no active buffer
+    // (no enabled trigger zone of its own) is silently skipped - nothing to pull from. Returns the
     // names of cameras actually recorded, for the "Also recorded: ..." notification annotation.
     private async Task<List<string>> RecordCompanionCamerasAsync(
         Camera triggeringCamera, CameraGroup group, string incidentId, DateTimeOffset occurredAt,
-        double? rewindSeconds, CancellationToken cancellationToken)
+        DateTimeOffset? rewindAt, CancellationToken cancellationToken)
     {
         var recorded = new List<string>();
         foreach (var memberId in group.CameraIds)
@@ -858,12 +886,13 @@ public sealed class TriggerZoneMonitor(
                 var memberCamera = await cameras.GetAsync(memberId, cancellationToken);
                 if (memberCamera is null) continue;
 
-                // A companion has no motion of its own to search for, so it borrows how far back
-                // the camera that actually triggered went. Each camera's delay is its own, making
-                // this an approximation - but a far better one than a frame captured after the
-                // event, which is what the live snapshot below is.
-                var snapshot = (rewindSeconds is { } delta
-                        ? await rewind.TryExtractAtAsync(memberId, occurredAt - TimeSpan.FromSeconds(delta), cancellationToken)
+                // The same instant the triggering camera's own image is of - see
+                // CompanionCaptureAt. A member whose buffer cannot serve it (no segment covering
+                // that moment, or the segment holding it is still being written) returns null and
+                // falls through to the live snapshot, which is a picture of a later moment but an
+                // honest one.
+                var snapshot = (rewindAt is { } at
+                        ? await rewind.TryExtractAtAsync(memberId, at, cancellationToken)
                         : null)
                     ?? await TryReadLatestSnapshotAsync(memberId, cancellationToken);
                 if (snapshot is null) continue;

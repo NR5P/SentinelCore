@@ -16,11 +16,25 @@ public sealed class DetectionFrameSlotTests
 
     private static readonly DateTimeOffset Base = new(2026, 8, 5, 12, 0, 0, TimeSpan.Zero);
 
+    // "Keeps up" is established by waiting for the consumer to say so, not by sleeping long enough
+    // that it probably has.
+    //
+    // This used to publish every 20ms and trust that the reader had been scheduled in between. That
+    // holds right up until something else in the run is busy: adding a test elsewhere in the suite
+    // that shells out to ffmpeg was enough to make this fail roughly one run in five, on a slot that
+    // was behaving perfectly. The property being pinned has nothing to do with wall-clock time - it
+    // is that a frame taken out of the slot before the next goes in is never counted as dropped - so
+    // the handshake tests it exactly, and the same way every time.
+    //
+    // The timeout is a liveness bound rather than a scheduling assumption: if a frame really did go
+    // missing the semaphore would never be released, and a test that hangs tells you far less than
+    // one that fails.
     [Fact]
     public async Task AConsumerThatKeepsUp_SeesEveryFrame()
     {
         var slot = new DetectionFrameSlot(FrameSize);
         var seen = new List<DateTimeOffset>();
+        var consumed = new SemaphoreSlim(0);
 
         var reading = Task.Run(async () =>
         {
@@ -28,6 +42,7 @@ public sealed class DetectionFrameSlotTests
             {
                 seen.Add(at);
                 slot.Return(buffer);
+                consumed.Release();
             }
         }, TestContext.Current.CancellationToken);
 
@@ -35,7 +50,9 @@ public sealed class DetectionFrameSlotTests
         for (var i = 0; i < 5; i++)
         {
             buffer = slot.Publish(buffer, Base.AddSeconds(i));
-            await Task.Delay(20, TestContext.Current.CancellationToken);
+            Assert.True(
+                await consumed.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken),
+                $"the consumer never received frame {i}");
         }
 
         slot.Complete();

@@ -408,6 +408,53 @@ public sealed class TriggerRewindTests
             box.CameraId, DateTimeOffset.UtcNow, TestContext.Current.CancellationToken));
     }
 
+    // --- companion cameras (TriggerZoneMonitor.CompanionCaptureAt) ----------------------------
+    //
+    // Only one camera in a group actually detects the motion; the rest have nothing of their own to
+    // date the event by, so they borrow the instant from the one that fired. Every established
+    // system solves this by cross-triggering a RECORDING on the other cameras and leaning on their
+    // own pre-event buffers to cover the past - ZoneMinder's linked monitors, Blue Iris's trigger
+    // groups - and in both, the linked camera's footage is reported as landing seconds off the
+    // trigger's. Having an exact instant and a buffer to look it up in is what makes that gap
+    // closable here, and it is only closable for as long as the instant is used unchanged.
+
+    private static RewindPick PickAt(DateTimeOffset chosenAt, double captureDelaySeconds) =>
+        new([0xFF, 0xD8], captureDelaySeconds, chosenAt);
+
+    // The regression this pins: CaptureDelaySeconds is how long the FETCH took, not how far back
+    // the fetch reached, and subtracting it put every companion frame that far in front of the
+    // moment. On this install that averaged 2.32s, which is a person's whole walk past a gate.
+    [Fact]
+    public void CompanionCaptureAt_IsTheFrameInstantItself_NotOffsetByHowLongTheFetchTook()
+    {
+        var pick = PickAt(Base, captureDelaySeconds: 2.32);
+
+        Assert.Equal(Base, TriggerZoneMonitor.CompanionCaptureAt(pick, applyToCompanions: true));
+    }
+
+    // Same instant however slow the fetch was - the number must not reach the lookup at all.
+    [Theory]
+    [InlineData(0.64)]
+    [InlineData(2.32)]
+    [InlineData(22.86)]
+    public void CompanionCaptureAt_IgnoresTheFetchDelayEntirely(double captureDelaySeconds)
+    {
+        var pick = PickAt(Base, captureDelaySeconds);
+
+        Assert.Equal(Base, TriggerZoneMonitor.CompanionCaptureAt(pick, applyToCompanions: true));
+    }
+
+    [Fact]
+    public void CompanionCaptureAt_WhenTheSettingIsOff_LeavesCompanionsOnTheLiveSnapshot() =>
+        Assert.Null(TriggerZoneMonitor.CompanionCaptureAt(PickAt(Base, 2.0), applyToCompanions: false));
+
+    // No pick means the triggering camera's own instant was never validated against the lookback -
+    // that check lives in TryFetchAsync, and TryExtractAtAsync has no equivalent. A clock step
+    // would otherwise let a companion pull footage from minutes ago and file it as now.
+    [Fact]
+    public void CompanionCaptureAt_WithoutAPick_ReturnsNullRatherThanTrustingTheTimestamp() =>
+        Assert.Null(TriggerZoneMonitor.CompanionCaptureAt(null, applyToCompanions: true));
+
     // --- helpers ------------------------------------------------------------------------------
 
     // Stands in for ffmpeg the same way HlsStreamManagerTests does: a shell script pointed at by
