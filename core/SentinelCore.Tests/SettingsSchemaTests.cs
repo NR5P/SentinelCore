@@ -133,6 +133,46 @@ public sealed class SettingsSchemaTests
             $"{string.Join(", ", staleExclusions)}.");
     }
 
+    // SettingsSchema says a section exists and where to PUT it. SettingsSnapshot is where every
+    // client reads that section's *current values* from, and nothing tied the two together.
+    //
+    // SCHEDULED RECORDING is what that cost: a schema entry and a working PUT, but no property on
+    // the snapshot, so GET /api/settings never mentioned it. All four clients drew its two number
+    // boxes empty, then refused to save them ("Keep Recordings For (days) must be a number"), so
+    // the section was unreachable from every UI - and the config backup, which builds from the
+    // same snapshot, omitted it silently, losing the free-space floor on every restore.
+    //
+    // The sibling test above enforces schema <-> DTO. This one enforces schema <-> snapshot, the
+    // other half of the same promise.
+    [Fact]
+    public void EverySchemaSection_HasAPropertyOnTheSnapshotClientsReadItsValuesFrom()
+    {
+        var properties = typeof(SettingsSnapshot).GetProperties();
+
+        foreach (var section in SettingsSchema.Sections)
+        {
+            // The one section that deliberately keeps its values outside the snapshot, and says so
+            // in the schema so clients know to fetch them separately.
+            if (section.DataEndpoint is not null) continue;
+
+            var match = Array.Find(
+                properties, p => JsonNamingPolicy.CamelCase.ConvertName(p.Name) == section.Key);
+
+            Assert.True(
+                match is not null,
+                $"Section '{section.Key}' has no property of that name on SettingsSnapshot, so GET /api/settings " +
+                $"never returns its values: every client renders the section blank and the config backup omits it. " +
+                $"Add it to SettingsSnapshot, BuildSnapshotAsync and ApplySnapshotAsync, or give the section a " +
+                $"DataEndpoint if its values genuinely live elsewhere.");
+
+            Assert.True(
+                match!.PropertyType == section.DtoType,
+                $"Section '{section.Key}' is described by {section.DtoType.Name} but SettingsSnapshot.{match.Name} " +
+                $"is a {match.PropertyType.Name}, so the values a client reads are not the ones the schema " +
+                $"describes.");
+        }
+    }
+
     [Fact]
     public void EveryFieldType_IsOneTheClientsKnowHowToRender()
     {
@@ -636,6 +676,60 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
             .UseSetting("MainAppSettingsPath", _settingsPath)
             .UseSetting("CamerasDataDirectory", _dataDirectory)
             .UseSetting("Bridge:DataDirectory", _dataDirectory));
+
+    // A section nobody has ever saved is absent from appsettings.json and so reads back as null,
+    // and a client rendering the schema then draws its fields empty. On a number field that is
+    // not merely cosmetic: every client refuses to save a blank one, so LOGIN ALERTS could not be
+    // switched on at all without the user inventing a cooldown the form never showed them - while
+    // the server was using 15 the whole time. The read fills those sections in with the defaults
+    // the server is actually running, which is what a settings form claims to be showing.
+    [Fact]
+    public async Task Settings_ReturnEverySchemaSection_EvenOnAConfigThatHasNeverSavedOne()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        // The settings file this host was pointed at is "{}" - nothing has ever been saved.
+        var snapshot = await client.GetFromJsonAsync<JsonElement>("/api/settings", ct);
+
+        foreach (var section in SettingsSchema.Sections)
+        {
+            if (section.DataEndpoint is not null) continue;
+
+            Assert.True(
+                snapshot.TryGetProperty(section.Key, out var value) && value.ValueKind != JsonValueKind.Null,
+                $"Section '{section.Key}' came back missing or null on a config that has never saved it, so every " +
+                $"client renders its fields empty - and refuses to save the number ones at all.");
+        }
+
+        // Spot-check that what came back is the real default rather than a zeroed struct: these
+        // are the values the server uses when the section is absent.
+        Assert.Equal(15, snapshot.GetProperty("loginAlerts").GetProperty("cooldownMinutes").GetInt32());
+        Assert.Equal(14, snapshot.GetProperty("scheduledRecording").GetProperty("retentionDays").GetInt32());
+        Assert.Equal(5, snapshot.GetProperty("scheduledRecording").GetProperty("minimumFreeGigabytes").GetDouble());
+    }
+
+    // The other side of that coin, and the reason the defaults are filled in on the read rather
+    // than inside BuildSnapshotAsync itself: to restore, null has to keep meaning "this backup
+    // does not mention the section, so leave the target's own value alone" (ApplySnapshotAsync).
+    // Filling defaults into the export would turn every unconfigured section into an explicit
+    // instruction to write that default - freezing today's defaults into a config restored years
+    // from now, and for Server writing an empty Urls over whatever the machine was bound to.
+    [Fact]
+    public async Task BackupExport_LeavesUnsavedSectionsOut_RatherThanBakingInTodaysDefaults()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var settings = (await client.GetFromJsonAsync<JsonElement>("/api/backup/export", ct))
+            .GetProperty("settings");
+
+        Assert.Equal(JsonValueKind.Null, settings.GetProperty("loginAlerts").ValueKind);
+        Assert.Equal(JsonValueKind.Null, settings.GetProperty("scheduledRecording").ValueKind);
+        Assert.Equal(JsonValueKind.Null, settings.GetProperty("server").ValueKind);
+    }
 
     [Fact]
     public async Task Schema_ServesEverySection_WithCamelCaseFieldsAndNoDtoTypeLeak()

@@ -48,7 +48,10 @@ public sealed record SettingsSnapshot(
     LocationSettingsDto? Location = null,
     ScheduleSettingsDto? Schedules = null,
     NuisanceAdvisorSettingsDto? NuisanceAdvisor = null,
-    RepeatAlertsSettingsDto? RepeatAlerts = null);
+    RepeatAlertsSettingsDto? RepeatAlerts = null,
+    // Appended last, with a default, so a backup file written before this property existed still
+    // deserializes - the same rule the properties above it follow.
+    ScheduledRecordingSettingsDto? ScheduledRecording = null);
 
 public static class SettingsEndpoints
 {
@@ -64,7 +67,7 @@ public static class SettingsEndpoints
             // never what it is, and this response now reaches phones and TVs, not just a browser
             // on the LAN. The config backup endpoint deliberately keeps using BuildSnapshotAsync
             // directly, unmasked: a backup that couldn't restore its own secrets wouldn't be one.
-            var snapshot = await BuildSnapshotAsync(appSettings, ct);
+            var snapshot = WithDefaultsForMissingSections(await BuildSnapshotAsync(appSettings, ct));
             SettingsSecrets.MaskInPlace(snapshot);
             return Results.Ok(snapshot);
         });
@@ -499,7 +502,75 @@ public static class SettingsEndpoints
         // Defaulted for the same reason: both of these ship on, so a null would show the form as
         // unchecked and zero while the pipeline was in fact merging repeat alerts.
         await settings.GetSectionAsync<RepeatAlertsSettingsDto>("RepeatAlerts", cancellationToken)
-            ?? new RepeatAlertsSettingsDto());
+            ?? new RepeatAlertsSettingsDto(),
+        await settings.GetSectionAsync<ScheduledRecordingSettingsDto>(
+            ScheduledRecordingOptions.SectionName, cancellationToken));
+
+    // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
+    // what a backup needs.
+    //
+    // A section absent from appsettings.json reads back as null, and a client rendering the
+    // schema then draws its fields empty: a blank "Cooldown (min)" box on an install that has
+    // never opened LOGIN ALERTS, even though the server is using 15. Blank is not just cosmetic
+    // on a number field - every client refuses to save one ("Cooldown (min) must be a number"),
+    // so the section cannot be turned on at all without the user inventing a value the form
+    // never showed them. Substituting a default-constructed DTO shows the values the server is
+    // actually running, which is what the form claims to be displaying.
+    //
+    // Six sections already default themselves inline in BuildSnapshotAsync for exactly this
+    // reason. Those are deliberately left alone rather than folded in here: because they sit in
+    // BuildSnapshotAsync they also reach the backup, and moving them would quietly change what a
+    // restore writes. This covers the remaining sections, and any section added later, on the
+    // read path only.
+    //
+    // Deliberately NOT applied to the backup export, which keeps reading BuildSnapshotAsync
+    // directly. There, null carries meaning restore depends on - "the backup does not mention
+    // this section, so leave the target's own value alone" (see ApplySnapshotAsync). Filling
+    // defaults in would turn every unconfigured section into an explicit instruction to write
+    // that default, freezing today's defaults into a config restored years from now, and for
+    // Server it would restore an empty Urls over whatever the machine was bound to.
+    //
+    // INTERNET EXPOSED MODE is absent below because it is the one section that keeps its values
+    // outside this snapshot (SettingsSectionSchema.DataEndpoint) and fetches them separately.
+    private static SettingsSnapshot WithDefaultsForMissingSections(SettingsSnapshot snapshot) => snapshot with
+    {
+        Bridge = snapshot.Bridge ?? new(),
+        Ollama = snapshot.Ollama ?? new(),
+        CloudVision = snapshot.CloudVision ?? new(),
+        VisionRouting = snapshot.VisionRouting ?? new(),
+        FastLocal = snapshot.FastLocal ?? new(),
+        ImageProcessing = snapshot.ImageProcessing ?? new(),
+        Email = snapshot.Email ?? new(),
+        DailySummary = snapshot.DailySummary ?? new(),
+        Telegram = snapshot.Telegram ?? new(),
+        Discord = snapshot.Discord ?? new(),
+        TelegramChat = snapshot.TelegramChat ?? new(),
+        BlueIris = snapshot.BlueIris ?? new(),
+        MultiFrameAnalysis = snapshot.MultiFrameAnalysis ?? new(),
+        TriggerRewind = snapshot.TriggerRewind ?? new(),
+        ScheduledRecording = snapshot.ScheduledRecording ?? new(),
+        PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
+        RepeatAlerts = snapshot.RepeatAlerts ?? new(),
+        SemanticSearch = snapshot.SemanticSearch ?? new(),
+        SelfMonitoring = snapshot.SelfMonitoring ?? new(),
+        StartupNotification = snapshot.StartupNotification ?? new(),
+        InternetOutage = snapshot.InternetOutage ?? new(),
+        Location = snapshot.Location ?? new(),
+        Schedules = snapshot.Schedules ?? new(),
+        QuietHours = snapshot.QuietHours ?? new(),
+        Webhook = snapshot.Webhook ?? new(),
+        Mqtt = snapshot.Mqtt ?? new(),
+        DeviceHub = snapshot.DeviceHub ?? new(),
+        PushNotifications = snapshot.PushNotifications ?? new(),
+        Logging = snapshot.Logging ?? new(),
+        Server = snapshot.Server ?? new(),
+        BugReports = snapshot.BugReports ?? new(),
+        LoginAlerts = snapshot.LoginAlerts ?? new(),
+        NuisanceAdvisor = snapshot.NuisanceAdvisor ?? new(),
+        TriggerApi = snapshot.TriggerApi ?? new(),
+        TriggerConfirmation = snapshot.TriggerConfirmation ?? new(),
+        HostReboot = snapshot.HostReboot ?? new()
+    };
 
     // Applied by config restore - merges each present section exactly the way its own PUT
     // endpoint above already does (Merge for most sections, Replace for the two wholly user-
@@ -555,6 +626,7 @@ public static class SettingsEndpoints
         if (snapshot.Server is not null) await settings.ReplaceSectionAsync("Urls", snapshot.Server.Urls, cancellationToken);
         if (snapshot.HostReboot is not null) await settings.MergeSectionAsync("HostReboot", snapshot.HostReboot, cancellationToken);
         if (snapshot.NuisanceAdvisor is not null) await settings.MergeSectionAsync("NuisanceAdvisor", snapshot.NuisanceAdvisor, cancellationToken);
+        if (snapshot.ScheduledRecording is not null) await settings.MergeSectionAsync(ScheduledRecordingOptions.SectionName, snapshot.ScheduledRecording, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

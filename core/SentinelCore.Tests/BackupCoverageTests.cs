@@ -19,6 +19,13 @@ namespace SentinelCore.Tests;
 // SettingsEndpoints snapshot the settings screen uses - so what these cover is the SQLite half,
 // which has to be remembered by hand, plus the version rule that decides whether an old file
 // still restores.
+//
+// That first claim was untrue for as long as it took SCHEDULED RECORDING to be added to
+// SettingsSchema with no matching property on SettingsSnapshot: the section saved and ran
+// perfectly, and every backup taken in that window silently left it out.
+// SettingsSchemaTests.EverySchemaSection_HasAPropertyOnTheSnapshotClientsReadItsValuesFrom is
+// what makes the claim true now, and the round-trip below is the end-to-end proof for the
+// section that broke it.
 public sealed class BackupCoverageTests : IDisposable
 {
     private readonly List<string> _directories = [];
@@ -231,6 +238,40 @@ public sealed class BackupCoverageTests : IDisposable
         // both cameras and the group itself are restored under their original ids.
         Assert.Equal(gateId, restored.GetProperty("cameraIds")[0].GetGuid());
         Assert.Equal(doorId, restored.GetProperty("cameraIds")[1].GetGuid());
+    }
+
+    // The section that proved the settings half of the backup *could* drift. Worth an end-to-end
+    // test of its own rather than trusting the snapshot correspondence alone, because the thing
+    // that goes missing here is the free-space floor that stops full-bitrate recordings filling
+    // the disk - a setting whose absence is invisible until it matters.
+    [Fact]
+    public async Task ExportingScheduledRecording_CarriesItToAnInstallThatHasNeverSetIt()
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        using var source = CreateFactory(TempDirectory());
+        using var sourceClient = source.CreateClient();
+
+        using (var saved = await sourceClient.PutAsJsonAsync("/api/settings/scheduled-recording",
+            new { RetentionDays = 3, MinimumFreeGigabytes = 42.0 }, ct))
+            saved.EnsureSuccessStatusCode();
+
+        using var exported = await sourceClient.GetAsync("/api/backup/export", ct);
+        exported.EnsureSuccessStatusCode();
+        var backup = await exported.Content.ReadAsStringAsync(ct);
+
+        using var destination = CreateFactory(TempDirectory());
+        using var destinationClient = destination.CreateClient();
+
+        using var imported = await destinationClient.PostAsync(
+            "/api/backup/import", new StringContent(backup, System.Text.Encoding.UTF8, "application/json"), ct);
+        Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
+
+        var restored = (await destinationClient.GetFromJsonAsync<JsonElement>("/api/settings", ct))
+            .GetProperty("scheduledRecording");
+
+        Assert.Equal(3, restored.GetProperty("retentionDays").GetInt32());
+        Assert.Equal(42.0, restored.GetProperty("minimumFreeGigabytes").GetDouble());
     }
 
     private static async Task<Guid> AddCameraAsync(HttpClient client, string name, CancellationToken ct)
