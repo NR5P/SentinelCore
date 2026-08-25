@@ -53,7 +53,8 @@ public static class GateCheckEndpoints
         }).RequireAuthorization("AdminOnly");
     }
 
-    private static List<string> Validate(GateCheckInputDto dto)
+    // internal for the same reason CameraEndpoints.Validate is - see BackupEndpoints.Validate.
+    internal static List<string> Validate(GateCheckInputDto dto)
     {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(dto.CheckLabel)) errors.Add("A label is required (e.g. \"the front gate\").");

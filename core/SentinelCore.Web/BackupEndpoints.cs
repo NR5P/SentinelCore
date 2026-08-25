@@ -224,6 +224,91 @@ public static class BackupEndpoints
         if (document.Settings?.PromptProfiles is { } profiles && !profiles.ContainsKey("default"))
             errors.Add("Backup's prompt profiles are missing a 'default' profile.");
 
+        // Restore writes cameras, trigger zones and gate checks straight into their stores, so
+        // until now it was the one way into this install that answered to none of the rules the
+        // endpoints enforce. The same trigger zone that PUT /api/cameras/{id}/trigger-config
+        // refuses with six separate errors - an object size of zero, a negative cooldown, a
+        // polygon outside the frame, a night window running from hour 99 to hour -3 - imported
+        // silently and left a camera that either never fires or never stops.
+        //
+        // None of that announces itself. A trigger zone with an impossible object size does not
+        // log anything; it just quietly stops being a camera that watches. The stream URL is the
+        // same story from the other direction: the endpoint allows rtsp/http/https and nothing
+        // else, and ffmpeg is handed whatever is stored, so a file:// address restored from a
+        // backup is a restriction that existed everywhere except here.
+        //
+        // Held to the endpoints' own validators rather than a second copy of the rules, because a
+        // second copy is how the two drift apart - which is the whole shape of this bug.
+        foreach (var camera in document.Cameras ?? [])
+        foreach (var problem in CameraEndpoints.Validate(ToInput(camera)))
+            errors.Add($"Camera \"{camera.Name}\": {problem}");
+
+        foreach (var zone in document.TriggerZones ?? [])
+        foreach (var problem in TriggerEndpoints.Validate(
+            ToDto(zone), zone.NightWindowEnabled, zone.NightStartHour, zone.NightEndHour))
+            errors.Add($"Trigger zone for camera {zone.CameraId}: {problem}");
+
+        foreach (var check in document.GateChecks ?? [])
+        foreach (var problem in GateCheckEndpoints.Validate(ToInput(check)))
+            errors.Add($"Gate check for camera {check.CameraId}: {problem}");
+
         return errors;
     }
+
+    // Nothing is written when any of it fails: the file is rejected whole, with every problem
+    // named. That is the same call the schema-version check above already makes, and for the same
+    // reason - restoring most of a backup and saying nothing about the rest is worse than
+    // refusing it, because the part that went missing is the part nobody will think to check.
+    private static CameraInputDto ToInput(Camera camera) => new()
+    {
+        Name = camera.Name,
+        StreamUrl = camera.StreamUrl,
+        Username = camera.Username,
+        Password = camera.Password,
+        IncludeAudio = camera.IncludeAudio,
+        PtzEnabled = camera.PtzEnabled,
+        OnvifPtzServiceUrl = camera.OnvifPtzServiceUrl,
+        OnvifProfileToken = camera.OnvifProfileToken,
+        IsBrowserPublished = camera.IsBrowserPublished
+    };
+
+    private static GateCheckInputDto ToInput(GateCheckConfig check) => new()
+    {
+        Enabled = check.Enabled,
+        CheckLabel = check.CheckLabel,
+        CheckBlocked = check.CheckBlocked,
+        IntervalMinutes = check.IntervalMinutes,
+        RemindIfStillOpenAfterHours = check.RemindIfStillOpenAfterHours
+    };
+
+    private static TriggerConfigDto ToDto(TriggerConfig config) => new()
+    {
+        Enabled = config.Enabled,
+        ZonePolygon = [.. config.ZonePolygon],
+        MinTriggerArea = config.MinTriggerArea,
+        Zones = config.Zones is null
+            ? null
+            : [.. config.Zones.Select(z => new TriggerZoneDto
+            {
+                Name = z.Name,
+                Polygon = [.. z.Polygon],
+                MinTriggerArea = z.MinTriggerArea
+            })],
+        CooldownSeconds = config.CooldownSeconds,
+        MaxTriggersPerMinute = config.MaxTriggersPerMinute,
+        ShadowSensitivity = config.ShadowSensitivity,
+        RecordClips = config.RecordClips,
+        ClipPreSeconds = config.ClipPreSeconds,
+        ClipPostSeconds = config.ClipPostSeconds,
+        SendToAlerts = config.SendToAlerts,
+        AlertProfile = config.AlertProfile,
+        SensorDeviceId = config.SensorDeviceId,
+        SensorTriggerOn = config.SensorTriggerOn,
+        SensorCooldownSeconds = config.SensorCooldownSeconds,
+        SensorMeasurement = config.SensorMeasurement,
+        SensorThreshold = config.SensorThreshold,
+        NightWindowEnabled = config.NightWindowEnabled,
+        NightStartHour = config.NightStartHour,
+        NightEndHour = config.NightEndHour
+    };
 }

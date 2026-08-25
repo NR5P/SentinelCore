@@ -274,6 +274,109 @@ public sealed class BackupCoverageTests : IDisposable
         Assert.Equal(42.0, restored.GetProperty("minimumFreeGigabytes").GetDouble());
     }
 
+    // Restore writes cameras, trigger zones and gate checks straight into their stores, which
+    // made it the one way into an install that answered to none of the rules the endpoints
+    // enforce. The same trigger zone the PUT refuses with six separate errors used to import
+    // without a word and leave a camera that either never fires or never stops - and none of
+    // that announces itself. A zone with an impossible object size logs nothing; it just quietly
+    // stops being a camera that watches.
+    [Fact]
+    public async Task ABackupCarryingValuesTheEndpointsRefuse_IsRejectedAndNothingIsWritten()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var directory = TempDirectory();
+        using var factory = CreateFactory(directory);
+        using var client = factory.CreateClient();
+
+        var cameraId = Guid.NewGuid();
+        var backup = $$"""
+        {
+          "schemaVersion": 2,
+          "exportedAt": "2026-08-25T00:00:00Z",
+          "cameras": [{
+            "id": "{{cameraId}}", "name": "Imported", "streamUrl": "file:///etc/passwd",
+            "username": null, "password": null, "includeAudio": false, "ptzEnabled": false,
+            "onvifPtzServiceUrl": null, "onvifProfileToken": null, "isBrowserPublished": false,
+            "createdAt": "2026-08-25T00:00:00Z"
+          }],
+          "triggerZones": [{
+            "cameraId": "{{cameraId}}", "enabled": true,
+            "zonePolygon": [{"x":-5,"y":-5},{"x":9,"y":-5},{"x":9,"y":9}],
+            "minTriggerArea": 0, "cooldownSeconds": -10, "maxTriggersPerMinute": 0,
+            "shadowSensitivity": 500, "recordClips": false, "clipPreSeconds": 5,
+            "clipPostSeconds": 10, "sendToAlerts": false, "alertProfile": "default",
+            "sensorDeviceId": "", "sensorTriggerOn": "on", "sensorCooldownSeconds": 30,
+            "zones": null, "sensorMeasurement": "", "sensorThreshold": 0,
+            "nightWindowEnabled": true, "nightStartHour": 99, "nightEndHour": -3
+          }]
+        }
+        """;
+
+        using var response = await client.PostAsync(
+            "/api/backup/import", new StringContent(backup, System.Text.Encoding.UTF8, "application/json"), ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var errors = (await response.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("errors")
+            .EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+
+        // Every problem named, and attributed to the thing that has it - a list saying only
+        // "invalid backup" would leave someone with no idea which of forty cameras to look at.
+        Assert.Contains(errors, e => e.Contains("Imported") && e.Contains("rtsp://"));
+        Assert.Contains(errors, e => e.Contains("Object size"));
+        Assert.Contains(errors, e => e.Contains("Zone points"));
+        Assert.Contains(errors, e => e.Contains("Night window hours"));
+
+        // Each zone problem names the camera it belongs to, so a file with forty cameras in it
+        // says which one to go and look at.
+        Assert.All(
+            errors.Where(e => e.StartsWith("Trigger zone", StringComparison.Ordinal)),
+            e => Assert.Contains(cameraId.ToString(), e, StringComparison.OrdinalIgnoreCase));
+
+        // Rejected whole: the camera the file carried was never written, so a failed restore
+        // leaves the install exactly as it was rather than half-changed.
+        var cameras = await client.GetFromJsonAsync<JsonElement>("/api/cameras", ct);
+        Assert.Equal(0, cameras.GetArrayLength());
+    }
+
+    // The other half of that: a backup whose contents are legal still restores. Guards against
+    // the validation above being too strict to let a real export back in.
+    [Fact]
+    public async Task ABackupOfAnOrdinaryCameraAndZone_StillRestores()
+    {
+        var ct = TestContext.Current.CancellationToken;
+
+        using var source = CreateFactory(TempDirectory());
+        using var sourceClient = source.CreateClient();
+        var cameraId = await AddCameraAsync(sourceClient, "Gate", ct);
+
+        using (var zone = await sourceClient.PutAsJsonAsync($"/api/cameras/{cameraId}/trigger-config", new
+        {
+            Enabled = true,
+            ZonePolygon = new[] { new { X = 0.1, Y = 0.1 }, new { X = 0.9, Y = 0.1 }, new { X = 0.9, Y = 0.9 } },
+            MinTriggerArea = 0.02, CooldownSeconds = 30, MaxTriggersPerMinute = 6, ShadowSensitivity = 50,
+            RecordClips = false, ClipPreSeconds = 5, ClipPostSeconds = 10, SendToAlerts = false,
+            AlertProfile = "default", SensorDeviceId = "", SensorTriggerOn = "on", SensorCooldownSeconds = 30,
+            SensorMeasurement = "", SensorThreshold = 0.0,
+            NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7
+        }, ct))
+            zone.EnsureSuccessStatusCode();
+
+        using var exported = await sourceClient.GetAsync("/api/backup/export", ct);
+        var payload = await exported.Content.ReadAsStringAsync(ct);
+
+        using var destination = CreateFactory(TempDirectory());
+        using var destinationClient = destination.CreateClient();
+        using var imported = await destinationClient.PostAsync(
+            "/api/backup/import", new StringContent(payload, System.Text.Encoding.UTF8, "application/json"), ct);
+
+        Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
+
+        var restored = await destinationClient.GetFromJsonAsync<JsonElement>($"/api/cameras/{cameraId}/trigger-config", ct);
+        Assert.Equal(0.02, restored.GetProperty("minTriggerArea").GetDouble(), 3);
+        Assert.Equal(21, restored.GetProperty("nightStartHour").GetInt32());
+    }
+
     private static async Task<Guid> AddCameraAsync(HttpClient client, string name, CancellationToken ct)
     {
         using var response = await client.PostAsJsonAsync("/api/cameras",

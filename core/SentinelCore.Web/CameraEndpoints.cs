@@ -455,7 +455,9 @@ public static class CameraEndpoints
     private static Camera Masked(Camera camera) =>
         string.IsNullOrEmpty(camera.Password) ? camera : camera with { Password = SettingsSecrets.Mask };
 
-    private static List<string> Validate(CameraInputDto dto)
+    // internal so config restore can hold imported cameras to the same rules this endpoint
+    // enforces - see BackupEndpoints.Validate.
+    internal static List<string> Validate(CameraInputDto dto)
     {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(dto.Name)) errors.Add("Name is required.");
