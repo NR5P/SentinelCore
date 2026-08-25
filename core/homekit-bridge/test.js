@@ -118,6 +118,86 @@ test("restores configured cameras before publish and keeps them through pairing 
   }
 });
 
+// identity.json holds the HAP username and pincode every paired iPhone knows this bridge by. It
+// is the one persisted file that cannot be rebuilt - cameras.json and devices.json are both
+// rediscoverable - and it was the only one written in place rather than through a temporary file,
+// so a process that died mid-write left a truncated one and the next boot had nothing good to do
+// with it.
+test("writes the HomeKit identity atomically and refuses to start on a damaged one", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sentinel-homekit-identity-"));
+  const persistDir = path.join(root, "persist");
+  const settingsPath = path.join(root, "appsettings.json");
+  fs.writeFileSync(settingsPath, JSON.stringify({ HomeKit: { Enabled: false } }));
+
+  const identityFile = path.join(persistDir, "identity.json");
+
+  function start() {
+    return freePort().then(async (controlPort) => {
+      const hapPort = await freePort();
+      const child = spawn(process.execPath, [path.join(__dirname, "index.js")], {
+        env: {
+          ...process.env,
+          HOMEKIT_MAIN_SETTINGS: settingsPath,
+          HOMEKIT_PERSIST_DIR: persistDir,
+          HOMEKIT_CONTROL_PORT: String(controlPort),
+          HOMEKIT_HAP_PORT: String(hapPort),
+          HOMEKIT_ADVERTISER: "ciao"
+        },
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      return { child, controlPort };
+    });
+  }
+
+  let first;
+  try {
+    first = await start();
+    await waitForOutput(first.child, "Control API listening");
+
+    const identity = JSON.parse(fs.readFileSync(identityFile, "utf8"));
+    assert.ok(identity.username, "an identity should have been generated");
+    assert.ok(identity.pincode);
+
+    // The rename is what makes the write atomic; a leftover temporary file would mean it wasn't.
+    const strays = fs.readdirSync(persistDir).filter((name) => name.endsWith(".tmp"));
+    assert.deepEqual(strays, [], "the identity should be renamed into place, leaving no temp file");
+  } finally {
+    if (first && first.child.exitCode === null) first.child.kill("SIGTERM");
+  }
+
+  // Wait for the port to be released before the second run reuses the directory.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  // Exactly what an interrupted write leaves behind.
+  fs.writeFileSync(identityFile, '{"username":"AA:BB:CC:D');
+
+  const second = await start();
+  try {
+    let output = "";
+    second.child.stdout.on("data", (chunk) => { output += chunk.toString(); });
+    second.child.stderr.on("data", (chunk) => { output += chunk.toString(); });
+
+    const exitCode = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`Never exited. Output: ${output}`)), 10_000);
+      second.child.once("exit", (code) => { clearTimeout(timeout); resolve(code); });
+    });
+
+    assert.notEqual(exitCode, 0, "a damaged identity file should stop the sidecar, not be ignored");
+
+    // Refusing is only half of it. Generating a fresh identity here would read as a recovery and
+    // would in fact unpair every iPhone in the house, so the message has to say which two choices
+    // there actually are.
+    assert.match(output, /unpairing/);
+    assert.match(output, /Restore/);
+    assert.equal(
+      fs.readFileSync(identityFile, "utf8"), '{"username":"AA:BB:CC:D',
+      "the damaged file should be left alone, not silently replaced");
+  } finally {
+    if (second.child.exitCode === null) second.child.kill("SIGTERM");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // Every accessory under one bridge needs its own serial number - hap-nodejs hands them all the
 // same "Default-SerialNumber" otherwise, and Apple Home responds to a collision by merging or
 // dropping tiles. The serials asserted here are read back off the accessories themselves (the

@@ -99,7 +99,22 @@ function loadOrCreateIdentity() {
   fs.mkdirSync(PERSIST_DIR, { recursive: true });
 
   if (fs.existsSync(IDENTITY_FILE)) {
-    return JSON.parse(fs.readFileSync(IDENTITY_FILE, "utf8"));
+    const stored = fs.readFileSync(IDENTITY_FILE, "utf8");
+    try {
+      return JSON.parse(stored);
+    } catch (error) {
+      // Fatal on purpose, and deliberately NOT regenerated. Falling through to a fresh identity
+      // here would look like a recovery and would in fact unpair every iPhone in the house
+      // without saying so - the one outcome the comment above this function exists to prevent.
+      // Better to refuse to start and say what the two real choices are.
+      throw new Error(
+        `${IDENTITY_FILE} could not be read (${error.message}). It holds the HomeKit username ` +
+        "and pincode that every paired iPhone knows this bridge by, so a new one cannot be " +
+        "generated without silently unpairing all of them. Restore that file from a backup to " +
+        "keep the existing pairings, or delete it to start over - the bridge will then have to " +
+        "be added to Apple Home again, and any automations using its accessories rebuilt."
+      );
+    }
   }
 
   const identity = {
@@ -108,8 +123,15 @@ function loadOrCreateIdentity() {
     setupId: randomSetupId(),
   };
 
+  // Written through a temporary file, the same way the camera and device rosters below are, and
+  // it matters more here than for either of them: those can be rebuilt by rediscovery, this one
+  // cannot be rebuilt at all. A process that dies between opening this file and finishing the
+  // write leaves a truncated one, and the next boot then has nothing good to do with it.
+  //
   // 0600 - this is pairing material, not general config.
-  fs.writeFileSync(IDENTITY_FILE, JSON.stringify(identity, null, 2), { mode: 0o600 });
+  const tempPath = `${IDENTITY_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(identity, null, 2), { mode: 0o600 });
+  fs.renameSync(tempPath, IDENTITY_FILE);
   console.log(`Generated new HomeKit identity at ${IDENTITY_FILE}`);
   return identity;
 }
