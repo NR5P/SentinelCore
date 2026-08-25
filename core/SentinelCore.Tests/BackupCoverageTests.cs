@@ -3,6 +3,7 @@ extern alias WebHost;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using SentinelCore.Web;
 using Xunit;
@@ -502,7 +503,27 @@ public sealed class BackupCoverageTests : IDisposable
         Assert.SkipUnless(File.Exists(shipped), "The shipped appsettings.json isn't in this checkout.");
 
         var sourceDirectory = TempDirectory();
-        File.Copy(shipped, Path.Combine(sourceDirectory, "appsettings.json"), overwrite: true);
+        var sourceSettings = Path.Combine(sourceDirectory, "appsettings.json");
+        File.Copy(shipped, sourceSettings, overwrite: true);
+
+        // appsettings.json is live config on an installed machine, not a fixture - the checkout
+        // this runs in is usually the one the server is running from, so whatever the operator has
+        // turned on is in the file being read. Auth is the section that decides whether this test
+        // can call anything: /api/backup is AdminOnly, and the synthetic Admin that makes it pass
+        // unauthenticated only exists while Auth:Enabled is false. An install that turned dashboard
+        // login on ships that `true` in this file, and its accounts live in accounts.db - which is
+        // deliberately not copied here, so the host boots with login required and no account to
+        // satisfy it, and every request 401s. That failed on the box this project actually runs on
+        // while passing everywhere else, and deploy.sh runs under `set -e`, so it blocked the
+        // restart rather than just reporting.
+        //
+        // Auth is pinned off in the copy because it is incidental to what this asserts: that the
+        // *settings values* survive an export/import round trip. The Auth section's own
+        // round-tripping is covered with the other sections, and login enforcement by
+        // WebAuthorizationTests.
+        var root = JsonNode.Parse(File.ReadAllText(sourceSettings))!.AsObject();
+        root["Auth"] = new JsonObject { ["Enabled"] = false };
+        File.WriteAllText(sourceSettings, root.ToJsonString());
 
         using var source = CreateFactory(sourceDirectory, writeEmptySettings: false);
         using var sourceClient = source.CreateClient();
