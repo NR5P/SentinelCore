@@ -96,17 +96,29 @@ public static class AccountEndpoints
 
             await accounts.UpdatePasswordAsync(selfId, PasswordHasher.Hash(request.NewPassword), ct);
 
-            // Deliberately NOT calling InvalidateForAccountAsync here (unlike the admin-triggered
-            // reset-password/role endpoints, which target a DIFFERENT account than the caller's
-            // own and so have no continuity concern). Re-establishing a working session via
-            // SignInAsync mid-request, on an HttpContext ASP.NET Core has already authenticated
-            // from the incoming cookie, does not reliably persist a new entry in this app's
-            // ITicketStore-backed session store - Options.SessionStore.StoreAsync silently never
-            // runs, so the caller would end up with a Set-Cookie that looks fine but is dead,
-            // logging them out despite the 200 response. Leaving the current session alone avoids
-            // that: the caller already proved the current password above, so nothing insecure
-            // about letting this one session keep working.
-            return Results.Ok(new { success = true });
+            // Every session for this account, the caller's own included.
+            //
+            // This used to leave them all alone, reasoning that the caller had just proved the
+            // current password so their session was safe to keep. That holds for the caller's
+            // session and says nothing about the others - and the others are the entire point.
+            // Changing your password is what someone does when they think somebody else is in
+            // their account, and until now that did not remove the intruder: sessions last 30
+            // days and slide, so a stolen cookie kept full access for as long as it kept being
+            // used. The admin-triggered reset-password and role endpoints above already
+            // invalidate for exactly this reason; self-service was the gap.
+            //
+            // Including the caller's own session is what keeps this simple. Trying to spare it
+            // means re-establishing one mid-request, and SignInAsync on an HttpContext already
+            // authenticated from the incoming cookie does not reliably persist through this
+            // app's ITicketStore - StoreAsync silently never runs, and the caller leaves with a
+            // Set-Cookie that looks fine and is dead. Signing everyone out, the caller included,
+            // has no such trap: they log in again with the password they just chose, which is
+            // what people expect of a password change anyway.
+            await accounts.InvalidateForAccountAsync(selfId, ct);
+
+            // signedOut tells the client to send the user back to the login screen rather than
+            // leaving them on a page whose next request will 401 for no visible reason.
+            return Results.Ok(new { success = true, signedOut = true });
         }).RequireAuthorization();
     }
 

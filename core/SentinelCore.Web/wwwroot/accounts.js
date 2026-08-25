@@ -110,6 +110,18 @@ window.GateWatchAccounts = (function () {
         }
         section.querySelector("#my-current-password").value = "";
         section.querySelector("#my-new-password").value = "";
+
+        // Changing the password now ends every session for the account, this one included, so
+        // that a stolen cookie somebody else is holding stops working. Reloading is what turns
+        // that into a login prompt: without it the page sits there looking signed in until the
+        // next request quietly 401s, which reads as the app breaking rather than as the sign-out
+        // it actually is.
+        if (payload.signedOut) {
+          showToast("Password changed - signing you back in.", true);
+          setTimeout(() => location.reload(), 1200);
+          return;
+        }
+
         showToast("Password changed.", true);
       } catch {
         showErrors(errors, ["Network error while changing the password."]);

@@ -2,6 +2,7 @@ extern alias WebHost;
 
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -315,6 +316,64 @@ public sealed class WebAuthorizationTests : IDisposable
 
         using var padded = await client.PostAsJsonAsync("/api/auth/login", new { Username = "admin", Password = " correct horse battery " }, ct);
         Assert.Equal(HttpStatusCode.Unauthorized, padded.StatusCode);
+    }
+
+    // Changing your password is what someone does when they think another person is in their
+    // account, so it has to remove that person. Sessions last 30 days and slide, so a session
+    // that survives a password change survives indefinitely as long as it keeps being used.
+    [Fact]
+    public async Task ChangingAPassword_EndsEverySessionForThatAccount()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+            await accounts.CreateAsync("nathan", SentinelCore.Web.PasswordHasher.Hash("original-password"), AccountRole.Admin, null, ct);
+        }
+        await EnableLoginAsync(ct);
+
+        // Two sessions for the same account: the owner's, and one somebody else is holding.
+        using var owner = factory.CreateClient();
+        using var stolen = factory.CreateClient();
+        foreach (var client in new[] { owner, stolen })
+        {
+            using var login = await client.PostAsJsonAsync("/api/auth/login",
+                new { Username = "nathan", Password = "original-password" }, ct);
+            login.EnsureSuccessStatusCode();
+        }
+
+        using (var before = await stolen.GetAsync("/api/settings", ct))
+            Assert.Equal(HttpStatusCode.OK, before.StatusCode);
+
+        using (var changed = await owner.PostAsJsonAsync("/api/accounts/change-password",
+            new { CurrentPassword = "original-password", NewPassword = "a-brand-new-password" }, ct))
+        {
+            changed.EnsureSuccessStatusCode();
+            // The client needs to know to go back to the login screen rather than sit on a page
+            // whose next request will 401 out of nowhere.
+            var body = await changed.Content.ReadFromJsonAsync<JsonElement>(ct);
+            Assert.True(body.GetProperty("signedOut").GetBoolean());
+        }
+
+        // The other session is gone.
+        using (var after = await stolen.GetAsync("/api/settings", ct))
+            Assert.Equal(HttpStatusCode.Unauthorized, after.StatusCode);
+
+        // So is the caller's own - the price of not having to re-establish one mid-request.
+        using (var self = await owner.GetAsync("/api/settings", ct))
+            Assert.Equal(HttpStatusCode.Unauthorized, self.StatusCode);
+
+        // And the new password is the one that works now.
+        using var fresh = factory.CreateClient();
+        using (var stale = await fresh.PostAsJsonAsync("/api/auth/login",
+            new { Username = "nathan", Password = "original-password" }, ct))
+            Assert.Equal(HttpStatusCode.Unauthorized, stale.StatusCode);
+
+        using var relogin = await fresh.PostAsJsonAsync("/api/auth/login",
+            new { Username = "nathan", Password = "a-brand-new-password" }, ct);
+        Assert.Equal(HttpStatusCode.OK, relogin.StatusCode);
     }
 
     private async Task EnableLoginAsync(CancellationToken ct)

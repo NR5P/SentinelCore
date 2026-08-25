@@ -521,6 +521,13 @@ private fun ChangePasswordDialog(model: SentinelViewModel, onDismiss: () -> Unit
                         try {
                             model.changeMyPassword(currentPassword, newPassword)
                             onDismiss()
+
+                            // The server ends every session for the account when the password
+                            // changes, this device's included, so that a session somebody else is
+                            // holding stops working. Reconnecting immediately turns that into a
+                            // sign-in prompt rather than leaving the app looking connected until
+                            // whatever the user does next quietly fails.
+                            model.connect()
                         } catch (error: Exception) {
                             errorMessage = error.message ?: "Could not change the password."
                         } finally {

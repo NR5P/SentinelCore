@@ -361,6 +361,13 @@ private struct ChangePasswordSheet: View {
         do {
             try await model.client.changeMyPassword(currentPassword: currentPassword, newPassword: newPassword)
             dismiss()
+
+            // The server ends every session for the account when the password changes, this
+            // device's included, so that a cookie somebody else is holding stops working.
+            // Reconnecting immediately is what turns that into a sign-in prompt: without it the
+            // app looks connected until whatever the user does next fails, which reads as a bug
+            // rather than as the sign-out it is.
+            await model.connect()
         } catch {
             errorMessage = error.localizedDescription
         }
