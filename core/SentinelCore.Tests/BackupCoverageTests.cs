@@ -339,6 +339,84 @@ public sealed class BackupCoverageTests : IDisposable
         Assert.Equal(0, cameras.GetArrayLength());
     }
 
+    // The settings half. RetentionDays carries [Range(1, 3650)] and is validated on start as well
+    // as on save, so a zero arriving through a restore does not misbehave at runtime - it stops
+    // the main app booting at all. That surfaces on the next restart, long after the restore
+    // looked finished, and on a machine somebody is in the middle of rebuilding.
+    [Fact]
+    public async Task ABackupCarryingSettingsTheEndpointRefuses_IsRejected()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory(TempDirectory());
+        using var client = factory.CreateClient();
+
+        var backup = """
+        {
+          "schemaVersion": 2,
+          "exportedAt": "2026-08-25T00:00:00Z",
+          "settings": {
+            "bridge": {
+              "apiKey": "0123456789abcdef0123456789abcdef", "dataDirectory": "data",
+              "saveImages": true, "retentionDays": 0, "unverifiedMotionRetentionDays": 3,
+              "allowedImageContentTypes": ["image/jpeg"], "maximumImageBytes": 15728640,
+              "queueCapacity": 100, "imageWidth": 1024
+            }
+          }
+        }
+        """;
+
+        using var response = await client.PostAsync(
+            "/api/backup/import", new StringContent(backup, System.Text.Encoding.UTF8, "application/json"), ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var errors = (await response.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("errors")
+            .EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+        Assert.Contains(errors, e => e.Contains("RetentionDays"));
+    }
+
+    // The guard on all of the above being too strict, and the one that matters most: the shipped
+    // configuration itself has to survive a round trip. A validation that refuses a real backup
+    // would be a worse bug than the one it was added for - it fails at exactly the moment someone
+    // is rebuilding a machine and has nothing else left.
+    [Fact]
+    public async Task TheShippedConfiguration_StillExportsAndImportsCleanly()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var shipped = Path.Combine(RepositoryRootOrSkip(), "core/SentinelCore/appsettings.json");
+        Assert.SkipUnless(File.Exists(shipped), "The shipped appsettings.json isn't in this checkout.");
+
+        var sourceDirectory = TempDirectory();
+        File.Copy(shipped, Path.Combine(sourceDirectory, "appsettings.json"), overwrite: true);
+
+        using var source = CreateFactory(sourceDirectory, writeEmptySettings: false);
+        using var sourceClient = source.CreateClient();
+
+        using var exported = await sourceClient.GetAsync("/api/backup/export", ct);
+        exported.EnsureSuccessStatusCode();
+        var payload = await exported.Content.ReadAsStringAsync(ct);
+
+        using var destination = CreateFactory(TempDirectory());
+        using var destinationClient = destination.CreateClient();
+        using var imported = await destinationClient.PostAsync(
+            "/api/backup/import", new StringContent(payload, System.Text.Encoding.UTF8, "application/json"), ct);
+
+        var body = await imported.Content.ReadAsStringAsync(ct);
+        Assert.True(imported.StatusCode == HttpStatusCode.OK,
+            $"The shipped configuration no longer restores through its own backup: {body}");
+    }
+
+    private static string RepositoryRootOrSkip()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "core"))) return directory.FullName;
+            directory = directory.Parent;
+        }
+        return "";
+    }
+
     // The other half of that: a backup whose contents are legal still restores. Guards against
     // the validation above being too strict to let a real export back in.
     [Fact]

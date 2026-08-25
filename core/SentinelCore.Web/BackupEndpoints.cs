@@ -239,6 +239,12 @@ public static class BackupEndpoints
         //
         // Held to the endpoints' own validators rather than a second copy of the rules, because a
         // second copy is how the two drift apart - which is the whole shape of this bug.
+        // The settings half of the same gap: ApplySnapshotAsync merges each section into
+        // appsettings.json without the check that section's own PUT performs.
+        if (document.Settings is { } settings)
+        foreach (var problem in SettingsEndpoints.ValidateSnapshot(settings))
+            errors.Add($"Settings - {problem}");
+
         foreach (var camera in document.Cameras ?? [])
         foreach (var problem in CameraEndpoints.Validate(ToInput(camera)))
             errors.Add($"Camera \"{camera.Name}\": {problem}");

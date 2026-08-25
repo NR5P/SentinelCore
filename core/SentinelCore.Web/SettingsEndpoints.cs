@@ -697,6 +697,35 @@ public static class SettingsEndpoints
         return Results.Ok(new { saved = true });
     }
 
+    // Every section of a snapshot, judged by the same DataAnnotations its own PUT applies.
+    //
+    // Config restore writes each section straight through MergeSectionAsync, so until this existed
+    // it was the one way to get a value into appsettings.json that the settings endpoints would
+    // have refused. RetentionDays is the one that bites hardest: [Range(1, 3650)] is validated on
+    // start as well as on save, so a zero arriving from a restore does not misbehave at runtime -
+    // it stops the main app booting at all, which is discovered on the next restart, by which time
+    // the restore looks long finished.
+    //
+    // Deliberately the same shallow check SaveSectionAsync performs rather than a deeper one, so
+    // that what restore accepts and what a save accepts cannot come apart.
+    public static List<string> ValidateSnapshot(SettingsSnapshot snapshot)
+    {
+        var errors = new List<string>();
+
+        foreach (var property in typeof(SettingsSnapshot).GetProperties())
+        {
+            // The DTO sections only. PromptProfiles, KnownVehicles and KnownFaces are collections
+            // with their own shapes and no DataAnnotations to apply.
+            if (!property.PropertyType.Name.EndsWith("SettingsDto", StringComparison.Ordinal)) continue;
+            if (property.GetValue(snapshot) is not { } section) continue;
+
+            foreach (var problem in ValidateDataAnnotations(section))
+                errors.Add($"{property.Name}: {problem}");
+        }
+
+        return errors;
+    }
+
     private static List<string> ValidateDataAnnotations<T>(T instance) where T : notnull
     {
         var context = new ValidationContext(instance);
