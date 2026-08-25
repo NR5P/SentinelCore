@@ -354,13 +354,29 @@
   }
 
   function escapeHtml(value) {
-    const div = document.createElement("div");
-    div.textContent = value;
-    return div.innerHTML;
+    // Deliberately a string replace rather than the textContent/innerHTML trick this used to be.
+    // That trick escapes exactly what a *text node* needs - & < > - and quotes are not among them,
+    // because a quote means nothing in text. Half the interpolations here are into attributes
+    // (alt=, title=, data-tip=, value=), and there a surviving double quote ends the attribute and
+    // everything after it is parsed as more attributes. Confirmed against a real DOM: an event
+    // summary reading `A man held a sign reading " onerror=alert(1) x="` produced an <img>
+    // carrying an onerror the markup never contained.
+    //
+    // Vision models write those summaries, and they quote things - a sign, a brand, a plate - so
+    // the merely-broken version of this happens without anybody attacking anything.
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
+  // Kept as a name because call sites read better for it, but there is nothing left for it to do:
+  // escapeHtml handles quotes now. This file having had its own attribute-safe variant, while the
+  // other eight copies of escapeHtml did not, is how the gap stayed open everywhere else.
   function escapeAttribute(value) {
-    return escapeHtml(value).replace(/"/g, "&quot;");
+    return escapeHtml(value);
   }
 
   window.addEventListener("beforeunload", () => stop());

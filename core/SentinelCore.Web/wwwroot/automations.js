@@ -10,9 +10,22 @@ window.GateWatchAutomations = (function () {
   let loaded = false;
 
   function escapeHtml(value) {
-    const div = document.createElement("div");
-    div.textContent = value ?? "";
-    return div.innerHTML;
+    // Deliberately a string replace rather than the textContent/innerHTML trick this used to be.
+    // That trick escapes exactly what a *text node* needs - & < > - and quotes are not among them,
+    // because a quote means nothing in text. Half the interpolations here are into attributes
+    // (alt=, title=, data-tip=, value=), and there a surviving double quote ends the attribute and
+    // everything after it is parsed as more attributes. Confirmed against a real DOM: an event
+    // summary reading `A man held a sign reading " onerror=alert(1) x="` produced an <img> carrying
+    // an onerror the markup never contained.
+    //
+    // Vision models write these summaries, and they quote things - a sign, a brand, a plate - so
+    // the merely-broken version of this happens without anybody attacking anything.
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   async function load() {
