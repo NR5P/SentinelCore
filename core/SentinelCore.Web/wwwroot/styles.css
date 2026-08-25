@@ -1727,7 +1727,14 @@ main {
 
 .live-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  /* auto-fit, not auto-fill: auto-fill keeps every column the width can hold even when there is
+     no camera to put in it, so the tiles stay at the 300px floor and the rest of the row sits
+     empty. Measured with two cameras in a 1144px content area: auto-fill gave 3 columns and two
+     371px tiles, auto-fit gives 2 columns and two 564px tiles - the same picture, half again as
+     large, on the one screen most likely to be left full-screen on a big monitor. auto-fit
+     collapses the empty tracks to zero width; the minmax floor still stops a long row from
+     squeezing tiles below 300px. */
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 16px;
 }
 

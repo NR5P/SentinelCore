@@ -10,9 +10,20 @@ struct LiveCamerasView: View {
     @EnvironmentObject private var model: AppModel
     let isActive: Bool
 
+    private static let tileSpacing: CGFloat = 40
+    private static let tileMinimum: CGFloat = 420
+    private static let horizontalPadding: CGFloat = 60
+
     var body: some View {
+        GeometryReader { proxy in
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 40)], spacing: 40) {
+            LazyVGrid(
+                columns: liveGridColumns(
+                    availableWidth: proxy.size.width - Self.horizontalPadding * 2,
+                    cameraCount: model.liveCameras.count,
+                    minimum: Self.tileMinimum,
+                    spacing: Self.tileSpacing),
+                spacing: Self.tileSpacing) {
                 // In the order this account arranged on a phone or in the dashboard - there's no
                 // way to rearrange it from here, a remote being a poor drag device.
                 ForEach(model.liveCameras) { camera in
@@ -22,7 +33,7 @@ struct LiveCamerasView: View {
                     .buttonStyle(.card)
                 }
             }
-            .padding(.horizontal, 60)
+            .padding(.horizontal, Self.horizontalPadding)
             .padding(.bottom, 60)
         }
         .navigationDestination(for: Camera.self) { LivePlayerView(camera: $0) }
@@ -49,7 +60,24 @@ struct LiveCamerasView: View {
                 ProgressView("Loading cameras…")
             }
         }
+        }
     }
+}
+
+// Ported from ios/SentinelCore/Views/LiveCamerasView.swift, and it matters more here than
+// anywhere else: `.adaptive(minimum:)` keeps every column the width can hold whether or not a
+// camera goes in one, so on a 3840pt television two cameras sat as two 420pt cards in the top
+// corner with the rest of the screen black. A TV is the display furthest from the viewer and the
+// one where a small picture is least usable.
+private func liveGridColumns(
+    availableWidth: CGFloat, cameraCount: Int, minimum: CGFloat, spacing: CGFloat) -> [GridItem]
+{
+    // GeometryReader reports zero on its first pass, and a NaN would trap the Int conversion.
+    let usable = availableWidth.isFinite ? max(0, availableWidth) : 0
+    let fits = max(1, Int((usable + spacing) / (minimum + spacing)))
+    return Array(
+        repeating: GridItem(.flexible(), spacing: spacing),
+        count: max(1, min(cameraCount, fits)))
 }
 
 private struct CameraCard: View {

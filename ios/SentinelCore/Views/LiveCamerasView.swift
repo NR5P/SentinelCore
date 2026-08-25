@@ -17,9 +17,20 @@ struct LiveCamerasView: View {
     @EnvironmentObject private var model: AppModel
     let isActive: Bool
 
+    private static let tileSpacing: CGFloat = 16
+    private static let tileMinimum: CGFloat = 320
+    private static let gridPadding: CGFloat = 16
+
     var body: some View {
+        GeometryReader { proxy in
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], spacing: 16) {
+            LazyVGrid(
+                columns: liveGridColumns(
+                    availableWidth: proxy.size.width - Self.gridPadding * 2,
+                    cameraCount: model.liveCameras.count,
+                    minimum: Self.tileMinimum,
+                    spacing: Self.tileSpacing),
+                spacing: Self.tileSpacing) {
                 // Ordered as this account arranged it (see AppModel.liveCameras) - press and hold
                 // a tile to drag it somewhere else. `cameras` itself stays in the server's order
                 // for every other screen.
@@ -33,7 +44,7 @@ struct LiveCamerasView: View {
                     .modifier(LiveTileReorder(camera: camera, isEnabled: model.cameras.count > 1))
                 }
             }
-            .padding()
+            .padding(Self.gridPadding)
             .animation(.snappy, value: model.liveCameraOrder)
         }
         .navigationTitle("Live")
@@ -62,7 +73,29 @@ struct LiveCamerasView: View {
                 ProgressView("Loading cameras…")
             }
         }
+        }
     }
+}
+
+// `.adaptive(minimum:)` reserves every column the available width can hold, whether or not there
+// is a camera to put in one, and then shares the row equally between all of them. With two
+// cameras on a wide window that leaves both tiles at the minimum and the rest of the row blank -
+// measured in the dashboard's equivalent grid, two 371pt tiles in 1144pt of space. Live view is
+// the screen most likely to be left full-screen on a large display, so that is exactly where the
+// waste is least welcome.
+//
+// Asking for min(cameras, columnsThatFit) flexible columns keeps the same "never narrower than
+// `minimum`" floor while letting a short row grow into the space it actually has. A phone is
+// unaffected: one column fits there either way.
+private func liveGridColumns(
+    availableWidth: CGFloat, cameraCount: Int, minimum: CGFloat, spacing: CGFloat) -> [GridItem]
+{
+    // GeometryReader reports zero on its first pass, and a NaN would trap the Int conversion.
+    let usable = availableWidth.isFinite ? max(0, availableWidth) : 0
+    let fits = max(1, Int((usable + spacing) / (minimum + spacing)))
+    return Array(
+        repeating: GridItem(.flexible(), spacing: spacing),
+        count: max(1, min(cameraCount, fits)))
 }
 
 // Drag one live tile onto another to put it in that tile's place. The order is saved against the
