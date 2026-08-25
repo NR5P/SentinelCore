@@ -339,6 +339,121 @@ public sealed class BackupCoverageTests : IDisposable
         Assert.Equal(0, cameras.GetArrayLength());
     }
 
+    // A camera may belong to only one group, and that is not bookkeeping: GetGroupForCameraAsync
+    // resolves a camera's group with FirstOrDefault, so two groups claiming the same camera means
+    // whichever row comes back first wins and the other group's companion cameras quietly never
+    // record. The endpoint refuses it; restore used to be the way around it.
+    [Fact]
+    public async Task ABackupWhoseCameraGroupsBreakTheirOwnRules_IsRejected()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory(TempDirectory());
+        using var client = factory.CreateClient();
+
+        var shared = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var ghost = Guid.NewGuid();
+
+        var backup = $$"""
+        {
+          "schemaVersion": 2, "exportedAt": "2026-08-25T00:00:00Z",
+          "cameras": [
+            { "id": "{{shared}}", "name": "A", "streamUrl": "rtsp://10.0.0.5/main", "username": null,
+              "password": null, "includeAudio": false, "ptzEnabled": false, "onvifPtzServiceUrl": null,
+              "onvifProfileToken": null, "isBrowserPublished": false, "createdAt": "2026-08-25T00:00:00Z" },
+            { "id": "{{second}}", "name": "B", "streamUrl": "rtsp://10.0.0.6/main", "username": null,
+              "password": null, "includeAudio": false, "ptzEnabled": false, "onvifPtzServiceUrl": null,
+              "onvifProfileToken": null, "isBrowserPublished": false, "createdAt": "2026-08-25T00:00:00Z" }
+          ],
+          "cameraGroups": [
+            { "id": "{{Guid.NewGuid()}}", "name": "First", "cameraIds": ["{{shared}}", "{{second}}"],
+              "correlationWindowSeconds": 25, "recordCompanionClips": true, "analyzeCompanionCaptures": false },
+            { "id": "{{Guid.NewGuid()}}", "name": "Second", "cameraIds": ["{{shared}}", "{{ghost}}"],
+              "correlationWindowSeconds": 99999, "recordCompanionClips": true, "analyzeCompanionCaptures": false }
+          ]
+        }
+        """;
+
+        using var response = await client.PostAsync(
+            "/api/backup/import", new StringContent(backup, System.Text.Encoding.UTF8, "application/json"), ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var errors = (await response.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("errors")
+            .EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+
+        Assert.Contains(errors, e => e.Contains("already in the group"));
+        Assert.Contains(errors, e => e.Contains("Correlation window"));
+        Assert.Contains(errors, e => e.Contains(ghost.ToString()) && e.Contains("does not exist"));
+
+        var groups = await client.GetFromJsonAsync<JsonElement>("/api/camera-groups", ct);
+        Assert.Equal(0, groups.GetArrayLength());
+    }
+
+    // An account with no username cannot be signed in to and cannot be told apart in the accounts
+    // list; a role outside the enum matches no authorization policy and renders as a bare number.
+    [Fact]
+    public async Task ABackupWhoseAccountsAreUnusable_IsRejected()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory(TempDirectory());
+        using var client = factory.CreateClient();
+
+        var backup = $$"""
+        {
+          "schemaVersion": 2, "exportedAt": "2026-08-25T00:00:00Z",
+          "accounts": [
+            { "id": "{{Guid.NewGuid()}}", "username": "", "passwordHash": "PBKDF2.SHA256.1000.c2FsdA==.aGFzaA==",
+              "role": 0, "displayName": null, "createdAt": "2026-08-25T00:00:00Z" },
+            { "id": "{{Guid.NewGuid()}}", "username": "odd", "passwordHash": "PBKDF2.SHA256.1000.c2FsdA==.aGFzaA==",
+              "role": 99, "displayName": null, "createdAt": "2026-08-25T00:00:00Z" }
+          ]
+        }
+        """;
+
+        using var response = await client.PostAsync(
+            "/api/backup/import", new StringContent(backup, System.Text.Encoding.UTF8, "application/json"), ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var errors = (await response.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("errors")
+            .EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
+
+        Assert.Contains(errors, e => e.Contains("username is required"));
+        Assert.Contains(errors, e => e.Contains("neither Admin nor Viewer"));
+    }
+
+    // OwnerKey is the primary key of the row a live-order entry becomes. It is declared
+    // non-nullable, which the deserializer does not enforce, so a file missing the field used to
+    // reach SQLite as a null parameter and throw there - a 500 with a stack trace, raised after
+    // the cameras above it had already been written and could not be taken back.
+    [Fact]
+    public async Task ABackupWithAMalformedLiveOrderEntry_IsRejectedBeforeAnythingIsWritten()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory(TempDirectory());
+        using var client = factory.CreateClient();
+
+        var backup = $$"""
+        {
+          "schemaVersion": 2, "exportedAt": "2026-08-25T00:00:00Z",
+          "cameras": [
+            { "id": "{{Guid.NewGuid()}}", "name": "A", "streamUrl": "rtsp://10.0.0.5/main", "username": null,
+              "password": null, "includeAudio": false, "ptzEnabled": false, "onvifPtzServiceUrl": null,
+              "onvifProfileToken": null, "isBrowserPublished": false, "createdAt": "2026-08-25T00:00:00Z" }
+          ],
+          "liveOrder": [ { "cameraIds": [] } ]
+        }
+        """;
+
+        using var response = await client.PostAsync(
+            "/api/backup/import", new StringContent(backup, System.Text.Encoding.UTF8, "application/json"), ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        // The camera listed ahead of the bad entry is not left behind by a half-finished restore.
+        var cameras = await client.GetFromJsonAsync<JsonElement>("/api/cameras", ct);
+        Assert.Equal(0, cameras.GetArrayLength());
+    }
+
     // The settings half. RetentionDays carries [Range(1, 3650)] and is validated on start as well
     // as on save, so a zero arriving through a restore does not misbehave at runtime - it stops
     // the main app booting at all. That surfaces on the next restart, long after the restore

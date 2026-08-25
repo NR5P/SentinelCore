@@ -258,6 +258,44 @@ public static class BackupEndpoints
         foreach (var problem in GateCheckEndpoints.Validate(ToInput(check)))
             errors.Add($"Gate check for camera {check.CameraId}: {problem}");
 
+        // Judged against the cameras and groups the file itself carries, not the ones already
+        // here: a restore onto a rebuilt machine writes all three in one pass, so the cameras a
+        // group names are usually arriving in the same document rather than existing yet.
+        //
+        // The one-group-per-camera rule matters more than it looks. GetGroupForCameraAsync
+        // resolves a camera's group with FirstOrDefault, so two groups claiming the same camera
+        // means whichever row comes back first wins - and the other group's companion cameras
+        // quietly never record. That is the ambiguity the endpoint's check exists to prevent, and
+        // restore was the way around it.
+        var knownCameraIds = (document.Cameras ?? []).Select(c => c.Id).ToHashSet();
+        var groups = document.CameraGroups ?? [];
+        foreach (var group in groups)
+        foreach (var problem in CameraGroupEndpoints.Validate(
+            ToInput(group), group.Id, knownCameraIds, [.. groups.Where(other => other.Id != group.Id)]))
+            errors.Add($"Camera group \"{group.Name}\": {problem}");
+
+        // Accounts and live-order rows are small enough to check inline; neither has an endpoint
+        // whose validator could be borrowed. An account with no username cannot be signed in to
+        // and cannot be told apart in the accounts list, and a role outside the enum renders as a
+        // bare number and matches no authorization policy - it is neither an admin nor a viewer.
+        foreach (var account in document.Accounts ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(account.Username))
+                errors.Add($"Account {account.Id}: username is required.");
+            if (!Enum.IsDefined(account.Role))
+                errors.Add($"Account \"{account.Username}\": role {(int)account.Role} is neither Admin nor Viewer.");
+        }
+
+        // OwnerKey is the primary key of the row this becomes. It is declared non-nullable, which
+        // means nothing to the deserializer, so a file missing the field reached SQLite as a null
+        // parameter and threw there - a 500 with a stack trace, raised after the cameras, groups
+        // and accounts above had already been written and could not be taken back.
+        foreach (var entry in document.LiveOrder ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(entry.OwnerKey))
+                errors.Add("Live grid order: an entry has no owner key.");
+        }
+
         return errors;
     }
 
@@ -276,6 +314,15 @@ public static class BackupEndpoints
         OnvifPtzServiceUrl = camera.OnvifPtzServiceUrl,
         OnvifProfileToken = camera.OnvifProfileToken,
         IsBrowserPublished = camera.IsBrowserPublished
+    };
+
+    private static CameraGroupInputDto ToInput(CameraGroup group) => new()
+    {
+        Name = group.Name,
+        CameraIds = [.. group.CameraIds],
+        CorrelationWindowSeconds = group.CorrelationWindowSeconds,
+        RecordCompanionClips = group.RecordCompanionClips,
+        AnalyzeCompanionCaptures = group.AnalyzeCompanionCaptures
     };
 
     private static GateCheckInputDto ToInput(GateCheckConfig check) => new()

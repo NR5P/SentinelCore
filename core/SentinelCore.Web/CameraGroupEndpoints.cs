@@ -62,6 +62,22 @@ public static class CameraGroupEndpoints
     private static async Task<List<string>> ValidateAsync(
         CameraGroupInputDto dto, Guid? editingId, ICameraGroupStore groupStore, ICameraStore cameraStore, CancellationToken ct)
     {
+        var cameras = await cameraStore.GetAllAsync(ct);
+        var groups = await groupStore.GetAllAsync(ct);
+        return Validate(dto, editingId, [.. cameras.Select(c => c.Id)], groups);
+    }
+
+    // The rules themselves, over plain data. Split out from the store lookups above because config
+    // restore has to apply exactly these rules to a group arriving in a backup file - and there
+    // the cameras and the other groups come from the file rather than from the database, since a
+    // restore onto a fresh machine writes all three in one go. Passing what to judge against,
+    // instead of where to read it from, is what lets both callers share one copy of the rules.
+    internal static List<string> Validate(
+        CameraGroupInputDto dto,
+        Guid? editingId,
+        IReadOnlyCollection<Guid> knownCameraIds,
+        IReadOnlyCollection<CameraGroup> existingGroups)
+    {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(dto.Name)) errors.Add("Name is required.");
         if (dto.CameraIds.Count < 2) errors.Add("A group needs at least two cameras - that's the whole point of linking them.");
@@ -70,14 +86,14 @@ public static class CameraGroupEndpoints
 
         foreach (var cameraId in dto.CameraIds)
         {
-            if (await cameraStore.GetAsync(cameraId, ct) is null)
+            if (!knownCameraIds.Contains(cameraId))
                 errors.Add($"Camera {cameraId} does not exist.");
         }
 
         // A camera can only belong to one group at a time (see CameraGroup's doc comment) - keeps
         // "which group fired" unambiguous when a trigger zone fires. Checked against every other
         // group's membership, excluding the group being edited.
-        foreach (var existing in await groupStore.GetAllAsync(ct))
+        foreach (var existing in existingGroups)
         {
             if (existing.Id == editingId) continue;
             var overlap = existing.CameraIds.Intersect(dto.CameraIds).Any();
