@@ -25,6 +25,12 @@ public static class AuthEndpoints
     private static readonly TimeSpan FailureWindow = TimeSpan.FromMinutes(5);
     private static readonly ConcurrentDictionary<string, List<DateTimeOffset>> FailedAttempts = new();
 
+    // How many distinct addresses may accumulate before the sweep below starts running, and how
+    // often it may run at most. See SweepStaleAttemptsIfDue.
+    private const int SweepThreshold = 1_000;
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(5);
+    private static long _lastSweepTicks;
+
     public static void MapAuthEndpoints(this WebApplication app)
     {
         // Always reachable, no matter the auth state - the frontend needs this to decide
@@ -180,11 +186,53 @@ public static class AuthEndpoints
     private static int RecordFailure(string ip)
     {
         var attempts = FailedAttempts.GetOrAdd(ip, static _ => []);
+        int count;
         lock (attempts)
         {
             attempts.RemoveAll(t => t < DateTimeOffset.UtcNow - FailureWindow);
             attempts.Add(DateTimeOffset.UtcNow);
-            return attempts.Count;
+            count = attempts.Count;
+        }
+
+        SweepStaleAttemptsIfDue();
+        return count;
+    }
+
+    // An address that fails once and never comes back used to keep its entry for the lifetime of
+    // the process: the pruning above only ever runs for an address that is seen again. One entry
+    // per source address is nothing on the LAN, where the same handful of machines fail a login
+    // now and then - but Internet Exposed Mode puts this endpoint in front of the open internet,
+    // where a distributed attempt means an entry per source address and no reason for any of them
+    // to return.
+    //
+    // Bounded both ways on purpose. The size check keeps ordinary use from ever walking the
+    // dictionary, and the interval keeps a sustained attack from turning every failed login into
+    // an O(n) sweep - which would hand an attacker a cheaper way to load the server than the
+    // brute force itself.
+    private static void SweepStaleAttemptsIfDue()
+    {
+        if (FailedAttempts.Count <= SweepThreshold) return;
+
+        var now = DateTimeOffset.UtcNow.UtcTicks;
+        var last = Interlocked.Read(ref _lastSweepTicks);
+        if (now - last < SweepInterval.Ticks) return;
+        // Whoever wins this exchange does the sweep; everyone else carries on.
+        if (Interlocked.CompareExchange(ref _lastSweepTicks, now, last) != last) return;
+
+        var cutoff = DateTimeOffset.UtcNow - FailureWindow;
+        foreach (var (address, attempts) in FailedAttempts)
+        {
+            lock (attempts)
+            {
+                attempts.RemoveAll(t => t < cutoff);
+                // Keyed removal, so an address that started failing again while this ran keeps
+                // the entry the other thread is holding rather than losing it here. The narrow
+                // race left is a failure recorded against a list already removed, which costs an
+                // attacker's next attempt one off its count - immaterial to a limiter that only
+                // has to be approximately right.
+                if (attempts.Count == 0)
+                    FailedAttempts.TryRemove(new KeyValuePair<string, List<DateTimeOffset>>(address, attempts));
+            }
         }
     }
 }
