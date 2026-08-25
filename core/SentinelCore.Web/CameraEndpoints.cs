@@ -92,8 +92,27 @@ public static class CameraEndpoints
                     .ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
             }
 
-            return Results.Ok(cameras);
+            return Results.Ok(cameras.Select(Masked));
         }).RequireAuthorization();
+
+        // The one way to get a camera's real password, deliberately separated from the list above.
+        //
+        // Admin-only, and one camera at a time on an explicit request, because that is the whole
+        // difference: the list is fetched by every client on every launch and every pull-to-
+        // refresh, by anyone allowed to watch video at all. A Viewer account exists to do exactly
+        // that and nothing else, so handing it the credentials to the cameras themselves - which
+        // on most makes it an ONVIF admin, and which people reuse elsewhere - was never something
+        // watching live video needed.
+        //
+        // Note this is only as closed as the install is: with login not yet enabled,
+        // AuthGateMiddleware substitutes a synthetic Admin and anything on the LAN can still ask.
+        // Turning login on is what shuts that door; this makes sure that once it is on, the door
+        // is actually in the wall.
+        app.MapGet("/api/cameras/{id:guid}/password", async (Guid id, ICameraStore store, CancellationToken ct) =>
+            await store.GetAsync(id, ct) is { } camera
+                ? Results.Ok(new { password = camera.Password ?? string.Empty })
+                : Results.NotFound())
+            .RequireAuthorization("AdminOnly");
 
         app.MapPost("/api/cameras", async (CameraInputDto dto, ICameraStore store, CancellationToken ct) =>
         {
@@ -103,7 +122,7 @@ public static class CameraEndpoints
             var camera = await store.AddAsync(
                 dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio,
                 dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, dto.IsBrowserPublished, ct);
-            return Results.Ok(camera);
+            return Results.Ok(Masked(camera));
         }).RequireAuthorization("AdminOnly");
 
         app.MapPut("/api/cameras/{id:guid}", async (Guid id, CameraInputDto dto, ICameraStore store, HlsStreamManager streams, Go2RtcManager webrtc, CancellationToken ct) =>
@@ -111,8 +130,16 @@ public static class CameraEndpoints
             var errors = Validate(dto);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
+            // An edit form that loaded the masked camera and changed only the name sends the mask
+            // straight back; that means "keep the stored password", never "set the password to
+            // eight bullet characters". Same contract as a masked settings secret - see
+            // SettingsSecrets.UnmaskAsync.
+            var password = dto.Password == SettingsSecrets.Mask
+                ? (await store.GetAsync(id, ct))?.Password
+                : dto.Password;
+
             var updated = await store.UpdateAsync(
-                id, dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, dto.Password, dto.IncludeAudio,
+                id, dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, password, dto.IncludeAudio,
                 dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, dto.IsBrowserPublished, ct);
             if (!updated) return Results.NotFound();
 
@@ -412,6 +439,21 @@ public static class CameraEndpoints
             // tab doesn't say goodbye. The caller closes the other side.
         }
     }
+
+    // A camera's password is a real credential to a real device on the network - usually the
+    // camera's admin login, often reused - so it travels the same way a stored SMTP password or
+    // bot token does: replaced by a fixed mask on the way out, understood as "unchanged" on the
+    // way back in. Reusing SettingsSecrets.Mask rather than inventing a second marker means every
+    // client already knows how to render this and what sending it back means.
+    //
+    // Empty stays empty, so a form can still tell "no password set" from "one is set, and it is
+    // not being shown to you" - the same distinction SettingsSecrets.MaskInPlace preserves.
+    //
+    // The config backup deliberately does not go through here: it reads ICameraStore directly, and
+    // a backup whose cameras could not reconnect after a restore would not be a backup. That file
+    // is already documented as being as sensitive as appsettings.json.
+    private static Camera Masked(Camera camera) =>
+        string.IsNullOrEmpty(camera.Password) ? camera : camera with { Password = SettingsSecrets.Mask };
 
     private static List<string> Validate(CameraInputDto dto)
     {

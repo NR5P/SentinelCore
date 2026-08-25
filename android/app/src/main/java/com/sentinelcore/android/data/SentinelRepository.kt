@@ -527,6 +527,13 @@ class SentinelRepository(
         request("/api/cameras/${queryValue(id)}", method = "DELETE")
     }
 
+    // The one way to see a camera's real password. Deliberately per-camera and on demand: the
+    // camera list carries only the mask, so nothing holds a live device credential until someone
+    // actually asks to look at it. Admin-only on the server.
+    suspend fun cameraPassword(id: String): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/cameras/${queryValue(id)}/password")).optString("password", "")
+    }
+
     suspend fun knownFaces(): List<KnownFace> = withContext(Dispatchers.IO) {
         val array = JSONArray(request("/api/known-faces"))
         buildList {
@@ -1473,6 +1480,8 @@ class SentinelRepository(
             ptzEnabled = json.optBoolean("ptzEnabled"),
             onvifPtzServiceUrl = json.nullableString("onvifPtzServiceUrl"),
             onvifProfileToken = json.nullableString("onvifProfileToken"),
+            username = json.nullableString("username"),
+            password = json.nullableString("password"),
         )
 
     private fun JSONArray?.toStringList(): List<String> {

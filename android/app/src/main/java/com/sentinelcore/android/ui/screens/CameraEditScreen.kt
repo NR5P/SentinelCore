@@ -36,11 +36,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sentinelcore.android.data.Camera
 import com.sentinelcore.android.data.CameraInput
 import com.sentinelcore.android.data.CameraProbeRequest
 import com.sentinelcore.android.data.CameraProbeResult
+import com.sentinelcore.android.data.SECRET_MASK
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelGreen
@@ -61,8 +63,16 @@ fun CameraEditScreen(
     val isNew = camera == null
     var name by remember { mutableStateOf(camera?.name.orEmpty()) }
     var streamUrl by remember { mutableStateOf(camera?.streamUrl ?: prefillStreamUrl.orEmpty()) }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    // Both of these used to start blank, so every save from this screen sent no credentials and
+    // the PUT - which replaces the record rather than merging it - wiped whatever the camera had.
+    // `password` is the mask, not the real value; see SECRET_MASK.
+    var username by remember { mutableStateOf(camera?.username.orEmpty()) }
+    var password by remember { mutableStateOf(camera?.password.orEmpty()) }
+    // Until someone presses Show, the box holds the mask and is not editable: leaving the mask in
+    // place is what tells the server to keep the stored password, and typing onto the end of it
+    // would save "••••••••newpass" as the credential.
+    var passwordRevealed by remember { mutableStateOf(isNew) }
+    var isRevealing by remember { mutableStateOf(false) }
     var includeAudio by remember { mutableStateOf(camera?.includeAudio ?: false) }
     var ptzEnabled by remember { mutableStateOf(camera?.ptzEnabled ?: false) }
     // Not shown directly - just carries whatever Test Connection last detected (or this camera's
@@ -82,11 +92,19 @@ fun CameraEditScreen(
             isTesting = true
             errorMessage = null
             try {
+                // Test Connection dials the camera for real, so the mask would simply fail its
+                // login - fetch the stored password for that one call rather than making someone
+                // reveal it first.
+                val probePassword = when {
+                    password != SECRET_MASK -> password.ifBlank { null }
+                    camera != null -> model.cameraPassword(camera.id).ifBlank { null }
+                    else -> null
+                }
                 val result = model.probeCamera(
                     CameraProbeRequest(
                         address = streamUrl.trim(),
                         username = username.ifBlank { null },
-                        password = password.ifBlank { null },
+                        password = probePassword,
                     ),
                 )
                 probeResult = result
@@ -193,9 +211,45 @@ fun CameraEditScreen(
                             onValueChange = { password = it },
                             label = { Text("Password (optional)") },
                             singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
+                            readOnly = !passwordRevealed,
+                            visualTransformation = if (passwordRevealed) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        if (!passwordRevealed) {
+                            TextButton(
+                                onClick = {
+                                    if (camera == null) return@TextButton
+                                    scope.launch {
+                                        isRevealing = true
+                                        try {
+                                            password = model.cameraPassword(camera.id)
+                                            passwordRevealed = true
+                                        } catch (error: Exception) {
+                                            errorMessage = error.message
+                                                ?: "Could not read the saved password."
+                                        } finally {
+                                            isRevealing = false
+                                        }
+                                    }
+                                },
+                                enabled = !isRevealing && password.isNotEmpty(),
+                            ) {
+                                Text(if (isRevealing) "Showing…" else "Show password")
+                            }
+                            Text(
+                                if (password.isEmpty()) {
+                                    "This camera has no password saved."
+                                } else {
+                                    "The saved password is kept on the server and isn't sent with " +
+                                        "the camera list. Show it to check or change it."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Row(
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,

@@ -18,6 +18,7 @@ import com.sentinelcore.android.data.Camera
 import com.sentinelcore.android.data.CameraInput
 import com.sentinelcore.android.data.CameraProbeRequest
 import com.sentinelcore.android.data.CameraProbeResult
+import com.sentinelcore.android.data.SECRET_MASK
 import com.sentinelcore.android.data.ConnectionState
 import com.sentinelcore.android.data.DeviceCandidate
 import com.sentinelcore.android.data.DeviceScanSnapshot
@@ -787,6 +788,11 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                             ptzEnabled = input.ptzEnabled,
                             onvifPtzServiceUrl = input.onvifPtzServiceUrl,
                             onvifProfileToken = input.onvifProfileToken,
+                            username = input.username,
+                            // Back to the mask, never the revealed value: this list is what the
+                            // next edit loads from, and it should hold no more than the server
+                            // just sent.
+                            password = if (input.password.isNullOrEmpty()) null else SECRET_MASK,
                         )
                     } else {
                         it
@@ -844,6 +850,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             throw error
         }
     }
+
+    suspend fun cameraPassword(id: String): String = repository.cameraPassword(id)
 
     suspend fun probeCamera(request: CameraProbeRequest): CameraProbeResult =
         repository.probeCamera(request)

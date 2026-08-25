@@ -84,7 +84,19 @@ data class Camera(
     // whole record, it doesn't merge, so these have to round-trip through every edit.
     val onvifPtzServiceUrl: String?,
     val onvifProfileToken: String?,
+    // For exactly the same reason, and they were missing: with no username or password on this
+    // type, every save from this app sent none, and the PUT read that as "this camera has no
+    // login" - so editing a camera's name quietly broke its stream until the credentials were
+    // typed in again. `password` arrives masked (SettingsSecrets.Mask); sending the mask back
+    // unchanged is what tells the server to keep the one it has, and the real value is fetched
+    // only when someone presses Show.
+    val username: String? = null,
+    val password: String? = null,
 )
+
+// SettingsSecrets.Mask on the server. Any stored secret is replaced by this on its way out, and
+// sending it back unchanged means "keep the one you have".
+const val SECRET_MASK: String = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 
 data class CameraInput(
     val name: String,

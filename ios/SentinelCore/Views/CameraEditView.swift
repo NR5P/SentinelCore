@@ -18,6 +18,13 @@ struct CameraEditView: View {
     @State private var onvifPtzServiceUrl: String?
     @State private var onvifProfileToken: String?
 
+    // The password box holds SettingsSecrets.Mask until someone presses Show, at which point the
+    // real one is fetched. Until then it is not editable: leaving the mask in place is what tells
+    // the server to keep the stored password, and letting someone type onto the end of it would
+    // save "••••••••newpass" as the credential.
+    @State private var passwordRevealed = false
+    @State private var isRevealing = false
+
     @State private var isTesting = false
     @State private var isSaving = false
     @State private var probeResult: CameraProbeResult?
@@ -49,7 +56,24 @@ struct CameraEditView: View {
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     #endif
-                SentinelTextField(label: "Password (optional)", text: $password, secure: true)
+                if isNew || passwordRevealed {
+                    SentinelTextField(
+                        label: "Password (optional)", text: $password, secure: !passwordRevealed)
+                } else {
+                    SentinelTextField(label: "Password (optional)", text: .constant(password), secure: true)
+                        .disabled(true)
+                    Button {
+                        Task { await revealPassword() }
+                    } label: {
+                        if isRevealing { ProgressView() } else { Text("Show Password") }
+                    }
+                    .disabled(isRevealing || password.isEmpty)
+                    Text(password.isEmpty
+                        ? "This camera has no password saved."
+                        : "The saved password is kept on the server and isn't sent with the camera list. Show it to check or change it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle("Include Audio", isOn: $includeAudio)
                 Toggle("Pan/Tilt/Zoom (PTZ) Joystick", isOn: $ptzEnabled)
                 Text("Shows on-screen directional controls in Live view for cameras that can physically move. Turned on automatically when Test Connection detects an ONVIF PTZ service - you can also turn it on by hand, but the controls won't do anything without one.")
@@ -128,11 +152,36 @@ struct CameraEditView: View {
             }
             name = camera.name
             streamUrl = camera.streamUrl ?? ""
+            // Both of these used to be left blank, so every save from this screen sent no
+            // credentials and the PUT - which replaces the record rather than merging it - wiped
+            // whatever the camera had. `password` is the mask, not the real value.
+            username = camera.username ?? ""
+            password = camera.password ?? ""
             includeAudio = camera.includeAudio ?? false
             ptzEnabled = camera.ptzEnabled ?? false
             onvifPtzServiceUrl = camera.onvifPtzServiceUrl
             onvifProfileToken = camera.onvifProfileToken
         }
+    }
+
+    private func revealPassword() async {
+        guard let camera else { return }
+        isRevealing = true
+        defer { isRevealing = false }
+        do {
+            password = try await model.client.cameraPassword(id: camera.id)
+            passwordRevealed = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // Test Connection dials the camera for real, so the mask would simply fail its login - fetch
+    // the stored password for that one call rather than making the user reveal it first.
+    private func passwordForProbe() async -> String? {
+        if password != SentinelSecrets.mask { return password.isEmpty ? nil : password }
+        guard let camera, let real = try? await model.client.cameraPassword(id: camera.id) else { return nil }
+        return real.isEmpty ? nil : real
     }
 
     private func testConnection() async {
@@ -144,7 +193,7 @@ struct CameraEditView: View {
                 CameraProbeRequest(
                     address: streamUrl.trimmingCharacters(in: .whitespaces),
                     username: username.isEmpty ? nil : username,
-                    password: password.isEmpty ? nil : password
+                    password: await passwordForProbe()
                 )
             )
             probeResult = result
@@ -193,7 +242,11 @@ struct CameraEditView: View {
                         includeAudio: input.includeAudio,
                         ptzEnabled: input.ptzEnabled,
                         onvifPtzServiceUrl: input.onvifPtzServiceUrl,
-                        onvifProfileToken: input.onvifProfileToken
+                        onvifProfileToken: input.onvifProfileToken,
+                        username: input.username,
+                        // Back to the mask, never the revealed value: this list is what the next
+                        // edit loads from, and it should hold no more than the server just sent.
+                        password: (input.password?.isEmpty ?? true) ? nil : SentinelSecrets.mask
                     )
                 }
             } else {

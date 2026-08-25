@@ -73,6 +73,14 @@ final class SentinelClient {
         let _: EmptyResponse = try await send("/api/cameras/\(id.uuidString)", method: "PUT", body: input)
     }
 
+    // The one way to see a camera's real password. Deliberately per-camera and on demand: the
+    // camera list carries only the mask, so nothing holds a live device credential in memory
+    // until someone actually asks to look at it. Admin-only on the server.
+    func cameraPassword(id: UUID) async throws -> String {
+        let response: CameraPasswordResponse = try await get("/api/cameras/\(id.uuidString)/password")
+        return response.password
+    }
+
     func deleteCamera(id: UUID) async throws {
         let _: EmptyResponse = try await send(
             "/api/cameras/\(id.uuidString)",

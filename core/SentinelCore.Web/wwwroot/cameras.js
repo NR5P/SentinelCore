@@ -1,4 +1,10 @@
 window.GateWatchCameras = (function () {
+  // SettingsSecrets.Mask. A camera's password is no longer part of the camera list - it is the
+  // login to a device on the network, and the list is fetched by anyone allowed to watch video
+  // at all - so what arrives here is this, and the real value is fetched one camera at a time
+  // from the admin-only reveal endpoint. See CameraEndpoints.Masked.
+  const SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+
   let cameras = [];
   let editingId = null;
   // Which of the two camera forms is currently open - a webcam device has no URL or PTZ
@@ -336,7 +342,8 @@ window.GateWatchCameras = (function () {
     fields.appendChild(buildTextField("cam-username", "Username (optional)", camera?.username ?? "",
       "Only needed if the camera requires a login to view its stream."));
     fields.appendChild(buildPasswordField("cam-password", "Password (optional)", camera?.password ?? "",
-      "Password that goes with the username above. Stored on this machine so the stream can be opened."));
+      "Password that goes with the username above. Stored on this machine so the stream can be opened.",
+      camera?.id ? `/api/cameras/${camera.id}/password` : null));
     fields.appendChild(buildCheckboxField("cam-audio", "Include audio", camera?.includeAudio ?? false,
       "Include the camera's microphone in the live view and saved clips, if it has one."));
     fields.appendChild(buildCheckboxField("cam-ptz", "Pan/Tilt/Zoom (PTZ) joystick", camera?.ptzEnabled ?? false,
@@ -377,7 +384,16 @@ window.GateWatchCameras = (function () {
     return row;
   }
 
-  function buildPasswordField(id, label, value, tip) {
+  // `revealUrl` is null when adding a camera - there is nothing stored to fetch, so this is an
+  // ordinary password box with a show/hide toggle, exactly as it always was.
+  //
+  // On an existing camera the box arrives holding the mask, and "show" fetches the real password
+  // before revealing it. Until then the box is read-only: leaving the mask in place is what tells
+  // the server to keep the stored password (see the PUT in CameraEndpoints), and read-only stops
+  // a click-and-type from turning that into "••••••••newpass" and saving it. Pressing show
+  // unlocks the box as well as filling it in, so checking a password and changing it are one
+  // step rather than two.
+  function buildPasswordField(id, label, value, tip, revealUrl = null) {
     const row = document.createElement("div");
     row.className = "field-row field-row-wide";
     if (tip) row.dataset.tip = tip;
@@ -390,19 +406,69 @@ window.GateWatchCameras = (function () {
     input.id = id;
     input.value = value;
     input.autocomplete = "off";
+
+    const masked = value === SECRET_MASK && !!revealUrl;
+    input.readOnly = masked;
+    if (revealUrl) input.dataset.revealUrl = revealUrl;
+
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "field-toggle-btn";
     toggle.textContent = "show";
     toggle.setAttribute("data-tip-right", "");
-    toggle.dataset.tip = "Reveal the password so you can check it.";
-    toggle.addEventListener("click", () => {
+    toggle.dataset.tip = masked
+      ? "Fetch this camera's saved password from the server and show it."
+      : "Reveal the password so you can check it.";
+
+    toggle.addEventListener("click", async () => {
+      if (input.value === SECRET_MASK && input.dataset.revealUrl) {
+        toggle.disabled = true;
+        toggle.textContent = "…";
+        const real = await fetchStoredPassword(input.dataset.revealUrl);
+        toggle.disabled = false;
+        if (real === null) {
+          // Swapping bullets for bullets reads as a broken button, so say what happened.
+          toggle.textContent = "show";
+          toggle.dataset.tip = "Could not read the saved password from the server. Try again, or type a new one over it.";
+          return;
+        }
+        input.value = real;
+        input.readOnly = false;
+        input.type = "text";
+        toggle.textContent = "hide";
+        toggle.dataset.tip = "Reveal the password so you can check it.";
+        return;
+      }
       input.type = input.type === "password" ? "text" : "password";
       toggle.textContent = input.type === "password" ? "show" : "hide";
     });
+
+    // Backing out of an edit: an empty box saves as "this camera has no password", so if the
+    // field started masked and is left empty, put the mask back rather than letting a change of
+    // mind clear a working credential. Typing a real new one is unaffected.
+    if (masked) {
+      input.addEventListener("blur", () => {
+        if (input.value !== "") return;
+        input.value = SECRET_MASK;
+        input.type = "password";
+        input.readOnly = true;
+        toggle.textContent = "show";
+      });
+    }
+
     wrap.append(input, toggle);
     row.appendChild(wrap);
     return row;
+  }
+
+  async function fetchStoredPassword(url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      return (await response.json()).password ?? "";
+    } catch {
+      return null;
+    }
   }
 
   function buildHiddenField(id, value) {
@@ -508,6 +574,15 @@ window.GateWatchCameras = (function () {
     }
   }
 
+  // What is really in a password box: whatever was typed, or - if it still holds the mask - the
+  // password the server has stored for this camera. Only the paths that actually use the password
+  // need this; a save can send the mask untouched and mean "keep it".
+  async function currentPassword(field) {
+    if (field.value !== SECRET_MASK) return field.value || null;
+    if (!field.dataset.revealUrl) return null;
+    return await fetchStoredPassword(field.dataset.revealUrl);
+  }
+
   async function testConnection() {
     const urlField = document.getElementById("cam-url");
     const nameField = document.getElementById("cam-name");
@@ -529,7 +604,9 @@ window.GateWatchCameras = (function () {
         body: JSON.stringify({
           address,
           username: usernameField.value.trim() || null,
-          password: passwordField.value || null
+          // The mask would just fail the camera's login, so resolve it to the stored password
+          // first - this dials the camera for real.
+          password: await currentPassword(passwordField)
         })
       });
       const payload = await response.json().catch(() => ({}));

@@ -82,6 +82,25 @@ struct Camera: Codable, Identifiable, Hashable {
     // whole record, it doesn't merge, so these have to round-trip through every edit.
     let onvifPtzServiceUrl: String?
     let onvifProfileToken: String?
+    // For exactly the same reason, and they were missing: with no username or password on this
+    // type, every save from this app sent none, and the PUT read that as "this camera has no
+    // login" - so editing a camera's name quietly broke its stream until the credentials were
+    // typed in again. `password` arrives masked (SettingsSecrets.Mask); sending the mask back
+    // unchanged is what tells the server to keep the one it has, and the real value is fetched
+    // only when someone presses Show. Optional so a response from an older server still decodes.
+    let username: String?
+    let password: String?
+}
+
+// SettingsSecrets.Mask on the server. Any stored secret is replaced by this on its way out, and
+// sending it back unchanged means "keep the one you have" - the contract shared by camera
+// passwords and every secret on the settings screen.
+enum SentinelSecrets {
+    static let mask = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"
+}
+
+struct CameraPasswordResponse: Decodable {
+    let password: String
 }
 
 struct CameraInput: Encodable {
