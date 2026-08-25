@@ -1469,6 +1469,10 @@ class SentinelRepository(
             confirmation = json.nullableString("confirmation"),
             cameraId = json.nullableString("cameraId"),
             triggerAreaFraction = json.nullableDouble("triggerAreaFraction"),
+            aiAnalysisOff = if (json.isNull("aiAnalysisOff")) null else json.optBoolean("aiAnalysisOff"),
+            clipState = json.nullableString("clipState"),
+            clipPreSeconds = if (json.isNull("clipPreSeconds")) null else json.optInt("clipPreSeconds"),
+            clipPostSeconds = if (json.isNull("clipPostSeconds")) null else json.optInt("clipPostSeconds"),
         )
 
     private fun parseCamera(json: JSONObject): Camera =

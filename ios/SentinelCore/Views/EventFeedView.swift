@@ -174,16 +174,40 @@ struct EventCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .clipped()
             .overlay(alignment: .bottomLeading) {
-                if event.hasClip {
-                    Label("Clip", systemImage: "play.fill")
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(.black.opacity(0.6), in: Capsule())
-                        .foregroundStyle(SentinelTheme.cyan)
-                        .padding(6)
-                }
+                clipBadge
             }
+    }
+
+    // A card that simply shows nothing where a clip would be cannot be told apart from one whose
+    // clip is still being written, or one on a camera that was never recording them - and those
+    // want three different reactions. The dashboard has distinguished them since clipState was
+    // added; this is the same set, in the same words.
+    @ViewBuilder
+    private var clipBadge: some View {
+        switch event.clip {
+        case .ready:
+            badge("Clip", icon: "play.fill", tint: SentinelTheme.cyan)
+        case .recording:
+            badge("Recording…", icon: "record.circle", tint: SentinelTheme.amber)
+        case .missing:
+            badge("No clip", icon: "exclamationmark.triangle.fill", tint: SentinelTheme.amber)
+        case .off, .none:
+            // "off" is a deliberate setting and "none" is a row clips never applied to; neither is
+            // worth a badge on every card. hasClip covers a server too old to send clipState.
+            if event.clip == nil && event.hasClip {
+                badge("Clip", icon: "play.fill", tint: SentinelTheme.cyan)
+            }
+        }
+    }
+
+    private func badge(_ text: String, icon: String, tint: Color) -> some View {
+        Label(text, systemImage: icon)
+            .font(.caption2)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(.black.opacity(0.6), in: Capsule())
+            .foregroundStyle(tint)
+            .padding(6)
     }
 
     private var eventDetails: some View {
@@ -211,6 +235,18 @@ struct EventCard: View {
                 Text(footerLabel)
                     .foregroundStyle(event.isAnalyzed ? SentinelTheme.cyan : .secondary)
                     .lineLimit(1)
+                // A camera whose frames are never analyzed produces motion rows that look exactly
+                // like a camera which has stopped seeing anything worth describing. Saying so on
+                // the row is the only place someone would notice.
+                if event.isAiAnalysisOff {
+                    Text("AI off")
+                        .font(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(SentinelTheme.amber.opacity(0.18), in: Capsule())
+                        .foregroundStyle(SentinelTheme.amber)
+                        .accessibilityLabel("AI analysis is off for this camera")
+                }
                 if let confirmation = event.confirmation, confirmation != "confirmed" {
                     Image(systemName: confirmation == "rejected" ? "exclamationmark.triangle.fill" : "ellipsis.circle")
                         .foregroundStyle(SentinelTheme.amber)
@@ -238,7 +274,8 @@ struct EventCard: View {
 
     private var accessibilityDescription: String {
         let detail = event.isAnalyzed ? (event.summary ?? "") : "Motion only, \(event.zoneName ?? "in zone")"
-        return "\(event.camera), \(detail), \(event.occurredAt.formatted())"
+        let aiOff = event.isAiAnalysisOff ? ", AI analysis off for this camera" : ""
+        return "\(event.camera), \(detail)\(aiOff), \(event.occurredAt.formatted())"
     }
 
     private var imageURL: URL? {

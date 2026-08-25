@@ -46,8 +46,34 @@ struct ActivityItem: Codable, Identifiable, Hashable {
     let cameraId: UUID?
     let triggerAreaFraction: Double?
 
+    // All four optional, because a server older than they are sends none of them and this list is
+    // the Alerts screen - a decode that fails here is a blank tab, not a missing badge.
+    //
+    // aiAnalysisOff is the one worth carrying. The server works it out per row precisely because a
+    // camera that has quietly dropped out of AI analysis looks exactly like a camera that has
+    // stopped seeing anything, and only the dashboard was showing it.
+    let aiAnalysisOff: Bool?
+    let clipState: String?
+    let clipPreSeconds: Int?
+    let clipPostSeconds: Int?
+
     var isAnalyzed: Bool { kind == "analyzed" }
     var hasClip: Bool { clipUrl != nil }
+
+    // Defaults to false so a server that doesn't send the field reads as "analysis is on", which
+    // is what every install did before it existed.
+    var isAiAnalysisOff: Bool { aiAnalysisOff ?? false }
+
+    // See ClipStates in ActivityEndpoints. `none` and an absent value both mean there is nothing
+    // to say about a clip on this row.
+    enum ClipState: String {
+        case ready, recording, missing, off
+    }
+
+    var clip: ClipState? {
+        guard let clipState else { return nil }
+        return ClipState(rawValue: clipState)
+    }
 
     // Only an analyzed row has an alert behind it, and only then is `id` a bare alert guid.
     var analysisId: UUID? { isAnalyzed ? UUID(uuidString: id) : nil }

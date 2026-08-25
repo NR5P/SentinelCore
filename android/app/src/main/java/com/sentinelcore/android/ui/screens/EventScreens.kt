@@ -270,18 +270,32 @@ private fun EventImage(
             modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)),
             description = "${event.camera} event",
         )
-        if (event.hasClip) {
+        // Showing nothing where a clip would be cannot be told apart from a clip still being
+        // written, or a camera that was never recording them - and those want different reactions.
+        // Same set of states the dashboard has distinguished since clipState was added; "off" is a
+        // deliberate setting and "none" never applied to this row, so neither earns a badge. A
+        // server too old to send clipState falls back to hasClip, exactly as before.
+        val badge: Triple<androidx.compose.ui.graphics.vector.ImageVector, String, androidx.compose.ui.graphics.Color>? =
+            when (event.clipState) {
+                "ready" -> Triple(Icons.Default.PlayArrow, "Clip", SentinelCyan)
+                "recording" -> Triple(Icons.Default.Refresh, "Recording…", SentinelAmber)
+                "missing" -> Triple(Icons.Default.Warning, "No clip", SentinelAmber)
+                null -> if (event.hasClip) Triple(Icons.Default.PlayArrow, "Clip", SentinelCyan) else null
+                else -> null
+            }
+
+        if (badge != null) {
             Row(
                 modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = "Video clip",
-                    tint = SentinelCyan,
+                    badge.first,
+                    contentDescription = badge.second,
+                    tint = badge.third,
                     modifier = Modifier.size(16.dp),
                 )
-                Text("Clip", color = SentinelCyan, style = MaterialTheme.typography.labelSmall)
+                Text(badge.second, color = badge.third, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
@@ -339,6 +353,17 @@ private fun EventSummary(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            // A camera whose frames are never analyzed produces motion rows that look exactly like
+            // a camera which has stopped seeing anything worth describing.
+            if (event.isAiAnalysisOff) {
+                Text(
+                    "AI off",
+                    color = SentinelAmber,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
             if (event.confirmation != null && event.confirmation != "confirmed") {
                 Icon(
                     Icons.Default.Warning,

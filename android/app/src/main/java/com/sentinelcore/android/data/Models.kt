@@ -47,9 +47,23 @@ data class ActivityItem(
     val confirmation: String?,
     val cameraId: String?,
     val triggerAreaFraction: Double?,
+    // All four default to null, because a server older than they are sends none of them and this
+    // list is the app's main screen.
+    //
+    // aiAnalysisOff is the one worth carrying. The server works it out per row precisely because a
+    // camera that has quietly dropped out of AI analysis looks exactly like a camera that has
+    // stopped seeing anything, and only the dashboard was showing it.
+    val aiAnalysisOff: Boolean? = null,
+    val clipState: String? = null,
+    val clipPreSeconds: Int? = null,
+    val clipPostSeconds: Int? = null,
 ) {
     val isAnalyzed: Boolean get() = kind == "analyzed"
     val hasClip: Boolean get() = clipUrl != null
+
+    // Defaults to false so a server that doesn't send the field reads as "analysis is on", which
+    // is what every install did before it existed.
+    val isAiAnalysisOff: Boolean get() = aiAnalysisOff == true
 
     // Only an analyzed row has an alert behind it, and only then is `id` a bare alert guid.
     val analysisId: String? get() = if (isAnalyzed) id else null

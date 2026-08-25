@@ -125,15 +125,7 @@ private struct AlertCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .clipped()
                 .overlay(alignment: .bottomLeading) {
-                    if event.hasClip {
-                        Label("Clip", systemImage: "play.fill")
-                            .font(.caption2)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.6), in: Capsule())
-                            .foregroundStyle(SentinelTheme.cyan)
-                            .padding(8)
-                    }
+                    clipBadge
                 }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -160,6 +152,12 @@ private struct AlertCard: View {
                 HStack(spacing: 14) {
                     Text(footerLabel)
                         .foregroundStyle(event.isAnalyzed ? SentinelTheme.cyan : .secondary)
+                    // A camera whose frames are never analyzed produces motion rows that look
+                    // exactly like a camera which has stopped seeing anything worth describing.
+                    if event.isAiAnalysisOff {
+                        Label("AI off", systemImage: "eye.slash")
+                            .foregroundStyle(SentinelTheme.amber)
+                    }
                     if event.notified {
                         Label("Notified", systemImage: "bell.fill").foregroundStyle(SentinelTheme.green)
                     }
@@ -180,6 +178,37 @@ private struct AlertCard: View {
             }
         }
         .padding(20)
+    }
+
+    // Showing nothing where a clip would be cannot be told apart from a clip still being written,
+    // or a camera that was never recording them - and those want different reactions. Same set of
+    // states the dashboard has distinguished since clipState was added.
+    @ViewBuilder
+    private var clipBadge: some View {
+        switch event.clip {
+        case .ready:
+            badge("Clip", icon: "play.fill", tint: SentinelTheme.cyan)
+        case .recording:
+            badge("Recording…", icon: "record.circle", tint: SentinelTheme.amber)
+        case .missing:
+            badge("No clip", icon: "exclamationmark.triangle.fill", tint: SentinelTheme.amber)
+        case .off, .none:
+            // "off" is a deliberate setting and "none" never applied to this row; neither earns a
+            // badge on every card. hasClip covers a server too old to send clipState.
+            if event.clip == nil && event.hasClip {
+                badge("Clip", icon: "play.fill", tint: SentinelTheme.cyan)
+            }
+        }
+    }
+
+    private func badge(_ text: String, icon: String, tint: Color) -> some View {
+        Label(text, systemImage: icon)
+            .font(.caption2)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.6), in: Capsule())
+            .foregroundStyle(tint)
+            .padding(8)
     }
 
     private var footerLabel: String {
