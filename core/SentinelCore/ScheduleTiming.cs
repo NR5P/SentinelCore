@@ -94,15 +94,29 @@ public static class ScheduleTiming
         var hasEnd = TryParseTimeOfDay(schedule.WindowEnd, out var windowEnd);
         if (!hasStart || !hasEnd) return AlignToEpoch(after, schedule.IntervalSeconds);
 
-        var windowLength = WindowLength(windowStart, windowEnd);
+        // A window whose end is not after its start runs past midnight into the next day; equal
+        // start and end is the whole day, since a zero-length window could never fire and is
+        // never what someone meant.
+        var crossesMidnight = windowEnd <= windowStart;
         var startDate = LocalDate(after, zone);
 
         // Starts a day early: a window that crosses midnight (22:00 -> 06:00) may have opened
         // yesterday and still be open now.
         for (var offset = -1; offset <= DayWalkLimit; offset++)
         {
-            var open = ResolveLocal(startDate.AddDays(offset).ToDateTime(windowStart), zone);
-            var close = open + windowLength;
+            var openDate = startDate.AddDays(offset);
+
+            // Both ends are resolved from their own wall-clock time on their own date, rather
+            // than the close being the open plus a fixed duration. On the two nights a year the
+            // clocks move, those are not the same thing: 22:00 -> 06:00 is eight hours on the
+            // wall clock but seven real hours in spring and nine in autumn. Adding a wall-clock
+            // length as an absolute TimeSpan shut the window an hour early every autumn - the
+            // last hour of the night simply stopped firing - and held it an hour open every
+            // spring. Resolving the end the same way as the start is what makes "until 06:00"
+            // mean 06:00 on all 365 nights.
+            var open = ResolveLocal(openDate.ToDateTime(windowStart), zone);
+            var close = ResolveLocal(
+                (crossesMidnight ? openDate.AddDays(1) : openDate).ToDateTime(windowEnd), zone);
             if (close <= after) continue;
 
             var candidate = open > after ? open : AlignFrom(open, interval, after);
@@ -237,11 +251,6 @@ public static class ScheduleTiming
 
     private static DateOnly LocalDate(DateTimeOffset instant, TimeZoneInfo zone) =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, zone).DateTime);
-
-    // A window whose end is not after its start wraps past midnight; equal start and end is the
-    // whole day, since a zero-length window could never fire and is never what someone meant.
-    private static TimeSpan WindowLength(TimeOnly start, TimeOnly end) =>
-        end > start ? end - start : TimeSpan.FromDays(1) - (start - end);
 
     private static DateTimeOffset AlignToEpoch(DateTimeOffset after, int intervalSeconds)
     {

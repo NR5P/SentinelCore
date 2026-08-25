@@ -200,6 +200,57 @@ public sealed class ScheduleTimingTests
         Assert.Equal(Instant(2026, 8, 5, 2, 0, NewYork), next);
     }
 
+    // A window that runs past midnight spans one of the two nights a year when the clocks move,
+    // and "22:00 to 06:00" is eight hours on the wall clock but seven real hours in spring and
+    // nine in autumn. Measuring it as a duration and adding it to the opening shut the window at
+    // 05:00 every autumn - the last hour of the night silently stopped firing - and held it open
+    // until 07:00 every spring. The ordinary-night rows are the control: this only ever went
+    // wrong on two nights, which is exactly why it could go unnoticed.
+    [Theory]
+    [InlineData(2026, 8, 5)]    // an ordinary night
+    [InlineData(2026, 11, 1)]   // fall back, 02:00 -> 01:00
+    [InlineData(2026, 3, 8)]    // spring forward, 02:00 -> 03:00
+    public void Interval_WithAWindowCrossingMidnight_KeepsTickingUntilItsEndHour(int year, int month, int day)
+    {
+        var schedule = Interval(1800) with { WindowStart = "22:00", WindowEnd = "06:00" };
+        var after = Instant(year, month, day, 5, 10, NewYork);
+
+        var next = ScheduleTiming.NextOccurrence(schedule, after, NewYork, null);
+
+        Assert.Equal(Instant(year, month, day, 5, 30, NewYork), next);
+    }
+
+    [Theory]
+    [InlineData(2026, 8, 5)]
+    [InlineData(2026, 11, 1)]
+    [InlineData(2026, 3, 8)]
+    public void Interval_WithAWindowCrossingMidnight_IsShutOnceItsEndHourPasses(int year, int month, int day)
+    {
+        var schedule = Interval(1800) with { WindowStart = "22:00", WindowEnd = "06:00" };
+        var after = Instant(year, month, day, 6, 10, NewYork);
+
+        var next = ScheduleTiming.NextOccurrence(schedule, after, NewYork, null);
+
+        // Nothing more until tonight's opening.
+        Assert.Equal(Instant(year, month, day, 22, 0, NewYork), next);
+    }
+
+    // The same rule for a window that does not cross midnight but does contain a transition:
+    // 01:00 -> 05:00 on the night the clocks go forward is three real hours, not four.
+    [Fact]
+    public void Interval_WithAWindowContainingASpringForward_StillEndsAtItsEndHour()
+    {
+        var schedule = Interval(1800) with { WindowStart = "01:00", WindowEnd = "05:00" };
+
+        Assert.Equal(
+            Instant(2026, 3, 8, 4, 30, NewYork),
+            ScheduleTiming.NextOccurrence(schedule, Instant(2026, 3, 8, 4, 10, NewYork), NewYork, null));
+
+        Assert.Equal(
+            Instant(2026, 3, 9, 1, 0, NewYork),
+            ScheduleTiming.NextOccurrence(schedule, Instant(2026, 3, 8, 5, 10, NewYork), NewYork, null));
+    }
+
     [Fact]
     public void Interval_WithAWindowShorterThanTheInterval_StillFiresOncePerWindow()
     {
