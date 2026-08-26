@@ -240,7 +240,7 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
                         $"Fast local model download failed checksum verification (expected {options.DownloadSha256}, got {hash}).");
             }
 
-            File.Move(tempPath, modelPath, overwrite: true);
+            AtomicFile.Replace(tempPath, modelPath);
             _logger.LogInformation("Fast local model downloaded and verified");
         }
         finally

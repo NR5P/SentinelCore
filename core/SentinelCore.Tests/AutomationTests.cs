@@ -87,7 +87,7 @@ public sealed class AutomationTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 

@@ -35,7 +35,7 @@ public sealed class ScheduleStoreTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -89,7 +89,7 @@ public sealed class ScheduleStoreTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -114,7 +114,7 @@ public sealed class ScheduleStoreTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -151,7 +151,7 @@ public sealed class ScheduleStoreTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -182,7 +182,7 @@ public sealed class ScheduleStoreTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -220,7 +220,7 @@ public sealed class ScheduleStoreTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -244,7 +244,7 @@ public sealed class ScheduleStoreTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 

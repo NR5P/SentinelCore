@@ -53,7 +53,7 @@ public sealed class MainAppEndpointTests : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        try { TempDirectories.Delete(_root); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         return ValueTask.CompletedTask;
     }
 
@@ -143,10 +143,36 @@ public sealed class MainAppEndpointTests : IAsyncDisposable
 
         foreach (var route in routes)
         {
-            using var response = await client.GetAsync(route, ct);
+            using var response = await GetOnceWarmAsync(client, route, ct);
             Assert.True(
                 response.StatusCode == HttpStatusCode.OK,
                 $"GET {route} answered {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(ct)}");
+        }
+    }
+
+    // /api/system/status is fed by SystemStatsSampler, a BackgroundService, and answers 503 until
+    // its first pass has published a snapshot. Asking the instant the host starts is therefore a
+    // race - one this suite happened to win on Linux and lose on Windows, where the sampler's first
+    // pass includes a vision-backend probe that takes longer to refuse.
+    //
+    // Waiting is the honest fix: the assertion is "this route answers", not "it answers within a
+    // millisecond of boot". Every other route here is served straight from a store and needs none
+    // of this, so only a 503 is retried.
+    private static async Task<HttpResponseMessage> GetOnceWarmAsync(
+        HttpClient client, string route, CancellationToken ct)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+        while (true)
+        {
+            var response = await client.GetAsync(route, ct);
+            if (response.StatusCode != HttpStatusCode.ServiceUnavailable ||
+                DateTimeOffset.UtcNow >= deadline)
+            {
+                return response;
+            }
+
+            response.Dispose();
+            await Task.Delay(200, ct);
         }
     }
 

@@ -203,7 +203,7 @@ public sealed class ClipExtensionTests
 
         public void Dispose()
         {
-            try { Directory.Delete(Path, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try { TempDirectories.Delete(Path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
     }
 }

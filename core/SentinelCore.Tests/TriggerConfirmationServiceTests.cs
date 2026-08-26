@@ -103,7 +103,7 @@ public sealed class TriggerConfirmationServiceTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempDirectories.Delete(root);
         }
     }
 
@@ -149,7 +149,7 @@ public sealed class TriggerConfirmationServiceTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempDirectories.Delete(root);
         }
     }
 
@@ -209,7 +209,7 @@ public sealed class TriggerConfirmationServiceTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempDirectories.Delete(root);
         }
     }
 
@@ -242,7 +242,7 @@ public sealed class TriggerConfirmationServiceTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempDirectories.Delete(root);
         }
     }
 
@@ -273,7 +273,7 @@ public sealed class TriggerConfirmationServiceTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TempDirectories.Delete(root);
         }
     }
 

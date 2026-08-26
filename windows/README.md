@@ -1,0 +1,102 @@
+# Sentinel Core for Windows
+
+Native Windows client, written in C# on WPF (.NET 8). The Windows counterpart to the SwiftUI app in
+[`ios/`](../ios) — same server, same JSON API, same feature set.
+
+## Build and run
+
+Needs the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Nothing else — no Visual
+Studio, no workloads.
+
+```bash
+dotnet run --project SentinelCore.App
+```
+
+On first launch the app searches the local network for a server and lists what it finds; you can
+also type the address by hand, for example `http://192.168.1.50:3320`.
+
+## Test
+
+```bash
+dotnet test
+```
+
+175 tests. The client library is exercised end to end against a real loopback HTTP server rather
+than a mocked handler — status codes, cookies, error-body shapes and all — because half of what that
+layer does is precisely the part a mock replaces.
+
+## Ship it to another PC
+
+The build above produces an app that needs the .NET 8 **Desktop** Runtime installed on the machine
+that runs it. To produce a folder that needs nothing at all:
+
+```bash
+./publish.ps1
+```
+
+That writes a self-contained x64 build to `publish/`. It is larger (~150 MB) and it is the version
+worth handing to someone who should not have to install a runtime first.
+
+## What it does
+
+- **Events** — the server's merged list of everything the cameras caught: motion and the AI's read
+  of it, one row per moment. Search, notified-only and show-hidden filters, refreshing every 30
+  seconds. Opening a row gives the full-resolution snapshot, the clip when one was recorded, and
+  everything the server knows about the event.
+- **Timeline** — a day of one camera drawn end to end: recorded stretches, AI event marks, severity
+  and unreviewed filters, and the reviewed flag shared with every other client.
+- **Live** — a tile per camera, arranged per account by dragging one onto another. Double-click for
+  the full-size view with PTZ and the manual record button.
+- **Device Hub** — the lights, gates, locks and sensors the server tracks over MQTT, with the
+  controls each kind actually speaks, plus discovery and editing.
+- **Settings** — connection (including the remote fallback address), account, server health, service
+  restarts and host reboot, the connection log, and every admin screen: cameras, trigger zones,
+  accounts, dashboard login, known faces, known vehicles, schedules, prompt profiles, HomeKit,
+  backup, licence, and the whole schema-driven server settings tree.
+
+## Two things worth knowing
+
+**Live video runs inside WebView2.** WPF can play none of the transports this server offers —
+WebRTC needs a peer connection and MSE needs MediaSource, and both live in a browser engine. So each
+tile hosts the Edge WebView2 control running the same WebRTC → MSE ladder the web dashboard uses,
+handed this session's own cookie. The runtime ships with Windows 11 and current Windows 10; where it
+is missing, the app says so and everything else keeps working.
+
+The dashboard's third tier is HLS and this deliberately does not have it: the server's HLS is
+MPEG-TS for H.264 cameras, which no browser engine plays without a JavaScript transmuxer. On a
+server with no go2rtc at all, tiles fall back to refreshing the server's cached thumbnail and the
+badge says `SNAPSHOTS`, so nobody mistakes a two-second-old still for a live feed.
+
+**Notifications are local, not push.** Sentinel Core sends push through Apple and Firebase; there is
+no Windows provider, so this app cannot register for a token the way the phone does. Instead it
+raises a tray notification itself whenever its own refresh finds an alert the server decided to
+notify about — which means it has to be running to alert you. The first refresh of a session only
+seeds the set, so connecting to a server with a day of history behind it doesn't fire a hundred
+notifications at once.
+
+## Layout
+
+| Project | What's in it |
+| --- | --- |
+| `SentinelCore.Client` | Models, the API client, mDNS discovery, credential and preference storage, and `AppModel` — all of it UI-framework-free and testable without a window. |
+| `SentinelCore.App` | The WPF application: theme, views, dialogs, tray icon, and the WebView2 live player. |
+| `SentinelCore.Client.Tests` | 140 tests over the client library, including the DNS-SD parser and the connect/fallback sequence. |
+| `SentinelCore.App.Tests` | 35 tests over the presentation layer — row wording, badges, converters, relative time. |
+
+## Where things are kept
+
+`%LOCALAPPDATA%\SentinelCore\` holds `settings.json` (the server address and a couple of
+preferences), `credentials\` (the dashboard login, encrypted with DPAPI against your Windows
+account), and `WebView2\` (the live player's browser profile). Deleting the folder returns the app
+to a fresh install.
+
+## HTTPS and the server's own certificate
+
+The server generates its own certificate authority, which Windows does not trust out of the box. The
+app notices, falls back to the server's plain-HTTP port, and says so in Settings rather than failing
+or downgrading silently. Traffic stays on your local network either way. To keep HTTPS instead,
+install the server's `certs/ca.crt` into **Local Machine → Trusted Root Certification Authorities**
+on this PC — see `core/docs/DEPLOYMENT.md` section 14a.
+
+The fallback is deliberately local-only. A remote address crosses the open internet, where quietly
+dropping encryption is not an acceptable trade, so it is never downgraded.

@@ -584,8 +584,8 @@ public sealed class TriggerRewindTests
 
         private void MakeExecutable()
         {
-            using var chmod = System.Diagnostics.Process.Start("/bin/chmod", $"+x {_stubPath}")!;
-            chmod.WaitForExit();
+            PosixShellStubs.SkipIfUnavailable();
+            PosixShellStubs.MakeExecutable(_stubPath);
         }
 
         // A real JPEG, so the service's IsCompleteJpeg check sees what it expects.
@@ -599,7 +599,7 @@ public sealed class TriggerRewindTests
 
         public void Dispose()
         {
-            try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try { TempDirectories.Delete(_root); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
     }
 

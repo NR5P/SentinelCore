@@ -1,0 +1,221 @@
+<UserControl x:Class="SentinelCore.App.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,16,20,24">
+        <StackPanel MaxWidth="860" HorizontalAlignment="Left">
+            <TextBlock Text="Settings" Style="{StaticResource SectionTitle}" Margin="0,0,0,14" />
+
+            <!-- ================= Server ================= -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="SERVER" Style="{StaticResource GroupHeading}" />
+
+                    <TextBlock Text="Dashboard address" Style="{StaticResource Caption}" Margin="0,0,0,4" />
+                    <TextBox x:Name="AddressBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
+                               Text="For example: http://192.168.1.50:3320" />
+
+                    <TextBlock Text="Remote address (optional)" Style="{StaticResource Caption}" Margin="0,14,0,4" />
+                    <TextBox x:Name="RemoteAddressBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap"
+                               Text="A Cloudflare Tunnel (or any other externally-reachable) address to use when the local address can't be reached, such as from a laptop away from home. Point it at the server's Internet Exposed port, not the normal dashboard port — that port always requires a login, while the normal one trusts the local network." />
+
+                    <TextBlock x:Name="HttpFallbackNotice" Style="{StaticResource Caption}" Margin="0,12,0,0"
+                               Visibility="Collapsed" Foreground="{StaticResource Amber}" TextWrapping="Wrap"
+                               Text="Connected over plain HTTP: this PC doesn't trust the certificate the server generated for itself, so the https:// address can't be used yet. Everything works, and traffic stays on your local network. For an encrypted connection, install the server's certificate authority (certs/ca.crt on the server) into Local Machine → Trusted Root Certification Authorities on this PC." />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <Button x:Name="SaveServerButton" Content="Save and Reconnect"
+                                Style="{StaticResource PrimaryButton}" Click="OnSaveServerClicked" />
+                        <Button Content="Forget this server" Margin="10,0,0,0" Style="{StaticResource DangerButton}"
+                                Click="OnForgetServerClicked" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- ================= Account ================= -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="ACCOUNT" Style="{StaticResource GroupHeading}" />
+                    <TextBlock x:Name="AccountText" Style="{StaticResource BodyText}" />
+                    <StackPanel x:Name="AccountButtons" Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Content="Change Password" Click="OnChangePasswordClicked" />
+                        <Button Content="Sign Out" Margin="10,0,0,0" Style="{StaticResource DangerButton}"
+                                Click="OnSignOutClicked" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- ================= Admin sections ================= -->
+            <StackPanel x:Name="AdminSections">
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="CAMERAS" Style="{StaticResource GroupHeading}" />
+                        <WrapPanel>
+                            <Button Content="Manage Cameras" Margin="0,0,10,0" Click="OnManageCamerasClicked" />
+                            <Button Content="Known Faces" Margin="0,0,10,0" Click="OnKnownFacesClicked" />
+                            <Button Content="Known Vehicles" Click="OnKnownVehiclesClicked" />
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
+                                   Text="Known vehicles are number plates the AI treats as household rather than a stranger's." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="ACCOUNTS" Style="{StaticResource GroupHeading}" />
+                        <WrapPanel>
+                            <Button Content="Manage Accounts" Margin="0,0,10,0" Click="OnManageAccountsClicked" />
+                            <Button Content="Dashboard Login" Click="OnDashboardLoginClicked" />
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
+                                   Text="Whether opening the dashboard requires a login at all, and who can." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
+                        <TextBlock Text="SERVER CONFIGURATION" Style="{StaticResource GroupHeading}" />
+                        <WrapPanel>
+                            <Button Content="Server Settings" Margin="0,0,10,10" Click="OnServerSettingsClicked" />
+                            <Button Content="Schedules" Margin="0,0,10,10" Click="OnSchedulesClicked" />
+                            <Button Content="Prompt Profiles" Margin="0,0,10,10" Click="OnPromptProfilesClicked" />
+                            <Button Content="Apple HomeKit" Margin="0,0,10,10" Click="OnHomeKitClicked" />
+                            <Button Content="Backup" Margin="0,0,10,10" Click="OnBackupClicked" />
+                            <Button Content="License" Margin="0,0,10,10" Click="OnLicenseClicked" />
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource Caption}"
+                                   Text="Every server setting the web dashboard has — alerts, AI backends, MQTT, Device Hub and more — editable from here." />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- ================= Notifications ================= -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="NOTIFICATIONS" Style="{StaticResource GroupHeading}" />
+                    <CheckBox x:Name="DesktopAlertsToggle" Content="Show a desktop notification for new alerts"
+                              Click="OnDesktopAlertsToggled" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0" TextWrapping="Wrap"
+                               Text="Windows has no equivalent of the phone's push service here — Sentinel Core sends push through Apple and Firebase. Instead this app raises a notification itself whenever its own refresh finds an alert the server decided to notify about, so it needs to be running to alert you." />
+                    <TextBlock x:Name="PushStatusText" Style="{StaticResource Caption}" Margin="0,10,0,0" />
+                    <Button x:Name="TestNotificationButton" Content="Send Test Notification" Margin="0,12,0,0"
+                            HorizontalAlignment="Left" Click="OnTestNotificationClicked"
+                            ToolTip="Asks the server to send its own test push to every registered phone and tablet" />
+                    <TextBlock x:Name="PushMessageText" Style="{StaticResource Caption}" Margin="0,8,0,0"
+                               Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+
+            <!-- ================= Server health ================= -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="SERVER HEALTH" Style="{StaticResource GroupHeading}" />
+                    <Grid x:Name="HealthGrid">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="CPU" Style="{StaticResource Caption}" Margin="0,0,0,8" />
+                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,8">
+                            <TextBlock x:Name="CpuText" Style="{StaticResource BodyText}" />
+                            <ProgressBar x:Name="CpuBar" Maximum="1" Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Memory" Style="{StaticResource Caption}" Margin="0,0,0,8" />
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,8">
+                            <TextBlock x:Name="MemoryText" Style="{StaticResource BodyText}" />
+                            <ProgressBar x:Name="MemoryBar" Maximum="1" Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Disk" Style="{StaticResource Caption}" Margin="0,0,0,8" />
+                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,0,0,8">
+                            <TextBlock x:Name="DiskText" Style="{StaticResource BodyText}" />
+                            <ProgressBar x:Name="DiskBar" Maximum="1" Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Analysis queue" Style="{StaticResource Caption}" Margin="0,0,0,6" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" x:Name="QueueText" Style="{StaticResource BodyText}" Margin="0,0,0,6" />
+
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Vision backend" Style="{StaticResource Caption}" Margin="0,0,0,6" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="VisionText" Style="{StaticResource BodyText}" Margin="0,0,0,6" />
+
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Uptime" Style="{StaticResource Caption}" />
+                        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="UptimeText" Style="{StaticResource BodyText}" />
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                        <Button Content="Refresh" Click="OnRefreshHealthClicked" />
+                        <Button x:Name="RestartBridgeButton" Content="Restart bridge" Margin="10,0,0,0"
+                                Click="OnRestartBridgeClicked" />
+                        <Button x:Name="RestartDashboardButton" Content="Restart dashboard" Margin="10,0,0,0"
+                                Click="OnRestartDashboardClicked" />
+                        <Button x:Name="HostRebootButton" Content="Reboot the server…" Margin="10,0,0,0"
+                                Style="{StaticResource DangerButton}" Click="OnHostRebootClicked" />
+                    </StackPanel>
+                    <TextBlock x:Name="HealthNotice" Style="{StaticResource Caption}" Margin="0,10,0,0"
+                               Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+
+            <!-- ================= System ================= -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="SYSTEM" Style="{StaticResource GroupHeading}" />
+                    <TextBlock x:Name="SystemText" Style="{StaticResource BodyText}" />
+                    <TextBlock x:Name="SystemErrorText" Style="{StaticResource Caption}" Margin="0,8,0,0"
+                               Foreground="{StaticResource Red}" Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+
+            <!-- ================= Diagnostics ================= -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="DIAGNOSTICS" Style="{StaticResource GroupHeading}" />
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="ToggleLogButton" Content="Show connection log" Click="OnToggleLogClicked" />
+                        <Button Content="Copy log" Margin="10,0,0,0" Click="OnCopyLogClicked" />
+                        <Button Content="Clear log" Margin="10,0,0,0" Click="OnClearLogClicked" />
+                    </StackPanel>
+
+                    <Border x:Name="LogPanel" Visibility="Collapsed" Margin="0,12,0,0" CornerRadius="6"
+                            Background="{StaticResource InputBackground}" Padding="10" MaxHeight="320">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="LogList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,0,0,8">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding LevelLabel}" FontSize="10.5"
+                                                           FontFamily="Consolas, Courier New"
+                                                           Foreground="{StaticResource Cyan}" Width="60" />
+                                                <TextBlock Text="{Binding Timestamp, StringFormat=HH:mm:ss}"
+                                                           FontSize="10.5" FontFamily="Consolas, Courier New"
+                                                           Foreground="{StaticResource SecondaryText}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Message}" Style="{StaticResource Monospace}"
+                                                       Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0" TextWrapping="Wrap"
+                               Text="Request bodies, passwords, cookies and server response contents are never written here." />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -44,7 +44,7 @@ public sealed class FileResultStore : IResultStore
         var temporaryPath = finalPath + ".tmp";
         await using (var stream = File.Create(temporaryPath))
             await JsonSerializer.SerializeAsync(stream, result, JsonOptions, cancellationToken);
-        File.Move(temporaryPath, finalPath, true);
+        AtomicFile.Replace(temporaryPath, finalPath);
         await _eventStore.RecordAsync(result, cancellationToken);
     }
 

@@ -1,0 +1,70 @@
+<Window x:Class="SentinelCore.App.Views.CameraDiscoveryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Find cameras" Height="600" Width="720" MinHeight="460" MinWidth="560">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Style="{StaticResource DialogHeader}">
+            <StackPanel>
+                <TextBlock Text="Find cameras" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap"
+                           Text="The server scans the networks you pick for ONVIF cameras. Choose the network the cameras are on - a virtual adapter almost never is." />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="460" TextWrapping="Wrap" />
+                <Button Content="Close" HorizontalAlignment="Right" MinWidth="90" Click="OnCloseClicked" />
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Padding="18,14" BorderBrush="{StaticResource CardBorder}"
+                BorderThickness="0,0,0,1">
+            <StackPanel>
+                <TextBlock Text="NETWORKS TO SCAN" Style="{StaticResource GroupHeading}" />
+                <ItemsControl x:Name="InterfaceList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <CheckBox IsChecked="{Binding Selected, Mode=TwoWay}" Margin="0,4">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Title}" Foreground="{StaticResource PrimaryText}" />
+                                    <TextBlock Text="{Binding Subtitle}" Style="{StaticResource Caption}" />
+                                </StackPanel>
+                            </CheckBox>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button x:Name="ScanButton" Content="Start scan" Margin="0,14,0,0" HorizontalAlignment="Left"
+                        Style="{StaticResource PrimaryButton}" Click="OnScanClicked" />
+            </StackPanel>
+        </Border>
+
+        <ListBox x:Name="ResultList" Margin="12">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Padding="12" Margin="0,4" CornerRadius="6" Background="{StaticResource CardBackground}"
+                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SuggestedName}" FontWeight="SemiBold"
+                                           Foreground="{StaticResource PrimaryText}" />
+                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Caption}" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="{Binding ActionLabel}" Tag="{Binding}"
+                                    IsEnabled="{Binding CanAdd}" Click="OnAddClicked" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</Window>

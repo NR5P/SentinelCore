@@ -1,0 +1,76 @@
+<UserControl x:Class="SentinelCore.App.Views.ActivityDetailView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:live="clr-namespace:SentinelCore.App.Live"
+             xmlns:design="clr-namespace:SentinelCore.App.Design">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,14,20,20">
+        <StackPanel MaxWidth="900" HorizontalAlignment="Left">
+
+            <!-- Media: the clip when one was recorded, otherwise the snapshot. -->
+            <Border CornerRadius="8" ClipToBounds="True" Background="Black" MinHeight="300">
+                <design:UnlicensedWatermark x:Name="Watermark">
+                    <Grid>
+                        <design:RemoteImage x:Name="SnapshotImage" DecodeWidth="1920" Stretch="Uniform" />
+                        <live:PlayerHost x:Name="ClipPlayer" Mode="clip" Visibility="Collapsed" />
+                        <TextBlock x:Name="MediaNotice" Foreground="#A6FFFFFF" FontSize="12"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   TextAlignment="Center" MaxWidth="360" TextWrapping="Wrap"
+                                   Visibility="Collapsed" />
+                    </Grid>
+                </design:UnlicensedWatermark>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <Button x:Name="SnapshotButton" Content="Snapshot" Click="OnShowSnapshotClicked" />
+                <Button x:Name="ClipButton" Content="Clip" Margin="8,0,0,0" Click="OnShowClipClicked" />
+                <Button Content="Save snapshot…" Margin="8,0,0,0" Click="OnSaveSnapshotClicked" />
+                <TextBlock x:Name="NoticeText" Style="{StaticResource Caption}" Margin="14,0,0,0"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420" />
+            </StackPanel>
+
+            <!-- What the AI made of the frame. Only present when something looked at it. -->
+            <Border x:Name="AnalysisCard" Style="{StaticResource Card}" Margin="0,16,0,0">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Border Style="{StaticResource Chip}">
+                            <TextBlock x:Name="TypeText" FontSize="11" Foreground="{StaticResource Cyan}" />
+                        </Border>
+                        <Border x:Name="NotifiedChip" Style="{StaticResource Chip}" Margin="8,0,0,8">
+                            <TextBlock Text="NOTIFIED" FontSize="11" Foreground="{StaticResource Green}" />
+                        </Border>
+                        <TextBlock x:Name="ConfidenceText" Style="{StaticResource Caption}"
+                                   VerticalAlignment="Center" Margin="6,0,0,8" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="SummaryText" Style="{StaticResource BodyText}" FontSize="15" />
+
+                    <StackPanel x:Name="NotifyReasonRow" Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="&#xEA8F;" FontFamily="Segoe MDL2 Assets"
+                                   Foreground="{StaticResource Green}" Margin="0,0,8,0" />
+                        <TextBlock x:Name="NotifyReasonText" Style="{StaticResource BodyText}"
+                                   Foreground="{StaticResource Green}" MaxWidth="760" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="PackageRow" Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBlock Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets"
+                                   Foreground="{StaticResource Amber}" Margin="0,0,8,0" />
+                        <TextBlock x:Name="PackageText" Style="{StaticResource BodyText}"
+                                   Foreground="{StaticResource Amber}" MaxWidth="760" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="LinkedRow" Orientation="Horizontal" Margin="0,8,0,0">
+                        <TextBlock Text="&#xE71B;" FontFamily="Segoe MDL2 Assets"
+                                   Foreground="{StaticResource SecondaryText}" Margin="0,0,8,0" />
+                        <TextBlock x:Name="LinkedText" Style="{StaticResource Caption}" MaxWidth="760" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- The facts, whatever the row is. -->
+            <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                <StackPanel x:Name="FactsPanel" />
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

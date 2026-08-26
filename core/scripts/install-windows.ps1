@@ -238,6 +238,28 @@ foreach ($required in @($mainDll, $webDll)) {
     if (-not (Test-Path $required)) { throw "Expected build output missing: $required" }
 }
 
+# Certificates
+#
+# The dashboard generates its own HTTPS certificate authority and server key on first start, into
+# a "certs" folder beside the two components. On Linux and macOS it chmods that folder to 700 and
+# the key to 600 itself; it can't do the equivalent here, because Windows permissions are ACLs
+# rather than a mode and the .NET APIs for them are Windows-only.
+#
+# That matters because of where the key ends up. A folder created directly under C:\ inherits
+# "BUILTIN\Users: ReadAndExecute" from the drive root, so an install to C:\SentinelCore - which
+# -InstallDir invites - would leave the server's private key readable by every account on the
+# machine. Creating the folder here with an explicit ACL first means the app finds it already
+# locked down, and its Directory.CreateDirectory leaves an existing folder's permissions alone.
+#
+# SIDs rather than names: BUILTIN\Administrators is localised, S-1-5-32-544 is not.
+$certDir = Join-Path $InstallDir 'certs'
+Write-Step "Securing $certDir"
+New-Item -ItemType Directory -Force -Path $certDir | Out-Null
+& icacls $certDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "Couldn't restrict permissions on $certDir - refusing to continue and leave a private key world-readable."
+}
+
 Install-AppService -Name 'SentinelCoreBridge' `
     -DisplayName 'Sentinel Core - Alert Pipeline' `
     -Description 'Receives Blue Iris alerts, analyses them with AI, and sends notifications.' `

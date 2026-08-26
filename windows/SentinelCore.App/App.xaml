@@ -1,0 +1,23 @@
+<Application x:Class="SentinelCore.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:design="clr-namespace:SentinelCore.App.Design"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Design/Theme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <design:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+            <design:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibility" />
+            <design:NullToVisibilityConverter x:Key="NullToVisibility" />
+            <design:EmptyStringToVisibilityConverter x:Key="EmptyStringToVisibility" />
+            <design:InverseBoolConverter x:Key="InverseBool" />
+            <design:RelativeTimeConverter x:Key="RelativeTime" />
+            <design:PercentConverter x:Key="Percent" />
+            <design:ByteSizeConverter x:Key="ByteSize" />
+            <design:TitleCaseConverter x:Key="TitleCase" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

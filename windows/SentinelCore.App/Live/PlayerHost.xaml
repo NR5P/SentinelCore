@@ -1,0 +1,25 @@
+<UserControl x:Class="SentinelCore.App.Live.PlayerHost"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
+
+    <Grid Background="Black">
+        <wv2:WebView2 x:Name="Web" Visibility="Collapsed" DefaultBackgroundColor="Black" />
+
+        <!-- Shown until the first frame, and instead of the player when WebView2 itself is missing.
+             A black rectangle with no explanation is the one outcome worth going out of the way to
+             avoid: it looks identical to a camera that has failed. -->
+        <Grid x:Name="Placeholder">
+            <Image x:Name="Poster" Stretch="UniformToFill" />
+            <Border Background="#66000000" />
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="18">
+                <TextBlock x:Name="PlaceholderTitle" Text="CONNECTING" HorizontalAlignment="Center"
+                           FontWeight="SemiBold" FontSize="11.5" Foreground="#B3FFFFFF" />
+                <TextBlock x:Name="PlaceholderMessage" Style="{StaticResource Caption}" TextAlignment="Center"
+                           Margin="0,8,0,0" MaxWidth="360" Visibility="Collapsed" />
+                <Button x:Name="RuntimeButton" Content="Get the WebView2 runtime" Margin="0,12,0,0"
+                        HorizontalAlignment="Center" Visibility="Collapsed" Click="OnRuntimeLinkClicked" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -1271,7 +1271,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1310,7 +1310,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1363,7 +1363,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1463,7 +1463,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1528,7 +1528,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1580,7 +1580,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2290,7 +2290,7 @@ public sealed class BasicTests
 
         Assert.True(settings.CanEnable(out var reason));
         Assert.Null(reason);
-        Directory.Delete(directory, recursive: true);
+        TempDirectories.Delete(directory);
     }
 
     [Theory]
@@ -2315,7 +2315,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2336,7 +2336,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2362,7 +2362,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2386,7 +2386,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2425,7 +2425,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2518,7 +2518,7 @@ public sealed class BasicTests
         Assert.False(File.Exists(image), "expired images should still be pruned.");
         Assert.False(File.Exists(result), "expired results should still be pruned.");
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     [Fact]
@@ -2534,7 +2534,7 @@ public sealed class BasicTests
         RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
 
         Assert.True(File.Exists(fresh));
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     // The sweep's log line is the only evidence anyone gets that retention ran, so the counts
@@ -2567,7 +2567,7 @@ public sealed class BasicTests
         Assert.Equal(2048, outcome.BytesReclaimed);
         Assert.Equal(0, outcome.FilesFailed);
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     // Nothing expired is the common case twice a day, and it has to be distinguishable from a
@@ -2589,7 +2589,7 @@ public sealed class BasicTests
         Assert.Equal(0, outcome.BytesReclaimed);
         Assert.Equal(0, outcome.FilesFailed);
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     [Fact]
@@ -2682,7 +2682,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2744,7 +2744,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2785,7 +2785,7 @@ public sealed class BasicTests
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2852,7 +2852,7 @@ public sealed class BasicTests
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2996,7 +2996,55 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
+        }
+    }
+
+    [Fact]
+    public async Task StartupNotificationWorker_WithTheHeartbeatHeldOpen_StillWritesTheCleanMarker()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"heartbeat-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var heartbeatPath = Path.Combine(directory, "heartbeat.json");
+        File.WriteAllText(heartbeatPath, "{ this is not json");
+
+        try
+        {
+            var worker = BuildStartupWorker(directory);
+            await worker.StartAsync(CancellationToken.None);
+
+            // Replacing a file while somebody else holds it open is free on Linux and macOS and
+            // an error on Windows, which is why this passes there on the first attempt and only
+            // exercises the retry here. A scanner opening the file it just saw appear does the
+            // same thing in production, for about as long, at no predictable moment.
+            // Taken on the test thread, where a failure to get it is a failed assertion. Opening
+            // it on the holder thread instead makes the same failure an unhandled exception on a
+            // thread nobody awaits, which takes the whole test process down with it.
+            var handle = OpenExclusively(heartbeatPath);
+
+            // Released from a dedicated thread, not the pool: the point is to let go while
+            // StopAsync is still retrying, and a pool queued behind the rest of this suite can sit
+            // on a work item for far longer than any budget worth giving a shutdown path.
+            var release = new Thread(() =>
+            {
+                Thread.Sleep(60);
+                handle.Dispose();
+            }) { IsBackground = true };
+            release.Start();
+
+            await worker.StopAsync(CancellationToken.None);
+            release.Join();
+
+            // The point of the marker: without it the next start reads "stopped mid-run" and
+            // reports a power cut that never happened.
+            var state = JsonSerializer.Deserialize<HeartbeatState>(
+                File.ReadAllText(heartbeatPath), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.NotNull(state);
+            Assert.True(state!.CleanShutdown);
+        }
+        finally
+        {
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3023,7 +3071,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3189,7 +3237,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3212,7 +3260,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3267,7 +3315,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3320,6 +3368,24 @@ public sealed class BasicTests
     private sealed class SingleClientHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    // The worker writes a heartbeat as it starts, so the file is not reliably free the instant
+    // StartAsync returns - and on Windows "not free" is what this whole test is about.
+    private static FileStream OpenExclusively(string path)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (true)
+        {
+            try
+            {
+                return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(10);
+            }
+        }
     }
 
     private static StartupNotificationWorker BuildStartupWorker(string dataDirectory) =>
@@ -3559,7 +3625,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3582,7 +3648,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3607,7 +3673,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -4790,7 +4856,7 @@ public sealed class BasicTests
         var unaged = await TriggerImagePaths.TryReadLatestAsync(root, cameraId, maxAge: null, CancellationToken.None);
         Assert.NotNull(unaged);
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     [Fact]

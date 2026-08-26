@@ -44,6 +44,6 @@ public static class AutoApiKeyProvisioner
         var options = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
         var temporaryPath = appSettingsPath + ".tmp";
         File.WriteAllText(temporaryPath, root.ToJsonString(options));
-        File.Move(temporaryPath, appSettingsPath, overwrite: true);
+        AtomicFile.Replace(temporaryPath, appSettingsPath);
     }
 }

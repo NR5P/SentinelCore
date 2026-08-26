@@ -23,9 +23,10 @@ public static class LicenseEndpoints
         // not showing it at all. Nothing here is privileged: whether the install is licensed is
         // already stamped across the pictures, and the customer name is the licence holder's own.
         // Installing a licence stays Admin-only, below.
-        app.MapGet("/api/license/status", async (AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
+        app.MapGet("/api/license/status", async (
+            AppSettingsFile settings, IConfiguration configuration, IHostEnvironment environment, CancellationToken ct) =>
         {
-            var licensePath = await ResolveLicensePathAsync(settings, configuration, ct);
+            var licensePath = await ResolveLicensePathAsync(settings, configuration, environment, ct);
             var status = LicenseStatus.Check(licensePath);
             return Results.Ok(status is null
                 ? new { valid = false }
@@ -36,7 +37,9 @@ public static class LicenseEndpoints
         // has no way to know what's on the customer's own computer). Validated with the same
         // embedded public key everything else uses before it's ever written to disk, so a
         // garbled upload can't silently clobber a license that was already working.
-        license.MapPost("/install", async (HttpRequest request, AppSettingsFile settings, IConfiguration configuration, CancellationToken ct) =>
+        license.MapPost("/install", async (
+            HttpRequest request, AppSettingsFile settings, IConfiguration configuration,
+            IHostEnvironment environment, CancellationToken ct) =>
         {
             using var reader = new StreamReader(request.Body);
             var contents = await reader.ReadToEndAsync(ct);
@@ -45,19 +48,18 @@ public static class LicenseEndpoints
             if (verified is null)
                 return Results.BadRequest(new { error = "That file doesn't look like a valid license - nothing was changed." });
 
-            var licensePath = await ResolveLicensePathAsync(settings, configuration, ct);
+            var licensePath = await ResolveLicensePathAsync(settings, configuration, environment, ct);
             await File.WriteAllTextAsync(licensePath, contents, ct);
 
             return Results.Ok(new { valid = true, customerName = verified.CustomerName });
         });
     }
 
-    private static async Task<string> ResolveLicensePathAsync(AppSettingsFile settings, IConfiguration configuration, CancellationToken ct)
+    private static async Task<string> ResolveLicensePathAsync(
+        AppSettingsFile settings, IConfiguration configuration, IHostEnvironment environment, CancellationToken ct)
     {
         var licenseSettings = await settings.GetSectionAsync<LicenseSettingsDto>("License", ct) ?? new LicenseSettingsDto();
-        var mainAppSettingsPath = configuration["MainAppSettingsPath"]
-            ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
-        var mainAppDirectory = Path.GetDirectoryName(Path.GetFullPath(mainAppSettingsPath))!;
+        var mainAppDirectory = Path.GetDirectoryName(MainAppSettingsPath.Resolve(configuration, environment))!;
         return Path.IsPathRooted(licenseSettings.FilePath)
             ? licenseSettings.FilePath
             : Path.Combine(mainAppDirectory, licenseSettings.FilePath);

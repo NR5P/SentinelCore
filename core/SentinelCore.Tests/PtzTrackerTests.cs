@@ -198,7 +198,7 @@ public class PtzTrackerTests
         finally
         {
             detector.Release();
-            try { Directory.Delete(root, recursive: true); } catch { /* best effort */ }
+            try { TempDirectories.Delete(root); } catch { /* best effort */ }
         }
     }
 

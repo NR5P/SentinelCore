@@ -415,7 +415,7 @@ public sealed class CompanionRewindMeasurementTests(ITestOutputHelper output, Co
 
         public ValueTask DisposeAsync()
         {
-            try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try { TempDirectories.Delete(_root); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             return ValueTask.CompletedTask;
         }
     }

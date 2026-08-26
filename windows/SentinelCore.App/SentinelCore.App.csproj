@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- For the tray icon and its balloon notifications, which is how this app raises an alert
+         when the server decides one is worth notifying about. WPF has no equivalent. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SentinelCore</AssemblyName>
+    <RootNamespace>SentinelCore.App</RootNamespace>
+    <ApplicationIcon>Resources\SentinelCore.ico</ApplicationIcon>
+    <Product>Sentinel Core</Product>
+    <AssemblyTitle>Sentinel Core for Windows</AssemblyTitle>
+    <Company>Sentinel Core</Company>
+    <Version>1.0.0</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Turning on Windows Forms for the tray icon also brings System.Windows.Forms and
+         System.Drawing in as implicit global usings, and almost every type this app touches -
+         Application, UserControl, Button, Brush, Image, TextBox, FontStyle - exists in both that
+         world and WPF's. Dropping the two globals makes the WPF meaning the only one in scope;
+         TrayNotifier.cs, the one file that genuinely wants Windows Forms, imports them by hand. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The live tiles. WPF cannot play HLS, fMP4 over a WebSocket, or WebRTC, and every transport
+         this server offers is one of those - so live video runs in the Edge WebView2 control, given
+         this session's own cookie. See Live/PlayerHost.xaml.cs. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SentinelCore.Client\SentinelCore.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\SentinelCore.ico" />
+    <EmbeddedResource Include="Live\player.html" />
+  </ItemGroup>
+
+</Project>

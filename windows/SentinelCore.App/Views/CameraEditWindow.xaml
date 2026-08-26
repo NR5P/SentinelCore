@@ -1,0 +1,70 @@
+<Window x:Class="SentinelCore.App.Views.CameraEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Camera" Height="620" Width="600" MinHeight="520" MinWidth="480">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="300" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" MinWidth="90" Click="OnCancelClicked" />
+                    <Button x:Name="SaveButton" Content="Save" Margin="10,0,0,0" MinWidth="90"
+                            Style="{StaticResource PrimaryButton}" Click="OnSaveClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <TextBlock x:Name="HeadingText" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" Margin="0,0,0,10" />
+
+                <TextBlock Text="Name" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                <TextBox x:Name="NameBox" />
+
+                <TextBlock Text="Stream address" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="StreamBox" />
+                <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
+                           Text="Usually an RTSP address, for example rtsp://192.168.1.60:554/h264Preview_01_main" />
+
+                <TextBlock Text="Username" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="UsernameBox" />
+
+                <TextBlock Text="Password" Style="{StaticResource FieldLabel}" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" x:Name="PasswordBox" />
+                    <Button Grid.Column="1" x:Name="RevealButton" Content="Show" Margin="8,0,0,0" MinWidth="72"
+                            Click="OnRevealClicked"
+                            ToolTip="Fetches the stored password from the server. Nothing holds it until you ask." />
+                </Grid>
+                <TextBlock x:Name="MaskNotice" Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap"
+                           Visibility="Collapsed"
+                           Text="The dots mean the server is keeping the password it already has. Leave them alone unless you are changing it." />
+
+                <CheckBox x:Name="AudioToggle" Content="Include audio" Margin="0,18,0,0" />
+                <CheckBox x:Name="PtzToggle" Content="This camera has PTZ" Margin="0,10,0,0" />
+                <TextBlock x:Name="PtzNotice" Style="{StaticResource Caption}" Margin="26,4,0,0" TextWrapping="Wrap" />
+
+                <Border Style="{StaticResource Card}" Margin="0,18,0,0">
+                    <StackPanel>
+                        <TextBlock Text="TEST CONNECTION" Style="{StaticResource GroupHeading}" />
+                        <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                   Text="Asks the server to probe this address with these credentials. If it finds an ONVIF PTZ service, the PTZ details are filled in for you." />
+                        <Button x:Name="TestButton" Content="Test connection" Margin="0,14,0,0"
+                                HorizontalAlignment="Left" Click="OnTestClicked" />
+                        <TextBlock x:Name="TestResultText" Style="{StaticResource Caption}" Margin="0,10,0,0"
+                                   TextWrapping="Wrap" Visibility="Collapsed" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

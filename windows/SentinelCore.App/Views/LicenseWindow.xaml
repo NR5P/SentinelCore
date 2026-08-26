@@ -1,0 +1,44 @@
+<Window x:Class="SentinelCore.App.Views.LicenseWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="License" Height="420" Width="560" ResizeMode="NoResize">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="360" />
+                <Button Content="Close" HorizontalAlignment="Right" MinWidth="90" Click="OnCloseClicked" />
+            </Grid>
+        </Border>
+
+        <StackPanel Margin="18">
+            <TextBlock Text="License" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Green}"
+                       Margin="0,0,0,14" />
+
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="StatusDot" Width="9" Height="9" VerticalAlignment="Center"
+                                 Fill="{StaticResource SecondaryText}" />
+                        <TextBlock x:Name="StatusText" Margin="10,0,0,0" Style="{StaticResource BodyText}"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock x:Name="CustomerText" Style="{StaticResource Caption}" Margin="19,6,0,0"
+                               Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock Style="{StaticResource Caption}" Margin="0,16,0,0" TextWrapping="Wrap"
+                       Text="An unlicensed server keeps working in full - the only difference is an UNLICENSED mark over camera images and live video. Installing a licence takes the .lic file's contents, not its location, because the server has no way to reach whatever machine it was emailed to." />
+
+            <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                <Button x:Name="InstallButton" Content="Install a licence file…" Style="{StaticResource PrimaryButton}"
+                        Click="OnInstallClicked" />
+                <Button Content="Refresh" Margin="10,0,0,0" Click="OnRefreshClicked" />
+            </StackPanel>
+        </StackPanel>
+    </DockPanel>
+</Window>
