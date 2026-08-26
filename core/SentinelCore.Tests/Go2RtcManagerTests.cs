@@ -43,8 +43,7 @@ public sealed class Go2RtcManagerTests : IDisposable
             echo $$ > "{_pidFile}"
             while true; do sleep 1; done
             """);
-        using var chmod = Process.Start("/bin/chmod", $"+x {_stubPath}")!;
-        chmod.WaitForExit();
+        PosixShellStubs.MakeExecutable(_stubPath);
     }
 
     private Go2RtcManager CreateManager()
@@ -68,6 +67,7 @@ public sealed class Go2RtcManagerTests : IDisposable
     [Fact]
     public async Task AViewerDisconnectingDuringStartup_DoesNotAbandonTheSidecar()
     {
+        PosixShellStubs.SkipIfUnavailable();
         var manager = CreateManager();
         using var viewerGoneAway = new CancellationTokenSource(TimeSpan.FromMilliseconds(600));
 
@@ -98,6 +98,7 @@ public sealed class Go2RtcManagerTests : IDisposable
     [Fact]
     public async Task DisposingWhileTheSidecarIsStillComingUp_KillsItPromptly()
     {
+        PosixShellStubs.SkipIfUnavailable();
         var manager = CreateManager();
         var exchange = manager.ExchangeOfferAsync(TestCamera(), "v=0", StreamQuality.Main, CancellationToken.None);
 
@@ -140,7 +141,7 @@ public sealed class Go2RtcManagerTests : IDisposable
         {
             try { Process.GetProcessById(pid).Kill(entireProcessTree: true); } catch { /* already gone */ }
         }
-        try { Directory.Delete(_root, recursive: true); } catch { /* best effort */ }
+        try { TempDirectories.Delete(_root); } catch { /* best effort */ }
     }
 
     private sealed class PlainHttpClientFactory : IHttpClientFactory

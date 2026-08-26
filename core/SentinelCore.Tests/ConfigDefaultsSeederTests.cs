@@ -20,7 +20,7 @@ public sealed class ConfigDefaultsSeederTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_directory, recursive: true); }
+        try { TempDirectories.Delete(_directory); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }

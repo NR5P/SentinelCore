@@ -28,7 +28,7 @@ public sealed class RestartEndpointTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_dataDirectory, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        try { TempDirectories.Delete(_dataDirectory); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
     private WebApplicationFactory<WebProgram> CreateFactory(bool forceAllowed = false)

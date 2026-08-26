@@ -53,7 +53,7 @@ public sealed class DeviceHubTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -219,7 +219,7 @@ public sealed class DeviceHubTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -972,7 +972,7 @@ public sealed class DeviceHubTests
         finally
         {
             await server.StopAsync();
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1058,7 +1058,7 @@ public sealed class DeviceHubTests
         finally
         {
             await server.StopAsync();
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1124,7 +1124,7 @@ public sealed class DeviceHubTests
         finally
         {
             await server.StopAsync();
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1325,7 +1325,7 @@ public sealed class DeviceHubTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1350,7 +1350,7 @@ public sealed class DeviceHubTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 

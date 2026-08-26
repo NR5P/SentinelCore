@@ -129,7 +129,7 @@ public sealed class SmtpMailerSendTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 

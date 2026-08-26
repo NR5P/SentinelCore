@@ -1271,7 +1271,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1310,7 +1310,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1363,7 +1363,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1463,7 +1463,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1528,7 +1528,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -1580,7 +1580,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2290,7 +2290,7 @@ public sealed class BasicTests
 
         Assert.True(settings.CanEnable(out var reason));
         Assert.Null(reason);
-        Directory.Delete(directory, recursive: true);
+        TempDirectories.Delete(directory);
     }
 
     [Theory]
@@ -2315,7 +2315,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2336,7 +2336,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2362,7 +2362,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2386,7 +2386,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2425,7 +2425,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -2518,7 +2518,7 @@ public sealed class BasicTests
         Assert.False(File.Exists(image), "expired images should still be pruned.");
         Assert.False(File.Exists(result), "expired results should still be pruned.");
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     [Fact]
@@ -2534,7 +2534,7 @@ public sealed class BasicTests
         RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
 
         Assert.True(File.Exists(fresh));
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     // The sweep's log line is the only evidence anyone gets that retention ran, so the counts
@@ -2567,7 +2567,7 @@ public sealed class BasicTests
         Assert.Equal(2048, outcome.BytesReclaimed);
         Assert.Equal(0, outcome.FilesFailed);
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     // Nothing expired is the common case twice a day, and it has to be distinguishable from a
@@ -2589,7 +2589,7 @@ public sealed class BasicTests
         Assert.Equal(0, outcome.BytesReclaimed);
         Assert.Equal(0, outcome.FilesFailed);
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     [Fact]
@@ -2682,7 +2682,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2744,7 +2744,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2785,7 +2785,7 @@ public sealed class BasicTests
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2852,7 +2852,7 @@ public sealed class BasicTests
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            Directory.Delete(tempDir, recursive: true);
+            TempDirectories.Delete(tempDir);
         }
     }
 
@@ -2996,7 +2996,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3023,7 +3023,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3189,7 +3189,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3212,7 +3212,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3267,7 +3267,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3559,7 +3559,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3582,7 +3582,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -3607,7 +3607,7 @@ public sealed class BasicTests
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            TempDirectories.Delete(directory);
         }
     }
 
@@ -4790,7 +4790,7 @@ public sealed class BasicTests
         var unaged = await TriggerImagePaths.TryReadLatestAsync(root, cameraId, maxAge: null, CancellationToken.None);
         Assert.NotNull(unaged);
 
-        Directory.Delete(root, recursive: true);
+        TempDirectories.Delete(root);
     }
 
     [Fact]

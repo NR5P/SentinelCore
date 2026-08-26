@@ -35,7 +35,7 @@ public sealed class BackupCoverageTests : IDisposable
     {
         foreach (var directory in _directories)
         {
-            try { Directory.Delete(directory, recursive: true); }
+            try { TempDirectories.Delete(directory); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }

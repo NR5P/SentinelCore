@@ -339,7 +339,7 @@ public sealed class ScheduleWorkerTests
         public async ValueTask DisposeAsync()
         {
             Store.Dispose();
-            await Task.Run(() => Directory.Delete(_tempDir, recursive: true));
+            await Task.Run(() => TempDirectories.Delete(_tempDir));
         }
     }
 

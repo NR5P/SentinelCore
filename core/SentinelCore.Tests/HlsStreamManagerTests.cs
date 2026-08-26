@@ -34,7 +34,7 @@ public sealed class HlsStreamManagerTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        try { TempDirectories.Delete(_root); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
     // Stands in for ffmpeg: records that it was started, writes a playlist and one segment into
@@ -54,6 +54,8 @@ public sealed class HlsStreamManagerTests : IDisposable
         bool stayAlive, bool emptySegment = false, string? refuseUrlContaining = null,
         string? announceCodec = null)
     {
+        PosixShellStubs.SkipIfUnavailable();
+
         var refusal = refuseUrlContaining is null
             ? ""
             : $"""
@@ -78,8 +80,7 @@ public sealed class HlsStreamManagerTests : IDisposable
             {(stayAlive ? "while true; do sleep 1; done" : "exit 0")}
             """);
 
-        var chmod = System.Diagnostics.Process.Start("/bin/chmod", $"+x {_stubPath}")!;
-        chmod.WaitForExit();
+        PosixShellStubs.MakeExecutable(_stubPath);
     }
 
     private int InvocationCount() =>
@@ -89,8 +90,7 @@ public sealed class HlsStreamManagerTests : IDisposable
     // under a session that was running perfectly well a moment ago.
     private void KillStubProcesses()
     {
-        var pkill = System.Diagnostics.Process.Start("/usr/bin/pkill", $"-f {_stubPath}");
-        pkill?.WaitForExit();
+        PosixShellStubs.Kill(_stubPath);
     }
 
     // StartedAt is deliberately read-only on the session, so the "ran for a while then died" case

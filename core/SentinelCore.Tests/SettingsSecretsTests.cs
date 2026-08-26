@@ -30,7 +30,7 @@ public sealed class SettingsSecretsTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_dataDirectory, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        try { TempDirectories.Delete(_dataDirectory); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
     private WebApplicationFactory<WebProgram> CreateFactory() => new WebApplicationFactory<WebProgram>()
