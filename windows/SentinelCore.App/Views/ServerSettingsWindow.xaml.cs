@@ -209,7 +209,6 @@ public partial class ServerSettingsWindow : Window
                 var box = new CheckBox { Content = field.Label, IsChecked = current?.AsBool ?? false };
                 _readers[field.Name] = () => SettingsValue.FromBool(box.IsChecked == true);
                 _writers[field.Name] = value => box.IsChecked = value.AsBool;
-                _writers[field.Name] = value => box.IsChecked = value.AsBool;
                 panel.Children.Add(box);
                 break;
             }

@@ -147,7 +147,7 @@ public sealed class SettingsSectionSchema
     // snapshot. Only INTERNET EXPOSED MODE sets it.
     public string? DataEndpoint { get; init; }
 
-    [JsonIgnore] public bool NeedsRestart => Fields.Any(field => field.RequiresRestart);
+    [JsonIgnore] public bool NeedsRestart => Fields.Any(entry => entry.RequiresRestart);
 
     [JsonIgnore] public string RestartTarget => RestartService ?? "bridge";
 }
