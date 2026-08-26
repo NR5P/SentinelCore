@@ -146,8 +146,7 @@ builder.Services.AddHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>();
 
-var mainAppSettingsPath = builder.Configuration["MainAppSettingsPath"]
-    ?? throw new InvalidOperationException("MainAppSettingsPath is not configured.");
+var mainAppSettingsPath = MainAppSettingsPath.Resolve(builder.Configuration, builder.Environment);
 var appSettingsFile = new AppSettingsFile(mainAppSettingsPath);
 builder.Services.AddSingleton(appSettingsFile);
 
