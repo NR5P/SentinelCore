@@ -824,6 +824,10 @@ function startSnapshots(reason) {
 // ------------------------------------------------------------------ Ladder
 
 async function start() {
+  // Restored for the live rungs, which do depend on it - sentinelPlayClip takes it away because a
+  // clip must not start until the host says so. See the note there.
+  video.setAttribute("autoplay", "");
+
   const webrtc = await tryWebRtc();
   if (stopped) return;
   if (webrtc.ok) {
@@ -877,11 +881,29 @@ window.sentinelPlayClip = function (path, offsetSeconds, autoplay) {
   stopped = false;
   isClip = true;
   video.style.display = "block";
-  video.style.display = "block";
   snapshot.style.display = "none";
   video.muted = false;
   video.loop = false;
   video.srcObject = null;
+
+  /*
+   * The element's own autoplay attribute has to go before the source is set.
+   *
+   * A clip's playback belongs to the host: the timeline's cursor spans a whole day and this file is
+   * one window inside it, so the host says when to start. But the attribute below starts playback
+   * the moment a source is assigned, regardless of the autoplay argument here - that argument only
+   * governs the explicit play() call further down, and never had any power to prevent it.
+   *
+   * So a clip loaded "paused" was in fact running immediately, unwatched. The host still believed
+   * it was stopped and ignored its position reports, and the moment someone pressed play the cursor
+   * snapped to wherever the video had already reached - which is why the jump tracked how long the
+   * clip had been sitting there rather than where it was supposed to resume, and why the picture
+   * agreed with the wrong cursor: the video really had played on.
+   *
+   * The live ladder does rely on the attribute (neither the MSE nor the WebRTC rung calls play()
+   * for itself), so start() puts it back rather than removing it outright.
+   */
+  video.removeAttribute("autoplay");
   video.src = url(path);
   setStatus("", "hidden");
   setMessage("");
@@ -892,6 +914,9 @@ window.sentinelPlayClip = function (path, offsetSeconds, autoplay) {
     }
     if (autoplay) {
       video.play().catch(function () { /* autoplay policy may refuse; the host's play button works */ });
+    } else {
+      // Belt and braces: anything that started this playing before the host asked stops here.
+      video.pause();
     }
   };
 
