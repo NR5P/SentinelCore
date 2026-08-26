@@ -217,6 +217,9 @@ builder.Services.Configure<List<KnownFace>>(builder.Configuration.GetSection("Kn
 
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAlertQueue, AlertQueue>();
+// Consulted only when a burst actually needs deciding, so an install that never sees two frames
+// close together never loads the detector on this path. See BurstFramePicker.
+builder.Services.AddSingleton<BurstFramePicker>();
 // Singleton, not scoped: "what did this camera last notify about" is process-wide state with the
 // same lifetime as the per-channel cooldowns it sits above.
 builder.Services.AddSingleton<NotificationDeduplicator>();
@@ -444,6 +447,7 @@ app.MapPost("/api/blueiris/alert", async (
     IResultStore store,
     IOptionsMonitor<BridgeOptions> bridgeOptions,
     IOptionsMonitor<RepeatAlertOptions> repeatAlerts,
+    BurstFramePicker burstFrames,
     ILogger<Program> logger,
     CancellationToken ct) =>
 {
@@ -523,7 +527,14 @@ app.MapPost("/api/blueiris/alert", async (
     };
     await store.SaveAsync(queuedResult, ct);
 
-    var enqueued = await queue.TryEnqueueAsync(alert, repeatAlerts.CurrentValue.SupersedeQueued, ct);
+    // Supersession keeps the newest frame, which is right when both frames show something and
+    // wrong when the newer one is empty - see BurstFramePicker. The peek is advisory; the queue
+    // re-decides under its own lock, so the worst case here is a detector pass whose answer is
+    // then unused.
+    var supersedeQueued = repeatAlerts.CurrentValue.SupersedeQueued
+        && await burstFrames.ShouldSupersedeAsync(queue.PeekWaiting(camera), alert, ct);
+
+    var enqueued = await queue.TryEnqueueAsync(alert, supersedeQueued, ct);
 
     // A frame from this camera was still waiting its turn when this newer one arrived, so it stood
     // down (see AlertQueue). Its row has to stop saying "queued" for the same reason a full queue's
