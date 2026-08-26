@@ -1,0 +1,68 @@
+<UserControl x:Class="SentinelCore.App.Views.ServerSetupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource WindowBackground}">
+
+    <Grid>
+        <StackPanel MaxWidth="520" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,22">
+                <TextBlock Text="&gt;_" Style="{StaticResource Wordmark}" FontSize="20" Margin="0,0,10,0" />
+                <TextBlock Text="SENTINEL_CORE" Style="{StaticResource Wordmark}" FontSize="20" />
+            </StackPanel>
+
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Connect to your server" Style="{StaticResource GroupHeading}" />
+
+                    <!--
+                        Discovery is purely an assist on top of manual entry below, which always
+                        stays visible - it can legitimately find nothing (a different VLAN, client
+                        isolation on the access point, a firewall dropping multicast) and that must
+                        never block getting connected by typing the address instead.
+                    -->
+                    <TextBlock x:Name="SearchingText" Style="{StaticResource Caption}"
+                               Text="Searching your local network for a server…" Margin="0,0,0,10" />
+
+                    <StackPanel x:Name="DiscoveredPanel" Visibility="Collapsed" Margin="0,0,0,12">
+                        <TextBlock Text="Found on your network" Style="{StaticResource Caption}" Margin="0,0,0,6" />
+                        <ItemsControl x:Name="DiscoveredList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Click="OnDiscoveredServerClicked" Tag="{Binding}"
+                                            HorizontalContentAlignment="Stretch" Margin="0,0,0,6"
+                                            Background="#16262B" BorderBrush="#1F3A40">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="{Binding Name}" Style="{StaticResource BodyText}" />
+                                                <TextBlock Text="{Binding AddressString}" Style="{StaticResource Caption}" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="&#xE76C;" FontFamily="Segoe MDL2 Assets"
+                                                       Foreground="{StaticResource SecondaryText}"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6"
+                               Text="Or enter the local-network address of the Sentinel Core dashboard." />
+                    <TextBox x:Name="AddressBox" KeyDown="OnAddressKeyDown" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,5,0,0"
+                               Text="For example: http://192.168.1.50:3320" />
+
+                    <Button x:Name="ConnectButton" Content="Connect" Style="{StaticResource PrimaryButton}"
+                            HorizontalAlignment="Left" Margin="0,14,0,0" Click="OnConnectClicked" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="ErrorText" Style="{StaticResource Caption}" Foreground="{StaticResource Red}"
+                       Margin="4,12,0,0" Visibility="Collapsed" />
+        </StackPanel>
+    </Grid>
+</UserControl>

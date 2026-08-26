@@ -1,0 +1,158 @@
+<Window x:Class="SentinelCore.App.Views.ScheduleEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Schedule" Height="800" Width="640" MinHeight="600" MinWidth="520">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="330" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Preview" MinWidth="90" Click="OnPreviewClicked"
+                            ToolTip="Ask the server when this would actually fire" />
+                    <Button Content="Cancel" Margin="10,0,0,0" MinWidth="90" Click="OnCancelClicked" />
+                    <Button x:Name="SaveButton" Content="Save" Margin="10,0,0,0" MinWidth="90"
+                            Style="{StaticResource PrimaryButton}" Click="OnSaveClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <TextBlock x:Name="HeadingText" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" Margin="0,0,0,10" />
+
+                <TextBlock Text="Name" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                <TextBox x:Name="NameBox" />
+
+                <CheckBox x:Name="EnabledToggle" Content="Enabled" Margin="0,14,0,0" IsChecked="True" />
+
+                <!-- ========== When ========== -->
+                <TextBlock Text="WHEN" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+
+                <TextBlock Text="Kind" Style="{StaticResource Caption}" Margin="0,0,0,4" />
+                <ComboBox x:Name="KindBox" SelectionChanged="OnKindChanged" />
+
+                <StackPanel x:Name="TimeOfDayPanel">
+                    <TextBlock Text="Time of day (HH:mm)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="TimeOfDayBox" />
+                </StackPanel>
+
+                <StackPanel x:Name="DaysPanel" Visibility="Collapsed">
+                    <TextBlock Text="Days" Style="{StaticResource FieldLabel}" />
+                    <WrapPanel x:Name="DaysHost" />
+                </StackPanel>
+
+                <StackPanel x:Name="IntervalPanel" Visibility="Collapsed">
+                    <TextBlock Text="Every (seconds)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="IntervalBox" />
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                            <TextBlock Text="Between (HH:mm)" Style="{StaticResource Caption}" />
+                            <TextBox x:Name="WindowStartBox" Margin="0,4,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                            <TextBlock Text="And (HH:mm)" Style="{StaticResource Caption}" />
+                            <TextBox x:Name="WindowEndBox" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+
+                <StackPanel x:Name="CronPanel" Visibility="Collapsed">
+                    <TextBlock Text="Cron expression" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="CronBox" FontFamily="Consolas, Courier New" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
+                               Text="Five fields: minute, hour, day of month, month, day of week." />
+                </StackPanel>
+
+                <StackPanel x:Name="OncePanel" Visibility="Collapsed">
+                    <TextBlock Text="Run once at (yyyy-MM-dd HH:mm, your local time)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="RunAtBox" />
+                </StackPanel>
+
+                <StackPanel x:Name="SolarPanel" Visibility="Collapsed">
+                    <TextBlock Text="Sun event" Style="{StaticResource FieldLabel}" />
+                    <ComboBox x:Name="SolarEventBox" />
+
+                    <TextBlock Text="Darkness level" Style="{StaticResource FieldLabel}" />
+                    <ComboBox x:Name="DarknessBox" DisplayMemberPath="Label" SelectedValuePath="ElevationDegrees" />
+                    <TextBlock x:Name="DarknessHint" Style="{StaticResource Caption}" Margin="2,4,0,0"
+                               TextWrapping="Wrap" />
+
+                    <TextBlock Text="Offset (minutes, may be negative)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="SolarOffsetBox" />
+
+                    <TextBlock x:Name="LocationWarning" Style="{StaticResource Caption}" Margin="0,10,0,0"
+                               Foreground="{StaticResource Amber}" TextWrapping="Wrap" Visibility="Collapsed"
+                               Text="No latitude and longitude are set on this server, so a sun-following schedule can't work out when to fire. Set them under Server Settings → Location first." />
+                </StackPanel>
+
+                <TextBlock Text="If a firing was missed" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="CatchUpBox" />
+
+                <!-- ========== What ========== -->
+                <TextBlock Text="WHAT IT DOES" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+
+                <TextBlock Text="Action" Style="{StaticResource Caption}" Margin="0,0,0,4" />
+                <ComboBox x:Name="ActionTypeBox" SelectionChanged="OnActionTypeChanged" />
+
+                <StackPanel x:Name="DeviceActionPanel">
+                    <TextBlock Text="Device" Style="{StaticResource FieldLabel}" />
+                    <ComboBox x:Name="DeviceBox" DisplayMemberPath="Name" SelectedValuePath="Id" />
+
+                    <TextBlock Text="Do what" Style="{StaticResource FieldLabel}" />
+                    <ComboBox x:Name="DeviceActionBox" />
+
+                    <TextBlock Text="Brightness (optional)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="BrightnessBox" />
+                </StackPanel>
+
+                <StackPanel x:Name="MqttActionPanel" Visibility="Collapsed">
+                    <TextBlock Text="Topic" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="MqttTopicBox" />
+                    <TextBlock Text="Payload" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="MqttPayloadBox" />
+                    <CheckBox x:Name="MqttRetainToggle" Content="Retain" Margin="0,12,0,0" />
+                </StackPanel>
+
+                <StackPanel x:Name="WebhookActionPanel" Visibility="Collapsed">
+                    <TextBlock Text="URL" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="WebhookUrlBox" />
+                    <TextBlock Text="Method" Style="{StaticResource FieldLabel}" />
+                    <ComboBox x:Name="WebhookMethodBox">
+                        <ComboBoxItem Content="POST" />
+                        <ComboBoxItem Content="GET" />
+                        <ComboBoxItem Content="PUT" />
+                    </ComboBox>
+                    <TextBlock Text="Content type" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="WebhookContentTypeBox" />
+                    <TextBlock Text="Headers (one per line, Name: value)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="WebhookHeadersBox" AcceptsReturn="True" MinHeight="60" TextWrapping="Wrap" />
+                    <TextBlock Text="Body" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="WebhookBodyBox" AcceptsReturn="True" MinHeight="80" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <Border x:Name="PreviewPanel" Style="{StaticResource Card}" Margin="0,20,0,0" Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="NEXT FIRINGS" Style="{StaticResource GroupHeading}" />
+                        <TextBlock x:Name="PreviewExplanation" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                        <ItemsControl x:Name="PreviewList" Margin="0,10,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource Monospace}" Margin="0,2,0,0" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

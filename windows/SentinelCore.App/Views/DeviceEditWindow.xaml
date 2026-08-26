@@ -1,0 +1,116 @@
+<Window x:Class="SentinelCore.App.Views.DeviceEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Device" Height="780" Width="600" MinHeight="560" MinWidth="480">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="260" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="DeleteButton" Content="Delete" MinWidth="90"
+                            Style="{StaticResource DangerButton}" Click="OnDeleteClicked" />
+                    <Button Content="Cancel" Margin="10,0,0,0" MinWidth="90" Click="OnCancelClicked" />
+                    <Button x:Name="SaveButton" Content="Save" Margin="10,0,0,0" MinWidth="90"
+                            Style="{StaticResource PrimaryButton}" Click="OnSaveClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <TextBlock x:Name="HeadingText" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" Margin="0,0,0,10" />
+
+                <TextBlock Text="Name" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                <TextBox x:Name="NameBox" />
+
+                <TextBlock Text="Kind" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="KindBox" SelectionChanged="OnKindChanged" />
+
+                <TextBlock Text="Room" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="RoomBox" />
+
+                <CheckBox x:Name="EnabledToggle" Content="Enabled" Margin="0,16,0,0" IsChecked="True" />
+
+                <TextBlock Text="MQTT" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+
+                <TextBlock Text="Command topic" Style="{StaticResource Caption}" Margin="0,0,0,4" />
+                <TextBox x:Name="CommandTopicBox" />
+
+                <TextBlock Text="State topic" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="StateTopicBox" />
+
+                <TextBlock Text="Availability topic (optional)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="AvailabilityTopicBox" />
+
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                        <TextBlock x:Name="PayloadOnLabel" Text="Payload for on" Style="{StaticResource Caption}" />
+                        <TextBox x:Name="PayloadOnBox" Margin="0,4,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                        <TextBlock x:Name="PayloadOffLabel" Text="Payload for off" Style="{StaticResource Caption}" />
+                        <TextBox x:Name="PayloadOffBox" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Grid>
+
+                <StackPanel x:Name="StopPanel" Visibility="Collapsed">
+                    <TextBlock Text="Payload for stop" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="PayloadStopBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
+                               Text="Leave blank if the motor has no stop command." />
+                </StackPanel>
+
+                <CheckBox x:Name="MomentaryToggle" Content="One press, no on/off state afterwards"
+                          Margin="0,16,0,0" />
+
+                <TextBlock Text="Value template (optional)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="TemplateBox" FontFamily="Consolas, Courier New" />
+                <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
+                           Text="For a device that reports JSON rather than a bare payload." />
+
+                <TextBlock Text="Schema" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="SchemaBox" />
+
+                <CheckBox x:Name="OptimisticToggle" Content="Assume the command worked without waiting for a report"
+                          Margin="0,16,0,0" />
+
+                <TextBlock Text="BRIGHTNESS" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+                <CheckBox x:Name="BrightnessToggle" Content="This device is dimmable"
+                          Click="OnBrightnessToggled" />
+                <StackPanel x:Name="BrightnessPanel" Visibility="Collapsed">
+                    <TextBlock Text="Brightness command topic" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="BrightnessCommandBox" />
+                    <TextBlock Text="Brightness state topic" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="BrightnessStateBox" />
+                    <TextBlock Text="Scale (usually 255)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="BrightnessScaleBox" />
+                </StackPanel>
+
+                <TextBlock Text="AVAILABILITY" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                        <TextBlock Text="Available payload" Style="{StaticResource Caption}" />
+                        <TextBox x:Name="PayloadAvailableBox" Margin="0,4,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                        <TextBlock Text="Unavailable payload" Style="{StaticResource Caption}" />
+                        <TextBox x:Name="PayloadNotAvailableBox" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

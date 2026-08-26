@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src * data: blob:; media-src * blob:; connect-src *; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<title>Sentinel Core live</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage {
+    position: absolute; inset: 0; overflow: hidden;
+    transform-origin: 50% 50%;
+  }
+  #video, #snapshot {
+    width: 100%; height: 100%; object-fit: contain; background: #000; display: block;
+  }
+  #snapshot { display: none; }
+  #status {
+    position: absolute; left: 10px; top: 10px; padding: 4px 9px; border-radius: 10px;
+    background: rgba(0,0,0,0.6); color: rgba(255,255,255,0.75);
+    font: 600 11px/1.4 "Segoe UI", system-ui, sans-serif; letter-spacing: 0.06em;
+    pointer-events: none;
+  }
+  #status.live { color: #38ff9c; }
+  #status.snapshots { color: #ffb545; }
+  #status.hidden { display: none; }
+  #message {
+    position: absolute; inset: auto 16px 16px 16px; color: #93a2ad;
+    font: 12px/1.5 "Segoe UI", system-ui, sans-serif; text-align: center;
+    pointer-events: none;
+  }
+  #zoomBadge {
+    position: absolute; right: 10px; top: 10px; padding: 4px 9px; border-radius: 10px;
+    background: rgba(0,0,0,0.6); color: #4ae8ff; display: none;
+    font: 600 11px/1.4 "Segoe UI", system-ui, sans-serif; pointer-events: none;
+  }
+  body.zoomed #stage { cursor: grab; }
+  body.dragging #stage { cursor: grabbing; }
+
+  /*
+   * The camera's controls live in here rather than in WPF.
+   *
+   * WebView2 is hosted as a child window, so WPF cannot paint above it and mouse input over the
+   * video never reaches WPF at all - buttons placed there by the host are both invisible and
+   * unclickable. Drawing them inside the page is the only arrangement where a control over live
+   * video actually works, and it is also what the macOS app looks like: everything for the camera
+   * sits on the picture, not in a panel beside it.
+   */
+  #controls { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .12s; }
+  body.controls-always #controls, body:hover #controls { opacity: 1; }
+  #controls .group { position: absolute; display: flex; gap: 6px; pointer-events: auto; }
+  #controls .tr { top: 10px; right: 10px; }
+  #controls .bl { bottom: 10px; left: 10px; align-items: center; }
+  #controls .br { bottom: 14px; right: 14px; }
+
+  #controls button {
+    font: 500 13px/1 "Segoe UI Symbol", "Segoe UI", system-ui, sans-serif;
+    min-width: 34px; height: 30px; padding: 0 8px;
+    color: #fff; background: rgba(0,0,0,0.55); cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.35); border-radius: 6px;
+  }
+  #controls button:hover { background: rgba(0,0,0,0.78); border-color: #38ff9c; }
+  #controls button:active { background: #1f9c61; }
+  #controls button.busy { color: #ff4d5e; }
+  #controls .zoomLabel {
+    color: #4ae8ff; font: 600 11px/1 "Segoe UI", system-ui, sans-serif;
+    background: rgba(0,0,0,0.55); border-radius: 6px; padding: 8px 9px;
+  }
+
+  /* The PTZ pad: eight directions around a home button, with the lens zoom beside it. */
+  #ptz { display: none; gap: 6px; align-items: flex-end;
+         background: rgba(0,0,0,0.35); border-radius: 8px; padding: 7px; }
+  body.has-ptz #ptz { display: flex; }
+  #ptzPad { display: grid; grid-template-columns: repeat(3, 38px); grid-auto-rows: 32px; gap: 4px; }
+  #ptzZoom { display: grid; grid-auto-rows: 32px; gap: 4px; }
+  #ptzPad button, #ptzZoom button { min-width: 38px; font-size: 14px; }
+  #ptzPad button.home { color: #4ae8ff; }
+  #ptzPad button.home.saved { color: #38ff9c; }
+
+  #toast {
+    position: absolute; right: 10px; top: 48px; max-width: 320px;
+    padding: 8px 11px; border-radius: 7px; background: rgba(0,0,0,0.78); color: #fff;
+    font: 12px/1.45 "Segoe UI", system-ui, sans-serif; display: none;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" autoplay muted playsinline></video>
+  <img id="snapshot" alt="">
+</div>
+<div id="status">CONNECTING</div>
+<div id="zoomBadge"></div>
+<div id="message"></div>
+<div id="toast"></div>
+
+<div id="controls">
+  <div class="group tr">
+    <button data-act="record" class="liveOnly" title="Record now - saves a clip of the seconds either side">&#9679;</button>
+    <button data-act="mute" class="fullOnly" title="Mute or unmute">&#128263;</button>
+    <button data-act="open" class="tileOnly" title="Open this camera">&#8599;</button>
+  </div>
+
+  <div class="group bl fullOnly">
+    <button data-act="zoomOut" title="Zoom out">&minus;</button>
+    <span class="zoomLabel" id="zoomLabel">1.0x</span>
+    <button data-act="zoomIn" title="Zoom in">+</button>
+    <button data-act="zoomReset" title="Back to the whole picture">&#10227;</button>
+  </div>
+
+  <div class="group br fullOnly" id="ptz">
+    <div id="ptzPad">
+      <button data-ptz="upLeft">&#8598;</button>
+      <button data-ptz="up">&#8593;</button>
+      <button data-ptz="upRight">&#8599;</button>
+      <button data-ptz="left">&#8592;</button>
+      <button data-ptz="home" class="home" title="Go home. Hold to save this position as home.">&#8962;</button>
+      <button data-ptz="right">&#8594;</button>
+      <button data-ptz="downLeft">&#8601;</button>
+      <button data-ptz="down">&#8595;</button>
+      <button data-ptz="downRight">&#8600;</button>
+    </div>
+    <div id="ptzZoom">
+      <button data-ptz="zoomIn" title="Zoom the camera's lens in">+</button>
+      <button data-ptz="zoomOut" title="Zoom the camera's lens out">&minus;</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/*
+ * The live ladder, run inside WebView2 because none of the transports this server offers can be
+ * played by WPF itself: WebRTC needs a peer connection, MSE needs MediaSource, and neither exists
+ * outside a browser engine.
+ *
+ * Order is WebRTC, then MSE, then still snapshots - the same first two tiers the web dashboard
+ * tries, and for the same reason: they fail differently. WebRTC needs its own media port reachable
+ * from the viewer (blocked by tunnels, VPNs and strict firewalls) and is the lowest latency by a
+ * wide margin; MSE rides the same HTTP connection the rest of the app uses, so if the app is
+ * talking to the server at all, MSE gets through.
+ *
+ * The dashboard's third tier is HLS, and this deliberately does not have it. The server's HLS is
+ * MPEG-TS for H.264 cameras, which no browser engine can play without a JavaScript transmuxer -
+ * vendoring one is a large third-party dependency for a tier that only matters on an install with
+ * no go2rtc at all. Rather than ship a broken-looking black rectangle there, this falls back to
+ * refreshing the server's cached thumbnail and says plainly that it is showing snapshots.
+ *
+ * The same page also plays recorded clips, driven from the host - see sentinelPlayClip below and
+ * the timeline that uses it.
+ */
+
+const params = new URLSearchParams(location.search);
+const base = params.get("base") || "";
+const cameraId = params.get("camera") || "";
+const quality = params.get("quality") === "main" ? "main" : "sub";
+const wantsAudio = params.get("audio") === "1";
+// "tile" is one camera in the grid - record and open, nothing else. "full" is the camera opened on
+// its own, where zoom, audio and the PTZ pad belong.
+const requestedMode = params.get("mode");
+// "tile" is one camera in the grid - record and open, nothing else. "full" is the camera opened on
+// its own, where zoom, audio and the PTZ pad belong. "clip" is a recording, which has no camera
+// controls at all: nothing to record, nothing to point, nothing to open.
+const mode = requestedMode === "full" || requestedMode === "clip" ? requestedMode : "tile";
+const hasPtz = params.get("ptz") === "1";
+const startedAt = Date.now();
+
+const stage = document.getElementById("stage");
+const video = document.getElementById("video");
+const snapshot = document.getElementById("snapshot");
+const statusEl = document.getElementById("status");
+const zoomBadge = document.getElementById("zoomBadge");
+const messageEl = document.getElementById("message");
+
+video.muted = !wantsAudio;
+
+let stopped = false;
+let snapshotTimer = null;
+let socket = null;
+let peer = null;
+let isClip = false;
+
+function post(payload) {
+  try {
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(payload);
+  } catch (error) {
+    /* The host is gone; nothing to report to. */
+  }
+}
+
+function elapsed() {
+  return Date.now() - startedAt;
+}
+
+/*
+ * A green LIVE badge over a tile that is actually frozen or reconnecting is worse than no badge at
+ * all - it is the one thing on screen claiming the feed is current. Until the first frame lands,
+ * this says CONNECTING instead.
+ */
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || "";
+}
+
+function setMessage(text) {
+  messageEl.textContent = text || "";
+}
+
+function report(tier, outcome, reason) {
+  post({ kind: "livePath", tier: tier, outcome: outcome, reason: reason || null, elapsedMs: elapsed() });
+}
+
+function playing(tier) {
+  if (stopped) return;
+  setStatus("LIVE", "live");
+  setMessage("");
+  report(tier, "playing", null);
+}
+
+function url(path) {
+  return base + path;
+}
+
+// ------------------------------------------------------------------ Digital zoom
+
+/*
+ * Zoom that has nothing to do with the camera's own lens. A PTZ camera's optical zoom is a command
+ * sent to the camera and it moves the picture for everyone watching; this scales the frames already
+ * on this screen, works on every camera including fixed ones, and is nobody else's business.
+ *
+ * Applied as a CSS transform on the element the video is already in, so it costs nothing: no extra
+ * stream, no re-request at a different resolution, no server involvement. What it cannot do is add
+ * detail that is not in the stream - past a few times magnification you are looking at the
+ * encoder's pixels, hence the ceiling.
+ */
+const MAX_SCALE = 8;
+let zoom = { scale: 1, x: 0, y: 0 };
+let dragging = null;
+
+function applyZoom() {
+  clampOffsets();
+  stage.style.transform = "translate(" + zoom.x + "px," + zoom.y + "px) scale(" + zoom.scale + ")";
+
+  const zoomed = zoom.scale > 1.01;
+  document.body.classList.toggle("zoomed", zoomed);
+  zoomBadge.style.display = zoomed ? "block" : "none";
+  zoomBadge.textContent = zoom.scale.toFixed(1) + "x";
+  var label = document.getElementById("zoomLabel");
+  if (label) label.textContent = zoom.scale.toFixed(1) + "x";
+  post({ kind: "zoom", scale: zoom.scale });
+}
+
+// Panning past the edge would show the page's background where the picture should be, which reads
+// as the stream having died.
+function clampOffsets() {
+  const limitX = Math.max(0, (stage.clientWidth * zoom.scale - stage.clientWidth) / 2);
+  const limitY = Math.max(0, (stage.clientHeight * zoom.scale - stage.clientHeight) / 2);
+  zoom.x = Math.max(-limitX, Math.min(limitX, zoom.x));
+  zoom.y = Math.max(-limitY, Math.min(limitY, zoom.y));
+}
+
+function setScale(next) {
+  const previous = zoom.scale;
+  zoom.scale = Math.max(1, Math.min(MAX_SCALE, next));
+  if (zoom.scale <= 1.01) {
+    zoom.x = 0;
+    zoom.y = 0;
+  } else if (previous > 0) {
+    // Keep whatever was in the middle in the middle as the scale changes, rather than letting the
+    // picture slide out from under the pointer.
+    const ratio = zoom.scale / previous;
+    zoom.x *= ratio;
+    zoom.y *= ratio;
+  }
+  applyZoom();
+}
+
+stage.addEventListener("wheel", function (event) {
+  event.preventDefault();
+  setScale(zoom.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15));
+}, { passive: false });
+
+stage.addEventListener("mousedown", function (event) {
+  if (zoom.scale <= 1.01) return;
+  dragging = { x: event.clientX, y: event.clientY, startX: zoom.x, startY: zoom.y };
+  document.body.classList.add("dragging");
+  event.preventDefault();
+});
+
+window.addEventListener("mousemove", function (event) {
+  if (!dragging) return;
+  zoom.x = dragging.startX + (event.clientX - dragging.x);
+  zoom.y = dragging.startY + (event.clientY - dragging.y);
+  applyZoom();
+});
+
+window.addEventListener("mouseup", function () {
+  dragging = null;
+  document.body.classList.remove("dragging");
+});
+
+stage.addEventListener("dblclick", function () {
+  // On a tile, a double-click is how you open the camera - the same gesture the grid has always
+  // had, except that it now has to be handled here, because a click over the video never reaches
+  // the host's own controls.
+  if (mode === "tile") {
+    post({ kind: "action", name: "open" });
+    return;
+  }
+  setScale(1);
+});
+
+// ------------------------------------------------------------------ Controls
+
+document.body.classList.toggle("has-ptz", mode === "full" && hasPtz);
+// Only the full view has audio, zoom and a pad; only a tile has "open".
+Array.prototype.forEach.call(document.querySelectorAll(".fullOnly"), function (element) {
+  if (mode !== "full") element.style.display = "none";
+});
+// A camera with no audio track has nothing to mute, so it gets no mute button rather than a dead one.
+if (!wantsAudio) {
+  const mute = document.querySelector('[data-act="mute"]');
+  if (mute) mute.style.display = "none";
+}
+Array.prototype.forEach.call(document.querySelectorAll(".tileOnly"), function (element) {
+  if (mode !== "tile") element.style.display = "none";
+});
+Array.prototype.forEach.call(document.querySelectorAll(".liveOnly"), function (element) {
+  if (mode === "clip") element.style.display = "none";
+});
+
+const zoomLabel = document.getElementById("zoomLabel");
+const toastEl = document.getElementById("toast");
+let toastTimer = null;
+let muted = !wantsAudio;
+
+function toast(text) {
+  toastEl.textContent = text;
+  toastEl.style.display = "block";
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { toastEl.style.display = "none"; }, 4000);
+}
+window.sentinelToast = toast;
+
+// The record button reports back so it can show it is working, and stop showing it afterwards.
+window.sentinelSetBusy = function (name, busy) {
+  const button = document.querySelector('[data-act="' + name + '"]');
+  if (button) button.classList.toggle("busy", !!busy);
+};
+
+document.getElementById("controls").addEventListener("click", function (event) {
+  const button = event.target.closest("button[data-act]");
+  if (!button) return;
+  const action = button.getAttribute("data-act");
+
+  switch (action) {
+    case "zoomIn": setScale(zoom.scale * 1.5); return;
+    case "zoomOut": setScale(zoom.scale / 1.5); return;
+    case "zoomReset": setScale(1); return;
+    case "mute":
+      muted = !muted;
+      video.muted = muted;
+      button.innerHTML = muted ? "&#128263;" : "&#128266;";
+      post({ kind: "action", name: "mute", muted: muted });
+      return;
+    default:
+      post({ kind: "action", name: action });
+  }
+});
+
+/*
+ * PTZ is press-and-release, not click: the camera keeps moving until it is told to stop, so the
+ * release is the command that matters. The page only reports the gesture - the host owns the
+ * queue that keeps a stop from overtaking its own move, and the hold that turns Home into
+ * "save this position".
+ */
+const ptzPad = document.getElementById("ptz");
+if (ptzPad) {
+  let heldDirection = null;
+
+  const press = function (direction) {
+    if (heldDirection) return;
+    heldDirection = direction;
+    post({ kind: "ptz", action: "press", direction: direction });
+  };
+
+  const release = function () {
+    if (!heldDirection) return;
+    const direction = heldDirection;
+    heldDirection = null;
+    post({ kind: "ptz", action: "release", direction: direction });
+  };
+
+  ptzPad.addEventListener("mousedown", function (event) {
+    const button = event.target.closest("button[data-ptz]");
+    if (!button) return;
+    event.preventDefault();
+    press(button.getAttribute("data-ptz"));
+  });
+
+  // Released anywhere, including off the button and outside the window: a press whose release is
+  // missed leaves the camera turning until something else stops it.
+  window.addEventListener("mouseup", release);
+  window.addEventListener("blur", release);
+  ptzPad.addEventListener("mouseleave", release);
+}
+
+window.sentinelSetHomeSaved = function (saved) {
+  const home = document.querySelector('[data-ptz="home"]');
+  if (home) home.classList.toggle("saved", !!saved);
+};
+
+// ------------------------------------------------------------------ WebRTC
+
+async function tryWebRtc() {
+  return new Promise(function (resolve) {
+    let settled = false;
+    const finish = function (ok, reason) {
+      if (settled) return;
+      settled = true;
+      if (!ok && peer) {
+        try { peer.close(); } catch (error) { /* already closed */ }
+        peer = null;
+      }
+      resolve({ ok: ok, reason: reason });
+    };
+
+    try {
+      // No STUN or TURN: this is a server on the same network (or reached through a tunnel that
+      // already carries the HTTP session), so host candidates are the only ones that can help and
+      // asking a public STUN server would only add latency and a dependency on the open internet.
+      peer = new RTCPeerConnection({ iceServers: [] });
+      peer.addTransceiver("video", { direction: "recvonly" });
+      if (wantsAudio) peer.addTransceiver("audio", { direction: "recvonly" });
+
+      peer.ontrack = function (event) {
+        video.srcObject = event.streams[0];
+      };
+      peer.onconnectionstatechange = function () {
+        if (!peer) return;
+        if (peer.connectionState === "connected") finish(true, null);
+        if (peer.connectionState === "failed") finish(false, "the WebRTC connection failed");
+      };
+
+      // A tunnel or a strict firewall does not refuse the media port, it simply drops it - so this
+      // has to time out rather than wait for an error that never comes.
+      setTimeout(function () { finish(false, "WebRTC did not connect within 6s"); }, 6000);
+
+      peer.createOffer()
+        .then(function (offer) { return peer.setLocalDescription(offer); })
+        .then(function () { return waitForIce(peer); })
+        .then(function () {
+          return fetch(url("/api/cameras/" + cameraId + "/webrtc/" + quality), {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/sdp" },
+            body: peer.localDescription.sdp
+          });
+        })
+        .then(function (response) {
+          if (!response.ok) {
+            // 503 is the deliberate "not on this install" answer - go2rtc missing or unstartable.
+            throw new Error(response.status === 503
+              ? "go2rtc is not available on this server"
+              : "the server refused the WebRTC offer (HTTP " + response.status + ")");
+          }
+          return response.text();
+        })
+        .then(function (answer) {
+          if (!peer) throw new Error("cancelled");
+          return peer.setRemoteDescription({ type: "answer", sdp: answer });
+        })
+        .catch(function (error) { finish(false, String(error && error.message ? error.message : error)); });
+    } catch (error) {
+      finish(false, String(error && error.message ? error.message : error));
+    }
+  });
+}
+
+// Gathering to completion keeps this to a single offer/answer exchange, which is all the server's
+// endpoint supports - there is nowhere to send a trickled candidate afterwards.
+function waitForIce(connection) {
+  if (connection.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise(function (resolve) {
+    const done = function () {
+      connection.removeEventListener("icegatheringstatechange", check);
+      resolve();
+    };
+    const check = function () {
+      if (connection.iceGatheringState === "complete") done();
+    };
+    connection.addEventListener("icegatheringstatechange", check);
+    setTimeout(done, 2000);
+  });
+}
+
+// ------------------------------------------------------------------ MSE
+
+function tryMse() {
+  return new Promise(function (resolve) {
+    let settled = false;
+    let delivered = false;
+    const finish = function (ok, reason) {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: ok, reason: reason });
+    };
+
+    let mediaSource;
+    let sourceBuffer = null;
+    const queue = [];
+
+    const wsBase = base.replace(/^http/, "ws");
+    try {
+      socket = new WebSocket(wsBase + "/api/cameras/" + cameraId + "/mse/" + quality);
+    } catch (error) {
+      finish(false, "the MSE socket could not be opened");
+      return;
+    }
+    socket.binaryType = "arraybuffer";
+
+    socket.onopen = function () {
+      // The codecs this engine can decode from fMP4, in the same shape the dashboard offers.
+      // go2rtc picks from this list and answers with what it will actually send.
+      //
+      // Audio is offered only where it can be heard. A grid tile is muted and stays muted, and
+      // asking for an audio track there would have go2rtc send one down a link whose bandwidth is
+      // the entire reason the tile is on the low rendition in the first place.
+      const codecs = [
+        "avc1.640033", "avc1.64002A", "avc1.640029", "avc1.4D4029", "avc1.42E01F",
+        "hvc1.1.6.L153.B0"
+      ];
+      if (wantsAudio) codecs.push("mp4a.40.2");
+      socket.send(JSON.stringify({ type: "mse", value: codecs.join(",") }));
+    };
+
+    socket.onerror = function () {
+      finish(false, delivered ? "the MSE socket failed mid-stream" : "the MSE socket could not connect");
+    };
+
+    socket.onclose = function () {
+      finish(false, delivered ? "the MSE socket closed mid-stream" : "the MSE socket closed before any media");
+    };
+
+    socket.onmessage = function (event) {
+      if (typeof event.data === "string") {
+        // go2rtc's codec answer, naming the MIME type it is about to send.
+        let mime;
+        try {
+          mime = JSON.parse(event.data).value;
+        } catch (error) {
+          finish(false, "the server's codec answer could not be read");
+          return;
+        }
+        if (!mime || !window.MediaSource || !MediaSource.isTypeSupported(mime)) {
+          finish(false, "this PC cannot decode " + (mime || "the offered codec"));
+          return;
+        }
+        startMediaSource(mime);
+        return;
+      }
+
+      if (!sourceBuffer) return;
+      queue.push(new Uint8Array(event.data));
+      drain();
+    };
+
+    function startMediaSource(mime) {
+      mediaSource = new MediaSource();
+      video.src = URL.createObjectURL(mediaSource);
+      mediaSource.addEventListener("sourceopen", function () {
+        try {
+          sourceBuffer = mediaSource.addSourceBuffer(mime);
+          sourceBuffer.mode = "segments";
+          sourceBuffer.addEventListener("updateend", drain);
+          drain();
+        } catch (error) {
+          finish(false, "the media buffer could not be created: " + error.message);
+        }
+      }, { once: true });
+    }
+
+    function drain() {
+      if (!sourceBuffer || sourceBuffer.updating || queue.length === 0) return;
+      try {
+        sourceBuffer.appendBuffer(queue.shift());
+        delivered = true;
+        trim();
+      } catch (error) {
+        // QuotaExceeded on a tile left running for hours: drop what is already behind the playhead
+        // and carry on rather than tearing the stream down.
+        if (error && error.name === "QuotaExceededError") {
+          trim(true);
+          return;
+        }
+        finish(false, "the fMP4 stream could not be read: " + error.message);
+      }
+    }
+
+    // A live tile has no scrubber, so anything behind the playhead is dead weight - and left alone
+    // it grows until the engine refuses to take another segment.
+    function trim(aggressive) {
+      if (!sourceBuffer || sourceBuffer.updating) return;
+      try {
+        const buffered = sourceBuffer.buffered;
+        if (buffered.length === 0) return;
+        const keep = aggressive ? 4 : 30;
+        const end = buffered.end(buffered.length - 1);
+        const start = buffered.start(0);
+        if (end - start > keep) sourceBuffer.remove(start, end - keep);
+      } catch (error) {
+        /* Removing is best effort; a failure here is not worth ending the stream over. */
+      }
+    }
+
+    video.addEventListener("playing", function () {
+      if (!stopped) finish(true, null);
+    }, { once: true });
+
+    // Live means live: if the buffer runs ahead of the playhead - a stall, a suspended window - jump
+    // back to the edge rather than playing minutes-old video that still looks current.
+    video.addEventListener("progress", function () {
+      if (isClip) return;
+      try {
+        const buffered = video.buffered;
+        if (buffered.length === 0) return;
+        const edge = buffered.end(buffered.length - 1);
+        if (edge - video.currentTime > 5) video.currentTime = edge - 0.5;
+      } catch (error) {
+        /* Not fatal. */
+      }
+    });
+
+    setTimeout(function () { finish(false, "MSE delivered no playable media within 8s"); }, 8000);
+  });
+}
+
+// ------------------------------------------------------------------ Snapshots
+
+/*
+ * The honest last resort. It is not video and it does not pretend to be: the badge says SNAPSHOTS
+ * and the message says why, so nobody mistakes a two-second-old still for a live feed.
+ */
+function startSnapshots(reason) {
+  if (stopped) return;
+  video.style.display = "none";
+  snapshot.style.display = "block";
+  setStatus("SNAPSHOTS", "snapshots");
+  setMessage("Live video needs go2rtc on the server. " + (reason || "") +
+             " Showing refreshed snapshots instead.");
+
+  const tick = function () {
+    if (stopped) return;
+    // A cache-busting parameter, or the engine will happily show the same still forever.
+    snapshot.src = url("/api/cameras/" + cameraId + "/thumbnail.jpg?t=" + Date.now());
+  };
+  tick();
+  snapshotTimer = setInterval(tick, 2000);
+}
+
+// ------------------------------------------------------------------ Ladder
+
+async function start() {
+  const webrtc = await tryWebRtc();
+  if (stopped) return;
+  if (webrtc.ok) {
+    playing("webrtc");
+    return;
+  }
+  report("webrtc", "failed", webrtc.reason);
+
+  const mse = await tryMse();
+  if (stopped) return;
+  if (mse.ok) {
+    playing("mse");
+    return;
+  }
+  report("mse", "failed", mse.reason);
+
+  startSnapshots(mse.reason);
+}
+
+function stop() {
+  stopped = true;
+  if (snapshotTimer) clearInterval(snapshotTimer);
+  snapshotTimer = null;
+  if (socket) {
+    try { socket.close(); } catch (error) { /* already closed */ }
+    socket = null;
+  }
+  if (peer) {
+    try { peer.close(); } catch (error) { /* already closed */ }
+    peer = null;
+  }
+  try {
+    video.pause();
+    video.removeAttribute("src");
+    video.srcObject = null;
+    video.load();
+  } catch (error) {
+    /* Tearing down; nothing useful to do. */
+  }
+}
+
+// ------------------------------------------------------------------ Host API
+
+window.sentinelStop = stop;
+window.sentinelSetMuted = function (muted) { video.muted = !!muted; };
+window.sentinelSetVolume = function (value) { video.volume = Math.max(0, Math.min(1, value)); };
+window.sentinelZoomIn = function () { setScale(zoom.scale * 1.5); };
+window.sentinelZoomOut = function () { setScale(zoom.scale / 1.5); };
+window.sentinelZoomReset = function () { setScale(1); };
+
+/*
+ * A recorded clip rather than a live stream: the same <video> element pointed at a saved file, with
+ * the host driving position instead of a scrubber. The timeline owns the transport, because its
+ * cursor spans a whole day and this file is only one window inside it.
+ */
+window.sentinelPlayClip = function (path, offsetSeconds, autoplay) {
+  stop();
+  stopped = false;
+  isClip = true;
+  video.style.display = "block";
+  snapshot.style.display = "none";
+  video.muted = false;
+  video.loop = false;
+  video.srcObject = null;
+  video.src = url(path);
+  setStatus("", "hidden");
+  setMessage("");
+
+  const seekWhenReady = function () {
+    if (offsetSeconds > 0) {
+      try { video.currentTime = offsetSeconds; } catch (error) { /* not seekable yet */ }
+    }
+    if (autoplay) {
+      video.play().catch(function () { /* autoplay policy may refuse; the host's play button works */ });
+    }
+  };
+
+  if (video.readyState >= 1) {
+    seekWhenReady();
+  } else {
+    video.addEventListener("loadedmetadata", seekWhenReady, { once: true });
+  }
+};
+
+window.sentinelSeekClip = function (seconds) {
+  if (!isClip) return;
+  try { video.currentTime = Math.max(0, seconds); } catch (error) { /* not seekable yet */ }
+};
+
+window.sentinelSetPlaying = function (play) {
+  if (play) {
+    video.play().catch(function () { /* nothing loaded, or policy refused */ });
+  } else {
+    video.pause();
+  }
+};
+
+window.sentinelShowMessage = function (text) {
+  setStatus("", "hidden");
+  setMessage(text);
+};
+
+// The clip's position, reported often enough for a cursor to track it smoothly without flooding
+// the host with messages.
+video.addEventListener("timeupdate", function () {
+  if (!isClip) return;
+  post({ kind: "clipTime", seconds: video.currentTime });
+});
+
+video.addEventListener("ended", function () {
+  if (!isClip) return;
+  post({ kind: "clipEnded" });
+});
+
+video.addEventListener("error", function () {
+  if (!isClip) return;
+  post({ kind: "clipError" });
+});
+
+if (cameraId) start();
+</script>
+</body>
+</html>

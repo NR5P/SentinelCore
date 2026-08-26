@@ -1,0 +1,44 @@
+<UserControl x:Class="SentinelCore.App.Views.LiveView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <DockPanel Margin="20,16,20,16">
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Live" Style="{StaticResource SectionTitle}" />
+                <TextBlock Style="{StaticResource Caption}"
+                           Text="Drag a tile onto another to rearrange the grid. Double-click to open a camera." />
+            </StackPanel>
+
+            <Button Grid.Column="1" Padding="10,6" Click="OnRefreshClicked" VerticalAlignment="Center"
+                    ToolTip="Refresh the camera list">
+                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" />
+            </Button>
+        </Grid>
+
+        <Grid>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl x:Name="TileHost">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <StackPanel x:Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center"
+                        Visibility="Collapsed" MaxWidth="360">
+                <TextBlock Text="No cameras" FontSize="16" HorizontalAlignment="Center"
+                           Foreground="{StaticResource SecondaryText}" />
+                <TextBlock Style="{StaticResource Caption}" TextAlignment="Center" Margin="0,8,0,0"
+                           Text="Add cameras in Settings → Manage Cameras, or in the Sentinel Core dashboard." />
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

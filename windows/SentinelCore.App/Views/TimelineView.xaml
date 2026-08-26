@@ -1,0 +1,171 @@
+<UserControl x:Class="SentinelCore.App.Views.TimelineView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:live="clr-namespace:SentinelCore.App.Live"
+             xmlns:design="clr-namespace:SentinelCore.App.Design">
+
+    <DockPanel Margin="20,16,20,16">
+
+        <!-- ================= Which camera, which day ================= -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Timeline" Style="{StaticResource SectionTitle}" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="ClipsSummary" Style="{StaticResource Caption}" />
+                    <TextBlock x:Name="EventsSummary" Style="{StaticResource Caption}" Margin="12,0,0,0" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <ComboBox x:Name="CameraBox" MinWidth="180" SelectionChanged="OnCameraChanged" />
+                <Button Content="&#xE76B;" FontFamily="Segoe MDL2 Assets" Padding="10,6" Margin="10,0,0,0"
+                        Click="OnPreviousDayClicked" ToolTip="Previous day" />
+                <DatePicker x:Name="DayPicker" Margin="6,0,0,0" MinWidth="132"
+                            SelectedDateChanged="OnDayChanged" />
+                <Button x:Name="NextDayButton" Content="&#xE76C;" FontFamily="Segoe MDL2 Assets" Padding="10,6"
+                        Margin="6,0,0,0" Click="OnNextDayClicked" ToolTip="Next day" />
+                <Button Content="&#xE72C;" FontFamily="Segoe MDL2 Assets" Padding="10,6" Margin="10,0,0,0"
+                        Click="OnRefreshClicked" ToolTip="Reload this day" />
+            </StackPanel>
+        </Grid>
+
+        <TextBlock x:Name="MessageText" DockPanel.Dock="Bottom" Style="{StaticResource Caption}"
+                   Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource Amber}"
+                   Visibility="Collapsed" />
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="400" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ================= Playback ================= -->
+            <DockPanel Grid.Column="0" Margin="0,0,14,0">
+
+                <!-- The rail: recorded stretches, event marks, and where the cursor is. -->
+                <Border DockPanel.Dock="Bottom" Height="60" Margin="0,12,0,0" CornerRadius="6"
+                        Background="{StaticResource InputBackground}"
+                        BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
+                    <Grid>
+                        <Canvas x:Name="RailCanvas" Background="Transparent"
+                                MouseLeftButtonDown="OnRailPressed"
+                                MouseMove="OnRailMoved"
+                                MouseLeftButtonUp="OnRailReleased" />
+                        <TextBlock x:Name="RailNotice" Style="{StaticResource Caption}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <!-- Transport -->
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
+                    <Button x:Name="PreviousEventButton" Padding="10,6" Click="OnPreviousEventClicked"
+                            ToolTip="Previous event">
+                        <TextBlock Text="&#xE892;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Button x:Name="PlayButton" Padding="14,6" Margin="8,0,0,0" Click="OnPlayClicked"
+                            Style="{StaticResource PrimaryButton}">
+                        <TextBlock x:Name="PlayGlyph" Text="&#xE768;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Button x:Name="NextEventButton" Padding="10,6" Margin="8,0,0,0" Click="OnNextEventClicked"
+                            ToolTip="Next event">
+                        <TextBlock Text="&#xE893;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+
+                    <TextBlock x:Name="CursorText" Margin="16,0,0,0" VerticalAlignment="Center"
+                               FontFamily="Consolas, Courier New" FontSize="14"
+                               Foreground="{StaticResource Cyan}" />
+
+                    <TextBlock x:Name="SegmentText" Margin="14,0,0,0" VerticalAlignment="Center"
+                               Style="{StaticResource Caption}" />
+
+                    <Button Content="Now" Margin="16,0,0,0" Padding="12,6" Click="OnNowClicked"
+                            ToolTip="Jump to the most recent footage" />
+                </StackPanel>
+
+                <Border CornerRadius="8" ClipToBounds="True" Background="Black">
+                    <design:UnlicensedWatermark x:Name="Watermark">
+                        <live:PlayerHost x:Name="Player" Mode="clip" />
+                    </design:UnlicensedWatermark>
+                </Border>
+            </DockPanel>
+
+            <!-- ================= Events ================= -->
+            <DockPanel Grid.Column="1">
+                <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Padding="12" Margin="0,0,0,10">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="ObjectsButton" Content="Objects" Padding="10,5" Click="OnObjectsClicked" />
+                            <Button x:Name="SeverityButton" Content="Severity" Padding="10,5" Margin="8,0,0,0"
+                                    Click="OnSeverityClicked" />
+                            <ComboBox x:Name="ReviewBox" MinWidth="120" Margin="8,0,0,0"
+                                      SelectionChanged="OnReviewChanged">
+                                <ComboBoxItem Content="All" />
+                                <ComboBoxItem Content="Unreviewed" />
+                                <ComboBoxItem Content="Reviewed" />
+                            </ComboBox>
+                        </StackPanel>
+                        <Button Content="Reset filters" Style="{StaticResource LinkButton}" Margin="0,8,0,0"
+                                HorizontalAlignment="Left" Click="OnResetFiltersClicked" />
+                    </StackPanel>
+                </Border>
+
+                <ListBox x:Name="EventList" SelectionChanged="OnEventSelected"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="10" Margin="0,3" CornerRadius="6"
+                                    Background="{StaticResource CardBackground}"
+                                    BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0" Width="112" Height="68" CornerRadius="5"
+                                            ClipToBounds="True" Background="#0A0D10">
+                                        <design:RemoteImage SourcePath="{Binding ImageUrl}" DecodeWidth="240"
+                                                            Stretch="UniformToFill" />
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Time}" FontFamily="Consolas, Courier New"
+                                                       FontSize="11.5" Foreground="{StaticResource Cyan}" />
+                                            <TextBlock Text="{Binding Category}" FontSize="10.5" Margin="7,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{Binding CategoryBrush}" />
+                                            <TextBlock Text="{Binding Severity}" FontSize="10.5" Margin="7,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{Binding SeverityBrush}" />
+                                            <TextBlock Text="{Binding ClipLabel}" FontSize="10.5" Margin="7,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{StaticResource SecondaryText}" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding Summary}" Style="{StaticResource BodyText}"
+                                                   Margin="0,5,0,0" MaxHeight="36"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+
+                                    <Button Grid.Column="2" Tag="{Binding}" Click="OnToggleReviewedClicked"
+                                            Style="{StaticResource LinkButton}" Padding="8,4"
+                                            VerticalAlignment="Center" ToolTip="{Binding ReviewedTip}">
+                                        <TextBlock Text="{Binding ReviewedGlyph}" FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="17" Foreground="{Binding ReviewedBrush}" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

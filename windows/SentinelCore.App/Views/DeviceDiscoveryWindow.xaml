@@ -1,0 +1,58 @@
+<Window x:Class="SentinelCore.App.Views.DeviceDiscoveryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Discover devices" Height="580" Width="720" MinHeight="440" MinWidth="560">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Style="{StaticResource DialogHeader}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Discover devices" FontSize="17" FontWeight="SemiBold"
+                               Foreground="{StaticResource Green}" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap"
+                               Text="Listens to your MQTT broker for a while and lists what it hears. A device that only publishes when something changes won't be found until it does - press a switch to make it talk." />
+                </StackPanel>
+                <Button Grid.Column="1" x:Name="ScanButton" Content="Start listening" VerticalAlignment="Center"
+                        Style="{StaticResource PrimaryButton}" Click="OnScanClicked" />
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="480" TextWrapping="Wrap" />
+                <Button Content="Close" HorizontalAlignment="Right" MinWidth="90" Click="OnCloseClicked" />
+            </Grid>
+        </Border>
+
+        <ListBox x:Name="ResultList" Margin="12">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Padding="12" Margin="0,4" CornerRadius="6" Background="{StaticResource CardBackground}"
+                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SuggestedName}" FontWeight="SemiBold"
+                                           Foreground="{StaticResource PrimaryText}" />
+                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Caption}" Margin="0,3,0,0"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="{Binding ActionLabel}" Tag="{Binding}"
+                                    IsEnabled="{Binding CanAdd}" Click="OnAddClicked" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</Window>

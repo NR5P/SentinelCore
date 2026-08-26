@@ -1,0 +1,140 @@
+<Window x:Class="SentinelCore.App.Views.TriggerZoneEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Trigger zones" Height="820" Width="1180" MinHeight="600" MinWidth="900">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="620" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Close" MinWidth="90" Click="OnCloseClicked" />
+                    <Button x:Name="SaveButton" Content="Save" Margin="10,0,0,0" MinWidth="90"
+                            Style="{StaticResource PrimaryButton}" Click="OnSaveClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Settings -->
+        <Border DockPanel.Dock="Right" Width="330" BorderBrush="{StaticResource CardBorder}"
+                BorderThickness="1,0,0,0" Background="{StaticResource SidebarBackground}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+                <StackPanel>
+                    <CheckBox x:Name="EnabledToggle" Content="Motion triggering is on" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="26,4,0,0" TextWrapping="Wrap"
+                               Text="With this off, nothing on this camera triggers a recording or an analysis." />
+
+                    <TextBlock Text="ZONES" Style="{StaticResource GroupHeading}" Margin="0,18,0,8" />
+                    <ListBox x:Name="ZoneList" SelectionChanged="OnZoneSelected" MaxHeight="170">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="8,7">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Rectangle Grid.Column="0" Width="10" Height="10" RadiusX="2" RadiusY="2"
+                                               Fill="{Binding Colour}" VerticalAlignment="Center" />
+                                    <StackPanel Grid.Column="1" Margin="9,0,0,0">
+                                        <TextBlock Text="{Binding Name}" Foreground="{StaticResource PrimaryText}" />
+                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource Caption}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button Content="Add zone" Click="OnAddZoneClicked" />
+                        <Button Content="Rename" Margin="8,0,0,0" Click="OnRenameZoneClicked" />
+                        <Button x:Name="DeleteZoneButton" Content="Delete" Margin="8,0,0,0"
+                                Style="{StaticResource DangerButton}" Click="OnDeleteZoneClicked" />
+                    </StackPanel>
+
+                    <TextBlock Text="Smallest thing that counts" Style="{StaticResource FieldLabel}" />
+                    <Slider x:Name="MinAreaSlider" Minimum="0" Maximum="0.2" TickFrequency="0.001"
+                            IsSnapToTickEnabled="True" ValueChanged="OnMinAreaChanged" />
+                    <TextBlock x:Name="MinAreaText" Style="{StaticResource Caption}" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Text="Each zone has its own: perspective means the same person covers far more of the frame near the camera than at the end of the drive." />
+
+                    <TextBlock Text="TIMING" Style="{StaticResource GroupHeading}" Margin="0,20,0,0" />
+
+                    <TextBlock Text="Cooldown (seconds)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="CooldownBox" />
+
+                    <TextBlock Text="Most triggers per minute" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="MaxPerMinuteBox" />
+
+                    <TextBlock Text="Shadow tolerance" Style="{StaticResource FieldLabel}" />
+                    <Slider x:Name="ShadowSlider" Minimum="0" Maximum="100" TickFrequency="1"
+                            IsSnapToTickEnabled="True" ValueChanged="OnShadowChanged" />
+                    <TextBlock x:Name="ShadowText" Style="{StaticResource Caption}" />
+
+                    <TextBlock Text="RECORDING" Style="{StaticResource GroupHeading}" Margin="0,20,0,0" />
+                    <CheckBox x:Name="RecordClipsToggle" Content="Record a clip" />
+                    <TextBlock Text="Seconds before" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="PreSecondsBox" />
+                    <TextBlock Text="Seconds after" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="PostSecondsBox" />
+
+                    <TextBlock Text="AI ANALYSIS" Style="{StaticResource GroupHeading}" Margin="0,20,0,0" />
+                    <CheckBox x:Name="SendToAlertsToggle" Content="Send frames for AI analysis" />
+                    <TextBlock Text="Prompt profile" Style="{StaticResource FieldLabel}" />
+                    <ComboBox x:Name="ProfileBox" DisplayMemberPath="DisplayName" SelectedValuePath="Key" />
+
+                    <TextBlock Text="OVERNIGHT PAUSE" Style="{StaticResource GroupHeading}" Margin="0,20,0,0" />
+                    <CheckBox x:Name="NightToggle" Content="Pause triggering overnight" />
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                            <TextBlock Text="From (hour)" Style="{StaticResource Caption}" />
+                            <TextBox x:Name="NightStartBox" Margin="0,4,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                            <TextBlock Text="Until (hour)" Style="{StaticResource Caption}" />
+                            <TextBox x:Name="NightEndBox" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap"
+                               Text="Whole hours on a 24-hour clock, server time. 21 to 7 means from 9pm until 7am." />
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Frame and polygon -->
+        <Grid Background="Black">
+            <Image x:Name="FrameImage" Stretch="Uniform" />
+            <Canvas x:Name="ZoneCanvas" Background="Transparent"
+                    MouseLeftButtonDown="OnCanvasMouseDown"
+                    MouseMove="OnCanvasMouseMove"
+                    MouseLeftButtonUp="OnCanvasMouseUp"
+                    MouseRightButtonDown="OnCanvasRightClick" />
+
+            <Border VerticalAlignment="Top" HorizontalAlignment="Left" Margin="14" Padding="12,9"
+                    CornerRadius="6" Background="#B3000000">
+                <StackPanel>
+                    <TextBlock x:Name="HintText" Foreground="#DDFFFFFF" FontSize="11.5"
+                               Text="Click to add a point · drag a point to move it · right-click a point to remove it" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Clear this zone" Padding="8,4" Click="OnClearZoneClicked" />
+                        <Button Content="Cover everything" Padding="8,4" Margin="8,0,0,0"
+                                Click="OnFillZoneClicked" />
+                        <Button x:Name="RefreshFrameButton" Content="New frame" Padding="8,4" Margin="8,0,0,0"
+                                Click="OnRefreshFrameClicked" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="FrameNotice" VerticalAlignment="Center" HorizontalAlignment="Center"
+                       Foreground="{StaticResource SecondaryText}" TextAlignment="Center" MaxWidth="420"
+                       TextWrapping="Wrap" />
+        </Grid>
+    </DockPanel>
+</Window>
