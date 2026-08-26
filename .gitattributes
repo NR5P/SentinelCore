@@ -1,0 +1,35 @@
+# Line endings, decided here rather than by whoever happens to clone the repository.
+#
+# Everything is already stored LF, and stays that way. What this changes is the working tree on
+# Windows, where Git for Windows' core.autocrlf=true checks every text file out as CRLF - and that
+# is not merely cosmetic. A C# raw string literal keeps whatever line endings its .cs file has, so
+# the Ollama prompt built from a Windows checkout came out CRLF where the same source on Linux gave
+# LF: the same commit, different bytes sent to the model, and one test that could only fail here.
+#
+# LF in the working tree on every platform. The .NET SDK, PowerShell, bash and every editor in use
+# here read LF happily on Windows; the shell scripts and systemd units that get copied to a Linux
+# box do not read CRLF happily at all.
+
+* text=auto eol=lf
+
+# The one thing that genuinely wants CRLF: cmd.exe can mis-parse labels and multi-line blocks
+# otherwise. Naming it here also normalises what is stored, which is why gradlew.bat changes.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never converted, never diffed as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.onnx  binary
+*.jar   binary
+*.keystore binary
+*.pdf   binary
+*.zip   binary
+*.mp4   binary
