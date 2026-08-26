@@ -134,12 +134,18 @@ public static class CameraEndpoints
             // straight back; that means "keep the stored password", never "set the password to
             // eight bullet characters". Same contract as a masked settings secret - see
             // SettingsSecrets.UnmaskAsync.
+            //
+            // One read serves both halves: StreamUrl now arrives masked too (see Masked), and a
+            // form that changed only the host has to keep the stored secret while taking the new
+            // host - so the URL is restored piece by piece rather than kept or replaced whole.
+            var existing = await store.GetAsync(id, ct);
             var password = dto.Password == SettingsSecrets.Mask
-                ? (await store.GetAsync(id, ct))?.Password
+                ? existing?.Password
                 : dto.Password;
+            var streamUrl = StreamUrlSecrets.Unmask(dto.StreamUrl.Trim(), existing?.StreamUrl);
 
             var updated = await store.UpdateAsync(
-                id, dto.Name.Trim(), dto.StreamUrl.Trim(), dto.Username, password, dto.IncludeAudio,
+                id, dto.Name.Trim(), streamUrl, dto.Username, password, dto.IncludeAudio,
                 dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, dto.IsBrowserPublished, ct);
             if (!updated) return Results.NotFound();
 
@@ -449,11 +455,20 @@ public static class CameraEndpoints
     // Empty stays empty, so a form can still tell "no password set" from "one is set, and it is
     // not being shown to you" - the same distinction SettingsSecrets.MaskInPlace preserves.
     //
+    // StreamUrl gets the same treatment, because on this network it holds a second copy of the very
+    // same credential: Reolink cameras cannot use RTSP here, so they stream over HTTP-FLV with
+    // "&password=<secret>" in the query string. Masking only the column left that copy going out in
+    // full to every signed-in caller, which made the admin-only /api/cameras/{id}/password endpoint
+    // a door with a second one open beside it. See StreamUrlSecrets.
+    //
     // The config backup deliberately does not go through here: it reads ICameraStore directly, and
     // a backup whose cameras could not reconnect after a restore would not be a backup. That file
     // is already documented as being as sensitive as appsettings.json.
-    private static Camera Masked(Camera camera) =>
-        string.IsNullOrEmpty(camera.Password) ? camera : camera with { Password = SettingsSecrets.Mask };
+    private static Camera Masked(Camera camera) => camera with
+    {
+        Password = string.IsNullOrEmpty(camera.Password) ? camera.Password : SettingsSecrets.Mask,
+        StreamUrl = StreamUrlSecrets.Mask(camera.StreamUrl),
+    };
 
     // internal so config restore can hold imported cameras to the same rules this endpoint
     // enforces - see BackupEndpoints.Validate.
