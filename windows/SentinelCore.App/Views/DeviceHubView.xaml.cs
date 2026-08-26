@@ -58,6 +58,23 @@ public partial class DeviceHubView : UserControl
     private void OnDevicesChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
         Dispatcher.Invoke(Rebuild);
 
+    /// <summary>
+    /// Redraws the cards, unless someone is in the middle of using one.
+    /// </summary>
+    /// <remarks>
+    /// Rebuilding replaces every control, and the brightness slider commits its value on mouse-up
+    /// from a handler attached to that specific slider instance. The four-second state poll calls
+    /// this, so any drag lasting longer than the poll interval had the slider pulled out from under
+    /// it: capture was lost, the handler never ran, no command was sent, and the thumb sprang back
+    /// to where it started. Deferring the redraw until the pointer is released costs at most one
+    /// poll's worth of staleness on one card.
+    /// </remarks>
+    private void RebuildUnlessBusy()
+    {
+        if (Mouse.Captured is DependencyObject captured && IsInteractive(captured)) return;
+        Rebuild();
+    }
+
     private async Task PollStateAsync()
     {
         if (!_isActive) return;
@@ -77,7 +94,7 @@ public partial class DeviceHubView : UserControl
             BrokerText.Text = snapshot.Connected
                 ? $"{_model.Devices.Count} device{(_model.Devices.Count == 1 ? "" : "s")} · broker connected"
                 : "Not connected to the MQTT broker - nothing here can be switched until it is.";
-            Rebuild();
+            RebuildUnlessBusy();
         }
         catch (Exception error)
         {

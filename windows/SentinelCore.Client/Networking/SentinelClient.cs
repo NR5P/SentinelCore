@@ -207,6 +207,21 @@ public sealed class SentinelClient : IDisposable
     public Task<byte[]> ReferenceFrameAsync(Guid cameraId, CancellationToken ct = default) =>
         GetBytesAsync($"/api/cameras/{cameraId}/reference-frame", ct);
 
+    /// <summary>
+    /// The bytes at a server-relative path, over this session. For the snapshots the feed, the
+    /// timeline and the live tiles show, and for saving one to a file.
+    /// </summary>
+    /// <remarks>
+    /// Public so that nothing else has to build its own HTTP stack to fetch an authenticated image.
+    /// Two callers used to construct - and dispose - an HttpClient and handler per image, which
+    /// leaves each one's sockets in TIME_WAIT for minutes afterwards; against a feed that fetches a
+    /// snapshot per row and reloads every 30 seconds, that is a steady climb towards running out of
+    /// ephemeral ports. Sharing the one handler this class already owns also means these requests
+    /// carry the same cookies and time out on the same rules as every other call.
+    /// </remarks>
+    public Task<byte[]> DownloadAsync(string path, CancellationToken ct = default) =>
+        GetBytesAsync(path, ct);
+
     public Task<List<PromptProfileName>> PromptProfileNamesAsync(CancellationToken ct = default) =>
         GetAsync<List<PromptProfileName>>("/api/prompt-profile-names", ct: ct);
 
@@ -833,7 +848,13 @@ public sealed class SentinelClient : IDisposable
         {
             response = await _http.SendAsync(request, ct).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        // A request the app itself abandoned is not a failure and is deliberately not logged. A
+        // request that ran out of time is - it arrives as the same exception type, so the caller's
+        // token is what tells them apart, and without this the single most confusing failure on a
+        // LAN (a firewall dropping packets, so the server never answers and never refuses) left no
+        // trace in the connection log at all.
+        catch (Exception error) when (error is not OperationCanceledException ||
+                                      !ct.IsCancellationRequested)
         {
             _log.Log($"{method} failed after {Elapsed(started)}: {Describe(error)}", DiagnosticLevel.Error);
             throw;

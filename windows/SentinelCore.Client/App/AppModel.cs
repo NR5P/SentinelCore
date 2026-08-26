@@ -69,11 +69,7 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             () => string.IsNullOrEmpty(ActiveServerUrl) ? ServerUrl : ActiveServerUrl,
             this);
         _discovery = new ServerDiscovery(this);
-        _discovery.ServersChanged += servers => Post(() =>
-        {
-            DiscoveredServers.Clear();
-            foreach (var server in servers) DiscoveredServers.Add(server);
-        });
+        _discovery.ServersChanged += servers => Post(() => DiscoveredServers.ReplaceAll(servers));
     }
 
     public SentinelClient Client { get; }
@@ -194,7 +190,7 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
 
     // The single Events list: motion and the AI's read of it, already joined server-side into one
     // row per moment.
-    public ObservableCollection<ActivityItem> Activity { get; } = new();
+    public BulkObservableCollection<ActivityItem> Activity { get; } = new();
 
     // "Show hidden" - motion the AI rejected as nothing, plus anything still awaiting a verdict.
     // Not persisted: the confirmed-only list is the one to be looking at day to day.
@@ -206,18 +202,18 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         set => SetProperty(ref _showHiddenActivity, value);
     }
 
-    public ObservableCollection<Models.Camera> Cameras { get; } = new();
+    public BulkObservableCollection<Models.Camera> Cameras { get; } = new();
 
     // How this account has arranged the Live grid, newest server answer first. Kept apart from
     // Cameras on purpose: that list stays the canonical, order-agnostic one every other screen
     // reads, and only the Live grid cares where the tiles sit.
     private List<Guid> _liveCameraOrder = new();
 
-    public ObservableCollection<HubDevice> Devices { get; } = new();
+    public BulkObservableCollection<HubDevice> Devices { get; } = new();
 
     public ObservableCollection<DiagnosticEntry> Diagnostics { get; } = new();
 
-    public ObservableCollection<DiscoveredServer> DiscoveredServers { get; } = new();
+    public BulkObservableCollection<DiscoveredServer> DiscoveredServers { get; } = new();
 
     // Whether the server has the Device Hub switched on. Drives whether the section exists at all.
     private bool _deviceHubEnabled;
@@ -336,7 +332,6 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             // recovered, so an explicit reconnect starts a fresh one.
             if (resetNetworkSession || wasOffline) Client.ResetSession();
 
-            _discovery.Start();
             UsingHttpFallback = false;
             await ResolveActiveServerUrlAsync(ct).ConfigureAwait(false);
 
@@ -346,7 +341,7 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             }
             catch (Exception error)
             {
-                if (error is OperationCanceledException)
+                if (IsLifecycleCancellation(error, ct))
                 {
                     Log("Connection task cancelled by the app lifecycle", DiagnosticLevel.Notice);
                     return;
@@ -463,6 +458,29 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         }
 
         if (ServerCompatibility.Advisory is { } advisory) Log(advisory, DiagnosticLevel.Notice);
+    }
+
+    /// <summary>
+    /// Whether an <see cref="OperationCanceledException"/> means "the app asked us to stop" rather
+    /// than "the server never answered".
+    /// </summary>
+    /// <remarks>
+    /// These are the same exception type and they mean opposite things. HttpClient reports its own
+    /// request timeout as a TaskCanceledException, so treating every cancellation as a lifecycle
+    /// stop left the app on CONNECTING forever - no error, no Offline badge - whenever a server was
+    /// reachable but silent. That is not a rare case: a Windows Firewall rule drops rather than
+    /// refuses, which is exactly the situation the offline message tells people to go and check. A
+    /// closed port answers with a reset and always failed correctly, which is why this hid.
+    ///
+    /// The caller's token is the only thing that distinguishes them: only a real lifecycle stop
+    /// cancels it. The inner TimeoutException is checked too, since HttpClient wraps its timeout
+    /// that way and the distinction is worth not depending on a single signal.
+    /// </remarks>
+    internal static bool IsLifecycleCancellation(Exception error, CancellationToken ct)
+    {
+        if (error is not OperationCanceledException) return false;
+        if (error.InnerException is TimeoutException) return false;
+        return ct.IsCancellationRequested;
     }
 
     private void FailConnection(Exception error)
@@ -833,7 +851,17 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         }
     }
 
+    /// <summary>
+    /// Begins browsing the LAN for servers. Driven by the setup screen appearing rather than by
+    /// connecting: the results only ever populate that screen's picker, and browsing multicasts a
+    /// query on every interface every five seconds - which this used to do for the whole life of
+    /// the process, having been started from the top of every connect and stopped only on Dispose.
+    /// The Apple and Android clients browse only while their picker is on screen, for the same
+    /// reason.
+    /// </summary>
     public void StartServerDiscovery() => _discovery.Start();
+
+    public void StopServerDiscovery() => _discovery.Stop();
 
     /// <summary>
     /// A push notification names an alert, and alerts are the analyzed half of the Events list -
@@ -888,11 +916,10 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         _uiContext.Post(_ => action(), null);
     }
 
-    private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> items)
-    {
-        target.Clear();
-        foreach (var item in items) target.Add(item);
-    }
+    // One notification for the whole list rather than one per row - see BulkObservableCollection
+    // for what the per-row version cost the Live grid.
+    private static void Replace<T>(BulkObservableCollection<T> target, IEnumerable<T> items) =>
+        target.ReplaceAll(items);
 
     public void Dispose()
     {

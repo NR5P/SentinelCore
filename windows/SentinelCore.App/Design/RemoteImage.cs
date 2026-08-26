@@ -85,20 +85,11 @@ public static class ImageLoader
         if (Cache.TryGetValue(key, out var cached)) return cached;
 
         if (_client is not { } client) return null;
-        if (client.Url(path) is not { } url) return null;
 
         try
         {
-            using var http = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler
-            {
-                CookieContainer = client.Cookies,
-                UseCookies = true,
-            })
-            {
-                Timeout = TimeSpan.FromSeconds(20),
-            };
-
-            var bytes = await http.GetByteArrayAsync(url).ConfigureAwait(false);
+            // The app's own session, not a fresh HttpClient per image - see SentinelClient.
+            var bytes = await client.DownloadAsync(path).ConfigureAwait(false);
             var bitmap = Decode(bytes, decodeWidth);
             if (bitmap is null) return null;
 

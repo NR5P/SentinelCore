@@ -48,12 +48,21 @@ public partial class TimelineView : UserControl
         DayPicker.SelectedDate = DateTime.Today;
         ReviewBox.SelectedIndex = 0;
 
-        Player.ClipPositionChanged += OnClipPositionChanged;
-        Player.ClipEnded += OnClipEnded;
-        Player.ClipFailed += OnClipFailed;
-
         RailCanvas.SizeChanged += (_, _) => DrawRail();
-        Loaded += async (_, _) => await LoadCamerasAsync();
+
+        // Subscribed on Loaded rather than in the constructor, because Unloaded below drops the
+        // subscriptions and this view is built once and reused. The shell swaps it out of the
+        // visual tree when another section is chosen, which raises Unloaded; wiring these up here
+        // is what makes them come back. Doing it in the constructor left the second visit to the
+        // Timeline with a cursor that no longer tracked playback, no jump to the next clip at the
+        // end of a segment, and no message when a clip failed - all of it silent.
+        Loaded += async (_, _) =>
+        {
+            Player.ClipPositionChanged += OnClipPositionChanged;
+            Player.ClipEnded += OnClipEnded;
+            Player.ClipFailed += OnClipFailed;
+            await LoadCamerasAsync();
+        };
         Unloaded += (_, _) =>
         {
             Player.ClipPositionChanged -= OnClipPositionChanged;

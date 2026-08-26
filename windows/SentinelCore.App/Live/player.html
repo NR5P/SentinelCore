@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src * data: blob:; media-src * blob:; connect-src *; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+      content="default-src 'none'; img-src * data: blob:; media-src * blob:; connect-src *; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
 <title>Sentinel Core live</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
@@ -94,6 +94,15 @@
 <div id="message"></div>
 <div id="toast"></div>
 
+<!--
+  The HLS rung's decoder. Taken from the server's own origin rather than embedded in this file: it
+  is the identical build the web dashboard uses, so the two can never drift apart, and this page is
+  already served from that origin so it costs no extra trust. A server too old to have it leaves
+  window.Hls undefined, which tryHls treats as "no HLS here" and falls through - so this failing to
+  load costs the bottom rung, never the page.
+-->
+<script src="/vendor/hls.min.js"></script>
+
 <div id="controls">
   <div class="group tr">
     <button data-act="record" class="liveOnly" title="Record now - saves a clip of the seconds either side">&#9679;</button>
@@ -173,13 +182,24 @@ const statusEl = document.getElementById("status");
 const zoomBadge = document.getElementById("zoomBadge");
 const messageEl = document.getElementById("message");
 
-video.muted = !wantsAudio;
+/*
+ * Always muted to begin with, even when audio is wanted.
+ *
+ * The engine's autoplay policy refuses to start unmuted media without a user gesture, and this page
+ * is navigated to rather than clicked into - so a full-size view of a camera with audio would have
+ * had its play() rejected, never fired "playing", and been failed by the tier's own timeout into
+ * the snapshot rung. Silent video beats no video, so the sound is turned on after playback is
+ * actually under way, where the policy allows it.
+ */
+video.muted = true;
 
 let stopped = false;
 let snapshotTimer = null;
 let socket = null;
 let peer = null;
+let hls = null;
 let isClip = false;
+let restartTimer = null;
 
 function post(payload) {
   try {
@@ -215,7 +235,62 @@ function playing(tier) {
   if (stopped) return;
   setStatus("LIVE", "live");
   setMessage("");
+  // Safe here and not before: playback has started, so unmuting is no longer an autoplay decision.
+  if (wantsAudio && !muted) video.muted = false;
   report(tier, "playing", null);
+}
+
+/*
+ * A tier that was playing and stopped playing.
+ *
+ * Distinct from a tier that never started, which the ladder handles by moving down a rung. This is
+ * a feed that died under a viewer, and the previous behaviour was to do nothing at all: the promise
+ * for that tier had already resolved, so the socket closing simply froze the picture and left the
+ * green LIVE badge sitting over it - a badge claiming the feed is current is the one thing on
+ * screen worth trusting, and it was lying. Reported as degraded (the server logs it as a stall, not
+ * a fallback) and the whole ladder is run again from the top, since whatever killed this tier may
+ * well have taken the ones above it too.
+ */
+function recover(tier, reason) {
+  if (stopped || isClip || restartTimer) return;
+  report(tier, "degraded", reason);
+  setStatus("RECONNECTING", "");
+  setMessage("");
+  restartTimer = setTimeout(function () {
+    restartTimer = null;
+    if (stopped || isClip) return;
+    teardownTransports();
+    start();
+  }, 2000);
+}
+
+/* Releases the sockets and decoders without ending the session, so the ladder can be run again. */
+function teardownTransports() {
+  if (snapshotTimer) clearInterval(snapshotTimer);
+  snapshotTimer = null;
+  if (socket) {
+    try { socket.onclose = null; socket.onerror = null; socket.close(); } catch (error) { /* already closed */ }
+    socket = null;
+  }
+  if (peer) {
+    try { peer.onconnectionstatechange = null; peer.close(); } catch (error) { /* already closed */ }
+    peer = null;
+  }
+  if (hls) {
+    try { hls.destroy(); } catch (error) { /* already gone */ }
+    hls = null;
+  }
+  try {
+    video.pause();
+    video.removeAttribute("src");
+    video.srcObject = null;
+    video.load();
+    video.muted = true;
+  } catch (error) {
+    /* Nothing useful to do. */
+  }
+  snapshot.style.display = "none";
+  video.style.display = "block";
 }
 
 function url(path) {
@@ -440,7 +515,12 @@ async function tryWebRtc() {
       peer.onconnectionstatechange = function () {
         if (!peer) return;
         if (peer.connectionState === "connected") finish(true, null);
-        if (peer.connectionState === "failed") finish(false, "the WebRTC connection failed");
+        if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+          // Once settled the promise is spent, so a connection that drops after it was playing has
+          // to be picked up here rather than by the ladder.
+          if (settled) recover("webrtc", "the WebRTC connection " + peer.connectionState);
+          else finish(false, "the WebRTC connection failed");
+        }
       };
 
       // A tunnel or a strict firewall does not refuse the media port, it simply drops it - so this
@@ -536,10 +616,14 @@ function tryMse() {
     };
 
     socket.onerror = function () {
+      if (settled) { recover("mse", "the MSE socket failed mid-stream"); return; }
       finish(false, delivered ? "the MSE socket failed mid-stream" : "the MSE socket could not connect");
     };
 
     socket.onclose = function () {
+      // A close after the tier resolved is a feed that died under someone watching it, not a tier
+      // that never started - the ladder is finished by then and cannot answer for it.
+      if (settled) { recover("mse", "the MSE socket closed mid-stream"); return; }
       finish(false, delivered ? "the MSE socket closed mid-stream" : "the MSE socket closed before any media");
     };
 
@@ -636,6 +720,82 @@ function tryMse() {
   });
 }
 
+// ------------------------------------------------------------------ HLS
+
+/*
+ * The bottom rung that is still video.
+ *
+ * This app used to drop from MSE straight to still images, while the web dashboard and the Apple
+ * clients all had HLS in between - so the one place a fallback matters most (the remote address,
+ * where WebRTC's UDP is gone and the MSE WebSocket often is too) was also the one place Windows
+ * showed a slideshow while a phone on the same address showed video.
+ *
+ * The tuning below is the dashboard's, arrived at there and repeated rather than re-derived: see
+ * LIVE_HLS_CONFIG in cameras.js for why sitting one segment from the live edge is unworkable when
+ * the server cuts segments on keyframes and the real segment length is the camera's GOP.
+ */
+var LIVE_HLS_CONFIG = {
+  liveSyncDurationCount: 3,
+  liveMaxLatencyDurationCount: 10,
+  maxLiveSyncPlaybackRate: 1.5,
+  backBufferLength: 30
+};
+
+function tryHls() {
+  return new Promise(function (resolve) {
+    let settled = false;
+    const finish = function (ok, reason) {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: ok, reason: reason });
+    };
+
+    // Whatever rendition this surface asked for: a grid tile stays on the low one, where the whole
+    // point is not to pull a full-resolution stream per tile, and the full-size view keeps main
+    // because it is the only stream being pulled and detail is what it is for.
+    const src = url("/api/cameras/" + cameraId + "/stream/" + quality + "/stream.m3u8");
+
+    // A WebRTC attempt above may have got as far as attaching a MediaStream.
+    video.srcObject = null;
+
+    video.addEventListener("playing", function () {
+      if (!stopped) finish(true, null);
+    }, { once: true });
+
+    // Longer than the rungs above it on purpose: HLS has a manifest and a segment to fetch before
+    // it can show anything, so the deadline that is generous for MSE is too tight here.
+    setTimeout(function () { finish(false, "HLS delivered no playable media within 12s"); }, 12000);
+
+    if (window.Hls && window.Hls.isSupported()) {
+      hls = new Hls(LIVE_HLS_CONFIG);
+      hls.on(Hls.Events.ERROR, function (_event, data) {
+        if (!data || !data.fatal) return;   // hls.js retries the rest itself
+        if (settled) {
+          // Already playing: recover in place rather than tearing the tile down, which is what the
+          // dashboard does and is nearly always enough.
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) { try { hls.startLoad(); return; } catch (e) { /* fall through */ } }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); return; } catch (e) { /* fall through */ } }
+          recover("hls", "a fatal HLS error: " + (data.details || data.type));
+          return;
+        }
+        finish(false, "HLS failed: " + (data.details || data.type));
+      });
+      // Only once the manifest is parsed. Calling play() straight after attachMedia, before there
+      // is anything to play, gets the promise rejected and never retried.
+      hls.on(Hls.Events.MANIFEST_PARSED, function () { video.play().catch(function () { /* policy */ }); });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = src;
+      video.addEventListener("loadedmetadata", function () {
+        video.play().catch(function () { /* policy */ });
+      }, { once: true });
+    } else {
+      finish(false, "this engine cannot play HLS and hls.js did not load");
+    }
+  });
+}
+
 // ------------------------------------------------------------------ Snapshots
 
 /*
@@ -647,8 +807,10 @@ function startSnapshots(reason) {
   video.style.display = "none";
   snapshot.style.display = "block";
   setStatus("SNAPSHOTS", "snapshots");
-  setMessage("Live video needs go2rtc on the server. " + (reason || "") +
-             " Showing refreshed snapshots instead.");
+  // Deliberately no longer asserts a cause. This rung is reached when every transport above it
+  // failed, and only one of the ways that happens is go2rtc being absent - saying so regardless
+  // sent people to check a service that was running fine.
+  setMessage("No live transport worked. " + (reason || "") + " Showing refreshed snapshots instead.");
 
   const tick = function () {
     if (stopped) return;
@@ -678,29 +840,22 @@ async function start() {
   }
   report("mse", "failed", mse.reason);
 
-  startSnapshots(mse.reason);
+  const hlsResult = await tryHls();
+  if (stopped) return;
+  if (hlsResult.ok) {
+    playing("hls");
+    return;
+  }
+  report("hls", "failed", hlsResult.reason);
+
+  startSnapshots(hlsResult.reason);
 }
 
 function stop() {
   stopped = true;
-  if (snapshotTimer) clearInterval(snapshotTimer);
-  snapshotTimer = null;
-  if (socket) {
-    try { socket.close(); } catch (error) { /* already closed */ }
-    socket = null;
-  }
-  if (peer) {
-    try { peer.close(); } catch (error) { /* already closed */ }
-    peer = null;
-  }
-  try {
-    video.pause();
-    video.removeAttribute("src");
-    video.srcObject = null;
-    video.load();
-  } catch (error) {
-    /* Tearing down; nothing useful to do. */
-  }
+  if (restartTimer) clearTimeout(restartTimer);
+  restartTimer = null;
+  teardownTransports();
 }
 
 // ------------------------------------------------------------------ Host API
@@ -721,6 +876,7 @@ window.sentinelPlayClip = function (path, offsetSeconds, autoplay) {
   stop();
   stopped = false;
   isClip = true;
+  video.style.display = "block";
   video.style.display = "block";
   snapshot.style.display = "none";
   video.muted = false;

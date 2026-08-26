@@ -73,25 +73,67 @@ public partial class LiveView : UserControl
         }
     }
 
+    /// <summary>
+    /// Brings the grid in line with the model, keeping the tiles that are still wanted.
+    /// </summary>
+    /// <remarks>
+    /// A tile owns a WebView2 player with a live socket and a decoder behind it, so recreating one
+    /// costs a reconnect and several seconds of black. This used to clear the lot and build every
+    /// tile again on any change, which - because a refresh replaced the camera list an item at a
+    /// time - meant the whole grid was torn down and rebuilt several times over on each 30-second
+    /// refresh, and live video could never survive one. Existing tiles are now reused and only
+    /// their order is applied, so a refresh that returns the same cameras touches nothing.
+    /// </remarks>
     private void Rebuild()
     {
-        foreach (var tile in _tiles) tile.Player.Stop();
-        _tiles.Clear();
-        TileHost.Items.Clear();
-
         var cameras = _model.LiveCameras;
         EmptyState.Visibility = cameras.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
+        var existing = _tiles.ToDictionary(tile => tile.CameraId);
+        var wanted = cameras.Select(camera => camera.Id).ToHashSet();
+
+        // Cameras that have gone away: stop them before dropping the control, or the player keeps
+        // its socket and decoder alive with nothing on screen to show for it.
+        foreach (var tile in _tiles.Where(tile => !wanted.Contains(tile.CameraId)))
+        {
+            tile.Player.Stop();
+        }
+
+        var ordered = new List<Tile>(cameras.Count);
         foreach (var camera in cameras)
         {
-            var tile = BuildTile(camera);
-            _tiles.Add(tile);
-            TileHost.Items.Add(tile.Root);
+            if (existing.TryGetValue(camera.Id, out var tile))
+            {
+                ordered.Add(tile);
+                continue;
+            }
+            tile = BuildTile(camera);
+            ordered.Add(tile);
             if (_isActive) _ = tile.Player.PlayAsync(_model, camera.Id);
         }
+
+        // Applied to reused tiles as well as new ones: both are properties of the grid as a whole
+        // rather than of a camera, and a tile that outlives the change that altered them would
+        // otherwise keep showing the state it was built in - a stale UNLICENSED badge over video
+        // that has just been licensed, or a tile that cannot be dragged because it was built when
+        // it was the only camera.
+        var draggable = cameras.Count > 1;
+        foreach (var tile in ordered)
+        {
+            tile.Watermark.IsLicensed = _model.IsLicensed;
+            tile.Root.AllowDrop = draggable;
+        }
+
+        _tiles.Clear();
+        _tiles.AddRange(ordered);
+
+        // Only the host's ordering is rewritten. The controls themselves are the same instances, so
+        // re-adding them re-parents rather than rebuilds.
+        TileHost.Items.Clear();
+        foreach (var tile in ordered) TileHost.Items.Add(tile.Root);
     }
 
-    private sealed record Tile(Guid CameraId, Border Root, PlayerHost Player);
+    private sealed record Tile(Guid CameraId, Border Root, PlayerHost Player, UnlicensedWatermark Watermark);
 
     private Tile BuildTile(Client.Models.Camera camera)
     {
@@ -222,7 +264,7 @@ public partial class LiveView : UserControl
             _model.MoveLiveCamera(movingId, camera.Id);
         };
 
-        return new Tile(camera.Id, root, player);
+        return new Tile(camera.Id, root, player, watermark);
     }
 
     private static TextBlock Badge(string glyph, string tip) => new()

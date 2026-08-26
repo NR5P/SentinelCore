@@ -2,7 +2,12 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:design="clr-namespace:SentinelCore.App.Design"
-             ShutdownMode="OnMainWindowClose">
+             ShutdownMode="OnExplicitShutdown">
+    <!-- OnExplicitShutdown, not OnMainWindowClose: closing the window hides it to the tray rather
+         than ending the process (see MainWindow.OnClosing). A monitoring client that stops watching
+         because someone clicked the X has stopped doing the one thing it is for, and the tray
+         menu's Open and Exit entries only mean anything once the window can be gone while the app
+         is not. Exit is the deliberate way out. -->
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
