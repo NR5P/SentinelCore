@@ -61,13 +61,26 @@ public partial class TimelineView : UserControl
             Player.ClipPositionChanged += OnClipPositionChanged;
             Player.ClipEnded += OnClipEnded;
             Player.ClipFailed += OnClipFailed;
-            await LoadCamerasAsync();
+
+            // First time in, discover the cameras - which selects one and loads its day. Coming
+            // back, the day is already here and the camera box's selection has not changed, so
+            // nothing would reload it; the clip has to be put back explicitly, because Unloaded
+            // navigated the player away from it.
+            if (_day is null) await LoadCamerasAsync();
+            else SyncPlayer(force: true);
         };
         Unloaded += (_, _) =>
         {
             Player.ClipPositionChanged -= OnClipPositionChanged;
             Player.ClipEnded -= OnClipEnded;
             Player.ClipFailed -= OnClipFailed;
+
+            // Forgotten, not just stopped. Stop() navigates the player to a blank page, so the clip
+            // it was showing is gone - but this view went on believing it was still loaded, and the
+            // next Play therefore asked a blank page to resume rather than loading anything. The
+            // button changed to Pause, the cursor sat still, and nothing said why.
+            SetPlaying(false);
+            _loadedSegment = null;
             Player.Stop();
         };
     }

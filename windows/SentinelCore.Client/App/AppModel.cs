@@ -40,6 +40,11 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
 
     private bool _isConnecting;
 
+    // The https:// address this session has already found untrusted, and the plain-HTTP address it
+    // settled on instead. Remembered so the failed handshake is not repeated - see ConnectAsync.
+    private string? _untrustedHttpsAddress;
+    private string? _httpFallbackAddress;
+
     /// <param name="uiContext">
     /// Where notifications and list mutations are delivered - the window's dispatcher. Passed in
     /// rather than only picked up from <see cref="SynchronizationContext.Current"/> because relying
@@ -84,6 +89,7 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         set
         {
             if (!SetProperty(ref _serverUrl, value)) return;
+            ForgetHttpFallback();
             _preferences.Set("serverURL", value);
             OnPropertyChanged(nameof(IsConfigured));
         }
@@ -332,8 +338,28 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             // recovered, so an explicit reconnect starts a fresh one.
             if (resetNetworkSession || wasOffline) Client.ResetSession();
 
+            // Deliberately on the explicit-reconnect path only: the Refresh button is how someone
+            // who has just installed ca.crt gets HTTPS back without restarting.
+            if (resetNetworkSession) ForgetHttpFallback();
+
             UsingHttpFallback = false;
             await ResolveActiveServerUrlAsync(ct).ConfigureAwait(false);
+
+            // An address already known to be untrusted goes straight to the port that worked.
+            // Without this the whole certificate dance ran again on every single connect - and
+            // since the app reconnects every 30 seconds, that meant a doomed TLS handshake and an
+            // ERROR line in the user's own diagnostics log twice a minute, for ever, while the app
+            // was working perfectly normally. A log that cries wolf that often is a log nobody can
+            // spot a real fault in. Re-tried from scratch on an explicit reconnect, which is what
+            // makes installing the CA certificate take effect without restarting the app.
+            if (!IsUsingRemote &&
+                _untrustedHttpsAddress is { } known &&
+                known == ActiveServerUrl &&
+                _httpFallbackAddress is { } remembered)
+            {
+                ActiveServerUrl = remembered;
+                UsingHttpFallback = true;
+            }
 
             try
             {
@@ -364,9 +390,12 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
                     {
                         ActiveServerUrl = fallback;
                         UsingHttpFallback = true;
+                        var untrusted = ActiveServerUrl;
                         try
                         {
                             await EstablishSessionAsync(ct).ConfigureAwait(false);
+                            _untrustedHttpsAddress = untrusted;
+                            _httpFallbackAddress = fallback;
                             Log("Connected over plain HTTP. For an encrypted connection instead, trust the server's " +
                                 "certificate authority (ca.crt) on this PC - see DEPLOYMENT.md section 14a.",
                                 DiagnosticLevel.Notice);
@@ -476,6 +505,16 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
     /// cancels it. The inner TimeoutException is checked too, since HttpClient wraps its timeout
     /// that way and the distinction is worth not depending on a single signal.
     /// </remarks>
+    /// <summary>
+    /// Drops what this session learned about the server's certificate, so the next connect judges
+    /// it afresh.
+    /// </summary>
+    private void ForgetHttpFallback()
+    {
+        _untrustedHttpsAddress = null;
+        _httpFallbackAddress = null;
+    }
+
     internal static bool IsLifecycleCancellation(Exception error, CancellationToken ct)
     {
         if (error is not OperationCanceledException) return false;
