@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src * data: blob:; media-src * blob:; connect-src *; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+      content="default-src 'none'; img-src * data: blob:; media-src * blob:; connect-src *; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src blob:;">
 <title>Sentinel Core live</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
@@ -490,10 +490,19 @@ window.sentinelSetHomeSaved = function (saved) {
 
 async function tryWebRtc() {
   return new Promise(function (resolve) {
+    // "settled" means this tier's promise has been answered; "playing" means frames actually
+    // reached the screen. Recovery keys off the second, never the first. Conflating them meant a
+    // tier that failed and was correctly abandoned still looked recoverable to its own late events
+    // - the MSE socket reports an error and then a close, so the close arrived after the failure
+    // had already been recorded, was mistaken for a feed dying mid-stream, and restarted the whole
+    // ladder. That looped for as long as the tile was open, tearing down the rung below it every
+    // few seconds, which is how a camera that simply had no WebRTC ended up on snapshots.
     let settled = false;
+    let playing = false;
     const finish = function (ok, reason) {
       if (settled) return;
       settled = true;
+      playing = ok;
       if (!ok && peer) {
         try { peer.close(); } catch (error) { /* already closed */ }
         peer = null;
@@ -518,7 +527,7 @@ async function tryWebRtc() {
         if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
           // Once settled the promise is spent, so a connection that drops after it was playing has
           // to be picked up here rather than by the ladder.
-          if (settled) recover("webrtc", "the WebRTC connection " + peer.connectionState);
+          if (playing) recover("webrtc", "the WebRTC connection " + peer.connectionState);
           else finish(false, "the WebRTC connection failed");
         }
       };
@@ -579,11 +588,26 @@ function waitForIce(connection) {
 
 function tryMse() {
   return new Promise(function (resolve) {
+    // "settled" means this tier's promise has been answered; "playing" means frames actually
+    // reached the screen. Recovery keys off the second, never the first. Conflating them meant a
+    // tier that failed and was correctly abandoned still looked recoverable to its own late events
+    // - the MSE socket reports an error and then a close, so the close arrived after the failure
+    // had already been recorded, was mistaken for a feed dying mid-stream, and restarted the whole
+    // ladder. That looped for as long as the tile was open, tearing down the rung below it every
+    // few seconds, which is how a camera that simply had no WebRTC ended up on snapshots.
     let settled = false;
+    let playing = false;
     let delivered = false;
     const finish = function (ok, reason) {
       if (settled) return;
       settled = true;
+      playing = ok;
+      if (!ok && socket) {
+        // Closed on the way out, the way the WebRTC rung closes its peer. A rung the ladder has
+        // moved past must not leave a socket open behind the rung now playing.
+        try { socket.onclose = null; socket.onerror = null; socket.close(); } catch (e) { /* gone */ }
+        socket = null;
+      }
       resolve({ ok: ok, reason: reason });
     };
 
@@ -616,14 +640,14 @@ function tryMse() {
     };
 
     socket.onerror = function () {
-      if (settled) { recover("mse", "the MSE socket failed mid-stream"); return; }
+      if (playing) { recover("mse", "the MSE socket failed mid-stream"); return; }
       finish(false, delivered ? "the MSE socket failed mid-stream" : "the MSE socket could not connect");
     };
 
     socket.onclose = function () {
       // A close after the tier resolved is a feed that died under someone watching it, not a tier
       // that never started - the ladder is finished by then and cannot answer for it.
-      if (settled) { recover("mse", "the MSE socket closed mid-stream"); return; }
+      if (playing) { recover("mse", "the MSE socket closed mid-stream"); return; }
       finish(false, delivered ? "the MSE socket closed mid-stream" : "the MSE socket closed before any media");
     };
 
@@ -743,10 +767,23 @@ var LIVE_HLS_CONFIG = {
 
 function tryHls() {
   return new Promise(function (resolve) {
+    // "settled" means this tier's promise has been answered; "playing" means frames actually
+    // reached the screen. Recovery keys off the second, never the first. Conflating them meant a
+    // tier that failed and was correctly abandoned still looked recoverable to its own late events
+    // - the MSE socket reports an error and then a close, so the close arrived after the failure
+    // had already been recorded, was mistaken for a feed dying mid-stream, and restarted the whole
+    // ladder. That looped for as long as the tile was open, tearing down the rung below it every
+    // few seconds, which is how a camera that simply had no WebRTC ended up on snapshots.
     let settled = false;
+    let playing = false;
     const finish = function (ok, reason) {
       if (settled) return;
       settled = true;
+      playing = ok;
+      // Detached rather than left inert. The ladder can be run again by recover(), and a listener
+      // per attempt that only ever returns early is still a listener the element has to call.
+      video.removeEventListener("canplay", nudge);
+      video.removeEventListener("loadeddata", nudge);
       resolve({ ok: ok, reason: reason });
     };
 
@@ -762,15 +799,43 @@ function tryHls() {
       if (!stopped) finish(true, null);
     }, { once: true });
 
+    /*
+     * Re-asserts playback whenever the element is ready but sitting still.
+     *
+     * One play() is not enough here. Attaching hls.js assigns its own MediaSource, and assigning a
+     * source runs the media load algorithm, which pauses the element and rejects the play promise
+     * that was in flight - and the manifest parses early enough that its play() lands before that,
+     * so it is the call that gets thrown away. The element then buffered the entire stream and sat
+     * at canplay, paused, until the tier timed out with every byte of media already in it. The
+     * autoplay attribute does not save it either: the earlier play() has cleared the can-autoplay
+     * flag. Asking again once there is something to play is what actually starts it, and it is
+     * harmless when playback is already under way.
+     */
+    function nudge() {
+      if (stopped || settled || isClip) return;
+      if (video.paused) video.play().catch(function () { /* policy, or gone */ });
+    }
+    video.addEventListener("canplay", nudge);
+    video.addEventListener("loadeddata", nudge);
+
     // Longer than the rungs above it on purpose: HLS has a manifest and a segment to fetch before
     // it can show anything, so the deadline that is generous for MSE is too tight here.
     setTimeout(function () { finish(false, "HLS delivered no playable media within 12s"); }, 12000);
 
     if (window.Hls && window.Hls.isSupported()) {
       hls = new Hls(LIVE_HLS_CONFIG);
+      // Order matters, and it is the reverse of the obvious one. attachMedia assigns hls.js's own
+      // MediaSource to the element, and assigning a source runs the media load algorithm - which
+      // pauses whatever was playing. Calling play() on MANIFEST_PARSED before that swap therefore
+      // got silently undone: the element reported play, then pause, then buffered the entire stream
+      // without ever playing it, and the tier timed out with every byte of media sitting in it. The
+      // autoplay attribute does not rescue it either, because the explicit play() has already
+      // cleared the element's can-autoplay flag. So: attach first, load the playlist once the media
+      // is attached, and play only once there is a manifest to play.
+      hls.on(Hls.Events.MEDIA_ATTACHED, function () { hls.loadSource(src); });
       hls.on(Hls.Events.ERROR, function (_event, data) {
         if (!data || !data.fatal) return;   // hls.js retries the rest itself
-        if (settled) {
+        if (playing) {
           // Already playing: recover in place rather than tearing the tile down, which is what the
           // dashboard does and is nearly always enough.
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) { try { hls.startLoad(); return; } catch (e) { /* fall through */ } }
@@ -783,7 +848,6 @@ function tryHls() {
       // Only once the manifest is parsed. Calling play() straight after attachMedia, before there
       // is anything to play, gets the promise rejected and never retried.
       hls.on(Hls.Events.MANIFEST_PARSED, function () { video.play().catch(function () { /* policy */ }); });
-      hls.loadSource(src);
       hls.attachMedia(video);
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = src;
