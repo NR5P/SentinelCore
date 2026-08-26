@@ -35,6 +35,13 @@ dist/
 # were one `git add -A` away from being committed.
 appsettings.json.bak*
 
+# A test that boots a host without overriding DataDirectory resolves events.db relative to the
+# process's working directory, which under `dotnet test` is this one - so a stray zero-byte
+# database appears at core/events.db. The real one lives in SentinelCore/data/ and is already
+# covered by data/ above. Anchored with a leading slash so it only ever hides this artifact and
+# never a database somewhere it would matter.
+/events.db
+
 # Output of the automated 6am review (scripts/daily-review/). These must stay untracked:
 # the review refuses to commit anything when the working tree is already dirty, so a tracked
 # report file would make it permanently unable to ship its own fixes.
