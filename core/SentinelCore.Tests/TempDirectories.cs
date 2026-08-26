@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 
 namespace SentinelCore.Tests;
@@ -11,32 +12,57 @@ namespace SentinelCore.Tests;
 // another process", and roughly a third of this suite went red on that alone - every one of them
 // having already passed its actual assertions.
 //
-// So the pools are drained first. The retry after that covers the short window where Windows has
-// accepted the close but not yet released the handle, and a final failure is swallowed on purpose:
-// this is cleanup, not an assertion, and a passing behaviour test should not go red because a
-// directory under %TEMP% outlived it by a few seconds.
+// Draining the pool frees those files, but SqliteConnection.ClearAllPools is process-wide and
+// xUnit runs test classes in parallel, so calling it from a test's own cleanup reaches into
+// connections other tests are in the middle of using. This code used to do exactly that, and
+// about one run in eight died with "ObjectDisposedException: SQLitePCL.sqlite3" inside a store's
+// constructor, in a test with no connection to the one doing the cleaning up. The comment here
+// claimed ClearAllPools only touches idle connections. It does not.
+//
+// So the drain happens once, from an assembly fixture, after the last test has finished and there
+// is nobody left to surprise. Linux reaches none of this: the first delete succeeds, which is also
+// the only path that runs when deploy.sh puts this suite in front of a service restart.
+//
+// It is not complete even so. Of ~140 directories deferred on a Windows run, the drain recovers
+// about 50; the rest are held by test hosts that are never disposed, so their connections are open
+// rather than pooled and no amount of draining or retrying frees them - measured, not assumed.
+// Those directories are left behind. That is untidiness in %TEMP%, not a failing test, and fixing
+// it means fixing host disposal in the tests that leak, which is a separate job.
 internal static class TempDirectories
 {
-    private const int Attempts = 5;
+    private static readonly ConcurrentBag<string> Deferred = [];
 
     public static void Delete(string path)
     {
         if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
 
-        // Every pooled connection this test opened, closed for real.
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Windows only, in practice. Cleanup is not an assertion: a passing behaviour test
+            // must not go red because a directory under the temp folder outlived it.
+            Deferred.Add(path);
+        }
+    }
+
+    internal static void DrainAndDelete()
+    {
+        // Safe here in the way it was never safe from a running test: by the time the assembly
+        // fixture is torn down, there is no other test to take a connection out from under.
         SqliteConnection.ClearAllPools();
 
-        for (var attempt = 1; attempt <= Attempts; attempt++)
+        foreach (var path in Deferred)
         {
             try
             {
-                Directory.Delete(path, recursive: true);
-                return;
+                if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
-                if (attempt == Attempts) return;
-                Thread.Sleep(50 * attempt);
+                // Nothing left to try, and nothing worth failing a finished run over.
             }
         }
     }
