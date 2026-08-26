@@ -84,6 +84,7 @@ public sealed class StartupNotificationWorker : BackgroundService
     // then can't read, silently losing the outage report it exists to produce.
     private readonly Lock _writeLock = new();
 
+
     // Set the moment shutdown begins. Guarded by _writeLock rather than volatile because the
     // check that reads it has to be atomic with the write it protects.
     private bool _stopping;
@@ -195,7 +196,7 @@ public sealed class StartupNotificationWorker : BackgroundService
                 // Temp-then-move, because a power cut mid-write is the exact scenario this feature
                 // exists for - a half-written file would corrupt the one thing meant to detect it.
                 File.WriteAllText(_temporaryPath, JsonSerializer.Serialize(state, JsonOptions));
-                File.Move(_temporaryPath, _heartbeatPath, true);
+                AtomicFile.Replace(_temporaryPath, _heartbeatPath);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -204,6 +205,7 @@ public sealed class StartupNotificationWorker : BackgroundService
             _logger.LogWarning(ex, "Couldn't write the heartbeat file at {Path}", _heartbeatPath);
         }
     }
+
 
     private async Task SendOutageEmailAsync(StartupDiagnosis diagnosis, CancellationToken cancellationToken)
     {

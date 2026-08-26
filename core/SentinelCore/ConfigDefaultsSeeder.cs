@@ -140,7 +140,7 @@ public static class ConfigDefaultsSeeder
     {
         var temporaryPath = path + ".tmp";
         File.WriteAllText(temporaryPath, root.ToJsonString(WriteOptions));
-        File.Move(temporaryPath, path, overwrite: true);
+        AtomicFile.Replace(temporaryPath, path);
     }
 
     private static ConfigSeedResult Failed(string warning) =>

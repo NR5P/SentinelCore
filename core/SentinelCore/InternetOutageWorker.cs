@@ -365,7 +365,7 @@ public sealed class InternetOutageWorker : BackgroundService
             // Temp-then-move: an outage is exactly when the machine is most likely to also lose
             // power, and a half-written file would lose the report this exists to produce.
             File.WriteAllText(_temporaryPath, JsonSerializer.Serialize(state, JsonOptions));
-            File.Move(_temporaryPath, _statePath, true);
+            AtomicFile.Replace(_temporaryPath, _statePath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

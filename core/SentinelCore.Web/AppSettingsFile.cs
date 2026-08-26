@@ -105,6 +105,6 @@ public sealed class AppSettingsFile(string path)
         var temporaryPath = path + ".tmp";
         await using (var stream = File.Create(temporaryPath))
             await JsonSerializer.SerializeAsync(stream, root, WriteOptions, cancellationToken);
-        File.Move(temporaryPath, path, overwrite: true);
+        AtomicFile.Replace(temporaryPath, path);
     }
 }
