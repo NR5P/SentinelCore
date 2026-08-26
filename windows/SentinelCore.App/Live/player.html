@@ -810,7 +810,7 @@ function startSnapshots(reason) {
   // Deliberately no longer asserts a cause. This rung is reached when every transport above it
   // failed, and only one of the ways that happens is go2rtc being absent - saying so regardless
   // sent people to check a service that was running fine.
-  setMessage("No live transport worked. " + (reason || "") + " Showing refreshed snapshots instead.");
+  setMessage("No live transport worked" + (reason ? ": " + reason : "") + ". Showing refreshed snapshots instead.");
 
   const tick = function () {
     if (stopped) return;
@@ -895,11 +895,17 @@ window.sentinelPlayClip = function (path, offsetSeconds, autoplay) {
     }
   };
 
-  if (video.readyState >= 1) {
-    seekWhenReady();
-  } else {
-    video.addEventListener("loadedmetadata", seekWhenReady, { once: true });
-  }
+  /*
+   * Always waits for the new file's metadata, never trusts readyState.
+   *
+   * Assigning video.src starts the media load algorithm, but the step that resets readyState to
+   * HAVE_NOTHING is queued rather than immediate - so readyState read on the line after the
+   * assignment can still describe the clip that was playing a moment ago. Taking the shortcut on
+   * that stale value seeks the outgoing media, and the incoming load then starts from zero with
+   * the requested offset silently discarded. A fresh loadedmetadata is guaranteed here because the
+   * src was just set, so there is nothing to fall back to.
+   */
+  video.addEventListener("loadedmetadata", seekWhenReady, { once: true });
 };
 
 window.sentinelSeekClip = function (seconds) {

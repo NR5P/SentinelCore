@@ -388,9 +388,12 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
                         DiagnosticLevel.Notice);
                     if (await Client.ProbeReachableAsync(fallback, ct: ct).ConfigureAwait(false))
                     {
+                        // Captured before the overwrite below, which is the whole point of the
+                        // local: this has to be the https:// address that was rejected, since that
+                        // is what the next connect will resolve to and compare against.
+                        var untrusted = ActiveServerUrl;
                         ActiveServerUrl = fallback;
                         UsingHttpFallback = true;
-                        var untrusted = ActiveServerUrl;
                         try
                         {
                             await EstablishSessionAsync(ct).ConfigureAwait(false);
@@ -490,6 +493,16 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
     }
 
     /// <summary>
+    /// Drops what this session learned about the server's certificate, so the next connect judges
+    /// it afresh.
+    /// </summary>
+    private void ForgetHttpFallback()
+    {
+        _untrustedHttpsAddress = null;
+        _httpFallbackAddress = null;
+    }
+
+    /// <summary>
     /// Whether an <see cref="OperationCanceledException"/> means "the app asked us to stop" rather
     /// than "the server never answered".
     /// </summary>
@@ -505,16 +518,6 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
     /// cancels it. The inner TimeoutException is checked too, since HttpClient wraps its timeout
     /// that way and the distinction is worth not depending on a single signal.
     /// </remarks>
-    /// <summary>
-    /// Drops what this session learned about the server's certificate, so the next connect judges
-    /// it afresh.
-    /// </summary>
-    private void ForgetHttpFallback()
-    {
-        _untrustedHttpsAddress = null;
-        _httpFallbackAddress = null;
-    }
-
     internal static bool IsLifecycleCancellation(Exception error, CancellationToken ct)
     {
         if (error is not OperationCanceledException) return false;
