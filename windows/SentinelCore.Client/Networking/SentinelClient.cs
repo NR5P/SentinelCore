@@ -848,13 +848,7 @@ public sealed class SentinelClient : IDisposable
         {
             response = await _http.SendAsync(request, ct).ConfigureAwait(false);
         }
-        // A request the app itself abandoned is not a failure and is deliberately not logged. A
-        // request that ran out of time is - it arrives as the same exception type, so the caller's
-        // token is what tells them apart, and without this the single most confusing failure on a
-        // LAN (a firewall dropping packets, so the server never answers and never refuses) left no
-        // trace in the connection log at all.
-        catch (Exception error) when (error is not OperationCanceledException ||
-                                      !ct.IsCancellationRequested)
+        catch (Exception error) when (IsWorthReporting(error))
         {
             _log.Log($"{method} failed after {Elapsed(started)}: {Describe(error)}", DiagnosticLevel.Error);
             throw;
@@ -871,6 +865,26 @@ public sealed class SentinelClient : IDisposable
             throw new SentinelServerException((int)response.StatusCode, message);
         }
     }
+
+    /// <summary>
+    /// Whether a failed request represents something actually wrong, or just this app tidying up.
+    /// </summary>
+    /// <remarks>
+    /// Three very different things arrive as OperationCanceledException and only one of them is a
+    /// fault. A request that ran out of time is: HttpClient reports its own timeout this way, and
+    /// on a LAN that is the single most confusing failure there is - a firewall that drops rather
+    /// than refuses, so the server never answers and never says no - which for a long time left no
+    /// trace in the connection log whatsoever. The other two are routine: the app shutting a
+    /// request down, and <see cref="ResetSession"/> discarding a session whose requests are still
+    /// in flight. The latter fires a dozen at once every time Refresh is pressed, so reporting them
+    /// as errors buried the log in red on the one action a user takes deliberately.
+    ///
+    /// The inner exception is what separates them - a timeout wraps TimeoutException, an abandoned
+    /// socket wraps IOException - which is more dependable here than the caller's token, since a
+    /// disposed handler cancels requests without anyone having asked it to.
+    /// </remarks>
+    private static bool IsWorthReporting(Exception error) =>
+        error is not OperationCanceledException || error.InnerException is TimeoutException;
 
     private static string? ExtractErrorMessage(byte[] data)
     {

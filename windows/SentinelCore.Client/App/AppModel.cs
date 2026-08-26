@@ -330,7 +330,6 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             // The configured address is logged rather than assumed. A field typed into but never
             // saved leaves this pointing somewhere else entirely, and "which address did it
             // actually use" is the single hardest thing to establish from outside the app.
-            Log($"Connecting to {ServerUrl}{(HasRemoteServerUrl ? $" (remote fallback {RemoteServerUrl})" : "")}");
             var wasOffline = ConnectionState == ConnectionState.Offline;
             if (ConnectionState != ConnectionState.Online) ConnectionState = ConnectionState.Checking;
 
@@ -360,6 +359,19 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
                 ActiveServerUrl = remembered;
                 UsingHttpFallback = true;
             }
+
+            // Logged here rather than at the top of the method, and naming the address actually
+            // about to be used. Announcing the configured one before resolving anything meant that
+            // once the certificate shortcut above started skipping straight to the plain-HTTP port,
+            // every refresh still opened with "Connecting to https://..." for a connection that was
+            // never attempted - the log stopped describing what the app did. The configured address
+            // is still named whenever it differs, because "which address did it actually use" is the
+            // hardest thing to establish from outside the app, and a value typed into the settings
+            // field but never saved is exactly how that question arises.
+            var configured = IsUsingRemote ? RemoteServerUrl : ServerUrl;
+            Log(ActiveServerUrl == configured
+                ? $"Connecting to {ActiveServerUrl}{(HasRemoteServerUrl && !IsUsingRemote ? $" (remote fallback {RemoteServerUrl})" : "")}"
+                : $"Connecting to {ActiveServerUrl} (configured as {configured})");
 
             try
             {
