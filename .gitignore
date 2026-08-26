@@ -10,3 +10,9 @@
 # allowlist, and launch.json points at per-session scratch directories. Neither
 # means anything on another machine.
 .claude/
+
+# Editor swap and backup files. One of these was committed once already - a vim swap
+# file for an appsettings.json, from a machine and a project name that no longer exist.
+*.swp
+*.swo
+*~
