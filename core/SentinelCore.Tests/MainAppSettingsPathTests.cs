@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
@@ -51,6 +52,59 @@ public class MainAppSettingsPathTests
             MainAppSettingsPath.Resolve(Configuration(null), new FakeHostEnvironment(Path.GetTempPath())));
 
         Assert.Contains("MainAppSettingsPath", error.Message);
+    }
+
+    [Fact]
+    public void TheShippedDashboardConfiguration_PointsAtNoParticularMachine()
+    {
+        var root = RepositoryRoot();
+        Assert.SkipWhen(root is null, "The repository sources aren't alongside this build.");
+
+        var shipped = Path.Combine(root!, "core/SentinelCore.Web/appsettings.json");
+        Assert.SkipWhen(!File.Exists(shipped), $"{shipped} isn't here.");
+
+        using var document = JsonDocument.Parse(File.ReadAllText(shipped));
+
+        // These two used to be absolute paths into one developer's home directory, which meant the
+        // dashboard only found the main app on the machine the file was last edited on - and on
+        // Windows resolved "/home/..." to C:\home\... rather than failing outright. Relative is
+        // what makes the same file correct on all three platforms, so it is worth keeping a test
+        // between here and the next person who pastes a working absolute path in.
+        foreach (var (path, value) in ShippedPaths(document.RootElement))
+        {
+            Assert.False(
+                Path.IsPathRooted(value),
+                $"{path} in the shipped dashboard configuration is the absolute path \"{value}\", " +
+                "which only resolves on the machine it was written on.");
+        }
+    }
+
+    private static IEnumerable<(string Path, string Value)> ShippedPaths(JsonElement root)
+    {
+        if (root.TryGetProperty("MainAppSettingsPath", out var settings) &&
+            settings.ValueKind == JsonValueKind.String)
+        {
+            yield return ("MainAppSettingsPath", settings.GetString()!);
+        }
+
+        if (root.TryGetProperty("Bridge", out var bridge) &&
+            bridge.ValueKind == JsonValueKind.Object &&
+            bridge.TryGetProperty("DataDirectory", out var dataDirectory) &&
+            dataDirectory.ValueKind == JsonValueKind.String)
+        {
+            yield return ("Bridge:DataDirectory", dataDirectory.GetString()!);
+        }
+    }
+
+    private static string? RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "core"))) return directory.FullName;
+            directory = directory.Parent;
+        }
+        return null;
     }
 
     private static IConfiguration Configuration(string? value) =>
