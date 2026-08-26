@@ -850,7 +850,13 @@ public sealed class SentinelClient : IDisposable
         }
         catch (Exception error) when (IsWorthReporting(error))
         {
-            _log.Log($"{method} failed after {Elapsed(started)}: {Describe(error)}", DiagnosticLevel.Error);
+            // Notice, not Error. One request failing is the mechanical detail of a problem; the
+            // connection failing is the problem, and AppModel.FailConnection reports that at Error
+            // with the address and a human explanation. Both at Error meant a single dead server
+            // produced two red lines saying the same thing in different words - and the point of
+            // the recent work here is a log someone can scan for the one line that matters. The
+            // detail is still here, with the timing and the full exception chain, one level down.
+            _log.Log($"{method} failed after {Elapsed(started)}: {Describe(error)}", DiagnosticLevel.Notice);
             throw;
         }
 
