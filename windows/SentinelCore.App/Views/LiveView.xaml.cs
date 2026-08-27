@@ -160,23 +160,65 @@ public partial class LiveView : UserControl
 
         // Record and open are drawn by the player page itself: WebView2 is hosted as a child
         // window, so a WPF button placed over the video would be both invisible and unclickable.
+        //
+        // A press starts recording and a second press stops it, so this tile's button has to know
+        // which one it is showing. The answer comes from the server rather than from a local flag:
+        // the same recording can be stopped from the opened camera, from a phone, or by the limit
+        // in Settings running out, and none of those go through here.
+        var recording = false;
+        var busy = false;
+
+        void Apply(Client.Models.ManualRecordingState state)
+        {
+            recording = state.IsRecording;
+            player.SetRecording(state.IsRecording);
+        }
+
+        async Task RefreshAsync()
+        {
+            try { Apply(await _model.Client.RecordingStateAsync(camera.Id)); }
+            catch { Apply(Client.Models.ManualRecordingState.Idle); }
+        }
+
         player.RecordRequested += async () =>
         {
+            if (busy) return;
+            busy = true;
             player.SetBusy("record", true);
+
+            var wasRecording = recording;
             try
             {
-                await _model.Client.RecordNowAsync(camera.Id);
-                player.Toast("Recording saved. It will appear in Events shortly.");
+                if (wasRecording)
+                {
+                    var stopped = await _model.Client.StopRecordingAsync(camera.Id);
+                    Apply(stopped.State);
+                    player.Toast(Client.Models.RecordingText.StopMessage(stopped));
+                }
+                else
+                {
+                    Apply(await _model.Client.RecordNowAsync(camera.Id));
+                    player.Toast("Recording. Press again to stop.");
+                }
             }
             catch (Exception error)
             {
                 player.Toast(AppModel.UserFacingMessage(error));
+                await RefreshAsync();
             }
             finally
             {
+                busy = false;
                 player.SetBusy("record", false);
             }
         };
+
+        // A tile built while another device is already recording this camera should come up showing
+        // a stop button, not a record one. Safe this early: PlayerHost remembers the state and
+        // applies it once its page has loaded, so this does not have to wait for WebView2. Fires
+        // again when tiles are re-parented by a drag-reorder, which is a wasted request per tile and
+        // a fresh answer for the price - worth it over leaving a tile showing a stale button.
+        player.Loaded += async (_, _) => await RefreshAsync();
         player.OpenRequested += () => Dispatcher.Invoke(() => OpenCamera(camera));
         var videoArea = new Grid { Height = TileHeight };
         videoArea.Children.Add(watermark);

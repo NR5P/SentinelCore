@@ -621,3 +621,41 @@ public sealed class ServerHealthResponse
     // is absent before multi-account. Its absence is itself a version signal.
     public ServerBuild? Build { get; init; }
 }
+
+/// <summary>
+/// Whether a camera is recording by hand right now, and when the server will stop it if nobody
+/// does. <see cref="StopsAtUtc"/> is the press-again deadline, not a guess: the server writes it
+/// when the recording starts and honours it with ffmpeg's own -t.
+/// </summary>
+public sealed class ManualRecordingState
+{
+    public bool IsRecording { get; set; }
+    public Guid? RecordingId { get; set; }
+    public DateTimeOffset? StartedUtc { get; set; }
+    public DateTimeOffset? StopsAtUtc { get; set; }
+    public int MaxMinutes { get; set; }
+
+    public static ManualRecordingState Idle => new();
+}
+
+public sealed class ManualRecordingResponse
+{
+    public bool Success { get; set; }
+    public ManualRecordingState State { get; set; } = new();
+}
+
+public sealed class ManualRecordingStopped
+{
+    public bool Success { get; set; }
+    public ManualRecordingState State { get; set; } = new();
+
+    /// <summary>
+    /// How the finished recording was filed - "complete", "partial", "failed" - and how many seconds
+    /// of video it holds. Both are null when the stop found nothing running, which is not an error:
+    /// two devices racing to stop the same recording is an ordinary thing to do.
+    /// </summary>
+    public string? Status { get; set; }
+
+    public string Detail { get; set; } = string.Empty;
+    public int? Seconds { get; set; }
+}

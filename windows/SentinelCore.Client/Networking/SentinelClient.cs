@@ -145,11 +145,23 @@ public sealed class SentinelClient : IDisposable
 
     /// <summary>
     /// "Record this now" from the live view. The server turns it into the same kind of trigger a
-    /// motion zone produces - same event, same Feed card - and attaches a clip covering the seconds
-    /// either side of the press.
+    /// motion zone produces - same event, same Feed card - attaches a clip covering the seconds
+    /// either side of the press, and starts recording until <see cref="StopRecordingAsync"/> or the
+    /// server's own limit ends it.
     /// </summary>
-    public Task RecordNowAsync(Guid cameraId, CancellationToken ct = default) =>
-        SendNoResultAsync<object>($"/api/cameras/{cameraId}/record", HttpMethod.Post, null, ct);
+    public async Task<ManualRecordingState> RecordNowAsync(Guid cameraId, CancellationToken ct = default) =>
+        (await SendAsync<ManualRecordingResponse, object>(
+            $"/api/cameras/{cameraId}/record", HttpMethod.Post, null, ct).ConfigureAwait(false)).State;
+
+    public Task<ManualRecordingStopped> StopRecordingAsync(Guid cameraId, CancellationToken ct = default) =>
+        SendAsync<ManualRecordingStopped, object>($"/api/cameras/{cameraId}/record", HttpMethod.Delete, null, ct);
+
+    /// <summary>
+    /// Asked when a camera opens, so a recording started on another device - or by this PC before it
+    /// was closed - shows as running rather than as a button that has forgotten about it.
+    /// </summary>
+    public Task<ManualRecordingState> RecordingStateAsync(Guid cameraId, CancellationToken ct = default) =>
+        GetAsync<ManualRecordingState>($"/api/cameras/{cameraId}/record", null, ct);
 
     /// <summary>
     /// Which live transport a tile actually landed on, and why. Logged by the server, not stored -

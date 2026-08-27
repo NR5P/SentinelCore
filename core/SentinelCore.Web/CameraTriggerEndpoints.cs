@@ -109,16 +109,70 @@ public static class CameraTriggerEndpoints
     private const int ManualTriggerCooldownSeconds = 5;
 
     // "Record this now" from the live view, for any camera - the thing you press when you are
-    // looking at something and want it kept.
+    // looking at something and want it kept. Pressing it again stops the recording.
     //
-    // It goes through CameraTriggerService rather than doing something of its own, which is what
-    // makes it land where the user expects: the same TriggerEvent row, the same Feed card, the same
-    // analysis and notification path a zone trigger takes. The one thing that service does not do
-    // is cut video, because its other callers (the HTTP trigger API, a Device Hub sensor) fire at
-    // cameras nobody is watching and have no buffer to cut from. Here there is one - the live HLS
-    // stream the viewer is already pulling - so the clip is attached afterwards.
+    // A press does two separate things, and the split is the point:
+    //
+    // 1. It fires an ordinary trigger through CameraTriggerService, which is what makes it land
+    //    where the user expects: the same TriggerEvent row, the same Feed card, the same analysis
+    //    and notification path a zone trigger takes. A short look-back clip is attached to that
+    //    event from the live HLS buffer, exactly as it always was. This is the half that captures
+    //    what you had already seen when you reached for the button.
+    //
+    // 2. It starts a real recording, which runs until you press again or the configured maximum
+    //    stops it. This is the half that captures what happens next, and it cannot come from the
+    //    HLS buffer: that window is about twenty-five seconds deep (hls_list_size plus
+    //    hls_delete_threshold, see HlsStreamManager.BuildFfmpegArguments) and ffmpeg deletes out of
+    //    it continuously, so footage of any length has to be written as it arrives rather than cut
+    //    out afterwards. ScheduledRecorder already does precisely that, so it does it here too.
+    //
+    // Which also means the recording starts at the press while the look-back clip reaches behind
+    // it. Splicing the two into one file was rejected: the live stream may be the camera's
+    // sub-stream while the recording pulls main, and concatenating with -c copy needs identical
+    // codec parameters.
     private static void MapManualRecord(WebApplication app)
     {
+        // What the button should look like right now. Clients call this when a camera opens, so a
+        // recording started on one device shows as running on every other one - and can be stopped
+        // from any of them.
+        app.MapGet("/api/cameras/{id:guid}/record", async (
+            Guid id,
+            ICameraStore store,
+            ManualRecordingService manual,
+            CancellationToken ct) =>
+        {
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            return Results.Ok(await manual.StateAsync(id, ct));
+        }).RequireAuthorization();
+
+        app.MapDelete("/api/cameras/{id:guid}/record", async (
+            Guid id,
+            ICameraStore store,
+            ManualRecordingService manual,
+            CancellationToken ct) =>
+        {
+            var camera = await store.GetAsync(id, ct);
+            if (camera is null) return Results.NotFound();
+
+            var finished = await manual.StopAsync(id, ct);
+            var state = await manual.StateAsync(id, ct);
+
+            // A stop that found nothing running is not an error - two devices racing to stop the
+            // same recording is an ordinary thing to do, and both should be told it is stopped.
+            return Results.Ok(new
+            {
+                success = true,
+                state,
+                status = finished?.Status,
+                detail = finished?.Detail ?? string.Empty,
+                seconds = finished is { ActualStartUtc: { } startedAt, ActualEndUtc: { } endedAt }
+                    ? (int)Math.Max(0, (endedAt - startedAt).TotalSeconds)
+                    : (int?)null
+            });
+        }).RequireAuthorization();
+
         app.MapPost("/api/cameras/{id:guid}/record", async (
             Guid id,
             ICameraStore store,
@@ -126,11 +180,28 @@ public static class CameraTriggerEndpoints
             ClipRecorder clips,
             HlsStreamManager streams,
             ITriggerEventStore events,
+            ManualRecordingService manual,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
             var camera = await store.GetAsync(id, ct);
             if (camera is null) return Results.NotFound();
+
+            // Already recording, so this press is the stop. Handled here as well as on DELETE so an
+            // older client that only knows how to POST still toggles correctly rather than being
+            // told it is in cooldown.
+            if (manual.IsRecording(id))
+            {
+                var finished = await manual.StopAsync(id, ct);
+                return Results.Ok(new
+                {
+                    success = true,
+                    recording = false,
+                    state = await manual.StateAsync(id, ct),
+                    status = finished?.Status,
+                    detail = finished?.Detail ?? string.Empty
+                });
+            }
 
             var pressedAt = DateTimeOffset.UtcNow;
             var result = await triggers.TriggerAsync(
@@ -138,10 +209,45 @@ public static class CameraTriggerEndpoints
                 new CameraTriggerRequest("the app's record button", AlertProfile: null, ManualTriggerCooldownSeconds),
                 ct);
 
+            // Neither of these stops the recording, and that is a change from when this button only
+            // produced a trigger. The two halves are now independent: the trigger is the Feed card
+            // for the moment you pressed, the recording is the video from here on, and failing to
+            // file the first is no reason to refuse the second.
+            //
+            // Cooldown matters most. It exists to swallow a double-tap, which under a toggle is no
+            // longer a risk worth paying for - a second press stops the recording rather than
+            // filing a second event - so refusing here would only break the ordinary act of
+            // stopping a recording and immediately starting another. The camera does not get a
+            // duplicate Feed card; it does get the video that was asked for.
             if (result.Status == CameraTriggerStatus.Cooldown)
-                return Results.Problem(result.Detail, statusCode: 429);
+            {
+                var resumed = await manual.StartAsync(camera, ct);
+                return Results.Ok(new
+                {
+                    success = true,
+                    recording = resumed.IsRecording,
+                    state = resumed,
+                    detail = result.Detail
+                });
+            }
+
             if (!result.Triggered)
-                return Results.Problem(result.Detail, statusCode: 502);
+            {
+                // The camera could not be photographed - almost always because it is not answering
+                // at all, in which case the recording below will fail too and say so on its own row.
+                // Worth attempting anyway: a still frame and a video stream are not quite the same
+                // ask, and the one that works is the one worth having.
+                var attempted = await manual.StartAsync(camera, ct);
+                return attempted.IsRecording
+                    ? Results.Ok(new
+                    {
+                        success = true,
+                        recording = true,
+                        state = attempted,
+                        detail = result.Detail
+                    })
+                    : Results.Problem(result.Detail, statusCode: 502);
+            }
 
             // Deliberately not awaited, and deliberately not on the request's token: the clip cannot
             // be built until the post-roll has actually been recorded, and nobody should be holding
@@ -153,7 +259,12 @@ public static class CameraTriggerEndpoints
                 _ = AttachManualClipAsync(camera, triggerId, pressedAt, clips, streams, events, logger);
             }
 
-            return Results.Ok(new { success = true });
+            // Started after the trigger has been honoured, so a camera that will not record still
+            // produces the event and its still image - the same order of priorities the clip
+            // attachment above follows.
+            var started = await manual.StartAsync(camera, ct);
+
+            return Results.Ok(new { success = true, recording = started.IsRecording, state = started });
         }).RequireAuthorization();
     }
 

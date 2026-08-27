@@ -278,6 +278,9 @@ public sealed class ScheduledRecordingSettingsDto
 
     [Range(1, 500)]
     public double MinimumFreeGigabytes { get; set; } = 5;
+
+    [Range(1, 240)]
+    public int ManualMaxMinutes { get; set; } = 10;
 }
 
 public sealed class PackageTheftWatchSettingsDto

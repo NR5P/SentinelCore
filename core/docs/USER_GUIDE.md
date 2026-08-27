@@ -428,12 +428,27 @@ on a moving camera. If you would rather the camera stayed wherever you left it, 
 camera parked away from home then has its zones off until somebody presses Home. `IdleMinutes` in
 the same section changes the 3 minutes.
 
-**Recording what you're watching.** The live view in the iPhone/iPad app has a record button. It
-saves a clip covering roughly 8 seconds either side of the press — the look-back is the point,
-since you press this *after* seeing something — and files it as an ordinary trigger event: same
-Feed card, same AI analysis, same notification path as a motion trigger, rather than a second kind
-of recording to go hunting for. It works on any camera you can see live, whether or not that camera
-has motion zones. This button is app-only; there is no equivalent on the web dashboard yet.
+**Recording what you're watching.** The live view in the iPhone/iPad and Windows apps has a record
+button. Pressing it does two things, and it helps to know which is which.
+
+It files an ordinary trigger event straight away, with a clip covering roughly 8 seconds either
+side of the press. That look-back is the point — you press this *after* seeing something — and it
+lands as the same Feed card, the same AI analysis and the same notification path as a motion
+trigger, rather than a second kind of recording to go hunting for.
+
+It also **starts recording**, from the press onwards, until you press the button again. That
+footage cannot reach backwards the way the clip does, which is why the two exist side by side: the
+clip is what you had already seen, the recording is what happens next. It appears under Recordings
+alongside scheduled recordings, not in the Feed, and ages out under the same retention.
+
+A recording left running stops itself at **Settings → Scheduled Recording → Record Button Limit**,
+10 minutes by default. It also stops if free disk space falls below the floor in the same section,
+and it is closed out and kept if the server restarts underneath it. The button reads its state from
+the server, so a recording started on a phone shows as running in the Windows app and can be
+stopped from either.
+
+Both halves work on any camera you can see live, whether or not it has motion zones. This button is
+app-only; there is no equivalent on the web dashboard yet.
 
 **Following a subject automatically (off by default).** The server can drive the camera to keep a
 person (or another object class) centred after a zone fires, then send it home. It is off unless

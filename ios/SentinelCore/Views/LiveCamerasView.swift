@@ -296,7 +296,15 @@ struct LivePlayerView: View {
 
     @State private var zoom = DigitalZoomState()
     @StateObject private var notice = NoticeState()
-    @State private var isRecording = false
+
+    // What the server says this camera is doing, not what this view remembers pressing. A recording
+    // started on another device - or by this phone before it was force-quit - has to show here as
+    // running, because stopping it from here is the whole point of it being one button.
+    @State private var recording = ManualRecordingState.idle
+
+    // Covers the round trip only, so the button cannot be pressed twice while the server is still
+    // deciding. Distinct from `recording.isRecording`, which is the state being toggled.
+    @State private var isBusy = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -364,6 +372,27 @@ struct LivePlayerView: View {
             }
             stream.start(source, client: model.client)
         }
+        .task {
+            // Deliberately not tied to streamRequest: the answer is about the server's state, not
+            // this view's video, and re-asking it every time the stream restarts would be noise.
+            recording = (try? await model.client.recordingState(cameraId: camera.id)) ?? .idle
+        }
+        // The server stops a forgotten recording at its own limit, and nothing tells this view when
+        // that happened. Rather than poll, wait for the deadline the server already handed over and
+        // ask once - otherwise the button goes on offering to stop a recording that ended an hour
+        // ago. Re-runs whenever the deadline changes, and is cancelled with the view.
+        .task(id: recording.stopsAtUtc) {
+            guard let stopsAt = recording.stopsAtUtc else { return }
+
+            // Two seconds past it, so the recording is finalized rather than still concatenating.
+            let seconds = stopsAt.timeIntervalSinceNow + 2
+            guard seconds > 0 else { return }
+
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+
+            recording = (try? await model.client.recordingState(cameraId: camera.id)) ?? .idle
+        }
         .onDisappear {
             stream.stop()
             notice.cancel()
@@ -371,21 +400,28 @@ struct LivePlayerView: View {
     }
 
     // Every camera gets this, not just the PTZ one: the moment worth keeping is just as likely on a
-    // fixed camera you happened to be looking at. The server turns it into an ordinary trigger, so
-    // what comes out the other end is a card in the Feed exactly like a motion event.
+    // fixed camera you happened to be looking at. A press starts recording and files an ordinary
+    // trigger, so a card appears in the Feed exactly like a motion event; a second press stops the
+    // recording. Left alone, the server stops it at the limit set in Settings.
     private var recordButton: some View {
         Button {
-            record()
+            toggleRecording()
         } label: {
-            Label("Record now", systemImage: isRecording ? "record.circle.fill" : "record.circle")
-                .labelStyle(.iconOnly)
-                .padding(8)
+            Label(
+                recording.isRecording ? "Stop recording" : "Record now",
+                systemImage: recording.isRecording ? "stop.circle.fill" : "record.circle"
+            )
+            .labelStyle(.iconOnly)
+            .padding(8)
         }
         .buttonStyle(.plain)
-        .disabled(isRecording)
+        .disabled(isBusy)
         .background(.black.opacity(0.5), in: .circle)
-        .foregroundStyle(isRecording ? SentinelTheme.red : .white)
-        .accessibilityLabel("Record now")
+        .foregroundStyle(recording.isRecording ? SentinelTheme.red : .white)
+        // Only while recording, and only on the icon - a pulse under a button somebody is about to
+        // press to stop it is the one moment it earns the attention.
+        .symbolEffect(.pulse, isActive: recording.isRecording)
+        .accessibilityLabel(recording.isRecording ? "Stop recording" : "Record now")
     }
 
     private var muteButton: some View {
@@ -406,19 +442,50 @@ struct LivePlayerView: View {
             .foregroundStyle(.white)
     }
 
-    private func record() {
-        guard !isRecording else { return }
-        isRecording = true
+    private func toggleRecording() {
+        guard !isBusy else { return }
+        isBusy = true
         let client = model.client
         let id = camera.id
+        let wasRecording = recording.isRecording
+
         Task {
             do {
-                try await client.recordNow(cameraId: id)
-                notice.show("Recording saved to the feed.")
+                if wasRecording {
+                    let stopped = try await client.stopRecording(cameraId: id)
+                    recording = stopped.state
+                    notice.show(Self.stopMessage(stopped))
+                } else {
+                    recording = try await client.recordNow(cameraId: id)
+                    notice.show("Recording. Press again to stop.")
+                }
             } catch {
                 notice.show((error as? LocalizedError)?.errorDescription ?? "Could not record that.")
+
+                // The press may well have landed before whatever failed, so the button must not be
+                // left guessing. Ask rather than assume; falling back to idle only if even that
+                // fails, since an idle button can at least be pressed again.
+                recording = (try? await client.recordingState(cameraId: id)) ?? .idle
             }
-            isRecording = false
+            isBusy = false
+        }
+    }
+
+    // Says what was actually kept. "Saved" alone was the old wording and it was never quite true -
+    // it appeared while the clip was still being cut - so this reports the length the server came
+    // back with and names the two outcomes that are not a clean save.
+    private static func stopMessage(_ stopped: ManualRecordingStopped) -> String {
+        switch stopped.status {
+        case "failed":
+            return stopped.detail.isEmpty ? "Nothing was recorded." : stopped.detail
+        case "complete", "partial":
+            guard let seconds = stopped.seconds, seconds > 0 else { return "Recording saved." }
+            let length = seconds < 60
+                ? "\(seconds)s"
+                : "\(seconds / 60)m \(seconds % 60)s"
+            return "Saved \(length) to Recordings."
+        default:
+            return "Recording stopped."
         }
     }
 

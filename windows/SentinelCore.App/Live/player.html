@@ -62,6 +62,11 @@
   #controls button:hover { background: rgba(0,0,0,0.78); border-color: #38ff9c; }
   #controls button:active { background: #1f9c61; }
   #controls button.busy { color: #ff4d5e; }
+  /* Recording, as opposed to merely waiting on the server. The pulse is what carries "still
+     running" across the room; the colour alone reads the same as the busy state above. */
+  #controls button.recording { color: #ff4d5e; animation: sentinelRecordPulse 1.6s ease-in-out infinite; }
+  @keyframes sentinelRecordPulse { 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { #controls button.recording { animation: none; } }
   #controls .zoomLabel {
     color: #4ae8ff; font: 600 11px/1 "Segoe UI", system-ui, sans-serif;
     background: rgba(0,0,0,0.55); border-radius: 6px; padding: 8px 9px;
@@ -105,7 +110,7 @@
 
 <div id="controls">
   <div class="group tr">
-    <button data-act="record" class="liveOnly" title="Record now - saves a clip of the seconds either side">&#9679;</button>
+    <button data-act="record" class="liveOnly" title="Record now - press again to stop">&#9679;</button>
     <button data-act="mute" class="fullOnly" title="Mute or unmute">&#128263;</button>
     <button data-act="open" class="tileOnly" title="Open this camera">&#8599;</button>
   </div>
@@ -422,6 +427,16 @@ window.sentinelToast = toast;
 window.sentinelSetBusy = function (name, busy) {
   const button = document.querySelector('[data-act="' + name + '"]');
   if (button) button.classList.toggle("busy", !!busy);
+};
+
+// Whether this camera is recording right now. Driven by the host from the server's answer rather
+// than by the click here, because a recording can be started - and stopped - from another device.
+window.sentinelSetRecording = function (on) {
+  const button = document.querySelector('[data-act="record"]');
+  if (!button) return;
+  button.classList.toggle("recording", !!on);
+  button.innerHTML = on ? "&#9632;" : "&#9679;";
+  button.title = on ? "Stop recording" : "Record now - press again to stop";
 };
 
 document.getElementById("controls").addEventListener("click", function (event) {

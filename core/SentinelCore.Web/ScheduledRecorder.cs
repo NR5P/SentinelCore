@@ -16,6 +16,13 @@ public sealed class ScheduledRecordingOptions
 
     // The free-space floor a recording will not cross. See ScheduledRecorder.HasRoomToRecord.
     public double MinimumFreeGigabytes { get; init; } = 5;
+
+    // How long a recording started with a camera's record button may run before it stops itself.
+    // A hand-started recording has no window to end it - that is the point of the button - so
+    // without a cap the only thing standing between a forgotten press and a full disk is
+    // MinimumFreeGigabytes, which is a last resort rather than a plan. Ten minutes of main-stream
+    // video is roughly 300 MB, so forgetting costs an annoyance instead of an outage.
+    public int ManualMaxMinutes { get; init; } = 10;
 }
 
 // Captures one recording window end to end: pull the camera through go2rtc, write it to disk as it
@@ -95,7 +102,11 @@ public sealed class ScheduledRecorder(
     // of those is a result the row should carry rather than an exception the worker has to catch to
     // stay alive. Cancellation is the exception, and means shutdown: whatever has been captured is
     // finalized as partial on the way out.
-    public async Task RunAsync(Camera camera, Recording recording, CancellationToken cancellationToken)
+    // stopRequested ends the recording early and cleanly, exactly the way the disk watch below
+    // does: ffmpeg is killed, and whatever it had already written is finalized into a playable
+    // file. That is what the record button's second press pulls.
+    public async Task RunAsync(
+        Camera camera, Recording recording, CancellationToken cancellationToken, CancellationToken stopRequested = default)
     {
         var segmentDirectory = SegmentDirectory(recording.Id);
 
@@ -139,7 +150,7 @@ public sealed class ScheduledRecorder(
                 "Recording {Name} on camera {CameraId} for {Minutes:0.#} more minute(s) into {Directory}",
                 recording.Name, camera.Id, remaining.TotalMinutes, segmentDirectory);
 
-            using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var stopping = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stopRequested);
             var diskWatch = WatchDiskAsync(recording, options, stopping);
 
             var ran = await FfmpegProcess.RunAsync(
@@ -153,6 +164,21 @@ public sealed class ScheduledRecorder(
 
             await stopping.CancelAsync();
             await diskWatch;
+
+            // Stopped by hand is neither a failure nor a short recording. The window this row was
+            // created with was only the cap on how long the button was allowed to hold the camera,
+            // so measuring the footage against it would file every hand-stopped recording as
+            // partial - "captured 0.5 of 10 minutes" - for doing exactly what was asked. Moving the
+            // requested end to the moment of the second press makes the row describe what somebody
+            // actually wanted, and the completeness check below then agrees with them.
+            if (stopRequested.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                var stoppedAt = DateTimeOffset.UtcNow;
+                await recordings.SetRequestedEndAsync(recording.Id, stoppedAt, cancellationToken);
+                recording = recording with { RequestedEndUtc = stoppedAt };
+                await FinalizeFromSegmentsAsync(recording, segmentDirectory, string.Empty, cancellationToken);
+                return;
+            }
 
             // `ran` false means ffmpeg was killed or exited non-zero - it does not mean there is
             // nothing on disk, and the segments already written are exactly as watchable as they
@@ -175,6 +201,19 @@ public sealed class ScheduledRecorder(
             await FinalizeFromSegmentsAsync(recording, segmentDirectory, ex.Message, cancellationToken);
         }
     }
+
+    // Closes out a recording that a restart found still in progress, without running any more of
+    // it. The segments already on disk become the file. Used for hand-started recordings, which are
+    // never resumed - see RecordingScheduleWorker.ResumeInterruptedAsync.
+    //
+    // Deliberately leaves the requested end where it is, so this lands as `partial` rather than
+    // `complete`. Nobody chose to stop this one - the process died under it - and "captured 2 of
+    // the 10 minutes it was allowed" is the honest description of a file that stops mid-scene.
+    // Moving the end to make the arithmetic say complete would only hide that.
+    public Task FinalizeInterruptedAsync(Recording recording, CancellationToken cancellationToken) =>
+        FinalizeFromSegmentsAsync(
+            recording, SegmentDirectory(recording.Id),
+            "The server restarted while this was recording.", cancellationToken);
 
     private List<string> BuildArguments(string source, Camera camera, Recording recording, TimeSpan remaining)
     {

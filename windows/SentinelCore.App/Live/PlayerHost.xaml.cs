@@ -192,6 +192,33 @@ public partial class PlayerHost : UserControl
             $"window.sentinelSetBusy && window.sentinelSetBusy({escaped}, {(busy ? "true" : "false")})");
     }
 
+    /// <summary>
+    /// Whether this camera is recording by hand right now. Set from the server's answer rather than
+    /// from the click, because a recording can be started - and stopped - from another device, and
+    /// the button has to agree with whichever one did it.
+    /// </summary>
+    /// <remarks>
+    /// Remembered rather than only forwarded, because the page it drives is not always there to be
+    /// told. A caller learns the state as soon as the server answers, which can be before WebView2
+    /// has initialized; and the page is re-navigated whenever the live ladder restarts, which would
+    /// otherwise leave a recording camera showing a record button again. Both are covered by
+    /// re-applying it once the page has loaded - see ApplyRecordingState.
+    /// </remarks>
+    public void SetRecording(bool recording)
+    {
+        _recording = recording;
+        ApplyRecordingState();
+    }
+
+    private bool _recording;
+
+    private void ApplyRecordingState()
+    {
+        if (!_initialized || Web.CoreWebView2 is null) return;
+        _ = Web.CoreWebView2.ExecuteScriptAsync(
+            $"window.sentinelSetRecording && window.sentinelSetRecording({(_recording ? "true" : "false")})");
+    }
+
     /// <summary>Flashes the Home button to show a hold actually saved the position.</summary>
     public void SetHomeSaved(bool saved)
     {
@@ -317,7 +344,14 @@ public partial class PlayerHost : UserControl
         core.AddWebResourceRequestedFilter($"*{PlayerPath}*", CoreWebView2WebResourceContext.Document);
         core.WebResourceRequested += OnWebResourceRequested;
         core.WebMessageReceived += OnWebMessageReceived;
-        core.NavigationCompleted += (_, _) => { if (!_stopped) ShowPlayer(); };
+        core.NavigationCompleted += (_, _) =>
+        {
+            if (_stopped) return;
+            ShowPlayer();
+
+            // The page is new, so whatever it was told before this navigation is gone with it.
+            ApplyRecordingState();
+        };
 
         _initialized = true;
         _initializing = false;
