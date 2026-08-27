@@ -259,6 +259,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddSingleton<SqliteTriggerStore>(serviceProvider => new SqliteTriggerStore(
     camerasRoot,
     serviceProvider.GetRequiredService<ILogger<SqliteTriggerStore>>()));
+builder.Services.AddSingleton<EventImageThumbnails>();
 builder.Services.AddSingleton<ITriggerConfigStore>(sp => sp.GetRequiredService<SqliteTriggerStore>());
 builder.Services.AddSingleton<ITriggerEventStore>(sp => sp.GetRequiredService<SqliteTriggerStore>());
 builder.Services.AddSingleton<ClipRecorder>();
@@ -558,14 +559,17 @@ app.MapGet("/api/events/{id:guid}", async (Guid id, IEventStore store, Cancellat
         });
 }).RequireAuthorization();
 
-app.MapGet("/api/events/{id:guid}/image", async (Guid id, IEventStore store, CancellationToken ct) =>
+// size=card serves the downscaled copy the Events list actually displays; anything else serves
+// the frame as the camera sent it. See EventImageThumbnails for why the two are different
+// requests rather than one resized picture - the original is evidence and stays untouched.
+app.MapGet("/api/events/{id:guid}/image", async (
+    Guid id, string? size, IEventStore store, EventImageThumbnails thumbnails, HttpContext http, CancellationToken ct) =>
 {
     var record = await store.GetEventAsync(id, ct);
     if (record?.ImagePath is null || !File.Exists(record.ImagePath))
         return Results.NotFound();
 
-    var bytes = await File.ReadAllBytesAsync(record.ImagePath, ct);
-    return Results.File(bytes, "image/jpeg");
+    return await EventImageResults.ServeAsync(record.ImagePath, size, thumbnails, http, ct);
 }).RequireAuthorization();
 
 app.Run();

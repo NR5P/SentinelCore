@@ -74,8 +74,13 @@ function renderCard(event) {
   const card = document.createElement("div");
   card.className = "card" + (event.notified ? " notified" : "");
 
+  // ?size=card, not the frame as the camera sent it. These are 3840x2160 and 2560x1920 snapshots
+  // averaging well over a megabyte, and this element is a card in a 320px-minimum grid - fifty of
+  // them meant tens of megabytes downloaded and fifty multi-megapixel JPEG decodes on the main
+  // thread, which is the same thread the live tiles append their video on. The full frame is still
+  // one click away below, and what is stored on disk is untouched.
   const imageHtml = event.imageUrl
-    ? `<img src="${event.imageUrl}" alt="${escapeHtml(event.summary || event.zoneName || "camera snapshot")}" />`
+    ? `<img src="${event.imageUrl}?size=card" loading="lazy" decoding="async" alt="${escapeHtml(event.summary || event.zoneName || "camera snapshot")}" />`
     : `<div class="no-image">no image</div>`;
 
   const badgeHtml = event.notified
@@ -150,7 +155,10 @@ function renderCard(event) {
   if (img) {
     img.addEventListener("click", () => {
       if (event.clipUrl) openLightboxVideo(event.clipUrl);
-      else openLightbox(img.src);
+      // event.imageUrl rather than img.src: the card now holds the card-sized copy, and the
+      // lightbox is the one place that genuinely wants every pixel the camera recorded - it is
+      // where someone reads a plate or checks a face.
+      else openLightbox(event.imageUrl);
     });
   }
 

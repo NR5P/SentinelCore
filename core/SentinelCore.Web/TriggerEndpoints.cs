@@ -192,13 +192,16 @@ public static class TriggerEndpoints
             }));
         }).RequireAuthorization();
 
-        app.MapGet("/api/triggers/{id:guid}/image", async (Guid id, ITriggerEventStore store, CancellationToken ct) =>
+        // size=card serves the downscaled copy the Events list displays - see EventImageResults,
+        // which this shares with the alert-side endpoint so the two cannot disagree.
+        app.MapGet("/api/triggers/{id:guid}/image", async (
+            Guid id, string? size, ITriggerEventStore store, EventImageThumbnails thumbnails,
+            HttpContext http, CancellationToken ct) =>
         {
             var trigger = await store.GetAsync(id, ct);
             if (trigger is null || !File.Exists(trigger.ImagePath)) return Results.NotFound();
 
-            var bytes = await File.ReadAllBytesAsync(trigger.ImagePath, ct);
-            return Results.File(bytes, "image/jpeg");
+            return await EventImageResults.ServeAsync(trigger.ImagePath, size, thumbnails, http, ct);
         }).RequireAuthorization();
 
         // Streamed from disk with range support so the browser can seek without pulling the
