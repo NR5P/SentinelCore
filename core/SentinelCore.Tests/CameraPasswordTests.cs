@@ -214,12 +214,17 @@ public sealed class CameraPasswordTests : IDisposable
         Assert.Equal(RealPassword, backup.GetProperty("cameras")[0].GetProperty("password").GetString());
     }
 
-    // Why every client has to send the password back on an edit: the PUT overwrites the whole
-    // record rather than merging, so a save that omits the field entirely reads as "this camera
-    // has no password" and silently breaks the stream. Both phone apps did exactly that until
-    // their Camera models learned to carry it.
+    // A save that omits the credential fields keeps them. This used to clear them: the PUT
+    // overwrote the whole record rather than merging, so a client that forgot the field said
+    // "this camera has no password" without meaning to, and the stream broke with a 401 that
+    // named nothing. Both phone apps did it until their Camera models learned to carry the field,
+    // and a gate camera lost its login the same way - the fix belongs on this side of the wire,
+    // where one endpoint can protect every client instead of each client remembering.
+    //
+    // Absent and empty are now different things: absent keeps, "" clears. See
+    // ClearingThePassword_StillClearsIt for the other half - deliberate clearing still works.
     [Fact]
-    public async Task SavingWithNoPasswordField_ClearsIt_WhichIsWhyClientsMustRoundTripTheMask()
+    public async Task SavingWithNoPasswordField_KeepsTheStoredPassword()
     {
         var ct = TestContext.Current.CancellationToken;
         using var factory = CreateFactory();
@@ -232,7 +237,69 @@ public sealed class CameraPasswordTests : IDisposable
             saved.EnsureSuccessStatusCode();
 
         var revealed = await client.GetFromJsonAsync<JsonElement>($"/api/cameras/{id}/password", ct);
-        Assert.Equal(string.Empty, revealed.GetProperty("password").GetString());
+        Assert.Equal(RealPassword, revealed.GetProperty("password").GetString());
+    }
+
+    // The username half of the same contract. It has no mask - it is not a secret and the list
+    // carries it in full - so nothing about a round trip protected it, and a save that left it out
+    // nulled it. A camera with a password and no username cannot authenticate either:
+    // BuildAuthenticatedUrl skips the credentials entirely when the username is blank, so the
+    // camera is dialed anonymously and answers 401.
+    [Fact]
+    public async Task SavingWithNoUsernameField_KeepsTheStoredUsername()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var id = await AddCameraAsync(client, ct);
+
+        using (var saved = await client.PutAsJsonAsync($"/api/cameras/{id}",
+            new { Name = "Renamed At The Gate", StreamUrl = "rtsp://10.0.0.5/main", IncludeAudio = false }, ct))
+            saved.EnsureSuccessStatusCode();
+
+        var cameras = await client.GetFromJsonAsync<JsonElement>("/api/cameras", ct);
+        var camera = cameras.EnumerateArray().Single();
+        Assert.Equal("Renamed At The Gate", camera.GetProperty("name").GetString());
+        Assert.Equal("admin", camera.GetProperty("username").GetString());
+    }
+
+    // Clearing the username stays possible, the same way clearing the password does.
+    [Fact]
+    public async Task ClearingTheUsername_StillClearsIt()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var id = await AddCameraAsync(client, ct);
+
+        using (var saved = await client.PutAsJsonAsync($"/api/cameras/{id}",
+            new { Name = "Front Gate", StreamUrl = "rtsp://10.0.0.5/main", Username = "", Password = "", IncludeAudio = false }, ct))
+            saved.EnsureSuccessStatusCode();
+
+        var cameras = await client.GetFromJsonAsync<JsonElement>("/api/cameras", ct);
+        Assert.Equal(string.Empty, cameras.EnumerateArray().Single().GetProperty("username").GetString());
+    }
+
+    // The exact shape that broke the gate camera: a rename that carries the masked password and
+    // the masked URL, and nothing else. Everything the camera needs to dial has to survive it.
+    [Fact]
+    public async Task RenamingACamera_KeepsEveryCredentialItDialsWith()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var id = await AddCameraAsync(client, ct);
+
+        using (var saved = await client.PutAsJsonAsync($"/api/cameras/{id}",
+            new { Name = "Gate Camera", StreamUrl = "rtsp://10.0.0.5/main", Username = "admin", Password = Mask, IncludeAudio = false }, ct))
+            saved.EnsureSuccessStatusCode();
+
+        var revealed = await client.GetFromJsonAsync<JsonElement>($"/api/cameras/{id}/password", ct);
+        Assert.Equal(RealPassword, revealed.GetProperty("password").GetString());
+
+        var camera = (await client.GetFromJsonAsync<JsonElement>("/api/cameras", ct)).EnumerateArray().Single();
+        Assert.Equal("Gate Camera", camera.GetProperty("name").GetString());
+        Assert.Equal("admin", camera.GetProperty("username").GetString());
     }
 
     private static async Task<Guid> AddCameraAsync(HttpClient client, CancellationToken ct)

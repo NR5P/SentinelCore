@@ -60,32 +60,104 @@ window.GateWatchCameras = (function () {
   let cameraGroups = [];
   let groupEditingId = null;
 
+  // Why the camera list has a state and not just a length: an empty array is three different
+  // situations - still fetching, fetched and genuinely empty, or the fetch failed - and rendering
+  // all three as "no cameras added yet" told people with four cameras that they owned none. The
+  // failed case is the one that really misled: load() used to swallow the error, leaving the array
+  // empty and the screen asserting a fact about their setup that came from a dropped request.
+  let loadState = "loading"; // loading | ready | failed
+
+  // Only the camera list gates this. The other three endpoints feed decorations - the gate/door
+  // badge, the group cards, the saved tile order - and they used to share a Promise.all with the
+  // cameras, which meant the slowest of four unrelated requests decided when a camera first
+  // appeared. They still start together, but they settle on their own and repaint when they land.
+  //
+  // Returns whether the camera list actually arrived, so the caller can decide whether it is safe
+  // to remember that cameras have been loaded - see the tab switch in app.js.
   async function load() {
+    const auxiliary = loadAuxiliary();
+    if (loadState !== "ready") loadState = "loading";
+
     try {
-      const [camerasResponse, gateChecksResponse, groupsResponse, liveOrderResponse] = await Promise.all([
-        fetch("/api/cameras"),
-        fetch("/api/gate-checks"),
-        fetch("/api/camera-groups"),
-        fetch("/api/live-order")
-      ]);
-      if (!camerasResponse.ok) throw new Error(`HTTP ${camerasResponse.status}`);
-      cameras = await camerasResponse.json();
-
-      // Failing to read the order is not worth failing the whole load over - an empty list just
-      // means the grid falls back to the camera store's own order, exactly as it did before this
-      // was a preference at all.
-      liveOrderIds = liveOrderResponse.ok ? (await liveOrderResponse.json()).cameraIds ?? [] : [];
-
-      gateChecks = new Map();
-      if (gateChecksResponse.ok) {
-        const list = await gateChecksResponse.json();
-        for (const config of list) gateChecks.set(config.cameraId, config);
-      }
-
-      cameraGroups = groupsResponse.ok ? await groupsResponse.json() : [];
+      const response = await fetch("/api/cameras");
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      cameras = await response.json();
+      loadState = "ready";
     } catch (err) {
       console.error("Failed to load cameras", err);
+      cameras = [];
+      loadState = "failed";
     }
+
+    // Deliberately not awaited: the whole point is that the list paints without them.
+    auxiliary.catch(() => {});
+    return loadState === "ready";
+  }
+
+  async function loadAuxiliary() {
+    // One slow or broken decoration endpoint must not take the others down with it, so each is
+    // caught to null rather than rejecting the group.
+    const [gateChecksResponse, groupsResponse, liveOrderResponse] = await Promise.all([
+      fetch("/api/gate-checks").catch(() => null),
+      fetch("/api/camera-groups").catch(() => null),
+      fetch("/api/live-order").catch(() => null)
+    ]);
+
+    // Failing to read the order is not worth failing the whole load over - an empty list just
+    // means the grid falls back to the camera store's own order, exactly as it did before this
+    // was a preference at all.
+    liveOrderIds = liveOrderResponse?.ok ? (await liveOrderResponse.json()).cameraIds ?? [] : [];
+
+    gateChecks = new Map();
+    if (gateChecksResponse?.ok) {
+      const list = await gateChecksResponse.json();
+      for (const config of list) gateChecks.set(config.cameraId, config);
+    }
+
+    cameraGroups = groupsResponse?.ok ? await groupsResponse.json() : [];
+    repaintDecorations();
+  }
+
+  // The list painted before these arrived, so whatever is on screen is now one repaint behind.
+  // Both halves are cheap and safe to run against a view that isn't showing: renderList rebuilds
+  // static cards, and applyLiveOrder only sets a CSS order property - it never touches a player,
+  // so a tile keeps the connection it already has.
+  function repaintDecorations() {
+    if (loadState !== "ready") return;
+    if (document.getElementById("cameras-root")?.children.length) renderList();
+    if (document.getElementById("camera-groups-list-root")?.children.length) renderGroupsList();
+    if (liveBuilt) applyLiveOrder(orderedCameraIds());
+  }
+
+  // The empty-state slot for both tabs: what to say when there is no list to draw yet. Kept in one
+  // place so the Cameras tab and the Live grid can never disagree about whether you own cameras.
+  function placeholderMarkup(emptyMessage) {
+    if (loadState === "loading") return `<div class="empty-state">loading cameras&hellip;</div>`;
+    if (loadState === "failed") {
+      return `<div class="empty-state">Couldn't reach the server to load your cameras.<br>` +
+        `<button type="button" class="btn btn-small" data-retry-cameras>Try again</button></div>`;
+    }
+    return `<div class="empty-state">${emptyMessage}</div>`;
+  }
+
+  // One delegated handler rather than one per rendered placeholder - the retry button is recreated
+  // on every repaint, and rebinding it each time is how stale listeners accumulate.
+  //
+  // Repaints only the tab actually on screen. Rendering the hidden one would be worse than
+  // useless for Live: showLive builds players, and building them into a hidden view spends
+  // connections on video nobody is watching.
+  document.addEventListener("click", async (event) => {
+    if (!event.target.closest("[data-retry-cameras]")) return;
+    await load();
+    if (isVisible("cameras-root")) renderList();
+    if (isVisible("live-root")) showLive();
+  });
+
+  // Cheap "is this actually on screen" test - app.js shows one view at a time by toggling a
+  // .hidden class on the container, and offsetParent goes null for anything inside it.
+  function isVisible(id) {
+    const el = document.getElementById(id);
+    return el !== null && el.offsetParent !== null;
   }
 
   function escapeHtml(value) {
@@ -113,7 +185,7 @@ window.GateWatchCameras = (function () {
     const root = document.getElementById("cameras-root");
     root.innerHTML = "";
     if (cameras.length === 0) {
-      root.innerHTML = `<div class="empty-state">no cameras added yet</div>`;
+      root.innerHTML = placeholderMarkup("no cameras added yet");
       return;
     }
 
@@ -517,8 +589,12 @@ window.GateWatchCameras = (function () {
       name: document.getElementById("cam-name").value.trim(),
       streamUrl: document.getElementById("cam-url").value.trim(),
       isBrowserPublished: publishedForm,
-      username: document.getElementById("cam-username").value.trim() || null,
-      password: document.getElementById("cam-password").value || null,
+      // Sent as-is, never coerced to null: the server reads null as "the caller didn't touch this,
+      // keep what's stored" and "" as "the user emptied the box on purpose, clear it". Folding an
+      // empty box into null - which this used to do - asked the server to keep a credential the
+      // user had just deleted, and folding it the other way wiped credentials nobody edited.
+      username: document.getElementById("cam-username").value.trim(),
+      password: document.getElementById("cam-password").value,
       includeAudio: document.getElementById("cam-audio").checked,
       ptzEnabled: document.getElementById("cam-ptz")?.checked ?? false,
       onvifPtzServiceUrl: document.getElementById("cam-ptz-service-url").value || null,
@@ -1039,7 +1115,7 @@ window.GateWatchCameras = (function () {
     root.innerHTML = "";
 
     if (cameras.length === 0) {
-      root.innerHTML = `<div class="empty-state">no cameras added yet - add one in the Cameras tab</div>`;
+      root.innerHTML = placeholderMarkup("no cameras added yet - add one in the Cameras tab");
       return;
     }
 

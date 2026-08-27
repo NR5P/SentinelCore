@@ -138,14 +138,25 @@ public static class CameraEndpoints
             // One read serves both halves: StreamUrl now arrives masked too (see Masked), and a
             // form that changed only the host has to keep the stored secret while taking the new
             // host - so the URL is restored piece by piece rather than kept or replaced whole.
+            // Absent means "leave this alone", empty means "clear it". The two are distinct on the
+            // way in - null is a field the caller never sent, "" is a box the user emptied on
+            // purpose - and collapsing them is how a camera silently loses the login it needs.
+            // A gate camera did exactly that: an edit that carried neither field wrote NULL over
+            // both, and the camera answered every RTSP DESCRIBE with 401 until they were retyped.
+            // Erring toward keeping a credential costs a deliberate clear one explicit ""; erring
+            // the other way costs a working camera, with nothing on screen to say why.
             var existing = await store.GetAsync(id, ct);
-            var password = dto.Password == SettingsSecrets.Mask
-                ? existing?.Password
-                : dto.Password;
+            var password = dto.Password switch
+            {
+                null => existing?.Password,
+                var p when p == SettingsSecrets.Mask => existing?.Password,
+                _ => dto.Password
+            };
+            var username = dto.Username ?? existing?.Username;
             var streamUrl = StreamUrlSecrets.Unmask(dto.StreamUrl.Trim(), existing?.StreamUrl);
 
             var updated = await store.UpdateAsync(
-                id, dto.Name.Trim(), streamUrl, dto.Username, password, dto.IncludeAudio,
+                id, dto.Name.Trim(), streamUrl, username, password, dto.IncludeAudio,
                 dto.PtzEnabled, dto.OnvifPtzServiceUrl, dto.OnvifProfileToken, dto.IsBrowserPublished, ct);
             if (!updated) return Results.NotFound();
 

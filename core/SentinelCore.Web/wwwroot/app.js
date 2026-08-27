@@ -509,9 +509,13 @@ for (const tab of tabs) {
       settingsLoaded = true;
       window.GateWatchSettings.load();
     }
+    // Set from the result, not ahead of it. Latching the flag before the await meant a first load
+    // that failed - one dropped request on a flaky connection - was remembered as a load that had
+    // happened, so every later visit to Cameras or Live skipped the fetch and rendered an empty
+    // list. It never recovered on its own: only saving a camera, removing a group, or reloading
+    // the page called load() again. A false flag just costs one retry on the next visit.
     if ((target === "cameras" || target === "live") && !camerasLoaded) {
-      camerasLoaded = true;
-      await window.GateWatchCameras.load();
+      camerasLoaded = await window.GateWatchCameras.load();
     }
     if (target === "cameras") window.GateWatchCameras.renderList();
     if (target === "live") window.GateWatchCameras.showLive();
