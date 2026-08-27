@@ -44,10 +44,14 @@ struct ScheduleListView: View {
                 }
             }
 
+            // One row each, not a Section each. A Section-per-schedule drew them as separate
+            // boxes, and on macOS AppKit measured those section rows once - at the height of
+            // the "Loading schedules…" row they replaced - and never again, so every schedule
+            // showed its name and nothing else: no timing, no next run, and no Run now / Edit /
+            // Delete, because the buttons were drawn outside the row and could not be clicked.
+            // Resizing the window forced the re-measure and made them appear.
             ForEach(schedules) { schedule in
-                Section {
-                    row(for: schedule)
-                }
+                row(for: schedule)
             }
         }
         .navigationTitle("Schedules")
@@ -81,8 +85,10 @@ struct ScheduleListView: View {
         // A Mac sheet collapses around a Form's ideal size without a minimum - see the note above
         // deviceHubSheetFrame(). The minimum has to stay off iPhone, where it is wider than the
         // screen and pushes the whole editor sideways.
+        // 580 rather than the 520 this started with: a grouped Form puts the label and the
+        // control on opposite ends of the row, and the widest of these rows needs the space.
         #if os(macOS)
-        editor.frame(minWidth: 520, minHeight: 620)
+        editor.frame(minWidth: 580, minHeight: 620)
         #else
         editor
         #endif

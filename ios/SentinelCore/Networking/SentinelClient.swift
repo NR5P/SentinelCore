@@ -502,7 +502,12 @@ final class SentinelClient {
     }
 
     func scheduleRuns(id: UUID, limit: Int = 25) async throws -> [ScheduleRun] {
-        try await get("/api/schedules/\(id.uuidString)/runs?limit=\(limit)")
+        // query:, not a "?" in the path - URLComponents.path escapes the "?" to %3F, and the
+        // request goes out for a route that doesn't exist, so History was always empty.
+        try await get(
+            "/api/schedules/\(id.uuidString)/runs",
+            query: [URLQueryItem(name: "limit", value: String(limit))]
+        )
     }
 
     // Upcoming firing times for a schedule that hasn't been saved yet - the only practical way

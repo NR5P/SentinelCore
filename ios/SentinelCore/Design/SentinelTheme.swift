@@ -130,8 +130,16 @@ struct SentinelTextField: View {
                     // prompt:, not the title argument: macOS draws a field's title as a label
                     // beside the box and only prompt: as placeholder text inside it.
                     SecureField("", text: $text, prompt: Text(prompt))
+                } else if axis == .vertical {
+                    // A vertical-axis field measures to zero height inside a macOS Form, which
+                    // leaves an empty pill with the value invisible inside it - the schedule
+                    // editor's Payload box looked unfillable for exactly this reason. A line
+                    // range gives it something to measure, and a field meant for several lines
+                    // may as well show several.
+                    TextField("", text: $text, prompt: Text(prompt), axis: .vertical)
+                        .lineLimit(3...8)
                 } else {
-                    TextField("", text: $text, prompt: Text(prompt), axis: axis)
+                    TextField("", text: $text, prompt: Text(prompt))
                 }
             }
             .labelsHidden()

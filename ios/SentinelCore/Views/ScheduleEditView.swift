@@ -88,6 +88,11 @@ struct ScheduleEditView: View {
                 }
             }
         }
+        // Every other Form in the app is grouped. Left on the default columns style this one
+        // sized its label column to the longest label, pushed the fields off the side of the
+        // Mac sheet, and - since the columns style is not a scroll view - clipped whatever ran
+        // past the bottom instead of scrolling to it.
+        .formStyle(.grouped)
         .navigationTitle(isNew ? "New Schedule" : "Edit Schedule")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -300,10 +305,15 @@ struct ScheduleEditView: View {
 
     private var catchUpSection: some View {
         Section {
-            Picker("If the server was off when it was due", selection: $catchUpPolicy) {
+            // The question this asks belongs in the header, not in the picker's own label: a
+            // macOS Form sizes its whole label column to the longest label in the form, and a
+            // sentence there pushed every field on this screen off the right of the sheet.
+            Picker("Missed runs", selection: $catchUpPolicy) {
                 Text("Skip it").tag("skip")
                 Text("Run it once on the way back up").tag("runOnce")
             }
+        } header: {
+            Text("If the server was off when it was due")
         } footer: {
             Text("Skipping suits anything where being late is pointless, like flashing a light. Running once suits anything where the state it leaves behind is the point, like shutting a door.")
         }
