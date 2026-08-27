@@ -1816,6 +1816,20 @@ trigger" portion has finished recording — check back after that many seconds. 
 **Save a video clip around each trigger** was on *before* the trigger happened; it can't
 retroactively record footage that wasn't being captured yet.
 
+**A camera stopped triggering and nothing else changed.** Most often the camera itself has
+gone off the network — powered down, rebooted into a bad state, or lost its link — and trigger
+detection cannot say so from the dashboard. The server keeps trying to reconnect and records
+why each attempt failed, so the journal is the fastest answer:
+
+```
+journalctl -u sentinelcore-web --since today | grep "Trigger zone detection ffmpeg"
+```
+
+A line ending `(Error opening input: No route to host)` or `(... Connection refused)` means
+the camera is unreachable rather than misconfigured — check power and network before touching
+any zone settings. Reconnection is automatic and backs off to one attempt a minute, so a camera
+that comes back is picked up within a minute without restarting the service.
+
 **The bot won't answer me on Telegram.** It only responds to the exact Chat ID configured in
 Telegram settings — confirm that's actually your chat, not a different one.
 
