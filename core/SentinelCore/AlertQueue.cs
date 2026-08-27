@@ -18,6 +18,12 @@ public interface IAlertQueue
     // a restart's backlog where every alert is already historical and none supersedes another.
     ValueTask<EnqueueResult> TryEnqueueAsync(IncomingAlert alert, bool supersedeWaiting, CancellationToken cancellationToken);
 
+    // The alert from this camera that is still waiting, if any - so the ingest path can look at the
+    // frame it is about to stand down before deciding to. Advisory only: the consumer may dequeue it
+    // an instant later, which is why the supersede decision is still re-made under the lock inside
+    // TryEnqueueAsync. See BurstFramePicker.
+    IncomingAlert? PeekWaiting(string camera);
+
     IAsyncEnumerable<IncomingAlert> ReadAllAsync(CancellationToken cancellationToken);
     int ApproximateCount { get; }
 
@@ -86,6 +92,14 @@ public sealed class AlertQueue : IAlertQueue
     }
 
     public int ApproximateCount => Math.Max(0, Volatile.Read(ref _count));
+
+    public IncomingAlert? PeekWaiting(string camera)
+    {
+        lock (_gate)
+        {
+            return _waitingByCamera.TryGetValue(camera, out var waiting) ? waiting : null;
+        }
+    }
 
     public ValueTask<EnqueueResult> TryEnqueueAsync(IncomingAlert alert, bool supersedeWaiting, CancellationToken cancellationToken)
     {

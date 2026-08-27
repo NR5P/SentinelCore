@@ -109,6 +109,14 @@ public sealed class AlertProcessor : BackgroundService
             var embedding = _semanticSearchOptions.CurrentValue.Enabled
                 ? await _imageEmbeddings.EmbedImageAsync(alert.ImageBytes, cancellationToken)
                 : null;
+
+            // Last, so it sees the finished analysis - Package Theft Watch above can still change
+            // what this alert is about. Here rather than in any one vision client because every
+            // backend feeds this same field, and the Feed filter, automation rules and the chat
+            // assistant all read it downstream. See EventTypeClassifier for why this corrects the
+            // model instead of rejecting it.
+            analysis.EventType = EventTypeClassifier.Normalize(analysis);
+
             var result = new AlertResult
             {
                 Id = alert.Id,

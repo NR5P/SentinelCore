@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
@@ -60,10 +62,10 @@ public class MainAppSettingsPathTests
         var root = RepositoryRoot();
         Assert.SkipWhen(root is null, "The repository sources aren't alongside this build.");
 
-        var shipped = Path.Combine(root!, "core/SentinelCore.Web/appsettings.json");
-        Assert.SkipWhen(!File.Exists(shipped), $"{shipped} isn't here.");
+        var shipped = CommittedDashboardConfiguration(root!);
+        Assert.SkipWhen(shipped is null, "Git can't say what was committed in this checkout.");
 
-        using var document = JsonDocument.Parse(File.ReadAllText(shipped));
+        using var document = JsonDocument.Parse(shipped!);
 
         // These two used to be absolute paths into one developer's home directory, which meant the
         // dashboard only found the main app on the machine the file was last edited on - and on
@@ -76,6 +78,50 @@ public class MainAppSettingsPathTests
                 Path.IsPathRooted(value),
                 $"{path} in the shipped dashboard configuration is the absolute path \"{value}\", " +
                 "which only resolves on the machine it was written on.");
+        }
+    }
+
+    // What HEAD says core/SentinelCore.Web/appsettings.json contains - deliberately not what is
+    // sitting in the working tree.
+    //
+    // "Shipped" means committed. On an installed machine that file is live config rather than a
+    // fixture: the checkout is the one the server runs from, and its DataDirectory and
+    // MainAppSettingsPath are absolute paths into the install, which is correct there and is
+    // exactly what this test calls a mistake. Read from the working tree, the test therefore
+    // failed permanently on the box the server runs on while passing everywhere else - and
+    // deploy.sh runs under `set -euo pipefail`, so it aborted the deploy before the restart step
+    // and left fresh bin/Release binaries the services never loaded. Same shape as the fix in
+    // BackupCoverageTests.TheShippedConfiguration_StillExportsAndImportsCleanly.
+    //
+    // Asking git instead keeps the guard doing its real job - catching an absolute path on its
+    // way into a commit - on the install box as well as on a developer's machine, rather than
+    // being skipped there.
+    private static string? CommittedDashboardConfiguration(string repositoryRoot)
+    {
+        try
+        {
+            using var git = Process.Start(new ProcessStartInfo("git", "show HEAD:core/SentinelCore.Web/appsettings.json")
+            {
+                WorkingDirectory = repositoryRoot,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            });
+            if (git is null) return null;
+
+            // Read before waiting: a blocked pipe would otherwise deadlock the wait it is waiting on.
+            var contents = git.StandardOutput.ReadToEnd();
+            if (!git.WaitForExit(TimeSpan.FromSeconds(30))) return null;
+
+            // Non-zero covers the cases worth tolerating rather than failing on: no git on PATH is
+            // caught below, but a source export with no .git, or a repository with no commits yet,
+            // land here.
+            return git.ExitCode == 0 ? contents : null;
+        }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException or IOException)
+        {
+            // No git installed, or nothing usable to run it against.
+            return null;
         }
     }
 

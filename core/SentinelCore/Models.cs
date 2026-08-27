@@ -39,8 +39,13 @@ public sealed record AcceptedAlertResponse(Guid Id, string Status, string Status
 
 public sealed class VisionAnalysis
 {
+    // Not init-only, for the same reason as NotificationRecommended below: AlertProcessor corrects
+    // it after the model has spoken. As returned, this field is very nearly always "none" or
+    // "unknown" even on alerts the same response recommended notifying about - see
+    // EventTypeClassifier, which re-derives it from the structured fields when the model's own
+    // answer contradicts them.
     [JsonPropertyName("event_type")]
-    public string EventType { get; init; } = "unknown";
+    public string EventType { get; set; } = "unknown";
 
     [JsonPropertyName("summary")]
     public string Summary { get; init; } = string.Empty;
