@@ -45,7 +45,9 @@ public sealed class TrayNotifier : IDisposable
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open Sentinel Core", null, (_, _) => Restore());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => Application.Current.Shutdown());
+        // Through the window, so it gets its normal teardown - a bare Shutdown() would leave the
+        // live tiles' players to be torn down underneath rather than stopped.
+        menu.Items.Add("Exit", null, (_, _) => _window.ExitApplication());
         _icon.ContextMenuStrip = menu;
 
         _icon.DoubleClick += (_, _) => Restore();
@@ -84,6 +86,8 @@ public sealed class TrayNotifier : IDisposable
 
     private void Restore()
     {
+        // Show() as well as un-minimising: closing the window now hides it rather than ending the
+        // app, so the window this is asked to bring back may not be on screen at all.
         _window.Show();
         if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;
         _window.Activate();

@@ -123,7 +123,12 @@ public sealed record Recording(
     string? FilePath,
     long ByteSize,
     string Status,
-    string Detail)
+    string Detail,
+    // True for a recording somebody started with a camera's record button. ScheduleId alone cannot
+    // answer this - it is also null for a scheduled recording whose schedule was deleted while the
+    // footage outlived it - and the two want opposite treatment when a restart finds them still in
+    // progress. See RecordingScheduleWorker.ResumeInterruptedAsync.
+    bool IsManual = false)
 {
     // ffmpeg is writing segments for this window right now. A row left in this state by a restart
     // is what RecordingScheduleWorker's resume pass looks for.
@@ -170,6 +175,12 @@ public interface IRecordingStore
 
     Task FinishAsync(Guid id, DateTimeOffset actualEndUtc, string? filePath, long byteSize, string status, string detail, CancellationToken cancellationToken);
     Task SetStartedAsync(Guid id, DateTimeOffset actualStartUtc, CancellationToken cancellationToken);
+
+    // Moves the end of the window somebody asked for. Only a manual recording does this, when it is
+    // stopped by hand: the window it was created with is the *maximum* it was allowed to run, not
+    // an intention, so leaving it in place would have every hand-stopped recording measured against
+    // a length nobody wanted and filed as partial. See ScheduledRecorder.RunAsync.
+    Task SetRequestedEndAsync(Guid id, DateTimeOffset requestedEndUtc, CancellationToken cancellationToken);
 
     // Ages out recordings older than the cutoff, handing back the files those rows owned so the
     // caller can unlink them. Same order of operations as the trigger retention sweep, and for the
@@ -231,13 +242,32 @@ public sealed class SqliteRecordingStore : IRecordingScheduleStore, IRecordingSt
                 FilePath TEXT,
                 ByteSize INTEGER NOT NULL,
                 Status TEXT NOT NULL,
-                Detail TEXT NOT NULL
+                Detail TEXT NOT NULL,
+                IsManual INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS IX_Recordings_RequestedStart ON Recordings (RequestedStartUtc DESC);
             CREATE INDEX IF NOT EXISTS IX_Recordings_Status ON Recordings (Status);
             """;
         command.ExecuteNonQuery();
+
+        // Databases written before the record button could hold a recording open. The default of 0
+        // is right for every row already in there: manual recordings did not exist.
+        AddColumnIfMissing("Recordings", "IsManual", "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    // Same idiom as SqliteTriggerStore and CameraStore - ALTER TABLE ADD COLUMN is the whole
+    // migration story this app needs, and asking pragma_table_info first makes it idempotent.
+    private void AddColumnIfMissing(string table, string column, string definition)
+    {
+        using var check = _connection.CreateCommand();
+        check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $column;";
+        check.Parameters.AddWithValue("$column", column);
+        if (Convert.ToInt64(check.ExecuteScalar()) > 0) return;
+
+        using var migrate = _connection.CreateCommand();
+        migrate.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
+        migrate.ExecuteNonQuery();
     }
 
     private const string ScheduleColumns = """
@@ -413,7 +443,7 @@ public sealed class SqliteRecordingStore : IRecordingScheduleStore, IRecordingSt
 
     private const string RecordingColumns = """
         Id, CameraId, ScheduleId, Name, RequestedStartUtc, RequestedEndUtc, ActualStartUtc,
-        ActualEndUtc, FilePath, ByteSize, Status, Detail
+        ActualEndUtc, FilePath, ByteSize, Status, Detail, IsManual
         """;
 
     public async Task<Recording> AddAsync(Recording recording, CancellationToken cancellationToken)
@@ -425,10 +455,10 @@ public sealed class SqliteRecordingStore : IRecordingScheduleStore, IRecordingSt
             command.CommandText = """
                 INSERT INTO Recordings
                     (Id, CameraId, ScheduleId, Name, RequestedStartUtc, RequestedEndUtc, ActualStartUtc,
-                     ActualEndUtc, FilePath, ByteSize, Status, Detail)
+                     ActualEndUtc, FilePath, ByteSize, Status, Detail, IsManual)
                 VALUES
                     ($id, $cameraId, $scheduleId, $name, $requestedStartUtc, $requestedEndUtc, $actualStartUtc,
-                     $actualEndUtc, $filePath, $byteSize, $status, $detail);
+                     $actualEndUtc, $filePath, $byteSize, $status, $detail, $isManual);
                 """;
             command.Parameters.AddWithValue("$id", recording.Id.ToString("N"));
             command.Parameters.AddWithValue("$cameraId", recording.CameraId.ToString("N"));
@@ -442,6 +472,7 @@ public sealed class SqliteRecordingStore : IRecordingScheduleStore, IRecordingSt
             command.Parameters.AddWithValue("$byteSize", recording.ByteSize);
             command.Parameters.AddWithValue("$status", recording.Status);
             command.Parameters.AddWithValue("$detail", recording.Detail);
+            command.Parameters.AddWithValue("$isManual", recording.IsManual ? 1 : 0);
             await command.ExecuteNonQueryAsync(cancellationToken);
             return recording;
         }
@@ -511,6 +542,23 @@ public sealed class SqliteRecordingStore : IRecordingScheduleStore, IRecordingSt
             command.CommandText = "UPDATE Recordings SET ActualStartUtc = $actualStartUtc WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
             command.Parameters.AddWithValue("$actualStartUtc", actualStartUtc.ToString("O"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task SetRequestedEndAsync(Guid id, DateTimeOffset requestedEndUtc, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE Recordings SET RequestedEndUtc = $requestedEndUtc WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            command.Parameters.AddWithValue("$requestedEndUtc", requestedEndUtc.ToString("O"));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -619,7 +667,8 @@ public sealed class SqliteRecordingStore : IRecordingScheduleStore, IRecordingSt
         reader.IsDBNull(reader.GetOrdinal("FilePath")) ? null : reader.GetString(reader.GetOrdinal("FilePath")),
         reader.GetInt64(reader.GetOrdinal("ByteSize")),
         reader.GetString(reader.GetOrdinal("Status")),
-        reader.GetString(reader.GetOrdinal("Detail")));
+        reader.GetString(reader.GetOrdinal("Detail")),
+        reader.GetInt64(reader.GetOrdinal("IsManual")) != 0);
 
     private static DateTimeOffset? ReadNullableTime(SqliteDataReader reader, string column)
     {

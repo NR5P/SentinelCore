@@ -192,6 +192,33 @@ public partial class PlayerHost : UserControl
             $"window.sentinelSetBusy && window.sentinelSetBusy({escaped}, {(busy ? "true" : "false")})");
     }
 
+    /// <summary>
+    /// Whether this camera is recording by hand right now. Set from the server's answer rather than
+    /// from the click, because a recording can be started - and stopped - from another device, and
+    /// the button has to agree with whichever one did it.
+    /// </summary>
+    /// <remarks>
+    /// Remembered rather than only forwarded, because the page it drives is not always there to be
+    /// told. A caller learns the state as soon as the server answers, which can be before WebView2
+    /// has initialized; and the page is re-navigated whenever the live ladder restarts, which would
+    /// otherwise leave a recording camera showing a record button again. Both are covered by
+    /// re-applying it once the page has loaded - see ApplyRecordingState.
+    /// </remarks>
+    public void SetRecording(bool recording)
+    {
+        _recording = recording;
+        ApplyRecordingState();
+    }
+
+    private bool _recording;
+
+    private void ApplyRecordingState()
+    {
+        if (!_initialized || Web.CoreWebView2 is null) return;
+        _ = Web.CoreWebView2.ExecuteScriptAsync(
+            $"window.sentinelSetRecording && window.sentinelSetRecording({(_recording ? "true" : "false")})");
+    }
+
     /// <summary>Flashes the Home button to show a hold actually saved the position.</summary>
     public void SetHomeSaved(bool saved)
     {
@@ -257,7 +284,6 @@ public partial class PlayerHost : UserControl
 
     private async Task<bool> EnsureInitializedAsync()
     {
-        if (_initialized) return true;
         if (_initializing) return false;
         if (_model is null) return false;
 
@@ -267,7 +293,14 @@ public partial class PlayerHost : UserControl
             ShowPlaceholder("NO SERVER", "The server address isn't set yet.");
             return false;
         }
+
+        // Re-read on every play, not captured once at first use. The address this app talks to can
+        // change while the app is running - moving to the remote address on leaving the house, or
+        // dropping to the plain-HTTP port when this PC doesn't trust the server's certificate - and
+        // a player that kept the origin it first saw would go on requesting video from an address
+        // nothing is answering on, while the rest of the app had already moved.
         _origin = origin;
+        if (_initialized) return true;
 
         _initializing = true;
         try
@@ -305,12 +338,20 @@ public partial class PlayerHost : UserControl
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.AreBrowserAcceleratorKeysEnabled = false;
 
-        // The made-up path is answered from the embedded resource; everything else on this origin
-        // goes to the real server.
-        core.AddWebResourceRequestedFilter($"{_origin}{PlayerPath}*", CoreWebView2WebResourceContext.Document);
+        // The made-up path is answered from the embedded resource; everything else goes to the real
+        // server. Filtered on the path across every origin rather than on one baked-in address,
+        // since the origin can change under a player that is already initialised.
+        core.AddWebResourceRequestedFilter($"*{PlayerPath}*", CoreWebView2WebResourceContext.Document);
         core.WebResourceRequested += OnWebResourceRequested;
         core.WebMessageReceived += OnWebMessageReceived;
-        core.NavigationCompleted += (_, _) => { if (!_stopped) ShowPlayer(); };
+        core.NavigationCompleted += (_, _) =>
+        {
+            if (_stopped) return;
+            ShowPlayer();
+
+            // The page is new, so whatever it was told before this navigation is gone with it.
+            ApplyRecordingState();
+        };
 
         _initialized = true;
         _initializing = false;
@@ -329,7 +370,8 @@ public partial class PlayerHost : UserControl
     private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs args)
     {
         if (Web.CoreWebView2 is not { } core) return;
-        if (!args.Request.Uri.StartsWith($"{_origin}{PlayerPath}", StringComparison.OrdinalIgnoreCase)) return;
+        if (!Uri.TryCreate(args.Request.Uri, UriKind.Absolute, out var requested)) return;
+        if (!requested.AbsolutePath.Equals(PlayerPath, StringComparison.OrdinalIgnoreCase)) return;
 
         var html = PlayerHtml.Value;
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(html));
@@ -350,6 +392,13 @@ public partial class PlayerHost : UserControl
         if (!Uri.TryCreate(_origin, UriKind.Absolute, out var originUri)) return;
 
         var manager = Web.CoreWebView2.CookieManager;
+
+        // Cleared first, not merged into. The engine keeps one cookie store shared by every player
+        // in the app and persisted on disk, while this method only ever added to it - so signing
+        // out, or pointing the app at a different server, left the previous session's cookie in
+        // place for the next tile to send.
+        manager.DeleteAllCookies();
+
         foreach (System.Net.Cookie cookie in _model.Client.Cookies.GetCookies(originUri))
         {
             var copy = manager.CreateCookie(cookie.Name, cookie.Value, originUri.Host, "/");

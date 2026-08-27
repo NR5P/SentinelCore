@@ -32,7 +32,12 @@ public partial class LiveCameraView : UserControl
     private readonly PtzCommandQueue _commands = new();
     private readonly DispatcherTimer _homeHold;
 
-    private bool _recording;
+    // Covers the round trip only, so the button cannot be pressed twice while the server is still
+    // deciding. Distinct from _isRecording, which is the state being toggled.
+    private bool _recordBusy;
+
+    // What the server says this camera is doing, not what this view remembers pressing.
+    private bool _isRecording;
     private bool _homeHandled;
 
     public LiveCameraView(AppModel model, Camera camera)
@@ -55,7 +60,11 @@ public partial class LiveCameraView : UserControl
         _homeHold = new DispatcherTimer { Interval = SaveHomeHold };
         _homeHold.Tick += (_, _) => SaveHome();
 
-        Loaded += async (_, _) => await Player.PlayAsync(_model, _camera.Id);
+        Loaded += async (_, _) =>
+        {
+            await Player.PlayAsync(_model, _camera.Id);
+            await RefreshRecordingStateAsync();
+        };
         Unloaded += (_, _) => Stop();
     }
 
@@ -75,29 +84,64 @@ public partial class LiveCameraView : UserControl
 
     /// <summary>
     /// Every camera gets this, not just a PTZ one: the moment worth keeping is just as likely on a
-    /// fixed camera you happened to be looking at. The server turns it into an ordinary trigger, so
-    /// what comes out the other end is a row in Events exactly like a motion event.
+    /// fixed camera you happened to be looking at. A press files an ordinary trigger, so a row
+    /// appears in Events exactly like a motion event, and starts recording; a second press stops it.
+    /// Left alone, the server stops it at the limit set in Settings.
     /// </summary>
     private async void OnRecordRequested()
     {
-        if (_recording) return;
-        _recording = true;
+        if (_recordBusy) return;
+        _recordBusy = true;
         Player.SetBusy("record", true);
 
+        var wasRecording = _isRecording;
         try
         {
-            await _model.Client.RecordNowAsync(_camera.Id);
-            Player.Toast("Recording saved. It will appear in Events shortly.");
+            if (wasRecording)
+            {
+                var stopped = await _model.Client.StopRecordingAsync(_camera.Id);
+                ApplyRecordingState(stopped.State);
+                Player.Toast(RecordingText.StopMessage(stopped));
+            }
+            else
+            {
+                ApplyRecordingState(await _model.Client.RecordNowAsync(_camera.Id));
+                Player.Toast("Recording. Press again to stop.");
+            }
         }
         catch (Exception error)
         {
             Player.Toast(AppModel.UserFacingMessage(error));
+
+            // The press may well have landed before whatever failed, so the button must not be left
+            // guessing - ask rather than assume.
+            await RefreshRecordingStateAsync();
         }
         finally
         {
-            _recording = false;
+            _recordBusy = false;
             Player.SetBusy("record", false);
         }
+    }
+
+    private async Task RefreshRecordingStateAsync()
+    {
+        try
+        {
+            ApplyRecordingState(await _model.Client.RecordingStateAsync(_camera.Id));
+        }
+        catch
+        {
+            // An unanswered question about the button is not worth a toast over the video. Falling
+            // back to idle leaves a button that can at least be pressed.
+            ApplyRecordingState(ManualRecordingState.Idle);
+        }
+    }
+
+    private void ApplyRecordingState(ManualRecordingState state)
+    {
+        _isRecording = state.IsRecording;
+        Player.SetRecording(state.IsRecording);
     }
 
     private void OnPtzGesture(string direction, bool pressed)

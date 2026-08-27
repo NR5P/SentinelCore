@@ -131,12 +131,27 @@ final class SentinelClient {
     // called - there's no "move by this much and stop automatically" in this mode, so the
     // joystick UI is expected to call ptzStop on release, not just ptzMove once.
     // "Record this now" from the live view. The server turns it into the same kind of trigger a
-    // motion zone produces - same event, same Feed card - and attaches a clip covering the seconds
-    // either side of the press.
-    func recordNow(cameraId: UUID) async throws {
-        let _: EmptyResponse = try await send(
+    // motion zone produces - same event, same Feed card - attaches a clip covering the seconds
+    // either side of the press, and starts recording until stopRecording is called or the server's
+    // own limit ends it.
+    @discardableResult
+    func recordNow(cameraId: UUID) async throws -> ManualRecordingState {
+        let response: ManualRecordingResponse = try await send(
             "/api/cameras/\(cameraId.uuidString)/record", method: "POST", body: Optional<String>.none
         )
+        return response.state
+    }
+
+    func stopRecording(cameraId: UUID) async throws -> ManualRecordingStopped {
+        try await send(
+            "/api/cameras/\(cameraId.uuidString)/record", method: "DELETE", body: Optional<String>.none
+        )
+    }
+
+    // Asked when a camera opens, so a recording started on another device - or by this one before
+    // it was force-quit - shows as running rather than as a button that has forgotten about it.
+    func recordingState(cameraId: UUID) async throws -> ManualRecordingState {
+        try await get("/api/cameras/\(cameraId.uuidString)/record")
     }
 
     // Which live transport a tile actually landed on, and why. Logged by the server, not stored -
@@ -820,6 +835,38 @@ final class SentinelClient {
 }
 
 struct EmptyResponse: Decodable {}
+
+// Whether a camera is recording by hand right now, and when the server will stop it if nobody
+// does. stopsAtUtc is the press-again deadline, not a guess: the server writes it when the
+// recording starts and honours it with ffmpeg's own -t.
+struct ManualRecordingState: Decodable, Equatable {
+    let isRecording: Bool
+    let recordingId: UUID?
+    let startedUtc: Date?
+    let stopsAtUtc: Date?
+    let maxMinutes: Int
+
+    static let idle = ManualRecordingState(
+        isRecording: false, recordingId: nil, startedUtc: nil, stopsAtUtc: nil, maxMinutes: 0
+    )
+}
+
+struct ManualRecordingResponse: Decodable {
+    let success: Bool
+    let state: ManualRecordingState
+}
+
+struct ManualRecordingStopped: Decodable {
+    let success: Bool
+    let state: ManualRecordingState
+
+    // How the finished recording was filed - "complete", "partial", "failed" - and how many seconds
+    // of video it holds. Both are nil when the stop found nothing running, which is not an error:
+    // two devices racing to stop the same recording is an ordinary thing to do.
+    let status: String?
+    let detail: String
+    let seconds: Int?
+}
 
 enum ClientError: LocalizedError {
     case invalidServerAddress

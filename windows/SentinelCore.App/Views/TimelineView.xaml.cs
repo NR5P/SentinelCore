@@ -48,17 +48,39 @@ public partial class TimelineView : UserControl
         DayPicker.SelectedDate = DateTime.Today;
         ReviewBox.SelectedIndex = 0;
 
-        Player.ClipPositionChanged += OnClipPositionChanged;
-        Player.ClipEnded += OnClipEnded;
-        Player.ClipFailed += OnClipFailed;
-
         RailCanvas.SizeChanged += (_, _) => DrawRail();
-        Loaded += async (_, _) => await LoadCamerasAsync();
+
+        // Subscribed on Loaded rather than in the constructor, because Unloaded below drops the
+        // subscriptions and this view is built once and reused. The shell swaps it out of the
+        // visual tree when another section is chosen, which raises Unloaded; wiring these up here
+        // is what makes them come back. Doing it in the constructor left the second visit to the
+        // Timeline with a cursor that no longer tracked playback, no jump to the next clip at the
+        // end of a segment, and no message when a clip failed - all of it silent.
+        Loaded += async (_, _) =>
+        {
+            Player.ClipPositionChanged += OnClipPositionChanged;
+            Player.ClipEnded += OnClipEnded;
+            Player.ClipFailed += OnClipFailed;
+
+            // First time in, discover the cameras - which selects one and loads its day. Coming
+            // back, the day is already here and the camera box's selection has not changed, so
+            // nothing would reload it; the clip has to be put back explicitly, because Unloaded
+            // navigated the player away from it.
+            if (_day is null) await LoadCamerasAsync();
+            else SyncPlayer(force: true);
+        };
         Unloaded += (_, _) =>
         {
             Player.ClipPositionChanged -= OnClipPositionChanged;
             Player.ClipEnded -= OnClipEnded;
             Player.ClipFailed -= OnClipFailed;
+
+            // Forgotten, not just stopped. Stop() navigates the player to a blank page, so the clip
+            // it was showing is gone - but this view went on believing it was still loaded, and the
+            // next Play therefore asked a blank page to resume rather than loading anything. The
+            // button changed to Pause, the cursor sat still, and nothing said why.
+            SetPlaying(false);
+            _loadedSegment = null;
             Player.Stop();
         };
     }

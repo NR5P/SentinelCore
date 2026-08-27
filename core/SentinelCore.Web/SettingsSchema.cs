@@ -633,11 +633,12 @@ public static class SettingsSchema
             Endpoint = "/api/settings/scheduled-recording",
             Basic = false,
             DtoType = typeof(ScheduledRecordingSettingsDto),
-            Description = "Controls the recordings made by the timed windows set up on each camera's trigger screen ('record the driveway from 8pm to 8:30pm every Tuesday'). These are the largest files this app produces by a wide margin - full-bitrate main-stream video, where an hour is roughly what a month of trigger clips costs - so both settings here exist to stop them quietly filling the disk. Neither affects trigger clips or alert history, which age out under their own separate settings.",
+            Description = "Controls the recordings made by the timed windows set up on each camera's trigger screen ('record the driveway from 8pm to 8:30pm every Tuesday'), and the ones started by hand with a camera's record button. These are the largest files this app produces by a wide margin - full-bitrate main-stream video, where an hour is roughly what a month of trigger clips costs - so every setting here exists to stop them quietly filling the disk. None of them affect trigger clips or alert history, which age out under their own separate settings.",
             Fields =
             [
                 Number("retentionDays", "Keep Recordings For (days)", "How long a finished recording is kept before it is deleted. Much shorter than alert history on purpose, because of the size involved - raise it only if you have the space to spare.", 1, 365),
-                Number("minimumFreeGigabytes", "Stop Below Free Space (GB)", "A recording will not start, and a running one stops itself, when free disk space falls below this. The point is that the rest of the system keeps working: the databases, trigger clips and alert pipeline all need somewhere to write, and they fail far less visibly than a recording that says it stopped early.", 1, 500)
+                Number("minimumFreeGigabytes", "Stop Below Free Space (GB)", "A recording will not start, and a running one stops itself, when free disk space falls below this. The point is that the rest of the system keeps working: the databases, trigger clips and alert pipeline all need somewhere to write, and they fail far less visibly than a recording that says it stopped early.", 1, 500),
+                Number("manualMaxMinutes", "Record Button Limit (minutes)", "How long a recording started with a camera's record button may run before it stops itself. Pressing the button again stops it sooner; this is only the backstop for the press that never comes, because the app was closed or the recording was forgotten. Ten minutes of main-stream video is roughly 300 MB.", 1, 240)
             ]
         },
         new()

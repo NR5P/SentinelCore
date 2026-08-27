@@ -46,7 +46,9 @@ worth handing to someone who should not have to install a runtime first.
 - **Timeline** — a day of one camera drawn end to end: recorded stretches, AI event marks, severity
   and unreviewed filters, and the reviewed flag shared with every other client.
 - **Live** — a tile per camera, arranged per account by dragging one onto another. Double-click for
-  the full-size view with PTZ and the manual record button.
+  the full-size view with PTZ. The record button (on both the tile and the full-size view) files a
+  trigger with a short look-back clip and starts recording until pressed again, or until the limit
+  in Settings → Scheduled Recording stops it.
 - **Device Hub** — the lights, gates, locks and sensors the server tracks over MQTT, with the
   controls each kind actually speaks, plus discovery and editing.
 - **Settings** — connection (including the remote fallback address), account, server health, service

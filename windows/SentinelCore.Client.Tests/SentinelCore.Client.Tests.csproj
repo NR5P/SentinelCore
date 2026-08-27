@@ -4,7 +4,13 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>latest</LangVersion>
+    <!-- Pinned, not "latest". These projects target net8.0-windows, but "latest" makes the
+         language version follow whichever SDK happens to be installed - so a machine that gained a
+         .NET 10 SDK started compiling this as C# 14, where "field" became a contextual keyword and
+         an ordinary lambda parameter of that name stopped building. The target framework had not
+         changed; only the compiler's idea of the language had. 12.0 is the version that ships with
+         net8.0, so this now says what it always meant. -->
+    <LangVersion>12.0</LangVersion>
     <IsPackable>false</IsPackable>
     <RootNamespace>SentinelCore.Client.Tests</RootNamespace>
   </PropertyGroup>

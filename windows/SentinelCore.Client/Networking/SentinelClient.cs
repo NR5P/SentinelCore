@@ -145,11 +145,23 @@ public sealed class SentinelClient : IDisposable
 
     /// <summary>
     /// "Record this now" from the live view. The server turns it into the same kind of trigger a
-    /// motion zone produces - same event, same Feed card - and attaches a clip covering the seconds
-    /// either side of the press.
+    /// motion zone produces - same event, same Feed card - attaches a clip covering the seconds
+    /// either side of the press, and starts recording until <see cref="StopRecordingAsync"/> or the
+    /// server's own limit ends it.
     /// </summary>
-    public Task RecordNowAsync(Guid cameraId, CancellationToken ct = default) =>
-        SendNoResultAsync<object>($"/api/cameras/{cameraId}/record", HttpMethod.Post, null, ct);
+    public async Task<ManualRecordingState> RecordNowAsync(Guid cameraId, CancellationToken ct = default) =>
+        (await SendAsync<ManualRecordingResponse, object>(
+            $"/api/cameras/{cameraId}/record", HttpMethod.Post, null, ct).ConfigureAwait(false)).State;
+
+    public Task<ManualRecordingStopped> StopRecordingAsync(Guid cameraId, CancellationToken ct = default) =>
+        SendAsync<ManualRecordingStopped, object>($"/api/cameras/{cameraId}/record", HttpMethod.Delete, null, ct);
+
+    /// <summary>
+    /// Asked when a camera opens, so a recording started on another device - or by this PC before it
+    /// was closed - shows as running rather than as a button that has forgotten about it.
+    /// </summary>
+    public Task<ManualRecordingState> RecordingStateAsync(Guid cameraId, CancellationToken ct = default) =>
+        GetAsync<ManualRecordingState>($"/api/cameras/{cameraId}/record", null, ct);
 
     /// <summary>
     /// Which live transport a tile actually landed on, and why. Logged by the server, not stored -
@@ -206,6 +218,21 @@ public sealed class SentinelClient : IDisposable
     /// <summary>Live ffmpeg snapshot, never cached - fetched fresh every time the zone editor opens.</summary>
     public Task<byte[]> ReferenceFrameAsync(Guid cameraId, CancellationToken ct = default) =>
         GetBytesAsync($"/api/cameras/{cameraId}/reference-frame", ct);
+
+    /// <summary>
+    /// The bytes at a server-relative path, over this session. For the snapshots the feed, the
+    /// timeline and the live tiles show, and for saving one to a file.
+    /// </summary>
+    /// <remarks>
+    /// Public so that nothing else has to build its own HTTP stack to fetch an authenticated image.
+    /// Two callers used to construct - and dispose - an HttpClient and handler per image, which
+    /// leaves each one's sockets in TIME_WAIT for minutes afterwards; against a feed that fetches a
+    /// snapshot per row and reloads every 30 seconds, that is a steady climb towards running out of
+    /// ephemeral ports. Sharing the one handler this class already owns also means these requests
+    /// carry the same cookies and time out on the same rules as every other call.
+    /// </remarks>
+    public Task<byte[]> DownloadAsync(string path, CancellationToken ct = default) =>
+        GetBytesAsync(path, ct);
 
     public Task<List<PromptProfileName>> PromptProfileNamesAsync(CancellationToken ct = default) =>
         GetAsync<List<PromptProfileName>>("/api/prompt-profile-names", ct: ct);
@@ -833,9 +860,15 @@ public sealed class SentinelClient : IDisposable
         {
             response = await _http.SendAsync(request, ct).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        catch (Exception error) when (IsWorthReporting(error))
         {
-            _log.Log($"{method} failed after {Elapsed(started)}: {Describe(error)}", DiagnosticLevel.Error);
+            // Notice, not Error. One request failing is the mechanical detail of a problem; the
+            // connection failing is the problem, and AppModel.FailConnection reports that at Error
+            // with the address and a human explanation. Both at Error meant a single dead server
+            // produced two red lines saying the same thing in different words - and the point of
+            // the recent work here is a log someone can scan for the one line that matters. The
+            // detail is still here, with the timing and the full exception chain, one level down.
+            _log.Log($"{method} failed after {Elapsed(started)}: {Describe(error)}", DiagnosticLevel.Notice);
             throw;
         }
 
@@ -850,6 +883,26 @@ public sealed class SentinelClient : IDisposable
             throw new SentinelServerException((int)response.StatusCode, message);
         }
     }
+
+    /// <summary>
+    /// Whether a failed request represents something actually wrong, or just this app tidying up.
+    /// </summary>
+    /// <remarks>
+    /// Three very different things arrive as OperationCanceledException and only one of them is a
+    /// fault. A request that ran out of time is: HttpClient reports its own timeout this way, and
+    /// on a LAN that is the single most confusing failure there is - a firewall that drops rather
+    /// than refuses, so the server never answers and never says no - which for a long time left no
+    /// trace in the connection log whatsoever. The other two are routine: the app shutting a
+    /// request down, and <see cref="ResetSession"/> discarding a session whose requests are still
+    /// in flight. The latter fires a dozen at once every time Refresh is pressed, so reporting them
+    /// as errors buried the log in red on the one action a user takes deliberately.
+    ///
+    /// The inner exception is what separates them - a timeout wraps TimeoutException, an abandoned
+    /// socket wraps IOException - which is more dependable here than the caller's token, since a
+    /// disposed handler cancels requests without anyone having asked it to.
+    /// </remarks>
+    private static bool IsWorthReporting(Exception error) =>
+        error is not OperationCanceledException || error.InnerException is TimeoutException;
 
     private static string? ExtractErrorMessage(byte[] data)
     {

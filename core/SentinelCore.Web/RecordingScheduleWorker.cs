@@ -96,6 +96,21 @@ public sealed class RecordingScheduleWorker(
                 continue;
             }
 
+            // A hand-started recording is not resumed, only closed out. Its window was never an
+            // intention - it is the cap on a recording somebody meant to end themselves - and the
+            // press that would have ended it belongs to a session that died with the last process.
+            // Resuming would leave the camera recording for the rest of the cap with no button
+            // anywhere able to stop it, which is the exact runaway the cap exists to prevent.
+            // Whatever was captured before the restart is finalized and kept.
+            if (recording.IsManual)
+            {
+                logger.LogInformation(
+                    "Finalizing hand-started recording on camera {CameraId} - the server restarted while it was running",
+                    camera.Id);
+                await recorder.FinalizeInterruptedAsync(recording, stoppingToken);
+                continue;
+            }
+
             var remaining = recording.RequestedEndUtc - DateTimeOffset.UtcNow;
             logger.LogInformation(
                 remaining > TimeSpan.Zero

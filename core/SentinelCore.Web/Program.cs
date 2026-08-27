@@ -326,6 +326,11 @@ builder.Services.AddSingleton<IRecordingScheduleStore>(recordingStore);
 builder.Services.AddSingleton<IRecordingStore>(recordingStore);
 builder.Services.AddSingleton<ScheduledRecorder>();
 builder.Services.AddHostedService<RecordingScheduleWorker>();
+
+// The same recorder driven by hand instead of by the clock - a camera's record button. Singleton
+// because the open recordings ARE the state: which cameras are rolling lives here and nowhere else,
+// so every client agrees about what the button says.
+builder.Services.AddSingleton<ManualRecordingService>();
 builder.Services.AddHostedService<ScheduledRecordingRetentionWorker>();
 
 // Triggering a camera from outside the motion detector - the key-authenticated HTTP endpoint and

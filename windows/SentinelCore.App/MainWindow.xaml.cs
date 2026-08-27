@@ -267,13 +267,47 @@ public partial class MainWindow : Window, INavigator
         _events?.Select(item);
     }
 
+    /// <summary>
+    /// Closing the window hides it; Exit from the tray is what actually quits.
+    /// </summary>
+    /// <remarks>
+    /// The alerts this app raises depend on its own refresh still running, so ending the process on
+    /// a window close meant the X button silently switched notifications off - and it also made the
+    /// tray menu's "Open Sentinel Core" unreachable, since the icon could never outlive the window.
+    /// The Apple app behaves the same way: closing the window leaves the app running.
+    ///
+    /// Hidden rather than minimised, so it leaves the taskbar and lives only in the tray. The live
+    /// tiles are stopped on the way down - the grid is not visible and has no business holding a
+    /// decoder and a socket per camera open behind a hidden window.
+    /// </remarks>
     protected override void OnClosing(CancelEventArgs e)
     {
+        if (!_exiting)
+        {
+            e.Cancel = true;
+            _live?.SetActive(false);
+            Hide();
+            return;
+        }
+
         _refreshTimer.Stop();
         _model.NewNotifiedEvents -= OnNewNotifiedEvents;
         _model.PropertyChanged -= OnModelPropertyChanged;
         _live?.SetActive(false);
         _tray.Dispose();
         base.OnClosing(e);
+    }
+
+    private bool _exiting;
+
+    /// <summary>
+    /// Quits for real, from the tray's Exit entry. Closes the window along the way so anything
+    /// holding state gets its normal teardown rather than being shut down underneath.
+    /// </summary>
+    public void ExitApplication()
+    {
+        _exiting = true;
+        Close();
+        Application.Current.Shutdown();
     }
 }

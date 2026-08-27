@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using SentinelCore.Web;
 using Xunit;
 
@@ -175,4 +176,128 @@ public sealed class ScheduledRecordingTests
             SolarElevationDegrees: 0,
             durationSeconds,
             IncludeAudio: false);
+}
+
+// The storage half of a recording started by hand. The recording itself needs ffmpeg and a camera,
+// so what is pinned here is what the rest of the feature relies on being true: that a hand-started
+// row can be told apart from a scheduled one after a restart, and that stopping one by hand can
+// move the window it is measured against.
+public sealed class ManualRecordingStoreTests : IDisposable
+{
+    private readonly string _directory = Path.Combine(
+        Path.GetTempPath(), $"sentinel-manual-{Guid.NewGuid():N}");
+
+    private SqliteRecordingStore NewStore() => new(_directory);
+
+    private static Recording Row(Guid cameraId, bool isManual, DateTimeOffset start, DateTimeOffset end) =>
+        new(
+            Guid.NewGuid(), cameraId, ScheduleId: null, "Front door (recorded by hand)",
+            start, end, ActualStartUtc: null, ActualEndUtc: null, FilePath: null, ByteSize: 0,
+            Recording.StatusRecording, string.Empty, IsManual: isManual);
+
+    [Fact]
+    public async Task A_recording_started_by_hand_still_says_so_after_a_restart()
+    {
+        var cameraId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+
+        // Two rows that are identical except for the flag - both have no schedule, which is exactly
+        // the ambiguity the flag exists to resolve. The second stands for a scheduled recording
+        // whose schedule was deleted while its footage outlived it.
+        using (var store = NewStore())
+        {
+            IRecordingStore recordings = store;
+            await recordings.AddAsync(Row(cameraId, isManual: true, now, now.AddMinutes(10)), TestContext.Current.CancellationToken);
+            await recordings.AddAsync(Row(cameraId, isManual: false, now, now.AddMinutes(30)), TestContext.Current.CancellationToken);
+        }
+
+        // A new store over the same file is what the next process start actually sees.
+        using (var store = NewStore())
+        {
+            var inProgress = await ((IRecordingStore)store).GetInProgressAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(2, inProgress.Count);
+            Assert.Single(inProgress, recording => recording.IsManual);
+            Assert.Single(inProgress, recording => !recording.IsManual);
+        }
+    }
+
+    [Fact]
+    public async Task Stopping_by_hand_moves_the_window_the_footage_is_measured_against()
+    {
+        var now = DateTimeOffset.UtcNow;
+        using var store = NewStore();
+        IRecordingStore recordings = store;
+
+        var recording = Row(Guid.NewGuid(), isManual: true, now, now.AddMinutes(10));
+        await recordings.AddAsync(recording, TestContext.Current.CancellationToken);
+
+        // Stopped after half a minute of a ten-minute cap. Without this the recorder would compare
+        // 30 seconds of footage against a ten-minute window and file a perfectly good recording as
+        // partial - see ScheduledRecorder.RunAsync.
+        var stoppedAt = now.AddSeconds(30);
+        await recordings.SetRequestedEndAsync(recording.Id, stoppedAt, TestContext.Current.CancellationToken);
+
+        var stored = await recordings.GetAsync(recording.Id, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(stored);
+        Assert.Equal(stoppedAt, stored!.RequestedEndUtc, TimeSpan.FromMilliseconds(1));
+        Assert.Equal(now, stored.RequestedStartUtc, TimeSpan.FromMilliseconds(1));
+    }
+
+    [Fact]
+    public async Task A_database_written_before_the_record_button_existed_still_opens()
+    {
+        Directory.CreateDirectory(_directory);
+        var databasePath = Path.Combine(_directory, "recordings.db");
+        var rowId = Guid.NewGuid();
+
+        // The Recordings table exactly as it was before IsManual was added, with a row in it. Every
+        // installation upgrading to this feature has one of these.
+        await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE Recordings (
+                    Id TEXT PRIMARY KEY,
+                    CameraId TEXT NOT NULL,
+                    ScheduleId TEXT,
+                    Name TEXT NOT NULL,
+                    RequestedStartUtc TEXT NOT NULL,
+                    RequestedEndUtc TEXT NOT NULL,
+                    ActualStartUtc TEXT,
+                    ActualEndUtc TEXT,
+                    FilePath TEXT,
+                    ByteSize INTEGER NOT NULL,
+                    Status TEXT NOT NULL,
+                    Detail TEXT NOT NULL
+                );
+                INSERT INTO Recordings
+                    (Id, CameraId, ScheduleId, Name, RequestedStartUtc, RequestedEndUtc,
+                     ByteSize, Status, Detail)
+                VALUES
+                    ($id, $cameraId, NULL, 'Evening driveway', '2026-08-01T20:00:00.0000000+00:00',
+                     '2026-08-01T20:30:00.0000000+00:00', 0, 'complete', '');
+                """;
+            command.Parameters.AddWithValue("$id", rowId.ToString("N"));
+            command.Parameters.AddWithValue("$cameraId", Guid.NewGuid().ToString("N"));
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        using var store = NewStore();
+        var migrated = await ((IRecordingStore)store).GetAsync(rowId, TestContext.Current.CancellationToken);
+
+        // Not manual, because manual recordings did not exist when it was written.
+        Assert.NotNull(migrated);
+        Assert.False(migrated!.IsManual);
+    }
+
+    public void Dispose()
+    {
+        // The store holds the connection open until it is disposed, which the tests do themselves.
+        SqliteConnection.ClearAllPools();
+        try { if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true); }
+        catch (IOException) { /* a locked file in a temp directory is not a failed test */ }
+    }
 }

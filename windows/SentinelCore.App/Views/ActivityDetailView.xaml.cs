@@ -195,13 +195,7 @@ public partial class ActivityDetailView : UserControl
 
         try
         {
-            if (_model.Client.Url(path) is not { } url) throw new InvalidOperationException("No server address.");
-            using var http = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler
-            {
-                CookieContainer = _model.Client.Cookies,
-                UseCookies = true,
-            });
-            var bytes = await http.GetByteArrayAsync(url);
+            var bytes = await _model.Client.DownloadAsync(path);
             await File.WriteAllBytesAsync(dialog.FileName, bytes);
             Notice($"Saved to {dialog.FileName}");
         }

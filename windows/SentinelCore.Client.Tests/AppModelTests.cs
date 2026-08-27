@@ -1,3 +1,4 @@
+using System.Net.Http;
 using SentinelCore.Client;
 using SentinelCore.Client.Models;
 using SentinelCore.Client.Networking;
@@ -316,14 +317,58 @@ public class AppModelTests : IDisposable
     [Fact]
     public async Task An_unreachable_server_goes_offline_with_a_message_that_names_a_fix()
     {
+        // A port that is definitely closed on this machine, obtained by taking one and giving it
+        // back. A hard-coded address instead (127.0.0.2:9) is refused on Windows but silently
+        // dropped on macOS and Linux, so the same test measured two different things depending on
+        // where it ran - and the slow one took the client's full request timeout to do it.
+        string address;
+        using (var server = new FakeServer()) address = server.BaseUrl;
+
         using var model = NewModel();
-        model.ServerUrl = "http://127.0.0.2:9";
+        model.ServerUrl = address;
 
         await model.ConnectAsync();
 
         Assert.Equal(ConnectionState.Offline, model.ConnectionState);
         Assert.NotNull(model.LastError);
         Assert.Contains("firewall", model.LastError, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A request that ran out of time must fail the connection, not be mistaken for the app
+    /// shutting down.
+    /// </summary>
+    /// <remarks>
+    /// These arrive as the same exception type. HttpClient reports its own timeout as a
+    /// TaskCanceledException, and treating every cancellation as a lifecycle stop left the app
+    /// sitting on CONNECTING for ever - no error, no Offline badge - whenever a server was
+    /// reachable but silent, which is exactly what a firewall that drops rather than refuses looks
+    /// like. Tested against the predicate directly because reproducing it end to end costs the
+    /// full request timeout in wall-clock, and because a closed port (the usual stand-in for an
+    /// unreachable server) answers with a reset and never exercises this path at all.
+    /// </remarks>
+    [Fact]
+    public void A_request_that_timed_out_is_not_mistaken_for_the_app_shutting_down()
+    {
+        var live = CancellationToken.None;
+
+        // What HttpClient throws when its own timeout elapses.
+        var timedOut = new TaskCanceledException("timed out", new TimeoutException());
+        Assert.False(AppModel.IsLifecycleCancellation(timedOut, live));
+
+        // Even without the inner TimeoutException, nothing asked this to stop.
+        Assert.False(AppModel.IsLifecycleCancellation(new TaskCanceledException(), live));
+
+        // A genuine shutdown: the caller's token is what says so.
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        Assert.True(AppModel.IsLifecycleCancellation(new OperationCanceledException(), cancelled.Token));
+
+        // And a timeout stays a timeout even while shutting down, so it is still reported.
+        Assert.False(AppModel.IsLifecycleCancellation(timedOut, cancelled.Token));
+
+        // Anything that is not a cancellation at all is simply not one.
+        Assert.False(AppModel.IsLifecycleCancellation(new HttpRequestException("nope"), cancelled.Token));
     }
 
     [Fact]

@@ -23,9 +23,16 @@ public partial class ServerSetupView : UserControl
         model.PropertyChanged += OnModelPropertyChanged;
         DiscoveredList.ItemsSource = model.DiscoveredServers;
 
-        // Starting discovery from here as well as from Connect matters: this screen is the one
-        // place where someone is likely to be powering the server on as they look at it.
-        model.StartServerDiscovery();
+        // Browsing runs only while this screen is up. It is the one place the results are shown,
+        // and it is also where someone is likely to be powering the server on as they look at it -
+        // but a browse multicasts a query on every interface every five seconds, which is not
+        // something to leave running for the life of the process once the address is set.
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible) model.StartServerDiscovery();
+            else model.StopServerDiscovery();
+        };
+        if (IsVisible) model.StartServerDiscovery();
     }
 
     private void OnModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
