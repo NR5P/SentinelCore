@@ -4,6 +4,35 @@ using System.Text.RegularExpressions;
 
 namespace SentinelCore.Web;
 
+// Why a stream never started, in a form the caller can act on rather than only print.
+//
+// The message is the short, credential-masked sentence that reaches the client; the ffmpeg tail
+// behind it is what lets EnsureStreamStartedAsync tell a refused login apart from a rendition that
+// isn't there. Before this, the whole ffmpeg log - banner, stream mapping and all - was interpolated
+// into the message, which went two places it should never have gone: the journal, and a 502 body
+// (see CameraEndpoints), each carrying the camera password ffmpeg echoes back inside the input URL.
+public interface IFfmpegFailure
+{
+    IReadOnlyList<string> FfmpegLog { get; }
+}
+
+// InvalidOperationException and TimeoutException respectively, because those are the types this
+// used to throw and what callers still catch - the log is added, nothing is taken away. The two
+// stay distinct because the difference matters to the caller: on this hardware a genuinely absent
+// substream BLOCKS rather than exiting, so a timeout is evidence about the rendition and an
+// immediate exit usually isn't (see FfmpegExitReason).
+public sealed class StreamStartFailedException(string message, IReadOnlyList<string> ffmpegLog)
+    : InvalidOperationException(message), IFfmpegFailure
+{
+    public IReadOnlyList<string> FfmpegLog { get; } = ffmpegLog;
+}
+
+public sealed class StreamStartTimedOutException(string message, IReadOnlyList<string> ffmpegLog)
+    : TimeoutException(message), IFfmpegFailure
+{
+    public IReadOnlyList<string> FfmpegLog { get; } = ffmpegLog;
+}
+
 // Starts an ffmpeg process per camera on first request, remuxing whatever RTSP/HTTP source
 // the camera speaks into HLS segments a browser can actually play (browsers have no native
 // RTSP support). Video is copied, not re-encoded, so this is cheap whatever the camera sends -
@@ -47,7 +76,13 @@ public sealed class HlsStreamManager : IDisposable
     // Cameras whose stream died on startup, and when it becomes worth trying them again. Keeps a
     // broken camera from having a fresh ffmpeg spawned for it on every request - see
     // GetOrStartLiveSession.
-    private readonly ConcurrentDictionary<SessionKey, DateTimeOffset> _restartBlockedUntil = new();
+    // The reason travels with the backoff. Without it, only the request that actually watched
+    // ffmpeg die can classify the failure: every request during the following ten seconds is
+    // answered from this dictionary instead, and a blank log reads as an unexplained failure - so
+    // a rejected password would still reach the low-resolution latch below, one request later.
+    private readonly record struct RestartBlock(DateTimeOffset Until, IReadOnlyList<string> FfmpegLog);
+
+    private readonly ConcurrentDictionary<SessionKey, RestartBlock> _restartBlockedUntil = new();
 
     // Cameras that turned out not to serve the low-resolution stream their URL implied, and when
     // it becomes worth asking them again. ffmpeg refuses an input it can't open and quits
@@ -67,6 +102,9 @@ public sealed class HlsStreamManager : IDisposable
     // it. Re-probing costs one ffmpeg that exits immediately, which is the cheaper thing to be
     // wrong about.
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _lowResRetryAfter = new();
+
+    // Cameras already warned about a fault that has no fallback - see WarnOncePerCamera.
+    private readonly ConcurrentDictionary<Guid, bool> _warnedCameras = new();
 
     // Long enough that a camera with no low stream isn't respawning doomed processes (the camera
     // list warms every camera on each fetch), short enough that a transient failure doesn't cost
@@ -110,19 +148,67 @@ public sealed class HlsStreamManager : IDisposable
         EnsureStreamStartedAsync(camera, StreamQuality.Main, cancellationToken);
 
     // Asking for Sub is a preference, not a demand: a camera that doesn't serve one still has to
-    // show a picture. So a Sub request that can't be satisfied degrades to the main stream rather
+    // show a picture. So a Sub request the *camera* won't satisfy degrades to the main stream rather
     // than failing, and the camera is remembered so the next viewer doesn't pay the same discovery
     // twice. Main requests keep the original behaviour exactly - they have nothing to fall back to.
+    //
+    // The exception is a failure the main stream shares: a refused login and an unreachable camera
+    // are facts about the camera, not about the rendition, and falling back to a stream reached
+    // with the same credentials over the same network only fails twice as slowly. Those report what
+    // actually happened - see the catch below.
     public async Task<string> EnsureStreamStartedAsync(
         Camera camera, StreamQuality quality, CancellationToken cancellationToken)
     {
         var effective = EffectiveQuality(camera, quality);
         try
         {
-            return await StartAndWaitAsync(camera, effective, cancellationToken);
+            var playlistPath = await StartAndWaitAsync(camera, effective, cancellationToken);
+
+            // A camera that works again is allowed to report its next fault. Otherwise the one-shot
+            // warning is one per process, and the second time someone breaks a password is silent.
+            _warnedCameras.TryRemove(camera.Id, out _);
+            return playlistPath;
         }
         catch (Exception ex) when (effective == StreamQuality.Sub && ex is not OperationCanceledException)
         {
+            var ffmpegLog = (ex as IFfmpegFailure)?.FfmpegLog ?? [];
+
+            // Two failures say nothing whatever about the low rendition, and the main stream cannot
+            // repair either of them: it is reached over the same network with the same login. Trying
+            // it anyway buys a second failure, a second startup budget, and - because the fallback
+            // latches - ten minutes of every grid tile decoding the camera's main stream, which on
+            // the camera that prompted this is 4K at 25fps. So these report the real cause and stop.
+            //
+            // Held off for seconds rather than latched for minutes. The difference is what the wait
+            // is made of: a latch waits out a fixed interval before it will even look again, while
+            // this only rations attempts, so the tile is back the moment the password is right.
+            if (FfmpegExitReason.IndicatesAuthenticationFailure(ffmpegLog))
+            {
+                RationLowResAttempts(camera, ffmpegLog);
+                WarnOncePerCamera(camera,
+                    "Camera {CameraId} ({Name}) rejected the credentials on its low-resolution stream: {Reason}. " +
+                    "Its main stream uses the same login, so that is not being tried as a fallback - check the " +
+                    "camera's username and password.",
+                    FfmpegExitReason.Describe(ffmpegLog) ?? "authentication failed");
+                throw;
+            }
+
+            if (FfmpegExitReason.IndicatesSourceUnreachable(ffmpegLog))
+            {
+                RationLowResAttempts(camera, ffmpegLog);
+                WarnOncePerCamera(camera,
+                    "Camera {CameraId} ({Name}) could not be reached on its low-resolution stream: {Reason}. " +
+                    "Nothing was learned about that rendition, so it stays the preferred one and the main stream " +
+                    "is not being tried as a fallback.",
+                    FfmpegExitReason.Describe(ffmpegLog) ?? "the camera did not answer");
+                throw;
+            }
+
+            // What is left is either the camera answering and refusing this rendition, or a session
+            // that never produced a playlist inside its budget - and a genuinely absent substream is
+            // the case that blocks rather than exiting (see FfmpegExitReason), so a timeout is the
+            // strongest evidence there is. Both are about the rendition, so both still fall back.
+            //
             // Warn the first time only. A camera whose low stream is genuinely switched off would
             // otherwise reprint this every retry interval for as long as the dashboard is open.
             var alreadyKnown = _lowResRetryAfter.ContainsKey(camera.Id);
@@ -131,14 +217,44 @@ public sealed class HlsStreamManager : IDisposable
                 _logger.LogWarning(
                     "Camera {CameraId} ({Name}) never produced a playlist on its derived low-resolution stream, so " +
                     "that stream probably isn't enabled on the camera. Falling back to the main stream for live view, " +
-                    "and trying the low one again in {RetryMinutes:n0} minutes. {Reason}",
-                    camera.Id, camera.Name, LowResRetryInterval.TotalMinutes, ex.Message);
+                    "and trying the low one again in {RetryMinutes:n0} minutes. ffmpeg said: {Reason}",
+                    camera.Id, camera.Name, LowResRetryInterval.TotalMinutes,
+                    FfmpegExitReason.Describe(ffmpegLog) ?? ex.Message);
 
             // The failed attempt left a backoff behind for the rendition we're abandoning; clearing
             // it keeps that from blocking the retry we're about to make on a different key.
             _restartBlockedUntil.TryRemove(new SessionKey(camera.Id, StreamQuality.Sub), out _);
             return await StartAndWaitAsync(camera, StreamQuality.Main, cancellationToken);
         }
+    }
+
+    // Neither no-fallback path may spawn an ffmpeg per request: /api/cameras warms every camera on
+    // each fetch, and a wrong password would otherwise put a doomed process behind every one of
+    // those, every few seconds, for as long as it stayed wrong. The ordinary restart backoff is the
+    // right tool and already carries the reason forward - but it is only ever *set* by a session
+    // that died after being established, and one that never starts at all is removed before it can
+    // leave one behind. So this puts it there.
+    //
+    // Only when there isn't a live one already. Refreshing it on each request would push the
+    // deadline forward faster than it could expire under a dashboard that polls, and a hold-off
+    // that never lifts is the latch this exists to avoid.
+    private void RationLowResAttempts(Camera camera, IReadOnlyList<string> ffmpegLog)
+    {
+        var key = new SessionKey(camera.Id, StreamQuality.Sub);
+        if (_restartBlockedUntil.TryGetValue(key, out var current) && DateTimeOffset.UtcNow < current.Until)
+            return;
+
+        _restartBlockedUntil[key] = new RestartBlock(DateTimeOffset.UtcNow + RestartBackoff, ffmpegLog);
+    }
+
+    // Both no-fallback paths are reached by every request for as long as the fault lasts, and
+    // /api/cameras warms every camera on each fetch - so an unthrottled warning here is the
+    // "every ten seconds for nine hours" journal that FfmpegExitReason was written about. Keyed on
+    // the camera and cleared when it next works, so the next occurrence is reported afresh.
+    private void WarnOncePerCamera(Camera camera, string message, string reason)
+    {
+        if (!_warnedCameras.TryAdd(camera.Id, true)) return;
+        _logger.LogWarning(message, camera.Id, camera.Name, reason);
     }
 
     // Which rendition this camera can actually serve for the one that was asked for. Resolved
@@ -217,8 +333,11 @@ public sealed class HlsStreamManager : IDisposable
             if (session.Process.HasExited)
             {
                 _sessions.TryRemove(key, out _);
-                throw new InvalidOperationException(
-                    $"ffmpeg exited before producing a stream - check the camera URL/credentials. Recent log:\n{session.RecentLog}");
+                var log = session.RecentLogLines;
+                throw new StreamStartFailedException(
+                    "ffmpeg exited before producing a stream - check the camera URL/credentials. " +
+                    $"ffmpeg said: {FfmpegExitReason.Describe(log) ?? "nothing at all"}",
+                    log);
             }
 
             await Task.Delay(200, cancellationToken);
@@ -227,8 +346,12 @@ public sealed class HlsStreamManager : IDisposable
         if (!File.Exists(playlistPath))
         {
             _sessions.TryRemove(key, out _);
+            var stalledLog = session.RecentLogLines;
             KillSession(session);
-            throw new TimeoutException($"Timed out waiting for the stream to start. Recent log:\n{session.RecentLog}");
+            throw new StreamStartTimedOutException(
+                "Timed out waiting for the stream to start. " +
+                $"ffmpeg said: {FfmpegExitReason.Describe(stalledLog) ?? "nothing at all"}",
+                stalledLog);
         }
 
         return playlistPath;
@@ -253,7 +376,7 @@ public sealed class HlsStreamManager : IDisposable
         // disposes it - neither can double-kill a process or tear down the other's replacement.
         if (_sessions.TryGetValue(key, out var existing) && existing.Process.HasExited)
         {
-            var log = existing.RecentLog;
+            var log = existing.RecentLogLines;
             var ranFor = DateTimeOffset.UtcNow - existing.StartedAt;
             if (_sessions.TryRemove(new KeyValuePair<SessionKey, StreamSession>(key, existing)))
                 KillSession(existing);
@@ -266,22 +389,27 @@ public sealed class HlsStreamManager : IDisposable
             // its own finds the camera again as soon as it recovers.
             if (ranFor < RestartBackoff)
             {
-                _restartBlockedUntil[key] = DateTimeOffset.UtcNow + RestartBackoff;
-                throw new InvalidOperationException(
-                    $"The stream for this camera keeps stopping - check its URL and credentials, and that it isn't refusing extra connections. Recent log:\n{log}");
+                _restartBlockedUntil[key] = new RestartBlock(DateTimeOffset.UtcNow + RestartBackoff, log);
+                throw new StreamStartFailedException(
+                    "The stream for this camera keeps stopping - check its URL and credentials, and that it " +
+                    $"isn't refusing extra connections. ffmpeg said: {FfmpegExitReason.Describe(log) ?? "nothing at all"}",
+                    log);
             }
 
             _logger.LogWarning(
-                "HLS session for camera {CameraId} ({Name}, {Quality}) died after {Seconds:n0}s; starting a fresh one. Recent log:\n{Log}",
-                camera.Id, camera.Name, key.Quality, ranFor.TotalSeconds, log);
+                "HLS session for camera {CameraId} ({Name}, {Quality}) died after {Seconds:n0}s; starting a fresh one. ffmpeg said: {Reason}",
+                camera.Id, camera.Name, key.Quality, ranFor.TotalSeconds,
+                FfmpegExitReason.Describe(log) ?? "nothing at all");
         }
 
-        if (_restartBlockedUntil.TryGetValue(key, out var blockedUntil))
+        if (_restartBlockedUntil.TryGetValue(key, out var blocked))
         {
-            if (DateTimeOffset.UtcNow < blockedUntil)
+            if (DateTimeOffset.UtcNow < blocked.Until)
             {
-                throw new InvalidOperationException(
-                    "The stream for this camera keeps stopping - check its URL and credentials, and that it isn't refusing extra connections.");
+                throw new StreamStartFailedException(
+                    "The stream for this camera keeps stopping - check its URL and credentials, and that it " +
+                    $"isn't refusing extra connections. ffmpeg said: {FfmpegExitReason.Describe(blocked.FfmpegLog) ?? "nothing at all"}",
+                    blocked.FfmpegLog);
             }
 
             _restartBlockedUntil.TryRemove(key, out _);
@@ -817,6 +945,16 @@ public sealed class HlsStreamManager : IDisposable
             get
             {
                 lock (_logLock) return string.Join('\n', _log);
+            }
+        }
+
+        // A snapshot rather than the queue itself: FfmpegExitReason reads it more than once, and
+        // the writer thread is still appending to the live buffer while it does.
+        public IReadOnlyList<string> RecentLogLines
+        {
+            get
+            {
+                lock (_logLock) return _log.ToArray();
             }
         }
     }

@@ -166,12 +166,34 @@ public static class CameraEndpoints
             return Results.Ok(new { saved = true });
         }).RequireAuthorization("AdminOnly");
 
-        app.MapDelete("/api/cameras/{id:guid}", async (Guid id, ICameraStore store, HlsStreamManager streams, Go2RtcManager webrtc, CancellationToken ct) =>
+        // Deleting a camera takes its per-camera *configuration* with it. Without that, the rows
+        // outlive the camera and stay switched on: a trigger config for a camera that no longer
+        // exists survives every restart, is written into config exports and restored from them, and
+        // comes back to life on the day some other camera is added under a reused id. The gate
+        // camera replaced on 2026-08-27 left exactly such a row behind.
+        //
+        // Configuration only. Recordings and trigger events - the footage and the images - are
+        // history rather than settings, and deleting the camera is not a statement about what it
+        // saw. They stay, and the Triggers and Recordings tabs go on showing them.
+        app.MapDelete("/api/cameras/{id:guid}", async (
+            Guid id, ICameraStore store, HlsStreamManager streams, Go2RtcManager webrtc,
+            ITriggerConfigStore triggerConfigs, IGateCheckStore gateChecks,
+            IRecordingScheduleStore recordingSchedules, CancellationToken ct) =>
         {
             streams.StopStream(id);
             webrtc.ForgetStream(id);
             var deleted = await store.DeleteAsync(id, ct);
-            return deleted ? Results.Ok(new { deleted = true }) : Results.NotFound();
+            if (!deleted) return Results.NotFound();
+
+            // After the camera row is gone, not before: every one of these is safe to run twice and
+            // harmless when there was nothing to remove, whereas a camera left behind by a cleanup
+            // that failed half way would be a camera whose settings had been silently emptied.
+            await triggerConfigs.DeleteAsync(id, ct);
+            await gateChecks.DeleteAsync(id, ct);
+            foreach (var schedule in await recordingSchedules.GetForCameraAsync(id, ct))
+                await recordingSchedules.DeleteAsync(schedule.Id, ct);
+
+            return Results.Ok(new { deleted = true });
         }).RequireAuthorization("AdminOnly");
 
         // Nothing here may be cached, by the client or by anything in front of the server. The

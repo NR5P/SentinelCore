@@ -176,6 +176,11 @@ public interface ITriggerConfigStore
     // silently dropping a disabled zone would mean it never comes back on restore.
     Task<IReadOnlyList<TriggerConfig>> GetAllAsync(CancellationToken cancellationToken);
     Task SaveAsync(TriggerConfig config, CancellationToken cancellationToken);
+
+    // For a camera that no longer exists. Deliberately not exposed as an endpoint: a config is
+    // switched off by saving it disabled, and the only thing that legitimately removes one outright
+    // is the camera itself going away - see CameraEndpoints' delete.
+    Task DeleteAsync(Guid cameraId, CancellationToken cancellationToken);
 }
 
 public interface ITriggerEventStore
@@ -522,6 +527,25 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$nightWindowEnabled", config.NightWindowEnabled ? 1 : 0);
             command.Parameters.AddWithValue("$nightStartHour", config.NightStartHour);
             command.Parameters.AddWithValue("$nightEndHour", config.NightEndHour);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task DeleteAsync(Guid cameraId, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            // TriggerEvents are deliberately untouched. They are what happened, not configuration:
+            // the images and the incidents they belong to stay readable after the camera that
+            // recorded them is gone, which is the whole point of keeping them.
+            command.CommandText = "DELETE FROM TriggerConfigs WHERE CameraId = $cameraId;";
+            command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally

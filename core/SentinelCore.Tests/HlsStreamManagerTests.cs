@@ -50,16 +50,21 @@ public sealed class HlsStreamManagerTests : IDisposable
     // prints one is a camera whose codec is never established, which is the existing behaviour
     // every other test here relies on. The pause before the playlist mirrors real ffmpeg, which
     // announces the input well before it has cut a first segment.
+    // refusalMessage is what the stub prints on stderr as it refuses. A silent refusal is the
+    // original behaviour and still means "ffmpeg quit and said nothing useful"; a refusal that
+    // speaks is how a real camera answers, and it is the only thing that tells a rejected password
+    // apart from a rendition that isn't there.
     private void WriteFfmpegStub(
         bool stayAlive, bool emptySegment = false, string? refuseUrlContaining = null,
-        string? announceCodec = null)
+        string? announceCodec = null, string? refusalMessage = null)
     {
         PosixShellStubs.SkipIfUnavailable();
 
+        var complaint = refusalMessage is null ? "" : $"echo \"{refusalMessage}\" >&2; ";
         var refusal = refuseUrlContaining is null
             ? ""
             : $"""
-              case "$*" in *{refuseUrlContaining}*) exit 1;; esac
+              case "$*" in *{refuseUrlContaining}*) {complaint}exit 1;; esac
               """;
         var segmentBody = emptySegment ? "" : "printf '\\x47fake-segment-payload' > \"$OUTDIR/seg_000.ts\"";
         var announcement = announceCodec is null
@@ -372,6 +377,115 @@ public sealed class HlsStreamManagerTests : IDisposable
         var sub = await manager.EnsureStreamStartedAsync(
             camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
         Assert.Equal(Path.Combine(_root, "hls", $"{camera.Id:N}-sub"), Path.GetDirectoryName(sub));
+    }
+
+    // The regression this pair exists for. On 2026-08-27 an edit blanked the gate camera's login,
+    // ffmpeg answered every DESCRIBE with 401, and that was read as "this camera has no low stream"
+    // - so a wrong password put every grid tile onto a 4K/25fps main stream, ten minutes at a time,
+    // while the log asserted a cause that the ffmpeg output printed directly underneath it
+    // contradicted.
+    [Fact]
+    public async Task ACameraThatRejectsTheLogin_IsNotRecordedAsHavingNoLowStream()
+    {
+        WriteFfmpegStub(
+            stayAlive: true, refuseUrlContaining: "_sub",
+            refusalMessage: "Error opening input: Server returned 401 Unauthorized (authorization failed)");
+        using var manager = CreateManager();
+        var camera = ReolinkCamera();
+
+        await Assert.ThrowsAnyAsync<Exception>(() => manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken));
+
+        // No ten-minute latch: the next request is free to ask for the low stream again.
+        Assert.False(LowResRetryIsRemembered(manager, camera.Id));
+
+        // And no fallback was attempted. The main stream is reached with the same login, so trying
+        // it buys a second failure and a second startup budget - the sub attempt is the only one.
+        Assert.Equal(1, InvocationCount());
+    }
+
+    // The other half: not latching must not turn into a doomed ffmpeg per request either.
+    // /api/cameras warms every camera on each fetch, so an unrationed retry would put one behind
+    // every camera every few seconds for as long as the password stayed wrong.
+    [Fact]
+    public async Task ARejectedLogin_IsRetriedInSecondsRatherThanPerRequestOrPerTenMinutes()
+    {
+        WriteFfmpegStub(
+            stayAlive: true, refuseUrlContaining: "_sub",
+            refusalMessage: "Error opening input: Server returned 401 Unauthorized (authorization failed)");
+        using var manager = CreateManager();
+        var camera = ReolinkCamera();
+
+        await Assert.ThrowsAnyAsync<Exception>(() => manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken));
+        var afterFirstAttempt = InvocationCount();
+
+        await Assert.ThrowsAnyAsync<Exception>(() => manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken));
+        Assert.Equal(afterFirstAttempt, InvocationCount());
+
+        // Seconds, not minutes - the whole point of refusing the ten-minute latch.
+        Assert.True(LowResHoldOffRemaining(manager, camera.Id) <= TimeSpan.FromSeconds(10));
+
+        // The password is put back, the hold-off lapses, and the low stream is simply asked for
+        // again - no interval to wait out, because none was ever recorded.
+        WriteFfmpegStub(stayAlive: true);
+        ClearHoldOff(manager);
+
+        var sub = await manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken);
+        Assert.Equal(Path.Combine(_root, "hls", $"{camera.Id:N}-sub"), Path.GetDirectoryName(sub));
+    }
+
+    // A camera that has dropped off the network says nothing about its renditions either, and its
+    // main stream is just as unreachable - so it gets the same treatment.
+    [Fact]
+    public async Task ACameraThatCannotBeReached_IsNotRecordedAsHavingNoLowStream()
+    {
+        WriteFfmpegStub(
+            stayAlive: true, refuseUrlContaining: "_sub",
+            refusalMessage: "Error opening input: No route to host");
+        using var manager = CreateManager();
+        var camera = ReolinkCamera();
+
+        await Assert.ThrowsAnyAsync<Exception>(() => manager.EnsureStreamStartedAsync(
+            camera, StreamQuality.Sub, TestContext.Current.CancellationToken));
+
+        Assert.False(LowResRetryIsRemembered(manager, camera.Id));
+        Assert.Equal(1, InvocationCount());
+    }
+
+    private static bool LowResRetryIsRemembered(HlsStreamManager manager, Guid cameraId)
+    {
+        var field = typeof(HlsStreamManager)
+            .GetField("_lowResRetryAfter", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var map = (System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset>)field.GetValue(manager)!;
+        return map.ContainsKey(cameraId);
+    }
+
+    // Read through the non-generic view: both the key and the value are private nested types, and
+    // naming them from a test would mean making them visible for no other reason.
+    private static TimeSpan LowResHoldOffRemaining(HlsStreamManager manager, Guid cameraId)
+    {
+        var blocks = HoldOffMap(manager);
+        Assert.Single(blocks.Keys.Cast<object>());
+
+        foreach (System.Collections.DictionaryEntry entry in blocks)
+        {
+            var until = (DateTimeOffset)entry.Value!.GetType().GetProperty("Until")!.GetValue(entry.Value)!;
+            return until - DateTimeOffset.UtcNow;
+        }
+
+        throw new InvalidOperationException("no hold-off was recorded");
+    }
+
+    private static void ClearHoldOff(HlsStreamManager manager) => HoldOffMap(manager).Clear();
+
+    private static System.Collections.IDictionary HoldOffMap(HlsStreamManager manager)
+    {
+        var field = typeof(HlsStreamManager)
+            .GetField("_restartBlockedUntil", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        return (System.Collections.IDictionary)field.GetValue(manager)!;
     }
 
     // Winds the retry deadline back into the past, the same reach-in approach SetSessionStartedAt

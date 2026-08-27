@@ -16,7 +16,8 @@ namespace SentinelCore.Web;
 //                                answers, so the process stays alive and the stall watchdog owns it
 //   camera unreachable           ffmpeg EXITS immediately, "No route to host"
 //   port closed                  ffmpeg EXITS immediately, "Connection refused"
-//   wrong password               ffmpeg EXITS immediately, "End of file"
+//   wrong password over HTTP     ffmpeg EXITS immediately, "End of file"
+//   wrong password over RTSP     ffmpeg EXITS immediately, "401 Unauthorized"
 //
 // So on this hardware an immediate exit is almost never evidence about the substream, and the one
 // latch keyed on it fires only on false positives. Rather than guess from the exit alone, read what
@@ -43,6 +44,21 @@ public static class FfmpegExitReason
         "Temporary failure in name resolution",
     ];
 
+    // The server answered and refused the credentials. Deliberately checked before - and excluded
+    // from - StreamRejectedSignatures below, even though a 401 is literally a 4xx and "Server
+    // returned 4" would otherwise swallow it. Reading an auth failure as "this rendition does not
+    // exist" is how a blanked password came to look like a camera with no substream: on 2026-08-27
+    // the gate camera lost its login, answered every DESCRIBE with 401, and was promoted onto its
+    // 4K main stream for ten minutes at a time by exactly that misreading.
+    private static readonly string[] AuthenticationSignatures =
+    [
+        // Both spellings: ffmpeg's RTSP demuxer prints "method DESCRIBE failed: 401 Unauthorized",
+        // and the line it derives from that omits the space.
+        "Unauthorized",
+        "authorization failed",
+        "403 Forbidden",
+    ];
+
     // The server answered and would not serve this particular stream. Only these justify concluding
     // anything about whether a substream exists, because only these mean something was there to
     // answer the question.
@@ -60,13 +76,25 @@ public static class FfmpegExitReason
     public static bool IndicatesSourceUnreachable(IEnumerable<string> stderr) =>
         MatchesAny(stderr, UnreachableSignatures);
 
+    // The credentials were rejected. Says nothing about the rendition, and nothing that trying a
+    // different one would fix: every rendition on a camera is reached with the same login.
+    public static bool IndicatesAuthenticationFailure(IEnumerable<string> stderr) =>
+        MatchesAny(stderr, AuthenticationSignatures);
+
     // Deliberately requires positive evidence rather than defaulting to true on an uninformative
     // exit. Latching wrongly is the expensive direction: it condemns a working camera to decoding
     // its main stream at full rate for the life of the process, which is the standing-latency
     // failure that made triggers save empty images. Declining to latch when the reason is unclear
     // costs at most a few more restart attempts, and those are now backed off.
-    public static bool IndicatesSubstreamMissing(IEnumerable<string> stderr) =>
-        MatchesAny(stderr, StreamRejectedSignatures);
+    public static bool IndicatesSubstreamMissing(IEnumerable<string> stderr)
+    {
+        // Materialised because it is read twice, and callers pass queries over a live log buffer.
+        var lines = stderr as IReadOnlyCollection<string> ?? stderr.ToList();
+
+        // A refused login is not an answer to the question this asks, so it disqualifies the
+        // evidence rather than counting as some of it.
+        return !MatchesAny(lines, AuthenticationSignatures) && MatchesAny(lines, StreamRejectedSignatures);
+    }
 
     private static bool MatchesAny(IEnumerable<string> stderr, string[] signatures) =>
         stderr.Any(line => signatures.Any(signature => line.Contains(signature, StringComparison.OrdinalIgnoreCase)));
@@ -86,7 +114,8 @@ public static class FfmpegExitReason
         // follows it is mostly URL. Prefer the former, fall back to the last line, which is where
         // ffmpeg puts its final word.
         var best = lines.LastOrDefault(line => line.Contains("Error opening input:", StringComparison.OrdinalIgnoreCase))
-            ?? lines.LastOrDefault(line => UnreachableSignatures.Concat(StreamRejectedSignatures)
+            ?? lines.LastOrDefault(line => UnreachableSignatures
+                .Concat(StreamRejectedSignatures).Concat(AuthenticationSignatures)
                 .Any(signature => line.Contains(signature, StringComparison.OrdinalIgnoreCase)))
             ?? lines[^1];
 

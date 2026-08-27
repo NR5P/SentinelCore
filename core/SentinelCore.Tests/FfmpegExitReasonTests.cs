@@ -40,6 +40,17 @@ public sealed class FfmpegExitReasonTests
         "Error opening input files: End of file",
     ];
 
+    // Straight out of the journal on 2026-08-27, when the gate camera's login had been blanked by
+    // an edit and every DESCRIBE came back 401. This is the transcript that showed "Server returned
+    // 4" swallowing an auth failure and reporting it as a rendition that isn't there.
+    private static readonly string[] RtspWrongPassword =
+    [
+        "[rtsp @ 0x5f5d264fc1c0] method DESCRIBE failed: 401 Unauthorized",
+        "[in#0 @ 0x5f5d264fbf00] Error opening input: Server returned 401 Unauthorized (authorization failed)",
+        "Error opening input file rtsp://192.168.50.146:554/Preview_01_sub.",
+        "Error opening input files: Server returned 401 Unauthorized (authorization failed)",
+    ];
+
     private static readonly string[] StreamRefusedByServer =
     [
         "[http @ 0x5621000] Server returned 404 Not Found",
@@ -78,6 +89,45 @@ public sealed class FfmpegExitReasonTests
     {
         Assert.True(FfmpegExitReason.IndicatesSubstreamMissing(StreamRefusedByServer));
         Assert.False(FfmpegExitReason.IndicatesSourceUnreachable(StreamRefusedByServer));
+    }
+
+    // The regression that cost the gate camera its low-resolution stream: a 401 is a 4xx, so
+    // "Server returned 4" matched it, and a wrong password was read as proof that the substream
+    // did not exist - promoting every grid tile onto a 4K stream for ten minutes at a time.
+    [Fact]
+    public void ARejectedPasswordIsNotEvidenceThatTheSubstreamIsMissing()
+    {
+        Assert.True(FfmpegExitReason.IndicatesAuthenticationFailure(RtspWrongPassword));
+        Assert.False(FfmpegExitReason.IndicatesSubstreamMissing(RtspWrongPassword));
+        Assert.False(FfmpegExitReason.IndicatesSourceUnreachable(RtspWrongPassword));
+    }
+
+    // The line ffmpeg derives from the DESCRIBE failure runs the two words together, and it is the
+    // only line some sessions get, so matching has to survive it.
+    [Fact]
+    public void TheRunTogetherSpellingOfUnauthorizedIsRecognisedToo()
+    {
+        Assert.True(FfmpegExitReason.IndicatesAuthenticationFailure(
+            ["[rtsp @ 0x1] method DESCRIBE failed: 401Unauthorized"]));
+    }
+
+    // The failures that are genuinely about the stream must still count - excluding auth is a
+    // carve-out, not a repeal.
+    [Fact]
+    public void ExcludingAuthDoesNotDisarmTheOrdinaryRefusal()
+    {
+        Assert.True(FfmpegExitReason.IndicatesSubstreamMissing(StreamRefusedByServer));
+        Assert.False(FfmpegExitReason.IndicatesAuthenticationFailure(StreamRefusedByServer));
+        Assert.False(FfmpegExitReason.IndicatesAuthenticationFailure(HostOffNetwork));
+        Assert.False(FfmpegExitReason.IndicatesAuthenticationFailure([]));
+    }
+
+    [Fact]
+    public void DescribeNamesARejectedPasswordAsWhatItIs()
+    {
+        Assert.Equal(
+            "Error opening input: Server returned 401 Unauthorized (authorization failed)",
+            FfmpegExitReason.Describe(RtspWrongPassword));
     }
 
     [Fact]
