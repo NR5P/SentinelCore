@@ -1948,14 +1948,38 @@ window.GateWatchCameras = (function () {
     const isCurrent = () => mseConnections.get(camera.id) === session;
     const startedAt = Date.now();
 
+    // Whether this tile has been seen actually rendering. Declared up here because both the
+    // element event below and the watchdog further down need it, and only the first of them to
+    // fire may report.
+    let sawMedia = false;
+
+    // Reported from the video element's own event, the way attachHls does it - not from the
+    // watchdog poll below. The poll only notices media on its *second* tick, since the first
+    // merely seeds lastTime, so the earliest figure it could ever produce is two 2s periods. Every
+    // healthy tile on every camera duly reported "4001ms to first frame", which is the poll's
+    // period and not the camera's latency: it made the one number this log exists for unable to
+    // tell a fast tile from a slow one, and made the MSE rung look four seconds worse than the HLS
+    // rung it is several seconds better than.
+    const reportPlaying = () => {
+      if (session.done || !isCurrent() || sawMedia) return;
+      sawMedia = true;
+      reportLivePath(camera, "mse", "playing", null, Date.now() - startedAt);
+    };
+
     const cleanup = () => {
       session.done = true;
       for (const t of session.timers) clearInterval(t);
       session.timers = [];
+      // The element outlives this session - a tile that falls through to HLS keeps the same
+      // <video> - so the listener has to come off, or a day of reconnects leaves a stack of them
+      // and an HLS "playing" gets reported as MSE.
+      video.removeEventListener("playing", reportPlaying);
       if (session.ws) { try { session.ws.close(); } catch { /* already closed */ } }
       if (session.objectUrl) { try { URL.revokeObjectURL(session.objectUrl); } catch { /* fine */ } }
       if (isCurrent()) mseConnections.delete(camera.id);
     };
+
+    video.addEventListener("playing", reportPlaying);
 
     const fail = (reason) => {
       if (session.done) return;
@@ -2000,7 +2024,6 @@ window.GateWatchCameras = (function () {
     // let HLS take over. Generous first deadline - the server may be starting go2rtc.
     let lastTime = -1;
     let stalledSinceMs = null;
-    let sawMedia = false;
     session.timers.push(setInterval(() => {
       if (session.done || !isCurrent()) { cleanup(); return; }
       if (video.paused && receivedAnyMedia) { stalledSinceMs = null; return; }
