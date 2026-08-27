@@ -1677,18 +1677,37 @@ window.GateWatchCameras = (function () {
       if (hasPlayed) showStatus(status, "buffering…");
     });
 
-    // WebRTC first: frames are pushed continuously instead of downloaded in keyframe-aligned
-    // segments, so the tile sits a few hundred milliseconds behind the camera instead of the
-    // several seconds HLS structurally needs. HLS remains the fallback whenever the handshake
-    // can't happen - go2rtc not installed on the server (the one-time 503 above), a browser
-    // without WebRTC, or a network path that only forwards HTTP (e.g. a Cloudflare Tunnel, which
-    // carries the HLS segments fine but not WebRTC's UDP media).
-    if (webrtcUnavailable() || typeof RTCPeerConnection === "undefined") {
+    // MSE first, which is where the Apple apps already start (see LiveStreamPlayer.swift) and for
+    // the same reason: it is within a couple hundred milliseconds of WebRTC, and unlike WebRTC it
+    // negotiates a codec before any media moves.
+    //
+    // That negotiation is the whole difference. connectMse below offers go2rtc the exact list this
+    // browser can decode - avc1.640033 among them, H.264 High profile level 5.1. WebRTC has no
+    // equivalent step, so go2rtc passes the camera's stream through as-is and the browser's WebRTC
+    // decoder, which advertises a far narrower profile set, silently renders nothing. Every camera
+    // on this network reports High level 5.1, so on 2026-08-27 every tile did this on every load:
+    //
+    //   webrtc  connected but no frames arrived within 8s   gave up at 12-20s
+    //   mse     playing, 4001ms to first frame
+    //
+    // Twelve to twenty seconds per tile, paid before the rung that works even got its turn - and
+    // paid again in every new tab, since the "WebRTC is dead here" latch is sessionStorage with a
+    // ten-minute life. That is the whole of the "the website is sluggish but the Mac app isn't"
+    // gap, and it is the gap the Apple apps closed by not having this rung at all.
+    //
+    // WebRTC is kept for the one case MSE cannot serve - a browser with no MediaSource - rather
+    // than deleted, because nothing here has shown WebRTC to be broken in general, only that it
+    // cannot carry these cameras' profile without a transcode nobody is asking go2rtc to do.
+    // HLS remains the last rung: go2rtc missing from the server (the one-time 503 above), or a
+    // network path that only forwards HTTP.
+    if (webrtcUnavailable()) {
       attachHls(video, status, camera); // no go2rtc on the server - MSE would 503 too
-    } else if (webrtcKnownDead()) {
-      connectMse(video, status, camera); // WebRTC media can't flow here, but MSE may well work
-    } else {
+    } else if ("MediaSource" in window) {
+      connectMse(video, status, camera);
+    } else if (typeof RTCPeerConnection !== "undefined" && !webrtcKnownDead()) {
       connectWebRtc(video, status, camera, 0);
+    } else {
+      attachHls(video, status, camera);
     }
   }
 
