@@ -204,11 +204,14 @@ public sealed class TriggerZoneMonitor(
             // dark until the next pass. It alternated blind and live every ten seconds, and the only
             // trace was one generic "Could not reconcile" line.
             var hadExited = existing.Process.HasExited;
+            var stderrTail = existing.StderrTail;
+
+            // A session that ever delivered a frame proves the camera is reachable, whatever has
+            // happened since, so it clears any backoff accumulated by earlier failures.
+            if (existing.EverDeliveredAFrame) _failedStarts.TryRemove(config.CameraId, out _);
 
             if (hadExited)
-                logger.LogWarning(
-                    "Trigger zone detection ffmpeg for camera {CameraId} had exited; starting a fresh session.",
-                    config.CameraId);
+                LogExit(config.CameraId, stderrTail);
             else if (stalled)
                 logger.LogWarning(
                     "Trigger zone detection for camera {CameraId} has delivered no frames for {Seconds:F0}s " +
@@ -230,15 +233,32 @@ public sealed class TriggerZoneMonitor(
             // it after 30s having learned nothing about its substream. Latching on that would
             // condemn a perfectly good camera to decoding its main stream at full rate for the life
             // of the process - exactly the standing-latency problem the substream exists to avoid.
-            if (hadExited && existing.UsedDerivedDetectionUrl && !existing.EverDeliveredAFrame)
+            //
+            // ...but only when ffmpeg's own account of the failure supports that reading. HasExited
+            // was doing this job alone, and on this network it cannot: a camera that has simply
+            // dropped off the LAN also exits immediately and also never delivers a frame, so an
+            // outage was indistinguishable from a missing substream. It latched on the gate camera
+            // at 08:53 on 2026-08-26 for exactly that reason - a transient failure twelve hours
+            // before the camera actually went away - and quietly moved detection onto the 5MP main
+            // stream for the rest of the process's life. See FfmpegExitReason for what each failure
+            // really looks like.
+            if (hadExited && existing.UsedDerivedDetectionUrl && !existing.EverDeliveredAFrame
+                && FfmpegExitReason.IndicatesSubstreamMissing(stderrTail))
             {
                 if (_noSubstream.TryAdd(config.CameraId, true))
                     logger.LogWarning(
-                        "Camera {CameraId} never delivered a frame on its derived low-resolution stream, so that " +
-                        "stream probably isn't enabled on the camera. Falling back to the main stream for detection.",
-                        config.CameraId);
+                        "Camera {CameraId} never delivered a frame on its derived low-resolution stream and ffmpeg " +
+                        "reported \"{Reason}\", so that stream probably isn't enabled on the camera. Falling back to " +
+                        "the main stream for detection.",
+                        config.CameraId, FfmpegExitReason.Describe(stderrTail));
             }
+
+            // Count this as a failed start unless the session had actually got going. Done after the
+            // latch above so that decision still sees the failure that produced it.
+            if (!existing.EverDeliveredAFrame) RecordFailedStart(config.CameraId);
         }
+
+        if (!MayStart(config.CameraId)) return;
 
         var camera = await cameras.GetAsync(config.CameraId, stoppingToken);
         if (camera is null) return;
@@ -246,6 +266,77 @@ public sealed class TriggerZoneMonitor(
         var session = StartSession(camera, config, multiFrame, rewindOptions);
         _sessions[config.CameraId] = session;
     }
+
+    // How long to wait before restarting a camera whose sessions keep dying without ever producing a
+    // frame. The first retry is immediate, so an ordinary blip - a camera rebooting, an encoder
+    // settings change being applied, a brief network drop - recovers exactly as fast as it always
+    // did. Only a camera that keeps failing is slowed, and never past a minute, so one that comes
+    // back is picked up within a minute rather than needing the service restarted.
+    //
+    // Without this a camera that is simply gone is restarted every ReconcileInterval for as long as
+    // it stays gone. Measured on 2026-08-27, with the gate camera off the network overnight: 3,338
+    // ffmpeg processes and 3,338 identical warnings in 24 hours. The processes are wasted work and
+    // the warnings are worse - that volume buries every unrelated fault in the journal.
+    public static TimeSpan RestartDelayFor(int consecutiveFailures) => consecutiveFailures switch
+    {
+        <= 1 => TimeSpan.Zero,
+        2 => TimeSpan.FromSeconds(20),
+        3 => TimeSpan.FromSeconds(40),
+        _ => TimeSpan.FromSeconds(60),
+    };
+
+    // A camera whose session keeps dying still has to say so, but not 360 times an hour. After the
+    // first report it repeats at this interval with a count, which is enough to see the fault is
+    // ongoing without drowning everything else.
+    private static readonly TimeSpan RepeatFailureLogInterval = TimeSpan.FromMinutes(5);
+
+    private sealed class FailedStarts
+    {
+        public int Count;
+        public DateTimeOffset LastAttemptAt;
+        public DateTimeOffset? LastLoggedAt;
+        public int AttemptsSinceLastLog;
+    }
+
+    private readonly ConcurrentDictionary<Guid, FailedStarts> _failedStarts = new();
+
+    // Says why the session died, which is the whole point: ffmpeg knew, and this used to throw the
+    // answer away and report only that something had happened.
+    private void LogExit(Guid cameraId, IReadOnlyList<string> stderrTail)
+    {
+        var record = _failedStarts.GetOrAdd(cameraId, _ => new FailedStarts());
+        var now = DateTimeOffset.UtcNow;
+        record.AttemptsSinceLastLog++;
+
+        var due = record.LastLoggedAt is null || now - record.LastLoggedAt >= RepeatFailureLogInterval;
+        if (!due) return;
+
+        var reason = FfmpegExitReason.Describe(stderrTail) ?? "no output from ffmpeg";
+        var attempts = record.AttemptsSinceLastLog;
+        record.LastLoggedAt = now;
+        record.AttemptsSinceLastLog = 0;
+
+        if (attempts > 1)
+            logger.LogWarning(
+                "Trigger zone detection ffmpeg for camera {CameraId} has exited {Attempts} time(s) since the last " +
+                "report, most recently: {Reason}. Starting a fresh session.",
+                cameraId, attempts, reason);
+        else
+            logger.LogWarning(
+                "Trigger zone detection ffmpeg for camera {CameraId} had exited ({Reason}); starting a fresh session.",
+                cameraId, reason);
+    }
+
+    private void RecordFailedStart(Guid cameraId)
+    {
+        var record = _failedStarts.GetOrAdd(cameraId, _ => new FailedStarts());
+        record.Count++;
+        record.LastAttemptAt = DateTimeOffset.UtcNow;
+    }
+
+    private bool MayStart(Guid cameraId) =>
+        !_failedStarts.TryGetValue(cameraId, out var record)
+        || DateTimeOffset.UtcNow - record.LastAttemptAt >= RestartDelayFor(record.Count);
 
     // Frames the processing loop never saw, because capture had already replaced them - see
     // DetectionFrameSlot. Dropping is by design and costs sensitivity, never freshness, but it has
@@ -437,7 +528,7 @@ public sealed class TriggerZoneMonitor(
                 zone.Name, camera.Id, camera.Name);
 
         _ = RunDetectionLoopAsync(camera, session, cts.Token);
-        _ = DrainAsync(process.StandardError);
+        _ = DrainAsync(process.StandardError, session);
 
         return session;
     }
@@ -1211,11 +1302,15 @@ public sealed class TriggerZoneMonitor(
         return true;
     }
 
-    private static async Task DrainAsync(StreamReader reader)
+    // ffmpeg's stderr still has to be read continuously whatever we do with it - it writes progress
+    // there for the life of the session, and a full pipe would block the process that is feeding
+    // detection. The difference now is that the last few lines are kept rather than dropped, so a
+    // session that dies can be asked why.
+    private static async Task DrainAsync(StreamReader reader, DetectionSession session)
     {
         try
         {
-            while (await reader.ReadLineAsync() != null) { }
+            while (await reader.ReadLineAsync() is { } line) session.RecordStderr(line);
         }
         catch
         {
@@ -1390,6 +1485,29 @@ public sealed class TriggerZoneMonitor(
         }
 
         public bool EverDeliveredAFrame => Volatile.Read(ref _framesDelivered) != 0;
+
+        // The tail of this session's ffmpeg stderr, kept so the reconcile pass can say why the
+        // process died instead of only that it did - see FfmpegExitReason. Bounded to a fixed
+        // handful of lines: a session that runs for weeks must not accumulate a log in memory, and
+        // only the last lines carry the cause anyway.
+        //
+        // Written by the drain task and read by the reconcile pass, so both go through the lock.
+        private readonly Queue<string> _stderrTail = new(FfmpegExitReason.LinesKept);
+        private readonly object _stderrLock = new();
+
+        public void RecordStderr(string line)
+        {
+            lock (_stderrLock)
+            {
+                if (_stderrTail.Count == FfmpegExitReason.LinesKept) _stderrTail.Dequeue();
+                _stderrTail.Enqueue(line);
+            }
+        }
+
+        public IReadOnlyList<string> StderrTail
+        {
+            get { lock (_stderrLock) return _stderrTail.ToArray(); }
+        }
 
         public TimeSpan SinceLastFrame(DateTimeOffset now) =>
             now - new DateTimeOffset(Interlocked.Read(ref _lastFrameAtTicks), TimeSpan.Zero);
