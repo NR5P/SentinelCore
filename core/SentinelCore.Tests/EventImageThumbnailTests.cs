@@ -143,6 +143,80 @@ public sealed class EventImageThumbnailTests : IDisposable
         Assert.Equal(EventImageThumbnails.MaxEdge, info.Width);
     }
 
+    // Nothing swept this directory when it was introduced, so every card anyone had ever looked at
+    // was kept for the life of the install - including copies of originals RetentionDays had
+    // already deleted. MotionRetentionWorker's orphan pass walks trigger-images and trigger-clips
+    // and this is a third sibling under the same root, so it was covered by neither.
+    [Fact]
+    public async Task ACopyNobodyHasLookedAtInAFortnight_IsThrownAway()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var source = WriteJpeg("full.jpg", 2560, 1920);
+        var thumbnails = CreateThumbnails();
+
+        var cached = await thumbnails.GetOrCreateAsync(source, ct);
+        Assert.NotNull(cached);
+        var bytes = new FileInfo(cached!).Length;
+
+        // Swept as of a day past the window rather than by backdating the file, so the test pins
+        // the cutoff arithmetic rather than a filesystem's willingness to accept an old timestamp.
+        var reclaimed = thumbnails.Sweep(DateTimeOffset.UtcNow + EventImageThumbnails.MaxAge + TimeSpan.FromDays(1));
+
+        Assert.False(File.Exists(cached!));
+        Assert.Equal(bytes, reclaimed);
+
+        // And it comes straight back, because nothing here was data - which is what makes deleting
+        // it on a clock safe at all.
+        var rebuilt = await thumbnails.GetOrCreateAsync(source, ct);
+        Assert.Equal(cached, rebuilt);
+        Assert.True(File.Exists(rebuilt!));
+    }
+
+    [Fact]
+    public async Task ACopyStillInsideTheWindow_IsLeftAlone()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var thumbnails = CreateThumbnails();
+        var cached = await thumbnails.GetOrCreateAsync(WriteJpeg("full.jpg", 2560, 1920), ct);
+        Assert.NotNull(cached);
+
+        var reclaimed = thumbnails.Sweep(DateTimeOffset.UtcNow + EventImageThumbnails.MaxAge - TimeSpan.FromDays(1));
+
+        Assert.Equal(0L, reclaimed);
+        Assert.True(File.Exists(cached!));
+    }
+
+    // RenderAsync unlinks its own temporary when it fails, but a process killed between writing one
+    // and moving it into place cannot. Those are collected on an hour rather than on MaxAge - a
+    // stray temporary has no reason to sit there for a fortnight.
+    [Fact]
+    public async Task ATemporaryLeftByAKilledProcess_IsCollectedWithinTheHour()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var thumbnails = CreateThumbnails();
+        var cached = await thumbnails.GetOrCreateAsync(WriteJpeg("full.jpg", 2560, 1920), ct);
+        Assert.NotNull(cached);
+
+        var abandoned = Path.Combine(Path.GetDirectoryName(cached!)!, $"{Guid.NewGuid():N}.jpg.{Guid.NewGuid():N}.tmp");
+        await File.WriteAllTextAsync(abandoned, "half a jpeg", ct);
+
+        var reclaimed = thumbnails.Sweep(DateTimeOffset.UtcNow.AddHours(2));
+
+        Assert.False(File.Exists(abandoned));
+        Assert.True(reclaimed > 0);
+        // Two hours is nothing to a fortnight-old cache, so the real copy beside it is untouched.
+        Assert.True(File.Exists(cached!));
+    }
+
+    // A sweep of a directory that was never created - no card has ever been asked for - is a no-op,
+    // not an exception. It runs on a timer inside a BackgroundService, where a throw is a warning
+    // every twelve hours for the life of a fresh install.
+    [Fact]
+    public void SweepingBeforeAnyCardHasBeenAskedFor_DoesNothing()
+    {
+        Assert.Equal(0L, CreateThumbnails().Sweep(DateTimeOffset.UtcNow));
+    }
+
     // The name is content-addressed, so a snapshot replaced in place must not keep serving the
     // picture it used to be.
     [Fact]

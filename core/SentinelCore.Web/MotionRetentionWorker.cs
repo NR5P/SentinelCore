@@ -41,6 +41,7 @@ namespace SentinelCore.Web;
 // disk filling is something you are told about rather than something you find.
 public sealed class MotionRetentionWorker(
     ITriggerEventStore triggers,
+    EventImageThumbnails thumbnails,
     AppSettingsFile appSettings,
     IConfiguration configuration,
     IHostEnvironment environment,
@@ -85,6 +86,15 @@ public sealed class MotionRetentionWorker(
             try { await SweepOrphansAsync(stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { logger.LogWarning(ex, "Orphaned trigger file sweep failed"); }
+
+            // The card-sized copies under data/thumbnails, which nothing swept before this. They are
+            // neither motion nor a trigger file, so this sits oddly under the name of this worker -
+            // but it is the only loop in this service that reclaims disk on a schedule, and a second
+            // BackgroundService whose whole job is to stat one directory twice a day would be more
+            // machinery than the work. The policy itself lives in EventImageThumbnails, which owns
+            // the directory; this only decides when.
+            try { thumbnails.Sweep(DateTimeOffset.UtcNow); }
+            catch (Exception ex) { logger.LogWarning(ex, "Event image thumbnail sweep failed"); }
 
             try { await Task.Delay(Interval, stoppingToken); }
             catch (OperationCanceledException) { return; }

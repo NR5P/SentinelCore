@@ -366,12 +366,15 @@ The dashboard writes separately, under `SentinelCore.Web/data/` (`CamerasDataDir
 - `data/trigger-clips/<cameraId>/`: saved clips for confirmed triggers, the largest consumer by a wide margin
 - `data/trigger-images/<cameraId>/`: trigger snapshots, plus `_latest.jpg` per camera
 - `data/clip-buffer/<cameraId>/`: the rolling ~2s video segments trigger clips and Trigger Rewind are cut from, continuously recycled
-- `data/triggers.db`, `cameras.db`, `accounts.db`, `live-order.db`, `gate-checks.db`
+- `data/thumbnails/`: card-sized copies of event snapshots, made on demand so the Events tab doesn't send a 5 MP frame to paint a 320px card. Pure cache — every file is rebuilt from its original on the next request, so deleting the directory costs nothing but a few hundred milliseconds per card
+- `data/hls/<cameraId>/`, `data/go2rtc/`, `data/keys/`, `data/scheduled-recordings/`: live-view segments, the go2rtc config, data-protection keys, and scheduled recording output
+- `data/triggers.db`, `cameras.db`, `accounts.db`, `live-order.db`, `gate-checks.db`, `recordings.db`
 
-Two retention passes run, and they cover different data:
+Three retention passes run, and they cover different data:
 
 - `Bridge:RetentionDays` — every 12 hours, prunes saved alert images and result JSON. It does not remove old rows from `events.db`.
 - `Bridge:UnverifiedMotionRetentionDays` (default 3, 0 keeps everything) — prunes motion that was never confirmed as a real subject: it deletes those rows from `triggers.db` as well as their clips and images, then sweeps any file under the trigger directories that no row points at any more. This is what keeps the *rejected* share of `trigger-clips` at a steady size rather than growing without limit. Note that a clip file is not owned by exactly one trigger: two triggers firing within one clip window share it, so a rejected trigger's clip is kept if a confirmed one still points at the same file.
+- `data/thumbnails` — swept on the same 12-hour pass, dropping cached copies more than 14 days old. Not configurable, and deliberately so: nothing there is data, so the only thing a shorter or longer window changes is how often a card is re-encoded. Fourteen days keeps the directory a function of recent browsing rather than of total uptime.
 
 **Confirmed and still-pending triggers are never pruned by anything, and their clips grow without bound.** This is worth knowing before sizing a disk. `RetentionDays` above does *not* cover them: it walks only `images/` and `results/` under the **ingest service's** data root, and `trigger-clips`/`trigger-images` live under the dashboard's `CamerasDataDirectory` — a different root entirely, which `RetentionWorker` deliberately never leaves. The unverified pass deletes only rows whose confirmation is neither `confirmed` nor `pending`, and the orphan sweep only removes files no row points at — a confirmed row keeps pointing at its clip forever. So every confirmed trigger's clip is kept permanently.
 
