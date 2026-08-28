@@ -2145,7 +2145,13 @@ window.GateWatchCameras = (function () {
     // where fast-forwarding would take minutes.
     const LIVE_TARGET_S = 0.35;   // how far behind the buffered edge to sit
     const LIVE_CATCHUP_S = 0.15;  // drift past target before easing the rate up
-    const LIVE_SEEK_S = 2.0;      // drift past which walking forward is hopeless - jump instead
+    // Drift past which walking forward costs more than the jump does. 1.08x closes only 0.08s per
+    // second, so this bound is really a promise about the worst case: at 1.0 the crawl never has
+    // more than ~0.65s to close and recovers in about six seconds, where at 2.0 a 1.7s gap - the
+    // measured cost of one throttled tab - took eighteen. Eighteen seconds a second behind is a
+    // long time to be steering a camera you cannot see keep up, and a single visible jump is the
+    // cheaper of the two. Above this the seek lands on the same target the crawl aims for.
+    const LIVE_SEEK_S = 1.0;
     session.timers.push(setInterval(() => {
       if (session.done || !sourceBuffer || video.paused) return;
       try {
