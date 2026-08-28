@@ -40,6 +40,25 @@ window.GateWatchCameras = (function () {
   // flip to another tab and back doesn't force a full HLS reconnect. Only if you stay away
   // longer than this do we actually release the players/connections.
   const LIVE_TEARDOWN_GRACE_MS = 90 * 1000;
+
+  // Which rendition a tile watches, by how big it currently is. A grid tile is a few hundred
+  // pixels wide, so a main stream is decoded at 3840x2160 to be drawn at 320 - the detail lands
+  // nowhere, and the tile pays for it in decode time, bandwidth and the size of each keyframe it
+  // has to wait for. Fullscreen is the one place those pixels are actually visible, so that is
+  // where main earns its cost.
+  //
+  // The server picks main on its own for a camera with no low-res URL (Go2RtcManager's
+  // EffectiveQuality), so asking for "sub" here never has to know which cameras have one.
+  const GRID_QUALITY = "sub";
+  const FULLSCREEN_QUALITY = "main";
+
+  // The rendition each tile is currently connected at, so a fullscreenchange can tell whether it
+  // actually needs to reconnect or is already showing the right one.
+  const liveTileQuality = new Map();
+
+  // Video elements whose lifetime-scoped listeners are already attached. Weak so a rebuilt Live
+  // tab's discarded tiles are collectable.
+  const livePlayerBound = new WeakSet();
   let liveTeardownTimer = null;
   let liveBuilt = false;
   let liveBuiltCameraIds = null;
@@ -1156,6 +1175,11 @@ window.GateWatchCameras = (function () {
       if (camera.ptzEnabled) tile.appendChild(buildPtzControls(camera));
       root.appendChild(tile);
 
+      // Going fullscreen is the moment this tile's pixels start being worth 4K, and leaving it is
+      // the moment they stop. Reconnecting at the matching rendition is the only way to change it:
+      // the quality is fixed when the stream opens.
+      tile.addEventListener("fullscreenchange", () => syncTileQuality(video, status, camera, tile));
+
       attachPlayer(video, status, camera);
     }
 
@@ -1662,20 +1686,27 @@ window.GateWatchCameras = (function () {
     } catch { /* reporting must never break playback */ }
   }
 
-  function attachPlayer(video, status, camera) {
-    // Not { once: true }: a tile that recovers from a stall has to be able to clear this again,
-    // and showStatus below puts it back up whenever playback actually stops.
-    let hasPlayed = false;
-    video.addEventListener("playing", () => {
-      hasPlayed = true;
-      status.classList.add("hidden");
-    });
-    // Only once the tile has played something - "waiting" also fires while a stream is still
-    // starting up, and "buffering…" over a tile that has never shown a frame is just a worse way
-    // of saying "connecting…".
-    video.addEventListener("waiting", () => {
-      if (hasPlayed) showStatus(status, "buffering…");
-    });
+  function attachPlayer(video, status, camera, quality = GRID_QUALITY) {
+    liveTileQuality.set(camera.id, quality);
+    // Bound once per element, not once per call. attachPlayer runs again every time a tile changes
+    // rendition (see syncTileQuality), and these two listeners outlive any single stream - binding
+    // them per call would stack a fresh pair on every fullscreen toggle.
+    if (!livePlayerBound.has(video)) {
+      livePlayerBound.add(video);
+      // Not { once: true }: a tile that recovers from a stall has to be able to clear this again,
+      // and showStatus below puts it back up whenever playback actually stops.
+      let hasPlayed = false;
+      video.addEventListener("playing", () => {
+        hasPlayed = true;
+        status.classList.add("hidden");
+      });
+      // Only once the tile has played something - "waiting" also fires while a stream is still
+      // starting up, and "buffering…" over a tile that has never shown a frame is just a worse way
+      // of saying "connecting…".
+      video.addEventListener("waiting", () => {
+        if (hasPlayed) showStatus(status, "buffering…");
+      });
+    }
 
     // MSE first, which is where the Apple apps already start (see LiveStreamPlayer.swift) and for
     // the same reason: it is within a couple hundred milliseconds of WebRTC, and unlike WebRTC it
@@ -1701,14 +1732,64 @@ window.GateWatchCameras = (function () {
     // HLS remains the last rung: go2rtc missing from the server (the one-time 503 above), or a
     // network path that only forwards HTTP.
     if (webrtcUnavailable()) {
-      attachHls(video, status, camera); // no go2rtc on the server - MSE would 503 too
+      attachHls(video, status, camera, quality); // no go2rtc on the server - MSE would 503 too
     } else if ("MediaSource" in window) {
-      connectMse(video, status, camera);
+      connectMse(video, status, camera, quality);
     } else if (typeof RTCPeerConnection !== "undefined" && !webrtcKnownDead()) {
-      connectWebRtc(video, status, camera, 0);
+      connectWebRtc(video, status, camera, 0, quality);
     } else {
-      attachHls(video, status, camera);
+      attachHls(video, status, camera, quality);
     }
+  }
+
+  // Drop just this tile's stream, leaving the rest of the Live tab alone. Used when a tile changes
+  // rendition: the quality is chosen when the connection opens, so switching means reconnecting.
+  function teardownCameraStream(cameraId, video) {
+    const hls = hlsInstances.get(cameraId);
+    if (hls) {
+      try { hls.destroy(); } catch { /* already gone */ }
+      hlsInstances.delete(cameraId);
+    }
+
+    const pc = webrtcConnections.get(cameraId);
+    if (pc) {
+      try { pc.close(); } catch { /* already closed */ }
+      webrtcConnections.delete(cameraId);
+    }
+
+    // Through the session's own cleanup rather than by hand: it is the only thing that takes the
+    // reportPlaying listener back off the element, and this tile is about to get a new session
+    // that adds another one.
+    const session = mseConnections.get(cameraId);
+    if (session) {
+      if (session.cleanup) session.cleanup();
+      else {
+        session.done = true;
+        for (const t of session.timers) clearInterval(t);
+        session.timers = [];
+        if (session.ws) { try { session.ws.close(); } catch { /* already closed */ } }
+        if (session.objectUrl) { try { URL.revokeObjectURL(session.objectUrl); } catch { /* fine */ } }
+      }
+      mseConnections.delete(cameraId);
+    }
+
+    video.pause();
+    video.playbackRate = 1;
+    video.srcObject = null;
+    video.removeAttribute("src");
+    video.load();
+  }
+
+  // Fullscreen wants detail, the grid wants latency. Reconnect the tile at whichever rendition
+  // matches the size it is now, but only when that is not the one it is already on - the browser
+  // fires fullscreenchange on every tile, and reconnecting one that did not change size would
+  // black out a working picture for no reason.
+  function syncTileQuality(video, status, camera, tile) {
+    const wanted = document.fullscreenElement === tile ? FULLSCREEN_QUALITY : GRID_QUALITY;
+    if (liveTileQuality.get(camera.id) === wanted) return;
+    teardownCameraStream(camera.id, video);
+    showStatus(status, "connecting…");
+    attachPlayer(video, status, camera, wanted);
   }
 
   // How long the whole WebRTC attempt gets - offer, answer, ICE, first media - before the tile
@@ -1755,7 +1836,7 @@ window.GateWatchCameras = (function () {
     try { sessionStorage.removeItem(WEBRTC_NO_MEDIA_KEY); } catch { /* storage off - skip */ }
   };
 
-  async function connectWebRtc(video, status, camera, priorFailures) {
+  async function connectWebRtc(video, status, camera, priorFailures, quality = GRID_QUALITY) {
     const pc = new RTCPeerConnection();
     webrtcConnections.set(camera.id, pc);
     const startedAt = Date.now();
@@ -1820,14 +1901,14 @@ window.GateWatchCameras = (function () {
         // connection instead of a separate port, so it survives the tunnels/VPNs/firewalls
         // that break WebRTC. It falls through to HLS itself if it can't run either.
         if (!sawMedia) rememberWebrtcDead();
-        connectMse(video, status, camera);
+        connectMse(video, status, camera, quality);
         return;
       }
 
       showStatus(status, "reconnecting…");
       setTimeout(() => {
         // Only if the Live tab still exists and nothing else took this tile over meanwhile.
-        if (liveBuilt && !webrtcConnections.has(camera.id)) connectWebRtc(video, status, camera, failures);
+        if (liveBuilt && !webrtcConnections.has(camera.id)) connectWebRtc(video, status, camera, failures, quality);
       }, 2000);
     };
 
@@ -1872,7 +1953,7 @@ window.GateWatchCameras = (function () {
       // from the ICE checks we send it).
       await waitForIceGathering(pc, 1000);
 
-      const response = await fetch(`/api/cameras/${camera.id}/webrtc`, {
+      const response = await fetch(`/api/cameras/${camera.id}/webrtc/${quality}`, {
         method: "POST",
         headers: { "Content-Type": "application/sdp" },
         body: pc.localDescription.sdp
@@ -1937,9 +2018,9 @@ window.GateWatchCameras = (function () {
   // sits around a second - more than WebRTC's few hundred ms, far less than HLS's several
   // seconds - and because the media rides the same HTTP connection as the dashboard itself, it
   // works in every environment where the page loads at all. Any failure lands on attachHls.
-  function connectMse(video, status, camera) {
+  function connectMse(video, status, camera, quality = GRID_QUALITY) {
     if (webrtcUnavailable() || mseUnavailable() || !("MediaSource" in window)) {
-      attachHls(video, status, camera);
+      attachHls(video, status, camera, quality);
       return;
     }
 
@@ -1970,6 +2051,9 @@ window.GateWatchCameras = (function () {
       session.done = true;
       for (const t of session.timers) clearInterval(t);
       session.timers = [];
+      // The element outlives this session, so a tile torn down mid-catch-up would hand HLS a
+      // video still set to play at 1.08x.
+      video.playbackRate = 1;
       // The element outlives this session - a tile that falls through to HLS keeps the same
       // <video> - so the listener has to come off, or a day of reconnects leaves a stack of them
       // and an HLS "playing" gets reported as MSE.
@@ -1978,6 +2062,9 @@ window.GateWatchCameras = (function () {
       if (session.objectUrl) { try { URL.revokeObjectURL(session.objectUrl); } catch { /* fine */ } }
       if (isCurrent()) mseConnections.delete(camera.id);
     };
+    // Exposed so a caller holding only the session (teardownCameraStream) tears it down the same
+    // way this rung does, listener removal included.
+    session.cleanup = cleanup;
 
     video.addEventListener("playing", reportPlaying);
 
@@ -1989,7 +2076,7 @@ window.GateWatchCameras = (function () {
       reportLivePath(camera, "mse", "failed", reason, Date.now() - startedAt);
       video.removeAttribute("src");
       video.load();
-      attachHls(video, status, camera);
+      attachHls(video, status, camera, quality);
     };
 
     // Codecs this browser can decode from fMP4, offered to go2rtc so it picks what to send.
@@ -2002,7 +2089,7 @@ window.GateWatchCameras = (function () {
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     let ws;
     try {
-      ws = new WebSocket(`${scheme}://${location.host}/api/cameras/${camera.id}/mse`);
+      ws = new WebSocket(`${scheme}://${location.host}/api/cameras/${camera.id}/mse/${quality}`);
     } catch {
       mseUnavailableUntil = Date.now() + TIER_UNAVAILABLE_TTL_MS;
       fail("the browser refused to open the MSE WebSocket");
@@ -2042,18 +2129,43 @@ window.GateWatchCameras = (function () {
       }
     }, 2000));
 
-    // Keep the tile pinned near the live edge: fMP4 keeps arriving while a tab is throttled or
-    // a fetch hiccups, so after a pause the playhead can be many seconds behind what's already
-    // buffered. Jump rather than fast-forward - this is a security feed, freshness wins.
+    // Keep the tile pinned near the live edge: fMP4 keeps arriving while a tab is throttled or a
+    // fetch hiccups, so the playhead drifts back from what's already buffered and stays there.
+    //
+    // This used to allow three full seconds of drift before jumping to half a second behind. That
+    // is the right shape for a tile somebody is watching and the wrong one for a camera somebody
+    // is *driving*: on a PTZ pad, every one of those seconds is time between pressing a direction
+    // and seeing the frame move, and the tile is free to sit at 2.9s of lag indefinitely because
+    // nothing pulls it forward until it crosses the line.
+    //
+    // So: hold a short target, and close small gaps by playing slightly fast rather than by
+    // jumping. Rate is invisible where a seek is a visible discontinuity, which is what makes it
+    // affordable to correct at a fraction of a second instead of at three. Seeks are kept for
+    // gaps too large to walk off - a throttled background tab, a laptop resumed from sleep -
+    // where fast-forwarding would take minutes.
+    const LIVE_TARGET_S = 0.35;   // how far behind the buffered edge to sit
+    const LIVE_CATCHUP_S = 0.15;  // drift past target before easing the rate up
+    const LIVE_SEEK_S = 2.0;      // drift past which walking forward is hopeless - jump instead
     session.timers.push(setInterval(() => {
       if (session.done || !sourceBuffer || video.paused) return;
       try {
         const buffered = sourceBuffer.buffered;
         if (buffered.length === 0) return;
         const end = buffered.end(buffered.length - 1);
-        if (end - video.currentTime > 3) video.currentTime = end - 0.5;
+        const drift = end - video.currentTime;
+
+        if (drift > LIVE_SEEK_S) {
+          video.currentTime = end - LIVE_TARGET_S;
+          video.playbackRate = 1;
+        } else if (drift > LIVE_TARGET_S + LIVE_CATCHUP_S) {
+          // Gentle on purpose. Faster closes the gap sooner but is audible on a camera with sound
+          // and visibly jerky without it, and the gap is a fraction of a second to begin with.
+          video.playbackRate = 1.08;
+        } else if (video.playbackRate !== 1) {
+          video.playbackRate = 1;
+        }
       } catch { /* buffered can throw while the source is closing */ }
-    }, 2000));
+    }, 500));
 
     const pump = () => {
       if (session.done || !sourceBuffer || sourceBuffer.updating) return;
@@ -2132,16 +2244,13 @@ window.GateWatchCameras = (function () {
     });
   }
 
-  function attachHls(video, status, camera) {
-    // The low rendition. This is the bottom rung - the tier a tile lands on when WebRTC and MSE
-    // are both unavailable, and the one that visibly rebuffers - so it is the last place that
-    // wants to be pulling a 2560x1920 stream per tile. A camera with no low stream is served its
-    // main one, so this costs nothing where it can't help.
-    //
-    // The WebRTC tier above still pulls main streams through go2rtc, which is a deliberate
-    // limit rather than an oversight: go2rtc registers one stream per camera, and giving it a
-    // second is its own change.
-    const src = `/api/cameras/${camera.id}/stream/sub/stream.m3u8`;
+  function attachHls(video, status, camera, quality = GRID_QUALITY) {
+    // This is the bottom rung - the tier a tile lands on when WebRTC and MSE are both unavailable,
+    // and the one that visibly rebuffers - so it is the last place that wants to be pulling a
+    // 2560x1920 stream per tile. It follows the same rendition rule as the rungs above it: the
+    // grid gets the low stream, fullscreen the main one. A camera with no low stream is served its
+    // main one either way, so asking for the low one costs nothing where it can't help.
+    const src = `/api/cameras/${camera.id}/stream/${quality}/stream.m3u8`;
     video.srcObject = null; // in case a WebRTC attempt got as far as attaching a stream
     const startedAt = Date.now();
 
@@ -2232,7 +2341,7 @@ window.GateWatchCameras = (function () {
         // the user changes tabs.
         setTimeout(() => {
           if (!video.isConnected || hlsInstances.has(camera.id)) return;
-          attachHls(video, status, camera);
+          attachHls(video, status, camera, quality);
         }, 2000);
         break;
     }
@@ -2259,6 +2368,7 @@ window.GateWatchCameras = (function () {
     // The badges point at DOM the next buildLive replaces - holding them would pin detached nodes
     // and let a late report write into a tile nobody is looking at.
     liveTierBadges.clear();
+    liveTileQuality.clear();
 
     for (const hls of hlsInstances.values()) {
       try { hls.destroy(); } catch { /* already gone */ }
