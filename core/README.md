@@ -372,7 +372,7 @@ The dashboard writes separately, under `SentinelCore.Web/data/` (`CamerasDataDir
 
 Three retention passes run, and they cover different data:
 
-- `Bridge:RetentionDays` — every 12 hours, prunes saved alert images and result JSON. It does not remove old rows from `events.db`.
+- `Bridge:RetentionDays` — every 12 hours, prunes saved alert images and result JSON, and removes any `images/YYYY-MM-DD/` folder it has emptied (today's is always left alone, since that is the one still being written to). It does not remove old rows from `events.db`.
 - `Bridge:UnverifiedMotionRetentionDays` (default 3, 0 keeps everything) — prunes motion that was never confirmed as a real subject: it deletes those rows from `triggers.db` as well as their clips and images, then sweeps any file under the trigger directories that no row points at any more. This is what keeps the *rejected* share of `trigger-clips` at a steady size rather than growing without limit. Note that a clip file is not owned by exactly one trigger: two triggers firing within one clip window share it, so a rejected trigger's clip is kept if a confirmed one still points at the same file.
 - `data/thumbnails` — swept on the same 12-hour pass, dropping cached copies more than 14 days old. Not configurable, and deliberately so: nothing there is data, so the only thing a shorter or longer window changes is how often a card is re-encoded. Fourteen days keeps the directory a function of recent browsing rather than of total uptime.
 
