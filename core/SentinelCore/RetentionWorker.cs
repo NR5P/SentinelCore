@@ -52,8 +52,10 @@ public sealed class RetentionWorker : BackgroundService
         // filling. At twice a day this is two lines, which is not the noise a per-alert line would
         // be, and its sibling MotionRetentionWorker already reports each sweep the same way.
         _logger.LogInformation(
-            "Retention: pruned saved alert images and results older than {Days}d - {Deleted} file(s) removed, {Megabytes:0.#} MB reclaimed",
-            options.RetentionDays, outcome.FilesDeleted, outcome.BytesReclaimed / 1024d / 1024d);
+            "Retention: pruned saved alert images and results older than {Days}d - {Deleted} file(s) removed, " +
+            "{Megabytes:0.#} MB reclaimed, {Directories} empty day folder(s) removed",
+            options.RetentionDays, outcome.FilesDeleted, outcome.BytesReclaimed / 1024d / 1024d,
+            outcome.DirectoriesDeleted);
 
         // Separate, and a warning, because this is the silent failure that matters: a file the
         // service cannot delete is skipped and retried forever, so a permissions or lock problem
@@ -70,7 +72,7 @@ public sealed class RetentionWorker : BackgroundService
 
     // What one sweep did. Returned rather than logged in here so the pruning stays pure and
     // directly testable - see the note on PruneExpiredFiles.
-    public readonly record struct PruneOutcome(int FilesDeleted, long BytesReclaimed, int FilesFailed);
+    public readonly record struct PruneOutcome(int FilesDeleted, long BytesReclaimed, int FilesFailed, int DirectoriesDeleted);
 
     // Public so the "never touches the database" guarantee is directly testable, following the
     // same pattern as MqttTopics and BuildSnapshotUrl elsewhere in this project.
@@ -79,6 +81,7 @@ public sealed class RetentionWorker : BackgroundService
         var deleted = 0;
         var bytes = 0L;
         var failed = 0;
+        var directories = 0;
 
         foreach (var subdirectory in PrunableSubdirectories)
         {
@@ -107,8 +110,62 @@ public sealed class RetentionWorker : BackgroundService
                 catch (IOException) { failed++; }
                 catch (UnauthorizedAccessException) { failed++; }
             }
+
+            directories += RemoveEmptyDirectories(directory);
         }
 
-        return new PruneOutcome(deleted, bytes, failed);
+        return new PruneOutcome(deleted, bytes, failed, directories);
+    }
+
+    // ResultStore files images under images/yyyy-MM-dd/, creating the day's folder on the first
+    // alert of that day. The file sweep above empties those folders and leaves every one of them
+    // behind, so images/ accumulated one permanently-empty entry per day the service had ever run -
+    // eleven of them on the install this was written for, and one more every day forever. It is
+    // 4 KB apiece, so this is about the directory staying readable rather than about disk: the
+    // useful listing is "which days do I still have images for", and it was being buried under a
+    // month of answers that are all "none".
+    //
+    // Only empty ones, only below images/ and results/, and never those roots themselves - the same
+    // boundary the file sweep keeps, for the same reason. Today's folder is skipped outright: it is
+    // the only one a running service still writes into, and ResultStore's CreateDirectory sits a
+    // statement before its write, so deleting it in that window would cost one alert its image.
+    // Nothing else is ever written to a past day, which is what makes those safe to take.
+    private static int RemoveEmptyDirectories(string subdirectoryRoot)
+    {
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var removed = 0;
+
+        string[] candidates;
+        try { candidates = Directory.GetDirectories(subdirectoryRoot, "*", SearchOption.AllDirectories); }
+        catch (DirectoryNotFoundException) { return 0; }
+        catch (IOException) { return 0; }
+        catch (UnauthorizedAccessException) { return 0; }
+
+        // Deepest first, so a folder whose only contents were themselves empty folders has already
+        // been emptied by the time it is considered. Any child is strictly deeper than its parent,
+        // which is what makes separator count a sufficient ordering here.
+        foreach (var directory in candidates
+            .OrderByDescending(path => path.Count(character => character == Path.DirectorySeparatorChar)))
+        {
+            if (string.Equals(Path.GetFileName(directory), today, StringComparison.Ordinal)) continue;
+
+            try
+            {
+                if (Directory.EnumerateFileSystemEntries(directory).Any()) continue;
+
+                // Non-recursive on purpose: it throws rather than deletes if anything appeared
+                // between the check above and this call, so the race cannot cost a file.
+                Directory.Delete(directory, recursive: false);
+                removed++;
+            }
+            // Not counted as a failure the way an undeletable file is. An empty folder that will
+            // not go is worth nothing to reclaim, and folding it into FilesFailed would trip a
+            // warning whose text is about the disk no longer being reclaimable.
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        return removed;
     }
 }

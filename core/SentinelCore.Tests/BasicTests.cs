@@ -2592,6 +2592,74 @@ public sealed class BasicTests
         TempDirectories.Delete(root);
     }
 
+    // The day folder is created per calendar day and the file sweep only ever empties it, so
+    // without this images/ grows by one dead entry every day the service runs, forever.
+    [Fact]
+    public void RetentionWorker_PruneExpiredFiles_RemovesTheDayFoldersItEmptied()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-{Guid.NewGuid():N}");
+        var expiredDay = Path.Combine(root, "images", "2020-01-01");
+        Directory.CreateDirectory(expiredDay);
+
+        var image = Path.Combine(expiredDay, "old.jpg");
+        File.WriteAllBytes(image, new byte[64]);
+        File.SetLastWriteTimeUtc(image, DateTime.UtcNow.AddDays(-400));
+
+        // Already empty before the sweep - the eleven that had accumulated on the live install were
+        // all in this state, emptied by earlier passes that had no way to remove the folder.
+        var alreadyEmpty = Path.Combine(root, "images", "2019-06-05");
+        Directory.CreateDirectory(alreadyEmpty);
+
+        var outcome = RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
+
+        Assert.False(Directory.Exists(expiredDay), "a day folder emptied by this sweep should go with it.");
+        Assert.False(Directory.Exists(alreadyEmpty), "day folders emptied by an earlier sweep should be collected too.");
+        Assert.Equal(2, outcome.DirectoriesDeleted);
+        Assert.True(Directory.Exists(Path.Combine(root, "images")), "images/ itself is a root and must survive.");
+
+        TempDirectories.Delete(root);
+    }
+
+    // The boundary that matters: a day folder still holding something is not empty, and the sweep
+    // must not reach past the file cutoff to take it.
+    [Fact]
+    public void RetentionWorker_PruneExpiredFiles_KeepsDayFoldersThatStillHoldSomething()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-{Guid.NewGuid():N}");
+        var day = Path.Combine(root, "images", "2020-01-01");
+        Directory.CreateDirectory(day);
+
+        var fresh = Path.Combine(day, "recent.jpg");
+        File.WriteAllBytes(fresh, new byte[64]);
+        File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow.AddDays(-1));
+
+        var outcome = RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
+
+        Assert.True(File.Exists(fresh));
+        Assert.True(Directory.Exists(day));
+        Assert.Equal(0, outcome.DirectoriesDeleted);
+
+        TempDirectories.Delete(root);
+    }
+
+    // Today's folder is the one a running ResultStore still writes into, and its CreateDirectory
+    // sits one statement before the write - so taking it in that window costs an alert its image.
+    // Every other day is finished and never written to again, which is what makes those safe.
+    [Fact]
+    public void RetentionWorker_PruneExpiredFiles_LeavesTodaysDayFolderAlone()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"retention-{Guid.NewGuid():N}");
+        var today = Path.Combine(root, "images", DateTime.UtcNow.ToString("yyyy-MM-dd"));
+        Directory.CreateDirectory(today);
+
+        var outcome = RetentionWorker.PruneExpiredFiles(root, DateTime.UtcNow.AddDays(-30));
+
+        Assert.True(Directory.Exists(today), "today's folder is still being written to and must be left alone.");
+        Assert.Equal(0, outcome.DirectoriesDeleted);
+
+        TempDirectories.Delete(root);
+    }
+
     [Fact]
     public async Task HomeKitAlertAction_WhenEnabledAndNotificationRecommended_TriggersSidecar()
     {
