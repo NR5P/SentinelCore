@@ -157,7 +157,9 @@
     const row = document.createElement("div");
     row.className = `timeline-event${event.reviewed ? " reviewed" : ""}${event.verdict === "rejected" ? " rejected" : ""}`;
     row.innerHTML = `
-      <img src="${event.hasImage ? `/api/events/${event.id}/image` : ""}" alt="">
+      ${event.hasImage
+        ? `<img src="/api/events/${event.id}/image" loading="lazy" decoding="async" alt="">`
+        : `<div class="timeline-event-no-image">no image</div>`}
       <div class="timeline-event-body">
         <div class="timeline-event-meta">
           <span>${new Date(event.occurredAt).toLocaleTimeString()}</span>

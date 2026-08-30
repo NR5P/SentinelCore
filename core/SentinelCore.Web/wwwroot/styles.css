@@ -2412,6 +2412,21 @@ main {
   border-radius: 4px;
 }
 
+/* Stands in for the thumbnail once retention has taken the frame, and deliberately keeps the
+   image's exact footprint so a day part-way past the cutoff doesn't render as ragged rows. */
+.timeline-event-no-image {
+  width: 126px;
+  aspect-ratio: 16 / 9;
+  flex-shrink: 0;
+  background: #000;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .timeline-event-body {
   flex: 1;
   min-width: 0;
