@@ -312,9 +312,23 @@ interval sets a floor under the delay that no amount of tuning removes.
 Installing **[go2rtc](https://github.com/AlexxIT/go2rtc)** on the server lifts that floor: the
 dashboard automatically switches its live tiles to WebRTC, which pushes frames continuously and
 typically sits a few hundred milliseconds behind the camera. Nothing else changes — recording,
-motion detection, snapshots, and the phone/TV apps all keep working exactly as before, and any
-tile that can't establish WebRTC (older browser, or viewing through a Cloudflare Tunnel, which
-doesn't carry WebRTC's UDP traffic) quietly falls back to HLS on its own.
+motion detection and snapshots all keep working exactly as before.
+
+Each tile actually climbs a ladder of three transports and settles on the best one it can get:
+**WebRTC**, then **MSE**, then **HLS**. The middle rung matters most in exactly the case that
+defeats the top one — WebRTC needs its own UDP media port reachable from the viewer, which a
+Cloudflare Tunnel, a VPN or a strict firewall won't carry, while MSE rides the same authenticated
+HTTPS connection as the rest of the dashboard. So a tile that can't establish WebRTC drops to MSE
+and stays within a couple hundred milliseconds of it, rather than all the way back to HLS. Only a
+tile that can get neither falls back to HLS. Both of the top two rungs come from go2rtc; without
+it installed, every tile is on HLS.
+
+The iPhone and Apple TV apps climb the same ladder minus the WebRTC rung, for the same reason —
+a phone away from the house rarely has a reachable media port — so they run on MSE and fall back
+to HLS only if it fails.
+
+Which rung a tile ended up on is shown on the tile itself, and every change is written to the
+server log, so "why was the feed stuttering last night" stays answerable after the fact.
 
 Setup is: install the single binary, restart the server. On a Mac `brew install go2rtc`; on
 Linux download the binary for your architecture from the go2rtc releases page, `chmod +x` it,
