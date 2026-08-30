@@ -67,6 +67,21 @@ public static class CameraEndpoints
     private static readonly string[] LiveTiers = ["webrtc", "mse", "hls"];
     private static readonly string[] LiveOutcomes = ["playing", "failed", "degraded"];
 
+    // How long one message may sit unwritten to the far side before the MSE bridge is torn down.
+    //
+    // This is not a latency budget, it is a "the peer is gone" test, and it exists because the
+    // failure it catches is silent and expensive. A viewer that stops draining its socket - an
+    // Apple TV that slept, a tab the OS froze - leaves the send blocked forever, so this pump
+    // stops reading from go2rtc, go2rtc's socket to us fills, and go2rtc stops. But go2rtc only
+    // runs a producer while it has a consumer, and the wedged consumer still counts, so the
+    // camera keeps being pulled at full bitrate on behalf of nobody, indefinitely.
+    //
+    // Comfortably longer than any client's own stall watchdog (6s on the Apple apps, 10s on the
+    // dashboard's MSE rung), so a session torn down here is always one the viewer has already
+    // given up on and reconnected past. That ordering is the point: this can only ever collect
+    // sessions that are already dead, never interrupt one somebody is watching.
+    private static readonly TimeSpan MseWriteTimeout = TimeSpan.FromSeconds(30);
+
     public static void MapCameraEndpoints(this WebApplication app)
     {
         app.MapGet("/api/cameras", async (ICameraStore store, HlsStreamManager streams, CancellationToken ct) =>
@@ -278,20 +293,21 @@ public static class CameraEndpoints
         // media port reachable from the viewer (blocked by tunnels, VPNs and strict firewalls),
         // while MSE rides this very HTTP connection - if the dashboard loads, MSE streams. The
         // dashboard tries WebRTC first (lower latency), then this, then HLS.
-        app.Map("/api/cameras/{id:guid}/mse", (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
-                ServeMseAsync(id, StreamQuality.Main, http, store, webrtc, ct))
+        app.Map("/api/cameras/{id:guid}/mse", (Guid id, HttpContext http, ICameraStore store, Go2RtcManager webrtc, ILoggerFactory loggerFactory, CancellationToken ct) =>
+                ServeMseAsync(id, StreamQuality.Main, http, store, webrtc, loggerFactory, ct))
             .RequireAuthorization();
 
         // Same two-route shape as the HLS playlist above, and for the same reason: an app built
         // before this existed keeps asking for the unqualified path and keeps getting the main
         // stream, while a grid of tiles asks for the cheap rendition by name.
         app.Map("/api/cameras/{id:guid}/mse/{quality:regex(^(main|sub)$)}",
-            (Guid id, string quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
-                ServeMseAsync(id, ParseQuality(quality), http, store, webrtc, ct))
+            (Guid id, string quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, ILoggerFactory loggerFactory, CancellationToken ct) =>
+                ServeMseAsync(id, ParseQuality(quality), http, store, webrtc, loggerFactory, ct))
             .RequireAuthorization();
 
         static async Task<IResult> ServeMseAsync(
-            Guid id, StreamQuality quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct)
+            Guid id, StreamQuality quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc,
+            ILoggerFactory loggerFactory, CancellationToken ct)
         {
             if (!http.WebSockets.IsWebSocketRequest)
                 return Results.BadRequest(new { errors = new[] { "Expected a WebSocket request." } });
@@ -321,11 +337,23 @@ public static class CameraEndpoints
                 // carries the media, but the pump is symmetric because go2rtc may also send JSON
                 // (codec answer) and a future protocol message shouldn't break this bridge.
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var toBrowser = PumpWebSocketAsync(upstream, browser, linked.Token);
-                var toUpstream = PumpWebSocketAsync(browser, upstream, linked.Token);
+                var toBrowser = PumpWebSocketAsync(upstream, browser, MseWriteTimeout, linked.Token);
+                var toUpstream = PumpWebSocketAsync(browser, upstream, MseWriteTimeout, linked.Token);
                 await Task.WhenAny(toBrowser, toUpstream);
                 linked.Cancel();
                 try { await Task.WhenAll(toBrowser, toUpstream); } catch { /* one side went away - expected */ }
+
+                // Worth a warning rather than silence: until this teardown existed the session
+                // simply stayed, and a stuck viewer held a go2rtc consumer - and so a camera being
+                // pulled at full bitrate - for as long as the service ran. If this line starts
+                // appearing in a tight loop it means a viewer is reconnecting into the same wedge,
+                // which is a different problem to the one this timeout solves.
+                if (toBrowser.IsCompletedSuccessfully && toBrowser.Result)
+                {
+                    loggerFactory.CreateLogger("SentinelCore.Web.LiveView").LogWarning(
+                        "MSE bridge for {Camera} torn down: the viewer stopped reading for {Timeout:0}s, which was holding a go2rtc consumer open.",
+                        camera.Name, MseWriteTimeout.TotalSeconds);
+                }
             }
 
             return Results.Empty;
@@ -452,10 +480,19 @@ public static class CameraEndpoints
     // One direction of the MSE bridge: copy messages (type and message boundaries preserved)
     // until the source closes or errors. 64KB fits go2rtc's fMP4 segments comfortably; larger
     // messages arrive in parts and are forwarded part by part with EndOfMessage carried through.
-    private static async Task PumpWebSocketAsync(
-        System.Net.WebSockets.WebSocket from, System.Net.WebSockets.WebSocket to, CancellationToken cancellationToken)
+    // Returns true if this direction was torn down because the far side stopped reading, which the
+    // caller logs. Every other ending - either peer closing, the request being cancelled - is the
+    // ordinary way an MSE session finishes and is silent.
+    //
+    // Public, and taking its deadline as an argument rather than reading MseWriteTimeout directly,
+    // purely for testability - this project has no InternalsVisibleTo, and the behaviour worth
+    // pinning down is a 30-second wait that no test should actually sit through.
+    public static async Task<bool> PumpWebSocketAsync(
+        System.Net.WebSockets.WebSocket from, System.Net.WebSockets.WebSocket to,
+        TimeSpan writeTimeout, CancellationToken cancellationToken)
     {
         var buffer = new byte[64 * 1024];
+        var writeDeadlineExpired = false;
         try
         {
             while (from.State == System.Net.WebSockets.WebSocketState.Open)
@@ -465,11 +502,29 @@ public static class CameraEndpoints
                 {
                     await to.CloseOutputAsync(
                         System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, null, cancellationToken);
-                    return;
+                    return false;
                 }
 
-                await to.SendAsync(
-                    new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, cancellationToken);
+                // Deadline per message, not per session: a healthy stream completes every one of
+                // these in microseconds, so the timer only ever expires on a peer that has stopped
+                // reading altogether. Cancelling the send aborts the socket, which is what makes
+                // the caller's WhenAny return and the whole bridge unwind - see MseWriteTimeout.
+                using var writeDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                writeDeadline.CancelAfter(writeTimeout);
+                try
+                {
+                    await to.SendAsync(
+                        new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, writeDeadline.Token);
+                }
+                // Only our own deadline, never the caller's cancellation: a shutdown or a viewer
+                // closing the tab cancels the outer token too, and neither of those is this fault.
+                catch (Exception ex) when (
+                    ex is OperationCanceledException or System.Net.WebSockets.WebSocketException
+                    && writeDeadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    writeDeadlineExpired = true;
+                    return true;
+                }
             }
         }
         catch (Exception ex) when (ex is OperationCanceledException or System.Net.WebSockets.WebSocketException)
@@ -477,6 +532,8 @@ public static class CameraEndpoints
             // Either peer vanishing mid-stream is the normal way an MSE session ends - a closed
             // tab doesn't say goodbye. The caller closes the other side.
         }
+
+        return writeDeadlineExpired;
     }
 
     // A camera's password is a real credential to a real device on the network - usually the
