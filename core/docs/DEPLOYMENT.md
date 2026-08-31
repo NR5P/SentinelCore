@@ -807,6 +807,23 @@ blank and it stays open exactly as before, so existing Home Assistant setups kee
 untouched. For an external broker reached over an untrusted network, set `Mqtt:UseTls` as well -
 this app's outbound connections then use TLS.
 
+If you installed go2rtc for the real-time live view (USER_GUIDE section 4a), open its media
+port as well - **both TCP and UDP**, because WebRTC will use either:
+
+```bash
+sudo ufw allow from 192.168.50.0/24 to any port 18555
+```
+
+This is the one go2rtc port that has to be reachable from a viewer. Its other two - the API on
+11984 and RTSP on 18554 - deliberately bind to loopback only, so no rule can help or hurt them;
+the dashboard reaches them from the same machine and browsers never touch them at all.
+
+Leaving 18555 closed does not break the live view, which is exactly what makes it easy to miss:
+tiles that can't establish WebRTC quietly settle on the MSE rung, which rides the dashboard's
+own HTTPS connection and needs no rule of its own. You lose the top rung of the ladder without
+being told, so the symptom is a live view that is merely good rather than one that is broken.
+The tile shows which transport it settled on if you want to confirm the rule worked.
+
 If you installed the HomeKit sidecar (section 8a), open its accessory port so iPhones on your
 LAN can reach it — they connect to it directly, mDNS only tells them where to look:
 
