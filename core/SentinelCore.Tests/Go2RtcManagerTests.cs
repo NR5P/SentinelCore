@@ -52,6 +52,19 @@ public sealed class Go2RtcManagerTests : IDisposable
         {
             ["Go2Rtc:Path"] = _stubPath,
             ["CamerasDataDirectory"] = _root,
+            // Load-bearing, and the whole premise of this file depends on it. The stub above is a
+            // sidecar that never answers its API - but "never answers" is only true if nothing
+            // else is listening on the port the manager polls, and Go2Rtc:ApiPort defaults to
+            // 11984, which on any machine actually running SentinelCore is the real go2rtc.
+            // There, the startup probe got a 200 from the live sidecar and returned immediately,
+            // so neither test reached the wait loop it was written for, and ExchangeOfferAsync
+            // went on to register the test camera as a real stream on the live go2rtc - which
+            // persisted "rtsp://127.0.0.1/stream" under a fresh GUID into the running install's
+            // go2rtc.yaml, one per test run, for good. Both tests still passed, because the
+            // WebRTC exchange then failed for its own reasons and ThrowsAnyAsync cannot tell the
+            // difference. Port 1 is unbindable without root, so the probe gets connection-refused
+            // instantly and deterministically, which is what the stub was always meant to model.
+            ["Go2Rtc:ApiPort"] = "1",
         }).Build();
 
         return new Go2RtcManager(

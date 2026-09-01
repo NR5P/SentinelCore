@@ -128,7 +128,13 @@ public sealed class HlsStreamManagerTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["FfmpegPath"] = _stubPath,
-                ["CamerasDataDirectory"] = _root
+                ["CamerasDataDirectory"] = _root,
+                // Same reason as Go2RtcManagerTests: the default 11984 is the live go2rtc on a
+                // machine running SentinelCore. Nothing here is expected to call the sidecar's
+                // API, but the manager below is constructed with this configuration, and a test
+                // that only reaches the network when someone later changes it is the kind that
+                // starts quietly mutating a running install. Pin it somewhere unreachable.
+                ["Go2Rtc:ApiPort"] = "1"
             })
             .Build();
 
