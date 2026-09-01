@@ -117,7 +117,7 @@ public sealed class PushNotificationDispatcher(
                 // PushAlertAction reports "delivered to 1/2 registered devices", which is
                 // indistinguishable from a transient partial failure even though that device has
                 // been dropped for good and will never be attempted again. Re-registration only
-                // happens when the app next launches and calls /api/push/devices/register, so
+                // happens when the app next launches and calls POST /api/push/devices, so
                 // without this line a phone or Apple TV can stop receiving alerts indefinitely
                 // and the journal's only hint is a rejection warning that says nothing about the
                 // registration being removed.

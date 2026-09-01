@@ -192,6 +192,6 @@ Common failures:
   This is normal after reinstalling an app, restoring a device from backup, or
   leaving one unused long enough for its token to be reissued. The removal is
   permanent: the device reappears only when its app next launches and calls
-  `/api/push/devices/register`. Watch for it after any alert whose log line reports a
+  `POST /api/push/devices`. Watch for it after any alert whose log line reports a
   partial delivery (`delivered to 1/2 registered devices`) — with more than one device
   registered, that line alone looks like a transient failure.
