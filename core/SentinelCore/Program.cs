@@ -373,8 +373,10 @@ var telegramChatSettings = builder.Configuration.GetSection(TelegramChatOptions.
 builder.Services.AddHttpClient(nameof(TelegramChatWorker), client =>
 {
     // Longer than the long-poll's own "timeout" query parameter so the poll itself never
-    // gets cut off by the client before Telegram responds.
-    client.Timeout = TimeSpan.FromSeconds(telegramChatSettings.PollTimeoutSeconds + 15);
+    // gets cut off by the client before Telegram responds. This is read once at startup while
+    // PollTimeoutSeconds hot-reloads, so TelegramChatWorker.ClampPollTimeout holds the other
+    // side of the same invariant using the same headroom constant.
+    client.Timeout = TimeSpan.FromSeconds(telegramChatSettings.PollTimeoutSeconds + TelegramChatWorker.PollTimeoutHeadroomSeconds);
 });
 builder.Services.AddHttpClient<IOllamaChatClient, OllamaChatClient>(client =>
 {

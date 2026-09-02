@@ -13,12 +13,18 @@ public sealed class TelegramChatWorker : BackgroundService
 {
     private const string ApiBaseUrl = "https://api.telegram.org";
 
+    // How much longer the HttpClient waits than the long-poll it is carrying. Program.cs sizes
+    // the client's timeout with this and ClampPollTimeout keeps the poll inside it, so the two
+    // cannot drift apart.
+    public const int PollTimeoutHeadroomSeconds = 15;
+
     private readonly HttpClient _httpClient;
     private readonly ChatAnswerService _chatAnswerService;
     private readonly IBlueIrisSnapshotClient _snapshotClient;
     private readonly IOptionsMonitor<TelegramOptions> _telegramOptionsMonitor;
     private readonly IOptionsMonitor<TelegramChatOptions> _chatOptionsMonitor;
     private readonly ILogger<TelegramChatWorker> _logger;
+    private int? _lastClampWarningFor;
 
     public TelegramChatWorker(
         IHttpClientFactory httpClientFactory,
@@ -63,7 +69,9 @@ public sealed class TelegramChatWorker : BackgroundService
             List<TelegramUpdate> updates;
             try
             {
-                updates = await GetUpdatesAsync(telegramOptions.BotToken, offset, chatOptions.PollTimeoutSeconds, stoppingToken);
+                var pollTimeout = ClampPollTimeout(chatOptions.PollTimeoutSeconds, _httpClient.Timeout);
+                WarnIfPollTimeoutClamped(chatOptions.PollTimeoutSeconds, pollTimeout);
+                updates = await GetUpdatesAsync(telegramOptions.BotToken, offset, pollTimeout, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -112,6 +120,33 @@ public sealed class TelegramChatWorker : BackgroundService
             _logger.LogWarning(ex, "Failed to clear the Telegram backlog on startup; starting from the beginning.");
             return 0;
         }
+    }
+
+    // PollTimeoutSeconds hot-reloads, but the HttpClient's timeout is fixed at startup from
+    // whatever it was then (Program.cs). Raising it in Settings therefore asks Telegram to hold
+    // the connection open for longer than this client is willing to wait, so *every* poll dies
+    // on HttpClient.Timeout and chat stops answering altogether - a total outage of the feature,
+    // from a settings change that looks harmless. Keep the poll inside the client's budget.
+    public static int ClampPollTimeout(int requestedSeconds, TimeSpan clientTimeout)
+    {
+        if (requestedSeconds < 0) return 0;
+        if (clientTimeout == Timeout.InfiniteTimeSpan) return requestedSeconds;
+
+        var budget = (int)clientTimeout.TotalSeconds - PollTimeoutHeadroomSeconds;
+        if (budget <= 0) return 0;
+        return Math.Min(requestedSeconds, budget);
+    }
+
+    // Only speaks up when the clamp actually bites, and only once per distinct configured value,
+    // so a poll every ~25s does not turn one bad setting into a wall of identical warnings.
+    private void WarnIfPollTimeoutClamped(int requested, int effective)
+    {
+        if (requested == effective || _lastClampWarningFor == requested) return;
+        _lastClampWarningFor = requested;
+        _logger.LogWarning(
+            "Telegram chat PollTimeoutSeconds is {Requested}s but this client only waits {ClientTimeout}s, " +
+            "so polling with {Effective}s instead. Restart SentinelCore to pick up the longer timeout.",
+            requested, (int)_httpClient.Timeout.TotalSeconds, effective);
     }
 
     private async Task<List<TelegramUpdate>> GetUpdatesAsync(string botToken, long offset, int timeoutSeconds, CancellationToken cancellationToken)
@@ -164,17 +199,26 @@ public sealed class TelegramChatWorker : BackgroundService
         await SendPhotoAsync(image, cancellationToken);
     }
 
-    private Task SendMessageAsync(string text, CancellationToken cancellationToken)
+    // Checks the result rather than firing and forgetting: a rejected sendMessage (429 rate
+    // limit, 403 after the owner blocks the bot, 400 on a malformed chat_id) is the one failure
+    // the asker cannot see for themselves - they just never get a reply. Same shape as
+    // SendPhotoAsync below and the alert-side sender in AlertActions.
+    private async Task SendMessageAsync(string text, CancellationToken cancellationToken)
     {
         var telegramOptions = _telegramOptionsMonitor.CurrentValue;
-        return _httpClient.PostAsync(
-            $"{ApiBaseUrl}/bot{telegramOptions.BotToken}/sendMessage",
-            new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["chat_id"] = telegramOptions.ChatId,
-                ["text"] = text
-            }),
-            cancellationToken);
+        using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["chat_id"] = telegramOptions.ChatId,
+            ["text"] = text
+        });
+
+        using var response = await _httpClient.PostAsync(
+            $"{ApiBaseUrl}/bot{telegramOptions.BotToken}/sendMessage", content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("Failed to send the Telegram chat reply: {StatusCode} {Body}", (int)response.StatusCode, body);
+        }
     }
 
     private async Task SendPhotoAsync(byte[] imageBytes, CancellationToken cancellationToken)
