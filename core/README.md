@@ -229,11 +229,15 @@ It works by long-polling Telegram's `getUpdates` API (outbound only), so no inbo
   "MaxEventsInContext": 100,
   "Model": "gemma3:4b",
   "PollTimeoutSeconds": 25,
-  "TimeoutSeconds": 60
+  "TimeoutSeconds": 300
 }
 ```
 
 `Model` can be any chat-capable model already pulled in Ollama (e.g. `qwen3:14b`) if you want better conversational answers than the vision model gives.
+
+`TimeoutSeconds` is how long to wait for that model to answer. The default is deliberately generous: a small local model reading a full event log on modest CPU hardware can take minutes, and 180s was measured as not always enough on a real camera with ~90 events in its lookback window. A chat question isn't time-critical the way an alert is, so waiting is better than cutting the answer off.
+
+`PollTimeoutSeconds` is the long-poll length, and unlike most settings here it **needs a service restart to take effect properly**. Neither of these two is in the Settings tab, because the HTTP client carrying the poll is sized from `PollTimeoutSeconds` once at startup. Editing it in this file alone leaves the poll longer than the client will wait; the service clamps the poll back down so chat keeps working, and logs a warning telling you to restart.
 
 ### Live photo on demand
 
