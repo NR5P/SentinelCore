@@ -361,12 +361,23 @@ always has, whether or not you add any cameras here.
 
 **Don't know your camera's stream URL?** Two ways to find it without guessing:
 
-- **Test Connection**, on the add-camera form — type in the camera's IP address (or as much of
-  the URL as you know) and optional login, and click it. It checks the camera's own discovery
-  protocol (ONVIF, which most IP cameras speak) first, and if that comes back empty, tries a
-  handful of common stream address patterns. If it finds a working stream, it fills in the real
-  URL and a suggested name for you — it never overwrites a URL you've already typed a real path
-  into.
+- **Test Connection**, on the add-camera form — fill in the field and your optional login, then
+  click it. It takes either of the two things the field is labelled for:
+  - **The camera's IP address** (`192.168.1.50`) — the search. It checks the camera's own
+    discovery protocol (ONVIF, which most IP cameras speak) first, and if that comes back empty,
+    tries a list of common stream address patterns, including the Reolink, Tapo, Vivotek, Uniview
+    and Axis spellings. If it finds a working stream, it fills in the real URL and a suggested
+    name for you — it never overwrites a URL you've already typed a real path into.
+  - **The camera's full stream URL** (`rtsp://192.168.1.50:554/h264Preview_01_main`) — just a
+    check. There is nothing left to search for once you've named the stream, so it only confirms
+    that the URL really carries video. Give it a *complete* URL: a half-finished one is not
+    understood, and `rtsp://`, `rtsps://`, `http://` and `https://` are the schemes it accepts.
+
+  If the camera answers but turns your login down, it now says so — "rejected this username and
+  password" — instead of reporting that no camera is there. That distinction matters most on a
+  camera with ONVIF switched off, which is the case this button exists to rescue. Note that a
+  camera account with a **blank** password still needs its username filled in: dialed with no
+  username at all, such a camera refuses the connection exactly like a wrong password would.
 - **Discover Cameras**, next to Add Camera — scans your network for cameras all at once, the
   same way. It only runs when you click it — nothing scans automatically or on a schedule. You'll
   be asked which network adapter to scan on machines with more than one; cameras it already knows
