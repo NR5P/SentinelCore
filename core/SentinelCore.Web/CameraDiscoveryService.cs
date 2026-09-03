@@ -234,11 +234,8 @@ public sealed class CameraDiscoveryService
         }
     }
 
-    private static string EmbedCredentials(string url, string username, string? password)
-    {
-        var builder = new UriBuilder(url) { UserName = username, Password = password ?? string.Empty };
-        return builder.Uri.ToString();
-    }
+    private static string EmbedCredentials(string url, string username, string? password) =>
+        StreamUrlCredentials.Embed(url, username, password);
 
     // Public alongside ParseFfprobeOutput, which returns it and is itself public so tests can
     // exercise the parsing logic against canned ffprobe output without spawning a process.

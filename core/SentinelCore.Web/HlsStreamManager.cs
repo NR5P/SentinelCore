@@ -776,17 +776,11 @@ public sealed class HlsStreamManager : IDisposable
     public static bool IsRtspUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme.Equals("rtsp", StringComparison.OrdinalIgnoreCase);
 
-    public static string BuildAuthenticatedUrl(Camera camera)
-    {
-        if (string.IsNullOrWhiteSpace(camera.Username)) return camera.StreamUrl;
-
-        var builder = new UriBuilder(camera.StreamUrl)
-        {
-            UserName = camera.Username,
-            Password = camera.Password ?? string.Empty
-        };
-        return builder.Uri.ToString();
-    }
+    // Kept as the name the rest of the app calls - CameraSource, Go2RtcManager and the snapshot
+    // path all go through here - but the rule itself lives in StreamUrlCredentials, shared with
+    // the discovery probe so the two cannot drift apart again.
+    public static string BuildAuthenticatedUrl(Camera camera) =>
+        StreamUrlCredentials.Embed(camera.StreamUrl, camera.Username, camera.Password);
 
     // Single-frame grab, independent of any running HLS session - used both for the trigger-zone
     // editor's reference image and for saving a full-res snapshot when a trigger zone fires.
