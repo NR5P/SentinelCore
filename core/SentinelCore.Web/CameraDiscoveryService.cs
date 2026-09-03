@@ -73,11 +73,21 @@ public sealed class CameraDiscoveryService
     [
         "/Streaming/Channels/101",              // Hikvision and many Hikvision-OEM cameras
         "/cam/realmonitor?channel=1&subtype=0", // Dahua, Amcrest (Dahua OEM)
+        "/h264Preview_01_main",                 // Reolink
+        "/Preview_01_main",                     // Reolink, older firmware - and what the RLC-510A
+                                                // and RLC-823S1 on this network actually serve
         "/live",
         "/stream1",
         "/videoMain",
         "/h264/ch1/main/av_stream",
-        "/live/ch0"
+        "/live/ch0",
+        "/onvif1",                              // Tapo, and a long tail of generic ONVIF cameras
+        "/live.sdp",                            // Vivotek
+        "/media/video1",                        // Uniview
+        "/axis-media/media.amp",                // Axis
+        "/video1",
+        "/"                                     // Reolink answers the bare root too, and it is the
+                                                // last thing worth trying before giving up
     ];
 
     private static readonly TimeSpan JobRetention = TimeSpan.FromMinutes(5);
@@ -133,6 +143,43 @@ public sealed class CameraDiscoveryService
         return await TryRtspTemplatesAsync(ip, username, password, cancellationToken);
     }
 
+    // The other half of "Stream URL or address": someone who already knows the exact stream URL
+    // shouldn't have it thrown away and re-guessed from the host. Nothing here needs discovering -
+    // the URL is the answer - so this only confirms it carries video, which is the part of Test
+    // Connection worth having when the address was already known.
+    //
+    // Kept separate from ProbeCameraAsync rather than folded into it: that method's whole shape is
+    // "find the stream for this host", and every step of it - WS-Discovery, ONVIF, the template
+    // table - is meaningless once the stream is already named.
+    public async Task<CameraProbeResult> ProbeStreamUrlAsync(
+        string streamUrl, string? username, string? password, CancellationToken cancellationToken)
+    {
+        var urlToVerify = string.IsNullOrWhiteSpace(username)
+            ? streamUrl
+            : EmbedCredentials(streamUrl, username!, password);
+
+        var verified = await VerifyStreamAsync(urlToVerify, cancellationToken);
+        var host = Uri.TryCreate(streamUrl, UriKind.Absolute, out var uri) ? uri.Host : streamUrl;
+
+        return verified.Outcome switch
+        {
+            VerifyOutcome.Ok => new CameraProbeResult(
+                CameraProbeStatus.Found, streamUrl, $"Camera at {host}", null, null,
+                verified.Stream?.Resolution, "This stream URL works."),
+
+            VerifyOutcome.Unauthorized => new CameraProbeResult(
+                CameraProbeStatus.NeedsCredentials, null, null, null, null, null,
+                string.IsNullOrWhiteSpace(username)
+                    ? "This stream URL reached a camera, but it needs a username and password."
+                    : "This stream URL reached a camera, but it rejected this username and password."),
+
+            _ => new CameraProbeResult(
+                CameraProbeStatus.NotFound, null, null, null, null, null,
+                "Nothing streamed from this URL. Check the address and path, or enter just the "
+                + "camera's IP address to search for its stream automatically.")
+        };
+    }
+
     private async Task<CameraProbeResult?> TryOnvifAsync(
         IPAddress ip, string deviceServiceUrl, string? username, string? password, CancellationToken cancellationToken)
     {
@@ -163,7 +210,7 @@ public sealed class CameraDiscoveryService
         // ffmpeg-invocation time.
         var urlToVerify = string.IsNullOrWhiteSpace(username) ? streamUrl : EmbedCredentials(streamUrl, username!, password);
         var verified = await VerifyStreamAsync(urlToVerify, cancellationToken);
-        if (verified is null) return null;
+        if (verified.Outcome != VerifyOutcome.Ok) return null;
 
         var suggestedName = deviceInfo is { Manufacturer: "Unknown", Model: "Unknown" }
             ? $"Camera at {ip}"
@@ -176,7 +223,7 @@ public sealed class CameraDiscoveryService
 
         return new CameraProbeResult(
             CameraProbeStatus.Found, streamUrl, suggestedName, deviceInfo.Manufacturer, deviceInfo.Model,
-            verified.Resolution, "Found via ONVIF.",
+            verified.Stream?.Resolution, "Found via ONVIF.",
             SupportsPtz: supportsPtz,
             OnvifPtzServiceUrl: supportsPtz ? ptzServiceUrl : null,
             OnvifProfileToken: supportsPtz ? profiles[0] : null);
@@ -205,11 +252,24 @@ public sealed class CameraDiscoveryService
             var urlToVerify = string.IsNullOrWhiteSpace(username) ? bareUrl : EmbedCredentials(bareUrl, username!, password);
 
             var verified = await VerifyStreamAsync(urlToVerify, cancellationToken);
-            if (verified is not null)
+            if (verified.Outcome == VerifyOutcome.Ok)
             {
                 return new CameraProbeResult(
                     CameraProbeStatus.Found, bareUrl, $"Camera at {ip}", null, null,
-                    verified.Resolution, "Found by testing common camera URL patterns - this camera doesn't appear to support ONVIF.");
+                    verified.Stream?.Resolution, "Found by testing common camera URL patterns - this camera doesn't appear to support ONVIF.");
+            }
+
+            // A 401 settles the whole table at once. The camera is there and answering; it turned
+            // this login down, and it will turn the same login down on every remaining path - so
+            // walking the rest costs a dozen more ffprobe spawns to arrive at the same answer,
+            // and then reports the wrong one ("no camera here") on the way out.
+            if (verified.Outcome == VerifyOutcome.Unauthorized)
+            {
+                return new CameraProbeResult(
+                    CameraProbeStatus.NeedsCredentials, null, null, null, null, null,
+                    string.IsNullOrWhiteSpace(username)
+                        ? "A camera answered at this address but needs a username and password."
+                        : "A camera answered at this address but rejected this username and password.");
             }
         }
 
@@ -250,7 +310,18 @@ public sealed class CameraDiscoveryService
     // read off stdout as text. -rtsp_transport tcp is forced unconditionally, matching
     // HlsStreamManager's own always-tcp behavior even for non-RTSP URLs - that's the one
     // configuration already proven against real cameras in this app.
-    private async Task<StreamProbeResult?> VerifyStreamAsync(string url, CancellationToken cancellationToken)
+    // Why a candidate URL didn't work, not just that it didn't. Unauthorized is separated out
+    // because it is the one failure that says the address was right - the camera is there, it
+    // answered, and it turned the login down.
+    private enum VerifyOutcome { Ok, Unauthorized, Failed }
+
+    private sealed record VerifyResult(VerifyOutcome Outcome, StreamProbeResult? Stream)
+    {
+        public static readonly VerifyResult Failed = new(VerifyOutcome.Failed, null);
+        public static readonly VerifyResult Unauthorized = new(VerifyOutcome.Unauthorized, null);
+    }
+
+    private async Task<VerifyResult> VerifyStreamAsync(string url, CancellationToken cancellationToken)
     {
         var psi = new ProcessStartInfo
         {
@@ -279,12 +350,15 @@ public sealed class CameraDiscoveryService
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             _logger.LogWarning(ex, "Could not start ffprobe at {Path}", _ffprobePath);
-            return null;
+            return VerifyResult.Failed;
         }
 
         using (process)
         {
-            _ = DiscardAsync(process.StandardError);
+            // stderr is read rather than discarded now: it carries the one thing that tells a
+            // rejected login apart from a wrong path, and ffprobe reports both as a plain non-zero
+            // exit. Still drained concurrently with stdout - a full pipe would deadlock the child.
+            var stderrTask = process.StandardError.ReadToEndAsync();
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(FfprobeTimeout);
@@ -299,13 +373,34 @@ public sealed class CameraDiscoveryService
             catch (OperationCanceledException)
             {
                 try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                return null;
+                return VerifyResult.Failed;
             }
 
-            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout)) return null;
-            return ParseFfprobeOutput(stdout);
+            if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(stdout) &&
+                ParseFfprobeOutput(stdout) is { } parsed)
+                return new VerifyResult(VerifyOutcome.Ok, parsed);
+
+            var stderr = await SafeReadAsync(stderrTask);
+            return IsUnauthorized(stderr) ? VerifyResult.Unauthorized : VerifyResult.Failed;
         }
     }
+
+    private static async Task<string> SafeReadAsync(Task<string> reading)
+    {
+        try { return await reading; }
+        catch { return string.Empty; }
+    }
+
+    // "method DESCRIBE failed: 401 Unauthorized" from an RTSP camera, "HTTP error 401 Unauthorized"
+    // from an HTTP-FLV one. Both are worth catching: this is the difference between telling someone
+    // their password is wrong and telling them their camera doesn't exist.
+    //
+    // Matched on the 401 code together with the word, rather than either alone - "unauthorized" can
+    // appear in a stream title, and a bare "401" can appear in a URL or a resolution.
+    public static bool IsUnauthorized(string? stderr) =>
+        stderr is not null &&
+        stderr.Contains("401", StringComparison.Ordinal) &&
+        stderr.Contains("unauthorized", StringComparison.OrdinalIgnoreCase);
 
     // Public so tests can check the JSON-parsing logic against canned ffprobe output without
     // spawning a process.
@@ -332,18 +427,6 @@ public sealed class CameraDiscoveryService
         catch (JsonException)
         {
             return null;
-        }
-    }
-
-    private static async Task DiscardAsync(StreamReader reader)
-    {
-        try
-        {
-            while (await reader.ReadLineAsync() != null) { }
-        }
-        catch
-        {
-            // process exited; nothing to do
         }
     }
 

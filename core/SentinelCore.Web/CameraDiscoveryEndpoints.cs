@@ -36,12 +36,37 @@ public static class CameraDiscoveryEndpoints
         app.MapPost("/api/cameras/discovery/probe", async (
             CameraProbeRequestDto dto, CameraDiscoveryService discovery, CancellationToken ct) =>
         {
-            if (!IPAddress.TryParse(dto.Address.Trim(), out var address))
-                return Results.BadRequest(new { errors = new[] { "Enter a valid IP address, e.g. 192.168.1.50." } });
+            var input = dto.Address.Trim();
 
-            var result = await discovery.ProbeCameraAsync(address, dto.Username, dto.Password, ct);
-            return Results.Ok(result);
+            // Both halves of what the field is labelled - "Stream URL or address". A bare IP gets
+            // the full search (ONVIF, then the template table); a URL is taken at its word and only
+            // checked. Rejecting the URL form used to be the single most confusing thing this
+            // button did: the label invites a stream URL, and pasting one produced "Enter a valid
+            // IP address" - advice that is wrong for someone who knows their camera's URL exactly.
+            if (IPAddress.TryParse(input, out var address))
+                return Results.Ok(await discovery.ProbeCameraAsync(address, dto.Username, dto.Password, ct));
+
+            if (IsSupportedStreamUrl(input))
+                return Results.Ok(await discovery.ProbeStreamUrlAsync(input, dto.Username, dto.Password, ct));
+
+            return Results.BadRequest(new
+            {
+                errors = new[]
+                {
+                    "Enter either the camera's IP address (e.g. 192.168.1.50) or its full stream "
+                    + "URL (e.g. rtsp://192.168.1.50:554/stream)."
+                }
+            });
         }).RequireAuthorization("AdminOnly");
+
+        // Restricted to the schemes a camera actually streams over, rather than accepting whatever
+        // Uri will parse. Whatever comes through here is handed to ffprobe as an input, and ffprobe
+        // will just as happily open a file:// path or a local pipe - which turns an admin-only
+        // camera test into a way to read the server's own disk. A camera has no reason to need it.
+        static bool IsSupportedStreamUrl(string input) =>
+            Uri.TryCreate(input, UriKind.Absolute, out var uri) &&
+            uri.Scheme.ToLowerInvariant() is "rtsp" or "rtsps" or "http" or "https" &&
+            !string.IsNullOrEmpty(uri.Host);
 
         app.MapGet("/api/cameras/discovery/interfaces", () =>
             Results.Ok(CameraDiscoveryService.GetCandidateInterfaces())

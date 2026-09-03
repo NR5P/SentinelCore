@@ -99,4 +99,65 @@ public sealed class CameraDiscoveryEndpointsTests : IDisposable
         Assert.Contains("\"status\":\"NotFound\"", body);
         Assert.DoesNotContain("\"status\":2", body);
     }
+
+    // The field is labelled "Stream URL or address", and for a long time only the second half was
+    // true - pasting a stream URL answered "Enter a valid IP address", which is bad advice for
+    // someone who knows their camera's URL exactly and merely wants it checked.
+    [Theory]
+    [InlineData("rtsp://127.0.0.1:554/Preview_01_main")]
+    [InlineData("rtsps://127.0.0.1:322/stream")]
+    [InlineData("http://127.0.0.1:1/flv?app=bcs&stream=channel0_main.bcs")]
+    public async Task Probe_WithAFullStreamUrl_IsAccepted(string url)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/api/cameras/discovery/probe",
+            new { Address = url }, ct);
+
+        // Loopback with nothing listening, so the verdict is NotFound - but it must be a verdict
+        // about the stream, not a 400 refusing to look at the input at all.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("\"status\":\"NotFound\"", await response.Content.ReadAsStringAsync(ct));
+    }
+
+    // Whatever survives validation is handed to ffprobe as an input, and ffprobe opens far more
+    // than cameras - a file:// path would read the server's own disk. Only the schemes a camera
+    // streams over get through.
+    [Theory]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("ftp://192.168.1.50/stream")]
+    [InlineData("rtsp://")]
+    [InlineData("definitely not an ip address")]
+    [InlineData("")]
+    public async Task Probe_WithAnInputThatIsNeitherAnIpNorAStreamUrl_IsRejected(string input)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/api/cameras/discovery/probe",
+            new { Address = input }, ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // The distinction the whole "wrong password" message rests on. These are ffprobe's real words:
+    // the RTSP line came from a Reolink RLC-510A dialed without the ':' its blank password needs,
+    // the HTTP one is what an HTTP-FLV camera answers.
+    [Theory]
+    [InlineData("[rtsp @ 0x7f] method DESCRIBE failed: 401 Unauthorized", true)]
+    [InlineData("[http @ 0x7f] HTTP error 401 Unauthorized", true)]
+    [InlineData("[rtsp @ 0x7f] method DESCRIBE failed: 404 Not Found", false)]
+    [InlineData("[tcp @ 0x7f] Connection to tcp://10.0.0.9:554 failed: Connection refused", false)]
+    // Neither half is enough alone: a 401 with no word, or the word with no code.
+    [InlineData("Stream #0:0: Video: h264, 401x226", false)]
+    [InlineData("unauthorized", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsUnauthorized_SeparatesARejectedLoginFromEveryOtherFailure(string? stderr, bool expected)
+    {
+        Assert.Equal(expected, WebHost::SentinelCore.Web.CameraDiscoveryService.IsUnauthorized(stderr));
+    }
 }
