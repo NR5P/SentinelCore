@@ -425,6 +425,18 @@ fun CameraZoneEditorScreen(
                                     enabled = zones.getOrNull(activeZone)?.polygon?.isNotEmpty() == true,
                                 ) { Text("Clear All", color = SentinelRed) }
                             }
+                            // A row of its own rather than a third button beside Undo/Clear:
+                            // those three titles together overflow the row on a narrow phone,
+                            // and Compose would ellipsize the ends.
+                            TextButton(
+                                onClick = {
+                                    mutateActiveZone {
+                                        it.copy(polygon = TriggerZone.WHOLE_FRAME_POLYGON)
+                                    }
+                                },
+                                enabled = zones.getOrNull(activeZone)?.polygon !=
+                                    TriggerZone.WHOLE_FRAME_POLYGON,
+                            ) { Text("Cover Everything") }
                             Row(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,

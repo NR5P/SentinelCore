@@ -569,6 +569,11 @@ watched. Three or more points make a shape; anything outside it is ignored, so y
 out a road, a neighbor's yard, or a tree that sways in the wind. Use **undo point** / **clear
 zone** to redo it.
 
+If you want the whole picture watched and nothing left out, **cover everything** fills the zone
+with the entire frame in one click, so you don't have to trace the four corners by hand. It
+replaces whatever you had drawn, and you can carry on editing from there. Note that a zone with
+no points at all is the opposite of this: it covers nothing and can never fire.
+
 **Size the smallest object** — anything smaller than this is ignored, which filters out birds,
 cats, and blowing debris. There are two ways to set it, and they drive the same value:
 

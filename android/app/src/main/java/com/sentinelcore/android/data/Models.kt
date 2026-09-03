@@ -152,6 +152,15 @@ data class TriggerZone(
     companion object {
         // Matches the server's TriggerConfig.DefaultZoneName.
         const val DEFAULT_NAME = "Zone 1"
+
+        // The whole camera view, as an ordinary four-corner polygon. It is spelled out rather than
+        // signalled by an empty polygon because empty already means the opposite to the server: a
+        // zone with fewer than three points rasterizes to a mask nothing can be inside, so it never
+        // fires. The corners really do cover everything - the detector tests pixel centres at
+        // (i + 0.5) / size, which puts every cell of its grid strictly inside the unit square.
+        val WHOLE_FRAME_POLYGON = listOf(
+            Point2D(0.0, 0.0), Point2D(1.0, 0.0), Point2D(1.0, 1.0), Point2D(0.0, 1.0),
+        )
     }
 }
 

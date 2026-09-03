@@ -467,6 +467,18 @@ window.GateWatchTriggers = (function () {
     renderPolygon();
   });
 
+  // The whole frame, as the four corners of the unit square rather than as a special empty-means-
+  // everything case: an empty polygon already means the opposite (it rasterizes to a mask no blob
+  // can be inside), and every consumer downstream - the detector, the overlays, the validator -
+  // then goes on treating this like any other shape. The corners really do cover everything: the
+  // detector tests pixel centres at (i + 0.5) / size, so all 320x180 cells fall strictly inside.
+  document.getElementById("zone-cover-everything").addEventListener("click", () => {
+    const zone = activeZoneOrNull();
+    if (!zone) return;
+    zone.polygon = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+    renderPolygon();
+  });
+
   // A new zone starts empty and selected, and inherits the current zone's size as a starting point
   // - you're usually adding a zone for a different distance, so it's a more useful default than
   // the stock 2% would be.

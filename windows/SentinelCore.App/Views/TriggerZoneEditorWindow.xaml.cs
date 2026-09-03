@@ -413,10 +413,7 @@ public partial class TriggerZoneEditorWindow : Window
     private void OnFillZoneClicked(object sender, RoutedEventArgs e)
     {
         if (_selectedZone < 0 || _selectedZone >= _zones.Count) return;
-        _zones[_selectedZone].Polygon = new List<Point2D>
-        {
-            new(0, 0), new(1, 0), new(1, 1), new(0, 1),
-        };
+        _zones[_selectedZone].Polygon = TriggerZone.WholeFramePolygon();
         RefreshZoneList();
     }
 

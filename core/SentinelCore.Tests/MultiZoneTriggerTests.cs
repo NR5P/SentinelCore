@@ -318,6 +318,32 @@ public sealed class MultiZoneTriggerTests
     }
 
     // Paints an opaque white square into an otherwise black RGB24 frame.
+    // --- "Cover everything" ---------------------------------------------------------------------
+
+    // The one-click whole-frame zone the editors offer (web, iOS/macOS, Android, Windows) is the
+    // four corners of the unit square, and this pins the claim that button makes: every cell of the
+    // detector grid is inside it, corners included. It holds because rasterization samples pixel
+    // centres at (i + 0.5) / size, which never lands on the boundary - move to sampling corners and
+    // the outer row and column would silently stop being watched.
+    [Fact]
+    public void WholeFramePolygon_CoversEveryPixelOfTheDetectorGrid()
+    {
+        var detector = new MotionDetector(
+            [new TriggerZone("everything", Square(0.0, 0.0, 1.0, 1.0), 0.0)],
+            shadowSensitivity: 0);
+
+        detector.ProcessFrame(new byte[MotionDetector.FrameSizeBytes]);
+
+        // Every pixel bright, so anything the mask misses shows up as a shortfall in the fraction.
+        var moved = new byte[MotionDetector.FrameSizeBytes];
+        Array.Fill(moved, (byte)255);
+
+        var fractions = detector.ProcessFrame(moved);
+
+        Assert.NotNull(fractions);
+        Assert.Equal(1.0, fractions[0], 6);
+    }
+
     private static void FillBlock(byte[] frame, int x0, int y0, int size)
     {
         for (var y = y0; y < y0 + size; y++)

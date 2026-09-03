@@ -140,6 +140,14 @@ struct TriggerZoneEditorView: View {
                             Button("Clear All", role: .destructive) { withActiveZone { $0.polygon.removeAll() } }
                                 .disabled(activeZonePolygon.isEmpty)
                         }
+                        // A row of its own rather than a third button beside Undo/Clear: those
+                        // three titles measure ~313pt together, which is wider than a Form row on
+                        // a small phone before Dynamic Type is turned up at all, and the ends
+                        // would truncate.
+                        Button("Cover Everything") {
+                            withActiveZone { $0.polygon = TriggerZone.wholeFramePolygon }
+                        }
+                        .disabled(activeZonePolygon == TriggerZone.wholeFramePolygon)
                         HStack {
                             Button("Add Zone", action: addZone)
                             Spacer()

@@ -174,6 +174,15 @@ struct TriggerZone: Codable, Equatable, Hashable {
     var name: String
     var polygon: [Point2D]
     var minTriggerArea: Double
+
+    // The whole camera view, as an ordinary four-corner polygon. It is spelled out rather than
+    // signalled by an empty polygon because empty already means the opposite to the server: a zone
+    // with fewer than three points rasterizes to a mask nothing can be inside, so it never fires.
+    // The corners really do cover everything - the detector tests pixel centres at (i + 0.5) / size,
+    // which puts every cell of its grid strictly inside the unit square.
+    static let wholeFramePolygon = [
+        Point2D(x: 0, y: 0), Point2D(x: 1, y: 0), Point2D(x: 1, y: 1), Point2D(x: 0, y: 1),
+    ]
 }
 
 // Mirrors the server's TriggerConfigDto - used for both the GET response and the PUT body.
