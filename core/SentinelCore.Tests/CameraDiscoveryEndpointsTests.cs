@@ -149,6 +149,17 @@ public sealed class CameraDiscoveryEndpointsTests : IDisposable
     [Theory]
     [InlineData("[rtsp @ 0x7f] method DESCRIBE failed: 401 Unauthorized", true)]
     [InlineData("[http @ 0x7f] HTTP error 401 Unauthorized", true)]
+    // Captured verbatim from ffprobe 7.x on the deployment box, dialing a live Reolink at .146
+    // anonymously and then with a wrong password. Note "401Unauthorized" with no space - ffmpeg
+    // concatenates the RTSP status code and reason phrase, so the spaced form asserted above is
+    // not in fact what this build emits. Both are kept: the two independent Contains checks accept
+    // either, and pinning the real string stops anyone "tidying" this into a single `401\s+
+    // Unauthorized` regex that would silently stop recognising a rejected login.
+    [InlineData("[rtsp @ 0x5a1a] method DESCRIBE failed: 401Unauthorized", true)]
+    [InlineData("rtsp://admin:pw@192.168.50.146:554/Preview_01_sub: "
+        + "Server returned 401 Unauthorized (authorization failed)", true)]
+    // The wrong-path answer from the same camera, which must stay distinguishable from the above.
+    [InlineData("[rtsp @ 0x5e08] method DESCRIBE failed: 404Stream Not Found", false)]
     [InlineData("[rtsp @ 0x7f] method DESCRIBE failed: 404 Not Found", false)]
     [InlineData("[tcp @ 0x7f] Connection to tcp://10.0.0.9:554 failed: Connection refused", false)]
     // Neither half is enough alone: a 401 with no word, or the word with no code.

@@ -358,7 +358,13 @@ public sealed class CameraDiscoveryService
             // stderr is read rather than discarded now: it carries the one thing that tells a
             // rejected login apart from a wrong path, and ffprobe reports both as a plain non-zero
             // exit. Still drained concurrently with stdout - a full pipe would deadlock the child.
-            var stderrTask = process.StandardError.ReadToEndAsync();
+            //
+            // Wrapped at creation, not at the await: the timeout path below returns without ever
+            // awaiting this task, and `using (process)` then disposes the reader out from under the
+            // read still in flight. Faulting there with nobody awaiting is an unobserved task
+            // exception - which is what the DiscardAsync this replaced was catching. Wrapping here
+            // means the task simply cannot fault, however it is abandoned.
+            var stderrTask = SafeReadAsync(process.StandardError.ReadToEndAsync());
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(FfprobeTimeout);
@@ -380,8 +386,7 @@ public sealed class CameraDiscoveryService
                 ParseFfprobeOutput(stdout) is { } parsed)
                 return new VerifyResult(VerifyOutcome.Ok, parsed);
 
-            var stderr = await SafeReadAsync(stderrTask);
-            return IsUnauthorized(stderr) ? VerifyResult.Unauthorized : VerifyResult.Failed;
+            return IsUnauthorized(await stderrTask) ? VerifyResult.Unauthorized : VerifyResult.Failed;
         }
     }
 
