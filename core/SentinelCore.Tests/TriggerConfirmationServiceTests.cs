@@ -4,6 +4,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SentinelCore.Web;
 using Xunit;
@@ -35,7 +36,7 @@ public sealed class TriggerConfirmationServiceTests
 
     private static TriggerConfirmationService NewService(
         SqliteTriggerStore store, AlertResult? whatTheMainAppReturns, out string settingsPath,
-        bool discardRejectedClips = true)
+        bool discardRejectedClips = true, ILogger<TriggerConfirmationService>? logger = null)
     {
         settingsPath = Path.Combine(Path.GetTempPath(), $"settings-{Guid.NewGuid():N}.json");
         File.WriteAllText(settingsPath, $$"""
@@ -60,7 +61,7 @@ public sealed class TriggerConfirmationServiceTests
             new AppSettingsFile(settingsPath),
             store,
             configuration,
-            NullLogger<TriggerConfirmationService>.Instance);
+            logger ?? NullLogger<TriggerConfirmationService>.Instance);
     }
 
     // The case that matters: a truck in the driveway. The analysis says so, so the trigger has to
@@ -551,8 +552,144 @@ public sealed class TriggerConfirmationServiceTests
         }
     }
 
+    // The three tests below are about the log line, not the verdict - the verdict is settled by the
+    // fail-open tests above and none of these changes it.
+    //
+    // On 2026-09-03 a camera misfired for two hours and filled the queue. 287 triggers logged
+    // "was Confirmed by analysis of alert ..." and 282 of them had never been judged: the analysis
+    // timed out, or ended superseded, or the hop cap ran out. Reading the journal, that is
+    // indistinguishable from two hours of the AI genuinely finding somebody there - and it is the
+    // only view onto a path that keeps ~19 MB of video per trigger forever, because a confirmed
+    // clip is never pruned. Confirmed-by-verdict and confirmed-by-giving-up have to read
+    // differently or the storm is invisible.
+
+    [Fact]
+    public async Task AnAnalysisThatActuallyJudged_IsLoggedAsAVerdict()
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var trigger = await store.AddAsync(
+                Guid.NewGuid(), "snap.jpg", 0.2, null, TriggerConfirmation.Pending, TestContext.Current.CancellationToken);
+
+            var completed = new AlertResult
+            {
+                Id = Guid.NewGuid(),
+                Status = "completed",
+                Analysis = new VisionAnalysis { Summary = "Nothing there." }
+            };
+
+            var log = new RecordingLogger<TriggerConfirmationService>();
+            var service = NewService(store, completed, out var settingsPath, logger: log);
+            try
+            {
+                await service.ResolveAsync(
+                    trigger.Id, new AlertForwardResult(Accepted: true, AlertId: completed.Id),
+                    TestContext.Current.CancellationToken);
+
+                Assert.Contains(log.Messages, m => m.Contains("by analysis of alert"));
+                Assert.DoesNotContain(log.Messages, m => m.Contains("left visible unjudged"));
+            }
+            finally
+            {
+                File.Delete(settingsPath);
+            }
+        }
+        finally
+        {
+            TempDirectories.Delete(root);
+        }
+    }
+
+    [Theory]
+    [InlineData("failed")]
+    [InlineData("superseded")]
+    public async Task AnAnalysisThatNeverJudged_IsNotLoggedAsAVerdict(string status)
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var trigger = await store.AddAsync(
+                Guid.NewGuid(), "snap.jpg", 0.2, null, TriggerConfirmation.Pending, TestContext.Current.CancellationToken);
+
+            var log = new RecordingLogger<TriggerConfirmationService>();
+            var service = NewService(
+                store, new AlertResult { Id = Guid.NewGuid(), Status = status }, out var settingsPath, logger: log);
+            try
+            {
+                await service.ResolveAsync(
+                    trigger.Id, new AlertForwardResult(Accepted: true, AlertId: Guid.NewGuid()),
+                    TestContext.Current.CancellationToken);
+
+                // Still confirmed - failing open is the design and this changes none of it.
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, TestContext.Current.CancellationToken);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+
+                Assert.Contains(log.Messages, m => m.Contains("left visible unjudged"));
+                Assert.DoesNotContain(log.Messages, m => m.Contains("by analysis of alert"));
+            }
+            finally
+            {
+                File.Delete(settingsPath);
+            }
+        }
+        finally
+        {
+            TempDirectories.Delete(root);
+        }
+    }
+
+    // The queue-full case - 90 of the storm's triggers. AlertForwarder records why the forward
+    // failed; before this, nothing recorded what became of the trigger.
+    [Fact]
+    public async Task ATriggerThatNeverReachedThePipeline_SaysSo()
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var trigger = await store.AddAsync(
+                Guid.NewGuid(), "snap.jpg", 0.2, null, TriggerConfirmation.Pending, TestContext.Current.CancellationToken);
+
+            var log = new RecordingLogger<TriggerConfirmationService>();
+            var service = NewService(store, null, out var settingsPath, logger: log);
+            try
+            {
+                await service.ResolveAsync(trigger.Id, AlertForwardResult.Refused, TestContext.Current.CancellationToken);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, TestContext.Current.CancellationToken);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+
+                Assert.Contains(log.Messages, m => m.Contains("never reached the alert pipeline"));
+            }
+            finally
+            {
+                File.Delete(settingsPath);
+            }
+        }
+        finally
+        {
+            TempDirectories.Delete(root);
+        }
+    }
+
     private sealed class SingleHandlerFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    // Deliberately hand-rolled rather than a LoggerFactory with no provider registered: that
+    // arrangement leaves IsEnabled false for every level, so a test asserting on log text quietly
+    // passes against nothing at all.
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
     }
 }

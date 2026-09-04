@@ -70,15 +70,31 @@ public sealed class TriggerConfirmationService(
                 // Accepted but no id to follow, or refused outright. Either way no verdict is
                 // coming, so don't leave it hidden.
                 await eventStore.SetConfirmationAsync(triggerId, TriggerConfirmation.Confirmed, cancellationToken);
+                // Logged because this is the one outcome that used to leave no trace on this side
+                // at all. AlertForwarder records why the forward failed, but nothing said what
+                // became of the trigger - so a queue-full burst showed up as a run of triggers
+                // that simply appeared, indistinguishable from ones the AI had approved.
+                logger.LogInformation(
+                    "Trigger {TriggerId} is left visible unjudged - it never reached the alert pipeline", triggerId);
                 return;
             }
 
             var settings = await GetSettingsAsync(cancellationToken);
-            var verdict = await AwaitVerdictAsync(alertId, TimeSpan.FromSeconds(settings.TimeoutSeconds), cancellationToken);
+            var (verdict, judged) = await AwaitVerdictAsync(alertId, TimeSpan.FromSeconds(settings.TimeoutSeconds), cancellationToken);
             await eventStore.SetConfirmationAsync(triggerId, verdict, cancellationToken);
 
-            logger.LogInformation(
-                "Trigger {TriggerId} was {Verdict} by analysis of alert {AlertId}", triggerId, verdict, alertId);
+            // Said plainly, because Confirmed means two different things and only one of them is a
+            // verdict. The AI looking at the frame and finding a person is Confirmed; so is every
+            // fail-open path - a supersede chain longer than the hop cap, an analysis that ended as
+            // anything but completed, the timeout. Logging both as "confirmed by analysis" made a
+            // camera misfiring for two hours read as two hours of confirmed subjects, when in fact
+            // 282 of those 287 triggers were never judged at all.
+            if (judged)
+                logger.LogInformation(
+                    "Trigger {TriggerId} was {Verdict} by analysis of alert {AlertId}", triggerId, verdict, alertId);
+            else
+                logger.LogInformation(
+                    "Trigger {TriggerId} is left visible unjudged - alert {AlertId} produced no verdict for it", triggerId, alertId);
 
             // Usually a no-op right here, because the analysis nearly always outlasts the clip's
             // post-roll and the clip therefore isn't cut yet. The recorder asks again the moment it
@@ -171,13 +187,23 @@ public sealed class TriggerConfirmationService(
         }
     }
 
-    private async Task<TriggerConfirmation> AwaitVerdictAsync(Guid alertId, TimeSpan timeout, CancellationToken cancellationToken)
+    // Judged is false on every path that reached Confirmed by giving up rather than by the AI
+    // saying so, which is most of them: no API key, a supersede chain past the hop cap, an alert
+    // that ended as anything but completed, a completed alert carrying no analysis, the timeout.
+    // The verdict written to the row is the same either way - failing open to visible is the whole
+    // design - but the two are not the same event and the log must not call them the same thing.
+    // Rejected is only ever reachable with Judged true.
+    private readonly record struct Verdict(TriggerConfirmation Confirmation, bool Judged);
+
+    private static Verdict Unjudged => new(TriggerConfirmation.Confirmed, false);
+
+    private async Task<Verdict> AwaitVerdictAsync(Guid alertId, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", cancellationToken);
         if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
         {
             logger.LogWarning("Cannot confirm a trigger - the main app's API key is not configured.");
-            return TriggerConfirmation.Confirmed;
+            return Unjudged;
         }
 
         var baseUrl = (configuration["MainAppBaseUrl"] ?? "http://127.0.0.1:5080").TrimEnd('/');
@@ -216,15 +242,17 @@ public sealed class TriggerConfirmationService(
                     logger.LogInformation(
                         "Alert {AlertId} ended as '{Status}' rather than completing, so its trigger stays visible unjudged",
                         alertId, result.Status);
-                    return TriggerConfirmation.Confirmed;
+                    return Unjudged;
                 }
 
                 if (result.Analysis is null)
-                    return TriggerConfirmation.Confirmed;
+                    return Unjudged;
 
-                return AlertNotificationPolicy.HasVisibleSubject(result.Analysis)
-                    ? TriggerConfirmation.Confirmed
-                    : TriggerConfirmation.Rejected;
+                return new Verdict(
+                    AlertNotificationPolicy.HasVisibleSubject(result.Analysis)
+                        ? TriggerConfirmation.Confirmed
+                        : TriggerConfirmation.Rejected,
+                    Judged: true);
             }
 
             await Task.Delay(PollInterval, cancellationToken);
@@ -233,7 +261,7 @@ public sealed class TriggerConfirmationService(
         logger.LogInformation(
             "Alert {AlertId} hadn't been analyzed within {Timeout}s, so its trigger stays visible unjudged",
             alertId, (int)timeout.TotalSeconds);
-        return TriggerConfirmation.Confirmed;
+        return Unjudged;
     }
 
     private async Task<AlertResult?> TryFetchResultAsync(
