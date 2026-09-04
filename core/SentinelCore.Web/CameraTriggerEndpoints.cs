@@ -298,6 +298,12 @@ public static class CameraTriggerEndpoints
 
             if (clipPath is null) return;
 
+            // Marked before the path is attached, not after. Somebody pressed record, so this clip
+            // is never a candidate for the automatic "the AI found nothing in it" discard (see
+            // TriggerConfirmationService.DiscardClipIfRejectedAsync) - and doing it in the other
+            // order would leave a moment where a verdict already in hand could take the file
+            // between the two writes.
+            await events.ProtectClipAsync(triggerId, CancellationToken.None);
             await events.SetClipPathAsync(triggerId, clipPath, CancellationToken.None);
             logger.LogInformation(
                 "Saved a {Seconds}s clip for {Name} from the record button.",

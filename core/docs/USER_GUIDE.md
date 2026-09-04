@@ -641,8 +641,8 @@ sweep all land on the EVENTS tab looking exactly like a person would.
 
 **AI-confirmed triggers** (SETTINGS → AI-CONFIRMED TRIGGERS, **on by default**) fixes that. A
 trigger is held back until the AI has actually looked at the frame, and only appears on the tab
-if it found a person, vehicle, package, or animal. The video and snapshot are still recorded
-the moment motion fires — the AI decides whether you *see* it, never whether it's *kept*.
+if it found a person, vehicle, package, or animal. The video and snapshot are both still
+recorded the moment motion fires, before anything has looked at them.
 
 A few things worth knowing:
 
@@ -650,15 +650,26 @@ A few things worth knowing:
   ever analyzes the frames from the other cameras, so their triggers appear immediately, as
   before. If you turn this on and a camera's triggers are still noisy, that camera's send-to-AI
   toggle is the thing to check.
-- **Hiding is not deleting, but rejected triggers don't stay forever.** Nothing is deleted at
-  the moment the AI rejects it — the snapshot and clip are both still there, and the **show
-  hidden** button on the EVENTS tab lists them, marked ⚠ nothing found, so you can check the
-  filter isn't hiding things it shouldn't. They are then pruned on a timer: **Unverified Motion
-  Retention Days** (SETTINGS → BRIDGE, **default 3**) deletes rejected triggers along with their
-  clips and images once they're older than that. The window exists because the rejects are the
-  only evidence for whether a zone is tuned right — a threshold firing on a spider web looks
-  identical to a perfect one until you can see what it fired *on* — but they're also the bulk of
-  what fills the disk. Set it to 0 to keep everything. **Confirmed triggers are never touched by
+- **When the AI finds nothing, the video goes and the picture stays.** **Delete video the AI
+  found nothing in** (SETTINGS → AI-CONFIRMED TRIGGERS, **on by default**) deletes that
+  trigger's clip as soon as the verdict lands. The snapshot is deliberately kept, and so is the
+  trigger itself: the **show hidden** button on the EVENTS tab still lists it, marked ⚠ nothing
+  found, with the picture of whatever fired — which is how you check the filter isn't hiding
+  things it shouldn't. This is where the disk goes, and it's the whole reason for the setting:
+  a clip is around 19 MB against a snapshot's few tens of KB, and on a windy night rejected
+  motion is most of what fires. Two things it will never do — it won't touch a clip that also
+  covers a trigger the AI *confirmed* (one clip spans a stretch of time, so an arrival and a
+  branch moving can share it, and that footage is real), and it won't delete anything because
+  the analysis was slow, errored, or couldn't be reached. Only the AI looking and finding
+  nothing deletes a video, and a clip you asked for yourself with the **record** button is never
+  deleted this way at all — it can still be hidden, since that's undoable, but you asked for that
+  video and it stays. Turn it off and clips of nothing stay on disk until the timer below
+  gets to them. The snapshots are pruned on that timer either way: **Unverified Motion
+  Retention Days** (SETTINGS → BRIDGE, **default 3**) deletes rejected triggers along with
+  whatever files they still have once they're older than that. That window exists because the
+  rejects are the only evidence for whether a zone is tuned right — a threshold firing on a
+  spider web looks identical to a perfect one until you can see what it fired *on* — but a
+  camera having a bad night still produces hundreds of them. Set it to 0 to keep everything. **Confirmed triggers are never touched by
   this** — and nothing else touches them either. **Retention Days** does not reach them: it
   prunes the AI service's own saved alert images and result files, not the dashboard's trigger
   clips and snapshots, which live somewhere else. A confirmed trigger's clip is kept for good.

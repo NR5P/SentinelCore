@@ -79,6 +79,14 @@ public sealed class TriggerConfirmationService(
 
             logger.LogInformation(
                 "Trigger {TriggerId} was {Verdict} by analysis of alert {AlertId}", triggerId, verdict, alertId);
+
+            // Usually a no-op right here, because the analysis nearly always outlasts the clip's
+            // post-roll and the clip therefore isn't cut yet. The recorder asks again the moment it
+            // has one - see TriggerZoneMonitor.BuildClipAsync - and that is the call that normally
+            // does the work. This one covers the other order: an analysis that came back before the
+            // post-roll elapsed, or a clip that was already patched in by a neighbouring trigger.
+            if (verdict == TriggerConfirmation.Rejected)
+                await DiscardClipIfRejectedAsync(triggerId, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -88,6 +96,78 @@ public sealed class TriggerConfirmationService(
         {
             logger.LogWarning(ex, "Confirming trigger {TriggerId} failed; leaving it visible", triggerId);
             await TryConfirmAsync(triggerId);
+        }
+    }
+
+    // Deletes the video behind a trigger the AI looked at and found nothing in.
+    //
+    // A rejected trigger is branches, rain, a moth on the illuminator or a headlight sweep, and
+    // storing 19 MB of video of it is the single largest thing on this disk that is worth nothing.
+    // The snapshot stays: it is what "show hidden" renders, and seeing what a zone actually fired
+    // ON is the only way to tell a badly tuned threshold from a well tuned one.
+    //
+    // Every uncertain path here keeps the video, which is the opposite of the rest of this class'
+    // fail-open bias and the same instinct applied to a different question. Confirmation fails open
+    // to SHOWING footage; deletion fails closed to KEEPING it. Both times the recoverable mistake
+    // is the one that leaves the file alone:
+    //   - the setting couldn't be read - never delete on a value we failed to read
+    //   - the verdict wasn't a rejection, or has since changed
+    //   - the clip is shared with a trigger that wasn't rejected (the store enforces this)
+    //   - the file won't unlink - left for the orphan sweep, which is what collects these
+    //
+    // Called on the rejection itself and again once the clip has actually been cut, since those
+    // two arrive in either order. It is safe to call as often as either wants: the store clears
+    // ClipPath as it hands the file over, so the second call finds nothing to do.
+    public async Task DiscardClipIfRejectedAsync(Guid triggerId, CancellationToken cancellationToken)
+    {
+        TriggerConfirmationSettingsDto settings;
+        try
+        {
+            settings = await mainAppSettings.GetSectionAsync<TriggerConfirmationSettingsDto>("TriggerConfirmation", cancellationToken)
+                ?? new TriggerConfirmationSettingsDto();
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidOperationException)
+        {
+            // Deliberately not GetSettingsAsync: that one falls back to the defaults, which is
+            // right for "should this trigger be held back" and wrong for "may I delete a file".
+            logger.LogWarning(ex, "Could not read the TriggerConfirmation settings; keeping the rejected trigger's clip");
+            return;
+        }
+
+        if (!settings.DiscardRejectedClips) return;
+
+        string? clipPath;
+        try
+        {
+            clipPath = await eventStore.ReleaseRejectedClipAsync(triggerId, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Could not release the clip for rejected trigger {TriggerId}", triggerId);
+            return;
+        }
+
+        if (clipPath is null) return;
+
+        try
+        {
+            var info = new FileInfo(clipPath);
+            if (!info.Exists) return;
+
+            var megabytes = info.Length / 1024d / 1024d;
+            info.Delete();
+
+            logger.LogInformation(
+                "Deleted the clip for trigger {TriggerId} - the AI found nothing in it - reclaiming {Megabytes:0.0} MB. Its snapshot is kept",
+                triggerId, megabytes);
+        }
+        // The row no longer points at the file, so nothing will come back for it here. That is not
+        // a leak: a file no row references is exactly what MotionRetentionWorker's orphan sweep
+        // exists to collect, and it runs twice a day.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(
+                ex, "Could not delete the clip for rejected trigger {TriggerId}; the orphan sweep will collect it", triggerId);
         }
     }
 

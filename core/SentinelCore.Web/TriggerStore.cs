@@ -241,6 +241,26 @@ public interface ITriggerEventStore
     // immediately (image first) and the clip path is patched in afterwards.
     Task SetClipPathAsync(Guid id, string clipPath, CancellationToken cancellationToken);
 
+    // Marks this trigger's clip as one a person deliberately asked for, so no automatic discard
+    // may take it. The AI's verdict still decides whether the trigger is SHOWN - a record-button
+    // press on an empty driveway is still hidden behind 'show hidden' - but somebody pressing
+    // record is a request for that video, and a model disagreeing about what is in frame is not a
+    // reason to delete what they asked for. Call it before SetClipPathAsync, not after: the other
+    // order leaves a window in which a verdict already in hand could collect the file.
+    Task ProtectClipAsync(Guid id, CancellationToken cancellationToken);
+
+    // Hands back the clip a rejected trigger points at, so footage the AI found nothing in can be
+    // unlinked at the moment of rejection instead of sitting on disk until the retention window
+    // catches up with it. Returns null - and changes nothing - when there is nothing to release.
+    //
+    // ClipPath is cleared on every rejected row that shares the file, and only when no row that
+    // isn't rejected points at it. One clip covers a span of time rather than an instant, so it is
+    // routinely shared: with a CONFIRMED trigger, whose footage this is never allowed to touch, or
+    // with one still PENDING, which is kept for now - if that verdict also comes back rejected it
+    // arrives here in turn and collects the file then. Same rule as DeleteUnconfirmedBeforeAsync,
+    // and it exists for the same incident.
+    Task<string?> ReleaseRejectedClipAsync(Guid triggerId, CancellationToken cancellationToken);
+
     // Decides whether a fresh trigger should join an already-open incident: the most recent
     // IncidentId among any of these camera ids triggered within the window, or null if none has.
     // Used by TriggerZoneMonitor to reuse vs. mint an IncidentId when a group member fires.
@@ -340,6 +360,11 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         // the Events tab rather than being guessed at by camera and timestamp.
         AddColumnIfMissing("TriggerEvents", "AlertId", "TEXT");
         AddColumnIfMissing("TriggerEvents", "CaptureDelaySeconds", "REAL");
+        // "Somebody asked for this video on purpose, so nothing may throw it away on the AI's
+        // say-so." Set only by the record button (see CameraTriggerEndpoints.AttachManualClipAsync)
+        // and read only by ReleaseRejectedClipAsync. 0 on every existing row and on everything the
+        // motion detector records, which is what the automatic discard is about.
+        AddColumnIfMissing("TriggerEvents", "KeepClip", "INTEGER NOT NULL DEFAULT 0");
         // Off on every existing row. The hours still get their real defaults rather than 0/0 so
         // that a row migrated today and enabled tomorrow suppresses the window someone would
         // actually have asked for - but with Enabled 0 they are inert either way.
@@ -788,6 +813,81 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$id", id.ToString("N"));
             command.Parameters.AddWithValue("$clipPath", clipPath);
             await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task ProtectClipAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE TriggerEvents SET KeepClip = 1 WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<string?> ReleaseRejectedClipAsync(Guid triggerId, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            // Both halves of the condition matter. Not rejected: the caller is asking about a
+            // trigger whose verdict has since changed or never came, and the answer is no. No clip:
+            // either this camera doesn't record them, or - much more common - the verdict landed
+            // before the post-roll finished and the clip is still being cut. That one is handled by
+            // the recorder asking again once it has patched the path in.
+            string clipPath;
+            using (var select = _connection.CreateCommand())
+            {
+                select.CommandText =
+                    "SELECT ClipPath FROM TriggerEvents " +
+                    "WHERE Id = $id AND Confirmation = 'rejected' AND ClipPath IS NOT NULL AND KeepClip = 0;";
+                select.Parameters.AddWithValue("$id", triggerId.ToString("N"));
+
+                if (await select.ExecuteScalarAsync(cancellationToken) is not string path || path.Length == 0)
+                    return null;
+
+                clipPath = path;
+            }
+
+            using (var shared = _connection.CreateCommand())
+            {
+                shared.CommandText =
+                    "SELECT COUNT(*) FROM TriggerEvents " +
+                    "WHERE ClipPath = $clipPath AND (Confirmation <> 'rejected' OR KeepClip <> 0);";
+                shared.Parameters.AddWithValue("$clipPath", clipPath);
+
+                if (Convert.ToInt64(await shared.ExecuteScalarAsync(cancellationToken)) > 0)
+                {
+                    _logger?.LogInformation(
+                        "A rejected trigger's clip is shared with a trigger that wasn't rejected, or with one somebody " +
+                        "recorded on purpose, so it stays on disk");
+                    return null;
+                }
+            }
+
+            // Every row sharing the file, not just this one: the file is about to be unlinked, and
+            // a row left pointing at it renders as a dead video link on the tab. By this point they
+            // are all rejected and none is protected - that is exactly what the count above
+            // established - so this cannot blank a row whose footage survives.
+            using (var clear = _connection.CreateCommand())
+            {
+                clear.CommandText = "UPDATE TriggerEvents SET ClipPath = NULL WHERE ClipPath = $clipPath;";
+                clear.Parameters.AddWithValue("$clipPath", clipPath);
+                await clear.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            return clipPath;
         }
         finally
         {

@@ -467,6 +467,16 @@ public sealed class TriggerConfirmationSettingsDto
     // trigger card, while the cost of not waiting long enough is the filter quietly doing nothing.
     [Range(30, 3600)]
     public int TimeoutSeconds { get; set; } = 300;
+
+    // Delete a rejected trigger's clip as soon as the verdict lands, instead of leaving it for
+    // UnverifiedMotionRetentionDays to prune days later. The snapshot is deliberately NOT deleted
+    // with it: the still is what tells you whether a zone is firing on a spider web, and it costs
+    // a few tens of kilobytes against the clip's ~19 MB. On by default - a clip the AI found
+    // nothing in is the single biggest consumer of disk here, and it is worth almost nothing.
+    //
+    // Nothing is deleted while this setting can't be read, and nothing is deleted for a clip a
+    // confirmed (or still-pending) trigger shares - see TriggerConfirmationService.
+    public bool DiscardRejectedClips { get; set; } = true;
 }
 
 public sealed class HomeKitSettingsDto

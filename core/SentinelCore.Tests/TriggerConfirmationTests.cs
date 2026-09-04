@@ -128,6 +128,162 @@ public sealed class TriggerConfirmationTests
         Assert.Equal(trigger.ImagePath, fetched.ImagePath);
     }
 
+    // --- Throwing away video of nothing -------------------------------------------------------
+    //
+    // The store half of "delete the clip the AI found nothing in" (see
+    // TriggerConfirmationService.DiscardClipIfRejectedAsync for the policy and the unlink). Every
+    // one of these is about the same hazard: a clip covers a span of time, so it belongs to every
+    // trigger that fired inside it, and handing back a file a confirmed trigger still points at
+    // destroys real footage silently - the row keeps its path and only renders as a dead video
+    // link. That has happened here once already, which is why DeleteUnconfirmedBeforeAsync guards
+    // the same way.
+
+    private static async Task<TriggerEvent> AddWithClipAsync(
+        SqliteTriggerStore store, Guid cameraId, TriggerConfirmation confirmation, string clipPath)
+    {
+        var trigger = await AddAsync(store, cameraId, confirmation);
+        await store.SetClipPathAsync(trigger.Id, clipPath, CancellationToken.None);
+        return trigger;
+    }
+
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_HandsBackTheClip_AndClearsEveryRejectedRowPointingAtIt()
+    {
+        using var store = NewStore(out _);
+        var cameraId = Guid.NewGuid();
+        var clip = "/clips/one.mp4";
+
+        // Two triggers that fired inside the same clip window, both rejected - the wind blowing a
+        // branch twice, which is exactly what this feature is for.
+        var first = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Rejected, clip);
+        var second = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Rejected, clip);
+
+        Assert.Equal(clip, await store.ReleaseRejectedClipAsync(first.Id, CancellationToken.None));
+
+        // Both rows let go of it, or the survivor renders as a dead video link.
+        var events = (ITriggerEventStore)store;
+        Assert.Null((await events.GetAsync(first.Id, CancellationToken.None))!.ClipPath);
+        Assert.Null((await events.GetAsync(second.Id, CancellationToken.None))!.ClipPath);
+
+        // And the file is handed out exactly once, however many rows shared it.
+        Assert.Null(await store.ReleaseRejectedClipAsync(second.Id, CancellationToken.None));
+    }
+
+    // The snapshot is the whole point of keeping the row: "show hidden" is how you tell a zone
+    // firing on a spider web from one that is tuned correctly, and that needs the picture.
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_LeavesTheRowAndItsSnapshotAlone()
+    {
+        using var store = NewStore(out _);
+        var trigger = await AddWithClipAsync(store, Guid.NewGuid(), TriggerConfirmation.Rejected, "/clips/one.mp4");
+
+        await store.ReleaseRejectedClipAsync(trigger.Id, CancellationToken.None);
+
+        var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, CancellationToken.None);
+        Assert.NotNull(stored);
+        Assert.Equal(TriggerConfirmation.Rejected, stored!.Confirmation);
+        Assert.Equal(trigger.ImagePath, stored.ImagePath);
+    }
+
+    // The one file this must never hand over.
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_KeepsAClipAConfirmedTriggerShares()
+    {
+        using var store = NewStore(out _);
+        var cameraId = Guid.NewGuid();
+        var clip = "/clips/arrival.mp4";
+
+        var rejected = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Rejected, clip);
+        var confirmed = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Confirmed, clip);
+
+        Assert.Null(await store.ReleaseRejectedClipAsync(rejected.Id, CancellationToken.None));
+
+        var stored = await ((ITriggerEventStore)store).GetAsync(confirmed.Id, CancellationToken.None);
+        Assert.Equal(clip, stored!.ClipPath);
+    }
+
+    // A sibling still waiting on its verdict holds the file too. Not forever: if that verdict also
+    // comes back rejected it arrives here in turn, and by then nothing is holding it.
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_WaitsForAPendingSibling_ThenCollectsTheClip()
+    {
+        using var store = NewStore(out _);
+        var cameraId = Guid.NewGuid();
+        var clip = "/clips/wind.mp4";
+
+        var rejected = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Rejected, clip);
+        var pending = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Pending, clip);
+
+        Assert.Null(await store.ReleaseRejectedClipAsync(rejected.Id, CancellationToken.None));
+
+        await store.SetConfirmationAsync(pending.Id, TriggerConfirmation.Rejected, CancellationToken.None);
+
+        Assert.Equal(clip, await store.ReleaseRejectedClipAsync(pending.Id, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_IgnoresATriggerThatWasNotRejected()
+    {
+        using var store = NewStore(out _);
+        var cameraId = Guid.NewGuid();
+
+        var confirmed = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Confirmed, "/clips/a.mp4");
+        var pending = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Pending, "/clips/b.mp4");
+
+        Assert.Null(await store.ReleaseRejectedClipAsync(confirmed.Id, CancellationToken.None));
+        Assert.Null(await store.ReleaseRejectedClipAsync(pending.Id, CancellationToken.None));
+    }
+
+    // The record button. A person asked for this video, and the AI having a different opinion about
+    // what is in frame is not a reason to delete what they asked for - the verdict still decides
+    // whether it is SHOWN, which is the reversible half.
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_NeverTakesAClipSomebodyRecordedOnPurpose()
+    {
+        using var store = NewStore(out _);
+        var trigger = await AddAsync(store, Guid.NewGuid(), TriggerConfirmation.Rejected);
+        await store.ProtectClipAsync(trigger.Id, CancellationToken.None);
+        await store.SetClipPathAsync(trigger.Id, "/clips/pressed-record.mp4", CancellationToken.None);
+
+        Assert.Null(await store.ReleaseRejectedClipAsync(trigger.Id, CancellationToken.None));
+
+        var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, CancellationToken.None);
+        Assert.Equal("/clips/pressed-record.mp4", stored!.ClipPath);
+    }
+
+    // And it protects the file, not just the row: a rejected motion trigger that happens to share
+    // the clip can't collect it either.
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_KeepsAClipADeliberateRecordingShares()
+    {
+        using var store = NewStore(out _);
+        var cameraId = Guid.NewGuid();
+        var clip = "/clips/shared-with-a-press.mp4";
+
+        var pressed = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Rejected, clip);
+        await store.ProtectClipAsync(pressed.Id, CancellationToken.None);
+        var motion = await AddWithClipAsync(store, cameraId, TriggerConfirmation.Rejected, clip);
+
+        Assert.Null(await store.ReleaseRejectedClipAsync(motion.Id, CancellationToken.None));
+        Assert.Equal(clip, (await ((ITriggerEventStore)store).GetAsync(pressed.Id, CancellationToken.None))!.ClipPath);
+    }
+
+    // The ordinary order of events: the analysis answers while the post-roll is still running, so
+    // at the moment of rejection there is no clip yet. The recorder asks again once it has cut one
+    // - that second ask is the one that does the work, and it has to still find the file releasable.
+    [Fact]
+    public async Task ReleaseRejectedClipAsync_WhenTheVerdictBeatsTheClip_CollectsItOnTheSecondAsk()
+    {
+        using var store = NewStore(out _);
+        var trigger = await AddAsync(store, Guid.NewGuid(), TriggerConfirmation.Rejected);
+
+        Assert.Null(await store.ReleaseRejectedClipAsync(trigger.Id, CancellationToken.None));
+
+        await store.SetClipPathAsync(trigger.Id, "/clips/late.mp4", CancellationToken.None);
+
+        Assert.Equal("/clips/late.mp4", await store.ReleaseRejectedClipAsync(trigger.Id, CancellationToken.None));
+    }
+
     // --- Restart recovery ---------------------------------------------------------------------
 
     [Fact]

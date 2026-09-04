@@ -1217,6 +1217,15 @@ public sealed class TriggerZoneMonitor(
             logger.LogInformation(
                 "Saved a {Seconds:F0}s trigger clip for camera {CameraId} ({Name}) covering {Count} trigger(s)",
                 (to - from).TotalSeconds, camera.Id, camera.Name, triggerIds.Length);
+
+            // The clip is only cut once the post-roll has elapsed, by which point the AI has
+            // usually already judged the trigger that opened it - so this, not the verdict itself,
+            // is where a clip of nothing normally gets thrown away. Only clips whose every trigger
+            // was rejected go: one that also covers a confirmed trigger is footage of something
+            // real and is kept whole. Asked per trigger because each carries its own verdict, and
+            // the first one that answers takes the file for all of them.
+            foreach (var id in triggerIds)
+                await triggerConfirmation.DiscardClipIfRejectedAsync(id, _stoppingToken);
         }
         catch (OperationCanceledException)
         {
