@@ -66,7 +66,42 @@ public sealed class ActivityItem
     public int? ClipPreSeconds { get; init; }
     public int? ClipPostSeconds { get; init; }
 
+    // Where the row came from - "alert" for something the cameras noticed, "manual" for the record
+    // button, "scheduled" for a timed recording window. Null from a server older than the field,
+    // which only ever sent alerts.
+    public string? Origin { get; init; }
+
+    // How long a recording row's video runs. Null on every other kind of row.
+    public int? DurationSeconds { get; init; }
+
     [JsonIgnore] public bool IsAnalyzed => Kind == "analyzed";
+
+    // Footage somebody asked for rather than something a camera noticed. Its summary is the
+    // server's own line about it and stands where an AI description would.
+    [JsonIgnore] public bool IsRecording => Kind == "recording";
+
+    // The badge every row wears. "Alert" is the default so an older server reads as it always did.
+    [JsonIgnore] public string OriginLabel => Origin switch
+    {
+        "manual" => "Manual",
+        "scheduled" => "Timer",
+        _ => "Alert",
+    };
+
+    [JsonIgnore] public string OriginDescription => Origin switch
+    {
+        "manual" => "Record button",
+        "scheduled" => "Timed recording",
+        _ => "The cameras noticed something",
+    };
+
+    [JsonIgnore] public string? DurationLabel => DurationSeconds switch
+    {
+        null => null,
+        < 60 => $"{DurationSeconds}s",
+        < 3600 => $"{DurationSeconds / 60}m {DurationSeconds % 60:00}s",
+        _ => $"{DurationSeconds / 3600}h {DurationSeconds % 3600 / 60:00}m",
+    };
 
     [JsonIgnore] public bool HasClip => !string.IsNullOrEmpty(ClipUrl);
 

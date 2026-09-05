@@ -33,17 +33,33 @@ public sealed class ActivityRow
     /// Nothing analysed a motion row, so the zone that caught it stands in for a description -
     /// dimmed and italic, so a mixed list reads as "described" versus "not looked at".
     /// </summary>
-    public string Description => Item.IsAnalyzed
+    public string Description => Item.IsAnalyzed || Item.IsRecording
         ? string.IsNullOrWhiteSpace(Item.Summary) ? "No description" : Item.Summary!
         : Item.ZoneName is { Length: > 0 } zone ? zone : "Motion in zone";
 
-    public FontStyle DescriptionStyle => Item.IsAnalyzed ? FontStyles.Normal : FontStyles.Italic;
+    public FontStyle DescriptionStyle => Item.IsAnalyzed || Item.IsRecording ? FontStyles.Normal : FontStyles.Italic;
 
-    public Brush DescriptionBrush => Item.IsAnalyzed ? Palette.PrimaryText : Palette.SecondaryText;
+    public Brush DescriptionBrush => Item.IsAnalyzed || Item.IsRecording ? Palette.PrimaryText : Palette.SecondaryText;
 
     public string FooterLabel => Item.IsAnalyzed
         ? TitleCase((Item.EventType ?? "unknown").Replace('_', ' '))
-        : "Motion only";
+        : Item.IsRecording ? "Recording" : "Motion only";
+
+    /// <summary>
+    /// Where the row came from, as the small badge every row wears: the cameras noticing something,
+    /// the record button, or a timed window. Without it a hand-started clip and a motion clip look
+    /// identical in the list.
+    /// </summary>
+    public string OriginLabel => Item.OriginLabel;
+
+    public string OriginTip => Item.OriginDescription;
+
+    public Brush OriginBrush => Item.Origin switch
+    {
+        "manual" => Palette.Amber,
+        "scheduled" => Palette.Cyan,
+        _ => Palette.SecondaryText,
+    };
 
     public Brush FooterBrush => Item.IsAnalyzed ? Palette.Cyan : Palette.SecondaryText;
 

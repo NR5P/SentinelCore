@@ -80,6 +80,7 @@ public sealed class TrayNotifier : IDisposable
 
     private static string Summarize(ActivityItem item)
     {
+        if (item.IsRecording) return string.IsNullOrWhiteSpace(item.Summary) ? "Recording" : item.Summary!;
         if (!item.IsAnalyzed) return item.ZoneName is { Length: > 0 } zone ? $"Motion in {zone}" : "Motion";
         return string.IsNullOrWhiteSpace(item.Summary) ? "Something was detected." : item.Summary!;
     }

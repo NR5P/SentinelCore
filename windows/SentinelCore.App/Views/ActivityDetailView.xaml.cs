@@ -47,6 +47,20 @@ public partial class ActivityDetailView : UserControl
 
     private void ApplyAnalysis()
     {
+        if (_item.IsRecording)
+        {
+            // The recording's own line - which kind, how long - where the AI's description would
+            // sit. There is no AI here: this is footage somebody asked for.
+            TypeText.Text = _item.OriginLabel.ToUpperInvariant() + " RECORDING";
+            NotifiedChip.Visibility = Visibility.Collapsed;
+            ConfidenceText.Text = _item.DurationLabel ?? "";
+            SummaryText.Text = string.IsNullOrWhiteSpace(_item.Summary) ? "Recording" : _item.Summary!;
+            NotifyReasonRow.Visibility = Visibility.Collapsed;
+            PackageRow.Visibility = Visibility.Collapsed;
+            LinkedRow.Visibility = Visibility.Collapsed;
+            return;
+        }
+
         if (!_item.IsAnalyzed)
         {
             AnalysisCard.Visibility = Visibility.Collapsed;
@@ -83,6 +97,8 @@ public partial class ActivityDetailView : UserControl
         Fact("Time", _item.OccurredAt.LocalDateTime.ToString("dddd d MMMM yyyy, HH:mm:ss", CultureInfo.CurrentCulture));
         if (_item.TriggerAreaFraction is { } area) Fact("Motion area", $"{area * 100:0.0}% of the frame");
         Fact("Media", _item.HasClip ? "Video clip" : "Snapshot");
+        Fact("Source", _item.OriginDescription);
+        if (_item.DurationLabel is { } length) Fact("Length", length);
 
         // Only worth stating when it isn't the ordinary case. "Confirmed" on every event would be
         // noise; the other two explain why a row is only visible with Show hidden on.
@@ -96,7 +112,7 @@ public partial class ActivityDetailView : UserControl
             });
         }
 
-        if (!_item.IsAnalyzed)
+        if (!_item.IsAnalyzed && !_item.IsRecording)
         {
             FactsPanel.Children.Add(new TextBlock
             {

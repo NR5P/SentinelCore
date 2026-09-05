@@ -342,7 +342,7 @@ fun SettingsScreen(
                     SettingsRow("Cameras", state.cameras.size.toString())
                     // Of those events, the ones nothing analyzed - motion the camera never
                     // forwarded for analysis, or whose forward was refused.
-                    SettingsRow("Motion only", state.activity.count { !it.isAnalyzed }.toString())
+                    SettingsRow("Motion only", state.activity.count { !it.isAnalyzed && !it.isRecording }.toString())
                     SettingsRow("App version", BuildConfig.VERSION_NAME)
                     state.lastError?.let { Text(it, color = SentinelRed) }
                 }

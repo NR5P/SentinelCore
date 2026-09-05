@@ -473,6 +473,29 @@ main {
   letter-spacing: 0.5px;
 }
 
+/* Where a card came from: the cameras noticing something, the record button, or a timed window.
+   Sits between the type label and the clock so every card reads the same way, whichever it is. */
+.origin-badge {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.origin-manual {
+  color: var(--amber);
+  border-color: rgba(255, 181, 69, 0.45);
+}
+
+.origin-scheduled {
+  color: var(--cyan);
+  border-color: rgba(75, 231, 255, 0.4);
+}
+
+
 .card-event-type {
   color: var(--green-dim);
   text-transform: uppercase;

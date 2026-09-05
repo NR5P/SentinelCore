@@ -140,7 +140,7 @@ private struct AlertCard: View {
                 }
                 // Nothing analysed a motion row, so the zone that caught it stands in for a
                 // description - dimmed, so a mixed list reads as "described" vs "not looked at".
-                if event.isAnalyzed {
+                if event.isAnalyzed || event.isRecording {
                     Text(event.summary?.isEmpty == false ? event.summary! : "No description")
                         .lineLimit(3)
                 } else {
@@ -152,6 +152,7 @@ private struct AlertCard: View {
                 HStack(spacing: 14) {
                     Text(footerLabel)
                         .foregroundStyle(event.isAnalyzed ? SentinelTheme.cyan : .secondary)
+                    OriginBadge(event: event)
                     // A camera whose frames are never analyzed produces motion rows that look
                     // exactly like a camera which has stopped seeing anything worth describing.
                     if event.isAiAnalysisOff {
@@ -212,6 +213,7 @@ private struct AlertCard: View {
     }
 
     private var footerLabel: String {
+        if event.isRecording { return "Recording" }
         guard event.isAnalyzed else { return "Motion only" }
         return (event.eventType ?? "unknown").replacingOccurrences(of: "_", with: " ").capitalized
     }

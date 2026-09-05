@@ -323,8 +323,9 @@ private fun EventSummary(
             )
         }
         // Nothing analysed a motion row, so the zone that caught it stands in for a description -
-        // dimmed, so a mixed list reads as "described" vs "not looked at".
-        if (event.isAnalyzed) {
+        // dimmed, so a mixed list reads as "described" vs "not looked at". A recording's summary
+        // is the server's own line about it and reads as the description.
+        if (event.isAnalyzed || event.isRecording) {
             Text(
                 event.summary.orEmpty().ifBlank { "No description" },
                 maxLines = 4,
@@ -341,18 +342,20 @@ private fun EventSummary(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (event.isAnalyzed) {
-                    event.eventType.orEmpty().ifBlank { "unknown" }
+                when {
+                    event.isAnalyzed -> event.eventType.orEmpty().ifBlank { "unknown" }
                         .replace('_', ' ').replaceFirstChar(Char::uppercase)
-                } else {
-                    "Motion only"
+                    event.isRecording -> "Recording"
+                    else -> "Motion only"
                 },
                 color = if (event.isAnalyzed) SentinelCyan else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
             )
+            Spacer(Modifier.width(8.dp))
+            OriginBadge(event)
+            Spacer(Modifier.weight(1f))
             // A camera whose frames are never analyzed produces motion rows that look exactly like
             // a camera which has stopped seeing anything worth describing.
             if (event.isAiAnalysisOff) {
@@ -396,6 +399,27 @@ private fun EventSummary(
             }
         }
     }
+}
+
+// Where a row came from, as the small chip every event card wears: the cameras noticing
+// something, the record button, or a timed recording window. Without it a hand-started clip and a
+// motion clip look identical in the list.
+@Composable
+fun OriginBadge(event: ActivityItem, modifier: Modifier = Modifier) {
+    val color = when (event.origin) {
+        "manual" -> SentinelAmber
+        "scheduled" -> SentinelCyan
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(
+        event.originLabel,
+        color = color,
+        style = MaterialTheme.typography.labelSmall,
+        maxLines = 1,
+        modifier = modifier
+            .background(color.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
 }
 
 @Composable

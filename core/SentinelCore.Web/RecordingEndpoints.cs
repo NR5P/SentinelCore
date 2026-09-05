@@ -160,6 +160,22 @@ public static class RecordingEndpoints
 
             return Results.File(recording.FilePath, "video/mp4", enableRangeProcessing: true);
         }).RequireAuthorization();
+
+        // A still from the recording, for its card on the Events tab. Cut from the file on first
+        // request and kept beside it, so the cost is one ffmpeg run per recording rather than one
+        // per page load. The size query the event images take is accepted and ignored: the frame
+        // is already scaled to card width, and nothing bigger is ever asked for.
+        app.MapGet("/api/recordings/{id:guid}/poster", async (
+            Guid id, string? size, IRecordingStore store, IConfiguration configuration,
+            ILogger<Recording> logger, CancellationToken ct) =>
+        {
+            var recording = await store.GetAsync(id, ct);
+            if (recording?.FilePath is null || !File.Exists(recording.FilePath)) return Results.NotFound();
+
+            var poster = await RecordingPoster.GetOrCreateAsync(
+                recording.FilePath, configuration["FfmpegPath"] ?? "ffmpeg", logger, ct);
+            return poster is null ? Results.NotFound() : Results.File(poster, "image/jpeg");
+        }).RequireAuthorization();
     }
 
     private static async Task<(TimeZoneInfo Zone, GeoCoordinate? Location)> ResolveClockAsync(

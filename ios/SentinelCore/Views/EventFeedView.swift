@@ -220,8 +220,9 @@ struct EventCard: View {
                     .font(.caption)
             }
             // Nothing analysed a motion row, so the zone that caught it stands in for a
-            // description - dimmed, so a mixed list reads as "described" vs "not looked at".
-            if event.isAnalyzed {
+            // description - dimmed, so a mixed list reads as "described" vs "not looked at". A
+            // recording's summary is the server's own line about it, and reads as the description.
+            if event.isAnalyzed || event.isRecording {
                 Text(event.summary?.isEmpty == false ? event.summary! : "No description")
                     .multilineTextAlignment(.leading)
                     .lineLimit(horizontalSizeClass == .compact ? 4 : 3)
@@ -235,6 +236,7 @@ struct EventCard: View {
                 Text(footerLabel)
                     .foregroundStyle(event.isAnalyzed ? SentinelTheme.cyan : .secondary)
                     .lineLimit(1)
+                OriginBadge(event: event)
                 // A camera whose frames are never analyzed produces motion rows that look exactly
                 // like a camera which has stopped seeing anything worth describing. Saying so on
                 // the row is the only place someone would notice.
@@ -268,14 +270,17 @@ struct EventCard: View {
     }
 
     private var footerLabel: String {
+        if event.isRecording { return "Recording" }
         guard event.isAnalyzed else { return "Motion only" }
         return (event.eventType ?? "unknown").replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     private var accessibilityDescription: String {
-        let detail = event.isAnalyzed ? (event.summary ?? "") : "Motion only, \(event.zoneName ?? "in zone")"
+        let detail = event.isAnalyzed || event.isRecording
+            ? (event.summary ?? "")
+            : "Motion only, \(event.zoneName ?? "in zone")"
         let aiOff = event.isAiAnalysisOff ? ", AI analysis off for this camera" : ""
-        return "\(event.camera), \(detail)\(aiOff), \(event.occurredAt.formatted())"
+        return "\(event.camera), \(event.originLabel), \(detail)\(aiOff), \(event.occurredAt.formatted())"
     }
 
     private var imageURL: URL? {

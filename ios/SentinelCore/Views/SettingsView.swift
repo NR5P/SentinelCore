@@ -181,7 +181,7 @@ struct SettingsView: View {
                 LabeledContent("Cameras", value: "\(model.cameras.count)")
                 // Of those events, the ones nothing analyzed - motion the camera never forwarded
                 // for analysis, or whose forward was refused.
-                LabeledContent("Motion only", value: "\(model.activity.filter { !$0.isAnalyzed }.count)")
+                LabeledContent("Motion only", value: "\(model.activity.filter { !$0.isAnalyzed && !$0.isRecording }.count)")
                 if let lastError = model.lastError {
                     Text(lastError).foregroundStyle(SentinelTheme.red)
                 }

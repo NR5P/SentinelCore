@@ -58,8 +58,46 @@ struct ActivityItem: Codable, Identifiable, Hashable {
     let clipPreSeconds: Int?
     let clipPostSeconds: Int?
 
+    // Where the row came from - "alert" for something the cameras noticed, "manual" for the record
+    // button, "scheduled" for a timed recording window (ActivityOrigins server-side). Optional for a
+    // server older than the field, which only ever sent alerts.
+    let origin: String?
+    // How long a recording row's video runs. Absent on every other kind of row, and on a recording
+    // still being written.
+    let durationSeconds: Int?
+
     var isAnalyzed: Bool { kind == "analyzed" }
     var hasClip: Bool { clipUrl != nil }
+
+    // Footage somebody asked for - the record button or a timed window - rather than something a
+    // camera noticed. The summary is the server's own line about it and stands where an AI
+    // description would.
+    var isRecording: Bool { kind == "recording" }
+
+    // The badge every card wears. "Alert" is the default so a server that predates the field, which
+    // only ever sent alerts, reads as what it always was.
+    var originLabel: String {
+        switch origin {
+        case "manual": "Manual"
+        case "scheduled": "Timer"
+        default: "Alert"
+        }
+    }
+
+    var originDescription: String {
+        switch origin {
+        case "manual": "Record button"
+        case "scheduled": "Timed recording"
+        default: "The cameras noticed something"
+        }
+    }
+
+    var durationLabel: String? {
+        guard let seconds = durationSeconds else { return nil }
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3600 { return "\(seconds / 60)m \(String(format: "%02d", seconds % 60))s" }
+        return "\(seconds / 3600)h \(String(format: "%02d", seconds % 3600 / 60))m"
+    }
 
     // Nothing looked at this frame and nothing will. Defaults to false so a server that doesn't
     // send the field reads as "analysis is on", which is what every install did before it existed.

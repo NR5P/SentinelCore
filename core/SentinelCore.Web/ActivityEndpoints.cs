@@ -70,6 +70,7 @@ public static class ActivityEndpoints
             ITriggerEventStore triggerStore,
             ITriggerConfigStore triggerConfigs,
             ICameraStore cameraStore,
+            IRecordingStore recordingStore,
             IImageEmbeddingService imageEmbeddings,
             AppSettingsFile appSettings,
             CancellationToken ct,
@@ -110,6 +111,14 @@ public static class ActivityEndpoints
                 ? []
                 : await triggerStore.GetRecentAsync(fetch, cameraId, includeUnconfirmed, ct);
 
+            // Footage somebody asked for - the record button, or a timed window - sits beside the
+            // motion it would otherwise have been filed away from. It used to live only behind
+            // /api/recordings, which no client ever listed, so a hand-started recording was saved
+            // to disk and then invisible everywhere.
+            var recordings = cameraFilterMatchedNothing
+                ? []
+                : await recordingStore.GetRecentAsync(fetch, cameraId, ct);
+
             // The rows above are the motion-only page and are filtered to confirmed unless "show
             // hidden" is on. That is right for listing, and wrong for the join: an alert whose
             // trigger the AI rejected would not find it here, and would then be judged by its own
@@ -140,7 +149,7 @@ public static class ActivityEndpoints
 
             return Results.Ok(BuildActivity(
                 alerts, triggers, cameraNames, analysisOnlyFilter, from, to, capped,
-                cameraInfo, includeUnconfirmed, DateTimeOffset.UtcNow, joinTriggers));
+                cameraInfo, includeUnconfirmed, DateTimeOffset.UtcNow, joinTriggers, recordings));
         }).RequireAuthorization();
     }
 
@@ -164,7 +173,10 @@ public static class ActivityEndpoints
         // The trigger rows to JOIN the alerts against, which is not the same set as the motion-only
         // page in `triggers` - see the call site. Null means "use the page", which is the old
         // behaviour and what the tests that don't care about verdicts still pass.
-        IReadOnlyList<TriggerEvent>? joinTriggers = null)
+        IReadOnlyList<TriggerEvent>? joinTriggers = null,
+        // Hand-started and timed recordings, listed as rows of their own. Null for the callers that
+        // predate them.
+        IReadOnlyList<Recording>? recordings = null)
     {
         var now = asOf ?? DateTimeOffset.UtcNow;
 
@@ -196,6 +208,21 @@ public static class ActivityEndpoints
                 items.Add(MotionOnly(
                     trigger, cameraNames.GetValueOrDefault(trigger.CameraId, "deleted camera"),
                     InfoFor(cameraInfo, trigger.CameraId), now));
+            }
+        }
+
+        // A recording is not a detection, so the analysis-only filters (event type, notified,
+        // search) have nothing to match on it - same rule as the motion rows above. It is always
+        // "confirmed": somebody asked for this footage, which is a stronger vote than any detector's.
+        if (!analysisOnlyFilter && recordings is not null)
+        {
+            foreach (var recording in recordings)
+            {
+                var startedAt = recording.ActualStartUtc ?? recording.RequestedStartUtc;
+                if (from is not null && startedAt < from) continue;
+                if (to is not null && startedAt >= to) continue;
+                items.Add(RecordingRow(
+                    recording, cameraNames.GetValueOrDefault(recording.CameraId, "deleted camera"), now));
             }
         }
 
@@ -359,6 +386,69 @@ public static class ActivityEndpoints
             ClipPostSeconds: info?.ClipPostSeconds);
     }
 
+    // A recording somebody asked for, by hand or by the clock. The file is the whole point of the
+    // row, so it rides in ClipUrl exactly like a trigger clip does and every client's existing
+    // clip player opens it. The summary says which kind and how long, since there is no AI
+    // description to stand there.
+    private static ActivityItem RecordingRow(Recording recording, string cameraName, DateTimeOffset now)
+    {
+        var inProgress = string.Equals(recording.Status, Recording.StatusRecording, StringComparison.OrdinalIgnoreCase);
+        var failed = string.Equals(recording.Status, "failed", StringComparison.OrdinalIgnoreCase);
+        var hasFile = !inProgress && !string.IsNullOrWhiteSpace(recording.FilePath) && File.Exists(recording.FilePath);
+
+        var startedAt = recording.ActualStartUtc ?? recording.RequestedStartUtc;
+        var endedAt = recording.ActualEndUtc ?? (inProgress ? now : recording.RequestedEndUtc);
+        var duration = (int)Math.Max(0, Math.Round((endedAt - startedAt).TotalSeconds));
+
+        var what = recording.IsManual
+            ? "Recorded from the record button"
+            : $"Timed recording \"{recording.Name}\"";
+        var summary = inProgress
+            ? $"{what} - recording now"
+            : failed
+                ? $"{what} - failed: {(string.IsNullOrWhiteSpace(recording.Detail) ? "no video was saved" : recording.Detail)}"
+                : $"{what} - {DescribeLength(duration)}";
+
+        var clipState = inProgress ? ClipStates.Recording
+            : hasFile ? ClipStates.Ready
+            // The file was expected and is not there - a failed window, or one whose file has since
+            // been removed. Either is worth the same fault badge a lost trigger clip gets.
+            : ClipStates.Missing;
+
+        return new ActivityItem(
+            Id: $"recording:{recording.Id:D}",
+            Kind: ActivityKinds.Recording,
+            Camera: cameraName,
+            OccurredAt: startedAt,
+            ImageUrl: hasFile ? $"/api/recordings/{recording.Id:D}/poster" : null,
+            ClipUrl: hasFile ? $"/api/recordings/{recording.Id:D}/video" : null,
+            Status: recording.Status,
+            EventType: null,
+            Summary: summary,
+            Notified: false,
+            NotificationReason: null,
+            Confidence: null,
+            LinkedCameras: null,
+            PackageTheftReason: null,
+            IncidentId: null,
+            TriggerId: null,
+            ZoneName: null,
+            Confirmation: ConfirmationStates.Confirmed,
+            CameraId: recording.CameraId,
+            TriggerAreaFraction: null,
+            AiAnalysisOff: false,
+            ClipState: clipState,
+            ClipPreSeconds: null,
+            ClipPostSeconds: null,
+            Origin: recording.IsManual ? ActivityOrigins.Manual : ActivityOrigins.Scheduled,
+            DurationSeconds: inProgress ? null : duration);
+    }
+
+    private static string DescribeLength(int seconds) =>
+        seconds < 60 ? $"{seconds}s"
+        : seconds < 3600 ? $"{seconds / 60}m {seconds % 60:00}s"
+        : $"{seconds / 3600}h {seconds % 3600 / 60:00}m";
+
     private static ActivityItem MotionOnly(TriggerEvent trigger, string cameraName, CameraActivityInfo? info, DateTimeOffset now)
     {
         // No config to consult reads the same as "not forwarding": either way nothing analyzed this
@@ -411,6 +501,24 @@ public static class ConfirmationStates
     public const string Unverified = "unverified";
 }
 
+// Why a row exists at all. An "alert" row is the cameras noticing something - a motion zone, a
+// sensor, the trigger API - whether or not the AI then agreed. The other two are footage somebody
+// asked for: the record button, or a recording window on the clock. Every row carries one so a
+// card can be badged, since a hand-started clip and a motion clip look identical otherwise.
+public static class ActivityOrigins
+{
+    public const string Alert = "alert";
+    public const string Manual = "manual";
+    public const string Scheduled = "scheduled";
+}
+
+public static class ActivityKinds
+{
+    public const string Analyzed = "analyzed";
+    public const string Motion = "motion";
+    public const string Recording = "recording";
+}
+
 public static class ClipStates
 {
     public const string Ready = "ready";
@@ -460,4 +568,10 @@ public sealed record ActivityItem(
     bool AiAnalysisOff = false,
     string? ClipState = null,
     int? ClipPreSeconds = null,
-    int? ClipPostSeconds = null);
+    int? ClipPostSeconds = null,
+    // See ActivityOrigins. Defaults to "alert" so the two rows that existed before recordings
+    // joined this list keep reading as what they always were.
+    string Origin = ActivityOrigins.Alert,
+    // How long a recording row's video runs. Null on every other kind of row, and on a recording
+    // that is still being written.
+    int? DurationSeconds = null);
