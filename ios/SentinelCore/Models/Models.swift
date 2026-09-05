@@ -232,6 +232,20 @@ struct TriggerConfig: Codable, Equatable {
     var nightStartHour: Int?
     var nightEndHour: Int?
 
+    // The two per-camera AI routing flags - see core/docs/AI_ROUTING_HANDOFF.md. Optional for
+    // exactly the reason the night window above is: nil omits the key, which the server merges
+    // against the stored row, and a plain `false` on every save would quietly switch the coop
+    // camera back to the detector the first time someone nudged a polygon from their phone.
+    //
+    // `bypassFastLocal` sends every trigger straight to the full model instead of letting the
+    // fast local detector decide what is worth escalating - the detector is COCO-trained and has
+    // no class for a raccoon, fox, opossum or weasel, so at a chicken coop it clears those frames
+    // as empty. `keepOnlyAlertable` judges a trigger by whether the AI would have alerted on the
+    // frame rather than by whether anything was in it, so the coop's own chickens stop confirming
+    // every trigger. Both off by default and both read through the resolved helpers below.
+    var bypassFastLocal: Bool?
+    var keepOnlyAlertable: Bool?
+
     // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
     // written before multi-zone reads as a single zone built from the legacy pair, so the editor
     // never has to special-case the migration.
@@ -248,6 +262,13 @@ struct TriggerConfig: Codable, Equatable {
     var resolvedNightWindow: (enabled: Bool, startHour: Int, endHour: Int) {
         (nightWindowEnabled ?? false, nightStartHour ?? 21, nightEndHour ?? 7)
     }
+
+    // Same fallbacks the server applies to a row written before these two columns existed, and
+    // the same reason as resolvedNightWindow: a server older than the feature sends neither key,
+    // and the editor still has to show a switch. Off is the server's default for both.
+    var resolvedBypassFastLocal: Bool { bypassFastLocal ?? false }
+
+    var resolvedKeepOnlyAlertable: Bool { keepOnlyAlertable ?? false }
 }
 
 extension TriggerZone {

@@ -94,6 +94,11 @@ public partial class TriggerZoneEditorWindow : Window
             SendToAlertsToggle.IsChecked = _config.SendToAlerts;
             ProfileBox.SelectedValue = _config.AlertProfile;
 
+            // Resolved, not raw: a server older than either column sends neither key, and the two
+            // checkboxes still have to show something.
+            BypassFastLocalToggle.IsChecked = _config.ResolvedBypassFastLocal;
+            KeepOnlyAlertableToggle.IsChecked = _config.ResolvedKeepOnlyAlertable;
+
             NightToggle.IsChecked = _config.ResolvedNightEnabled;
             NightStartBox.Text = _config.ResolvedNightStartHour.ToString(CultureInfo.InvariantCulture);
             NightEndBox.Text = _config.ResolvedNightEndHour.ToString(CultureInfo.InvariantCulture);
@@ -508,6 +513,11 @@ public partial class TriggerZoneEditorWindow : Window
             NightWindowEnabled = NightToggle.IsChecked == true,
             NightStartHour = nightStart,
             NightEndHour = nightEnd,
+
+            // Stated rather than omitted for the same reason as the three above: this screen knows
+            // about both switches, so it owns their value.
+            BypassFastLocal = BypassFastLocalToggle.IsChecked == true,
+            KeepOnlyAlertable = KeepOnlyAlertableToggle.IsChecked == true,
         };
     }
 

@@ -614,6 +614,8 @@ Below that, the settings for this zone:
 | Seconds before / after trigger | How much footage to keep on each side of the trigger moment. The clip only appears once the "after" portion has finished recording. |
 | **Send triggers to the AI and alert pipeline** | Off by default. When on, a trigger from this zone is sent through the *same* AI analysis and the *same* alert actions (email, Telegram, webhook) that Blue Iris alerts already use — see below. |
 | Alert prompt profile | Which prompt profile (see [section 9](#9-prompt-profiles--what-the-ai-is-told-to-look-for)) analyzes this camera's triggers. Only shown/used when the toggle above is on. |
+| **Always use the full AI (skip the fast detector)** | Off by default. Sends every trigger from this camera straight to the full AI instead of letting the fast local detector decide what is worth escalating. Only matters when Fast Local Detection is your primary backend. The detector is trained on a fixed class list with no raccoon, fox, opossum or weasel in it, so at a chicken coop it clears those frames as empty and the model that could name the predator never sees them. Every trigger then costs a full analysis (~2 minutes), so raise "seconds between triggers" to match — see below. |
+| **Only keep what the AI would alert on** | Off by default. Judges this camera's triggers by whether the AI would have alerted on the frame instead of by whether anything was in it — see below. |
 | Enabled | Master switch for the whole zone. Off means nothing is watched or recorded, but your shape and settings are kept. |
 | **Pause triggers overnight** | Off by default. Stops this camera triggering at all between the two hours you set — see below. |
 | Trigger from a sensor | Fires this camera when a Device Hub sensor reports — see below. |
@@ -686,6 +688,42 @@ A few things worth knowing:
 - **It fails toward showing you things.** If the analysis is slow, errors, or can't be reached,
   the trigger is shown unjudged rather than hidden. Only the AI actually looking and finding
   nothing hides a trigger. "Give up after" sets how long to wait before giving up that way.
+
+### A camera pointed at something that is always there
+
+The two settings above this one — **Always use the full AI** and **Only keep what the AI would
+alert on** — exist for the same awkward camera: one aimed at a chicken coop, a bird feeder, a
+paddock. Both are **off by default** and both should stay off on almost every camera. A driveway
+wants neither.
+
+**The problem.** On a driveway the system is right about two things: the fast local detector is a
+good judge of which frames are worth the full AI, and "is a person, vehicle, package or animal in
+shot" is a good test of whether a trigger was real. Point the same camera at a coop and both
+break:
+
+- The fast detector knows a fixed list of things, and **raccoon, fox, opossum, weasel and coyote
+  are not on it**. A predator isn't scored as "probably nothing" — there is no entry for it at
+  all, so the frame looks empty and never reaches the AI that could have named it. Measured over
+  one night at a coop: of 346 frames the detector screened, 306 were cleared without anything
+  capable of recognising a predator ever seeing them.
+- The chickens *are* animals, and they *are* always in shot. So they confirm every trigger. The
+  EVENTS tab fills with chickens, every clip is kept, and the one raccoon is a single row in the
+  pile.
+
+**Always use the full AI** fixes the first: every trigger from that camera goes straight to the
+full model. **Only keep what the AI would alert on** fixes the second: a trigger counts as real
+only if the AI would have told you about it, so ordinary chicken activity gets no event, no clip
+and no alert, while a predator gets all three. The snapshot is kept either way, so **show hidden**
+still shows you everything that fired.
+
+**The cost is real, and it is the first one.** Sending every trigger to the full AI means every
+trigger costs a full analysis — around two minutes. If the camera fires faster than that, the
+queue backs up and triggers start being dropped unanalysed, and a dropped trigger is kept rather
+than discarded, so you end up with *more* footage instead of less. **Raise "seconds between
+triggers" on that camera to at least the length of an analysis** when you turn this on.
+
+Neither setting does anything unless **Send triggers to the AI and alert pipeline** is on for that
+camera — with it off, nothing analyses the frame in the first place.
 
 ### Pausing a camera overnight
 
