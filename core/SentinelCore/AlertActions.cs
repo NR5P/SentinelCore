@@ -541,8 +541,17 @@ public sealed class EmailAlertAction : IAlertAction
         if (analysis.Person.Visible && EqualsValue(analysis.Person.Location, "inside_property"))
             return new("person-on-property", "Person detected inside your property");
 
+        // No "at your gate" here, unlike the person/vehicle subjects above. Those are all reached
+        // through a location check (IsNearGate, outside_gate_entrance) that only a gate camera can
+        // satisfy, so the wording is earned. This one fires on any camera that sees an animal, and
+        // the first real notification the chicken coop ever sent arrived titled "Animal detected
+        // near your gate" - the coop is nowhere near the gate.
+        //
+        // Says WHAT instead of where, because the where is already in the email's own table and
+        // the what is the entire question at a coop: a raccoon and the chickens are both "animal",
+        // and the subject line is all you get on a phone at 5am.
         if (analysis.Animal.Visible)
-            return new("animal", "Animal detected near your gate");
+            return new("animal", AnimalSubject(analysis.Animal));
 
         return null;
     }
@@ -559,6 +568,29 @@ public sealed class EmailAlertAction : IAlertAction
             "dhl" => "DHL",
             _ => null
         };
+    }
+
+    // The model writes these as short noun phrases - "chickens", "Two chickens", "unidentified
+    // animal (likely raccoon) on ladder" - so they drop straight into a subject line. Capped
+    // anyway: it is free-text from a model, and an email subject that runs to a paragraph is
+    // truncated by the client in whatever place it likes.
+    private const int AnimalSubjectDescriptionLimit = 80;
+
+    // Public for the tests, following BuildRequest above: it is a pure string function whose whole
+    // output is something a person reads on a lock screen, and the last version of it was wrong for
+    // a year on every camera that was not the gate.
+    public static string AnimalSubject(AnimalAnalysis animal)
+    {
+        // Trailing full stop reads wrong in a subject line, and the model supplies one about half
+        // the time ("Several chickens are present in the coop."). Trimmed BEFORE the length check,
+        // not after: doing it after also eats the ellipsis the truncation just added.
+        var description = animal.Description?.Trim().TrimEnd('.');
+        if (string.IsNullOrWhiteSpace(description)) return "Animal detected";
+
+        if (description.Length > AnimalSubjectDescriptionLimit)
+            description = description[..AnimalSubjectDescriptionLimit].TrimEnd() + "...";
+
+        return $"Animal detected: {description}";
     }
 
     private static string VehicleDescription(VehicleAnalysis vehicle)
