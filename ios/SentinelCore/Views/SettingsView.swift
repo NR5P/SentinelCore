@@ -255,7 +255,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("This native client manages its connection and push registration locally. Full server configuration remains in the Core dashboard.")
+                Text("This app manages its own connection and push registration. Server settings edited here and on the web dashboard are the same settings - a change in either place shows up in both.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

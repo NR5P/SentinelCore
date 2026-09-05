@@ -445,8 +445,9 @@ fun SettingsScreen(
 
             item {
                 Text(
-                    "This native client manages its connection and push registration locally. " +
-                        "Full server configuration remains in the Core dashboard.",
+                    "This app manages its own connection and push registration. Server settings " +
+                        "edited here and on the web dashboard are the same settings - a change in " +
+                        "either place shows up in both.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
                         .fillMaxWidth()

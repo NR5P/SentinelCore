@@ -163,8 +163,8 @@ private struct AlertCard: View {
                     }
                     if let confirmation = event.confirmation, confirmation != "confirmed" {
                         Label(
-                            confirmation == "rejected" ? "Nothing found" : "Checking",
-                            systemImage: confirmation == "rejected" ? "exclamationmark.triangle.fill" : "ellipsis.circle"
+                            ActivityVerdict.shortLabel(for: confirmation),
+                            systemImage: ActivityVerdict.symbol(for: confirmation)
                         )
                         .foregroundStyle(SentinelTheme.amber)
                     }

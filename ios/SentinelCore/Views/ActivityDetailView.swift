@@ -129,7 +129,7 @@ struct ActivityDetailView: View {
             if let confirmation = event.confirmation, confirmation != "confirmed" {
                 LabeledContent(
                     "AI verdict",
-                    value: confirmation == "rejected" ? "Nothing found in frame" : "Awaiting verdict"
+                    value: ActivityVerdict.detailLabel(for: confirmation)
                 )
             }
             if !event.isAnalyzed {
