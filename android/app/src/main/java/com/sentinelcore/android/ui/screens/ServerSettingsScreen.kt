@@ -63,6 +63,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import com.sentinelcore.android.ui.components.SaveFeedbackHost
+import com.sentinelcore.android.ui.components.rememberSaveFeedback
+import com.sentinelcore.android.ui.components.SaveButton
 
 // Every server settings section, rendered generically from GET /api/settings/schema - the same
 // definitions the web dashboard and the iOS/macOS app render, so a section added on the server
@@ -306,6 +309,7 @@ private fun ServerSettingsSectionEditor(
     var isSaving by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errors by remember { mutableStateOf<List<String>>(emptyList()) }
+    val feedback = rememberSaveFeedback()
     var confirmRestart by remember { mutableStateOf(false) }
     var confirmAction by remember { mutableStateOf(false) }
 
@@ -447,21 +451,25 @@ private fun ServerSettingsSectionEditor(
             errors = emptyList()
             try {
                 val restartRequired = model.saveSettingsSection(section.endpoint, payload)
-                statusMessage = if (restartRequired) {
+                // The banner and the button say it saved; the inline line only keeps what's still
+                // worth reading once they've gone - that a restart stands between save and effect.
+                if (restartRequired) {
                     val service = if (restartsDashboard) "dashboard" else "bridge"
-                    "Saved. Takes effect after the $service service restarts - use the restart button below."
+                    statusMessage = "Saved. Takes effect after the $service service restarts - use the restart button below."
+                    feedback.saved("Saved - restart the $service to apply")
                 } else {
-                    "Saved."
+                    feedback.saved()
                 }
             } catch (error: Exception) {
                 errors = (error.message ?: "Save failed.").split("\n")
+                feedback.failed("Not saved")
             } finally {
                 isSaving = false
             }
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    SaveFeedbackHost(feedback) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -572,9 +580,7 @@ private fun ServerSettingsSectionEditor(
                 ) {
                     statusMessage?.let { Text(it, color = SentinelGreen, style = MaterialTheme.typography.bodySmall) }
                     errors.forEach { Text(it, color = SentinelRed, style = MaterialTheme.typography.bodySmall) }
-                    Button(onClick = ::save, enabled = !isSaving, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (isSaving) "Saving…" else "Save")
-                    }
+                    SaveButton(feedback, isSaving, onClick = ::save, modifier = Modifier.fillMaxWidth())
                     section.extraAction?.let { action ->
                         OutlinedButton(onClick = { confirmAction = true }, modifier = Modifier.fillMaxWidth()) {
                             Text(action.label.replaceFirstChar(Char::uppercase))
@@ -653,9 +659,12 @@ private fun ServerSettingsSectionEditor(
                         try {
                             // The server's own sentence when it has one - "Test email sent to
                             // you@example.com." is what someone pressed the button to find out.
-                            statusMessage = model.runSettingsAction(action) ?: "Done."
+                            val outcome = model.runSettingsAction(action) ?: "Done."
+                            statusMessage = outcome
+                            feedback.note(outcome)
                         } catch (error: Exception) {
                             errors = listOf(error.message ?: "Action failed.")
+                            feedback.failed("${action.label.replaceFirstChar(Char::uppercase)} failed")
                         }
                     }
                 }) { Text("Continue") }

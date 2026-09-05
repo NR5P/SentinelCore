@@ -180,6 +180,7 @@ struct DeviceEditView: View {
                 _ = try await model.client.createDevice(toSave)
             }
             onSaved()
+            SaveFeedback.hapticSuccess()
             dismiss()
         } catch {
             errors = [error.localizedDescription]

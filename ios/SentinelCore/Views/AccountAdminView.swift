@@ -134,6 +134,7 @@ struct AccountEditView: View {
                     ? nil : displayName.trimmingCharacters(in: .whitespaces)
             )
             model.accounts.append(created)
+            SaveFeedback.hapticSuccess()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
@@ -219,6 +220,7 @@ struct AccountDetailView: View {
         do {
             try await model.client.updateAccountRole(id: account.id, role: otherRole)
             model.accounts = try await model.client.accounts()
+            SaveFeedback.hapticSuccess()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
@@ -247,6 +249,7 @@ struct AccountDetailView: View {
         do {
             try await model.client.deleteAccount(id: account.id)
             model.accounts.removeAll { $0.id == account.id }
+            SaveFeedback.hapticSuccess()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

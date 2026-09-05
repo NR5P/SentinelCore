@@ -360,6 +360,7 @@ private struct ChangePasswordSheet: View {
         errorMessage = nil
         do {
             try await model.client.changeMyPassword(currentPassword: currentPassword, newPassword: newPassword)
+            SaveFeedback.hapticSuccess()
             dismiss()
 
             // The server ends every session for the account when the password changes, this

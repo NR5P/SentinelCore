@@ -253,6 +253,7 @@ struct CameraEditView: View {
                 let created = try await model.client.createCamera(input)
                 model.cameras.append(created)
             }
+            SaveFeedback.hapticSuccess()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

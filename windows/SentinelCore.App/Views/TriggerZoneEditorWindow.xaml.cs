@@ -459,11 +459,11 @@ public partial class TriggerZoneEditorWindow : Window
         {
             var config = BuildConfigForSave(cooldown, maxPerMinute, preSeconds, postSeconds, nightStart, nightEnd);
             _config = await _model.Client.SaveTriggerConfigAsync(_camera.Id, config);
-            Message("Saved.");
+            Design.SaveFeedback.Saved(MessageText, SaveButton);
         }
         catch (Exception error)
         {
-            Message(AppModel.UserFacingMessage(error));
+            Design.SaveFeedback.Failed(MessageText, AppModel.UserFacingMessage(error));
         }
         finally
         {
@@ -542,7 +542,7 @@ public partial class TriggerZoneEditorWindow : Window
         return false;
     }
 
-    private void Message(string message) => MessageText.Text = message;
+    private void Message(string message) => Design.SaveFeedback.Note(MessageText, message);
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();
 }

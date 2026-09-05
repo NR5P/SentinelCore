@@ -40,6 +40,9 @@ import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelRed
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.sentinelcore.android.ui.components.SaveFeedbackHost
+import com.sentinelcore.android.ui.components.rememberSaveFeedback
+import com.sentinelcore.android.ui.components.SaveButton
 
 // Apple Home integration - the web dashboard's APPLE HOMEKIT section. Two halves that look alike
 // but aren't: the settings are ordinary config saved to appsettings, while the status and pairing
@@ -63,6 +66,7 @@ fun HomeKitAdminScreen(
     var confirmingReset by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val feedback = rememberSaveFeedback()
 
     suspend fun refreshStatus() {
         // Allowed to fail on its own - the sidecar is optional, and a settings form that refused
@@ -77,7 +81,7 @@ fun HomeKitAdminScreen(
             .onFailure { errorMessage = it.message ?: "Could not load HomeKit settings." }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    SaveFeedbackHost(feedback) {
         ScreenHeader("Apple HomeKit", state)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -199,7 +203,9 @@ fun HomeKitAdminScreen(
                 }
 
                 item {
-                    Button(
+                    SaveButton(
+                        feedback = feedback,
+                        isSaving = isSaving,
                         onClick = {
                             scope.launch {
                                 isSaving = true
@@ -207,18 +213,18 @@ fun HomeKitAdminScreen(
                                 errorMessage = null
                                 try {
                                     model.saveHomeKitSettings(current)
-                                    statusMessage = "Saved."
+                                    feedback.saved()
                                     refreshStatus()
                                 } catch (error: Exception) {
                                     errorMessage = error.message ?: "Save failed."
+                                    feedback.failed("Not saved")
                                 } finally {
                                     isSaving = false
                                 }
                             }
                         },
-                        enabled = !isSaving,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                    ) { Text(if (isSaving) "Saving…" else "Save") }
+                    )
                 }
 
                 item {
@@ -262,6 +268,7 @@ fun HomeKitAdminScreen(
                         try {
                             model.resetHomeKitPairing()
                             statusMessage = "Pairing reset — the sidecar is restarting."
+                            feedback.note("Pairing reset")
                             refreshStatus()
                         } catch (error: Exception) {
                             errorMessage = error.message ?: "Reset failed."

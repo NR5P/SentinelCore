@@ -125,6 +125,7 @@ struct TriggerZoneEditorView: View {
 
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @StateObject private var feedback = SaveFeedback()
 
     var body: some View {
         Group {
@@ -267,16 +268,14 @@ struct TriggerZoneEditorView: View {
                 }
             }
         }
+        .saveFeedback(feedback)
         .navigationTitle("Trigger Zone")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button(isSaving ? "Saving…" : "Save") {
-                    Task { await save() }
-                }
-                .disabled(isSaving)
+                SaveButton(feedback: feedback, isSaving: isSaving) { Task { await save() } }
             }
         }
         .alert("Rename Zone", isPresented: $isRenaming) {
@@ -465,6 +464,7 @@ struct TriggerZoneEditorView: View {
     private func save() async {
         if let validationError = validationError() {
             errorMessage = validationError
+            feedback.failed("Not saved")
             return
         }
         isSaving = true
@@ -505,8 +505,10 @@ struct TriggerZoneEditorView: View {
         do {
             let saved = try await model.client.saveTriggerConfig(cameraId: camera.id, config)
             apply(saved)
+            feedback.saved()
         } catch {
             errorMessage = error.localizedDescription
+            feedback.failed("Not saved")
         }
     }
 }

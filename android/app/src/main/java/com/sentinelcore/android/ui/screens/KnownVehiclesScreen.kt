@@ -38,6 +38,9 @@ import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelRed
 import kotlinx.coroutines.launch
+import com.sentinelcore.android.ui.components.SaveButton
+import com.sentinelcore.android.ui.components.SaveFeedbackHost
+import com.sentinelcore.android.ui.components.rememberSaveFeedback
 
 // Number plates the AI should recognise as household rather than a stranger's - the web
 // dashboard's KNOWN VEHICLES section, which PACKAGE THEFT WATCH also consults before deciding a
@@ -59,8 +62,8 @@ fun KnownVehiclesScreen(
     var newPlate by remember { mutableStateOf("") }
     var newLabel by remember { mutableStateOf("") }
     var isSaving by remember { mutableStateOf(false) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val feedback = rememberSaveFeedback()
 
     LaunchedEffect(Unit) {
         runCatching { model.knownVehicles() }
@@ -77,7 +80,7 @@ fun KnownVehiclesScreen(
         newLabel.isNotBlank() &&
         vehicles.none { it.plate.uppercase() == trimmedPlate }
 
-    Column(Modifier.fillMaxSize()) {
+    SaveFeedbackHost(feedback) {
         ScreenHeader("Known Vehicles", state)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -131,7 +134,6 @@ fun KnownVehiclesScreen(
                         }
                         IconButton(onClick = {
                             vehicles.remove(vehicle)
-                            statusMessage = null
                         }) {
                             Icon(Icons.Filled.Delete, contentDescription = "Remove", tint = SentinelRed)
                         }
@@ -162,7 +164,6 @@ fun KnownVehiclesScreen(
                                 vehicles.add(KnownVehicle(trimmedPlate, newLabel.trim()))
                                 newPlate = ""
                                 newLabel = ""
-                                statusMessage = null
                             },
                             enabled = canAdd,
                             modifier = Modifier.fillMaxWidth(),
@@ -172,25 +173,27 @@ fun KnownVehiclesScreen(
             }
 
             item {
-                Button(
+                SaveButton(
+                    feedback = feedback,
+                    isSaving = isSaving,
                     onClick = {
                         scope.launch {
                             isSaving = true
-                            statusMessage = null
                             errorMessage = null
                             try {
                                 model.saveKnownVehicles(vehicles.toList())
-                                statusMessage = "Saved."
+                                feedback.saved()
                             } catch (error: Exception) {
                                 errorMessage = error.message ?: "Save failed."
+                                feedback.failed("Not saved")
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    enabled = !isSaving && loaded,
+                    enabled = loaded,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                ) { Text(if (isSaving) "Saving…" else "Save") }
+                )
             }
 
             item {
@@ -202,9 +205,6 @@ fun KnownVehiclesScreen(
                 )
             }
 
-            statusMessage?.let { message ->
-                item { Text(message, color = SentinelGreen, modifier = Modifier.padding(horizontal = 14.dp)) }
-            }
             errorMessage?.let { message ->
                 item { Text(message, color = SentinelRed, modifier = Modifier.padding(horizontal = 14.dp)) }
             }

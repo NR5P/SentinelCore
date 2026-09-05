@@ -111,8 +111,8 @@ private struct PromptProfileEditView: View {
     @State private var faceRecognition = false
     @State private var seeded = false
     @State private var isSaving = false
-    @State private var statusMessage: String?
     @State private var errorMessage: String?
+    @StateObject private var feedback = SaveFeedback()
 
     var body: some View {
         Form {
@@ -161,14 +161,14 @@ private struct PromptProfileEditView: View {
             }
 
             Section {
-                Button(isSaving ? "Saving…" : "Save") { Task { await save() } }
-                    .disabled(isSaving || questions.isEmpty || systemPrompt.trimmingCharacters(in: .whitespaces).isEmpty)
+                SaveButton(
+                    feedback: feedback,
+                    isSaving: isSaving,
+                    disabled: questions.isEmpty || systemPrompt.trimmingCharacters(in: .whitespaces).isEmpty
+                ) { Task { await save() } }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("This profile's crop region and any other settings not shown here are kept exactly as they are.")
-                    if let statusMessage {
-                        Text(statusMessage).foregroundStyle(SentinelTheme.green)
-                    }
                     if let errorMessage {
                         Text(errorMessage).foregroundStyle(SentinelTheme.red)
                     }
@@ -176,6 +176,7 @@ private struct PromptProfileEditView: View {
             }
         }
         .formStyle(.grouped)
+        .saveFeedback(feedback)
         .navigationTitle(displayName.isEmpty ? profileKey : displayName)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -199,7 +200,6 @@ private struct PromptProfileEditView: View {
     // so everything omitted here survives untouched.
     private func save() async {
         isSaving = true
-        statusMessage = nil
         errorMessage = nil
         defer { isSaving = false }
 
@@ -213,8 +213,9 @@ private struct PromptProfileEditView: View {
 
         if let failure = await onSave(edited) {
             errorMessage = failure
+            feedback.failed("Not saved")
         } else {
-            statusMessage = "Saved."
+            feedback.saved()
         }
     }
 }

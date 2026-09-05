@@ -71,11 +71,12 @@ public partial class KnownVehiclesWindow : Window
             // The whole list every time, which is what the endpoint takes - it replaces the section
             // rather than patching it, so a partial send would delete the rest.
             await _model.Client.SaveKnownVehiclesAsync(_vehicles.ToList());
-            Message($"Saved {_vehicles.Count} vehicle{(_vehicles.Count == 1 ? "" : "s")}.");
+            Design.SaveFeedback.Saved(MessageText, SaveButton,
+                $"Saved {_vehicles.Count} vehicle{(_vehicles.Count == 1 ? "" : "s")}.");
         }
         catch (Exception error)
         {
-            Message(AppModel.UserFacingMessage(error));
+            Design.SaveFeedback.Failed(MessageText, AppModel.UserFacingMessage(error));
         }
         finally
         {
@@ -83,7 +84,7 @@ public partial class KnownVehiclesWindow : Window
         }
     }
 
-    private void Message(string message) => MessageText.Text = message;
+    private void Message(string message) => Design.SaveFeedback.Note(MessageText, message);
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();
 }

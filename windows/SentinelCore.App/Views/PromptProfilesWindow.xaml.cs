@@ -135,7 +135,7 @@ public partial class PromptProfilesWindow : Window
         try
         {
             await _model.Client.SavePromptProfilesAsync(_profiles);
-            Message("Saved.");
+            Design.SaveFeedback.Saved(MessageText, SaveButton);
             var selected = _selectedKey;
             await ReloadAsync();
             if (selected is not null && ProfileList.ItemsSource is IEnumerable<ProfileRow> rows)
@@ -145,7 +145,7 @@ public partial class PromptProfilesWindow : Window
         }
         catch (Exception error)
         {
-            Message(AppModel.UserFacingMessage(error));
+            Design.SaveFeedback.Failed(MessageText, AppModel.UserFacingMessage(error));
         }
         finally
         {
@@ -153,7 +153,7 @@ public partial class PromptProfilesWindow : Window
         }
     }
 
-    private void Message(string message) => MessageText.Text = message;
+    private void Message(string message) => Design.SaveFeedback.Note(MessageText, message);
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();
 }

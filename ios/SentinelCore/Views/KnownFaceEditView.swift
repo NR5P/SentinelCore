@@ -185,6 +185,7 @@ struct KnownFaceEditView: View {
                 label: label.trimmingCharacters(in: .whitespaces), imageData: pendingImageData
             )
             model.knownFaces.append(created)
+            SaveFeedback.hapticSuccess()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

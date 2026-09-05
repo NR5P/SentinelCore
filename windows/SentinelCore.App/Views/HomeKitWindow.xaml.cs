@@ -101,12 +101,12 @@ public partial class HomeKitWindow : Window
                 TimeoutSeconds = timeout,
                 MinimumConfidence = confidence,
             });
-            Message("Saved.");
+            Design.SaveFeedback.Saved(MessageText, SaveButton);
             await LoadStatusAsync();
         }
         catch (Exception error)
         {
-            Message(AppModel.UserFacingMessage(error));
+            Design.SaveFeedback.Failed(MessageText, AppModel.UserFacingMessage(error));
         }
         finally
         {
@@ -143,7 +143,7 @@ public partial class HomeKitWindow : Window
         }
     }
 
-    private void Message(string message) => MessageText.Text = message;
+    private void Message(string message) => Design.SaveFeedback.Note(MessageText, message);
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();
 }

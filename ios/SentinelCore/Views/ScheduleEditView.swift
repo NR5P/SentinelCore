@@ -466,6 +466,7 @@ struct ScheduleEditView: View {
                 _ = try await model.client.createSchedule(buildInput())
             }
             onSaved()
+            SaveFeedback.hapticSuccess()
             dismiss()
         } catch {
             errors = [error.localizedDescription]

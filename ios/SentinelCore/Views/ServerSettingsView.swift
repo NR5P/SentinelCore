@@ -194,6 +194,7 @@ struct ServerSettingsSectionView: View {
     @State private var isSaving = false
     @State private var saveErrors: [String] = []
     @State private var statusMessage: String?
+    @StateObject private var feedback = SaveFeedback()
     @State private var confirmingRestart = false
     @State private var confirmingAction = false
     @State private var initialized = false
@@ -211,8 +212,7 @@ struct ServerSettingsSectionView: View {
             }
 
             Section {
-                Button(isSaving ? "Saving…" : "Save") { Task { await save() } }
-                    .disabled(isSaving)
+                SaveButton(feedback: feedback, isSaving: isSaving) { Task { await save() } }
 
                 if let extraAction = section.extraAction {
                     Button(extraAction.label.capitalized) { confirmingAction = true }
@@ -255,6 +255,7 @@ struct ServerSettingsSectionView: View {
             }
         }
         .formStyle(.grouped)
+        .saveFeedback(feedback)
         .navigationTitle(Text(section.title).font(.body.smallCaps()))
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -720,11 +721,17 @@ struct ServerSettingsSectionView: View {
 
         do {
             let result = try await model.client.saveSettingsSection(endpoint: section.endpoint, values: payload)
-            statusMessage = result.restartRequired == true
-                ? "Saved. Takes effect after the \(section.restartTarget) service restarts - use the restart button below."
-                : "Saved."
+            // The banner and the button say it saved; the footer only keeps what's still worth
+            // reading once they've gone - that a restart stands between the save and the effect.
+            if result.restartRequired == true {
+                statusMessage = "Saved. Takes effect after the \(section.restartTarget) service restarts - use the restart button below."
+                feedback.saved("Saved - restart the \(section.restartTarget) to apply")
+            } else {
+                feedback.saved()
+            }
         } catch {
             saveErrors = error.localizedDescription.components(separatedBy: "\n")
+            feedback.failed("Not saved")
         }
     }
 
@@ -734,9 +741,12 @@ struct ServerSettingsSectionView: View {
         do {
             // The server's own sentence when it has one - "Test email sent to you@example.com."
             // is the answer someone pressed the button for, and "Done." throws it away.
-            statusMessage = try await model.client.runSettingsAction(action) ?? "Done."
+            let outcome = try await model.client.runSettingsAction(action) ?? "Done."
+            statusMessage = outcome
+            feedback.note(outcome)
         } catch {
             saveErrors = [error.localizedDescription]
+            feedback.failed(action.label.capitalized + " failed")
         }
     }
 

@@ -77,6 +77,9 @@ import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+import com.sentinelcore.android.ui.components.SaveFeedbackHost
+import com.sentinelcore.android.ui.components.rememberSaveFeedback
+import com.sentinelcore.android.ui.components.SaveTextButton
 
 // The detector works on a fixed 320x180 grid (MotionDetector.GridWidth/GridHeight), so a size
 // expressed as a fraction of the frame turns into this many pixels - the number the trigger
@@ -184,6 +187,7 @@ fun CameraZoneEditorScreen(
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val feedback = rememberSaveFeedback()
 
     fun mutateActiveZone(mutate: (TriggerZone) -> TriggerZone) {
         val index = activeZone
@@ -273,6 +277,7 @@ fun CameraZoneEditorScreen(
         val validation = validationError()
         if (validation != null) {
             errorMessage = validation
+            feedback.failed("Not saved")
             return
         }
         scope.launch {
@@ -315,8 +320,10 @@ fun CameraZoneEditorScreen(
                 )
                 val saved = model.saveTriggerConfig(camera.id, config)
                 apply(saved)
+                feedback.saved()
             } catch (error: Exception) {
                 errorMessage = error.message ?: "Could not save this trigger zone."
+                feedback.failed("Not saved")
             } finally {
                 isSaving = false
             }
@@ -368,13 +375,9 @@ fun CameraZoneEditorScreen(
         )
     }
 
-    Column(Modifier.fillMaxSize()) {
+    SaveFeedbackHost(feedback) {
         DetailHeader("Trigger Zone", onBack) {
-            if (isSaving) {
-                CircularProgressIndicator(Modifier.size(20.dp))
-            } else {
-                TextButton(onClick = ::save) { Text("Save") }
-            }
+            SaveTextButton(feedback, isSaving, onClick = ::save)
         }
 
         val bitmap = referenceBitmap

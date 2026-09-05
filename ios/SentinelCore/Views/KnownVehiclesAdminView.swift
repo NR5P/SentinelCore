@@ -15,8 +15,8 @@ struct KnownVehiclesAdminView: View {
     @State private var newLabel = ""
     @State private var loaded = false
     @State private var isSaving = false
-    @State private var statusMessage: String?
     @State private var errorMessage: String?
+    @StateObject private var feedback = SaveFeedback()
 
     private var trimmedPlate: String {
         newPlate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
@@ -44,7 +44,6 @@ struct KnownVehiclesAdminView: View {
                     }
                     .onDelete { offsets in
                         vehicles.remove(atOffsets: offsets)
-                        statusMessage = nil
                     }
                 }
             } header: {
@@ -64,20 +63,15 @@ struct KnownVehiclesAdminView: View {
                     vehicles.append(KnownVehicle(plate: trimmedPlate, label: newLabel.trimmingCharacters(in: .whitespacesAndNewlines)))
                     newPlate = ""
                     newLabel = ""
-                    statusMessage = nil
                 }
                 .disabled(!canAdd)
             }
 
             Section {
-                Button(isSaving ? "Saving…" : "Save") { Task { await save() } }
-                    .disabled(isSaving || !loaded)
+                SaveButton(feedback: feedback, isSaving: isSaving, disabled: !loaded) { Task { await save() } }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Changes here aren't sent to the server until you save.")
-                    if let statusMessage {
-                        Text(statusMessage).foregroundStyle(SentinelTheme.green)
-                    }
                     if let errorMessage {
                         Text(errorMessage).foregroundStyle(SentinelTheme.red)
                     }
@@ -85,6 +79,7 @@ struct KnownVehiclesAdminView: View {
             }
         }
         .formStyle(.grouped)
+        .saveFeedback(feedback)
         .navigationTitle("Known Vehicles")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -104,14 +99,14 @@ struct KnownVehiclesAdminView: View {
 
     private func save() async {
         isSaving = true
-        statusMessage = nil
         errorMessage = nil
         defer { isSaving = false }
         do {
             try await model.client.saveKnownVehicles(vehicles)
-            statusMessage = "Saved."
+            feedback.saved()
         } catch {
             errorMessage = error.localizedDescription
+            feedback.failed("Not saved")
         }
     }
 }

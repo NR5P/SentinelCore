@@ -41,6 +41,9 @@ import com.sentinelcore.android.ui.theme.SentinelRed
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import com.sentinelcore.android.ui.components.SaveFeedbackHost
+import com.sentinelcore.android.ui.components.rememberSaveFeedback
+import com.sentinelcore.android.ui.components.SaveButton
 
 // The AI prompt profiles - the web dashboard's PROMPT PROFILES section. Each profile is a system
 // prompt plus the questions the model is asked about an image; cameras and gate checks pick one by
@@ -173,10 +176,10 @@ private fun PromptProfileEditor(
         mutableStateOf(profile.optBoolean("faceRecognitionEnabled"))
     }
     var isSaving by remember { mutableStateOf(false) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val feedback = rememberSaveFeedback()
 
-    Column(Modifier.fillMaxSize()) {
+    SaveFeedbackHost(feedback) {
         ScreenHeader(displayName.ifEmpty { profileKey }, state)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -280,11 +283,12 @@ private fun PromptProfileEditor(
             }
 
             item {
-                Button(
+                SaveButton(
+                    feedback = feedback,
+                    isSaving = isSaving,
                     onClick = {
                         scope.launch {
                             isSaving = true
-                            statusMessage = null
                             errorMessage = null
                             try {
                                 // Only the five fields this screen shows; the caller merges them
@@ -296,17 +300,18 @@ private fun PromptProfileEditor(
                                     .put("licensePlateRecognitionEnabled", licensePlate)
                                     .put("faceRecognitionEnabled", faceRecognition)
                                 onSave(edited)
-                                statusMessage = "Saved."
+                                feedback.saved()
                             } catch (error: Exception) {
                                 errorMessage = error.message ?: "Save failed."
+                                feedback.failed("Not saved")
                             } finally {
                                 isSaving = false
                             }
                         }
                     },
-                    enabled = !isSaving && questions.isNotEmpty() && systemPrompt.isNotBlank(),
+                    enabled = questions.isNotEmpty() && systemPrompt.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-                ) { Text(if (isSaving) "Saving…" else "Save") }
+                )
             }
 
             item {
@@ -319,9 +324,6 @@ private fun PromptProfileEditor(
                 )
             }
 
-            statusMessage?.let { message ->
-                item { Text(message, color = SentinelGreen, modifier = Modifier.padding(horizontal = 14.dp)) }
-            }
             errorMessage?.let { message ->
                 item { Text(message, color = SentinelRed, modifier = Modifier.padding(horizontal = 14.dp)) }
             }

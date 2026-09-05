@@ -476,7 +476,7 @@ public partial class ServerSettingsWindow : Window
         try
         {
             var result = await _model.Client.SaveSettingsSectionAsync(section.Endpoint, values);
-            Message(result.RestartRequired == true
+            Design.SaveFeedback.Saved(MessageText, save, result.RestartRequired == true
                 ? $"Saved. The {section.RestartTarget} has to restart before this takes effect."
                 : "Saved.");
 
@@ -486,7 +486,7 @@ public partial class ServerSettingsWindow : Window
         }
         catch (Exception error)
         {
-            Message(AppModel.UserFacingMessage(error));
+            Design.SaveFeedback.Failed(MessageText, AppModel.UserFacingMessage(error));
         }
         finally
         {
@@ -520,7 +520,7 @@ public partial class ServerSettingsWindow : Window
         }
     }
 
-    private void Message(string message) => MessageText.Text = message;
+    private void Message(string message) => Design.SaveFeedback.Note(MessageText, message);
 
     private void OnCloseClicked(object sender, RoutedEventArgs e) => Close();
 }

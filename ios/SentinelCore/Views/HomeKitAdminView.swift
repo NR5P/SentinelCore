@@ -17,6 +17,7 @@ struct HomeKitAdminView: View {
     @State private var confirmingReset = false
     @State private var statusMessage: String?
     @State private var errorMessage: String?
+    @StateObject private var feedback = SaveFeedback()
 
     var body: some View {
         Form {
@@ -104,8 +105,7 @@ struct HomeKitAdminView: View {
                 }
 
                 Section {
-                    Button(isSaving ? "Saving…" : "Save") { Task { await save() } }
-                        .disabled(isSaving)
+                    SaveButton(feedback: feedback, isSaving: isSaving) { Task { await save() } }
                     Button("Reset Pairing", role: .destructive) { confirmingReset = true }
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
@@ -121,6 +121,7 @@ struct HomeKitAdminView: View {
             }
         }
         .formStyle(.grouped)
+        .saveFeedback(feedback)
         .navigationTitle("Apple HomeKit")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -156,10 +157,11 @@ struct HomeKitAdminView: View {
         defer { isSaving = false }
         do {
             try await model.client.saveHomeKitSettings(settings)
-            statusMessage = "Saved."
+            feedback.saved()
             status = try? await model.client.homeKitStatus()
         } catch {
             errorMessage = error.localizedDescription
+            feedback.failed("Not saved")
         }
     }
 
@@ -169,9 +171,11 @@ struct HomeKitAdminView: View {
         do {
             try await model.client.resetHomeKitPairing()
             statusMessage = "Pairing reset — the sidecar is restarting."
+            feedback.note("Pairing reset")
             status = try? await model.client.homeKitStatus()
         } catch {
             errorMessage = error.localizedDescription
+            feedback.failed("Pairing was not reset")
         }
     }
 }
