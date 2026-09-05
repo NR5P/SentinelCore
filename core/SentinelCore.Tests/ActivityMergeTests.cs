@@ -105,6 +105,59 @@ public sealed class ActivityMergeTests
         Assert.Empty(items);
     }
 
+    // The bug this join fix exists for. The Events tab pages triggers with the confirmed-only
+    // filter on, so a REJECTED trigger is absent from that page - and an alert that cannot find
+    // its trigger falls back to its own SubjectConfirmed, which says true for anything that is a
+    // subject. At the chicken coop, where the whole point is that chickens are subjects and not
+    // news, that put a picture of chickens on the tab for every trigger whose video had just been
+    // deleted for being unremarkable.
+    [Fact]
+    public void BuildActivity_ARejectedTriggerMissingFromThePage_StillSuppressesItsAlert()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+        var rejected = Trigger(now, alertId, confirmation: TriggerConfirmation.Rejected);
+
+        // What the endpoint really passes: the motion-only page has been filtered to confirmed, so
+        // the rejected trigger is not in it - but it IS in the join set, fetched by alert id.
+        var items = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: true)], [],
+            Cameras(), false, null, null, 50, AnalyzedCamera(), joinTriggers: [rejected]);
+
+        Assert.Empty(items);
+    }
+
+    [Fact]
+    public void BuildActivity_ThatSameRejectedAlert_IsStillListedUnderShowHidden()
+    {
+        // Held back, not erased - the snapshot is the only way to tell a well-aimed zone from one
+        // pointed at the road.
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+        var rejected = Trigger(now, alertId, confirmation: TriggerConfirmation.Rejected);
+
+        var shown = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: true)], [rejected],
+            Cameras(), false, null, null, 50, AnalyzedCamera(), includeUnconfirmed: true,
+            joinTriggers: [rejected]);
+
+        Assert.Equal("rejected", Assert.Single(shown).Confirmation);
+    }
+
+    [Fact]
+    public void BuildActivity_WithNoJoinSetGiven_FallsBackToThePage()
+    {
+        // The default keeps every existing caller and test meaning what it did before.
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var items = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: true)], [Trigger(now, alertId)],
+            Cameras(), false, null, null, 50, AnalyzedCamera());
+
+        Assert.Equal("confirmed", Assert.Single(items).Confirmation);
+    }
+
     // Rejected is the AI saying no. Unverified is nobody having asked. Both are held back from the
     // default list, but they have to stay distinguishable or "show hidden" can't explain itself.
     [Fact]

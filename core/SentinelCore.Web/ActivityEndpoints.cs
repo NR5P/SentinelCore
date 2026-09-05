@@ -110,6 +110,17 @@ public static class ActivityEndpoints
                 ? []
                 : await triggerStore.GetRecentAsync(fetch, cameraId, includeUnconfirmed, ct);
 
+            // The rows above are the motion-only page and are filtered to confirmed unless "show
+            // hidden" is on. That is right for listing, and wrong for the join: an alert whose
+            // trigger the AI rejected would not find it here, and would then be judged by its own
+            // SubjectConfirmed alone - which says "confirmed" for a chicken, a branch, anything
+            // that is a subject without being worth showing. Fetched by alert id so the verdict is
+            // always available, without diluting the page budget above with rows about to be
+            // filtered out.
+            var joinTriggers = cameraFilterMatchedNothing
+                ? []
+                : await triggerStore.GetByAlertIdsAsync([.. alerts.Select(a => a.Id)], ct);
+
             // Whether a camera forwards to AI analysis at all, and what clip window it records,
             // both live on the trigger config rather than on any event row - GetAllAsync rather
             // than GetEnabledAsync so a camera whose zone was since switched off still explains
@@ -129,7 +140,7 @@ public static class ActivityEndpoints
 
             return Results.Ok(BuildActivity(
                 alerts, triggers, cameraNames, analysisOnlyFilter, from, to, capped,
-                cameraInfo, includeUnconfirmed, DateTimeOffset.UtcNow));
+                cameraInfo, includeUnconfirmed, DateTimeOffset.UtcNow, joinTriggers));
         }).RequireAuthorization();
     }
 
@@ -149,14 +160,18 @@ public static class ActivityEndpoints
         int capped,
         IReadOnlyDictionary<Guid, CameraActivityInfo>? cameraInfo = null,
         bool includeUnconfirmed = false,
-        DateTimeOffset? asOf = null)
+        DateTimeOffset? asOf = null,
+        // The trigger rows to JOIN the alerts against, which is not the same set as the motion-only
+        // page in `triggers` - see the call site. Null means "use the page", which is the old
+        // behaviour and what the tests that don't care about verdicts still pass.
+        IReadOnlyList<TriggerEvent>? joinTriggers = null)
     {
         var now = asOf ?? DateTimeOffset.UtcNow;
 
         // First wins: two triggers claiming one alert can't happen through the write path, and if
         // a hand-edited row ever made it so, listing the moment twice would be worse than picking
         // one of them.
-        var triggersByAlertId = triggers
+        var triggersByAlertId = (joinTriggers ?? triggers)
             .Where(t => t.AlertId is not null)
             .GroupBy(t => t.AlertId!.Value)
             .ToDictionary(g => g.Key, g => g.First());

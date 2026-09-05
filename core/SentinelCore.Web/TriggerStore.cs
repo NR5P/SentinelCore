@@ -248,6 +248,12 @@ public interface ITriggerEventStore
     // "show unconfirmed" toggle - the only way to see what the AI filter is actually throwing
     // away, and to notice when it's throwing away the wrong things.
     Task<IReadOnlyList<TriggerEvent>> GetRecentAsync(int limit, Guid? cameraId, bool includeUnconfirmed, CancellationToken cancellationToken);
+
+    // The trigger rows behind a specific set of alerts, whatever verdict they got. This exists
+    // because the Events tab's paged trigger list is filtered to confirmed rows, and a join built
+    // from that list silently loses the verdict of every rejected one - which then reads as
+    // confirmed off the alert's own SubjectConfirmed. See ActivityEndpoints.BuildActivity.
+    Task<IReadOnlyList<TriggerEvent>> GetByAlertIdsAsync(IReadOnlyList<Guid> alertIds, CancellationToken cancellationToken);
     Task<TriggerEvent?> GetAsync(Guid id, CancellationToken cancellationToken);
 
     // Powers the day timeline: this camera's local trigger events (and their clips, once built)
@@ -739,6 +745,38 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
                 results.Add(Guid.ParseExact(reader.GetString(0), "N"));
+
+            return results;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<IReadOnlyList<TriggerEvent>> GetByAlertIdsAsync(
+        IReadOnlyList<Guid> alertIds, CancellationToken cancellationToken)
+    {
+        if (alertIds.Count == 0) return [];
+
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            // Parameterised IN list rather than a string-joined one: these ids come off rows the
+            // caller just read, but building SQL out of values is a habit worth not having.
+            var names = alertIds.Select((_, i) => $"$a{i}").ToList();
+            using var command = _connection.CreateCommand();
+            command.CommandText =
+                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, " +
+                $"ZoneName, AlertId, CaptureDelaySeconds, Judged FROM TriggerEvents WHERE AlertId IN ({string.Join(", ", names)});";
+
+            for (var i = 0; i < alertIds.Count; i++)
+                command.Parameters.AddWithValue($"$a{i}", alertIds[i].ToString("N"));
+
+            var results = new List<TriggerEvent>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                results.Add(ReadEvent(reader));
 
             return results;
         }
