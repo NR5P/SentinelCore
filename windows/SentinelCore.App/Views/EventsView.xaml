@@ -104,6 +104,15 @@
                                     <TextBlock Text="{Binding FooterLabel}" Style="{StaticResource Caption}"
                                                Foreground="{Binding FooterBrush}" VerticalAlignment="Center" />
 
+                                    <!-- Where the row came from: the cameras, the record button, or a
+                                         timed window. Every row wears one, or a hand-started clip and
+                                         a motion clip would look identical here. -->
+                                    <Border Margin="8,0,0,0" Padding="5,1" CornerRadius="8"
+                                            BorderThickness="1" BorderBrush="{Binding OriginBrush}"
+                                            ToolTip="{Binding OriginTip}" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding OriginLabel}" FontSize="10" Foreground="{Binding OriginBrush}" />
+                                    </Border>
+
                                     <!-- A camera whose frames are never analyzed produces motion rows
                                          that look exactly like a camera which has stopped seeing
                                          anything worth describing. Saying so on the row is the only

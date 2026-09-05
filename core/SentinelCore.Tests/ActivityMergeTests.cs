@@ -498,4 +498,113 @@ public sealed class ActivityMergeTests
 
         Assert.Equal("deleted camera", Assert.Single(items).Camera);
     }
+
+    // ---------------------------------------------------------------- Recordings
+
+    private static Recording ManualRecording(DateTimeOffset startedAt, int seconds, string status = "complete", string? filePath = null) =>
+        new(Guid.NewGuid(), CameraId, null, "Side of house", startedAt, startedAt.AddMinutes(10),
+            startedAt, startedAt.AddSeconds(seconds), filePath, 1234, status, "", IsManual: true);
+
+    private static Recording TimedRecording(DateTimeOffset startedAt, int seconds, string status = "complete") =>
+        new(Guid.NewGuid(), CameraId, Guid.NewGuid(), "Evening driveway", startedAt, startedAt.AddSeconds(seconds),
+            startedAt, startedAt.AddSeconds(seconds), null, 1234, status, "");
+
+    [Fact]
+    public void BuildActivity_ARecordingStartedByHand_IsListedAsAManualRow()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var items = ActivityEndpoints.BuildActivity(
+            [], [], Cameras(), false, null, null, 50, AnalyzedCamera(),
+            recordings: [ManualRecording(now.AddMinutes(-5), 16)]);
+
+        var item = Assert.Single(items);
+        Assert.Equal("recording", item.Kind);
+        Assert.Equal("manual", item.Origin);
+        Assert.Equal("confirmed", item.Confirmation);
+        Assert.Equal("Driveway", item.Camera);
+        Assert.Equal(16, item.DurationSeconds);
+        Assert.StartsWith("recording:", item.Id);
+        Assert.Contains("record button", item.Summary);
+        Assert.Contains("16s", item.Summary);
+        // The file for this test does not exist, so no clip URL - and the badge says so rather
+        // than leaving a card that silently refuses to play.
+        Assert.Null(item.ClipUrl);
+        Assert.Equal("missing", item.ClipState);
+    }
+
+    [Fact]
+    public void BuildActivity_ATimedRecording_IsListedAsAScheduledRow()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var items = ActivityEndpoints.BuildActivity(
+            [], [], Cameras(), false, null, null, 50, AnalyzedCamera(),
+            recordings: [TimedRecording(now.AddHours(-1), 1800)]);
+
+        var item = Assert.Single(items);
+        Assert.Equal("scheduled", item.Origin);
+        Assert.Contains("Evening driveway", item.Summary);
+        Assert.Contains("30m 00s", item.Summary);
+        Assert.Equal(1800, item.DurationSeconds);
+    }
+
+    [Fact]
+    public void BuildActivity_ARecordingStillBeingWritten_HasNoClipYet()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var started = now.AddSeconds(-40);
+        var recording = new Recording(Guid.NewGuid(), CameraId, null, "Side of house", started, started.AddMinutes(10),
+            started, null, null, 0, Recording.StatusRecording, "", IsManual: true);
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [], [], Cameras(), false, null, null, 50, AnalyzedCamera(), asOf: now, recordings: [recording]));
+
+        Assert.Equal("recording", item.ClipState);
+        Assert.Null(item.ClipUrl);
+        Assert.Null(item.DurationSeconds);
+        Assert.Contains("recording now", item.Summary);
+    }
+
+    [Fact]
+    public void BuildActivity_AnalysisOnlyFilters_LeaveRecordingsOut()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var items = ActivityEndpoints.BuildActivity(
+            [], [], Cameras(), analysisOnlyFilter: true, null, null, 50, AnalyzedCamera(),
+            recordings: [ManualRecording(now, 10)]);
+
+        Assert.Empty(items);
+    }
+
+    [Fact]
+    public void BuildActivity_RecordingsRespectTheDateWindow_AndSortWithEverythingElse()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+
+        var items = ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now.AddMinutes(-2))], [Trigger(now.AddMinutes(-2), alertId)], Cameras(), false,
+            from: now.AddMinutes(-3), to: now, 50, AnalyzedCamera(),
+            recordings: [ManualRecording(now.AddMinutes(-1), 9), ManualRecording(now.AddHours(-2), 9)]);
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("recording", items[0].Kind);
+        Assert.Equal("analyzed", items[1].Kind);
+        // Every row says where it came from, the old two included.
+        Assert.Equal("alert", items[1].Origin);
+    }
+
+    // The two rows that existed before recordings joined the list keep reading as what they were.
+    [Fact]
+    public void BuildActivity_MotionAndAnalysisRows_CarryTheAlertOrigin()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var items = ActivityEndpoints.BuildActivity(
+            [], [Trigger(now)], Cameras(), false, null, null, 50, UnanalyzedCamera());
+
+        Assert.Equal("alert", Assert.Single(items).Origin);
+    }
 }

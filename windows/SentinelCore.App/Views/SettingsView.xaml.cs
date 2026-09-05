@@ -100,7 +100,7 @@ public partial class SettingsView : UserControl
 
     private void ApplySystem()
     {
-        var motionOnly = _model.Activity.Count(item => !item.IsAnalyzed);
+        var motionOnly = _model.Activity.Count(item => !item.IsAnalyzed && !item.IsRecording);
         SystemText.Text =
             $"{_model.Activity.Count} events loaded · {_model.Cameras.Count} cameras · {motionOnly} motion only" +
             (_model.LastUpdated is { } updated ? $"\nLast updated {updated.LocalDateTime:HH:mm:ss}" : "");

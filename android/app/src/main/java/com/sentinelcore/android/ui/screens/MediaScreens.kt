@@ -134,6 +134,32 @@ fun ActivityDetailScreen(
                         )
                     }
 
+                    if (event.isRecording) {
+                        // The recording's own line - which kind, how long - where the AI's
+                        // description would sit. There is no AI here: this is footage somebody
+                        // asked for.
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    OriginBadge(event)
+                                    event.durationLabel?.let {
+                                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Text(
+                                    event.summary.orEmpty().ifBlank { "Recording" },
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+                    }
+
                     if (event.isAnalyzed) {
                         Card(Modifier.fillMaxWidth()) {
                             Column(
@@ -193,6 +219,8 @@ fun ActivityDetailScreen(
                                 MetadataRow("Motion area", "${(it * 1000).roundToInt() / 10.0}%")
                             }
                             MetadataRow("Media", if (event.hasClip) "Video clip" else "Snapshot")
+                            MetadataRow("Source", event.originDescription)
+                            event.durationLabel?.let { MetadataRow("Length", it) }
                             // Only worth stating when it isn't the ordinary case. "Confirmed" on
                             // every card would be noise; the other two explain why a row is only
                             // visible with Hidden switched on.
@@ -206,7 +234,7 @@ fun ActivityDetailScreen(
                                     },
                                 )
                             }
-                            if (!event.isAnalyzed) {
+                            if (!event.isAnalyzed && !event.isRecording) {
                                 Text(
                                     "Nothing analysed this frame - this camera doesn't send to AI analysis.",
                                     style = MaterialTheme.typography.bodySmall,

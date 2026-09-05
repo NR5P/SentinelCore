@@ -68,8 +68,26 @@ function clipBadgeHtml(event) {
 // and a notify decision; a "motion" item has neither and never will - nothing looked at it,
 // because the camera doesn't forward to the alert pipeline or the forward was refused. Either can
 // carry a clip, since that comes from the trigger side. See ActivityEndpoints for the join.
+// Where a row came from, as the badge on its card. Three values (ActivityOrigins server-side):
+// the cameras noticing something, the record button, or a recording window on the clock. Every
+// card wears one, because a hand-started clip and a motion clip are otherwise identical.
+const ORIGIN_BADGES = {
+  alert: { label: "alert", tip: "The cameras noticed something - a motion zone, a sensor, or the trigger API - and this is what was kept." },
+  manual: { label: "manual", tip: "Recorded on purpose with the record button in one of the apps. Runs from the press until it was stopped, or until the limit set in Settings." },
+  scheduled: { label: "timer", tip: "Recorded by a timed recording window on this camera's trigger zone, whether or not anything moved." }
+};
+
+function originBadgeHtml(event) {
+  const origin = ORIGIN_BADGES[event.origin] || ORIGIN_BADGES.alert;
+  return `<span class="origin-badge origin-${escapeHtml(event.origin || "alert")}" data-tip="${origin.tip}">${origin.label}</span>`;
+}
+
 function renderCard(event) {
   const analyzed = event.kind === "analyzed";
+  // Footage somebody asked for rather than something a camera noticed - see ActivityEndpoints.
+  // The summary is the server's own line about it ("Recorded from the record button - 16s"), so
+  // it takes the description slot rather than the muted "motion in zone" one.
+  const recording = event.kind === "recording";
 
   const card = document.createElement("div");
   card.className = "card" + (event.notified ? " notified" : "");
@@ -116,11 +134,15 @@ function renderCard(event) {
   // it's the one thing that says why this frame exists.
   const summaryHtml = analyzed
     ? `<div class="card-summary" data-tip="The AI's description of what it saw in this snapshot.">${escapeHtml(event.summary) || "&mdash;"}</div>`
-    : `<div class="card-summary card-muted" data-tip="Motion caught this frame, but nothing analyzed it - this camera doesn't send to AI analysis (Settings on the camera's trigger zone).">${escapeHtml(event.zoneName || "motion in zone")}</div>`;
+    : recording
+      ? `<div class="card-summary" data-tip="A recording somebody asked for, not something the AI described. Click the picture to play it.">${escapeHtml(event.summary) || "recording"}</div>`
+      : `<div class="card-summary card-muted" data-tip="Motion caught this frame, but nothing analyzed it - this camera doesn't send to AI analysis (Settings on the camera's trigger zone).">${escapeHtml(event.zoneName || "motion in zone")}</div>`;
 
   const footerLabel = analyzed
     ? `<span class="card-event-type" data-tip="What kind of event the AI classified this as.">${escapeHtml(event.eventType)}</span>`
-    : `<span class="card-event-type" data-tip="No AI analysis exists for this one - motion only.">motion only</span>`;
+    : recording
+      ? `<span class="card-event-type" data-tip="Video that was recorded on request. Nothing analyzed it - it isn't an event the cameras noticed.">recording</span>`
+      : `<span class="card-event-type" data-tip="No AI analysis exists for this one - motion only.">motion only</span>`;
 
   const imageTip = event.clipUrl
     ? "Click to play the clip recorded around this event."
@@ -146,6 +168,7 @@ function renderCard(event) {
       ${packageTheftHtml}
       <div class="card-footer">
         ${footerLabel}
+        ${originBadgeHtml(event)}
         <span>${formatClock(event.occurredAt)}</span>
       </div>
     </div>

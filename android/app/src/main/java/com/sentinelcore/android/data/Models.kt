@@ -57,9 +57,40 @@ data class ActivityItem(
     val clipState: String? = null,
     val clipPreSeconds: Int? = null,
     val clipPostSeconds: Int? = null,
+    // Where the row came from - "alert" for something the cameras noticed, "manual" for the record
+    // button, "scheduled" for a timed recording window. Null from a server older than the field,
+    // which only ever sent alerts.
+    val origin: String? = null,
+    // How long a recording row's video runs. Null on every other kind of row.
+    val durationSeconds: Int? = null,
 ) {
     val isAnalyzed: Boolean get() = kind == "analyzed"
     val hasClip: Boolean get() = clipUrl != null
+
+    // Footage somebody asked for rather than something a camera noticed. Its summary is the
+    // server's own line about it and stands where an AI description would.
+    val isRecording: Boolean get() = kind == "recording"
+
+    // The badge every card wears. "Alert" is the default so an older server reads as it always did.
+    val originLabel: String get() = when (origin) {
+        "manual" -> "Manual"
+        "scheduled" -> "Timer"
+        else -> "Alert"
+    }
+
+    val originDescription: String get() = when (origin) {
+        "manual" -> "Record button"
+        "scheduled" -> "Timed recording"
+        else -> "The cameras noticed something"
+    }
+
+    val durationLabel: String? get() = durationSeconds?.let { seconds ->
+        when {
+            seconds < 60 -> "${seconds}s"
+            seconds < 3600 -> "${seconds / 60}m ${"%02d".format(seconds % 60)}s"
+            else -> "${seconds / 3600}h ${"%02d".format(seconds % 3600 / 60)}m"
+        }
+    }
 
     // Defaults to false so a server that doesn't send the field reads as "analysis is on", which
     // is what every install did before it existed.

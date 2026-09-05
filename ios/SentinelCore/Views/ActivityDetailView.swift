@@ -26,6 +26,8 @@ struct ActivityDetailView: View {
 
                 if event.isAnalyzed {
                     analysisCard
+                } else if event.isRecording {
+                    recordingCard
                 }
                 factsCard
             }
@@ -113,6 +115,23 @@ struct ActivityDetailView: View {
         .sentinelCard()
     }
 
+    // The recording's own line - which kind, how long - where the AI's description would sit on an
+    // analysed row. There is no AI here: this is footage somebody asked for.
+    private var recordingCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                OriginBadge(event: event)
+                if let length = event.durationLabel {
+                    Text(length).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            Text(event.summary?.isEmpty == false ? event.summary! : "Recording")
+                .font(.title3)
+        }
+        .sentinelCard()
+    }
+
     private var factsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             LabeledContent("Camera", value: event.camera)
@@ -124,6 +143,10 @@ struct ActivityDetailView: View {
                 LabeledContent("Motion area", value: area.formatted(.percent.precision(.fractionLength(1))))
             }
             LabeledContent("Media", value: event.hasClip ? "Video clip" : "Snapshot")
+            LabeledContent("Source", value: event.originDescription)
+            if let length = event.durationLabel {
+                LabeledContent("Length", value: length)
+            }
             // Only worth stating when it isn't the ordinary case. "Confirmed" on every card would
             // be noise; the other two explain why a row is only visible with Show hidden on.
             if let confirmation = event.confirmation, confirmation != "confirmed" {
@@ -132,7 +155,7 @@ struct ActivityDetailView: View {
                     value: ActivityVerdict.detailLabel(for: confirmation)
                 )
             }
-            if !event.isAnalyzed {
+            if !event.isAnalyzed && !event.isRecording {
                 Text("Nothing analysed this frame - this camera doesn't send to AI analysis.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
