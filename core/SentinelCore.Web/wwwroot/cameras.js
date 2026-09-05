@@ -2268,7 +2268,7 @@ window.GateWatchCameras = (function () {
 
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls(LIVE_HLS_CONFIG);
-      hls.on(Hls.Events.ERROR, (_event, data) => handleHlsError(hls, video, status, camera, data));
+      hls.on(Hls.Events.ERROR, (_event, data) => handleHlsError(hls, video, status, camera, data, quality));
       // Only attempt playback once hls.js has actually parsed the manifest - calling play()
       // right after attachMedia (before there's anything to play) causes some browsers to
       // reject the play() promise and never retry, leaving the video stuck paused.
@@ -2320,7 +2320,11 @@ window.GateWatchCameras = (function () {
   // keeps the same player rather than tearing the tile down. Previously any fatal error left the
   // tile reading "stream unavailable" until the whole Live tab was rebuilt, even after the camera
   // came back.
-  function handleHlsError(hls, video, status, camera, data) {
+  // `quality` is the rendition this player was opened at. The restart below has to reopen the
+  // same one, and it used to read a `quality` that was not in scope here - a ReferenceError
+  // thrown inside the setTimeout, so a tile that hit a fatal demuxer/decoder error was destroyed
+  // and never rebuilt: it sat on "restarting stream…" until the whole Live tab was rebuilt.
+  function handleHlsError(hls, video, status, camera, data, quality = GRID_QUALITY) {
     if (!data.fatal) return;
 
     // Reported as degraded rather than failed: the tile stays on HLS and recovers in place. These
