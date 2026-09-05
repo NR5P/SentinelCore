@@ -671,10 +671,20 @@ A few things worth knowing:
   whatever files they still have once they're older than that. That window exists because the
   rejects are the only evidence for whether a zone is tuned right — a threshold firing on a
   spider web looks identical to a perfect one until you can see what it fired *on* — but a
-  camera having a bad night still produces hundreds of them. Set it to 0 to keep everything. **Confirmed triggers are never touched by
-  this** — and nothing else touches them either. **Retention Days** does not reach them: it
-  prunes the AI service's own saved alert images and result files, not the dashboard's trigger
-  clips and snapshots, which live somewhere else. A confirmed trigger's clip is kept for good.
+  camera having a bad night still produces hundreds of them. Set it to 0 to keep everything. **A trigger the AI confirmed is never touched by
+  this** — and nothing else touches it either. **Retention Days** does not reach it: that prunes
+  the AI service's own saved alert images and result files, not the dashboard's trigger clips and
+  snapshots, which live somewhere else. A confirmed trigger's clip is kept for good.
+
+  There is one exception, and it is not really an exception to that sentence. "Confirmed" is also
+  what a trigger gets when nothing ever judged it — the analysis queue was full, the model was
+  unreachable, the verdict timed out. Failing that way round is deliberate: footage of something
+  that really moved should not vanish because of an outage. But it used to be *permanent*, which
+  meant a camera misfiring into a saturated queue kept every clip it made, at exactly the moment
+  it was producing the most worthless video. Those now have their **video** released on this same
+  window. Their row and their snapshot stay, because unlike a reject there is no verdict saying
+  there was nothing there — the picture might be the only record of something real, and it costs a
+  few hundred KB against the clip's ~19 MB.
   That is the safe direction to fail — it's the footage you'd actually want — but it does mean
   the confirmed clips grow forever. On a single busy camera here that has measured **0.3 to 4.4 GB
   a day** — a clip is a steady ~19 MB, so what moves the number is how much really happens in front

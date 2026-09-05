@@ -92,9 +92,9 @@ function renderCard(event) {
   // Only ever present with "show hidden" on - a confirmed event is the normal case and gets no
   // badge, so the list looks the same as it does with the filter doing its job quietly.
   const confirmationHtml = {
-    rejected: `<span class="clip-badge confirmation-badge" data-tip="The AI looked at this frame and found no person, vehicle, package, or animal, so it's hidden from the normal list. The snapshot and clip are still on disk.">&#9888; nothing found</span>`,
+    rejected: `<span class="clip-badge confirmation-badge" data-tip="The AI looked at this frame and decided it wasn't worth showing you, so it's hidden from the normal list. Usually that means nothing was there - no person, vehicle, package or animal. On a camera set to &quot;only keep what the AI would alert on&quot; it can also mean something WAS there and was expected, like the chickens in a coop. The snapshot is kept either way; the video is deleted as soon as the verdict lands, unless the same clip also covers a trigger that was confirmed.">&#9888; filtered out</span>`,
     pending: `<span class="clip-badge confirmation-badge" data-tip="Still waiting on the AI to say whether anything was really here. It'll appear in the normal list if confirmed.">&#8230; checking</span>`,
-    unverified: `<span class="clip-badge confirmation-badge" data-tip="Nothing ever judged this frame - the analysis failed, or the forward to it was refused. It's hidden from the normal list because it never passed the AI check, not because it failed one. The snapshot and clip are still on disk.">&#9888; never checked</span>`
+    unverified: `<span class="clip-badge confirmation-badge" data-tip="Nothing ever judged this frame - the analysis failed, or the forward to it was refused. It's hidden from the normal list because it never passed the AI check, not because it failed one. The snapshot is kept; the video is kept too, until it ages out of the Unverified Motion Days window like a reject does.">&#9888; never checked</span>`
   }[event.confirmation] || "";
 
   // A camera with AI analysis switched off never gets a verdict, so its motion is kept here rather

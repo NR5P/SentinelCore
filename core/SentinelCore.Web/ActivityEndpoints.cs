@@ -295,6 +295,20 @@ public static class ActivityEndpoints
         // "missing" there would invent a fault out of missing information.
         if (info is null || !info.RecordClips) return info is null ? ClipStates.None : ClipStates.Off;
 
+        // A rejected trigger with no clip is the system having done its job, not a fault. Since
+        // 7f29718 the clip is deleted the moment the AI says there was nothing worth keeping, so
+        // badging it "missing" tells the user to go and investigate a file we removed on purpose -
+        // and the web tooltip for that state says, in as many words, to check the logs.
+        //
+        // Rare until KeepOnlyAlertable, which makes it every row on a camera that has it on: the
+        // chicken coop showed an amber fault triangle for six hours after every single trigger.
+        //
+        // "none" rather than a new state so the shipped mobile builds render it as the nothing it
+        // is instead of falling down an unknown-value branch. A rejected trigger whose clip DID
+        // survive - a shared file, a protected one, discarding switched off - never reaches here:
+        // hasClip is checked first and returns "ready".
+        if (trigger.Confirmation == TriggerConfirmation.Rejected) return ClipStates.None;
+
         var readyBy = trigger.OccurredAt
             .AddSeconds(info.ClipPostSeconds + ClipRecorder.SegmentSeconds + ClipBuildGraceSeconds);
         if (now < readyBy) return ClipStates.Recording;

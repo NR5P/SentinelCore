@@ -306,6 +306,25 @@ public sealed class ActivityMergeTests
         Assert.Equal("missing", item.ClipState);
     }
 
+    // ...unless the AI rejected the frame, in which case we deleted the clip ourselves the moment
+    // the verdict landed. Badging that a fault sends the user to look for a file the system removed
+    // on purpose - and the tooltip for "missing" tells them to go and read the logs. Rare before
+    // KeepOnlyAlertable; every single row on a camera that has it on.
+    [Fact]
+    public void BuildActivity_ARejectedTriggerWhoseClipWasDiscarded_IsNotAFault()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var alertId = Guid.NewGuid();
+        var rejected = Trigger(now, alertId, confirmation: TriggerConfirmation.Rejected);
+
+        var item = Assert.Single(ActivityEndpoints.BuildActivity(
+            [Alert(alertId, now, subjectConfirmed: true)], [rejected], Cameras(), false, null, null, 50,
+            AnalyzedCamera(), includeUnconfirmed: true, asOf: now.AddMinutes(10), joinTriggers: [rejected]));
+
+        Assert.Equal("rejected", item.Confirmation);
+        Assert.Equal("none", item.ClipState);
+    }
+
     [Fact]
     public void BuildActivity_WhenTheCameraDoesNotRecordClips_SaysSoRatherThanReportingAFault()
     {
