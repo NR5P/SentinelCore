@@ -197,7 +197,22 @@ public sealed record TriggerEvent(
     //
     // Null when the image came from the live snapshot instead: Trigger Rewind is off, or there was
     // no buffered video to fetch from.
-    double? CaptureDelaySeconds = null);
+    double? CaptureDelaySeconds = null,
+    // Whether the AI actually looked at this frame and gave a verdict. False means Confirmation
+    // says 'confirmed' because nothing ever judged it, not because a subject was found - the queue
+    // was full, the model was unreachable, the analysis errored, the wait timed out.
+    //
+    // Confirmed has always meant those two different things (see TriggerConfirmation below), and
+    // until this column existed only the log could tell them apart. Retention could not, so a
+    // camera misfiring into a saturated queue kept every clip forever at exactly the moment it was
+    // producing the most worthless video: 89 triggers in 40 minutes on 2026-09-03, and 1.88 GB in
+    // one two-hour storm before that.
+    //
+    // True on every existing row and on every trigger that was never gated for a verdict in the
+    // first place (a camera with 'send to alerts' off). Only the fail-open paths inside
+    // TriggerConfirmationService set it false - see the note there about why it is not defaulted
+    // at the write.
+    bool Judged = true);
 
 public interface ITriggerConfigStore
 {
@@ -256,7 +271,9 @@ public interface ITriggerEventStore
     Task RecordNuisanceAdvisoryAsync(Guid cameraId, DateOnly night, DateTimeOffset sentAt, CancellationToken cancellationToken);
 
     // Records the AI's verdict once the analysis for this trigger has finished.
-    Task SetConfirmationAsync(Guid id, TriggerConfirmation confirmation, CancellationToken cancellationToken);
+    // judged is required rather than defaulted on purpose: a default of true is precisely how the
+    // next fail-open path added here would silently rejoin the bug this column exists to fix.
+    Task SetConfirmationAsync(Guid id, TriggerConfirmation confirmation, bool judged, CancellationToken cancellationToken);
 
     // Records which alert this trigger was forwarded as, so the Events tab can show the motion
     // and its analysis as one card. Written as soon as the pipeline accepts the forward - well
@@ -310,6 +327,17 @@ public interface ITriggerEventStore
     // share a clip file, so a rejected row's ClipPath is frequently a confirmed row's ClipPath too,
     // and unlinking on row ownership alone destroys confirmed footage.
     Task<IReadOnlyList<string>> DeleteUnconfirmedBeforeAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
+
+    // Releases the CLIP - not the row, not the snapshot - of triggers old enough to have aged out
+    // that were confirmed only because nothing ever judged them (Judged = 0). Returns the paths to
+    // unlink, same contract as DeleteUnconfirmedBeforeAsync.
+    //
+    // Deliberately gentler than the rejected sweep, which takes rows and snapshots too. A rejected
+    // trigger has a verdict: the AI looked and found nothing, so there is nothing to keep. An
+    // unjudged one has no verdict at all and might be the single frame of something real, so the
+    // picture and the row stay and only the video goes. That is where essentially all the disk is
+    // anyway - a clip is ~19-28 MB against a snapshot's few hundred KB.
+    Task<IReadOnlyList<string>> ReleaseUnjudgedClipsBeforeAsync(DateTimeOffset olderThan, CancellationToken cancellationToken);
 
     // Every image and clip path any row still points at. The retention sweep diffs this against
     // what is actually on disk to find files nothing owns any more - see
@@ -397,6 +425,11 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         // and read only by ReleaseRejectedClipAsync. 0 on every existing row and on everything the
         // motion detector records, which is what the automatic discard is about.
         AddColumnIfMissing("TriggerEvents", "KeepClip", "INTEGER NOT NULL DEFAULT 0");
+        // 1 on every existing row, deliberately. The alternative - assuming history was unjudged -
+        // would hand the very first retention sweep after this upgrade a licence to delete the
+        // clips of every camera that has AI switched off, which are exactly the rows nothing was
+        // ever going to judge and nobody asked to have swept.
+        AddColumnIfMissing("TriggerEvents", "Judged", "INTEGER NOT NULL DEFAULT 1");
         // Off on every existing row. The hours still get their real defaults rather than 0/0 so
         // that a row migrated today and enabled tomorrow suppresses the window someone would
         // actually have asked for - but with Enabled 0 they are inert either way.
@@ -658,15 +691,16 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         return trigger;
     }
 
-    public async Task SetConfirmationAsync(Guid id, TriggerConfirmation confirmation, CancellationToken cancellationToken)
+    public async Task SetConfirmationAsync(Guid id, TriggerConfirmation confirmation, bool judged, CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "UPDATE TriggerEvents SET Confirmation = $confirmation WHERE Id = $id;";
+            command.CommandText = "UPDATE TriggerEvents SET Confirmation = $confirmation, Judged = $judged WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
             command.Parameters.AddWithValue("$confirmation", ToStorage(confirmation));
+            command.Parameters.AddWithValue("$judged", judged ? 1 : 0);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -726,7 +760,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
 
             using var command = _connection.CreateCommand();
             command.CommandText =
-                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds " +
+                "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds, Judged " +
                 $"FROM TriggerEvents {where}ORDER BY OccurredAt DESC LIMIT $limit;";
             command.Parameters.AddWithValue("$limit", limit);
             if (cameraId is not null) command.Parameters.AddWithValue("$cameraId", cameraId.Value.ToString("N"));
@@ -751,7 +785,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds, Judged
                 FROM TriggerEvents
                 WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end AND Confirmation = 'confirmed'
                 ORDER BY OccurredAt ASC;
@@ -780,7 +814,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds
+                SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds, Judged
                 FROM TriggerEvents
                 WHERE CameraId = $cameraId AND OccurredAt >= $start AND OccurredAt < $end
                 ORDER BY OccurredAt ASC;
@@ -938,13 +972,86 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         }
     }
 
+    async Task<IReadOnlyList<string>> ITriggerEventStore.ReleaseUnjudgedClipsBeforeAsync(
+        DateTimeOffset olderThan, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            var cutoff = olderThan.ToUniversalTime().ToString("O");
+
+            // Candidates first, then the sharing check per file - the same two-step
+            // ReleaseRejectedClipAsync uses, and for the same reason. One clip routinely covers
+            // several triggers, so a file is only safe to unlink when EVERY row pointing at it is
+            // an aged-out unjudged one. Three confirmed gate clips were destroyed on 2026-08-15 by
+            // a version of this that trusted row ownership alone.
+            var candidates = new List<string>();
+            using (var select = _connection.CreateCommand())
+            {
+                select.CommandText =
+                    "SELECT DISTINCT ClipPath FROM TriggerEvents " +
+                    "WHERE Judged = 0 AND Confirmation = 'confirmed' AND ClipPath IS NOT NULL " +
+                    "AND KeepClip = 0 AND OccurredAt < $cutoff;";
+                select.Parameters.AddWithValue("$cutoff", cutoff);
+
+                await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    if (!reader.IsDBNull(0)) candidates.Add(reader.GetString(0));
+            }
+
+            var released = new List<string>();
+            var kept = 0;
+            foreach (var clipPath in candidates)
+            {
+                using (var shared = _connection.CreateCommand())
+                {
+                    // Anything sharing this file that is judged, protected, or not yet past the
+                    // cutoff keeps the whole file - including a still-Pending row, whose verdict
+                    // may land at any moment.
+                    shared.CommandText =
+                        "SELECT COUNT(*) FROM TriggerEvents WHERE ClipPath = $clipPath AND " +
+                        "(Judged <> 0 OR Confirmation <> 'confirmed' OR KeepClip <> 0 OR OccurredAt >= $cutoff);";
+                    shared.Parameters.AddWithValue("$clipPath", clipPath);
+                    shared.Parameters.AddWithValue("$cutoff", cutoff);
+
+                    if (Convert.ToInt64(await shared.ExecuteScalarAsync(cancellationToken)) > 0)
+                    {
+                        kept++;
+                        continue;
+                    }
+                }
+
+                // Every row sharing the file, so none is left rendering a dead video link. The
+                // rows and their snapshots survive - only the video reference goes.
+                using (var clear = _connection.CreateCommand())
+                {
+                    clear.CommandText = "UPDATE TriggerEvents SET ClipPath = NULL WHERE ClipPath = $clipPath;";
+                    clear.Parameters.AddWithValue("$clipPath", clipPath);
+                    await clear.ExecuteNonQueryAsync(cancellationToken);
+                }
+
+                released.Add(clipPath);
+            }
+
+            if (kept > 0)
+                _logger?.LogInformation(
+                    "Kept {Kept} clip file(s) of never-judged motion that are shared with triggers still worth keeping", kept);
+
+            return released;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     async Task<TriggerEvent?> ITriggerEventStore.GetAsync(Guid id, CancellationToken cancellationToken)
     {
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds FROM TriggerEvents WHERE Id = $id;";
+            command.CommandText = "SELECT Id, CameraId, OccurredAt, ImagePath, TriggerAreaFraction, ClipPath, IncidentId, Confirmation, ZoneName, AlertId, CaptureDelaySeconds, Judged FROM TriggerEvents WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -1110,7 +1217,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         FromStorage(reader.GetString(7)),
         reader.IsDBNull(8) ? null : reader.GetString(8),
         reader.IsDBNull(9) ? null : Guid.ParseExact(reader.GetString(9), "N"),
-        reader.IsDBNull(10) ? null : reader.GetDouble(10));
+        reader.IsDBNull(10) ? null : reader.GetDouble(10),
+        reader.GetInt64(11) != 0);
 
     private static string ToStorage(TriggerConfirmation confirmation) => confirmation switch
     {

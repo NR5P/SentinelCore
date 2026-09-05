@@ -104,7 +104,7 @@ public sealed class TriggerConfirmationTests
 
         Assert.Empty(await store.GetRecentAsync(50, null, includeUnconfirmed: false, CancellationToken.None));
 
-        await store.SetConfirmationAsync(trigger.Id, TriggerConfirmation.Confirmed, CancellationToken.None);
+        await store.SetConfirmationAsync(trigger.Id, TriggerConfirmation.Confirmed, judged: true, CancellationToken.None);
 
         var listed = await store.GetRecentAsync(50, null, includeUnconfirmed: false, CancellationToken.None);
         Assert.Single(listed);
@@ -118,7 +118,7 @@ public sealed class TriggerConfirmationTests
         var cameraId = Guid.NewGuid();
         var trigger = await AddAsync(store, cameraId, TriggerConfirmation.Pending);
 
-        await store.SetConfirmationAsync(trigger.Id, TriggerConfirmation.Rejected, CancellationToken.None);
+        await store.SetConfirmationAsync(trigger.Id, TriggerConfirmation.Rejected, judged: true, CancellationToken.None);
 
         // Still fetchable by id - /api/triggers/{id}/image and /clip keep working for anything
         // "show hidden" lists.
@@ -216,7 +216,7 @@ public sealed class TriggerConfirmationTests
 
         Assert.Null(await store.ReleaseRejectedClipAsync(rejected.Id, CancellationToken.None));
 
-        await store.SetConfirmationAsync(pending.Id, TriggerConfirmation.Rejected, CancellationToken.None);
+        await store.SetConfirmationAsync(pending.Id, TriggerConfirmation.Rejected, judged: true, CancellationToken.None);
 
         Assert.Equal(clip, await store.ReleaseRejectedClipAsync(pending.Id, CancellationToken.None));
     }

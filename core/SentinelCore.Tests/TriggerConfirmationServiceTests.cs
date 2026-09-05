@@ -502,6 +502,133 @@ public sealed class TriggerConfirmationServiceTests
         finally { TempDirectories.Delete(root); }
     }
 
+    // --- Judged: the distinction is now persisted, not just logged -------------------------------
+
+    [Fact]
+    public async Task ARealVerdict_IsRecordedAsJudged()
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, _) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var completed = Vehicle(Guid.NewGuid());
+
+            var service = NewService(store, completed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(trigger.Id, new AlertForwardResult(true, completed.Id), ct);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+                Assert.True(stored.Judged);
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task ATriggerThatNeverReachedThePipeline_IsRecordedAsUnjudged()
+    {
+        // The queue-full case, which is the one that cost 89 triggers on 2026-09-03. The forward is
+        // refused with no alert id, so nothing is ever polled.
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, _) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+
+            var service = NewService(store, null, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(trigger.Id, AlertForwardResult.Refused, ct);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+
+                // Still visible - that part is the deliberate fail-open and must not change.
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+                // But no longer indistinguishable from a real verdict.
+                Assert.False(stored.Judged);
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task AnAnalysisThatEndedWithoutCompleting_IsRecordedAsUnjudged()
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, _) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var failed = new AlertResult { Id = Guid.NewGuid(), Status = "failed" };
+
+            var service = NewService(store, failed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(trigger.Id, new AlertForwardResult(true, failed.Id), ct);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+                Assert.False(stored.Judged);
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task ACompletedResultWithNoAnalysis_IsRecordedAsUnjudged()
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, _) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var empty = new AlertResult { Id = Guid.NewGuid(), Status = "completed", Analysis = null };
+
+            var service = NewService(store, empty, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(trigger.Id, new AlertForwardResult(true, empty.Id), ct);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.False(stored!.Judged);
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task ARejection_IsAlsoAJudgement()
+    {
+        // Rejected is only ever reachable with a real verdict, so it must never read as unjudged -
+        // otherwise the two sweeps would both consider the same row theirs.
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, _) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var completed = Empty(Guid.NewGuid());
+
+            var service = NewService(store, completed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(trigger.Id, new AlertForwardResult(true, completed.Id), ct);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Rejected, stored!.Confirmation);
+                Assert.True(stored.Judged);
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
     [Fact]
     public async Task AnEmptyFrame_DeletesTheClip_AndKeepsTheSnapshot()
     {

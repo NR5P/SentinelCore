@@ -14,8 +14,13 @@ namespace SentinelCore.Web;
 // window is what makes both true at once: the false triggers are reviewable while they still tell
 // you something about the current settings, and gone before they cost real disk.
 //
-// Confirmed events are not touched here - and, as things stand, not anywhere else either, so
-// their clips are kept permanently.
+// A confirmed event's clip is kept permanently - with one exception, added after the storm below.
+// A trigger that reads 'confirmed' only because nothing ever judged it (Judged = 0: queue full,
+// model unreachable, analysis errored, verdict timed out) has its CLIP released on the same
+// UnverifiedMotionRetentionDays window, while its row and snapshot stay. Fail-open is the right
+// call at the moment the verdict is missing, but it used to be permanent - a camera misfiring into
+// a saturated queue kept every clip forever at exactly the moment it was producing the most
+// worthless video. See ReleaseUnjudgedClipsBeforeAsync.
 //
 // This comment used to claim they "age out under the main app's RetentionDays". They cannot:
 // RetentionDays walks only images/ and results/ under the INGEST service's data root, and the
@@ -116,6 +121,7 @@ public sealed class MotionRetentionWorker(
 
         var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
         var files = await triggers.DeleteUnconfirmedBeforeAsync(cutoff, cancellationToken);
+        await SweepUnjudgedClipsAsync(cutoff, days, cancellationToken);
         if (files.Count == 0) return;
 
         var bytes = 0L;
@@ -152,6 +158,45 @@ public sealed class MotionRetentionWorker(
                 "they are now orphans, and the orphan sweep is what has to collect them",
                 failed);
         }
+    }
+
+    // The other half of the window: motion nothing ever judged. Separate from the sweep above
+    // because it takes only the video - see ReleaseUnjudgedClipsBeforeAsync for why the row and
+    // the snapshot are worth keeping when there is no verdict to say they aren't.
+    private async Task SweepUnjudgedClipsAsync(DateTimeOffset cutoff, int days, CancellationToken cancellationToken)
+    {
+        var clips = await triggers.ReleaseUnjudgedClipsBeforeAsync(cutoff, cancellationToken);
+        if (clips.Count == 0) return;
+
+        var bytes = 0L;
+        var deleted = 0;
+        var failed = 0;
+        foreach (var path in clips)
+        {
+            try
+            {
+                var info = new FileInfo(path);
+                if (!info.Exists) continue;
+                var size = info.Length;
+                info.Delete();
+                bytes += size;
+                deleted++;
+            }
+            // Unlike the sweep above the row survives, but its ClipPath has already been cleared,
+            // so a file that won't delete here is an orphan too and the orphan sweep collects it.
+            catch (IOException) { failed++; }
+            catch (UnauthorizedAccessException) { failed++; }
+        }
+
+        logger.LogInformation(
+            "Motion retention: released the video of never-judged motion older than {Days}d - {Deleted} of {Referenced} " +
+            "clip(s) removed, {Megabytes:0.0} MB reclaimed. Their snapshots and rows are kept",
+            days, deleted, clips.Count, bytes / 1024d / 1024d);
+
+        if (failed > 0)
+            logger.LogWarning(
+                "Motion retention: {Failed} never-judged clip(s) could not be deleted - the orphan sweep has to collect them",
+                failed);
     }
 
     // Deletes files under the trigger directories that no row points at any more.

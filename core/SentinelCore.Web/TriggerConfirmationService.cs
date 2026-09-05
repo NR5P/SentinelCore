@@ -75,7 +75,7 @@ public sealed class TriggerConfirmationService(
             {
                 // Accepted but no id to follow, or refused outright. Either way no verdict is
                 // coming, so don't leave it hidden.
-                await eventStore.SetConfirmationAsync(triggerId, TriggerConfirmation.Confirmed, cancellationToken);
+                await eventStore.SetConfirmationAsync(triggerId, TriggerConfirmation.Confirmed, judged: false, cancellationToken);
                 // Logged because this is the one outcome that used to leave no trace on this side
                 // at all. AlertForwarder records why the forward failed, but nothing said what
                 // became of the trigger - so a queue-full burst showed up as a run of triggers
@@ -88,7 +88,7 @@ public sealed class TriggerConfirmationService(
             var settings = await GetSettingsAsync(cancellationToken);
             var (verdict, judged) = await AwaitVerdictAsync(
                 alertId, TimeSpan.FromSeconds(settings.TimeoutSeconds), keepOnlyAlertable, cancellationToken);
-            await eventStore.SetConfirmationAsync(triggerId, verdict, cancellationToken);
+            await eventStore.SetConfirmationAsync(triggerId, verdict, judged, cancellationToken);
 
             // Said plainly, because Confirmed means two different things and only one of them is a
             // verdict. The AI looking at the frame and finding a person is Confirmed; so is every
@@ -325,7 +325,7 @@ public sealed class TriggerConfirmationService(
     {
         try
         {
-            await eventStore.SetConfirmationAsync(triggerId, TriggerConfirmation.Confirmed, CancellationToken.None);
+            await eventStore.SetConfirmationAsync(triggerId, TriggerConfirmation.Confirmed, judged: false, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -357,7 +357,7 @@ public sealed class TriggerConfirmationSweeper(
             if (stranded.Count == 0) return;
 
             foreach (var id in stranded)
-                await eventStore.SetConfirmationAsync(id, TriggerConfirmation.Confirmed, stoppingToken);
+                await eventStore.SetConfirmationAsync(id, TriggerConfirmation.Confirmed, judged: false, stoppingToken);
 
             logger.LogInformation(
                 "Released {Count} trigger(s) that were left waiting for an AI verdict by a restart", stranded.Count);
