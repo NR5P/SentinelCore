@@ -362,6 +362,7 @@ public static class BackupEndpoints
         SensorThreshold = config.SensorThreshold,
         NightWindowEnabled = config.NightWindowEnabled,
         NightStartHour = config.NightStartHour,
-        NightEndHour = config.NightEndHour
+        NightEndHour = config.NightEndHour,
+        BypassFastLocal = config.BypassFastLocal
     };
 }

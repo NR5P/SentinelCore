@@ -472,6 +472,10 @@
               <label class="field-label" for="zone-alert-profile">Alert prompt profile</label>
               <select id="zone-alert-profile" class="field-input"></select>
             </div>
+            <div class="field-row field-row-wide field-checkbox-row" data-tip="Skips the fast local detector and sends every trigger from this camera straight to the full AI. Only relevant when Fast Local Detection is the primary backend, and only when the switch above is on. The detector is trained on a fixed class list with no raccoon, fox, opossum or weasel in it, so at a chicken coop it clears those frames as empty and the model that could name the predator never sees them. The cost is real: every trigger becomes a full analysis of around two minutes, so raise the cooldown above to match or the queue backs up and starts dropping frames unanalysed. Off by default, and worth turning on for very few cameras.">
+              <label class="switch"><input type="checkbox" id="zone-bypass-fastlocal" /><span class="switch-track"></span></label>
+              <span class="field-label">Always use the full AI (skip the fast detector)</span>
+            </div>
             <div class="field-row field-row-wide field-checkbox-row" data-tip="Pauses motion triggers between the hours below. Meant for a camera whose night-time IR picks up a spider web, insects or condensation close to the lens: those blobs are the same size on screen as a real person further away, so no minimum object size can tell them apart - but the time of day can. Nothing is captured, recorded or analysed while paused, and a sensor binding still fires normally. Off by default.">
               <label class="switch"><input type="checkbox" id="zone-night-window" /><span class="switch-track"></span></label>
               <span class="field-label">Pause triggers overnight</span>

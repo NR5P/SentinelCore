@@ -249,6 +249,90 @@ public sealed class FastLocalTests
         Assert.Equal(0, fastLocal.CallCount);
     }
 
+    // --- FailoverVisionClient: BypassFastLocal (per-camera) ------------------------------------
+
+    [Fact]
+    public async Task BypassFastLocal_SendsStraightToTheFullModel_WhenFastLocalIsPrimary()
+    {
+        // The chicken coop. rf-detr is COCO-trained and has no raccoon/fox/opossum class, so it
+        // clears a predator frame as empty and nothing escalates - measured 2026-09-03, 306 of 346
+        // screened frames stopped at the detector. The camera opts out of the gate entirely.
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal" },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var alert = MakeAlert() with { BypassFastLocal = true };
+
+        var (_, _, model) = await client.AnalyzeAsync(alert, MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gemma3:4b", model);
+        Assert.Equal(0, fastLocal.CallCount);
+    }
+
+    [Fact]
+    public async Task BypassFastLocal_PrefersCloud_WhenItIsConfigured()
+    {
+        // Same order the escalation path prefers, so a bypassed camera lands on the backend the
+        // install actually pays for rather than always waking the local model.
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal" },
+            new CloudVisionOptions { Enabled = true, ApiKey = "sk-test" });
+
+        var alert = MakeAlert() with { BypassFastLocal = true };
+
+        var (_, _, model) = await client.AnalyzeAsync(alert, MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gpt-4o-mini", model);
+        Assert.Equal(0, fastLocal.CallCount);
+    }
+
+    [Fact]
+    public async Task BypassFastLocal_Unset_StillGoesThroughTheDetector()
+    {
+        // The flag is per-camera and off everywhere else: one camera opting out must not change
+        // how anything else routes.
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b");
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", EscalationEnabled = true },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var (_, _, model) = await client.AnalyzeAsync(MakeAlert(), MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("fastlocal/rf-detr-nano", model);
+        Assert.Equal(1, fastLocal.CallCount);
+        Assert.Equal(0, ollama.CallCount);
+    }
+
+    [Fact]
+    public async Task BypassFastLocal_StillAppliesTheConfidenceFloor()
+    {
+        // The one trap in wiring this up: isGateCheck skips the detector AND exempts the result
+        // from MinimumConfidence. Bypassing the detector must not buy the second exemption too, or
+        // a coop camera starts believing every low-confidence guess the model makes.
+        var fastLocal = new FakeVisionClient("fastlocal/rf-detr-nano");
+        var ollama = new FakeVisionClient("gemma3:4b") { Analysis = SubjectAnalysis(0.4) };
+        var cloud = new FakeVisionClient("gpt-4o-mini");
+        var client = MakeClient(ollama, cloud, fastLocal,
+            new VisionRoutingOptions { Primary = "fastlocal", MinimumConfidence = 0.6 },
+            new CloudVisionOptions { Enabled = false, ApiKey = "" });
+
+        var alert = MakeAlert() with { BypassFastLocal = true };
+
+        var (analysis, _, model) = await client.AnalyzeAsync(alert, MakeProfile(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("gemma3:4b", model);
+        Assert.Equal(0, fastLocal.CallCount);
+        Assert.False(AlertNotificationPolicy.HasVisibleSubject(analysis));
+    }
+
     // --- FailoverVisionClient: EscalationVerdictWins -------------------------------------------
 
     // The opt-in inverse of Escalation_FindingNothing_DoesNotOverwriteTheDetectorsSubject above.

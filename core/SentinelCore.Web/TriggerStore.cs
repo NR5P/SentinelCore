@@ -90,7 +90,20 @@ public sealed record TriggerConfig(
     // rather than 0/0, so switching the feature on gives a sensible window instead of a
     // zero-width one that appears to do nothing.
     int NightStartHour = 21,
-    int NightEndHour = 7)
+    int NightEndHour = 7,
+    // Send this camera's alerts straight to the full AI, skipping the fast local detector that
+    // normally decides whether a frame is worth escalating. The detector is COCO-trained and has no
+    // class for a raccoon, fox, opossum or weasel, so at the chicken coop it clears those frames as
+    // empty and the only model that could name the predator never sees them - measured on the night
+    // of 2026-09-03, 306 of 346 screened frames stopped at the detector.
+    //
+    // Off unless someone turns it on, and worth turning on for very few cameras: every trigger then
+    // costs a full analysis (~140s), so the zone's CooldownSeconds has to be raised to match or the
+    // queue saturates and fails open, which is worse than the gap it was meant to close.
+    //
+    // Appended at the end with a default for the same reason Zones and the night window were - this
+    // record is built positionally in several places.
+    bool BypassFastLocal = false)
 {
     public const string DefaultZoneName = "Zone 1";
 
@@ -371,6 +384,10 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         AddColumnIfMissing("TriggerConfigs", "NightWindowEnabled", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing("TriggerConfigs", "NightStartHour", "INTEGER NOT NULL DEFAULT 21");
         AddColumnIfMissing("TriggerConfigs", "NightEndHour", "INTEGER NOT NULL DEFAULT 7");
+        // Off on every existing row: routing every camera's motion at the full model is far more
+        // analysis than this box can run, and the detector is the right gate everywhere the thing
+        // being watched for is a person or a vehicle.
+        AddColumnIfMissing("TriggerConfigs", "BypassFastLocal", "INTEGER NOT NULL DEFAULT 0");
 
         using var incidentIndex = _connection.CreateCommand();
         incidentIndex.CommandText = """
@@ -415,7 +432,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                        SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
                        SensorMeasurement, SensorThreshold,
-                       NightWindowEnabled, NightStartHour, NightEndHour
+                       NightWindowEnabled, NightStartHour, NightEndHour, BypassFastLocal
                 FROM TriggerConfigs WHERE CameraId = $cameraId;
                 """;
             command.Parameters.AddWithValue("$cameraId", cameraId.ToString("N"));
@@ -440,7 +457,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                        SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
                        SensorMeasurement, SensorThreshold,
-                       NightWindowEnabled, NightStartHour, NightEndHour
+                       NightWindowEnabled, NightStartHour, NightEndHour, BypassFastLocal
                 FROM TriggerConfigs WHERE Enabled = 1;
                 """;
 
@@ -468,7 +485,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                        RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                        SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
                        SensorMeasurement, SensorThreshold,
-                       NightWindowEnabled, NightStartHour, NightEndHour
+                       NightWindowEnabled, NightStartHour, NightEndHour, BypassFastLocal
                 FROM TriggerConfigs;
                 """;
 
@@ -496,12 +513,12 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                                             RecordClips, ClipPreSeconds, ClipPostSeconds, SendToAlerts, AlertProfile,
                                             SensorDeviceId, SensorTriggerOn, SensorCooldownSeconds, Zones,
                                             SensorMeasurement, SensorThreshold,
-                                            NightWindowEnabled, NightStartHour, NightEndHour)
+                                            NightWindowEnabled, NightStartHour, NightEndHour, BypassFastLocal)
                 VALUES ($cameraId, $enabled, $zonePolygon, $minTriggerArea, $cooldownSeconds, $maxTriggersPerMinute, $shadowSensitivity,
                         $recordClips, $clipPreSeconds, $clipPostSeconds, $sendToAlerts, $alertProfile,
                         $sensorDeviceId, $sensorTriggerOn, $sensorCooldownSeconds, $zones,
                         $sensorMeasurement, $sensorThreshold,
-                        $nightWindowEnabled, $nightStartHour, $nightEndHour)
+                        $nightWindowEnabled, $nightStartHour, $nightEndHour, $bypassFastLocal)
                 ON CONFLICT(CameraId) DO UPDATE SET
                     Enabled = excluded.Enabled,
                     ZonePolygon = excluded.ZonePolygon,
@@ -522,7 +539,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
                     SensorThreshold = excluded.SensorThreshold,
                     NightWindowEnabled = excluded.NightWindowEnabled,
                     NightStartHour = excluded.NightStartHour,
-                    NightEndHour = excluded.NightEndHour;
+                    NightEndHour = excluded.NightEndHour,
+                    BypassFastLocal = excluded.BypassFastLocal;
                 """;
 
             // Zones is the source of truth; the legacy ZonePolygon/MinTriggerArea columns are
@@ -552,6 +570,7 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
             command.Parameters.AddWithValue("$nightWindowEnabled", config.NightWindowEnabled ? 1 : 0);
             command.Parameters.AddWithValue("$nightStartHour", config.NightStartHour);
             command.Parameters.AddWithValue("$nightEndHour", config.NightEndHour);
+            command.Parameters.AddWithValue("$bypassFastLocal", config.BypassFastLocal ? 1 : 0);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         finally
@@ -1052,7 +1071,8 @@ public sealed class SqliteTriggerStore : ITriggerConfigStore, ITriggerEventStore
         reader.GetDouble(17),
         reader.GetInt64(18) != 0,
         (int)reader.GetInt64(19),
-        (int)reader.GetInt64(20));
+        (int)reader.GetInt64(20),
+        reader.GetInt64(21) != 0);
 
     private static TriggerEvent ReadEvent(SqliteDataReader reader) => new(
         Guid.ParseExact(reader.GetString(0), "N"),

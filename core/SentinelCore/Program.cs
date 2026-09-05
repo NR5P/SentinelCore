@@ -503,13 +503,18 @@ app.MapPost("/api/blueiris/alert", async (
     var linkedCameras = form["linkedCameras"].ToString().Trim();
     var incidentId = form["incidentId"].ToString().Trim();
 
+    // Absent on every camera that routes normally - AlertForwarder only adds the field when the
+    // zone asked for it, so "missing" and "false" mean the same thing here.
+    var bypassFastLocal = string.Equals(form["bypassFastLocal"].ToString().Trim(), "true", StringComparison.OrdinalIgnoreCase);
+
     var alert = new IncomingAlert(
         Guid.NewGuid(), camera, form["alertId"].ToString(), occurredAt,
         DateTimeOffset.UtcNow, profile, image.ContentType, Path.GetFileName(image.FileName), memory.ToArray())
     {
         ExtraFrames = extraFrames,
         LinkedCameras = string.IsNullOrWhiteSpace(linkedCameras) ? null : linkedCameras,
-        IncidentId = string.IsNullOrWhiteSpace(incidentId) ? null : incidentId
+        IncidentId = string.IsNullOrWhiteSpace(incidentId) ? null : incidentId,
+        BypassFastLocal = bypassFastLocal
     };
 
     // Write the image and the queued row before handing the alert to the in-memory queue. The

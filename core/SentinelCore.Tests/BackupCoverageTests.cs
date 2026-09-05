@@ -572,7 +572,8 @@ public sealed class BackupCoverageTests : IDisposable
             RecordClips = false, ClipPreSeconds = 5, ClipPostSeconds = 10, SendToAlerts = false,
             AlertProfile = "default", SensorDeviceId = "", SensorTriggerOn = "on", SensorCooldownSeconds = 30,
             SensorMeasurement = "", SensorThreshold = 0.0,
-            NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7
+            NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7,
+            BypassFastLocal = true
         }, ct))
             zone.EnsureSuccessStatusCode();
 
@@ -623,7 +624,8 @@ public sealed class BackupCoverageTests : IDisposable
             RecordClips = false, ClipPreSeconds = 5, ClipPostSeconds = 10, SendToAlerts = false,
             AlertProfile = "default", SensorDeviceId = "", SensorTriggerOn = "on", SensorCooldownSeconds = 30,
             SensorMeasurement = "", SensorThreshold = 0.0,
-            NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7
+            NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7,
+            BypassFastLocal = true
         }, ct))
             zone.EnsureSuccessStatusCode();
 

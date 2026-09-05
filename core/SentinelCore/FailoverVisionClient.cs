@@ -38,7 +38,12 @@ public sealed class FailoverVisionClient(
         IncomingAlert alert, PromptProfile profile, CancellationToken cancellationToken)
     {
         var isGateCheck = string.Equals(alert.Profile, GateCheckDecision.ProfileName, StringComparison.OrdinalIgnoreCase);
-        var (primary, fallback, primaryName, fallbackName) = ResolveOrder(includeFastLocal: !isGateCheck);
+
+        // Two independent reasons to skip the detector, deliberately not folded into one flag:
+        // isGateCheck ALSO exempts the result from MinimumConfidence (see ApplyConfidenceFloor), and
+        // a camera that just wants the full model has no business skipping the confidence floor too.
+        var (primary, fallback, primaryName, fallbackName) =
+            ResolveOrder(includeFastLocal: !isGateCheck && !alert.BypassFastLocal);
 
         // One snapshot for every decision below. IOptionsMonitor rebinds the moment a settings save
         // lands, so reading CurrentValue separately per branch could apply half of one configuration
@@ -279,9 +284,13 @@ public sealed class FailoverVisionClient(
 
         if (primaryIsFastLocal)
         {
-            // Gate checks (includeFastLocal false) need a VLM: use the same order the escalation
-            // path prefers - cloud when configured, Ollama otherwise - so a low-end install's
-            // gate checks land on the backend it can actually afford.
+            // Gate checks and cameras with BypassFastLocal (includeFastLocal false) need a VLM: use
+            // the same order the escalation path prefers - cloud when configured, Ollama otherwise -
+            // so a low-end install's gate checks land on the backend it can actually afford.
+            //
+            // Note this returns no fallback when cloud is unconfigured, whatever FallbackEnabled
+            // says: there is no second VLM to fall back TO. A bypassed camera therefore has one
+            // backend and no safety net, which is the same deal gate checks have always had.
             if (!includeFastLocal)
                 return cloudConfigured
                     ? (cloud, routing.FallbackEnabled ? ollama : null, cloudName, routing.FallbackEnabled ? "Ollama" : null)

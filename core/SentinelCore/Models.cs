@@ -33,6 +33,15 @@ public sealed record IncomingAlert(
     // group, its companions') that belongs to the same incident.
     public string? LinkedCameras { get; init; }
     public string? IncidentId { get; init; }
+
+    // Set only by a trigger zone whose camera asked to skip the fast local detector (see
+    // TriggerConfig.BypassFastLocal) - Blue Iris alerts never populate it. Read once, in
+    // FailoverVisionClient, to decide whether the detector gets a look before the full model.
+    //
+    // Transient like ExtraFrames: it is not on PendingAlertRecord, so an alert recovered after a
+    // restart routes normally. Same as LinkedCameras/IncidentId today, and the cost is one
+    // detector-gated analysis for an alert that was already interrupted.
+    public bool BypassFastLocal { get; init; }
 }
 
 public sealed record AcceptedAlertResponse(Guid Id, string Status, string StatusUrl);

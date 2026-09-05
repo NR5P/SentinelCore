@@ -53,6 +53,12 @@ public sealed class TriggerConfigDto
     public int? NightStartHour { get; set; }
     public int? NightEndHour { get; set; }
 
+    // Nullable for exactly the reason the three above are: no shipped mobile build sends this key,
+    // and a plain `bool` would read as false and quietly route the coop back through the detector
+    // the first time someone nudged its zone from a phone. Null means "this client doesn't know
+    // about the setting", not "turn it off". See TriggerConfig.BypassFastLocal.
+    public bool? BypassFastLocal { get; set; }
+
     public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
 
     public bool UsesThreshold =>
@@ -140,7 +146,9 @@ public static class TriggerEndpoints
                 dto.ShadowSensitivity, dto.RecordClips, dto.ClipPreSeconds, dto.ClipPostSeconds, dto.SendToAlerts, profile,
                 dto.SensorDeviceId.Trim(), dto.SensorTriggerOn.Trim().ToLowerInvariant(), dto.SensorCooldownSeconds, zones,
                 dto.SensorMeasurement.Trim(), dto.SensorThreshold,
-                nightEnabled, nightStart, nightEnd);
+                nightEnabled, nightStart, nightEnd,
+                // Same absent-key merge as the night window, for the same reason.
+                dto.BypassFastLocal ?? existing?.BypassFastLocal ?? false);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         }).RequireAuthorization("AdminOnly");

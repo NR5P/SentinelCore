@@ -23,7 +23,8 @@ public sealed class AlertForwarder(
     ILogger<AlertForwarder> logger)
 {
     public async Task<AlertForwardResult> ForwardAsync(
-        byte[] imageBytes, IReadOnlyList<byte[]> extraFrames, string cameraName, string profile, DateTimeOffset occurredAt,
+        byte[] imageBytes, IReadOnlyList<byte[]> extraFrames, string cameraName, string profile, bool bypassFastLocal,
+        DateTimeOffset occurredAt,
         IReadOnlyList<string>? linkedCameraNames, string? incidentId, CancellationToken cancellationToken)
     {
         var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", cancellationToken);
@@ -51,6 +52,11 @@ public sealed class AlertForwarder(
         content.Add(new StringContent(cameraName), "camera");
         content.Add(new StringContent(string.IsNullOrWhiteSpace(profile) ? "default" : profile), "profile");
         content.Add(new StringContent(occurredAt.ToString("O")), "occurredAt");
+        // Only sent when the zone asked for it, so the field is absent on every other camera and
+        // the main app's default (route normally) needs no agreement between the two processes.
+        // See TriggerConfig.BypassFastLocal.
+        if (bypassFastLocal)
+            content.Add(new StringContent("true"), "bypassFastLocal");
         // Only present for a camera that belongs to a Camera Group - see
         // TriggerZoneMonitor.RecordCompanionCamerasAsync/MaybeTriggerAsync. linkedCameras is a
         // plain display string (comma-joined names), not a foreign key - the main app doesn't
