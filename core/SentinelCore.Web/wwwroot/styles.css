@@ -2048,6 +2048,32 @@ main {
   display: block;
 }
 
+/* No reference frame could be grabbed. Without a picture the <img> collapses to a broken-image
+   strip and the SVG with it, leaving nothing to draw on - so the pane holds a camera-shaped area
+   and says why it's blank. Zones and sizes drawn here are stored as fractions of the frame, so a
+   blank 16:9 stand-in maps onto the real picture the same way the picture itself would. */
+.zone-frame-missing {
+  aspect-ratio: 16 / 9;
+}
+
+.zone-frame-missing img {
+  display: none;
+}
+
+.zone-frame-missing::before {
+  content: "no reference frame - the camera did not answer";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+  padding: 12px;
+  pointer-events: none;
+}
+
 .zone-size-wrap {
   cursor: default;
   max-width: 260px;

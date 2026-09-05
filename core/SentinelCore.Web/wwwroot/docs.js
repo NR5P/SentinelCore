@@ -15,6 +15,10 @@ async function loadDocs() {
     const response = await fetch("/api/docs");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const docs = await response.json();
+    // Set from the result, not ahead of it: a first load that failed used to be remembered as a
+    // load that had happened, so every later visit skipped the fetch and the tab stayed on
+    // "could not load docs" until the page was reloaded.
+    docsLoaded = true;
 
     docsListEl.innerHTML = "";
     if (docs.length === 0) {
@@ -41,7 +45,6 @@ async function loadDocs() {
 window.GateWatchDocs = {
   load() {
     if (docsLoaded) return;
-    docsLoaded = true;
     loadDocs();
   }
 };

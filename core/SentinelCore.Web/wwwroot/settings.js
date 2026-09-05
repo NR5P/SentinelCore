@@ -1834,6 +1834,10 @@ window.GateWatchSettings = (function () {
     body.appendChild(grid);
 
     async function refresh() {
+      // Only while somebody can actually see it. Every poll has the server sample its own CPU,
+      // memory and disk, and this used to run every five seconds for the life of the page whether
+      // the section was open, collapsed, or on a tab nobody had visited in hours.
+      if (!section.classList.contains("open") || section.offsetParent === null) return;
       try {
         const response = await fetch("/api/system/status");
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1854,8 +1858,14 @@ window.GateWatchSettings = (function () {
       }
     }
 
-    refresh();
-    setInterval(refresh, SYSTEM_STATUS_POLL_MS);
+    // Started on first open rather than at build time, and refreshed straight away on every open
+    // so the numbers are never up to five seconds stale when the section unfolds.
+    let pollTimer = null;
+    header.addEventListener("click", () => {
+      if (!section.classList.contains("open")) return;
+      refresh();
+      if (!pollTimer) pollTimer = setInterval(refresh, SYSTEM_STATUS_POLL_MS);
+    });
 
     section.append(header, body);
     return section;
@@ -2279,7 +2289,19 @@ window.GateWatchSettings = (function () {
     removeBtn.dataset.tip = `Remove ${face.label} and all their enrolled photos.`;
     removeBtn.addEventListener("click", async () => {
       if (!confirm(`Remove ${face.label} from known faces?`)) return;
-      await fetch(`/api/known-faces/${face.id}`, { method: "DELETE" });
+      try {
+        const response = await fetch(`/api/known-faces/${face.id}`, { method: "DELETE" });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          showFieldErrors(sharedErrors, [response.status === 403
+            ? "Only an admin account can remove a known face."
+            : (payload.error || "Could not remove that person.")]);
+          return;
+        }
+      } catch {
+        showFieldErrors(sharedErrors, ["Network error while removing."]);
+        return;
+      }
       await onChange();
     });
     header.append(name, removeBtn);
