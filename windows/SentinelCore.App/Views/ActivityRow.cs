@@ -77,6 +77,8 @@ public sealed class ActivityRow
         "rejected" => "",      // warning triangle
         "pending" => "",       // ellipsis
         null or "confirmed" => "",
+        // Nothing ever judged this frame - a question mark, not the "still thinking" ellipsis.
+        "unverified" => "",
         _ => "",
     };
 
@@ -84,6 +86,7 @@ public sealed class ActivityRow
     {
         "rejected" => "AI found nothing",
         "confirmed" or null => "",
+        "unverified" => "Never checked by AI",
         _ => "Awaiting AI verdict",
     };
 

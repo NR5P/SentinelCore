@@ -199,10 +199,10 @@ fun ActivityDetailScreen(
                             if (event.confirmation != null && event.confirmation != "confirmed") {
                                 MetadataRow(
                                     "AI verdict",
-                                    if (event.confirmation == "rejected") {
-                                        "Nothing found in frame"
-                                    } else {
-                                        "Awaiting verdict"
+                                    when (event.confirmation) {
+                                        "rejected" -> "Nothing found in frame"
+                                        "unverified" -> "Never checked - the analysis failed or was refused"
+                                        else -> "Awaiting verdict"
                                     },
                                 )
                             }

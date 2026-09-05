@@ -248,9 +248,9 @@ struct EventCard: View {
                         .accessibilityLabel("AI analysis is off for this camera")
                 }
                 if let confirmation = event.confirmation, confirmation != "confirmed" {
-                    Image(systemName: confirmation == "rejected" ? "exclamationmark.triangle.fill" : "ellipsis.circle")
+                    Image(systemName: ActivityVerdict.symbol(for: confirmation))
                         .foregroundStyle(SentinelTheme.amber)
-                        .accessibilityLabel(confirmation == "rejected" ? "AI found nothing" : "Awaiting AI verdict")
+                        .accessibilityLabel(ActivityVerdict.shortLabel(for: confirmation))
                 }
                 Spacer(minLength: 4)
                 if event.notified {

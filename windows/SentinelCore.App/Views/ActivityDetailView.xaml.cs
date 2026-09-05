@@ -88,7 +88,12 @@ public partial class ActivityDetailView : UserControl
         // noise; the other two explain why a row is only visible with Show hidden on.
         if (_item.Confirmation is { } confirmation && confirmation != "confirmed")
         {
-            Fact("AI verdict", confirmation == "rejected" ? "Nothing found in frame" : "Awaiting verdict");
+            Fact("AI verdict", confirmation switch
+            {
+                "rejected" => "Nothing found in frame",
+                "unverified" => "Never checked - the analysis failed or was refused",
+                _ => "Awaiting verdict",
+            });
         }
 
         if (!_item.IsAnalyzed)

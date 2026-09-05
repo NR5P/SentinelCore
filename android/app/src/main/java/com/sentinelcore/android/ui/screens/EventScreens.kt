@@ -367,10 +367,11 @@ private fun EventSummary(
             if (event.confirmation != null && event.confirmation != "confirmed") {
                 Icon(
                     Icons.Default.Warning,
-                    contentDescription = if (event.confirmation == "rejected") {
-                        "AI found nothing"
-                    } else {
-                        "Awaiting AI verdict"
+                    contentDescription = when (event.confirmation) {
+                        "rejected" -> "AI found nothing"
+                        // Nothing ever judged this frame - not the same as still waiting.
+                        "unverified" -> "Never checked by AI"
+                        else -> "Awaiting AI verdict"
                     },
                     tint = SentinelAmber,
                     modifier = Modifier.size(16.dp),
