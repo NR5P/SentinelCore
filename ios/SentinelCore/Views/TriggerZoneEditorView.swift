@@ -108,6 +108,11 @@ struct TriggerZoneEditorView: View {
     @State private var nightStartHour = 21
     @State private var nightEndHour = 7
 
+    // Whole-camera too, and off by default on both counts - matching TriggerConfig's own
+    // defaults, so a server that predates either column shows what a freshly migrated one does.
+    @State private var bypassFastLocal = false
+    @State private var keepOnlyAlertable = false
+
     // Not editable here, only carried: the sensor binding is set up on the web dashboard, and the
     // PUT overwrites the whole record, so dropping these would unbind the camera's sensor every
     // time someone nudged a polygon from their phone.
@@ -222,6 +227,21 @@ struct TriggerZoneEditorView: View {
                                 Text(profile.displayName).tag(profile.key)
                             }
                         }
+                    }
+
+                    // Both only do anything while "Send to Alerts" is on - nothing analyses the
+                    // frame otherwise - and both are worth turning on for very few cameras, so
+                    // they sit in their own section rather than adding two more switches to the
+                    // list above.
+                    Section("AI Routing") {
+                        Toggle("Always Use the Full AI", isOn: $bypassFastLocal)
+                        Text("Skips the fast local detector and sends every trigger from this camera straight to the full AI. Only matters while Send to Alerts is on, and only when Fast Local Detection is the primary backend. The detector is trained on a fixed class list with no raccoon, fox, opossum or weasel in it, so at a chicken coop it clears those frames as empty and the model that could name the predator never sees them. The cost is real: every trigger becomes a full analysis of around two minutes, so raise the cooldown above to match or the queue backs up and starts dropping frames unanalysed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Toggle("Only Keep What the AI Would Alert On", isOn: $keepOnlyAlertable)
+                        Text("Judges this camera's triggers by whether the AI would have alerted on the frame, instead of by whether anything was in it. The normal bar is \"a person, vehicle, package or animal is there\", which is right for a driveway but wrong at a chicken coop: the chickens are animals, they are always in shot, and they confirm every trigger. With this on, ordinary chicken activity is rejected - no event, no video kept, no alert - while a predator still gets all three. The snapshot is kept either way, so Show Hidden still shows everything that fired. Nothing is rejected because the AI was slow, unreachable or errored.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     if let errorMessage {
@@ -416,6 +436,10 @@ struct TriggerZoneEditorView: View {
         // resolvedNightWindow, not the raw optionals: a server predating the feature sends none of
         // the three, and the editor still has to show a window.
         (nightWindowEnabled, nightStartHour, nightEndHour) = config.resolvedNightWindow
+        // Resolved, not raw: a server older than either column sends neither key, and the two
+        // switches still have to show something.
+        bypassFastLocal = config.resolvedBypassFastLocal
+        keepOnlyAlertable = config.resolvedKeepOnlyAlertable
     }
 
     // Mirrors the server's own validation so the common mistakes are caught before a round-trip,
@@ -472,7 +496,11 @@ struct TriggerZoneEditorView: View {
             // on screen. See core/docs/NIGHT_WINDOW_HANDOFF.md.
             nightWindowEnabled: nightWindowEnabled,
             nightStartHour: nightStartHour,
-            nightEndHour: nightEndHour
+            nightEndHour: nightEndHour,
+            // Never nil from here either, and for the same reason: this editor knows about both
+            // switches, so it owns their value. Omitting them would save half of what's on screen.
+            bypassFastLocal: bypassFastLocal,
+            keepOnlyAlertable: keepOnlyAlertable
         )
         do {
             let saved = try await model.client.saveTriggerConfig(cameraId: camera.id, config)

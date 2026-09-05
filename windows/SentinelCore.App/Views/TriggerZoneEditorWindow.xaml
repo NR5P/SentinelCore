@@ -86,6 +86,16 @@
                     <TextBlock Text="Prompt profile" Style="{StaticResource FieldLabel}" />
                     <ComboBox x:Name="ProfileBox" DisplayMemberPath="DisplayName" SelectedValuePath="Key" />
 
+                    <!-- Both only do anything while "Send frames for AI analysis" is on: nothing
+                         analyses the frame otherwise. Worth turning on for very few cameras. -->
+                    <TextBlock Text="AI ROUTING" Style="{StaticResource GroupHeading}" Margin="0,20,0,0" />
+                    <CheckBox x:Name="BypassFastLocalToggle" Content="Always use the full AI" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap"
+                               Text="Skips the fast local detector and sends every trigger straight to the full AI. Only matters when Fast Local Detection is the primary backend. The detector has no class for a raccoon, fox, opossum or weasel, so at a chicken coop it clears those frames as empty. Every trigger then costs a full analysis of around two minutes, so raise the cooldown to match." />
+                    <CheckBox x:Name="KeepOnlyAlertableToggle" Content="Only keep what the AI would alert on" Margin="0,10,0,0" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap"
+                               Text="Judges a trigger by whether the AI would have alerted on the frame, not by whether anything was in it. At a chicken coop the chickens confirm every trigger otherwise. Ordinary activity is then rejected - no event, no video kept, no alert - while a predator still gets all three. The snapshot is kept either way." />
+
                     <TextBlock Text="OVERNIGHT PAUSE" Style="{StaticResource GroupHeading}" Margin="0,20,0,0" />
                     <CheckBox x:Name="NightToggle" Content="Pause triggering overnight" />
                     <Grid Margin="0,10,0,0">

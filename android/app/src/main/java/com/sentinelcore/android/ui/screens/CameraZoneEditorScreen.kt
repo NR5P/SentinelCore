@@ -165,6 +165,8 @@ fun CameraZoneEditorScreen(
     // Whole-camera, not per-zone: the server holds one window per trigger config. Defaults match
     // TriggerConfig's - off, 21:00-07:00 - so a server that doesn't know about the feature shows
     // the same thing a freshly migrated one does.
+    var bypassFastLocal by remember { mutableStateOf(false) }
+    var keepOnlyAlertable by remember { mutableStateOf(false) }
     var nightWindowEnabled by remember { mutableStateOf(false) }
     var nightStartHour by remember { mutableIntStateOf(21) }
     var nightEndHour by remember { mutableIntStateOf(7) }
@@ -212,6 +214,10 @@ fun CameraZoneEditorScreen(
         nightWindowEnabled = nightWindow.enabled
         nightStartHour = nightWindow.startHour
         nightEndHour = nightWindow.endHour
+        // Resolved, not raw: a server older than either column sends neither key, and the two
+        // switches still have to show something.
+        bypassFastLocal = config.resolvedBypassFastLocal()
+        keepOnlyAlertable = config.resolvedKeepOnlyAlertable()
     }
 
     suspend fun load() {
@@ -302,6 +308,10 @@ fun CameraZoneEditorScreen(
                     nightWindowEnabled = nightWindowEnabled,
                     nightStartHour = nightStartHour,
                     nightEndHour = nightEndHour,
+                    // Never null from here either, and for the same reason: this editor knows
+                    // about both switches, so it owns their value.
+                    bypassFastLocal = bypassFastLocal,
+                    keepOnlyAlertable = keepOnlyAlertable,
                 )
                 val saved = model.saveTriggerConfig(camera.id, config)
                 apply(saved)
@@ -552,6 +562,72 @@ fun CameraZoneEditorScreen(
                                     valueRange = 0f..100f,
                                 )
                             }
+                        }
+                    }
+                }
+
+                item {
+                    // Both switches only do anything while Send to Alerts is on - nothing
+                    // analyses the frame otherwise - and both are worth turning on for very few
+                    // cameras, so they get their own card rather than lengthening the list above.
+                    Card(Modifier.fillMaxWidth().widthIn(max = 900.dp)) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text("AI Routing", style = MaterialTheme.typography.titleSmall)
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("Always Use the Full AI", modifier = Modifier.weight(1f))
+                                Switch(
+                                    checked = bypassFastLocal,
+                                    onCheckedChange = { bypassFastLocal = it },
+                                )
+                            }
+                            Text(
+                                "Skips the fast local detector and sends every trigger from this " +
+                                    "camera straight to the full AI. Only matters while Send to " +
+                                    "Alerts is on, and only when Fast Local Detection is the " +
+                                    "primary backend. The detector is trained on a fixed class " +
+                                    "list with no raccoon, fox, opossum or weasel in it, so at a " +
+                                    "chicken coop it clears those frames as empty and the model " +
+                                    "that could name the predator never sees them. The cost is " +
+                                    "real: every trigger becomes a full analysis of around two " +
+                                    "minutes, so raise the cooldown above to match or the queue " +
+                                    "backs up and starts dropping frames unanalysed.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "Only Keep What the AI Would Alert On",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Switch(
+                                    checked = keepOnlyAlertable,
+                                    onCheckedChange = { keepOnlyAlertable = it },
+                                )
+                            }
+                            Text(
+                                "Judges this camera's triggers by whether the AI would have " +
+                                    "alerted on the frame, instead of by whether anything was in " +
+                                    "it. The normal bar is \"a person, vehicle, package or animal " +
+                                    "is there\", which is right for a driveway but wrong at a " +
+                                    "chicken coop: the chickens are animals, they are always in " +
+                                    "shot, and they confirm every trigger. With this on, ordinary " +
+                                    "chicken activity is rejected - no event, no video kept, no " +
+                                    "alert - while a predator still gets all three. The snapshot " +
+                                    "is kept either way, so Show Hidden still shows everything " +
+                                    "that fired. Nothing is rejected because the AI was slow, " +
+                                    "unreachable or errored.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }

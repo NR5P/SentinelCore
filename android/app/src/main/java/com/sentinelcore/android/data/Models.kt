@@ -208,6 +208,20 @@ data class TriggerConfig(
     val nightWindowEnabled: Boolean? = null,
     val nightStartHour: Int? = null,
     val nightEndHour: Int? = null,
+
+    // The two per-camera AI routing flags - see core/docs/AI_ROUTING_HANDOFF.md. Nullable for
+    // exactly the reason the night window above is, and it is the same trap: null omits the key,
+    // which the server merges against the stored row, while a plain false on every save would
+    // switch the coop camera back to the fast detector the first time someone nudged a polygon
+    // from their phone, and nothing anywhere would say so.
+    //
+    // bypassFastLocal sends every trigger straight to the full model rather than letting the fast
+    // local detector decide what is worth escalating - it is COCO-trained and has no class for a
+    // raccoon, fox, opossum or weasel, so at a chicken coop it clears those frames as empty.
+    // keepOnlyAlertable judges a trigger by whether the AI would have alerted on the frame instead
+    // of by whether anything was in it, so the coop's own chickens stop confirming every trigger.
+    val bypassFastLocal: Boolean? = null,
+    val keepOnlyAlertable: Boolean? = null,
 ) {
     // Always at least one zone, mirroring the server's TriggerConfig.ResolvedZones: a config
     // written before multi-zone reads as a single zone built from the legacy pair, so the editor
@@ -223,6 +237,14 @@ data class TriggerConfig(
     // asked for instead of a zero-width one that appears to do nothing.
     fun resolvedNightWindow(): NightWindow =
         NightWindow(nightWindowEnabled ?: false, nightStartHour ?: 21, nightEndHour ?: 7)
+
+
+    // Same fallbacks the server applies to a row written before these two columns existed, and
+    // the same reason as resolvedNightWindow(): a server older than the feature sends neither
+    // key, and the editor still has to show a switch. Off is the server's default for both.
+    fun resolvedBypassFastLocal(): Boolean = bypassFastLocal ?: false
+
+    fun resolvedKeepOnlyAlertable(): Boolean = keepOnlyAlertable ?: false
 }
 
 data class NightWindow(val enabled: Boolean, val startHour: Int, val endHour: Int)

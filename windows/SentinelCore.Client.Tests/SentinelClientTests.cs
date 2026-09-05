@@ -220,6 +220,31 @@ public class SentinelClientTests
         Assert.False(config.ResolvedNightEnabled);
         Assert.Equal(21, config.ResolvedNightStartHour);
         Assert.Equal(7, config.ResolvedNightEndHour);
+
+        // Same story for the two AI routing flags, whose columns are newer still: absent means the
+        // server predates them, and both of the server's own defaults are off.
+        Assert.False(config.ResolvedBypassFastLocal);
+        Assert.False(config.ResolvedKeepOnlyAlertable);
+        Assert.Null(config.BypassFastLocal);
+        Assert.Null(config.KeepOnlyAlertable);
+    }
+
+    [Fact]
+    public async Task The_AI_routing_flags_are_read_back_as_the_server_sent_them()
+    {
+        const string json = """
+            {"enabled":true,"zonePolygon":[],"minTriggerArea":0.02,"cooldownSeconds":30,
+             "maxTriggersPerMinute":6,"shadowSensitivity":50,"recordClips":false,"clipPreSeconds":5,
+             "clipPostSeconds":10,"sendToAlerts":true,"alertProfile":"coop",
+             "bypassFastLocal":true,"keepOnlyAlertable":true}
+            """;
+        using var server = new FakeServer().OnGet($"/api/cameras/{Guid.Empty}/trigger-config", json);
+        using var client = ClientFor(server);
+
+        var config = await client.TriggerConfigAsync(Guid.Empty);
+
+        Assert.True(config.ResolvedBypassFastLocal);
+        Assert.True(config.ResolvedKeepOnlyAlertable);
     }
 
     [Fact]
@@ -238,6 +263,29 @@ public class SentinelClientTests
         Assert.DoesNotContain("zones", body);      // absent, not [], which would mean "delete them"
         Assert.Contains("zonePolygon", body);      // must keep being sent whatever else changes
         Assert.Contains("minTriggerArea", body);
+
+        // The two AI routing flags are the same trap with a newer name: a plain false here would
+        // route the coop camera back through the fast detector and re-widen what it keeps, both
+        // without anyone asking. Null has to stay off the wire entirely.
+        Assert.DoesNotContain("bypassFastLocal", body);
+        Assert.DoesNotContain("keepOnlyAlertable", body);
+    }
+
+    [Fact]
+    public async Task Saving_a_trigger_config_sends_the_AI_routing_flags_the_editor_set()
+    {
+        // The other half of the contract: a screen that knows about the flags owns their value, so
+        // an explicit false has to reach the server rather than being mistaken for "no opinion".
+        using var server = new FakeServer().On("PUT", $"/api/cameras/{Guid.Empty}/trigger-config", "{}");
+        using var client = ClientFor(server);
+
+        await client.SaveTriggerConfigAsync(
+            Guid.Empty,
+            new TriggerConfig { Enabled = true, BypassFastLocal = true, KeepOnlyAlertable = false });
+
+        var body = server.Bodies.Single();
+        Assert.Contains("\"bypassFastLocal\":true", body);
+        Assert.Contains("\"keepOnlyAlertable\":false", body);
     }
 
     [Fact]

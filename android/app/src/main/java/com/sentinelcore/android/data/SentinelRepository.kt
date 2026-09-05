@@ -1732,6 +1732,11 @@ class SentinelRepository(
             nightWindowEnabled = if (json.isNull("nightWindowEnabled")) null else json.optBoolean("nightWindowEnabled"),
             nightStartHour = if (json.isNull("nightStartHour")) null else json.optInt("nightStartHour"),
             nightEndHour = if (json.isNull("nightEndHour")) null else json.optInt("nightEndHour"),
+            // Null-vs-false matters here for the same reason it does above: a server older than
+            // these two columns sends neither key, and optBoolean would report that as a real
+            // "off" the editor would then save back over whatever was stored.
+            bypassFastLocal = if (json.isNull("bypassFastLocal")) null else json.optBoolean("bypassFastLocal"),
+            keepOnlyAlertable = if (json.isNull("keepOnlyAlertable")) null else json.optBoolean("keepOnlyAlertable"),
         )
     }
 
@@ -1798,6 +1803,16 @@ class SentinelRepository(
             json.put("nightWindowEnabled", nightWindowEnabled)
                 .put("nightStartHour", nightStartHour)
                 .put("nightEndHour", nightEndHour)
+        }
+
+        // Independent of each other and of the window above, so each is sent only when this
+        // config actually carries a choice for it. Same rule as ever: an absent key means "this
+        // client has no opinion" and keeps the stored value, never "turn it off".
+        if (bypassFastLocal != null) {
+            json.put("bypassFastLocal", bypassFastLocal)
+        }
+        if (keepOnlyAlertable != null) {
+            json.put("keepOnlyAlertable", keepOnlyAlertable)
         }
         return json
     }

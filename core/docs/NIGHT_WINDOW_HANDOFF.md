@@ -1,7 +1,7 @@
 # Overnight trigger pause — client notes
 
 A camera's trigger zone can now be told to **hold back every motion trigger between two hours of
-the day**. Server, web dashboard, iOS/macOS and Android all have it. **tvOS is the one surface
+the day**. Server, web dashboard, iOS/macOS, Android and Windows all have it. **tvOS is the one surface
 still without a control** — it decodes the config and has a `saveTriggerConfig` on its client, but
 no trigger editor to put the switch in; it sends none of the three keys, which the merge rule below
 makes safe.
@@ -130,6 +130,7 @@ only appear once it's on:
 | Web | `core/SentinelCore.Web/wwwroot/index.html` (search `zone-night-window`), wired in `wwwroot/triggers.js` |
 | iOS / macOS | `ios/SentinelCore/Views/TriggerZoneEditorView.swift`, fields in `ios/SentinelCore/Models/Models.swift` |
 | Android | `android/app/src/main/java/com/sentinelcore/android/ui/screens/CameraZoneEditorScreen.kt`, fields in `data/Models.kt`, JSON in `data/SentinelRepository.kt` |
+| Windows | `windows/SentinelCore.App/Views/TriggerZoneEditorWindow.xaml` + `.xaml.cs`, fields in `windows/SentinelCore.Client/Models/Models.cs` |
 | tvOS | **not built** — no trigger editor exists there |
 
 Neither app uses a free-text number field: the range is 24 discrete values, so iOS uses a `Picker`
