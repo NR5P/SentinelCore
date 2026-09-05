@@ -256,14 +256,22 @@ window.SentinelSchedules = (function () {
 
   async function setEnabled(schedule, enabled) {
     try {
-      await fetch(`/api/schedules/${schedule.id}/enabled`, {
+      const response = await fetch(`/api/schedules/${schedule.id}/enabled`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled })
       });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        alert(response.status === 403
+          ? "Only an admin account can enable or disable a schedule."
+          : ((payload.errors || []).join(" ") || payload.error || "Could not change the schedule."));
+        return;
+      }
       await load();
     } catch (err) {
       console.error("Failed to change whether a schedule is enabled", err);
+      alert("Network error while changing the schedule.");
     }
   }
 
@@ -298,10 +306,18 @@ window.SentinelSchedules = (function () {
     if (!confirm(`Remove schedule "${schedule.name}"? Its run history goes with it.`)) return;
 
     try {
-      await fetch(`/api/schedules/${schedule.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/schedules/${schedule.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        alert(response.status === 403
+          ? "Only an admin account can remove a schedule."
+          : ((payload.errors || []).join(" ") || payload.error || "Could not remove the schedule."));
+        return;
+      }
       await load();
     } catch (err) {
       console.error("Failed to delete schedule", err);
+      alert("Network error while removing the schedule.");
     }
   }
 

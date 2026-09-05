@@ -90,8 +90,13 @@ window.GateWatchTriggers = (function () {
         const blob = await frameResp.blob();
         referenceUrl = URL.createObjectURL(blob);
         await Promise.all([setImageSrc(drawImg(), referenceUrl), setImageSrc(sizeImg(), referenceUrl)]);
+        setFrameMissing(false);
       } else {
-        showEditorError("Could not grab a reference frame from this camera - check its stream URL/credentials.");
+        // The panes keep their shape (see .zone-frame-missing) so the zone can still be drawn
+        // and the size still set against a blank frame - a camera being offline right now is no
+        // reason to lock its settings.
+        setFrameMissing(true);
+        showEditorError("Could not grab a reference frame from this camera - check its stream URL/credentials. The zone can still be drawn on a blank frame.");
       }
 
       let alertProfile = "default";
@@ -159,6 +164,15 @@ window.GateWatchTriggers = (function () {
     document.getElementById("zone-editor").classList.add("hidden");
     revokeUrls();
     currentCamera = null;
+  }
+
+  // Both panes at once: they show the same frame, and a missing one is missing from both.
+  function setFrameMissing(missing) {
+    for (const wrap of [drawWrap(), sizeWrap()]) wrap.classList.toggle("zone-frame-missing", missing);
+    if (missing) {
+      drawImg().removeAttribute("src");
+      sizeImg().removeAttribute("src");
+    }
   }
 
   function setImageSrc(img, url) {

@@ -140,10 +140,18 @@ window.GateWatchAutomations = (function () {
     if (!confirm(`Remove automation rule "${rule.name}"?`)) return;
 
     try {
-      await fetch(`/api/automation-rules/${rule.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/automation-rules/${rule.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        alert(response.status === 403
+          ? "Only an admin account can remove a rule."
+          : ((payload.errors || []).join(" ") || payload.error || "Could not remove the rule."));
+        return;
+      }
       await load();
     } catch (err) {
       console.error("Failed to delete automation rule", err);
+      alert("Network error while removing the rule.");
     }
   }
 

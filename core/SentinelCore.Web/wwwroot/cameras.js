@@ -934,11 +934,21 @@ window.GateWatchCameras = (function () {
     if (!confirm(`Remove camera "${camera.name}"? This only removes it from the live view - nothing to do with Blue Iris.`)) return;
 
     try {
-      await fetch(`/api/cameras/${camera.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/cameras/${camera.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        // Said out loud: a refused delete that silently reloads the same list reads as a button
+        // that does nothing.
+        const payload = await response.json().catch(() => ({}));
+        alert(response.status === 403
+          ? "Only an admin account can remove a camera."
+          : ((payload.errors || []).join(" ") || payload.error || "Could not remove the camera."));
+        return;
+      }
       await load();
       renderList();
     } catch (err) {
       console.error("Failed to delete camera", err);
+      alert("Network error while removing the camera.");
     }
   }
 
@@ -1101,11 +1111,19 @@ window.GateWatchCameras = (function () {
     if (!confirm(`Remove the camera group "${group.name}"? The cameras themselves aren't affected.`)) return;
 
     try {
-      await fetch(`/api/camera-groups/${group.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/camera-groups/${group.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        alert(response.status === 403
+          ? "Only an admin account can remove a camera group."
+          : ((payload.errors || []).join(" ") || payload.error || "Could not remove the camera group."));
+        return;
+      }
       await load();
       renderGroupsList();
     } catch (err) {
       console.error("Failed to delete camera group", err);
+      alert("Network error while removing the camera group.");
     }
   }
 
