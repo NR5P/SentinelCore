@@ -131,6 +131,7 @@ window.GateWatchTriggers = (function () {
         document.getElementById("zone-night-start").value = config.nightStartHour ?? 21;
         document.getElementById("zone-night-end").value = config.nightEndHour ?? 7;
         document.getElementById("zone-bypass-fastlocal").checked = !!config.bypassFastLocal;
+        document.getElementById("zone-keep-only-alertable").checked = !!config.keepOnlyAlertable;
       }
 
       const profileNames = profilesResp.ok ? await profilesResp.json() : [];
@@ -564,7 +565,8 @@ window.GateWatchTriggers = (function () {
       // an empty box should fall back to the shipped window rather than silently to midnight.
       nightStartHour: hourOrDefault("zone-night-start", 21),
       nightEndHour: hourOrDefault("zone-night-end", 7),
-      bypassFastLocal: document.getElementById("zone-bypass-fastlocal").checked
+      bypassFastLocal: document.getElementById("zone-bypass-fastlocal").checked,
+      keepOnlyAlertable: document.getElementById("zone-keep-only-alertable").checked
     };
 
     try {

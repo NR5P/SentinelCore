@@ -126,7 +126,7 @@ public sealed class CameraTriggerService(
             var released = false;
             try
             {
-                var (profile, bypassFastLocal) = await ResolveProfileAsync(camera.Id, request.AlertProfile, cancellationToken);
+                var (profile, bypassFastLocal, keepOnlyAlertable) = await ResolveProfileAsync(camera.Id, request.AlertProfile, cancellationToken);
                 logger.LogInformation(
                     "Trigger fired for camera {CameraId} ({Name}) from {Source}, profile {Profile}",
                     camera.Id, camera.Name, request.Source, profile);
@@ -149,7 +149,7 @@ public sealed class CameraTriggerService(
                 if (gated)
                 {
                     released = true;
-                    _ = triggerConfirmation.ResolveAsync(trigger.Id, forwarded, CancellationToken.None);
+                    _ = triggerConfirmation.ResolveAsync(trigger.Id, forwarded, CancellationToken.None, keepOnlyAlertable);
                 }
 
                 return new CameraTriggerResult(
@@ -194,7 +194,7 @@ public sealed class CameraTriggerService(
     // camera is pointed at, not what this one caller wants. A requested profile therefore still gets
     // the camera's own routing - a coop fired by a sensor needs the full model for the same reason
     // motion does. One lookup serves both so an explicit profile doesn't skip reading the row.
-    private async Task<(string Profile, bool BypassFastLocal)> ResolveProfileAsync(
+    private async Task<(string Profile, bool BypassFastLocal, bool KeepOnlyAlertable)> ResolveProfileAsync(
         Guid cameraId, string? requested, CancellationToken cancellationToken)
     {
         var config = await configStore.GetAsync(cameraId, cancellationToken);
@@ -202,6 +202,6 @@ public sealed class CameraTriggerService(
             ? requested.Trim()
             : string.IsNullOrWhiteSpace(config?.AlertProfile) ? "default" : config.AlertProfile;
 
-        return (profile, config?.BypassFastLocal ?? false);
+        return (profile, config?.BypassFastLocal ?? false, config?.KeepOnlyAlertable ?? false);
     }
 }

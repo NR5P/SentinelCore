@@ -119,6 +119,54 @@ public sealed class TriggerBypassFastLocalTests
 
     // --- Live reload ----------------------------------------------------------------------------
 
+    // --- KeepOnlyAlertable shares this column's plumbing ------------------------------------------
+
+    [Fact]
+    public async Task KeepOnlyAlertableSurvivesAReopenAndTurnsBackOff()
+    {
+        var store = NewStore(out var root);
+        var cameraId = Guid.NewGuid();
+        var ct = TestContext.Current.CancellationToken;
+
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId) with { KeepOnlyAlertable = true }, ct);
+        Assert.True((await new SqliteTriggerStore(root).GetAsync(cameraId, ct))!.KeepOnlyAlertable);
+
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId) with { KeepOnlyAlertable = false }, ct);
+        Assert.False((await new SqliteTriggerStore(root).GetAsync(cameraId, ct))!.KeepOnlyAlertable);
+    }
+
+    [Fact]
+    public async Task AnExistingCameraMigratesWithKeepOnlyAlertableOff()
+    {
+        // Migrating this one ON would start hiding events and deleting clips across every install
+        // on first boot, which is the worst possible default for a setting about throwing footage
+        // away.
+        var store = NewStore(out var root);
+        var cameraId = Guid.NewGuid();
+        var ct = TestContext.Current.CancellationToken;
+
+        await store.SaveAsync(TriggerConfig.Disabled(cameraId) with { Enabled = true }, ct);
+
+        Assert.False((await new SqliteTriggerStore(root).GetAsync(cameraId, ct))!.KeepOnlyAlertable);
+    }
+
+    [Fact]
+    public void FlippingKeepOnlyAlertableIsAConfigChange()
+    {
+        var cameraId = Guid.NewGuid();
+        var off = TriggerConfig.Disabled(cameraId) with { Enabled = true };
+
+        Assert.False(TriggerZoneMonitor.ConfigsEquivalent(off, off with { KeepOnlyAlertable = true }));
+    }
+
+    [Fact]
+    public void AnOldClientOmittingKeepOnlyAlertableKeepsTheStoredValue()
+    {
+        var stored = TriggerConfig.Disabled(Guid.NewGuid()) with { KeepOnlyAlertable = true };
+        Assert.True(new TriggerConfigDto { KeepOnlyAlertable = null }.KeepOnlyAlertable ?? stored.KeepOnlyAlertable);
+        Assert.False(new TriggerConfigDto { KeepOnlyAlertable = false }.KeepOnlyAlertable ?? stored.KeepOnlyAlertable);
+    }
+
     [Fact]
     public void FlippingTheFlagIsAConfigChange()
     {

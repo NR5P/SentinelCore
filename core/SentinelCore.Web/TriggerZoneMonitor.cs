@@ -922,7 +922,7 @@ public sealed class TriggerZoneMonitor(
             if (session.Config.SendToAlerts)
                 _ = ForwardToAlertPipelineAsync(
                     camera, bytes, session.MultiFrame, session.Config.AlertProfile, session.Config.BypassFastLocal,
-                    now, linkedCameraNames, incidentId,
+                    session.Config.KeepOnlyAlertable, now, linkedCameraNames, incidentId,
                     trigger.Id, gated, pick);
         }
         catch (Exception ex)
@@ -1027,7 +1027,8 @@ public sealed class TriggerZoneMonitor(
                     var alertProfile = memberConfig?.AlertProfile ?? "default";
                     _ = ForwardToAlertPipelineAsync(
                         memberCamera, snapshot, new MultiFrameOptions(), alertProfile,
-                        memberConfig?.BypassFastLocal ?? false, occurredAt, [], incidentId,
+                        memberConfig?.BypassFastLocal ?? false, memberConfig?.KeepOnlyAlertable ?? false,
+                        occurredAt, [], incidentId,
                         companionTrigger.Id, companionGated);
                 }
             }
@@ -1053,7 +1054,7 @@ public sealed class TriggerZoneMonitor(
     // alert has been queued.
     private async Task ForwardToAlertPipelineAsync(
         Camera camera, byte[] imageBytes, MultiFrameOptions multiFrame, string profile, bool bypassFastLocal,
-        DateTimeOffset occurredAt,
+        bool keepOnlyAlertable, DateTimeOffset occurredAt,
         IReadOnlyList<string> linkedCameraNames, string? incidentId, Guid triggerId, bool gated,
         RewindPick? pick = null)
     {
@@ -1093,7 +1094,7 @@ public sealed class TriggerZoneMonitor(
                 await eventStore.SetAlertIdAsync(triggerId, alertId, _stoppingToken);
 
             if (gated)
-                await triggerConfirmation.ResolveAsync(triggerId, forwarded, _stoppingToken);
+                await triggerConfirmation.ResolveAsync(triggerId, forwarded, _stoppingToken, keepOnlyAlertable);
         }
         catch (OperationCanceledException)
         {
@@ -1385,6 +1386,9 @@ public sealed class TriggerZoneMonitor(
         // it belongs here for the same reason: without it, switching the coop to the full model
         // would appear to save and then keep going through the detector until the next restart.
         if (a.BypassFastLocal != b.BypassFastLocal) return false;
+
+        // Read off the session's copy when the verdict is resolved, so it belongs here too.
+        if (a.KeepOnlyAlertable != b.KeepOnlyAlertable) return false;
 
         // The whole zone list, not just the primary polygon: this is what decides whether the
         // reconcile loop tears down and rebuilds the detection session, so a field missed here is

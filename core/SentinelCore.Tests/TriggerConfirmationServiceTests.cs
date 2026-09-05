@@ -324,6 +324,184 @@ public sealed class TriggerConfirmationServiceTests
         }
     };
 
+    // --- KeepOnlyAlertable: judging by "would the AI have told you" ------------------------------
+    //
+    // The chicken coop. Both of these frames have a visible animal, so the default bar confirms
+    // both and keeps both clips - which is how one evening produced 385 confirmed triggers and 6 GB
+    // of video of chickens being chickens. The model's own notification_recommended is the flag
+    // that already told them apart correctly, on all 40 analyses of 2026-09-03.
+
+    private static AlertResult Chickens(Guid id) => new()
+    {
+        Id = id,
+        Status = "completed",
+        Analysis = new VisionAnalysis
+        {
+            Summary = "Chickens are present in the chicken coop. No predators are visible.",
+            Animal = new AnimalAnalysis { Visible = true, Description = "chickens" },
+            NotificationRecommended = false
+        }
+    };
+
+    private static AlertResult Raccoon(Guid id) => new()
+    {
+        Id = id,
+        Status = "completed",
+        Analysis = new VisionAnalysis
+        {
+            Summary = "A raccoon is at the coop door.",
+            Animal = new AnimalAnalysis { Visible = true, Description = "a raccoon" },
+            NotificationRecommended = true
+        }
+    };
+
+    [Fact]
+    public async Task KeepOnlyAlertable_Chickens_AreRejected_AndTheClipGoes()
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, imagePath, clipPath) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var completed = Chickens(Guid.NewGuid());
+
+            var service = NewService(store, completed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(
+                    trigger.Id, new AlertForwardResult(true, completed.Id), ct, keepOnlyAlertable: true);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Rejected, stored!.Confirmation);
+                Assert.False(File.Exists(clipPath));
+
+                // The picture stays regardless, so "show hidden" can still show what fired - which
+                // is the only way to tell a well-tuned coop zone from one pointed at the road.
+                Assert.True(File.Exists(imagePath));
+                Assert.Equal(imagePath, stored.ImagePath);
+                Assert.Null(stored.ClipPath);
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task KeepOnlyAlertable_APredator_IsConfirmed_AndTheClipStays()
+    {
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, clipPath) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var completed = Raccoon(Guid.NewGuid());
+
+            var service = NewService(store, completed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(
+                    trigger.Id, new AlertForwardResult(true, completed.Id), ct, keepOnlyAlertable: true);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+                Assert.True(File.Exists(clipPath));
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task WithoutKeepOnlyAlertable_TheSameChickens_AreConfirmed()
+    {
+        // The setting is per-camera and off by default: this is the behaviour every other camera
+        // keeps, and the reason the coop needed a switch rather than a change to the rule.
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, clipPath) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var completed = Chickens(Guid.NewGuid());
+
+            var service = NewService(store, completed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(trigger.Id, new AlertForwardResult(true, completed.Id), ct);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+                Assert.True(File.Exists(clipPath));
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task KeepOnlyAlertable_StillFailsOpen_WhenTheAnalysisNeverLanded()
+    {
+        // Narrowing what counts as real must not also narrow what survives an outage. A frame the
+        // AI never judged is footage of something that moved, and this setting is not a licence to
+        // throw it away.
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, clipPath) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var failed = new AlertResult { Id = Guid.NewGuid(), Status = "failed" };
+
+            var service = NewService(store, failed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(
+                    trigger.Id, new AlertForwardResult(true, failed.Id), ct, keepOnlyAlertable: true);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+                Assert.True(File.Exists(clipPath));
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
+    [Fact]
+    public async Task KeepOnlyAlertable_BelievesANotificationWithNothingVisible()
+    {
+        // The one asymmetry, and it is deliberate: notification_recommended with no subject in
+        // frame is the spider-web-on-the-lens shape, where the model asserts something in prose it
+        // did not set a flag for. That direction errs towards keeping footage, so it is believed.
+        using var store = NewStore(out var root);
+        try
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var (trigger, _, clipPath) = await AddWithFilesAsync(store, Guid.NewGuid(), root, ct);
+            var completed = new AlertResult
+            {
+                Id = Guid.NewGuid(),
+                Status = "completed",
+                Analysis = new VisionAnalysis
+                {
+                    Summary = "Something moved at the coop door but the view is obstructed.",
+                    NotificationRecommended = true
+                }
+            };
+
+            var service = NewService(store, completed, out var settingsPath);
+            try
+            {
+                await service.ResolveAsync(
+                    trigger.Id, new AlertForwardResult(true, completed.Id), ct, keepOnlyAlertable: true);
+
+                var stored = await ((ITriggerEventStore)store).GetAsync(trigger.Id, ct);
+                Assert.Equal(TriggerConfirmation.Confirmed, stored!.Confirmation);
+                Assert.True(File.Exists(clipPath));
+            }
+            finally { File.Delete(settingsPath); }
+        }
+        finally { TempDirectories.Delete(root); }
+    }
+
     [Fact]
     public async Task AnEmptyFrame_DeletesTheClip_AndKeepsTheSnapshot()
     {

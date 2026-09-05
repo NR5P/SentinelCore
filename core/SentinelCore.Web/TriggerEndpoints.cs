@@ -59,6 +59,9 @@ public sealed class TriggerConfigDto
     // about the setting", not "turn it off". See TriggerConfig.BypassFastLocal.
     public bool? BypassFastLocal { get; set; }
 
+    // Nullable for the same old-client reason as the fields above it.
+    public bool? KeepOnlyAlertable { get; set; }
+
     public bool HasSensorBinding => !string.IsNullOrWhiteSpace(SensorDeviceId);
 
     public bool UsesThreshold =>
@@ -148,7 +151,8 @@ public static class TriggerEndpoints
                 dto.SensorMeasurement.Trim(), dto.SensorThreshold,
                 nightEnabled, nightStart, nightEnd,
                 // Same absent-key merge as the night window, for the same reason.
-                dto.BypassFastLocal ?? existing?.BypassFastLocal ?? false);
+                dto.BypassFastLocal ?? existing?.BypassFastLocal ?? false,
+                dto.KeepOnlyAlertable ?? existing?.KeepOnlyAlertable ?? false);
             await store.SaveAsync(config, ct);
             return Results.Ok(config);
         }).RequireAuthorization("AdminOnly");

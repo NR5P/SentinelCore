@@ -363,6 +363,7 @@ public static class BackupEndpoints
         NightWindowEnabled = config.NightWindowEnabled,
         NightStartHour = config.NightStartHour,
         NightEndHour = config.NightEndHour,
-        BypassFastLocal = config.BypassFastLocal
+        BypassFastLocal = config.BypassFastLocal,
+        KeepOnlyAlertable = config.KeepOnlyAlertable
     };
 }

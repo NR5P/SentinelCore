@@ -61,7 +61,13 @@ public sealed class TriggerConfirmationService(
 
     // Fire-and-forget from the trigger path: waits out the analysis, then writes the verdict.
     // Never throws - the caller has already recorded the trigger and moved on.
-    public async Task ResolveAsync(Guid triggerId, AlertForwardResult forwarded, CancellationToken cancellationToken)
+    //
+    // keepOnlyAlertable is trailing and defaulted rather than required: it comes off the camera's
+    // trigger config, it is off for all but a camera or two, and every other caller (and the
+    // fail-open paths above) means "judge this the normal way".
+    public async Task ResolveAsync(
+        Guid triggerId, AlertForwardResult forwarded, CancellationToken cancellationToken,
+        bool keepOnlyAlertable = false)
     {
         try
         {
@@ -80,7 +86,8 @@ public sealed class TriggerConfirmationService(
             }
 
             var settings = await GetSettingsAsync(cancellationToken);
-            var (verdict, judged) = await AwaitVerdictAsync(alertId, TimeSpan.FromSeconds(settings.TimeoutSeconds), cancellationToken);
+            var (verdict, judged) = await AwaitVerdictAsync(
+                alertId, TimeSpan.FromSeconds(settings.TimeoutSeconds), keepOnlyAlertable, cancellationToken);
             await eventStore.SetConfirmationAsync(triggerId, verdict, cancellationToken);
 
             // Said plainly, because Confirmed means two different things and only one of them is a
@@ -197,7 +204,31 @@ public sealed class TriggerConfirmationService(
 
     private static Verdict Unjudged => new(TriggerConfirmation.Confirmed, false);
 
-    private async Task<Verdict> AwaitVerdictAsync(Guid alertId, TimeSpan timeout, CancellationToken cancellationToken)
+    // The bar a judged frame has to clear. Normally "was anything there" - a person, vehicle,
+    // package or animal - which is the right question for a driveway, where anything in shot is
+    // worth a look.
+    //
+    // KeepOnlyAlertable asks the narrower one instead: would the AI have told you about this? At a
+    // chicken coop the two come apart completely. Chickens are animals and are always in frame, so
+    // the default bar confirms every trigger and keeps every clip; the model meanwhile answers
+    // notification_recommended=false for them and true for a predator, which is exactly the
+    // distinction being asked for. Measured on 2026-09-03: 30 of 40 analyses had a visible subject
+    // and none of the 40 warranted a notification.
+    //
+    // Read off the model's own flag rather than AlertNotificationPolicy.ShouldNotify, deliberately.
+    // ShouldNotify also suppresses duplicates, and a repeat sighting of a real fox is still footage
+    // worth keeping - the same reasoning the dedup check there already spells out for itself.
+    //
+    // Not combined with HasVisibleSubject: a model that recommends a notification while reporting
+    // nothing in frame is believed, because that direction errs towards keeping footage and this
+    // whole file errs that way on purpose.
+    private static bool IsConfirmed(VisionAnalysis analysis, bool keepOnlyAlertable) =>
+        keepOnlyAlertable
+            ? analysis.NotificationRecommended
+            : AlertNotificationPolicy.HasVisibleSubject(analysis);
+
+    private async Task<Verdict> AwaitVerdictAsync(
+        Guid alertId, TimeSpan timeout, bool keepOnlyAlertable, CancellationToken cancellationToken)
     {
         var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", cancellationToken);
         if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
@@ -249,7 +280,7 @@ public sealed class TriggerConfirmationService(
                     return Unjudged;
 
                 return new Verdict(
-                    AlertNotificationPolicy.HasVisibleSubject(result.Analysis)
+                    IsConfirmed(result.Analysis, keepOnlyAlertable)
                         ? TriggerConfirmation.Confirmed
                         : TriggerConfirmation.Rejected,
                     Judged: true);

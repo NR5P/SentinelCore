@@ -476,6 +476,10 @@
               <label class="switch"><input type="checkbox" id="zone-bypass-fastlocal" /><span class="switch-track"></span></label>
               <span class="field-label">Always use the full AI (skip the fast detector)</span>
             </div>
+            <div class="field-row field-row-wide field-checkbox-row" data-tip="Judges this camera's triggers by whether the AI would have alerted on the frame, instead of by whether anything was in it. The normal bar is &quot;a person, vehicle, package or animal is there&quot;, which is right for a driveway but wrong at a chicken coop: the chickens are animals, they are always in shot, and they confirm every trigger - so the tab fills with them and every clip is kept, while the raccoon you actually care about is lost in the pile. With this on, ordinary chicken activity is rejected: no event in the tab, no video kept, no alert. A predator still gets all three. The snapshot is kept either way, so 'show hidden' still shows you everything that fired. Nothing is rejected because the AI was slow, unreachable or errored. Off by default.">
+              <label class="switch"><input type="checkbox" id="zone-keep-only-alertable" /><span class="switch-track"></span></label>
+              <span class="field-label">Only keep what the AI would alert on</span>
+            </div>
             <div class="field-row field-row-wide field-checkbox-row" data-tip="Pauses motion triggers between the hours below. Meant for a camera whose night-time IR picks up a spider web, insects or condensation close to the lens: those blobs are the same size on screen as a real person further away, so no minimum object size can tell them apart - but the time of day can. Nothing is captured, recorded or analysed while paused, and a sensor binding still fires normally. Off by default.">
               <label class="switch"><input type="checkbox" id="zone-night-window" /><span class="switch-track"></span></label>
               <span class="field-label">Pause triggers overnight</span>

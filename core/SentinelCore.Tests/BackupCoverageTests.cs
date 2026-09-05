@@ -573,7 +573,7 @@ public sealed class BackupCoverageTests : IDisposable
             AlertProfile = "default", SensorDeviceId = "", SensorTriggerOn = "on", SensorCooldownSeconds = 30,
             SensorMeasurement = "", SensorThreshold = 0.0,
             NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7,
-            BypassFastLocal = true
+            BypassFastLocal = true, KeepOnlyAlertable = true
         }, ct))
             zone.EnsureSuccessStatusCode();
 
@@ -625,7 +625,7 @@ public sealed class BackupCoverageTests : IDisposable
             AlertProfile = "default", SensorDeviceId = "", SensorTriggerOn = "on", SensorCooldownSeconds = 30,
             SensorMeasurement = "", SensorThreshold = 0.0,
             NightWindowEnabled = true, NightStartHour = 21, NightEndHour = 7,
-            BypassFastLocal = true
+            BypassFastLocal = true, KeepOnlyAlertable = true
         }, ct))
             zone.EnsureSuccessStatusCode();
 
