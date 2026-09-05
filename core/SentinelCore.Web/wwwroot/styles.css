@@ -1935,12 +1935,15 @@ main {
 .ptz-controls {
   position: absolute;
   right: 8px;
-  bottom: 8px;
+  /* Clear of the native <video controls> transport bar, which Chromium and Safari draw in the
+     bottom ~40-48px of the element. At 8px the pad's bottom row of arrows sat directly on top of
+     the fullscreen and overflow buttons, so a press meant to nudge the camera down either did
+     nothing or went full screen instead. Low-opacity by default so it doesn't block much of the
+     frame - full opacity only while actually being interacted with. */
+  bottom: 52px;
   display: flex;
   align-items: flex-end;
   gap: 6px;
-  /* Above the native <video controls> transport bar, but low-opacity by default so it doesn't
-     block much of the frame - full opacity only while actually being interacted with. */
   opacity: 0.55;
   transition: opacity 0.15s ease;
 }
