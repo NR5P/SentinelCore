@@ -17,6 +17,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
 5b. [Gate/door open check — a safety check independent of motion alerts](#5b-gatedoor-open-check--a-safety-check-independent-of-motion-alerts)
 5c. [Camera Groups — cross-camera recording & incident correlation](#5c-camera-groups--cross-camera-recording--incident-correlation)
+5d. [Using a laptop or phone as a camera](#5d-using-a-laptop-or-phone-as-a-camera)
 6. [Motion zones on your own cameras](#6-motion-zones-on-your-own-cameras)
 6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
 6ab. [Schedules — doing something at a time, at sunset, or when it gets dark](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark)
@@ -547,6 +548,51 @@ recorded: CameraA, CameraB"*, listing what else was captured alongside it.
 **What it does not do:** grouping cameras never changes each camera's own trigger-zone settings
 (shape, sensitivity, rate limiting) — it only adds companion recording/analysis on top of
 whatever each camera was already going to do on its own.
+
+## 5d. Using a laptop or phone as a camera
+
+Any device with a webcam and a browser — a spare laptop, an old phone, a tablet — can be one of
+your cameras. Nothing is installed on it: it opens a page, presses start, and its camera streams
+to the server for as long as that page stays open. From there it is an ordinary camera: it
+appears on the **LIVE** tab, records clips, fires trigger zones and gets analyzed like the rest.
+
+It takes two steps, on two different devices:
+
+1. **On the dashboard, add the camera.** On the **CAMERAS** tab click **+ add webcam device**
+   (next to **+ add camera**). It only asks for a name and whether to include the device's
+   microphone — there is no address to type, because the device will come to the server rather
+   than the other way round. Save it. Its card on the CAMERAS tab now has a **publish page**
+   button.
+
+2. **On the device that has the camera, open the publish page.** Click **publish page** *on that
+   device* — not on the machine you're sitting at, unless that is the device. If the dashboard
+   isn't already open there, it's `https://<server>:3443/publish.html`; sign in if asked, then
+   pick the camera you just added. The page shows the device's camera straight away, with a
+   dropdown to choose between cameras on a device that has more than one (a laptop's built-in
+   one versus a plugged-in USB one, or a phone's front and back). Press **start streaming**. The
+   status line under the picture confirms when the server is actually receiving video — leave
+   the page open after that.
+
+**"Can't use this device's camera", or the camera never appears.** Browsers only hand a page the
+device's camera over **HTTPS with a certificate the device trusts** — a rule of the browser, not
+of this system, and the same one that stops any website using your camera without a padlock.
+That means two things have to be true on the device doing the publishing:
+
+- The page has to be the `https://` address on port 3443, not the plain `http://` one on 3320.
+  The publish page says so if you open the wrong one, and links you to the right one.
+- The device has to trust the dashboard's certificate. This dashboard signs its own (there is no
+  public authority that will issue one for a home LAN address), so the first time a device visits
+  the `https://` address it sees a warning. **Clicking past the warning is not enough here**: the
+  page loads, but the browser then quietly refuses to share the camera, without ever asking you.
+  The fix is to trust the certificate on that device, once — the publish page offers it as a
+  download and walks through the steps for a Mac, Windows, iPhone or Android; they are also in
+  the deployment guide, section 14a. Reload the page afterwards and the camera appears.
+
+**Keeping it going.** The stream stops when the tab is closed, the screen locks, or the device
+sleeps — so turn off sleep on the device, plug it in, and leave the tab in front. The page holds
+the screen awake where the browser allows it, but that is a courtesy, not a substitute for the
+device's own power settings. If the device drops off, the camera's tile on the LIVE tab reports
+that nothing is publishing, rather than looking like a broken camera.
 
 ## 6. Motion zones on your own cameras
 

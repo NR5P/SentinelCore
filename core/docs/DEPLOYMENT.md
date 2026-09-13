@@ -871,7 +871,10 @@ certs/ca.crt         (a prebuilt release - see section 17; top-level, alongside 
                       and SentinelCore.Web/, not nested inside either one)
 ```
 
-The app prints the exact path in its startup log the first time it generates one. Per platform:
+The app prints the exact path in its startup log the first time it generates one. You don't
+have to copy the file off the server: the dashboard serves it at
+`http://<server>:3320/api/certificate-authority` (or the same path on the `https://` address),
+which is where the webcam publish page sends a device that needs it. Per platform:
 
 - **Linux:** `sudo cp ca.crt /usr/local/share/ca-certificates/sentinel-core.crt && sudo update-ca-certificates`
 - **macOS:** double-click it, then in Keychain Access set it to "Always Trust"

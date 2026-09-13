@@ -71,6 +71,9 @@ if (httpsSettings.Enabled && string.IsNullOrWhiteSpace(httpsSettings.Certificate
         // actually serving, without needing the change persisted to appsettings.json on disk.
         builder.Configuration["Https:CertificatePath"] = provisioned.CertificatePath;
         builder.Configuration["Https:KeyPath"] = provisioned.KeyPath;
+        // The authority's public certificate is what a device downloads to trust this server
+        // (CertificateAuthorityEndpoints); recorded here for the same reason as the two above.
+        builder.Configuration[CertificateAuthorityEndpoints.ConfigurationKey] = provisioned.AuthorityCertificatePath;
 
         if (provisioned.Reissued)
         {
@@ -422,6 +425,7 @@ app.UseWebSockets();
 app.MapSettingsEndpoints();
 app.MapCameraEndpoints();
 app.MapCameraPublishEndpoints();
+app.MapCertificateAuthorityEndpoints();
 app.MapCameraGroupEndpoints();
 app.MapLiveOrderEndpoints();
 app.MapKnownFaceEndpoints();

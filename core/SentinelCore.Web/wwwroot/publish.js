@@ -9,6 +9,7 @@
 // "connected" from "the server is actually receiving frames", which are not the same thing.
 (function () {
   const params = new URLSearchParams(location.search);
+  const CERTIFICATE_URL = "/api/certificate-authority";
 
   const els = {
     blocked: document.getElementById("publish-blocked"),
@@ -50,11 +51,13 @@
     els.status.textContent = message;
   }
 
-  function setError(message) {
+  // html is for the certificate guidance only, which carries a download link; everything else
+  // stays text, since some of it quotes the browser's own error message.
+  function setError(message, { html = false } = {}) {
     els.errors.innerHTML = "";
     if (!message) return;
     const li = document.createElement("li");
-    li.textContent = message;
+    if (html) li.innerHTML = message; else li.textContent = message;
     els.errors.appendChild(li);
   }
 
@@ -69,22 +72,48 @@
   // getUserMedia only exists in a secure context, and "secure" excludes plain http on a LAN
   // address - which is exactly how this dashboard is usually reached. Worth catching up front and
   // explaining precisely, because the browser's own failure here is a bare undefined property.
-  function checkEnvironment() {
+  //
+  // HTTPS alone doesn't get there either. The dashboard's certificate is signed by the install's
+  // own authority, and a browser that hasn't been told to trust it lets the page load past a
+  // warning and then refuses the camera without ever showing a prompt - so the fix offered here
+  // is the certificate, not just the address, and this page has to be the thing that hands it
+  // over: the device reading this is the one that needs it.
+  async function checkEnvironment() {
     if (window.isSecureContext && navigator.mediaDevices?.getUserMedia) return true;
 
     const httpsUrl = `https://${location.hostname}:3443${location.pathname}${location.search}`;
     blocked(
       "This browser will only share a camera with pages loaded over HTTPS (or from localhost), " +
       "and this page was loaded over plain HTTP.",
-      `Try <a href="${escapeAttribute(httpsUrl)}">${escapeHtml(httpsUrl)}</a> instead. ` +
-      "If the dashboard's HTTPS port is different, use that port. " +
-      "A self-signed certificate warning is expected the first time - accept it and this page will work."
+      `<p>1. ${await certificateStepHtml()}</p>` +
+      `<p>2. Then open <a href="${escapeAttribute(httpsUrl)}">${escapeHtml(httpsUrl)}</a> on this device instead. ` +
+      "If the dashboard's HTTPS port is different, use that port.</p>"
     );
     return false;
   }
 
+  // The authority is only offered when this install actually has one: on a real-domain
+  // certificate there is nothing to download, and whatever sent someone here has another cause.
+  let certificateOffered = null;
+  async function certificateStepHtml() {
+    if (certificateOffered === null) {
+      try {
+        certificateOffered = (await fetch(CERTIFICATE_URL, { method: "HEAD", cache: "no-store" })).ok;
+      } catch {
+        certificateOffered = false;
+      }
+    }
+    if (!certificateOffered)
+      return "Trust the dashboard's HTTPS certificate on this device - see the deployment guide, section 14a.";
+    return `<a href="${CERTIFICATE_URL}" download>Download the dashboard's certificate</a> and trust it on this device, once: ` +
+      "on a Mac, open the file, then in Keychain Access double-click it and set Trust to <em>Always Trust</em>; " +
+      "on Windows, install it into <em>Trusted Root Certification Authorities</em>; " +
+      "on an iPhone, install the profile, then switch it on under Settings → General → About → Certificate Trust Settings; " +
+      "on Android, install it as a CA certificate. Then reload this page.";
+  }
+
   async function start() {
-    if (!checkEnvironment()) return;
+    if (!(await checkEnvironment())) return;
 
     let cameras;
     try {
@@ -138,18 +167,84 @@
     els.cameraName.textContent = camera.name;
     els.mic.checked = !!camera.includeAudio;
     show(els.stage);
-    await listDevices();
-    setStatus("ready");
 
-    els.toggle.addEventListener("click", () => (publishing ? stop("stopped on this device") : begin()));
+    els.toggle.addEventListener("click", () => {
+      if (!publishing) return begin();
+      stop();
+      preview("stopped on this device - previewing only, nothing is being sent");
+    });
     // Changing camera or microphone mid-session restarts it, which is the only way to swap tracks
     // without renegotiating - and a restart here costs a second of video, not a lost session.
-    els.device.addEventListener("change", () => { if (publishing) begin(); });
+    // Before a session, changing the camera re-opens the preview, so what is on screen is always
+    // the camera that would be streamed.
+    els.device.addEventListener("change", () => (publishing ? begin() : preview()));
     els.mic.addEventListener("change", () => { if (publishing) begin(); });
+
+    await preview();
   }
 
-  // The device list is only populated with real labels once permission has been granted, so this
-  // is called again after the first successful capture to replace "camera 2" with its actual name.
+  // Shows the chosen camera on screen without sending it anywhere. This is what asks the browser
+  // for permission, and permission is what turns the device list from one unnamed "camera 1"
+  // into every camera the device has, by name - until it has run there is nothing real to pick
+  // from and nothing to look at, which reads as a page that does nothing. Video only: the
+  // microphone is asked for when streaming starts, and only if it is wanted.
+  async function preview(statusMessage) {
+    if (publishing) return;
+    const mine = ++generation;
+    stopMedia();
+    setError("");
+    setStatus("opening camera…");
+
+    let captured;
+    try {
+      captured = await navigator.mediaDevices.getUserMedia({ video: videoConstraint() });
+    } catch (error) {
+      if (mine !== generation) return;
+      setStatus("");
+      await reportCaptureFailure(error);
+      return;
+    }
+    if (mine !== generation) { for (const track of captured.getTracks()) track.stop(); return; }
+
+    stream = captured;
+    els.preview.srcObject = stream;
+    els.idleOverlay.classList.add("hidden");
+    await listDevices();
+    setStatus(statusMessage ?? "previewing - press start streaming to send this to the dashboard");
+  }
+
+  // exact, so a chosen camera is that camera and not the browser's idea of a close match - but
+  // only once permission has given the devices real ids. Before that the list holds one blank
+  // entry, and asking for a blank id exactly is an OverconstrainedError.
+  function videoConstraint() {
+    const deviceId = els.device.value;
+    return deviceId ? { deviceId: { exact: deviceId } } : true;
+  }
+
+  // The browser's own reasons are terse, and one is misleading: NotAllowedError is the same answer
+  // for "the person clicked block" and for "this page's certificate isn't trusted, so the camera
+  // was refused without asking". On a LAN dashboard the second is by far the likelier, and its
+  // fix is the certificate rather than the address-bar permission - so it gets named first.
+  async function reportCaptureFailure(error) {
+    if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
+      setError(
+        "The browser wouldn't share the camera with this page. " +
+        "If you clicked through a certificate warning to get here, that is why - a browser refuses the camera to a " +
+        "page whose certificate it doesn't trust, and doesn't ask. " + await certificateStepHtml() + " " +
+        "If the certificate is already trusted, allow the camera for this site in the address bar and try again.",
+        { html: true });
+    } else if (error?.name === "NotFoundError" || error?.name === "OverconstrainedError") {
+      setError("No camera was found on this device, or the chosen one has gone away. Pick another one and try again.");
+    } else {
+      setError(`Couldn't open the camera: ${error?.message ?? error}`);
+    }
+  }
+
+  // Before permission is granted, browsers list one anonymous entry per kind with a blank id and
+  // blank label, so the first real list only exists after a capture has succeeded - and it runs
+  // again after every capture so a camera plugged in since shows up too. The selection follows
+  // the camera actually in use rather than whatever the blank entry was, so the list and the
+  // picture agree.
   async function listDevices() {
     let devices;
     try {
@@ -159,7 +254,8 @@
     }
 
     const cameras = devices.filter((d) => d.kind === "videoinput");
-    const previous = els.device.value;
+    const active = stream?.getVideoTracks()[0]?.getSettings()?.deviceId;
+    const previous = active || els.device.value;
     els.device.innerHTML = "";
     cameras.forEach((device, index) => {
       const option = document.createElement("option");
@@ -167,7 +263,8 @@
       option.textContent = device.label || `camera ${index + 1}`;
       els.device.appendChild(option);
     });
-    if (previous) els.device.value = previous;
+    if (previous && Array.from(els.device.options).some((option) => option.value === previous))
+      els.device.value = previous;
   }
 
   // ---------------- Publishing ----------------
@@ -182,19 +279,12 @@
     setStatus("requesting camera…");
 
     try {
-      const deviceId = els.device.value;
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: deviceId ? { deviceId: { exact: deviceId } } : true,
-        audio: els.mic.checked
-      });
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint(), audio: els.mic.checked });
     } catch (error) {
       publishing = false;
       els.toggle.textContent = "start streaming";
       setStatus("");
-      setError(
-        error?.name === "NotAllowedError"
-          ? "Camera permission was denied. Allow it for this site in the browser's address bar, then try again."
-          : `Couldn't open the camera: ${error?.message ?? error}`);
+      await reportCaptureFailure(error);
       return;
     }
 
