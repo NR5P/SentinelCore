@@ -107,6 +107,29 @@ public sealed class CertificateAuthorityEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task FindsTheAuthorityBesideAHandConfiguredServerCertificate()
+    {
+        // The production box is exactly this: Https:CertificatePath set by hand to certs/server.crt
+        // from the old setup script, ca.crt beside it, and no authority path recorded anywhere -
+        // which is how the download first shipped answering 404 on the one install it was for.
+        var ct = TestContext.Current.CancellationToken;
+        const string pem = "-----BEGIN CERTIFICATE-----\nMIIBsibling\n-----END CERTIFICATE-----\n";
+        var certs = Path.Combine(_dataDirectory, "certs");
+        Directory.CreateDirectory(certs);
+        await File.WriteAllTextAsync(Path.Combine(certs, "server.crt"), "-----BEGIN CERTIFICATE-----\nserver\n", ct);
+        await File.WriteAllTextAsync(Path.Combine(certs, "ca.crt"), pem, ct);
+
+        using var factory = CreateFactory(authorityPath: null)
+            .WithWebHostBuilder(builder => builder.UseSetting("Https:CertificatePath", Path.Combine(certs, "server.crt")));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/api/certificate-authority", ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(pem, await response.Content.ReadAsStringAsync(ct));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("missing")]
