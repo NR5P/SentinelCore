@@ -88,6 +88,18 @@ if (httpsSettings.Enabled && string.IsNullOrWhiteSpace(httpsSettings.Certificate
         Console.WriteLine($"Could not auto-generate an HTTPS certificate ({ex.Message}). Continuing on plain HTTP.");
     }
 }
+// An install whose certificate was configured by hand - which is what the old setup-local-https.sh
+// left behind, and what a real-domain certificate looks like - skips the provisioning above, and
+// so never records where its authority lives. The script's layout put ca.crt beside server.crt,
+// so that is where to look; a real-domain certificate directory has no such file and the
+// download stays a 404. An explicit Https:AuthorityCertificatePath in configuration wins over both.
+if (string.IsNullOrWhiteSpace(builder.Configuration[CertificateAuthorityEndpoints.ConfigurationKey])
+    && !string.IsNullOrWhiteSpace(httpsSettings.CertificatePath))
+{
+    var sibling = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(httpsSettings.CertificatePath)) ?? "", "ca.crt");
+    if (File.Exists(sibling))
+        builder.Configuration[CertificateAuthorityEndpoints.ConfigurationKey] = sibling;
+}
 var httpsEnabled = httpsSettings.CanEnable(out var httpsSkipReason);
 
 // A third, dedicated port for traffic reaching this server from outside the LAN (e.g. via a
