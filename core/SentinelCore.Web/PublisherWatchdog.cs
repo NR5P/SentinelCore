@@ -14,6 +14,7 @@ public sealed class PublisherWatchdog(
     ICameraStore cameras,
     Go2RtcManager go2rtc,
     OwnerNotifier notifier,
+    PublishedMseTranscoder mseTranscoder,
     ILogger<PublisherWatchdog> logger) : BackgroundService
 {
     // Thirty seconds between looks is prompt enough for a two-minute grace period and is one
@@ -61,7 +62,10 @@ public sealed class PublisherWatchdog(
         var published = all.Where(c => c.IsBrowserPublished).ToList();
 
         foreach (var stale in Presence.Known().Except(published.Select(c => c.Id)))
+        {
             Presence.Forget(stale);
+            await mseTranscoder.StopAsync(stale);
+        }
 
         var now = DateTimeOffset.UtcNow;
         foreach (var camera in published)
@@ -69,6 +73,20 @@ public sealed class PublisherWatchdog(
             if (cancellationToken.IsCancellationRequested) return;
 
             var live = await go2rtc.HasLivePublisherAsync(camera.Id, cancellationToken);
+
+            // The MSE transcode's lifetime is this, not "is anyone watching". It cannot be started
+            // on demand: its input is the publisher's stream, whose keyframes are ~30s apart, so a
+            // cold encode has nothing to emit for far longer than the 10s a client allows for a
+            // first frame. Started when a viewer arrived, it therefore lost that race every time -
+            // the viewer fell back to HLS, the encode was reaped for having no consumers, and the
+            // next viewer repeated it. Kept warm alongside the publisher it is already ~20% of a
+            // core to run, the encode emits a keyframe every second (-g 30), and an MSE viewer
+            // gets a picture immediately.
+            if (live)
+                await mseTranscoder.EnsureRunningAsync(camera, cancellationToken);
+            else
+                await mseTranscoder.StopAsync(camera.Id);
+
             switch (Presence.Observe(camera.Id, live, now))
             {
                 case PublisherPresence.Transition.Dropped:

@@ -1,13 +1,12 @@
-using System.Text.Json;
 using SentinelCore.Web;
 using Xunit;
 
 namespace SentinelCore.Tests;
 
 // The rules behind the MSE transcode, without a process or a sidecar. What is worth pinning here
-// is the encoder's arguments and the idle rule: the arguments carry two traps that have already
-// cost real debugging time once each (see the comments in PublishedMseTranscoder), and the idle
-// rule decides whether an encode runs against an empty room.
+// is the encoder's arguments: they carry two traps that have already cost real debugging time once
+// each (see the comments in PublishedMseTranscoder). When the encode runs is PublisherWatchdog's
+// business, not this class's.
 public class PublishedMseTranscoderTests
 {
     private const string Input = "rtsp://127.0.0.1:18554/aaaabbbbccccddddeeeeffff00001111";
@@ -83,35 +82,6 @@ public class PublishedMseTranscoderTests
         Assert.Equal(Input, ValueAfter(args, "-i"));
         Assert.Equal(Output, args[^1]);
         Assert.Equal("rtsp", ValueAfter(args, "-f"));
-    }
-
-    // One idle sweep is a tile being dragged or a viewer moving between grid and fullscreen; two
-    // is nobody watching.
-    [Theory]
-    [InlineData(0, false)]
-    [InlineData(1, false)]
-    [InlineData(2, true)]
-    [InlineData(5, true)]
-    public void AnEncodeStopsOnlyAfterTwoIdleSweeps(int idleSweeps, bool expected)
-        => Assert.Equal(expected, PublishedMseTranscoder.ShouldStop(idleSweeps));
-
-    [Fact]
-    public void ConsumersAreCountedFromGo2RtcsOwnView()
-    {
-        var withViewers = JsonDocument.Parse(
-            """
-            {"producers":[{"url":"rtsp://127.0.0.1:1/awaiting-publisher"}],
-             "consumers":[{"id":1,"format_name":"mse/fmp4"},{"id":2,"format_name":"mse/fmp4"}]}
-            """).RootElement;
-        Assert.Equal(2, PublishedMseTranscoder.CountConsumers(withViewers));
-
-        var none = JsonDocument.Parse("""{"producers":[],"consumers":[]}""").RootElement;
-        Assert.Equal(0, PublishedMseTranscoder.CountConsumers(none));
-
-        // A stream go2rtc has only just been told about has no consumers key at all; that is an
-        // empty room, not a parse failure.
-        var absent = JsonDocument.Parse("""{"producers":[]}""").RootElement;
-        Assert.Equal(0, PublishedMseTranscoder.CountConsumers(absent));
     }
 
     private static string? ValueAfter(List<string> args, string flag)

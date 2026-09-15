@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 
 namespace SentinelCore.Web;
 
@@ -42,12 +41,6 @@ public sealed class PublishedMseTranscoder(
     IConfiguration configuration,
     ILogger<PublishedMseTranscoder> logger) : IAsyncDisposable
 {
-    // Two sweeps, not one, before an encode is stopped. A tile that is being dragged around the
-    // grid, or an app moving between its grid and a fullscreen view, drops its consumer and takes
-    // a new one immediately; stopping on the first idle sweep would spend more time starting and
-    // stopping ffmpeg than encoding.
-    public const int IdleSweepsBeforeStop = 2;
-
     private readonly string _ffmpegPath = configuration["FfmpegPath"] ?? "ffmpeg";
     private readonly int _apiPort = configuration.GetValue("Go2Rtc:ApiPort", 11984);
     private readonly int _rtspPort = configuration.GetValue("Go2Rtc:RtspPort", Go2RtcManager.DefaultRtspPort);
@@ -61,17 +54,12 @@ public sealed class PublishedMseTranscoder(
         public required Process Process { get; init; }
         public required CancellationTokenSource Supervision { get; init; }
         public required Task Supervisor { get; set; }
-        public int ConsecutiveIdleSweeps { get; set; }
     }
 
     // The go2rtc stream name an MSE viewer of this camera should be pointed at. The suffix follows
     // the "-sub" convention Go2RtcManager.StreamName already uses, so a name in a go2rtc log line
     // still says which camera and which rendition it belongs to.
     public static string StreamNameFor(Guid cameraId) => $"{cameraId:N}-mse";
-
-    // Whether a stream that has been idle this many sweeps in a row should be torn down. Pulled
-    // out so the rule can be tested without a process or a sidecar.
-    public static bool ShouldStop(int consecutiveIdleSweeps) => consecutiveIdleSweeps >= IdleSweepsBeforeStop;
 
     // The encoder. Deliberately the same shape as HlsStreamManager.BuildFfmpegArguments' transcode
     // branch, and for the same reasons:
@@ -129,7 +117,8 @@ public sealed class PublishedMseTranscoder(
         {
             if (_sessions.TryGetValue(camera.Id, out var existing))
             {
-                existing.ConsecutiveIdleSweeps = 0;
+                // Already encoding, or encoding until it died - in which case start a fresh one
+                // rather than handing back a stream nothing is feeding.
                 if (!existing.Process.HasExited) return name;
                 await StopLockedAsync(camera.Id);
             }
@@ -252,74 +241,6 @@ public sealed class PublishedMseTranscoder(
         }
     }
 
-    // Stop encoding for cameras nobody is watching. An encode is ~20% of a core, which is cheap
-    // enough to run for a viewer and far too expensive to run for an empty room, and unlike the
-    // HLS sessions there is no natural request to hang an idle timer off - an MSE viewer holds one
-    // WebSocket open for as long as it watches and makes no further requests. So idleness is asked
-    // of go2rtc, which knows exactly who is attached to the stream.
-    public async Task SweepIdleAsync(CancellationToken cancellationToken)
-    {
-        if (_disposed) return;
-
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            foreach (var (cameraId, session) in _sessions.ToList())
-            {
-                if (cancellationToken.IsCancellationRequested) return;
-
-                if (session.Process.HasExited)
-                {
-                    await StopLockedAsync(cameraId);
-                    continue;
-                }
-
-                var consumers = await CountConsumersAsync(StreamNameFor(cameraId), cancellationToken);
-
-                // A sidecar that cannot be asked is not evidence of idleness - leave the encode be
-                // and look again next sweep.
-                if (consumers is null) continue;
-
-                session.ConsecutiveIdleSweeps = consumers.Value > 0 ? 0 : session.ConsecutiveIdleSweeps + 1;
-                if (ShouldStop(session.ConsecutiveIdleSweeps))
-                {
-                    logger.LogInformation("No MSE viewers left on {Stream}; stopping its transcode", StreamNameFor(cameraId));
-                    await StopLockedAsync(cameraId);
-                }
-            }
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-
-    private async Task<int?> CountConsumersAsync(string name, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var client = httpClientFactory.CreateClient(nameof(Go2RtcManager));
-            using var response = await client.GetAsync(
-                $"http://127.0.0.1:{_apiPort}/api/streams?src={name}", cancellationToken);
-            if (!response.IsSuccessStatusCode) return null;
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            return CountConsumers(json.RootElement);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
-        {
-            return null;
-        }
-    }
-
-    // Our own pushing ffmpeg shows up on this stream as a producer, never a consumer, so every
-    // consumer here is a real viewer.
-    public static int CountConsumers(JsonElement stream) =>
-        stream.TryGetProperty("consumers", out var consumers) && consumers.ValueKind == JsonValueKind.Array
-            ? consumers.GetArrayLength()
-            : 0;
-
     // Called when a camera is edited or deleted, alongside Go2RtcManager.ForgetStream: the encode
     // is reading a URL that may no longer mean the same thing, and the next viewer should start a
     // fresh one rather than inherit it.
@@ -390,37 +311,6 @@ public sealed class PublishedMseTranscoder(
         {
             _gate.Release();
             _gate.Dispose();
-        }
-    }
-}
-
-// The loop that drives SweepIdleAsync. Separate from PublisherWatchdog because it answers a
-// different question on a different clock - that one asks whether video is arriving, this one asks
-// whether anyone is watching - and folding them together would tie an encode's lifetime to an
-// alerting policy.
-public sealed class PublishedMseTranscodeSweeper(
-    PublishedMseTranscoder transcoder,
-    ILogger<PublishedMseTranscodeSweeper> logger) : BackgroundService
-{
-    private static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(30);
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(SweepInterval, stoppingToken);
-                await transcoder.SweepIdleAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "The MSE transcode sweep failed a pass");
-            }
         }
     }
 }
