@@ -247,10 +247,19 @@ window.GateWatchCameras = (function () {
       ? `<span class="camera-card-meta">to stream from this device, open <a href="${escapeHtml(publisher.httpsUrl("/#cameras"))}">the secure address</a> (the edit form explains the one-time certificate step)</span>`
       : "";
 
+    const keepAwake = streamingHere
+      ? `<details class="camera-card-meta camera-card-keep-awake"><summary>keep this device awake - what to set</summary>${publisher.keepAwakeHtml()}</details>`
+      : "";
+    const lastSeen = camera.isBrowserPublished && !streamingHere
+      ? `<span class="camera-card-meta camera-card-last-seen" data-camera="${escapeHtml(camera.id)}">${lastSeenText(camera.id)}</span>`
+      : "";
+
     info.innerHTML = `
       <span class="camera-card-name">${escapeHtml(camera.name)}</span>
       <span class="camera-card-meta">${sourceLine}</span>
+      ${lastSeen}
       ${failureLine}
+      ${keepAwake}
       ${secureHint}
       <span class="camera-card-meta">${camera.includeAudio ? "video + audio" : "video only"}</span>
       ${camera.ptzEnabled ? `<span class="camera-card-meta">PTZ enabled</span>` : ""}
@@ -316,6 +325,53 @@ window.GateWatchCameras = (function () {
 
     card.append(info, actions);
     return card;
+  }
+
+  // ---------------- When did a webcam device last stream? ----------------
+
+  // The one question an empty webcam tile raises is whether the device just went to sleep or was
+  // never started, and the server (PublisherWatchdog) knows. Fetched per card, cached briefly so
+  // the list re-rendering every few seconds while another camera streams doesn't turn into a
+  // request per card per render.
+  const publishStatus = new Map();
+  const PUBLISH_STATUS_TTL_MS = 30000;
+
+  function lastSeenText(cameraId) {
+    const cached = publishStatus.get(cameraId);
+    if (!cached || Date.now() - cached.at > PUBLISH_STATUS_TTL_MS) refreshPublishStatus(cameraId);
+    return cached ? describePublishStatus(cached.payload) : "";
+  }
+
+  async function refreshPublishStatus(cameraId) {
+    // Mark it in flight so the next render doesn't ask again before this answer lands.
+    publishStatus.set(cameraId, { at: Date.now(), payload: publishStatus.get(cameraId)?.payload ?? null });
+    try {
+      const response = await fetch(`/api/cameras/${cameraId}/publish/status`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      publishStatus.set(cameraId, { at: Date.now(), payload });
+      for (const el of document.querySelectorAll(`.camera-card-last-seen[data-camera="${cameraId}"]`))
+        el.textContent = describePublishStatus(payload);
+    } catch {
+      // Left blank - the card already says it is a webcam device.
+    }
+  }
+
+  function describePublishStatus(payload) {
+    if (!payload) return "";
+    if (payload.publishing) return "streaming from another device - the server is receiving video";
+    if (!payload.lastSeenAt) return "has never streamed since the server started";
+    return `not streaming - last video received ${timeAgo(payload.lastSeenAt)}`;
+  }
+
+  function timeAgo(iso) {
+    const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (seconds < 90) return "moments ago";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 90) return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 36) return `${hours} h ago`;
+    return `${Math.round(hours / 24)} days ago`;
   }
 
   // ---------------- Gate/door open check ----------------
@@ -441,10 +497,8 @@ window.GateWatchCameras = (function () {
 
     const note = document.createElement("p");
     note.className = "field-note field-row-wide";
-    note.textContent =
-      "Streaming from this device lasts as long as this dashboard tab stays open and the device stays awake. " +
-      "For a device that is only ever going to sit somewhere and stream, its camera card has a publish page " +
-      "that does nothing else.";
+    note.innerHTML = window.SentinelPublisher.keepAwakeHtml() +
+      " For a device that is only ever going to sit somewhere and stream, its camera card has a publish page that does nothing else.";
     fields.appendChild(note);
 
     // PTZ and connection testing are meaningless here, but saveCamera still reads these inputs -
@@ -540,7 +594,7 @@ window.GateWatchCameras = (function () {
     select.addEventListener("change", () => {
       const now = publisher.snapshot();
       if (camera && now.camera?.id === camera.id)
-        publisher.start({ camera: now.camera, deviceId: select.value, includeMic: now.includeMic });
+        publisher.start({ camera: now.camera, deviceId: select.value, includeMic: now.includeMic, host: "dashboard" });
       else if (!now.publishing)
         publisher.preview(select.value);
     });
@@ -610,7 +664,7 @@ window.GateWatchCameras = (function () {
     }
     // Already doing exactly this - a rename shouldn't cost a second of video.
     if (streamingHere && current.deviceId === intent.deviceId && current.includeMic === !!includeMic) return;
-    publisher.start({ camera: { id: cameraId, name }, deviceId: intent.deviceId, includeMic });
+    publisher.start({ camera: { id: cameraId, name }, deviceId: intent.deviceId, includeMic, host: "dashboard" });
   }
 
   function openForm(camera) {
@@ -2635,6 +2689,9 @@ window.GateWatchCameras = (function () {
   window.SentinelPublisher?.onChange(() => {
     if (loadState === "ready" && !document.getElementById("view-cameras").classList.contains("hidden")) renderList();
   });
+  // If this dashboard was streaming a camera when the page last went away - a settings save
+  // reloads it, a browser update restarts it - pick that straight back up.
+  window.SentinelPublisher?.resume("dashboard");
   document.getElementById("discovery-cancel-btn").addEventListener("click", closeDiscovery);
   document.getElementById("discovery-scan-btn").addEventListener("click", startScan);
   document.getElementById("gate-check-save-btn").addEventListener("click", saveGateCheck);

@@ -2888,3 +2888,12 @@ main {
 .camera-card-error {
   color: var(--red, #e5484d);
 }
+
+.camera-card-keep-awake summary {
+  cursor: pointer;
+  color: var(--cyan);
+}
+
+.camera-card-keep-awake code {
+  font-size: 0.8em;
+}

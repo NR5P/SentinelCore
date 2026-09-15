@@ -58,15 +58,26 @@ public static class CameraPublishEndpoints
         // confirm its own video is actually arriving (a peer connection that reports "connected"
         // is not proof the server is receiving frames), and the dashboard uses it to explain an
         // empty tile as "nothing is publishing" rather than a broken camera.
+        //
+        // lastSeenAt / missingSince come from PublisherWatchdog, so an empty tile can also say
+        // "last had video at 3:12" - the difference between a laptop that just went to sleep and
+        // one that was never started.
         app.MapGet("/api/cameras/{id:guid}/publish/status", async (
-            Guid id, ICameraStore store, Go2RtcManager webrtc, CancellationToken ct) =>
+            Guid id, ICameraStore store, Go2RtcManager webrtc, PublisherWatchdog watchdog, CancellationToken ct) =>
         {
             var camera = await store.GetAsync(id, ct);
             if (camera is null) return Results.NotFound();
             if (!camera.IsBrowserPublished)
                 return Results.BadRequest(new { errors = new[] { "This camera is not published from a browser." } });
 
-            return Results.Ok(new { publishing = await webrtc.HasLivePublisherAsync(id, ct) });
+            var live = await webrtc.HasLivePublisherAsync(id, ct);
+            var seen = watchdog.Presence.Get(id);
+            return Results.Ok(new
+            {
+                publishing = live,
+                lastSeenAt = live ? DateTimeOffset.UtcNow : seen?.LastLiveAt,
+                missingSince = live ? null : seen?.MissingSince
+            });
         }).RequireAuthorization();
     }
 }

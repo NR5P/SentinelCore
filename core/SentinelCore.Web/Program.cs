@@ -205,6 +205,11 @@ builder.Services.AddSingleton<Go2RtcManager>();
 // Have the sidecar up before the first viewer arrives rather than on their time - see
 // Go2RtcWarmUpService. Optional and non-blocking: an install without go2rtc boots unchanged.
 builder.Services.AddHostedService<Go2RtcWarmUpService>();
+// Watches browser-published (webcam device) cameras and tells the owner when one goes dark. A
+// singleton as well as a hosted service so the publish/status endpoint can read what it has seen.
+builder.Services.AddSingleton<OwnerNotifier>();
+builder.Services.AddSingleton<PublisherWatchdog>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PublisherWatchdog>());
 
 // Short timeout on purpose - a camera being probed is either on the LAN and answers in
 // milliseconds, or it isn't there, and the whole point of the probe is to fail fast on the ones

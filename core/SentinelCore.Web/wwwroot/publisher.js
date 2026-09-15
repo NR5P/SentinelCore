@@ -19,9 +19,23 @@ window.SentinelPublisher = (function () {
   // has no authenticated way to ask, so the shipped default is offered and the text says so.
   const HTTPS_PORT = 3443;
 
+  // What this browser was streaming, kept in localStorage so a page reload - a settings save
+  // reloads the dashboard, a browser update restarts it - doesn't end a week of streaming with
+  // nobody there to press start again. Tagged with the host that stored it, because both hosts
+  // share the origin's storage and only the one that was streaming should pick it back up.
+  const INTENT_KEY = "sentinelcore.publisher.intent";
+
+  // Sleep detection. A machine that sleeps freezes this page's timers; when it wakes, the gap
+  // between two ticks is however long it slept, while the peer connection may never announce
+  // that it died. Three minutes, not one: a background tab's timers are throttled to once a
+  // minute, and a spurious "reconnect" every minute would cost a second of video each time.
+  const HEARTBEAT_MS = 15000;
+  const SUSPEND_GAP_MS = 3 * 60 * 1000;
+
   const state = {
     publishing: false,
     camera: null,       // { id, name } while publishing
+    host: null,         // "dashboard" | "publish" - which page is doing the streaming
     deviceId: "",       // the videoinput in use, once permission has given devices real ids
     includeMic: false,
     stream: null,       // the preview or the published capture - whichever is on screen
@@ -221,12 +235,13 @@ window.SentinelPublisher = (function () {
 
   // ---------------- Publishing ----------------
 
-  async function start({ camera, deviceId, includeMic }) {
+  async function start({ camera, deviceId, includeMic, host }) {
     clearTimeout(retryTimer);
     stopMedia();
     const mine = ++generation;
     state.publishing = true;
     state.camera = { id: camera.id, name: camera.name };
+    state.host = host ?? state.host;
     state.includeMic = !!includeMic;
     state.receiving = false;
     state.error = null;
@@ -251,6 +266,7 @@ window.SentinelPublisher = (function () {
     rememberDevice(captured, deviceId);
     state.stream = captured;
     state.failedCamera = null;
+    rememberIntent();
     emit();
     await acquireWakeLock();
 
@@ -347,8 +363,11 @@ window.SentinelPublisher = (function () {
   }
 
   // Ends publishing and preview alike; the status text is whatever the host wants shown after.
-  function stop(reason) {
+  // A deliberate stop forgets the stored intent; the page going away (keepIntent) does not - that
+  // is exactly the case the intent exists for.
+  function stop(reason, { keepIntent = false } = {}) {
     generation++;
+    if (state.publishing && !keepIntent) forgetIntent();
     state.publishing = false;
     state.camera = null;
     state.failedCamera = null;
@@ -400,7 +419,69 @@ window.SentinelPublisher = (function () {
     if (document.visibilityState === "visible" && state.publishing) acquireWakeLock();
   });
 
-  window.addEventListener("beforeunload", () => stop());
+  window.addEventListener("beforeunload", () => stop(undefined, { keepIntent: true }));
+
+  // ---------------- Surviving a reload, and a sleep ----------------
+
+  function rememberIntent() {
+    try {
+      localStorage.setItem(INTENT_KEY, JSON.stringify({
+        host: state.host, camera: state.camera, deviceId: state.deviceId, includeMic: state.includeMic, since: Date.now()
+      }));
+    } catch { /* storage unavailable - a reload will need a hand */ }
+  }
+
+  function forgetIntent() {
+    try { localStorage.removeItem(INTENT_KEY); } catch { /* nothing stored */ }
+  }
+
+  function storedIntent() {
+    try {
+      const raw = localStorage.getItem(INTENT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Picks streaming back up after a reload, if this host was the one streaming. Optionally only
+  // for one camera - publish.html is opened for a specific camera and must not start a different
+  // one. Returns what it resumed, or null.
+  function resume(host, cameraId) {
+    const intent = storedIntent();
+    if (!intent || intent.host !== host || !intent.camera?.id) return null;
+    if (cameraId && intent.camera.id !== cameraId) return null;
+    if (!canCapture() || state.publishing) return null;
+    start({ camera: intent.camera, deviceId: intent.deviceId, includeMic: intent.includeMic, host });
+    return intent.camera;
+  }
+
+  let lastBeat = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    const gap = now - lastBeat;
+    lastBeat = now;
+    if (gap < SUSPEND_GAP_MS || !state.publishing) return;
+    const minutes = Math.round(gap / 60000);
+    state.status = `this device was asleep for about ${minutes} minute${minutes === 1 ? "" : "s"} - reconnecting…`;
+    state.receiving = false;
+    emit();
+    start({ camera: state.camera, deviceId: state.deviceId, includeMic: state.includeMic, host: state.host });
+  }, HEARTBEAT_MS);
+
+  // What a browser cannot do is stop the machine from sleeping; the wake lock only keeps the
+  // screen on, and a closed lid or a power-saving timer ends the stream regardless. So the hosts
+  // say what to set, per platform, next to the stream they are asking someone to leave running.
+  function keepAwakeHtml() {
+    return "<strong>Keep this device awake for as long as you want the feed.</strong> Plug it in, leave the lid open " +
+      "and this tab in front, and turn sleep off: " +
+      "<em>Mac</em> - System Settings → Battery (or Energy) → Options → <em>Prevent automatic sleeping on power adapter when the display is off</em>, " +
+      "or run <code>caffeinate -dis</code> in Terminal and leave it running; " +
+      "<em>Windows</em> - Settings → System → Power &amp; battery → Screen and sleep → set sleep to <em>Never</em> when plugged in; " +
+      "<em>Linux</em> - Settings → Power → Automatic Suspend → off. " +
+      "The dashboard reconnects on its own after a network blip or a reload, and if the server stops receiving video for " +
+      "two minutes it sends you a message (email, Telegram and the phone apps - whichever are set up) and another when it is back.";
+  }
 
   // ---------------- Helpers ----------------
 
@@ -436,7 +517,7 @@ window.SentinelPublisher = (function () {
   return {
     canCapture, insecureReason, insecureFixHtml, httpsUrl, certificateStepHtml,
     listCameras, populateDeviceSelect,
-    preview, start, stop, snapshot, onChange,
-    escapeHtml
+    preview, start, stop, resume, snapshot, onChange,
+    keepAwakeHtml, escapeHtml
   };
 })();

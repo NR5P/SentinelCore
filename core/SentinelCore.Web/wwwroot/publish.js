@@ -100,7 +100,7 @@
   // ---------------- The stage ----------------
 
   function session() {
-    return { camera: { id: camera.id, name: camera.name }, deviceId: els.device.value, includeMic: els.mic.checked };
+    return { camera: { id: camera.id, name: camera.name }, deviceId: els.device.value, includeMic: els.mic.checked, host: "publish" };
   }
 
   async function openStage() {
@@ -125,6 +125,11 @@
       publisher.snapshot().publishing ? publisher.start(session()) : publisher.preview(els.device.value));
     els.mic.addEventListener("change", () => { if (publisher.snapshot().publishing) publisher.start(session()); });
 
+    document.getElementById("publish-keep-awake").innerHTML = publisher.keepAwakeHtml();
+
+    // A reload (a browser update, an accidental refresh) picks streaming straight back up rather
+    // than sitting at "start streaming" until someone comes back to the room.
+    if (publisher.resume("publish", camera.id)) return;
     await publisher.preview("");
   }
 
