@@ -549,7 +549,9 @@ public sealed class HlsStreamManager : IDisposable
         Directory.CreateDirectory(outputDir);
 
         var sourceUrl = _cameraSource.ResolveUrl(camera, quality);
-        var args = BuildFfmpegArguments(sourceUrl, camera.IncludeAudio, outputDir, hevcSource);
+        var args = BuildFfmpegArguments(
+            sourceUrl, camera.IncludeAudio, outputDir, hevcSource,
+            transcodeVideo: camera.IsBrowserPublished);
 
         var psi = new ProcessStartInfo
         {
@@ -604,7 +606,8 @@ public sealed class HlsStreamManager : IDisposable
     public const string ThumbnailFileName = "thumb.jpg";
 
     public static List<string> BuildFfmpegArguments(
-        string sourceUrl, bool includeAudio, string outputDir, bool hevcSource = false)
+        string sourceUrl, bool includeAudio, string outputDir, bool hevcSource = false,
+        bool transcodeVideo = false)
     {
         var args = new List<string>();
         // -rtsp_transport is an RTSP-demuxer-only option; ffmpeg errors out ("Option not found")
@@ -626,7 +629,13 @@ public sealed class HlsStreamManager : IDisposable
         // for. Measured on 30s of 1080p30 here: 1.38s of CPU before, 0.07s after, same JPEG out.
         // That is per camera, continuously - on a small always-on box it was a large share of the
         // budget ffmpeg needs to keep segments landing on time.
-        args.AddRange(["-skip_frame", "nokey"]);
+        //
+        // Except when transcodeVideo is on, where the HLS output is an encode rather than a copy and
+        // therefore reads the same decoder. nokey there would feed the encoder keyframes only and
+        // emit roughly 1fps of video - the option is a thumbnail optimisation, so it has to go the
+        // moment anything else depends on decoded frames.
+        if (!transcodeVideo)
+            args.AddRange(["-skip_frame", "nokey"]);
         args.AddRange(["-i", sourceUrl]);
 
         // Primary output: HLS segments, video copied untouched so this stays cheap.
@@ -652,7 +661,51 @@ public sealed class HlsStreamManager : IDisposable
         //
         // On a camera with a GOP of 2s or more this changes nothing either way - copying video can
         // only cut on a keyframe, so the GOP wins and hls_time is only ever a floor.
-        args.AddRange(["-map", "0:v:0", "-c:v", "copy"]);
+        args.AddRange(["-map", "0:v:0"]);
+        if (transcodeVideo)
+        {
+            // A browser-published camera cannot be copied. go2rtc repackages the publisher's WebRTC
+            // H.264 into RTSP, and the result is not well-formed enough to remux: measured on this
+            // install's laptop camera 2026-09-15, a copy produced "Invalid NAL unit size (5976 >
+            // 2612)", "Error splitting the input into NAL units" and "non-existing PPS 54
+            // referenced", and segments alternated between 15 frames and **zero** - a playlist where
+            // every other entry claims EXTINF:1.0 and contains no video at all. The phone renders the
+            // poster frame, decodes one picture, and goes black, which is exactly what it looked
+            // like from the outside.
+            //
+            // Re-encoding fixes it at the only place it can be fixed, because the framing damage is
+            // upstream of us: the decoder resynchronises and the encoder writes correct NAL sizes and
+            // parameter sets. Measured the same day on the same source - 243 frames over 8.3s, PTS
+            // continuous at 32ms, zero decode errors on the output.
+            //
+            // The keyframe interval is the second reason to be here and matters just as much. A
+            // browser's WebRTC encoder emits an IDR roughly every 30 seconds (see StartupBudgetFor,
+            // and Go2RtcManager's note on forcing one for snapshots), and nothing downstream can
+            // start before one arrives - which is why a published camera gets a 75s startup budget
+            // while the iOS MSE rung gives up after 10. Encoding our own GOP at 1s means a viewer
+            // joining at an arbitrary moment waits ~1s rather than up to 30.
+            //
+            // veryfast + zerolatency keeps this affordable next to the vision model: 640x480 is what
+            // a laptop webcam publishes, and this is the only camera on the box paying the cost.
+            args.AddRange([
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-tune", "zerolatency",
+                "-profile:v", "high",
+                "-pix_fmt", "yuv420p",
+                // Closed 1-second GOP. sc_threshold 0 stops x264 inserting extra keyframes on scene
+                // changes, so segment boundaries stay where split_by_time puts them.
+                "-g", "30", "-keyint_min", "30", "-sc_threshold", "0",
+                // zerolatency already implies this; stated so a later preset change can't bring
+                // B-frames back and reorder PTS under the segmenter.
+                "-bf", "0",
+                "-crf", "23", "-maxrate", "2M", "-bufsize", "4M",
+            ]);
+        }
+        else
+        {
+            args.AddRange(["-c:v", "copy"]);
+        }
         // Apple will not decode an H.265 track tagged hev1, which is what ffmpeg's MP4 muxer
         // writes by default; hvc1 is the tag its HLS authoring rules require and the only one
         // AVPlayer accepts. Wrong for H.264, hence only on this branch.

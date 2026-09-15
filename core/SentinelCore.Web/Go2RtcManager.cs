@@ -143,7 +143,11 @@ public sealed class Go2RtcManager : IDisposable
     {
         await EnsureStartedAsync(cancellationToken);
         var effective = EffectiveQuality(camera, quality);
-        await RegisterStreamAsync(camera, effective, cancellationToken);
+        // Same guard, and the same reason, as EnsureRecordableAsync: a browser-published camera is
+        // registered by its publisher, and re-PUTting the stream recreates it inside go2rtc and
+        // drops that publisher. A viewer must never be able to do that by opening the camera.
+        if (!camera.IsBrowserPublished)
+            await RegisterStreamAsync(camera, effective, cancellationToken);
 
         var client = _httpClientFactory.CreateClient(nameof(Go2RtcManager));
         using var content = new StringContent(sdpOffer, Encoding.UTF8, "application/sdp");
@@ -268,7 +272,10 @@ public sealed class Go2RtcManager : IDisposable
     {
         await EnsureStartedAsync(cancellationToken);
         var effective = EffectiveQuality(camera, quality);
-        await RegisterStreamAsync(camera, effective, cancellationToken);
+        // See ExchangeOfferAsync and EnsureRecordableAsync: registering a browser-published camera
+        // here would re-PUT the stream and drop the browser publishing into it.
+        if (!camera.IsBrowserPublished)
+            await RegisterStreamAsync(camera, effective, cancellationToken);
 
         var socket = new System.Net.WebSockets.ClientWebSocket();
         try

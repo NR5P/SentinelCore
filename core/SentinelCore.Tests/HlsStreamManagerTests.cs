@@ -636,6 +636,43 @@ public sealed class HlsStreamManagerTests : IDisposable
         Assert.EndsWith("thumb.jpg", args[^1]);
     }
 
+    [Fact]
+    public void CopiesVideoForAnOrdinaryCameraRatherThanPayingToReEncodeIt()
+    {
+        var args = HlsStreamManager.BuildFfmpegArguments(
+            "rtsp://camera/stream", includeAudio: false, "/out");
+
+        Assert.Equal("copy", args[args.IndexOf("-c:v") + 1]);
+        Assert.DoesNotContain("libx264", args);
+
+        // The decoder only runs for the thumbnail here, so the frames it skips are free.
+        Assert.Contains("-skip_frame", args);
+    }
+
+    [Fact]
+    public void ReEncodesVideoForABrowserPublishedCameraBecauseItsFramingCannotBeCopied()
+    {
+        var args = HlsStreamManager.BuildFfmpegArguments(
+            "rtsp://127.0.0.1:18554/abc", includeAudio: false, "/out", transcodeVideo: true);
+
+        Assert.Equal("libx264", args[args.IndexOf("-c:v") + 1]);
+        Assert.DoesNotContain("copy", args);
+
+        // -skip_frame nokey is a thumbnail optimisation that becomes destructive the moment the HLS
+        // output shares the decoder: the encoder would see keyframes only and emit ~1fps of video.
+        Assert.DoesNotContain("-skip_frame", args);
+
+        // A 1s GOP is the point of re-encoding as much as the framing is - a browser's WebRTC
+        // encoder emits an IDR roughly every 30s, and no viewer can start before one arrives.
+        Assert.Equal("30", args[args.IndexOf("-g") + 1]);
+        Assert.Equal("0", args[args.IndexOf("-sc_threshold") + 1]);
+
+        // B-frames reorder PTS underneath the segmenter; zerolatency implies this, we state it.
+        Assert.Equal("0", args[args.IndexOf("-bf") + 1]);
+
+        Assert.EndsWith("thumb.jpg", args[^1]);
+    }
+
     // Seeds the remembered-codec cache the way a previous session would have, so the tests above
     // can start from a camera this server already believes it knows the packaging for.
     private static void RememberHevc(HlsStreamManager manager, Guid cameraId)
