@@ -590,11 +590,29 @@ That means two things have to be true on the device doing the publishing:
   appears. (On Linux, Chrome and Firefox keep their own certificate store — import it in the
   browser's settings under Manage certificates → Authorities, not only the system store.)
 
-**Keeping it going.** The stream stops when the tab is closed, the screen locks, or the device
-sleeps — so turn off sleep on the device, plug it in, and leave the tab in front. The page holds
-the screen awake where the browser allows it, but that is a courtesy, not a substitute for the
-device's own power settings. If the device drops off, the camera's tile on the LIVE tab reports
-that nothing is publishing, rather than looking like a broken camera.
+**Keeping it going for days or weeks.** The stream stops when the tab is closed or the device
+sleeps — a browser can hold the screen awake, but it cannot stop the machine itself from
+sleeping, so that part is a setting on the device (the form and the camera's card list it):
+
+- **Mac:** System Settings → Battery (or Energy) → Options → *Prevent automatic sleeping on power
+  adapter when the display is off* — or run `caffeinate -dis` in Terminal and leave it running.
+- **Windows:** Settings → System → Power & battery → Screen and sleep → sleep *Never* when plugged in.
+- **Linux:** Settings → Power → Automatic Suspend → off.
+
+Plug the device in and leave the lid open with the tab in front. Everything else is handled:
+
+- **Reloads and restarts** don't lose the stream. If the page reloads (saving settings reloads
+  the dashboard; a browser update restarts it) the same tab picks streaming straight back up.
+- **Sleep and network blips** are recovered from. If the device does doze off, the page notices
+  the gap when it wakes and reconnects at once; a Wi-Fi hiccup or a server restart is retried
+  every few seconds until it works.
+- **Your login doesn't run out.** A dashboard session lasts 30 days and is extended every time the
+  page checks in, which it does every few seconds while streaming.
+- **You get told when it stops.** If the server has received no video from a webcam device for
+  two minutes, it sends *"Webcam device 'X' has stopped streaming"* by email, Telegram and to
+  the phone apps — whichever are set up under Settings — and *"is streaming again"* when it
+  recovers. The camera's card on the CAMERAS tab also says when video was last received, so a
+  blank tile reads "last video 3 h ago", not "broken camera".
 
 ## 6. Motion zones on your own cameras
 
