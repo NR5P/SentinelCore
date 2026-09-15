@@ -10,6 +10,10 @@ window.GateWatchCameras = (function () {
   // Which of the two camera forms is currently open - a webcam device has no URL or PTZ
   // fields, so saveCamera has to know not to read them.
   let publishedForm = false;
+  // The webcam form's picker follows SentinelPublisher (publisher.js) while it is open; this is
+  // how it stops following when the form closes.
+  let webcamCaptureUnsubscribe = null;
+  let shownCaptureStream = null;
   const hlsInstances = new Map();
   const webrtcConnections = new Map();
   const mseConnections = new Map();
@@ -223,13 +227,31 @@ window.GateWatchCameras = (function () {
     info.className = "camera-card-info";
     // A webcam device has no address to show, and showing an empty line reads as a broken camera.
     // What matters about it instead is that something has to be publishing for it to work at all.
-    const sourceLine = camera.isBrowserPublished
-      ? "published from a browser on another device"
-      : escapeHtml(camera.streamUrl);
+    const publisher = window.SentinelPublisher;
+    const publishing = publisher?.snapshot();
+    const streamingHere = camera.isBrowserPublished && publishing?.camera?.id === camera.id;
+    const sourceLine = !camera.isBrowserPublished
+      ? escapeHtml(camera.streamUrl)
+      : streamingHere
+        ? `<span class="camera-card-streaming-here">streaming from this browser</span> - ${escapeHtml(publishing.status)}`
+        : "webcam device - not streaming from this browser";
+    // A save that turned "stream from this device" on closes the form, so a capture that then
+    // fails (the certificate, usually) has nowhere to be seen but here.
+    const failedHere = camera.isBrowserPublished && publishing?.failedCamera?.id === camera.id && publishing.error;
+    const failureLine = failedHere
+      ? `<span class="camera-card-meta camera-card-error">couldn't start streaming from this browser: ${publishing.error.html ? publishing.error.message : escapeHtml(publishing.error.message)}</span>`
+      : "";
+    // A plain-HTTP page can't be the camera, and the card is where someone looks when the tile is
+    // blank - so it says what to do rather than leaving that to the form.
+    const secureHint = camera.isBrowserPublished && publisher && !publisher.canCapture()
+      ? `<span class="camera-card-meta">to stream from this device, open <a href="${escapeHtml(publisher.httpsUrl("/#cameras"))}">the secure address</a> (the edit form explains the one-time certificate step)</span>`
+      : "";
 
     info.innerHTML = `
       <span class="camera-card-name">${escapeHtml(camera.name)}</span>
       <span class="camera-card-meta">${sourceLine}</span>
+      ${failureLine}
+      ${secureHint}
       <span class="camera-card-meta">${camera.includeAudio ? "video + audio" : "video only"}</span>
       ${camera.ptzEnabled ? `<span class="camera-card-meta">PTZ enabled</span>` : ""}
       ${gateCheck?.enabled ? `<span class="camera-card-meta">gate check: every ${gateCheck.intervalMinutes} min${gateCheck.checkBlocked ? ", blocked-camera check on" : ""}</span>` : ""}
@@ -241,7 +263,9 @@ window.GateWatchCameras = (function () {
     editBtn.className = "btn";
     editBtn.textContent = "edit";
     editBtn.setAttribute("data-tip-right", "");
-    editBtn.dataset.tip = "Change this camera's name, stream URL, or login details.";
+    editBtn.dataset.tip = camera.isBrowserPublished
+      ? "Rename this camera, pick which of this device's cameras it uses, or start and stop streaming from here."
+      : "Change this camera's name, stream URL, or login details.";
     editBtn.addEventListener("click", () => openForm(camera));
     const zoneBtn = document.createElement("button");
     zoneBtn.className = "btn";
@@ -273,9 +297,19 @@ window.GateWatchCameras = (function () {
       publishBtn.rel = "noopener";
       publishBtn.setAttribute("data-tip-right", "");
       publishBtn.dataset.tip =
-        "Open this on the device that has the camera - not here - and press start. " +
-        "That device streams its webcam to this dashboard for as long as the page stays open.";
-      actions.append(editBtn, publishBtn, zoneBtn, gateCheckBtn, deleteBtn);
+        "A page that does nothing but stream, for a device left running unattended. " +
+        "Open it on the device that has the camera and press start. If the camera is on this device, edit is enough.";
+      if (streamingHere) {
+        const stopBtn = document.createElement("button");
+        stopBtn.className = "btn";
+        stopBtn.textContent = "stop streaming";
+        stopBtn.setAttribute("data-tip-right", "");
+        stopBtn.dataset.tip = "Stop sending this device's camera to the dashboard. The camera stays; edit it to start again.";
+        stopBtn.addEventListener("click", () => { publisher.stop(); renderList(); });
+        actions.append(editBtn, stopBtn, publishBtn, zoneBtn, gateCheckBtn, deleteBtn);
+      } else {
+        actions.append(editBtn, publishBtn, zoneBtn, gateCheckBtn, deleteBtn);
+      }
     } else {
       actions.append(editBtn, zoneBtn, gateCheckBtn, deleteBtn);
     }
@@ -403,11 +437,14 @@ window.GateWatchCameras = (function () {
     fields.appendChild(buildCheckboxField("cam-audio", "Include the device's microphone", camera?.includeAudio ?? false,
       "Stream the device's microphone alongside its camera, into live view and saved clips."));
 
+    fields.appendChild(buildWebcamCaptureBlock(camera));
+
     const note = document.createElement("p");
     note.className = "field-note field-row-wide";
     note.textContent =
-      "After saving, open the publish page on the device itself and pick this camera. " +
-      "That device has to stay awake with the page open for as long as you want the feed.";
+      "Streaming from this device lasts as long as this dashboard tab stays open and the device stays awake. " +
+      "For a device that is only ever going to sit somewhere and stream, its camera card has a publish page " +
+      "that does nothing else.";
     fields.appendChild(note);
 
     // PTZ and connection testing are meaningless here, but saveCamera still reads these inputs -
@@ -421,6 +458,159 @@ window.GateWatchCameras = (function () {
     document.getElementById("camera-test-btn").classList.add("hidden");
     wrap.classList.remove("hidden");
     wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  // The picker for the camera on *this* device, inside the form, so that opening the form,
+  // picking a camera and saving is the whole job when the device with the webcam is the one the
+  // dashboard is open on. That is what everyone tries first, and before this the form could only
+  // say "now go to another page". publish.html still exists for a device that is only ever going
+  // to sit somewhere and stream: it is this block with nothing else around it.
+  //
+  // On a page that can't capture at all (plain HTTP - see SentinelPublisher.canCapture) the block
+  // is the explanation instead: the certificate to trust and a button to the secure address, since
+  // a picker that silently shows no cameras is exactly the dead end this replaces.
+  function buildWebcamCaptureBlock(camera) {
+    const publisher = window.SentinelPublisher;
+    const block = document.createElement("div");
+    block.className = "field-row field-row-wide webcam-capture";
+
+    if (!publisher.canCapture()) {
+      block.innerHTML =
+        `<span class="field-label">Camera on this device</span>` +
+        `<div class="webcam-capture-blocked">` +
+        `<p class="field-note">${publisher.escapeHtml(publisher.insecureReason())} ` +
+        `Two steps, once, on this device - then this form shows the camera picker:</p>` +
+        `<div class="webcam-capture-blocked-fix field-note">…</div></div>`;
+      publisher.insecureFixHtml("/#cameras").then((html) => {
+        const fix = block.querySelector(".webcam-capture-blocked-fix");
+        if (fix) fix.innerHTML = html;
+      });
+      return block;
+    }
+
+    const current = publisher.snapshot();
+    const streamingHere = !!camera && current.camera?.id === camera.id;
+    const streamingElsewhere = current.publishing && !streamingHere;
+
+    block.dataset.tip =
+      "The cameras this browser can see. Pick one, check the preview, and save - with the switch on, " +
+      "streaming starts straight away and keeps going while this dashboard tab stays open.";
+    block.innerHTML = `
+      <label class="field-label" for="cam-device">Camera on this device</label>
+      <select id="cam-device" class="field-input"></select>
+      <div class="publish-video-wrap webcam-capture-preview">
+        <video id="cam-preview" class="publish-video" autoplay playsinline muted></video>
+        <div id="cam-preview-idle" class="publish-idle-overlay">no camera yet</div>
+      </div>
+      <p id="cam-capture-status" class="publish-status"></p>
+      <ul id="cam-capture-errors" class="field-errors"></ul>`;
+
+    // On by default for a new camera and for one already streaming from here. For an existing
+    // camera the answer is asked of the server below: nobody publishing to it means the person
+    // editing it on a device that can capture almost certainly wants this to be the device,
+    // while a phone already streaming to it must not be silently displaced by a rename.
+    const streamSwitch = buildCheckboxField("cam-stream-here", "Stream from this device",
+      streamingHere || (!camera && !streamingElsewhere),
+      "On: saving starts streaming this device's camera to the dashboard, for as long as this tab is open. " +
+      "Off: nothing is sent from here - stream it from the device that has the camera instead.");
+    block.appendChild(streamSwitch);
+    const switchInput = streamSwitch.querySelector("input");
+
+    if (streamingElsewhere) {
+      switchInput.disabled = true;
+      const busy = document.createElement("p");
+      busy.className = "field-note";
+      busy.textContent = `This browser is already streaming as "${current.camera.name}" - stop that first to use its camera here.`;
+      block.appendChild(busy);
+    } else if (camera && !streamingHere) {
+      fetch(`/api/cameras/${camera.id}/publish/status`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload) => {
+          // Only while the same form is still open, and only if nobody has touched the switch.
+          if (payload && !payload.publishing && document.getElementById("cam-stream-here") === switchInput && !switchInput.dataset.touched)
+            switchInput.checked = true;
+        })
+        .catch(() => { /* unknown is left as off */ });
+      switchInput.addEventListener("change", () => { switchInput.dataset.touched = "1"; });
+    }
+
+    const select = block.querySelector("#cam-device");
+    // Changing camera mid-stream restarts the stream on the new one; before a stream it re-opens
+    // the preview, so what is on screen is always the camera that would be sent.
+    select.addEventListener("change", () => {
+      const now = publisher.snapshot();
+      if (camera && now.camera?.id === camera.id)
+        publisher.start({ camera: now.camera, deviceId: select.value, includeMic: now.includeMic });
+      else if (!now.publishing)
+        publisher.preview(select.value);
+    });
+
+    releaseWebcamCapture();
+    webcamCaptureUnsubscribe = publisher.onChange((state) => renderWebcamCapture(block, state));
+    renderWebcamCapture(block, current);
+    if (!current.publishing) publisher.preview(current.deviceId);
+    return block;
+  }
+
+  async function renderWebcamCapture(block, state) {
+    const status = block.querySelector("#cam-capture-status");
+    const video = block.querySelector("#cam-preview");
+    if (!status || !video) return;
+    status.textContent = state.status;
+
+    const errors = block.querySelector("#cam-capture-errors");
+    errors.innerHTML = "";
+    if (state.error) {
+      const li = document.createElement("li");
+      if (state.error.html) li.innerHTML = state.error.message; else li.textContent = state.error.message;
+      errors.appendChild(li);
+    }
+
+    // Only when the capture actually changed: re-pointing the <video> at the same stream restarts
+    // it, and the device list only changes when a capture has (permission, or a new camera).
+    if (state.stream !== shownCaptureStream) {
+      shownCaptureStream = state.stream;
+      video.srcObject = state.stream;
+      block.querySelector("#cam-preview-idle").classList.toggle("hidden", !!state.stream);
+      if (state.stream) await window.SentinelPublisher.populateDeviceSelect(block.querySelector("#cam-device"));
+    }
+  }
+
+  // Closing the form ends a preview but never a stream: the picker is a window onto the
+  // publisher, not its owner, and a camera saved with "stream from this device" on keeps going
+  // after the form is gone - that is the whole point of it.
+  function releaseWebcamCapture() {
+    if (webcamCaptureUnsubscribe) {
+      webcamCaptureUnsubscribe();
+      webcamCaptureUnsubscribe = null;
+    }
+    shownCaptureStream = null;
+    const publisher = window.SentinelPublisher;
+    if (publisher && !publisher.snapshot().publishing) publisher.stop();
+  }
+
+  // What the form asked for, read before closeForm tears the picker down. Null when this page
+  // can't capture, in which case saving changes nothing about who is streaming.
+  function readWebcamIntent() {
+    const streamHere = document.getElementById("cam-stream-here");
+    if (!streamHere) return null;
+    return {
+      streamHere: streamHere.checked && !streamHere.disabled,
+      deviceId: document.getElementById("cam-device")?.value ?? ""
+    };
+  }
+
+  function applyWebcamIntent(cameraId, name, includeMic, intent) {
+    const publisher = window.SentinelPublisher;
+    const current = publisher.snapshot();
+    const streamingHere = current.camera?.id === cameraId;
+    if (!intent.streamHere) {
+      if (streamingHere) publisher.stop();
+      return;
+    }
+    // Already doing exactly this - a rename shouldn't cost a second of video.
+    if (streamingHere && current.deviceId === intent.deviceId && current.includeMic === !!includeMic) return;
+    publisher.start({ camera: { id: cameraId, name }, deviceId: intent.deviceId, includeMic });
   }
 
   function openForm(camera) {
@@ -466,6 +656,7 @@ window.GateWatchCameras = (function () {
 
   function closeForm() {
     editingId = null;
+    releaseWebcamCapture();
     document.getElementById("camera-form-wrap").classList.add("hidden");
     // Both panels share one footer, so a test-connection error left behind by the URL form would
     // otherwise still be sitting there the next time the webcam form - which has nothing to test -
@@ -642,7 +833,11 @@ window.GateWatchCameras = (function () {
         return;
       }
 
+      // Both read before closeForm: it clears editingId and tears the picker down.
+      const savedId = editingId ?? payload.id;
+      const webcamIntent = publishedForm ? readWebcamIntent() : null;
       closeForm();
+      if (webcamIntent && savedId) applyWebcamIntent(savedId, body.name, body.includeAudio, webcamIntent);
       await load();
       renderList();
     } catch {
@@ -2435,6 +2630,11 @@ window.GateWatchCameras = (function () {
   document.getElementById("camera-test-btn").addEventListener("click", testConnection);
   document.getElementById("discover-cameras-btn").addEventListener("click", openDiscovery);
   document.getElementById("add-webcam-btn").addEventListener("click", () => openWebcamForm(null));
+  // The card of a camera streaming from this browser shows the publisher's status line, which
+  // changes every few seconds - keep it honest while the tab is on screen.
+  window.SentinelPublisher?.onChange(() => {
+    if (loadState === "ready" && !document.getElementById("view-cameras").classList.contains("hidden")) renderList();
+  });
   document.getElementById("discovery-cancel-btn").addEventListener("click", closeDiscovery);
   document.getElementById("discovery-scan-btn").addEventListener("click", startScan);
   document.getElementById("gate-check-save-btn").addEventListener("click", saveGateCheck);

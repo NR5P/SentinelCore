@@ -877,6 +877,8 @@ have to copy the file off the server: the dashboard serves it at
 which is where the webcam publish page sends a device that needs it. Per platform:
 
 - **Linux:** `sudo cp ca.crt /usr/local/share/ca-certificates/sentinel-core.crt && sudo update-ca-certificates`
+  for system tools; Chrome and Firefox keep their own store, so also import it in the browser
+  under Settings → Privacy and security → Security → Manage certificates → Authorities.
 - **macOS:** double-click it, then in Keychain Access set it to "Always Trust"
 - **Windows:** double-click → Install Certificate → Local Machine → place in "Trusted Root
   Certification Authorities"
