@@ -556,22 +556,21 @@ your cameras. Nothing is installed on it: it opens a page, presses start, and it
 to the server for as long as that page stays open. From there it is an ordinary camera: it
 appears on the **LIVE** tab, records clips, fires trigger zones and gets analyzed like the rest.
 
-It takes two steps, on two different devices:
+**If the camera is on the device you're using right now** (the usual case — a laptop with the
+dashboard open), it is one form. On the **CAMERAS** tab click **+ add webcam device** (next to
+**+ add camera**). The form asks for a name, whether to include the microphone, and shows
+**Camera on this device**: a dropdown of every camera this device has (a laptop's built-in one
+versus a plugged-in USB one; a phone's front and back) with a live preview of the one selected.
+Leave **Stream from this device** on and save. Streaming starts immediately and keeps going while
+this dashboard tab stays open — the camera's card says *streaming from this browser* and shows
+whether the server is receiving video, and gets a **stop streaming** button. To change which
+camera it uses later, **edit** it and pick another.
 
-1. **On the dashboard, add the camera.** On the **CAMERAS** tab click **+ add webcam device**
-   (next to **+ add camera**). It only asks for a name and whether to include the device's
-   microphone — there is no address to type, because the device will come to the server rather
-   than the other way round. Save it. Its card on the CAMERAS tab now has a **publish page**
-   button.
-
-2. **On the device that has the camera, open the publish page.** Click **publish page** *on that
-   device* — not on the machine you're sitting at, unless that is the device. If the dashboard
-   isn't already open there, it's `https://<server>:3443/publish.html`; sign in if asked, then
-   pick the camera you just added. The page shows the device's camera straight away, with a
-   dropdown to choose between cameras on a device that has more than one (a laptop's built-in
-   one versus a plugged-in USB one, or a phone's front and back). Press **start streaming**. The
-   status line under the picture confirms when the server is actually receiving video — leave
-   the page open after that.
+**If the camera is on a different device** — a spare phone you want to leave in a room — add the
+camera the same way (turn **Stream from this device** off), then on that device open the
+**publish page** button from the camera's card (or `https://<server>:3443/publish.html`), pick
+the camera, and press **start streaming**. That page does nothing but stream, so it is the one to
+leave running unattended for days.
 
 **"Can't use this device's camera", or the camera never appears.** Browsers only hand a page the
 device's camera over **HTTPS with a certificate the device trusts** — a rule of the browser, not
@@ -579,14 +578,17 @@ of this system, and the same one that stops any website using your camera withou
 That means two things have to be true on the device doing the publishing:
 
 - The page has to be the `https://` address on port 3443, not the plain `http://` one on 3320.
-  The publish page says so if you open the wrong one, and links you to the right one.
+  Both the form and the camera's card say so if you're on the wrong one, with a button that
+  opens the right address straight onto the Cameras tab.
 - The device has to trust the dashboard's certificate. This dashboard signs its own (there is no
   public authority that will issue one for a home LAN address), so the first time a device visits
   the `https://` address it sees a warning. **Clicking past the warning is not enough here**: the
   page loads, but the browser then quietly refuses to share the camera, without ever asking you.
-  The fix is to trust the certificate on that device, once — the publish page offers it as a
-  download and walks through the steps for a Mac, Windows, iPhone or Android; they are also in
-  the deployment guide, section 14a. Reload the page afterwards and the camera appears.
+  The fix is to trust the certificate on that device, once — the form and the publish page offer
+  it as a download and walk through the steps for a Mac, Windows, Linux, iPhone or Android; they
+  are also in the deployment guide, section 14a. Reload the page afterwards and the camera
+  appears. (On Linux, Chrome and Firefox keep their own certificate store — import it in the
+  browser's settings under Manage certificates → Authorities, not only the system store.)
 
 **Keeping it going.** The stream stops when the tab is closed, the screen locks, or the device
 sleeps — so turn off sleep on the device, plug it in, and leave the tab in front. The page holds

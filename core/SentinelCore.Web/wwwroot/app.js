@@ -572,3 +572,15 @@ for (const tab of tabs) {
     scheduleTooltipAnchoring();
   });
 }
+
+// A link can land on a tab: /#cameras opens Cameras. The webcam picker's "open the secure
+// address" button relies on it, so changing address doesn't also mean finding the tab again -
+// the person following that button has already been told enough steps.
+//
+// Deferred to DOMContentLoaded rather than run here: the click handler above reaches for
+// window.GateWatchCameras, and cameras.js is loaded after this file.
+window.addEventListener("DOMContentLoaded", () => {
+  const wanted = location.hash.replace(/^#/, "");
+  const landing = wanted && Array.from(tabs).find((tab) => tab.dataset.view === wanted);
+  if (landing) landing.click();
+});

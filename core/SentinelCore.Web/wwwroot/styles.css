@@ -2852,3 +2852,39 @@ main {
   min-height: 1.2em;
   margin: 0 0 4px;
 }
+
+/* The camera picker embedded in a webcam device's form - cameras.js buildWebcamCaptureBlock. It
+   borrows the publish page's preview styling above so the two hosts look like the same thing. */
+.webcam-capture {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.webcam-capture-preview {
+  max-width: 360px;
+  margin-bottom: 4px;
+}
+
+.webcam-capture-blocked {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+}
+
+.webcam-capture-blocked p {
+  margin: 0 0 8px;
+}
+
+.publisher-switch-link {
+  display: inline-block;
+  margin: 6px 0;
+  text-decoration: none;
+}
+
+.camera-card-streaming-here {
+  color: var(--green);
+}
+
+.camera-card-error {
+  color: var(--red, #e5484d);
+}

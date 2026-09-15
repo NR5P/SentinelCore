@@ -1,15 +1,15 @@
-// Turns this browser into one of the dashboard's cameras: capture the device's webcam and push it
-// to the server over WebRTC, the exact reverse of the live grid in cameras.js. The server hands
-// the media to its go2rtc sidecar, and from there it is an ordinary camera - clips, trigger zones
-// and AI analysis all work without knowing where the video came from.
+// The standalone host for SentinelPublisher (publisher.js): this page is the publisher with
+// nothing else around it, for a laptop or spare phone that is left running for days. Everything
+// that captures, connects, reconnects and stays awake lives in the shared module; what is here is
+// just which panel to show and how to paint the module's state into it.
 //
-// The awkward constraint this page exists to manage is that it has to keep running unattended for
-// days on a machine nobody is sitting at. Everything below is shaped by that: a wake lock so the
-// screen doesn't sleep the stream away, a reconnect loop, and a status line that distinguishes
-// "connected" from "the server is actually receiving frames", which are not the same thing.
+// Deliberately its own page rather than only a dashboard tab: it has to survive being left alone,
+// so it holds a screen wake lock and does nothing else - no polling of events, no live grid
+// behind it quietly eating the battery of the device it is running on. The Cameras tab embeds the
+// same module for the case where the device with the webcam is the one the dashboard is open on.
 (function () {
+  const publisher = window.SentinelPublisher;
   const params = new URLSearchParams(location.search);
-  const CERTIFICATE_URL = "/api/certificate-authority";
 
   const els = {
     blocked: document.getElementById("publish-blocked"),
@@ -29,36 +29,10 @@
   };
 
   let camera = null;
-  let stream = null;
-  let pc = null;
-  let wakeLock = null;
-  let statusTimer = null;
-  let retryTimer = null;
-  let publishing = false;
-
-  // Bumped every time a session starts or stops, so callbacks belonging to a session that has
-  // since been torn down (a slow SDP exchange, a late reconnect timer) can tell they are stale and
-  // do nothing. Without it, stopping and restarting quickly leaves the old attempt's error handler
-  // free to kill the new session.
-  let generation = 0;
 
   function show(panel) {
     for (const el of [els.blocked, els.picker, els.stage]) el.classList.add("hidden");
     panel.classList.remove("hidden");
-  }
-
-  function setStatus(message) {
-    els.status.textContent = message;
-  }
-
-  // html is for the certificate guidance only, which carries a download link; everything else
-  // stays text, since some of it quotes the browser's own error message.
-  function setError(message, { html = false } = {}) {
-    els.errors.innerHTML = "";
-    if (!message) return;
-    const li = document.createElement("li");
-    if (html) li.innerHTML = message; else li.textContent = message;
-    els.errors.appendChild(li);
   }
 
   function blocked(reason, fixHtml) {
@@ -69,51 +43,11 @@
 
   // ---------------- Startup ----------------
 
-  // getUserMedia only exists in a secure context, and "secure" excludes plain http on a LAN
-  // address - which is exactly how this dashboard is usually reached. Worth catching up front and
-  // explaining precisely, because the browser's own failure here is a bare undefined property.
-  //
-  // HTTPS alone doesn't get there either. The dashboard's certificate is signed by the install's
-  // own authority, and a browser that hasn't been told to trust it lets the page load past a
-  // warning and then refuses the camera without ever showing a prompt - so the fix offered here
-  // is the certificate, not just the address, and this page has to be the thing that hands it
-  // over: the device reading this is the one that needs it.
-  async function checkEnvironment() {
-    if (window.isSecureContext && navigator.mediaDevices?.getUserMedia) return true;
-
-    const httpsUrl = `https://${location.hostname}:3443${location.pathname}${location.search}`;
-    blocked(
-      "This browser will only share a camera with pages loaded over HTTPS (or from localhost), " +
-      "and this page was loaded over plain HTTP.",
-      `<p>1. ${await certificateStepHtml()}</p>` +
-      `<p>2. Then open <a href="${escapeAttribute(httpsUrl)}">${escapeHtml(httpsUrl)}</a> on this device instead. ` +
-      "If the dashboard's HTTPS port is different, use that port.</p>"
-    );
-    return false;
-  }
-
-  // The authority is only offered when this install actually has one: on a real-domain
-  // certificate there is nothing to download, and whatever sent someone here has another cause.
-  let certificateOffered = null;
-  async function certificateStepHtml() {
-    if (certificateOffered === null) {
-      try {
-        certificateOffered = (await fetch(CERTIFICATE_URL, { method: "HEAD", cache: "no-store" })).ok;
-      } catch {
-        certificateOffered = false;
-      }
-    }
-    if (!certificateOffered)
-      return "Trust the dashboard's HTTPS certificate on this device - see the deployment guide, section 14a.";
-    return `<a href="${CERTIFICATE_URL}" download>Download the dashboard's certificate</a> and trust it on this device, once: ` +
-      "on a Mac, open the file, then in Keychain Access double-click it and set Trust to <em>Always Trust</em>; " +
-      "on Windows, install it into <em>Trusted Root Certification Authorities</em>; " +
-      "on an iPhone, install the profile, then switch it on under Settings → General → About → Certificate Trust Settings; " +
-      "on Android, install it as a CA certificate. Then reload this page.";
-  }
-
   async function start() {
-    if (!(await checkEnvironment())) return;
+    if (!publisher.canCapture()) {
+      blocked(publisher.insecureReason(), await publisher.insecureFixHtml(location.pathname + location.search));
+      return;
+    }
 
     let cameras;
     try {
@@ -136,7 +70,7 @@
     if (publishable.length === 0) {
       blocked(
         "No webcam cameras have been set up yet.",
-        `On <a href="/">the dashboard</a>, open the Cameras tab and choose <em>add webcam device</em>, then return here.`
+        `On <a href="/#cameras">the dashboard's Cameras tab</a>, choose <em>add webcam device</em>, then return here.`
       );
       return;
     }
@@ -163,313 +97,57 @@
     show(els.picker);
   }
 
+  // ---------------- The stage ----------------
+
+  function session() {
+    return { camera: { id: camera.id, name: camera.name }, deviceId: els.device.value, includeMic: els.mic.checked };
+  }
+
   async function openStage() {
     els.cameraName.textContent = camera.name;
     els.mic.checked = !!camera.includeAudio;
     show(els.stage);
+    publisher.onChange(render);
 
     els.toggle.addEventListener("click", () => {
-      if (!publishing) return begin();
-      stop();
-      preview("stopped on this device - previewing only, nothing is being sent");
+      if (publisher.snapshot().publishing) {
+        publisher.stop();
+        publisher.preview(els.device.value, "stopped on this device - previewing only, nothing is being sent");
+      } else {
+        publisher.start(session());
+      }
     });
     // Changing camera or microphone mid-session restarts it, which is the only way to swap tracks
     // without renegotiating - and a restart here costs a second of video, not a lost session.
     // Before a session, changing the camera re-opens the preview, so what is on screen is always
     // the camera that would be streamed.
-    els.device.addEventListener("change", () => (publishing ? begin() : preview()));
-    els.mic.addEventListener("change", () => { if (publishing) begin(); });
+    els.device.addEventListener("change", () =>
+      publisher.snapshot().publishing ? publisher.start(session()) : publisher.preview(els.device.value));
+    els.mic.addEventListener("change", () => { if (publisher.snapshot().publishing) publisher.start(session()); });
 
-    await preview();
+    await publisher.preview("");
   }
 
-  // Shows the chosen camera on screen without sending it anywhere. This is what asks the browser
-  // for permission, and permission is what turns the device list from one unnamed "camera 1"
-  // into every camera the device has, by name - until it has run there is nothing real to pick
-  // from and nothing to look at, which reads as a page that does nothing. Video only: the
-  // microphone is asked for when streaming starts, and only if it is wanted.
-  async function preview(statusMessage) {
-    if (publishing) return;
-    const mine = ++generation;
-    stopMedia();
-    setError("");
-    setStatus("opening camera…");
-
-    let captured;
-    try {
-      captured = await navigator.mediaDevices.getUserMedia({ video: videoConstraint() });
-    } catch (error) {
-      if (mine !== generation) return;
-      setStatus("");
-      await reportCaptureFailure(error);
-      return;
-    }
-    if (mine !== generation) { for (const track of captured.getTracks()) track.stop(); return; }
-
-    stream = captured;
-    els.preview.srcObject = stream;
-    els.idleOverlay.classList.add("hidden");
-    await listDevices();
-    setStatus(statusMessage ?? "previewing - press start streaming to send this to the dashboard");
-  }
-
-  // exact, so a chosen camera is that camera and not the browser's idea of a close match - but
-  // only once permission has given the devices real ids. Before that the list holds one blank
-  // entry, and asking for a blank id exactly is an OverconstrainedError.
-  function videoConstraint() {
-    const deviceId = els.device.value;
-    return deviceId ? { deviceId: { exact: deviceId } } : true;
-  }
-
-  // The browser's own reasons are terse, and one is misleading: NotAllowedError is the same answer
-  // for "the person clicked block" and for "this page's certificate isn't trusted, so the camera
-  // was refused without asking". On a LAN dashboard the second is by far the likelier, and its
-  // fix is the certificate rather than the address-bar permission - so it gets named first.
-  async function reportCaptureFailure(error) {
-    if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
-      setError(
-        "The browser wouldn't share the camera with this page. " +
-        "If you clicked through a certificate warning to get here, that is why - a browser refuses the camera to a " +
-        "page whose certificate it doesn't trust, and doesn't ask. " + await certificateStepHtml() + " " +
-        "If the certificate is already trusted, allow the camera for this site in the address bar and try again.",
-        { html: true });
-    } else if (error?.name === "NotFoundError" || error?.name === "OverconstrainedError") {
-      setError("No camera was found on this device, or the chosen one has gone away. Pick another one and try again.");
-    } else {
-      setError(`Couldn't open the camera: ${error?.message ?? error}`);
-    }
-  }
-
-  // Before permission is granted, browsers list one anonymous entry per kind with a blank id and
-  // blank label, so the first real list only exists after a capture has succeeded - and it runs
-  // again after every capture so a camera plugged in since shows up too. The selection follows
-  // the camera actually in use rather than whatever the blank entry was, so the list and the
-  // picture agree.
-  async function listDevices() {
-    let devices;
-    try {
-      devices = await navigator.mediaDevices.enumerateDevices();
-    } catch {
-      return;
+  let shownStream = null;
+  async function render(state) {
+    els.toggle.textContent = state.publishing ? "stop streaming" : "start streaming";
+    els.status.textContent = state.status;
+    els.errors.innerHTML = "";
+    if (state.error) {
+      const li = document.createElement("li");
+      if (state.error.html) li.innerHTML = state.error.message; else li.textContent = state.error.message;
+      els.errors.appendChild(li);
     }
 
-    const cameras = devices.filter((d) => d.kind === "videoinput");
-    const active = stream?.getVideoTracks()[0]?.getSettings()?.deviceId;
-    const previous = active || els.device.value;
-    els.device.innerHTML = "";
-    cameras.forEach((device, index) => {
-      const option = document.createElement("option");
-      option.value = device.deviceId;
-      option.textContent = device.label || `camera ${index + 1}`;
-      els.device.appendChild(option);
-    });
-    if (previous && Array.from(els.device.options).some((option) => option.value === previous))
-      els.device.value = previous;
-  }
-
-  // ---------------- Publishing ----------------
-
-  async function begin() {
-    stopMedia();
-    clearTimeout(retryTimer);
-    const mine = ++generation;
-    publishing = true;
-    els.toggle.textContent = "stop streaming";
-    setError("");
-    setStatus("requesting camera…");
-
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint(), audio: els.mic.checked });
-    } catch (error) {
-      publishing = false;
-      els.toggle.textContent = "start streaming";
-      setStatus("");
-      await reportCaptureFailure(error);
-      return;
-    }
-
-    if (mine !== generation) { stopMedia(); return; }
-
-    els.preview.srcObject = stream;
-    els.idleOverlay.classList.add("hidden");
-    await listDevices();
-    await acquireWakeLock();
-
-    setStatus("connecting…");
-    try {
-      await connect(mine);
-    } catch (error) {
-      if (mine !== generation) return;
-      setStatus("");
-      setError(`Couldn't start publishing: ${error?.message ?? error}`);
-      scheduleRetry(mine);
-      return;
-    }
-
-    if (mine !== generation) return;
-    setStatus("connected - waiting for the server to confirm it's receiving video…");
-    pollStatus(mine);
-  }
-
-  async function connect(mine) {
-    pc = new RTCPeerConnection();
-
-    // sendonly in both directions of the word: this page is a source, and explicitly saying so
-    // keeps the browser from offering to receive anything back.
-    for (const track of stream.getTracks()) pc.addTrack(track, stream);
-
-    pc.addEventListener("connectionstatechange", () => {
-      if (mine !== generation || !pc) return;
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-        setStatus("connection lost - reconnecting…");
-        scheduleRetry(mine);
-      }
-    });
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await waitForIceGathering(pc, 1500);
-
-    const response = await fetch(`/api/cameras/${camera.id}/publish`, {
-      method: "POST",
-      headers: { "Content-Type": "application/sdp" },
-      body: pc.localDescription.sdp
-    });
-
-    if (response.status === 401 || response.status === 403)
-      throw new Error("this device is no longer signed in - open the dashboard and sign in again");
-    if (response.status === 503)
-      throw new Error("the server can't accept published video because go2rtc isn't running on it");
-    if (!response.ok) throw new Error(`the server rejected the connection (HTTP ${response.status})`);
-
-    const answer = await response.text();
-    if (mine !== generation) return;
-    await pc.setRemoteDescription({ type: "answer", sdp: answer });
-  }
-
-  // A peer connection reporting "connected" only means the handshake completed - it says nothing
-  // about whether frames are arriving. Asking the server what it can actually see is the only
-  // honest confirmation, and it is what makes this page trustworthy to walk away from.
-  function pollStatus(mine) {
-    clearTimeout(statusTimer);
-    const tick = async () => {
-      if (mine !== generation) return;
-      try {
-        const response = await fetch(`/api/cameras/${camera.id}/publish/status`);
-        if (response.ok) {
-          const payload = await response.json();
-          if (mine !== generation) return;
-          setStatus(payload.publishing
-            ? "streaming - the server is receiving video from this device"
-            : "connected, but the server isn't receiving video yet…");
-        }
-      } catch {
-        // A failed poll is not a failed stream; the connection state handler owns real failures.
-      }
-      statusTimer = setTimeout(tick, 10000);
-    };
-    tick();
-  }
-
-  function scheduleRetry(mine) {
-    if (mine !== generation || !publishing) return;
-    clearTimeout(retryTimer);
-    retryTimer = setTimeout(() => { if (mine === generation && publishing) begin(); }, 3000);
-  }
-
-  function stop(reason) {
-    generation++;
-    publishing = false;
-    clearTimeout(statusTimer);
-    clearTimeout(retryTimer);
-    stopMedia();
-    releaseWakeLock();
-    els.toggle.textContent = "start streaming";
-    els.idleOverlay.classList.remove("hidden");
-    setStatus(reason ?? "");
-  }
-
-  function stopMedia() {
-    if (pc) {
-      try { pc.close(); } catch { /* already closed */ }
-      pc = null;
-    }
-    if (stream) {
-      for (const track of stream.getTracks()) track.stop();
-      stream = null;
-    }
-    els.preview.srcObject = null;
-  }
-
-  // ---------------- Staying awake ----------------
-
-  // Without this the screen sleeps, and on most platforms a sleeping screen suspends the capture -
-  // the camera goes dark hours into a trip with the tab still cheerfully open. Not universally
-  // supported, and not a substitute for the machine's own sleep settings, which is why the page
-  // says so in plain text too.
-  async function acquireWakeLock() {
-    if (!("wakeLock" in navigator) || wakeLock) return;
-    try {
-      wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", () => { wakeLock = null; });
-    } catch {
-      // Denied or unsupported - the stream still runs for as long as the device stays awake.
+    // Only when the capture actually changed: re-pointing the <video> at the same stream restarts
+    // it, and the device list only changes when a capture has (permission, or a new camera).
+    if (state.stream !== shownStream) {
+      shownStream = state.stream;
+      els.preview.srcObject = state.stream;
+      els.idleOverlay.classList.toggle("hidden", !!state.stream);
+      if (state.stream) await publisher.populateDeviceSelect(els.device);
     }
   }
-
-  function releaseWakeLock() {
-    if (!wakeLock) return;
-    try { wakeLock.release(); } catch { /* already gone */ }
-    wakeLock = null;
-  }
-
-  // A wake lock is dropped whenever the tab is backgrounded, and is not restored on return.
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && publishing) acquireWakeLock();
-  });
-
-  // ---------------- Helpers ----------------
-
-  function waitForIceGathering(connection, timeoutMs) {
-    if (connection.iceGatheringState === "complete") return Promise.resolve();
-    return new Promise((resolve) => {
-      const done = () => {
-        connection.removeEventListener("icegatheringstatechange", check);
-        resolve();
-      };
-      const check = () => { if (connection.iceGatheringState === "complete") done(); };
-      connection.addEventListener("icegatheringstatechange", check);
-      setTimeout(done, timeoutMs);
-    });
-  }
-
-  function escapeHtml(value) {
-    // Deliberately a string replace rather than the textContent/innerHTML trick this used to be.
-    // That trick escapes exactly what a *text node* needs - & < > - and quotes are not among them,
-    // because a quote means nothing in text. Half the interpolations here are into attributes
-    // (alt=, title=, data-tip=, value=), and there a surviving double quote ends the attribute and
-    // everything after it is parsed as more attributes. Confirmed against a real DOM: an event
-    // summary reading `A man held a sign reading " onerror=alert(1) x="` produced an <img>
-    // carrying an onerror the markup never contained.
-    //
-    // Vision models write those summaries, and they quote things - a sign, a brand, a plate - so
-    // the merely-broken version of this happens without anybody attacking anything.
-    return String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-
-  // Kept as a name because call sites read better for it, but there is nothing left for it to do:
-  // escapeHtml handles quotes now. This file having had its own attribute-safe variant, while the
-  // other eight copies of escapeHtml did not, is how the gap stayed open everywhere else.
-  function escapeAttribute(value) {
-    return escapeHtml(value);
-  }
-
-  window.addEventListener("beforeunload", () => stop());
 
   start();
 })();
