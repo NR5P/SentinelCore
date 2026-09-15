@@ -58,6 +58,7 @@ public sealed class Go2RtcManager : IDisposable
     private readonly string _workingRoot;
     private readonly ILogger<Go2RtcManager> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly PublishedMseTranscoder _mseTranscoder;
     private readonly SemaphoreSlim _startLock = new(1, 1);
 
     // Which source string each camera is currently registered under in the running go2rtc, so a
@@ -76,8 +77,9 @@ public sealed class Go2RtcManager : IDisposable
     private readonly CancellationTokenSource _shutdown = new();
 
     public Go2RtcManager(IConfiguration configuration, IHostEnvironment environment,
-        IHttpClientFactory httpClientFactory, ILogger<Go2RtcManager> logger)
+        IHttpClientFactory httpClientFactory, PublishedMseTranscoder mseTranscoder, ILogger<Go2RtcManager> logger)
     {
+        _mseTranscoder = mseTranscoder;
         _binaryPath = configuration["Go2Rtc:Path"] ?? "go2rtc";
         _ffmpegPath = configuration["FfmpegPath"] ?? "ffmpeg";
         // Deliberately not go2rtc's stock ports (1984/8554/8555): anyone already running another
@@ -277,11 +279,20 @@ public sealed class Go2RtcManager : IDisposable
         if (!camera.IsBrowserPublished)
             await RegisterStreamAsync(camera, effective, cancellationToken);
 
+        // A published camera's video cannot be decoded by an MSE client as it comes out of go2rtc
+        // - see PublishedMseTranscoder for what is wrong with it and why it has to be re-encoded
+        // rather than repackaged. Every other camera goes to its own stream exactly as before:
+        // this branch is the only thing in the MSE path that a published camera does differently,
+        // and nothing here registers, re-PUTs or otherwise touches a pulled camera's stream.
+        var source = StreamName(camera.Id, effective);
+        if (camera.IsBrowserPublished)
+            source = await _mseTranscoder.EnsureRunningAsync(camera, cancellationToken) ?? source;
+
         var socket = new System.Net.WebSockets.ClientWebSocket();
         try
         {
             await socket.ConnectAsync(
-                new Uri($"ws://127.0.0.1:{_apiPort}/api/ws?src={StreamName(camera.Id, effective)}"), cancellationToken);
+                new Uri($"ws://127.0.0.1:{_apiPort}/api/ws?src={source}"), cancellationToken);
             return socket;
         }
         catch
@@ -295,6 +306,11 @@ public sealed class Go2RtcManager : IDisposable
     // next viewer registers the new URL instead of streaming from the old one.
     public void ForgetStream(Guid cameraId)
     {
+        // A published camera's MSE transcode is reading a URL this edit may have changed, and it
+        // is keyed by camera rather than by rendition, so it is dropped here whether or not this
+        // camera had a registration to forget - a pulled camera simply has no transcode to stop.
+        _ = _mseTranscoder.StopAsync(cameraId);
+
         List<StreamQuality> dropped;
         lock (_registeredSources)
         {

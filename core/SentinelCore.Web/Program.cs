@@ -201,6 +201,12 @@ builder.Services.AddSingleton<ILiveOrderStore>(new SqliteLiveOrderStore(camerasR
 // includes go2rtc gathering its ICE candidates, and the first request may also be paying the
 // sidecar's startup wait.
 builder.Services.AddHttpClient(nameof(Go2RtcManager), client => client.Timeout = TimeSpan.FromSeconds(20));
+// Re-encodes a browser-published camera into a stream an MSE client can decode - see
+// PublishedMseTranscoder. Registered before Go2RtcManager because that takes it as a dependency;
+// it costs nothing on an install with no published cameras, since a transcode is only started
+// when an MSE viewer actually opens one.
+builder.Services.AddSingleton<PublishedMseTranscoder>();
+builder.Services.AddHostedService<PublishedMseTranscodeSweeper>();
 builder.Services.AddSingleton<Go2RtcManager>();
 // Have the sidecar up before the first viewer arrives rather than on their time - see
 // Go2RtcWarmUpService. Optional and non-blocking: an install without go2rtc boots unchanged.

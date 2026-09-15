@@ -69,6 +69,8 @@ public sealed class Go2RtcManagerTests : IDisposable
 
         return new Go2RtcManager(
             configuration, new StubEnvironment(_root), new PlainHttpClientFactory(),
+            new PublishedMseTranscoder(new PlainHttpClientFactory(), configuration,
+                NullLogger<PublishedMseTranscoder>.Instance),
             NullLogger<Go2RtcManager>.Instance);
     }
 

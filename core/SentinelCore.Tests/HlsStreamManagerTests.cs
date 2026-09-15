@@ -142,6 +142,8 @@ public sealed class HlsStreamManagerTests : IDisposable
         // don't use - it is here to satisfy the constructor, not to be exercised.
         var go2rtc = new Go2RtcManager(
             configuration, new StubEnvironment(_root), new PlainHttpClientFactory(),
+            new PublishedMseTranscoder(new PlainHttpClientFactory(), configuration,
+                NullLogger<PublishedMseTranscoder>.Instance),
             NullLogger<Go2RtcManager>.Instance);
 
         return new HlsStreamManager(
