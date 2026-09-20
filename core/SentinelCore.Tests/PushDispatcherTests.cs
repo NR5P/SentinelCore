@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace SentinelCore.Tests;
@@ -177,9 +178,154 @@ public sealed class PushDispatcherTests
         File.Delete(accountPath);
     }
 
+    // ---- Relay mode -------------------------------------------------------------------------
+    //
+    // An install with no Apple/Firebase credentials of its own hands each push to the relay,
+    // authenticated by its license. These pin the selection rule (direct wins when configured),
+    // the license requirement, and that the relay's answers drive the same stale-token cleanup
+    // as APNs' own.
+
+    [Fact]
+    public async Task SendAsync_WithNoDirectCredentials_GoesThroughTheRelayWithTheLicense()
+    {
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new RelayHandler(_ => (HttpStatusCode.OK, """{"status":"delivered"}"""));
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger(), new FixedLicenseSource("{lic}"));
+
+        var report = await dispatcher.SendAsync(NewRelayOptions(), PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Delivered);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("push.example.test", request.Uri.Host);
+        Assert.Equal("/v1/push", request.Uri.AbsolutePath);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("{lic}")), request.License);
+        Assert.Contains("\"phone-token\"", request.Body);
+    }
+
+    // The rule that lets Relay ship enabled by default: an install that already pushes for itself
+    // never notices the relay exists.
+    [Fact]
+    public async Task SendAsync_WhenAppleIsConfigured_IgnoresTheRelay()
+    {
+        using var key = NewSigningKey(out var keyPath);
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new RelayHandler(_ => (HttpStatusCode.OK, "{}"));
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger(), new FixedLicenseSource("{lic}"));
+        var options = NewOptions(keyPath); // Apple configured; Relay left at its enabled default
+
+        var report = await dispatcher.SendAsync(options, PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Delivered);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("api.sandbox.push.apple.com", request.Uri.Host);
+        Assert.Null(request.License);
+
+        File.Delete(keyPath);
+    }
+
+    [Fact]
+    public async Task SendAsync_WithoutALicense_FailsWithoutCallingTheRelay_AndKeepsTheDevice()
+    {
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new RelayHandler(_ => (HttpStatusCode.OK, """{"status":"delivered"}"""));
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger(), new FixedLicenseSource(null));
+
+        var report = await dispatcher.SendAsync(NewRelayOptions(), PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Attempted);
+        Assert.Equal(1, report.Failed);
+        Assert.Equal(0, report.Removed);
+        Assert.Empty(handler.Requests);
+        Assert.Single(store.Devices);
+    }
+
+    [Fact]
+    public async Task SendAsync_WhenTheRelaySaysUnregistered_RemovesTheDeviceAndSaysSo()
+    {
+        var store = new FakePushDeviceStore(NewDevice("apple", "stale-token", "Apple TV"));
+        var logger = new CapturingLogger();
+        var handler = new RelayHandler(_ => (HttpStatusCode.OK, """{"status":"unregistered"}"""));
+        var dispatcher = NewDispatcher(store, handler, logger, new FixedLicenseSource("{lic}"));
+
+        var report = await dispatcher.SendAsync(NewRelayOptions(), PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Removed);
+        Assert.Empty(store.Devices);
+        var line = Assert.Single(logger.Warnings, m => m.Contains("Removed the push registration"));
+        Assert.Contains("Apple TV", line);
+    }
+
+    // A token the relay has never seen (registered before relay mode was on, or after the relay
+    // rebuilt its store) is registered on the spot and the push retried - no waiting for the
+    // six-hourly reconciler.
+    [Fact]
+    public async Task SendAsync_WhenTheRelayDoesNotKnowTheToken_RegistersItAndRetries()
+    {
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var pushes = 0;
+        var handler = new RelayHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/v1/push" => ++pushes == 1
+                ? (HttpStatusCode.NotFound, """{"status":"unknown"}""")
+                : (HttpStatusCode.OK, """{"status":"delivered"}"""),
+            "/v1/devices" => (HttpStatusCode.OK, """{"registered":true}"""),
+            _ => (HttpStatusCode.InternalServerError, "unexpected")
+        });
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger(), new FixedLicenseSource("{lic}"));
+
+        var report = await dispatcher.SendAsync(NewRelayOptions(), PushMessage.Test(), CancellationToken.None);
+
+        Assert.Equal(1, report.Delivered);
+        Assert.Equal(
+            ["/v1/push", "/v1/devices", "/v1/push"],
+            handler.Requests.Select(r => r.Uri.AbsolutePath).ToArray());
+        var registration = handler.Requests[1];
+        Assert.Contains("\"apnsSandbox\":true", registration.Body);
+    }
+
+    private static PushNotificationOptions NewRelayOptions() => new()
+    {
+        Enabled = true,
+        Relay = new RelayPushOptions { Enabled = true, Url = "https://push.example.test", ApnsSandbox = true }
+    };
+
+    private sealed record RelayRequest(Uri Uri, string? License, string Body);
+
+    private sealed class RelayHandler(Func<HttpRequestMessage, (HttpStatusCode Status, string Body)> reply) : HttpMessageHandler
+    {
+        public List<RelayRequest> Requests { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
+            var license = request.Headers.TryGetValues(PushRelayClient.LicenseHeader, out var values) ? values.First() : null;
+            Requests.Add(new RelayRequest(request.RequestUri!, license, body));
+            var (status, responseBody) = reply(request);
+            return new HttpResponseMessage(status)
+            {
+                Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
+            };
+        }
+    }
+
     private static PushNotificationDispatcher NewDispatcher(
-        IPushDeviceStore store, HttpMessageHandler handler, ILogger<PushNotificationDispatcher> logger) =>
-        new(store, new SingleClientFactory(handler), new FakeEnvironment(), logger);
+        IPushDeviceStore store, HttpMessageHandler handler, ILogger<PushNotificationDispatcher> logger,
+        IRelayLicenseSource? license = null)
+    {
+        var factory = new SingleClientFactory(handler);
+        var environment = new FakeEnvironment();
+        return new(
+            store,
+            new ApnsSender(factory, environment, NullLogger<ApnsSender>.Instance),
+            new FcmSender(factory, environment, NullLogger<FcmSender>.Instance),
+            new PushRelayClient(factory, license ?? new FixedLicenseSource(null), NullLogger<PushRelayClient>.Instance),
+            logger);
+    }
+
+    internal sealed class FixedLicenseSource(string? contents) : IRelayLicenseSource
+    {
+        public Task<string?> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(contents);
+    }
 
     // A real P-256 key, because GetAppleProviderTokenAsync signs the provider JWT for real before
     // any request goes out - a placeholder string would fail in ImportFromPem, not at the assert.

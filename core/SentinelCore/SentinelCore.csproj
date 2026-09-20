@@ -39,6 +39,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../SentinelCore.Licensing/SentinelCore.Licensing.csproj" />
+    <ProjectReference Include="../SentinelCore.Push/SentinelCore.Push.csproj" />
   </ItemGroup>
   <!-- The SDK's default item globs otherwise sweep up whatever's sitting in the runtime data/
        folder next to this project (events.db, images, push-devices.db, ...) as Content purely

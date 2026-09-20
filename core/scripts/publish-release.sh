@@ -256,6 +256,8 @@ for platform in $PLATFORMS; do
   echo "==> Publishing $platform (rid: $rid)"
   mkdir -p "$stage"
 
+  # Deliberately only these two. SentinelCore.PushRelay is the vendor-operated service that holds
+  # the real APNs/FCM keys (docs/PUSH_RELAY.md); it is never part of what a customer installs.
   publish_project "$ROOT_DIR/SentinelCore/SentinelCore.csproj" "$rid" "$stage/SentinelCore"
   publish_project "$ROOT_DIR/SentinelCore.Web/SentinelCore.Web.csproj" "$rid" "$stage/SentinelCore.Web"
 

@@ -9,22 +9,10 @@ namespace SentinelCore;
 // See LicenseGenerator/README.md for how licenses actually get issued.
 public static class LicenseStatus
 {
-    // Generated via LicenseGenerator's `generate-keys` command. The matching private key never
-    // touches this repo - it stays only wherever it was generated. Every install checks against
-    // whatever is compiled in here, so this only ever needs to be set once.
-    public const string PublicKeyPem = """
-        -----BEGIN PUBLIC KEY-----
-        MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAoP5AaxG6j2hLHQvG7seg
-        WGg4zFznO6LSdcz5oWRHFzuNF8LigifsJ/RLPeJnwNBgnt0CodfkZ/E0CSc1Hpx9
-        kYMZLZQ48jaSIlxmLL4Zt2teGYTGHkDac/6VLyPVQESKjZPZ7V5GMsFf5mupz6zC
-        pAAcVslomeBASvrW+23gxuMnXcJ7aFClkJlnfmRq2H1zpwBU+opHYdplgq+Vr7Xg
-        nIvGxbFn8v7zj3f9aATmtWwbuPWNjCeZHFLrv6nnQoVgWcc9i5HAWT/1Wv1UYqfW
-        obrXx6U+YFiVoRuAW+b/eVpJEoQPw4zU1D6jNldJTqcoNOrV5jMcte/zcao0AKuj
-        gQRZ2gb+qXdao2rpAfczGFZlCEvucT/ZtCPb+jQVlv7qgrCPA7DYXG87fE/Yqzlt
-        G52WeZZ0G/EHp2kJljcNaCg//4P9nASAnqhLuj0xDLJMuAN700FC4b/RZvaQ2CB2
-        s97CzJ/AlJvqfymwsgjQQUqpH5lLUq5zOuSXYbyPxdXNAgMBAAE=
-        -----END PUBLIC KEY-----
-        """;
+    // The embedded public half of the signing key now lives in the Licensing library
+    // (LicensePublicKey) so the push relay can verify with the same key without referencing this
+    // project. Kept as an alias here for the docs and tools that name it.
+    public const string PublicKeyPem = LicensePublicKey.Pem;
 
     public static LicenseInfo? Check(string licenseFilePath)
     {

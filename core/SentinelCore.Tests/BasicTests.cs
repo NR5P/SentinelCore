@@ -2871,7 +2871,7 @@ public sealed class BasicTests
             }
         };
 
-        var message = PushMessage.FromAlert(result);
+        var message = PushMessages.FromAlert(result);
 
         Assert.Equal("Front gate", message.Title);
         Assert.Equal(result.Id.ToString(), message.EventId);

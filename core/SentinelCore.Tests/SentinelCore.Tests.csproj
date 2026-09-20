@@ -19,5 +19,6 @@
          Each keeps "global" as well so ordinary types from both are usable unqualified. -->
     <ProjectReference Include="../SentinelCore/SentinelCore.csproj" Aliases="global,MainApp" />
     <ProjectReference Include="../SentinelCore.Web/SentinelCore.Web.csproj" Aliases="global,WebHost" />
+    <ProjectReference Include="../SentinelCore.PushRelay/SentinelCore.PushRelay.csproj" Aliases="global,RelayHost" />
   </ItemGroup>
 </Project>

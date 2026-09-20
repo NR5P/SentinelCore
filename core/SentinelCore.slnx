@@ -4,4 +4,6 @@
   <Project Path="SentinelCore.Tests/SentinelCore.Tests.csproj" />
   <Project Path="SentinelCore.Licensing/SentinelCore.Licensing.csproj" />
   <Project Path="LicenseGenerator/LicenseGenerator.csproj" />
+  <Project Path="SentinelCore.Push/SentinelCore.Push.csproj" />
+  <Project Path="SentinelCore.PushRelay/SentinelCore.PushRelay.csproj" />
 </Solution>

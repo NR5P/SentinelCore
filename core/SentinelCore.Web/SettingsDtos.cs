@@ -572,6 +572,7 @@ public sealed class PushNotificationsSettingsDto
 
     public ApplePushDto Apple { get; set; } = new();
     public FirebasePushDto Firebase { get; set; } = new();
+    public RelayPushDto Relay { get; set; } = new();
 }
 
 public sealed class ApplePushDto
@@ -590,6 +591,16 @@ public sealed class FirebasePushDto
     public bool Enabled { get; set; }
     public string ProjectId { get; set; } = string.Empty;
     public string ServiceAccountPath { get; set; } = string.Empty;
+}
+
+// Mirrors RelayPushOptions. Defaults match the shipped appsettings.json so a save from a client
+// that predates this block (or the round-trip test's minimal payload) writes the same thing the
+// seeder would have.
+public sealed class RelayPushDto
+{
+    public bool Enabled { get; set; } = true;
+    public string Url { get; set; } = "https://push.nr5p.com";
+    public bool ApnsSandbox { get; set; }
 }
 
 // Flat on purpose, even though the file shape is Logging.LogLevel.{Default,Microsoft.AspNetCore}:

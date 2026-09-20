@@ -158,6 +158,19 @@ builder.Services.AddSingleton<IFaceRecognitionService, FaceRecognitionService>()
 // load is deferred to first actual search (see ImageEmbeddingService.EnsureInitializedAsync), so
 // this line alone costs nothing until semantic search is both enabled and used.
 builder.Services.AddHttpClient<IImageEmbeddingService, ImageEmbeddingService>();
+builder.Services.AddSingleton<ApnsSender>();
+builder.Services.AddSingleton<FcmSender>();
+builder.Services.AddHttpClient(nameof(PushRelayClient), client => client.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<PushRelayClient>();
+// The license lives next to the main app's appsettings.json (or wherever its License:FilePath
+// points), and the dashboard is the process that installs it - so resolve the path the same way
+// LicenseEndpoints does, on each read, rather than fixing it at startup.
+builder.Services.AddSingleton<IRelayLicenseSource>(sp => new FileRelayLicenseSource(
+    ct => new ValueTask<string>(LicenseEndpoints.ResolveLicensePathAsync(
+        sp.GetRequiredService<AppSettingsFile>(),
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<IHostEnvironment>(),
+        ct))));
 builder.Services.AddSingleton<PushNotificationDispatcher>();
 builder.Services.AddSingleton<ITimelineReviewStore, SqliteTimelineReviewStore>();
 

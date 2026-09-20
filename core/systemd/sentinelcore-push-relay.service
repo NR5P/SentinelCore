@@ -1,0 +1,25 @@
+[Unit]
+Description=SentinelCore Push Relay
+Wants=network-online.target
+After=network-online.target
+
+# The vendor-operated push relay (docs/PUSH_RELAY.md). Not part of a customer install: it holds
+# the real APNs/FCM credentials and serves every install through push.nr5p.com. Binds loopback
+# only (Urls in its appsettings.json) - cloudflared on this same host is what exposes it.
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=__INSTALL_DIR__/SentinelCore.PushRelay
+ExecStart=__DOTNET_PATH__ __INSTALL_DIR__/SentinelCore.PushRelay/bin/Release/net10.0/SentinelCore.PushRelay.dll
+
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_NOLOGO=true
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+SyslogIdentifier=sentinelcore-push-relay
+
+[Install]
+WantedBy=multi-user.target

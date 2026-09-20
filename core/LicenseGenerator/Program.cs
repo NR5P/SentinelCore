@@ -49,7 +49,7 @@ static int GenerateKeys(Dictionary<string, string> flags)
     Console.WriteLine("uploaded anywhere, or leave this machine. If it's lost, you can never issue");
     Console.WriteLine("another valid license without shipping a new public key to every past customer.");
     Console.WriteLine();
-    Console.WriteLine("Paste the contents below into SentinelCore/LicenseStatus.cs as PublicKeyPem:");
+    Console.WriteLine("Paste the contents below into SentinelCore.Licensing/LicensePublicKey.cs as Pem:");
     Console.WriteLine();
     Console.WriteLine(File.ReadAllText(publicPath));
     return 0;

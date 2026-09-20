@@ -312,8 +312,12 @@ public static class SettingsEndpoints
             {
                 // Same shape of guard as Device Hub's "MQTT must be on first": the master toggle
                 // with no delivery service underneath it would silently send nothing.
-                if (dto.Enabled && !dto.Apple.Enabled && !dto.Firebase.Enabled)
-                    extra.Add("Turn on Apple or Firebase below first - push notifications need at least one delivery service.");
+                if (dto.Enabled && !dto.Apple.Enabled && !dto.Firebase.Enabled && !dto.Relay.Enabled)
+                    extra.Add("Turn on the Relay, Apple or Firebase below first - push notifications need at least one delivery service.");
+                if (dto.Relay.Enabled &&
+                    (!Uri.TryCreate(dto.Relay.Url, UriKind.Absolute, out var relayUri) ||
+                     (relayUri.Scheme != Uri.UriSchemeHttps && relayUri.Scheme != Uri.UriSchemeHttp)))
+                    extra.Add("Relay: Address must be a full address starting with https://.");
             }));
 
         // Logging lives at Logging.LogLevel with a dotted category name ("Microsoft.AspNetCore")

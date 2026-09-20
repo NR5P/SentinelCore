@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+  </PropertyGroup>
+  <!-- Deliberately references only the two small libraries, never SentinelCore itself: this is
+       the vendor-operated service that holds the real APNs/FCM keys, and it should carry nothing
+       it doesn't need - no vision models, no camera code, no SQLite of events. It is also not part
+       of any release bundle (see scripts/publish-release.sh). -->
+  <ItemGroup>
+    <ProjectReference Include="../SentinelCore.Push/SentinelCore.Push.csproj" />
+    <ProjectReference Include="../SentinelCore.Licensing/SentinelCore.Licensing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Remove="data/**" />
+    <None Remove="data/**" />
+  </ItemGroup>
+</Project>

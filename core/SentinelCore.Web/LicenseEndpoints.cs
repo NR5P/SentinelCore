@@ -55,7 +55,8 @@ public static class LicenseEndpoints
         });
     }
 
-    private static async Task<string> ResolveLicensePathAsync(
+    // Also used by the push relay client's license source (Program.cs) - same file, same rules.
+    internal static async Task<string> ResolveLicensePathAsync(
         AppSettingsFile settings, IConfiguration configuration, IHostEnvironment environment, CancellationToken ct)
     {
         var licenseSettings = await settings.GetSectionAsync<LicenseSettingsDto>("License", ct) ?? new LicenseSettingsDto();

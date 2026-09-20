@@ -873,7 +873,7 @@ public static class SettingsSchema
             Endpoint = "/api/settings/push-notifications",
             Basic = true,
             DtoType = typeof(PushNotificationsSettingsDto),
-            Description = "Native push alerts to the Sentinel Core apps on iPhone, iPad, Mac, Apple TV, and Android - the banner-on-your-lock-screen kind, not email or Telegram. Requires developer credentials for the platform you're pushing to: an Apple Developer key for the Apple apps, a Firebase service account for Android. Each device also has to opt in from its own app's Settings screen (Enable Notifications) before anything reaches it.",
+            Description = "Native push alerts to the Sentinel Core apps on iPhone, iPad, Mac, Apple TV, and Android - the banner-on-your-lock-screen kind, not email or Telegram. Out of the box these go through the Sentinel Core push relay using your license, so nothing beyond turning this on is needed. The Apple and Firebase sections are for running with your own developer credentials instead; either one that's turned on and filled in takes over from the relay for its platform. Each device also has to opt in from its own app's Settings screen (Enable Notifications) before anything reaches it.",
             Fields =
             [
                 Check("enabled", "Enabled", "Send native push notifications to registered phones, tablets, and TVs. The delivery services below still need their own credentials and their own Enabled switch."),
@@ -889,7 +889,10 @@ public static class SettingsSchema
                 Check("apple.useSandbox", "Apple: Use Sandbox", "Send through Apple's sandbox push environment. On for apps installed via Xcode/development builds; off for TestFlight or App Store builds."),
                 Check("firebase.enabled", "Firebase: Enabled", "Deliver to Android devices through Firebase Cloud Messaging. Needs the project details below from your Firebase console."),
                 Text("firebase.projectId", "Firebase: Project ID", "The Firebase project ID from your project's settings page in the Firebase console."),
-                Text("firebase.serviceAccountPath", "Firebase: Service Account Path", "Path on the server to the Firebase service-account JSON file. Like the Apple key, the file itself is the secret - keep it readable by this service only.")
+                Text("firebase.serviceAccountPath", "Firebase: Service Account Path", "Path on the server to the Firebase service-account JSON file. Like the Apple key, the file itself is the secret - keep it readable by this service only."),
+                Check("relay.enabled", "Relay: Enabled", "Deliver through the Sentinel Core push relay, which holds the Apple and Firebase developer keys so you don't need accounts with either. Your license is what identifies this install to it, so a valid license must be installed (Settings → LICENSE). Only the alert's title and text pass through the relay - never images, video, or anything about your cameras. Ignored for any platform whose Apple or Firebase section above is turned on and filled in."),
+                Text("relay.url", "Relay: Address", "The relay's https address. Leave at the default unless you've been given a different one."),
+                Check("relay.apnsSandbox", "Relay: Apple Sandbox", "Only for Apple apps installed from Xcode or the command line rather than the App Store or TestFlight - those register sandbox tokens, which need Apple's sandbox environment. Leave off for a normal install; turned on wrongly, every Apple push is rejected.")
             ]
         },
         new()

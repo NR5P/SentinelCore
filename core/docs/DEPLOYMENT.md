@@ -1017,6 +1017,15 @@ output, so it lands wherever the rest of the web dashboard's logs do:
 5 minutes) get a 429 rather than being logged forever; that counter is in-memory only and resets
 on every restart.
 
+### Push notifications don't need any of this
+
+Native push to the phones works without a tunnel or Internet Exposed Mode: Core reaches *out* to
+the push relay at `push.nr5p.com` (or straight to Apple/Google in direct mode), and Apple/Google
+reach the phone. A phone away from home still gets the alert; it just can't open the event until
+it's back on the LAN or the tunnel above is set up. See
+[PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md) - and, for whoever runs the relay itself,
+[PUSH_RELAY.md](PUSH_RELAY.md).
+
 ## 14c. Local network discovery (optional)
 
 The web dashboard advertises itself over mDNS/DNS-SD (service type `_sentinelcore._tcp`) so the

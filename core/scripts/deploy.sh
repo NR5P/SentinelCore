@@ -9,6 +9,7 @@
 #   ./scripts/deploy.sh main       # build + restart only sentinelcore
 #   ./scripts/deploy.sh web        # build + restart only sentinelcore-web
 #   ./scripts/deploy.sh homekit    # restart only the HomeKit sidecar (Node, nothing to build)
+#   ./scripts/deploy.sh relay      # build + restart only sentinelcore-push-relay (vendor host only)
 #
 # Set SKIP_TESTS=1 to skip the test run (not recommended - it's the one thing standing
 # between a bad build and the live alert pipeline).
@@ -20,9 +21,9 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
 case "$TARGET" in
-  main|web|homekit|all) ;;
+  main|web|homekit|relay|all) ;;
   *)
-    echo "Unknown target '$TARGET'. Use: all, main, web, or homekit." >&2
+    echo "Unknown target '$TARGET'. Use: all, main, web, homekit, or relay." >&2
     exit 1
     ;;
 esac
@@ -53,13 +54,15 @@ if [[ "$(uname -s)" != "Darwin" && "${SKIP_RESTART:-0}" != "1" ]]; then
     main) units=(sentinelcore) ;;
     web) units=(sentinelcore-web) ;;
     homekit) units=(sentinelcore-homekit) ;;
+    relay) units=(sentinelcore-push-relay) ;;
     all) units=(sentinelcore sentinelcore-web) ;;
   esac
 
   blocked=()
   for unit in "${units[@]}"; do
-    # An uninstalled HomeKit sidecar is skipped at restart time, so don't demand rights for it.
-    if [[ "$unit" == "sentinelcore-homekit" ]] && ! systemctl cat sentinelcore-homekit >/dev/null 2>&1; then
+    # The HomeKit sidecar and the push relay are optional units, skipped at restart time when not
+    # installed - so don't demand rights for them either.
+    if [[ "$unit" == "sentinelcore-homekit" || "$unit" == "sentinelcore-push-relay" ]] && ! systemctl cat "$unit" >/dev/null 2>&1; then
       continue
     fi
     restart_blocked "$unit" && blocked+=("$unit")
@@ -91,7 +94,7 @@ if [[ "$(uname -s)" != "Darwin" && "${SKIP_RESTART:-0}" != "1" ]]; then
     fi
     echo "    Fix (see docs/DEPLOYMENT.md section 10):" >&2
     echo "      sudo visudo -f /etc/sudoers.d/blueiris-deploy" >&2
-    for unit in sentinelcore sentinelcore-web sentinelcore-homekit; do
+    for unit in sentinelcore sentinelcore-web sentinelcore-homekit sentinelcore-push-relay; do
       echo "      media ALL=(root) NOPASSWD: /usr/bin/systemctl restart $unit" >&2
     done
     echo >&2
@@ -161,6 +164,22 @@ restart_homekit() {
   sudo systemctl restart sentinelcore-homekit
 }
 
+# The push relay is only ever installed on the vendor's own host (docs/PUSH_RELAY.md) - a missing
+# unit is the normal case everywhere else, so like the HomeKit sidecar it's skipped, not an error.
+# Linux only: nothing runs the relay from a Mac.
+restart_relay() {
+  if [[ "$IS_MACOS" == "1" ]]; then
+    echo "==> Skipping push relay (not run on macOS)"
+    return
+  fi
+  if ! systemctl cat sentinelcore-push-relay >/dev/null 2>&1; then
+    echo "==> Skipping push relay (not installed)"
+    return
+  fi
+  echo "==> Restarting sentinelcore-push-relay"
+  sudo systemctl restart sentinelcore-push-relay
+}
+
 if [[ "${SKIP_RESTART:-0}" == "1" ]]; then
   # Deliberately loud, and deliberately the last thing printed. This leaves the machine in the
   # state the preflight above exists to prevent - new binaries, old processes, and wwwroot already
@@ -175,6 +194,7 @@ if [[ "${SKIP_RESTART:-0}" == "1" ]]; then
     main) echo "      sudo systemctl restart sentinelcore" ;;
     web) echo "      sudo systemctl restart sentinelcore-web" ;;
     homekit) echo "      sudo systemctl restart sentinelcore-homekit" ;;
+    relay) echo "      sudo systemctl restart sentinelcore-push-relay" ;;
     all) echo "      sudo systemctl restart sentinelcore sentinelcore-web" ;;
   esac
   exit 0
@@ -184,7 +204,8 @@ case "$TARGET" in
   main) restart_main ;;
   web) restart_web ;;
   homekit) restart_homekit ;;
-  all) restart_main; restart_web; restart_homekit ;;
+  relay) restart_relay ;;
+  all) restart_main; restart_web; restart_homekit; restart_relay ;;
 esac
 
 sleep 2

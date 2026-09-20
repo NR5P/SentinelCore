@@ -181,17 +181,14 @@ builder.Services.AddOptions<PushNotificationOptions>()
     .Bind(builder.Configuration.GetSection(PushNotificationOptions.SectionName))
     .ValidateDataAnnotations()
     .Validate(
-        o => !o.Enabled || !o.Apple.Enabled ||
-             (!string.IsNullOrWhiteSpace(o.Apple.TeamId) &&
-              !string.IsNullOrWhiteSpace(o.Apple.KeyId) &&
-              !string.IsNullOrWhiteSpace(o.Apple.BundleId) &&
-              !string.IsNullOrWhiteSpace(o.Apple.PrivateKeyPath)),
+        o => !o.Enabled || !o.Apple.Enabled || o.Apple.HasCredentials,
         "PushNotifications:Apple provider credentials are required when Apple push is enabled.")
     .Validate(
-        o => !o.Enabled || !o.Firebase.Enabled ||
-             (!string.IsNullOrWhiteSpace(o.Firebase.ProjectId) &&
-              !string.IsNullOrWhiteSpace(o.Firebase.ServiceAccountPath)),
+        o => !o.Enabled || !o.Firebase.Enabled || o.Firebase.HasCredentials,
         "PushNotifications:Firebase provider credentials are required when Firebase push is enabled.")
+    .Validate(
+        o => !o.Enabled || !o.Relay.Enabled || o.Relay.IsConfigured,
+        "PushNotifications:Relay:Url must be a full http(s) address when the relay is enabled.")
     .ValidateOnStart();
 
 builder.Services.AddSingleton<IBugReportSender, SmtpBugReportSender>();
@@ -228,7 +225,15 @@ builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IResultStore, FileResultStore>();
 builder.Services.AddSingleton<IPushDeviceStore, SqlitePushDeviceStore>();
 builder.Services.AddSingleton<IPackageWatchStore, SqlitePackageWatchStore>();
+builder.Services.AddSingleton<ApnsSender>();
+builder.Services.AddSingleton<FcmSender>();
+builder.Services.AddHttpClient(nameof(PushRelayClient), client => client.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<PushRelayClient>();
 builder.Services.AddSingleton<PushNotificationDispatcher>();
+// Re-registers every locally known device with the push relay at startup and periodically, so
+// devices that enrolled before relay mode was on (or after the relay's own store was rebuilt)
+// still receive alerts. Does nothing unless the relay is the effective provider.
+builder.Services.AddHostedService<PushRelayReconciler>();
 builder.Services.AddSingleton<IAlertAction, EmailAlertAction>();
 builder.Services.AddSingleton<IAlertAction, PushAlertAction>();
 
@@ -399,13 +404,17 @@ builder.Services.AddHttpClient(nameof(InternetOutageWorker), client =>
     client.Timeout = TimeSpan.FromSeconds(20);
 });
 
-var app = builder.Build();
-
-// Visibility only - never a functional gate. See LicenseStatus.cs.
+// Visibility only - never a functional gate for the app itself (see LicenseStatus.cs). The one
+// thing that does need it is the push relay, which carries pushes only for licensed installs -
+// PushRelayClient reads this same file, fresh, each time it needs it.
 var configuredLicensePath = builder.Configuration["License:FilePath"] ?? "license.lic";
 var licenseFilePath = Path.IsPathRooted(configuredLicensePath)
     ? configuredLicensePath
-    : Path.Combine(app.Environment.ContentRootPath, configuredLicensePath);
+    : Path.Combine(builder.Environment.ContentRootPath, configuredLicensePath);
+builder.Services.AddSingleton<IRelayLicenseSource>(new FileRelayLicenseSource(licenseFilePath));
+
+var app = builder.Build();
+
 var license = LicenseStatus.Check(licenseFilePath);
 if (license is null)
     app.Logger.LogWarning("No valid license found at {LicenseFilePath} - running unlicensed. See LicenseGenerator/README.md.", licenseFilePath);

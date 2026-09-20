@@ -51,36 +51,31 @@ public sealed class PushNotificationOptions
 
     public ApplePushOptions Apple { get; init; } = new();
     public FirebasePushOptions Firebase { get; init; } = new();
+    public RelayPushOptions Relay { get; init; } = new();
 }
 
-public sealed class ApplePushOptions
+// ApplePushOptions and FirebasePushOptions live in SentinelCore.Push (shared with the relay).
+// Relay mode is the one a distributed install actually uses: no Apple or Firebase credentials on
+// the customer's machine, just their license, sent to a relay the vendor operates that holds the
+// real keys. A direct provider that is enabled and fully configured always wins over the relay
+// for its platform - see PushProviderSelection - so this can ship enabled by default without
+// changing anything on an install that already pushes for itself.
+public sealed class RelayPushOptions
 {
-    public bool Enabled { get; init; }
-    public string TeamId { get; init; } = string.Empty;
-    public string KeyId { get; init; } = string.Empty;
-    public string BundleId { get; init; } = "com.sentinelcore.client";
-    // Apple requires the apns-topic to exactly match the receiving app's own bundle id, so the
-    // tvOS app (a separate App ID) needs its own topic here rather than reusing BundleId. Left
-    // blank, SendAppleAsync falls back to BundleId - that push will simply be rejected by APNs
-    // for tvOS devices rather than crash anything.
-    public string TvBundleId { get; init; } = string.Empty;
-    public string PrivateKeyPath { get; init; } = string.Empty;
-    public bool UseSandbox { get; init; } = true;
+    public bool Enabled { get; init; } = true;
 
-    // Pulled out of PushNotificationDispatcher as a pure function so the topic-selection rule
-    // (tvOS gets its own topic, everything else keeps using BundleId) is directly testable
-    // without standing up ECDSA signing or a fake HTTP pipeline.
-    public string ResolveApnsTopic(string appVariant) =>
-        string.Equals(appVariant, "tvos", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(TvBundleId)
-            ? TvBundleId
-            : BundleId;
-}
+    [Required]
+    public string Url { get; init; } = "https://push.nr5p.com";
 
-public sealed class FirebasePushOptions
-{
-    public bool Enabled { get; init; }
-    public string ProjectId { get; init; } = string.Empty;
-    public string ServiceAccountPath { get; init; } = string.Empty;
+    // Which APNs environment the relay should use for tokens this install registers. App Store /
+    // TestFlight builds are production (the default); only an app installed from Xcode or the
+    // command line registers sandbox tokens. Mirrors Apple.UseSandbox for direct mode.
+    public bool ApnsSandbox { get; init; }
+
+    public bool IsConfigured =>
+        Enabled &&
+        Uri.TryCreate(Url, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
 }
 
 public sealed class ImageProcessingOptions

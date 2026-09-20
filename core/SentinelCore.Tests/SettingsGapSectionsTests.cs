@@ -64,7 +64,8 @@ public sealed class SettingsGapSectionsTests : IDisposable
                     PrivateKeyPath = "/etc/sentinel/apns.p8",
                     UseSandbox = true
                 },
-                Firebase = new { Enabled = false, ProjectId = "", ServiceAccountPath = "" }
+                Firebase = new { Enabled = false, ProjectId = "", ServiceAccountPath = "" },
+                Relay = new { Enabled = true, Url = "https://push.example.test", ApnsSandbox = true }
             },
             ct);
         Assert.Equal(HttpStatusCode.OK, save.StatusCode);
@@ -80,6 +81,57 @@ public sealed class SettingsGapSectionsTests : IDisposable
         // class but not in the shipped appsettings.json, so a DTO that forgot it would drop it
         // from the file on every save (MergeSectionAsync replaces the Apple block wholesale).
         Assert.Equal("com.sentinelcore.client.tv", push.GetProperty("apple").GetProperty("tvBundleId").GetString());
+        Assert.Equal("https://push.example.test", push.GetProperty("relay").GetProperty("url").GetString());
+        Assert.True(push.GetProperty("relay").GetProperty("apnsSandbox").GetBoolean());
+    }
+
+    // The shipped default: nothing filled in but the master switch, relay on. This is what a
+    // customer's save looks like, and it has to be accepted as a complete configuration.
+    [Fact]
+    public async Task PushNotifications_EnabledWithOnlyTheRelay_IsAccepted()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var save = await client.PutAsJsonAsync(
+            "/api/settings/push-notifications",
+            new
+            {
+                Enabled = true,
+                MinimumConfidence = 0.6,
+                DuplicateCooldownMinutes = 5,
+                Apple = new { Enabled = false },
+                Firebase = new { Enabled = false },
+                Relay = new { Enabled = true, Url = "https://push.nr5p.com" }
+            },
+            ct);
+
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+    }
+
+    [Fact]
+    public async Task PushNotifications_RelayWithABareHostname_IsRefused()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var save = await client.PutAsJsonAsync(
+            "/api/settings/push-notifications",
+            new
+            {
+                Enabled = true,
+                MinimumConfidence = 0.6,
+                DuplicateCooldownMinutes = 5,
+                Apple = new { Enabled = false },
+                Firebase = new { Enabled = false },
+                Relay = new { Enabled = true, Url = "push.nr5p.com" }
+            },
+            ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, save.StatusCode);
+        Assert.Contains("https://", await save.Content.ReadAsStringAsync(ct));
     }
 
     [Fact]
@@ -97,7 +149,8 @@ public sealed class SettingsGapSectionsTests : IDisposable
                 MinimumConfidence = 0.6,
                 DuplicateCooldownMinutes = 5,
                 Apple = new { Enabled = false },
-                Firebase = new { Enabled = false }
+                Firebase = new { Enabled = false },
+                Relay = new { Enabled = false }
             },
             ct);
 
