@@ -131,7 +131,7 @@ fun ServerSetupScreen(
                     onValueChange = { address = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Server address") },
-                    placeholder = { Text("http://192.168.50.8:3320") },
+                    placeholder = { Text("http://192.168.1.50:3320") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,

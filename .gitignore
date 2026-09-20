@@ -26,3 +26,11 @@
 # committable just because it missed that file's scope.
 *.pem
 *.lic
+
+# Android release signing. The upload keystore and the properties file holding its passwords
+# never belong in the repo - see docs/STORE_DISTRIBUTION.md for where they live.
+android/keystore.properties
+android/*.jks
+android/*.keystore
+android/app/*.jks
+android/app/*.keystore

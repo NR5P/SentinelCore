@@ -19,6 +19,14 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.10" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
+    <!-- Renders the privacy policy for the two public pages (PublicPages.cs). Same package the
+         dashboard already uses for its own markdown. -->
+    <PackageReference Include="Markdig" Version="1.3.2" />
+  </ItemGroup>
+  <!-- The store-facing privacy policy lives with the other cross-platform docs and is embedded
+       here so nr5p.com/privacy always serves exactly what the repo says, with no copy to forget. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../docs/PRIVACY_POLICY.md" LogicalName="PRIVACY_POLICY.md" />
   </ItemGroup>
   <ItemGroup>
     <Content Remove="data/**" />

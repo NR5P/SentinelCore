@@ -52,6 +52,7 @@ var app = builder.Build();
 app.UseMiddleware<LicenseAuthMiddleware>();
 app.UseRateLimiter();
 app.MapRelayEndpoints();
+app.MapPublicPages();
 
 app.Logger.LogInformation(
     "Sentinel Core push relay listening; Apple {Apple}, Firebase {Firebase}",

@@ -293,3 +293,25 @@ internal static class LicensedHttpClientExtensions
         return client.SendAsync(request, cancellationToken);
     }
 }
+
+// The bare domain and /privacy are served by the relay because it is the vendor's only public
+// process; both stores link to the privacy page, so it must never 404 or come out empty.
+public sealed class PublicPagesTests
+{
+    [Theory]
+    [InlineData("/", "Sentinel Core")]
+    [InlineData("/privacy", "Privacy Policy")]
+    public async Task PublicPage_RendersWithoutALicense(string path, string expectedText)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = new WebApplicationFactory<RelayProgram>()
+            .WithWebHostBuilder(b => b.UseSetting("Relay:DataDirectory", Path.Combine(Path.GetTempPath(), $"relay-pages-{Guid.NewGuid():N}")));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(path, ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.StartsWith("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains(expectedText, await response.Content.ReadAsStringAsync(ct));
+    }
+}

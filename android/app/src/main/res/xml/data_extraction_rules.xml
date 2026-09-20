@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: what cloud backup and device-to-device transfer may copy. The session cookie
+     store is a login credential for the user's own server and must not leave the device - a
+     restored phone signs in again, same as the iOS app. Everything else (server address,
+     preferences) is harmless to carry over. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="sentinel_core_sessions.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="sentinel_core_sessions.xml" />
+    </device-transfer>
+</data-extraction-rules>
