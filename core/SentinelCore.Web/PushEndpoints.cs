@@ -18,11 +18,19 @@ public static class PushEndpoints
             CancellationToken ct) =>
         {
             var options = await ReadOptionsAsync(settings, ct);
+            var apple = PushProviderSelection.For(options, PushPlatforms.Apple);
+            var android = PushProviderSelection.For(options, PushPlatforms.Android);
             return Results.Ok(new
             {
                 enabled = options.Enabled,
-                appleConfigured = options.Enabled && options.Apple.Enabled && options.Apple.HasCredentials,
-                firebaseConfigured = options.Enabled && options.Firebase.Enabled && options.Firebase.HasCredentials,
+                // "Configured" means deliveries to that platform are possible - by the operator's
+                // own credentials or through the relay. Every app build gates its Send Test
+                // button on appleConfigured, and a relay-only install (the shipped default) must
+                // not read as "not configured" to them.
+                appleConfigured = apple != PushProvider.None,
+                firebaseConfigured = android != PushProvider.None,
+                appleProvider = apple.ToString().ToLowerInvariant(),
+                firebaseProvider = android.ToString().ToLowerInvariant(),
                 relayConfigured = PushProviderSelection.UsesRelay(options),
                 registeredDevices = await devices.CountAsync(ct)
             });
