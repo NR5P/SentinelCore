@@ -20,5 +20,11 @@
     <ProjectReference Include="../SentinelCore/SentinelCore.csproj" Aliases="global,MainApp" />
     <ProjectReference Include="../SentinelCore.Web/SentinelCore.Web.csproj" Aliases="global,WebHost" />
     <ProjectReference Include="../SentinelCore.PushRelay/SentinelCore.PushRelay.csproj" Aliases="global,RelayHost" />
+    <!-- The licensing GUI, for LicenseSigningKeyTests. Only its non-UI signing types are
+         exercised - nothing here constructs a window - but referencing the project does drag
+         Avalonia's native libraries into this test project's output. That's the price of keeping
+         the signing logic in the tool that owns it rather than in the shipped Licensing library,
+         which has no business knowing how to load a private key. -->
+    <ProjectReference Include="../LicenseGenerator.Gui/LicenseGenerator.Gui.csproj" />
   </ItemGroup>
 </Project>

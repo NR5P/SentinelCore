@@ -19,3 +19,10 @@
 
 # Editor/scratch backups - one of these was committed twice by accident.
 *.bak
+
+# License signing key material and issued licenses, anywhere in the tree. core/.gitignore
+# already covers core/, but the licensing GUI writes wherever its folder picker last pointed,
+# and a private key or a customer's .lic landing one directory higher must not become
+# committable just because it missed that file's scope.
+*.pem
+*.lic

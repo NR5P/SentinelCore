@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>LicenseGenerator.Gui</RootNamespace>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.22" Condition="'$(Configuration)' == 'Debug'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SentinelCore.Licensing/SentinelCore.Licensing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Linked straight out of branding/ rather than copied in: the build script already reads
+         that same file to render the .icns, and one shared source beats a second megabyte-sized
+         copy of the icon drifting out of sync with it. The Link path is what decides the
+         avares:// URI the window loads. -->
+    <AvaloniaResource Include="../../branding/SentinelCoreAppIcon-1024.png" Link="Assets/AppIcon.png" />
+  </ItemGroup>
+</Project>

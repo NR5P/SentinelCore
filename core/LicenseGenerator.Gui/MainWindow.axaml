@@ -1,0 +1,158 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LicenseGenerator.Gui.MainWindow"
+        Title="SentinelCore Licenses"
+        Width="860" Height="700" MinWidth="720" MinHeight="600"
+        WindowStartupLocation="CenterScreen">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.label">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Margin" Value="0,0,0,4" />
+    </Style>
+    <Style Selector="TextBlock.hint">
+      <Setter Property="Opacity" Value="0.65" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Margin" Value="0,4,0,0" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#20FFFFFF" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+  </Window.Styles>
+
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Padding="20,16" Background="#18FFFFFF">
+      <StackPanel Orientation="Horizontal" Spacing="14">
+        <Image Source="avares://LicenseGenerator.Gui/Assets/AppIcon.png" Width="44" Height="44" />
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="SentinelCore Licenses" FontSize="19" FontWeight="Bold" />
+          <TextBlock Text="Sign a license for a customer who has paid." Opacity="0.7" FontSize="12" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <TabControl Margin="12">
+
+      <!-- ISSUE -->
+      <TabItem Header="Issue a license">
+        <ScrollViewer>
+          <StackPanel Spacing="18" Margin="8,14,8,8">
+
+            <StackPanel Spacing="6">
+              <TextBlock Classes="label" Text="Signing key" />
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBox Name="KeyPathBox" AutomationProperties.Name="Signing key path" Grid.Column="0" IsReadOnly="True"
+                         Watermark="Choose the private.pem you sign licenses with" />
+                <Button Name="BrowseKeyButton" AutomationProperties.Name="Choose signing key" Grid.Column="1" Content="Choose…" Margin="8,0,0,0" />
+              </Grid>
+              <Border Name="KeyStatusBorder" CornerRadius="6" Padding="10,8" IsVisible="False">
+                <TextBlock Name="KeyStatusText" AutomationProperties.Name="Signing key status" TextWrapping="Wrap" FontSize="12" />
+              </Border>
+            </StackPanel>
+
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <StackPanel>
+                  <TextBlock Classes="label" Text="Customer name" />
+                  <TextBox Name="CustomerBox" AutomationProperties.Name="Customer name" Watermark="Jane Doe" />
+                </StackPanel>
+                <StackPanel>
+                  <TextBlock Classes="label" Text="Customer email" />
+                  <TextBox Name="EmailBox" AutomationProperties.Name="Customer email" Watermark="jane@example.com" />
+                </StackPanel>
+                <StackPanel>
+                  <TextBlock Classes="label" Text="Product" />
+                  <TextBox Name="ProductBox" AutomationProperties.Name="Product" Text="SentinelCore" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <StackPanel Spacing="6">
+              <TextBlock Classes="label" Text="Save the .lic file to" />
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBox Name="OutputDirBox" AutomationProperties.Name="Output folder" Grid.Column="0" IsReadOnly="True" />
+                <Button Name="BrowseOutputButton" AutomationProperties.Name="Choose output folder" Grid.Column="1" Content="Choose…" Margin="8,0,0,0" />
+              </Grid>
+              <TextBox Name="FileNameBox" AutomationProperties.Name="License file name" Watermark="jane-doe.lic" />
+              <TextBlock Classes="hint"
+                         Text="Named after the customer automatically. Edit it if you'd rather call it something else." />
+            </StackPanel>
+
+            <Button Name="IssueButton" AutomationProperties.Name="Issue license" Content="Issue license"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                    Padding="0,12" FontWeight="SemiBold" />
+
+            <Border Name="IssueResultBorder" CornerRadius="6" Padding="14" IsVisible="False">
+              <StackPanel Spacing="10">
+                <TextBlock Name="IssueResultText" AutomationProperties.Name="Issue result" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Name="RevealButton" AutomationProperties.Name="Show in folder" Content="Show in folder" />
+                  <Button Name="CopyPathButton" AutomationProperties.Name="Copy path" Content="Copy path" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- VERIFY -->
+      <TabItem Header="Verify">
+        <ScrollViewer>
+          <StackPanel Spacing="16" Margin="8,14,8,8">
+            <TextBlock TextWrapping="Wrap" Opacity="0.75"
+                       Text="Check a .lic file against the public key compiled into SentinelCore - the same check the customer's server does. Use it to confirm a license before you email it, or to work out why one a customer sent back isn't being accepted." />
+            <Button Name="VerifyBrowseButton" AutomationProperties.Name="Choose a license to verify" Content="Choose a .lic file…" HorizontalAlignment="Left" />
+            <Border Name="VerifyResultBorder" CornerRadius="6" Padding="14" IsVisible="False">
+              <SelectableTextBlock Name="VerifyResultText" AutomationProperties.Name="Verification result" TextWrapping="Wrap" FontFamily="monospace" />
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- KEY SETUP -->
+      <TabItem Header="Key setup">
+        <ScrollViewer>
+          <StackPanel Spacing="16" Margin="8,14,8,8">
+
+            <Border CornerRadius="6" Padding="14" Background="#33FF6B6B">
+              <StackPanel Spacing="8">
+                <TextBlock FontWeight="Bold" Text="You almost certainly do not need this." />
+                <TextBlock TextWrapping="Wrap" FontSize="12"
+                           Text="SentinelCore already has a signing key, and its public half is compiled into every copy of the app you have shipped. Generating a second pair does not add a key - it replaces the old one, and every license you have already issued stops verifying the moment the new public key ships. There is no list of who those customers were." />
+                <TextBlock TextWrapping="Wrap" FontSize="12"
+                           Text="Use this only for a brand-new product line, or if the original key is genuinely lost." />
+              </StackPanel>
+            </Border>
+
+            <StackPanel Spacing="6">
+              <TextBlock Classes="label" Text="Create the key pair in" />
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBox Name="KeyGenDirBox" AutomationProperties.Name="New key pair folder" Grid.Column="0" IsReadOnly="True" />
+                <Button Name="BrowseKeyGenButton" AutomationProperties.Name="Choose new key pair folder" Grid.Column="1" Content="Choose…" Margin="8,0,0,0" />
+              </Grid>
+            </StackPanel>
+
+            <CheckBox Name="KeyGenConfirmCheck" AutomationProperties.Name="Confirm key replacement is understood"
+                      Content="I understand this invalidates every license already issued" />
+
+            <Button Name="GenerateKeysButton" AutomationProperties.Name="Generate a new key pair" Content="Generate a new key pair" />
+
+            <Border Name="KeyGenResultBorder" CornerRadius="6" Padding="14" IsVisible="False">
+              <StackPanel Spacing="10">
+                <TextBlock Name="KeyGenResultText" AutomationProperties.Name="Key generation result" TextWrapping="Wrap" />
+                <SelectableTextBlock Name="KeyGenPublicPem" AutomationProperties.Name="New public key" FontFamily="monospace" FontSize="11" TextWrapping="Wrap" />
+                <Button Name="CopyPemButton" AutomationProperties.Name="Copy public key" Content="Copy public key" HorizontalAlignment="Left" />
+              </StackPanel>
+            </Border>
+
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+    </TabControl>
+  </DockPanel>
+</Window>

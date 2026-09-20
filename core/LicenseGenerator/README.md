@@ -3,6 +3,12 @@
 A local-only tool for issuing signed licenses. Nothing in here is deployed - this never runs
 anywhere except your own machine.
 
+> There is a window for this now: **`../LicenseGenerator.Gui`**, which does the same job with the
+> same key and produces identical files. It also checks the key you picked against the public key
+> compiled into SentinelCore before you sign anything, which this tool can't do. Prefer it for
+> issuing a license by hand; the commands below remain the right answer for scripting, and for a
+> headless machine where no window can open.
+
 ## One-time setup
 
 ```bash
