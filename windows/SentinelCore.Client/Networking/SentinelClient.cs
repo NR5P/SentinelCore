@@ -32,11 +32,16 @@ public sealed class SentinelClient : IDisposable
     private CookieContainer _cookies;
     private HttpClientHandler _handler;
 
+    // The same handler and cookies as _http, with no client-wide timeout: the Organizer holds a
+    // 25-second long poll open and uploads attachments that can take minutes, so each of its
+    // requests brings its own limit instead. See OrganizerRequestAsync.
+    private HttpClient _organizerHttp;
+
     public SentinelClient(Func<string> activeServerUrl, ISentinelLog log)
     {
         _activeServerUrl = activeServerUrl;
         _log = log;
-        (_handler, _cookies, _http) = CreateSession();
+        (_handler, _cookies, _http, _organizerHttp) = CreateSession();
     }
 
     /// <summary>The session cookies, so the WebView2 live player can be handed the same session.</summary>
@@ -50,12 +55,14 @@ public sealed class SentinelClient : IDisposable
     public void ResetSession()
     {
         var old = _http;
-        (_handler, _cookies, _http) = CreateSession();
+        var oldOrganizer = _organizerHttp;
+        (_handler, _cookies, _http, _organizerHttp) = CreateSession();
+        oldOrganizer.Dispose();
         old.Dispose();
         _log.Log("Created a fresh network session");
     }
 
-    private static (HttpClientHandler, CookieContainer, HttpClient) CreateSession()
+    private static (HttpClientHandler, CookieContainer, HttpClient, HttpClient) CreateSession()
     {
         var cookies = new CookieContainer();
         var handler = new HttpClientHandler
@@ -67,7 +74,9 @@ public sealed class SentinelClient : IDisposable
         };
         var http = new HttpClient(handler) { Timeout = RequestTimeout };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore-Windows/1.0");
-        return (handler, cookies, http);
+        var organizer = new HttpClient(handler, disposeHandler: false) { Timeout = Timeout.InfiniteTimeSpan };
+        organizer.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore-Windows/1.0");
+        return (handler, cookies, http, organizer);
     }
 
     // MARK: - Connection and identity
@@ -960,7 +969,49 @@ public sealed class SentinelClient : IDisposable
         return string.Join(" -> ", parts);
     }
 
-    public void Dispose() => _http.Dispose();
+    /// <summary>
+    /// The Organizer's way to the server (see Organizer/OrganizerEngine): the same address and
+    /// session cookie as every other request here. Hands back any status rather than throwing on
+    /// non-2xx, because the sync engine gives 401 and 404 their own meanings; only failing to reach
+    /// the server at all throws. Not logged per request - the engine holds a long poll open all
+    /// day, and each tick would bury the connection log.
+    /// </summary>
+    public async Task<(int Status, byte[] Body)> OrganizerRequestAsync(
+        string method,
+        string path,
+        IReadOnlyDictionary<string, string>? query,
+        byte[]? body,
+        string? contentType,
+        TimeSpan? timeout,
+        CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(new HttpMethod(method), RequireUri(path, query));
+        request.Headers.Accept.ParseAdd("application/json");
+        if (body is not null)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType ?? "application/octet-stream");
+        }
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(timeout ?? RequestTimeout);
+        try
+        {
+            using var response = await _organizerHttp.SendAsync(request, limit.Token).ConfigureAwait(false);
+            var data = await response.Content.ReadAsByteArrayAsync(limit.Token).ConfigureAwait(false);
+            return ((int)response.StatusCode, data);
+        }
+        catch (Exception error) when (IsWorthReporting(error) && !ct.IsCancellationRequested && path != "/api/organizer/wait")
+        {
+            _log.Log($"Organizer {method} {path} failed: {Describe(error)}", DiagnosticLevel.Notice);
+            throw;
+        }
+    }
+
+    public void Dispose()
+    {
+        _organizerHttp.Dispose();
+        _http.Dispose();
+    }
 }
 
 public sealed class SentinelInvalidAddressException()

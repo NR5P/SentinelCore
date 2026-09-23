@@ -29,6 +29,7 @@ public sealed class TrayNotifier : IDisposable
     private readonly NotifyIcon _icon;
 
     private ActivityItem? _lastNotified;
+    private string? _lastOrganizerItem;
 
     public TrayNotifier(MainWindow window, AppModel model)
     {
@@ -54,7 +55,8 @@ public sealed class TrayNotifier : IDisposable
         _icon.BalloonTipClicked += (_, _) =>
         {
             Restore();
-            if (_lastNotified is { } item) _window.ShowEvent(item);
+            if (_lastOrganizerItem is { } organizerItem) _window.ShowOrganizerItem(organizerItem);
+            else if (_lastNotified is { } item) _window.ShowEvent(item);
         };
     }
 
@@ -63,6 +65,7 @@ public sealed class TrayNotifier : IDisposable
         if (events.Count == 0) return;
 
         _lastNotified = events[0];
+        _lastOrganizerItem = null;
 
         // One notification however many arrived together. A camera that catches a delivery van
         // pulling up can produce several alerts in one refresh, and three balloons stacking up
@@ -75,6 +78,13 @@ public sealed class TrayNotifier : IDisposable
             ? Summarize(events[0])
             : string.Join("\n", events.Take(3).Select(item => $"{item.Camera}: {Summarize(item)}"));
 
+        _icon.ShowBalloonTip(10_000, title, body, ToolTipIcon.Info);
+    }
+
+    /// <summary>A reminder or event alert from the Organizer. Clicking it opens that item.</summary>
+    public void NotifyOrganizer(string title, string body, string itemId)
+    {
+        _lastOrganizerItem = itemId;
         _icon.ShowBalloonTip(10_000, title, body, ToolTipIcon.Info);
     }
 

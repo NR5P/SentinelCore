@@ -22,6 +22,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- A real 1600x1200 JPEG, so the server's thumbnailer has work to do in the live tests. -->
+    <None Include="Resources\organizer-test.jpg" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SentinelCore.Client\SentinelCore.Client.csproj" />
   </ItemGroup>
 

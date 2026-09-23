@@ -5,7 +5,8 @@
 # scratch data - nothing touches the LAN ports, real certificates, mDNS or any real data directory.
 #
 #   scripts/with-organizer-servers.sh swift test
-#   scripts/with-organizer-servers.sh ./gradlew testDebugUnitTest
+#   scripts/with-organizer-servers.sh sh -c 'cd android && ./gradlew testDebugUnitTest'
+#   scripts/with-organizer-servers.sh dotnet test windows/SentinelCore.Client.Tests -p:EnableWindowsTargeting=true
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

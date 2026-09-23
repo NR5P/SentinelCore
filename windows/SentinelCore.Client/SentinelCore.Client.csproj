@@ -17,6 +17,9 @@
 
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <!-- The Organizer's copy on this PC (Organizer/OrganizerStore.cs). The same package and version
+         as the server's, and it carries its own native SQLite, so nothing extra needs installing. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
   </ItemGroup>
 
   <ItemGroup>

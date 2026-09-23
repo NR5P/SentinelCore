@@ -92,6 +92,11 @@
                 </Border>
             </StackPanel>
 
+            <!-- ================= Organizer ================= -->
+            <Border x:Name="OrganizerCard" Style="{StaticResource Card}" Margin="0,0,0,14" Visibility="Collapsed">
+                <ContentControl x:Name="OrganizerHost" />
+            </Border>
+
             <!-- ================= Notifications ================= -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>

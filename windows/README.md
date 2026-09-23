@@ -21,6 +21,15 @@ also type the address by hand, for example `http://192.168.1.50:3320`.
 dotnet test
 ```
 
+The Organizer's end-to-end tests need two throwaway servers, which one script starts on loopback
+with scratch data:
+
+```bash
+../scripts/with-organizer-servers.sh dotnet test SentinelCore.Client.Tests
+```
+
+Without it they are skipped, not failed.
+
 175 tests. The client library is exercised end to end against a real loopback HTTP server rather
 than a mocked handler — status codes, cookies, error-body shapes and all — because half of what that
 layer does is precisely the part a mock replaces.
@@ -53,6 +62,13 @@ worth handing to someone who should not have to install a runtime first.
   button at the top of Live). The dashboard's own publish page runs in WebView2 with this session's cookie, and
   the app holds the PC out of sleep while it streams and resumes on the next launch. See
   `Views/DeviceCameraWindow.xaml.cs` for how the http origin and the self-signed certificate are handled.
+- **Organizer** — calendar, reminders, notes and Trello-style boards, shared with the dashboard and
+  the phone apps: private to you, the whole family, or a group you choose, with pictures, files and
+  links on anything. It is kept on this PC as well as the server, so all of it works with no
+  connection, and a PC keeps the whole thing by default — the copy that refills a server that had
+  to be rebuilt (Settings → Organizer). Reminder and event alerts come from that copy, so they fire
+  with the server down. The engine is `SentinelCore.Client/Organizer/`; the protocol every client
+  speaks is [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md).
 - **Device Hub** — the lights, gates, locks and sensors the server tracks over MQTT, with the
   controls each kind actually speaks, plus discovery and editing.
 - **Settings** — connection (including the remote fallback address), account, server health, service
@@ -93,7 +109,9 @@ notifications at once.
 
 `%LOCALAPPDATA%\SentinelCore\` holds `settings.json` (the server address and a couple of
 preferences), `credentials\` (the dashboard login, encrypted with DPAPI against your Windows
-account), and `WebView2\` (the live player's browser profile). Deleting the folder returns the app
+account), `WebView2\` (the live player's browser profile), and `Organizer\` (this PC's copy of the
+Organizer: a SQLite database plus the attached files). Deleting `Organizer\` is safe once everything
+has synced — the next launch fetches it all again. Deleting the folder returns the app
 to a fresh install.
 
 ## HTTPS and the server's own certificate

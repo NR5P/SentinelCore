@@ -79,6 +79,10 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
 
     public SentinelClient Client { get; }
 
+    /// <summary>The one preferences file. Shared, never re-opened: each store rewrites the whole
+    /// file, so a second instance would erase whatever the first had written since it loaded.</summary>
+    public PreferenceStore Preferences => _preferences;
+
     // MARK: - Configuration
 
     private string _serverUrl;

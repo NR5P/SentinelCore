@@ -4,9 +4,11 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using SentinelCore.App.Design;
+using SentinelCore.App.Organizer;
 using SentinelCore.App.Views;
 using SentinelCore.Client;
 using SentinelCore.Client.Models;
+using SentinelCore.Client.Organizer;
 
 namespace SentinelCore.App;
 
@@ -17,6 +19,8 @@ namespace SentinelCore.App;
 public partial class MainWindow : Window, INavigator
 {
     private readonly AppModel _model;
+    private readonly OrganizerSession? _organizer;
+    private readonly OrganizerAlerts? _organizerAlerts;
     private readonly TrayNotifier _tray;
     private readonly DispatcherTimer _refreshTimer;
 
@@ -28,11 +32,13 @@ public partial class MainWindow : Window, INavigator
     private TimelineView? _timeline;
     private LiveView? _live;
     private DeviceHubView? _devices;
+    private OrganizerView? _organizerView;
     private SettingsView? _settings;
 
-    public MainWindow(AppModel model)
+    public MainWindow(AppModel model, OrganizerSession? organizer = null)
     {
         _model = model;
+        _organizer = organizer;
         InitializeComponent();
 
         SetupView.Attach(model);
@@ -41,6 +47,18 @@ public partial class MainWindow : Window, INavigator
         _tray = new TrayNotifier(this, model);
         _model.NewNotifiedEvents += OnNewNotifiedEvents;
         _model.PropertyChanged += OnModelPropertyChanged;
+
+        // Alerts come from this PC's own copy, so they fire with the server down - and whether or
+        // not the section is showing. A reminder set on the phone still alerts here.
+        if (organizer is not null)
+        {
+            organizer.EnabledChanged += OnOrganizerEnabledChanged;
+            _organizerAlerts = new OrganizerAlerts(organizer.Engine,
+                alerts => _tray.NotifyOrganizer(
+                    alerts.Count == 1 ? alerts[0].Title : $"{alerts.Count} reminders and events",
+                    alerts.Count == 1 ? alerts[0].Body : string.Join("\n", alerts.Take(4).Select(alert => alert.Title)),
+                    alerts[0].ItemId));
+        }
 
         // The feed refreshes itself every 30 seconds, matching the Apple client. A monitoring
         // window left open on a desk has to be current without anyone touching it.
@@ -69,6 +87,7 @@ public partial class MainWindow : Window, INavigator
         Events,
         Timeline,
         Live,
+        Organizer,
         Devices,
         Settings,
     }
@@ -81,6 +100,10 @@ public partial class MainWindow : Window, INavigator
             new(AppSection.Timeline, "Timeline", ""),
             new(AppSection.Live, "Live", ""),
         };
+
+        // The Organizer is on by default but can be switched off server-side; what the server said
+        // last is remembered, so it's there offline too.
+        if (_organizer is { Enabled: true }) sections.Add(new SectionItem(AppSection.Organizer, "Organizer", "\uE8BF"));
 
         // The Device Hub is off by default and only appears once it's switched on server-side, so
         // the list is filtered rather than fixed.
@@ -108,7 +131,8 @@ public partial class MainWindow : Window, INavigator
             AppSection.Timeline => _timeline ??= new TimelineView(_model),
             AppSection.Live => _live ??= NewLiveView(),
             AppSection.Devices => _devices ??= NewDeviceHubView(),
-            _ => _settings ??= new SettingsView(_model),
+            AppSection.Organizer when _organizer is not null => _organizerView ??= new OrganizerView(_organizer),
+            _ => _settings ??= new SettingsView(_model, _organizer),
         };
     }
 
@@ -218,6 +242,20 @@ public partial class MainWindow : Window, INavigator
 
     private void OnNewNotifiedEvents(IReadOnlyList<ActivityItem> events) => _tray.Notify(events);
 
+    private void OnOrganizerEnabledChanged() => Dispatcher.BeginInvoke(BuildSections);
+
+    /// <summary>Opens the Organizer on one item - used by an alert notification.</summary>
+    public void ShowOrganizerItem(string itemId)
+    {
+        if (_organizer is null) return;
+        if (SectionList.ItemsSource is IEnumerable<SectionItem> sections
+            && sections.FirstOrDefault(section => section.Section == AppSection.Organizer) is { } organizer)
+        {
+            SectionList.SelectedItem = organizer;
+            _organizerView?.Reveal(itemId);
+        }
+    }
+
     // ---------------------------------------------------------------- Navigation
 
     /// <summary>
@@ -305,6 +343,8 @@ public partial class MainWindow : Window, INavigator
         }
 
         _refreshTimer.Stop();
+        _organizerAlerts?.Dispose();
+        if (_organizer is not null) _organizer.EnabledChanged -= OnOrganizerEnabledChanged;
         _model.NewNotifiedEvents -= OnNewNotifiedEvents;
         _model.PropertyChanged -= OnModelPropertyChanged;
         _live?.SetActive(false);

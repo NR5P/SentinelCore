@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using SentinelCore.App.Design;
 using SentinelCore.Client;
 using SentinelCore.Client.Networking;
+using SentinelCore.Client.Organizer;
 
 namespace SentinelCore.App.Views;
 
@@ -12,10 +13,18 @@ public partial class SettingsView : UserControl
 {
     private readonly AppModel _model;
 
-    public SettingsView(AppModel model)
+    public SettingsView(AppModel model, OrganizerSession? organizer = null)
     {
         _model = model;
         InitializeComponent();
+
+        if (organizer is not null)
+        {
+            OrganizerHost.Content = new Organizer.OrganizerSettingsPanel(model, organizer);
+            void ApplyOrganizer() => OrganizerCard.Visibility = organizer.Enabled ? Visibility.Visible : Visibility.Collapsed;
+            ApplyOrganizer();
+            organizer.EnabledChanged += () => Dispatcher.BeginInvoke(ApplyOrganizer);
+        }
 
         AddressBox.Text = model.ServerUrl;
         RemoteAddressBox.Text = model.RemoteServerUrl;

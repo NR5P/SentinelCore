@@ -2,12 +2,17 @@ using System.Windows;
 using System.Windows.Threading;
 using SentinelCore.App.Design;
 using SentinelCore.Client;
+using SentinelCore.Client.Organizer;
 
 namespace SentinelCore.App;
 
 public partial class App : Application
 {
     public static AppModel Model { get; private set; } = null!;
+
+    /// <summary>The Organizer's copy on this PC and its sync. Null only if its database couldn't
+    /// be opened, in which case the section simply isn't there.</summary>
+    public static OrganizerSession? Organizer { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -33,7 +38,16 @@ public partial class App : Application
             args.SetObserved();
         };
 
-        MainWindow = new MainWindow(Model);
+        try
+        {
+            Organizer = new OrganizerSession(Model);
+        }
+        catch (Exception error)
+        {
+            Model.Log($"The Organizer's copy on this PC couldn't be opened: {error.Message}", DiagnosticLevel.Error);
+        }
+
+        MainWindow = new MainWindow(Model, Organizer);
         MainWindow.Show();
     }
 
@@ -51,6 +65,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Organizer?.Dispose();
         Model.Dispose();
         base.OnExit(e);
     }
