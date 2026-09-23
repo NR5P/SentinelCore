@@ -86,6 +86,13 @@ struct OrganizerTVView: View {
     }
 }
 
+// The holiday calendar's color, the same as on every other device.
+private func holidayColor(_ setId: String) -> Color {
+    let hex = HolidayColors.hex(setId).dropFirst()
+    guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return .secondary }
+    return Color(red: Double(value >> 16 & 0xFF) / 255, green: Double(value >> 8 & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
+}
+
 @MainActor
 private func spaceColor(_ engine: OrganizerEngine, _ id: String) -> Color {
     let colors: [Color] = [SentinelTheme.green, SentinelTheme.cyan, SentinelTheme.amber, .purple, .pink, .blue]
@@ -123,7 +130,7 @@ private struct AgendaTV: View {
                                         if let detail = entry.detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
                                     }
                                     Spacer()
-                                    Text(engine.space(entry.spaceId)?.name ?? "").font(.caption).foregroundStyle(.secondary)
+                                    Text(entry.tag).font(.caption).foregroundStyle(.secondary)
                                 }
                                 .padding(.vertical, 6)
                             }
@@ -142,12 +149,28 @@ private struct AgendaTV: View {
         var time: String
         var title: String
         var detail: String?
-        var spaceId: String
+        var tag: String
         var color: Color
     }
 
     private func entries(from: Date, to: Date) -> [Entry] {
         var out: [Entry] = []
+        // Holiday calendars chosen on the phone, Mac or dashboard - the choice follows the account.
+        // One that lasts several days shows on each of them.
+        let calendar = Calendar.current
+        for (holiday, start, end) in engine.holidays(from: from, to: to) {
+            var day = max(start, from)
+            var index = 0
+            while day < min(end, to) {
+                out.append(Entry(
+                    id: "\(holiday.id)-\(index)", start: day,
+                    time: holiday.dayCount > 1 ? "Day \(calendar.dateComponents([.day], from: start, to: day).day! + 1) of \(holiday.dayCount)" : "Holiday",
+                    title: holiday.name, detail: holiday.note,
+                    tag: engine.holidaySetName(holiday.setId), color: holidayColor(holiday.setId)))
+                day = calendar.date(byAdding: .day, value: 1, to: day)!
+                index += 1
+            }
+        }
         for event in engine.items(.event) {
             for occurrence in Recurrence.occurrences(of: event, from: from, to: to) {
                 let allDay = event.bool("allDay")
@@ -155,7 +178,7 @@ private struct AgendaTV: View {
                     id: "\(event.id)-\(occurrence.start.timeIntervalSince1970)", start: occurrence.start,
                     time: allDay ? "All day" : "\(occurrence.start.formatted(date: .omitted, time: .shortened)) – \(occurrence.end.formatted(date: .omitted, time: .shortened))",
                     title: event.title.isEmpty ? "Untitled" : event.title, detail: event.string("location"),
-                    spaceId: event.spaceId, color: spaceColor(engine, event.spaceId)))
+                    tag: engine.space(event.spaceId)?.name ?? "", color: spaceColor(engine, event.spaceId)))
             }
         }
         for reminder in engine.items(.reminder) where reminder.parentId == nil && !reminder.bool("completed") {
@@ -163,7 +186,7 @@ private struct AgendaTV: View {
             out.append(Entry(
                 id: reminder.id, start: due,
                 time: reminder.bool("allDay") ? "Reminder" : "Due \(due.formatted(date: .omitted, time: .shortened))",
-                title: "☐ " + reminder.title, detail: nil, spaceId: reminder.spaceId, color: SentinelTheme.amber))
+                title: "☐ " + reminder.title, detail: nil, tag: engine.space(reminder.spaceId)?.name ?? "", color: SentinelTheme.amber))
         }
         return out.sorted { $0.start < $1.start }
     }

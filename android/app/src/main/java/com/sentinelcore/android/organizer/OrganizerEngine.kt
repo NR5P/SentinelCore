@@ -121,6 +121,15 @@ class OrganizerEngine(
         private set
     @Volatile var onAlertsChanged: ((List<PlannedAlert>) -> Unit)? = null
 
+    // Holiday calendars: the choice, what there is, and the cached days. See OrganizerHolidays.kt.
+    private val _holidays = MutableStateFlow(HolidayState())
+    val holidays: StateFlow<HolidayState> = _holidays.asStateFlow()
+    private val holidayMutex = Mutex()
+    @Volatile private var holidaysAgain = false
+    @Volatile private var holidaysCheckedAt = 0L
+    // Bumped on every change of choice, so a send only counts as done for the choice it carried.
+    private val holidayVersion = AtomicLong(0)
+
     init {
         synchronized(lock) {
             // "Off" keeps nothing between launches - only what has edits that never made it up.
@@ -141,6 +150,7 @@ class OrganizerEngine(
                 runCatching { JSONArray(text).let { array -> (0 until array.length()).map { array.getString(it) }.toSet() } }
                     .getOrNull()?.let { _keptOffline.value = it }
             }
+            HolidayState.fromJson(store.meta("holidays"))?.let { _holidays.value = it }
             _syncState.update { it.copy(waitingChanges = pending.size) }
         }
         replanAlerts()
@@ -489,7 +499,11 @@ class OrganizerEngine(
     // Signing in as someone else on this device must not show them the last person's copy.
     private fun adoptOwner(owner: String) {
         val stored = store.meta("owner")
-        if (stored != null && stored != owner) resetLocalCopy(keepPending = false)
+        if (stored != null && stored != owner) {
+            // Someone else's holiday choice isn't theirs either; the list of sets is.
+            _holidays.value = HolidayState(catalog = _holidays.value.catalog)
+            resetLocalCopy(keepPending = false)
+        }
         store.setMeta("owner", owner)
     }
 
@@ -503,6 +517,9 @@ class OrganizerEngine(
             cursor = 0
             _spaces.value = emptyList()
             store.wipe(keepPending)
+            // The wipe takes the holiday choice with the rest of the metadata. It's kept: a rebuilt
+            // server gets it back from here.
+            saveHolidays()
             _syncState.update { it.copy(waitingChanges = pending.size) }
         }
         replanAlerts()
@@ -599,6 +616,7 @@ class OrganizerEngine(
             }
         }
         startBlobWork()
+        scope.launch { refreshHolidays() }
     }
 
     private suspend fun syncOnce(restoreSpaces: List<OrganizerSpace>?) {
@@ -846,6 +864,96 @@ class OrganizerEngine(
         plannedAlerts = AlertPlanner.plan(synchronized(lock) { items.values.toList() }, zone = zone())
         onAlertsChanged?.invoke(plannedAlerts)
     }
+
+    // ---- holiday calendars -----------------------------------------------------------------
+
+    // Every holiday overlapping a range, whatever space is being looked at - they belong to none.
+    fun holidaysBetween(from: java.time.ZonedDateTime, to: java.time.ZonedDateTime): List<Triple<Holiday, java.time.ZonedDateTime, java.time.ZonedDateTime>> =
+        _holidays.value.list.mapNotNull { holiday ->
+            val (start, end) = holiday.span(zone()) ?: return@mapNotNull null
+            if (start.isBefore(to) && end.isAfter(from)) Triple(holiday, start, end) else null
+        }
+
+    fun holidaySetName(id: String): String = _holidays.value.catalog?.firstOrNull { it.id == id }?.name ?: "Holidays"
+
+    fun setHolidaySets(sets: List<String>) {
+        _holidays.update { it.copy(sets = sets.distinct(), dirty = true) }
+        holidayVersion.incrementAndGet()
+        saveHolidays()
+        scope.launch { refreshHolidays(force = true) }
+    }
+
+    // After a sync, and at most every five minutes unless forced: send an unsent choice or take
+    // the server's, then fetch the days again if the choice or the years have changed.
+    suspend fun refreshHolidays(force: Boolean = false) {
+        if (transport == null) return
+        if (!holidayMutex.tryLock()) {
+            if (force) holidaysAgain = true
+            return
+        }
+        try {
+            val state = _holidays.value
+            if (!force && !state.dirty && System.currentTimeMillis() - holidaysCheckedAt < 300_000) return
+            if (_holidays.value.catalog == null) {
+                val sets = HolidayJson.sets(JSONObject(send("GET", "/api/organizer/holidays/sets").text).getJSONArray("sets"))
+                _holidays.update { it.copy(catalog = sets) }
+            }
+            if (_holidays.value.dirty) {
+                sendHolidaySets()
+            } else {
+                val version = holidayVersion.get()
+                val reply = JSONObject(send("GET", "/api/organizer/preferences").text)
+                // A choice made while this was out is newer than the answer - it goes up next time.
+                if (version == holidayVersion.get()) {
+                    if (reply.isNull("holidaySets") || !reply.has("holidaySets")) {
+                        // Never chosen on this server - a rebuilt one - so this phone's goes back.
+                        if (_holidays.value.sets.isNotEmpty()) sendHolidaySets()
+                    } else {
+                        val chosen = HolidayJson.strings(reply.getJSONArray("holidaySets"))
+                        _holidays.update { it.copy(sets = chosen) }
+                    }
+                }
+            }
+            val year = java.time.Year.now(zone()).value
+            val current = _holidays.value
+            val key = current.sets.sorted().joinToString(",") + "|${year - 1}-${year + 2}"
+            if (current.sets.isEmpty()) {
+                _holidays.update { it.copy(list = emptyList(), key = key) }
+            } else if (current.key != key) {
+                val reply = JSONObject(send("GET", "/api/organizer/holidays", query = mapOf(
+                    "sets" to current.sets.joinToString(","), "from" to (year - 1).toString(), "to" to (year + 2).toString(),
+                )).text)
+                val list = HolidayJson.holidays(reply.getJSONArray("holidays"))
+                _holidays.update { it.copy(list = list, key = key) }
+            }
+            holidaysCheckedAt = System.currentTimeMillis()
+            saveHolidays()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Unreachable, or an older server: the cached copy stays and the next sync tries again.
+        } finally {
+            holidayMutex.unlock()
+            if (holidaysAgain) {
+                holidaysAgain = false
+                scope.launch { refreshHolidays(force = true) }
+            }
+        }
+    }
+
+    private suspend fun sendHolidaySets() {
+        val version = holidayVersion.get()
+        val body = JSONObject().put("holidaySets", JSONArray(_holidays.value.sets)).toString().toByteArray()
+        try {
+            send("PUT", "/api/organizer/preferences", body = body)
+        } catch (error: OrganizerException.Server) {
+            // A set this server doesn't know; sending it again won't help.
+            if (error.status != 400) throw error
+        }
+        if (version == holidayVersion.get()) _holidays.update { it.copy(dirty = false) }
+    }
+
+    private fun saveHolidays() = store.setMeta("holidays", _holidays.value.toJson())
 
     // ---- online-only actions ---------------------------------------------------------------
 

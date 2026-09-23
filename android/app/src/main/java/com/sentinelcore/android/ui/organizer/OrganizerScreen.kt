@@ -1,5 +1,13 @@
 package com.sentinelcore.android.ui.organizer
 
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.font.FontStyle
+import com.sentinelcore.android.organizer.Holiday
+import com.sentinelcore.android.organizer.HolidayColors
+import com.sentinelcore.android.organizer.HolidayState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -219,10 +227,29 @@ fun ResetPromptDialog(engine: OrganizerEngine) {
 
 // ---- calendar ---------------------------------------------------------------------------------
 
-private data class CalendarEntry(val item: OrganizerItem, val start: java.time.ZonedDateTime, val end: java.time.ZonedDateTime, val originalStart: String?, val isReminder: Boolean)
+// An event occurrence, a dated reminder or a holiday. Holidays aren't Organizer items.
+private data class CalendarEntry(
+    val item: OrganizerItem?,
+    val start: java.time.ZonedDateTime,
+    val end: java.time.ZonedDateTime,
+    val originalStart: String?,
+    val isReminder: Boolean,
+    val holiday: Holiday? = null,
+) {
+    val title: String get() = holiday?.name ?: ((if (isReminder) "☐ " else "") + (item?.title?.ifEmpty { null } ?: "Untitled"))
+
+    @Composable
+    fun color(engine: OrganizerEngine): Color = when {
+        holiday != null -> Color(HolidayColors.argb(holiday.setId))
+        isReminder -> SentinelAmber
+        else -> spaceColor(engine, item!!.spaceId)
+    }
+}
 
 private fun entriesBetween(engine: OrganizerEngine, filter: String?, from: java.time.ZonedDateTime, to: java.time.ZonedDateTime): List<CalendarEntry> {
     val out = mutableListOf<CalendarEntry>()
+    // Holidays first on each day, and whatever space is picked - they belong to none.
+    engine.holidaysBetween(from, to).forEach { (holiday, start, end) -> out += CalendarEntry(null, start, end, null, false, holiday) }
     engine.items(OrganizerKinds.EVENT).filter { filter == null || it.spaceId == filter }.forEach { event ->
         Recurrence.occurrences(event, from, to).forEach { out += CalendarEntry(event, it.start, it.end, it.originalStart, false) }
     }
@@ -230,13 +257,16 @@ private fun entriesBetween(engine: OrganizerEngine, filter: String?, from: java.
         val due = OrganizerDates.parse(reminder.string("due"), reminder.bool("allDay")) ?: return@forEach
         if (!due.isBefore(from) && due.isBefore(to)) out += CalendarEntry(reminder, due, due, null, true)
     }
-    return out.sortedBy { it.start }
+    return out.sortedWith(compareBy({ it.start }, { if (it.holiday != null) 0 else 1 }))
 }
 
 @Composable
 private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: OrganizerRoutes) {
     var month by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     var selected by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    val holidayState by engine.holidays.collectAsStateWithLifecycle()
+    var showingHolidaySettings by remember { mutableStateOf(false) }
+    var viewingHoliday by remember { mutableStateOf<Holiday?>(null) }
     val shown = YearMonth.parse(month)
     val selectedDay = LocalDate.parse(selected)
     val zone = ZoneId.systemDefault()
@@ -260,6 +290,10 @@ private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: Organ
                 style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             TextButton(onClick = { month = YearMonth.now().toString(); selected = LocalDate.now().toString() }) { Text("Today") }
             IconButton(onClick = { month = shown.plusMonths(1).toString() }) { Icon(Icons.Default.ChevronRight, contentDescription = "Next month") }
+            IconButton(onClick = { showingHolidaySettings = true }) {
+                Icon(if (holidayState.sets.isEmpty()) Icons.Outlined.StarOutline else Icons.Filled.Star,
+                    contentDescription = "Holiday calendars", tint = SentinelGreen)
+            }
         }
         Row {
             (0..6).forEach { i ->
@@ -293,10 +327,11 @@ private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: Organ
                                 },
                             )
                             dayEntries.take(3).forEach { entry ->
-                                val color = if (entry.isReminder) SentinelAmber else spaceColor(engine, entry.item.spaceId)
+                                val color = entry.color(engine)
                                 Text(
-                                    (if (entry.isReminder) "☐ " else "") + entry.item.title.ifEmpty { "Untitled" },
+                                    entry.title,
                                     fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    fontStyle = if (entry.holiday != null) FontStyle.Italic else null,
                                     modifier = Modifier.fillMaxWidth().padding(top = 1.dp).background(color.copy(alpha = 0.18f), RoundedCornerShape(3.dp)).padding(horizontal = 2.dp),
                                 )
                             }
@@ -318,23 +353,39 @@ private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: Organ
                 dayEntries.forEach { entry ->
                     Row(
                         Modifier.fillMaxWidth().clickable {
-                            if (entry.isReminder) routes.openReminder(entry.item.id) else routes.openEvent(entry.item.id, null, entry.originalStart)
+                            when {
+                                entry.holiday != null -> viewingHoliday = entry.holiday
+                                entry.isReminder -> routes.openReminder(entry.item!!.id)
+                                else -> routes.openEvent(entry.item!!.id, null, entry.originalStart)
+                            }
                         }.padding(vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Box(Modifier.width(4.dp).height(36.dp).background(if (entry.isReminder) SentinelAmber else spaceColor(engine, entry.item.spaceId)))
+                        Box(Modifier.width(4.dp).height(36.dp).background(entry.color(engine)))
+                        val item = entry.item
+                        if (entry.holiday != null || item == null) {
+                            val holiday = entry.holiday
+                            Column(Modifier.weight(1f)) {
+                                Text(entry.title, fontStyle = FontStyle.Italic)
+                                Text(holiday?.note ?: if ((holiday?.dayCount ?: 1) > 1) "${holiday?.dayCount} days" else "All day",
+                                    style = MaterialTheme.typography.labelSmall, color = SentinelTextDim)
+                            }
+                            if (holiday != null) Text(engine.holidaySetName(holiday.setId), style = MaterialTheme.typography.labelSmall,
+                                color = Color(HolidayColors.argb(holiday.setId)))
+                            return@Row
+                        }
                         Column(Modifier.weight(1f)) {
-                            Text((if (entry.isReminder) "☐ " else "") + entry.item.title.ifEmpty { "Untitled" })
+                            Text(entry.title)
                             val time = when {
-                                entry.item.bool("allDay") -> "All day"
+                                item.bool("allDay") -> "All day"
                                 entry.isReminder -> "Due " + entry.start.toLocalTime().format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
                                 else -> entry.start.toLocalTime().format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)) + " – " +
                                     entry.end.toLocalTime().format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
                             }
-                            Text(time + (entry.item.string("location")?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                            Text(time + (item.string("location")?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
                                 style = MaterialTheme.typography.labelSmall, color = SentinelTextDim)
                         }
-                        SpaceTag(engine, entry.item.spaceId)
+                        SpaceTag(engine, item.spaceId)
                     }
                     HorizontalDivider()
                 }
@@ -342,6 +393,70 @@ private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: Organ
         }
         Spacer(Modifier.height(72.dp))
     }
+
+    if (showingHolidaySettings) HolidaySettingsDialog(engine, holidayState) { showingHolidaySettings = false }
+    viewingHoliday?.let { holiday ->
+        AlertDialog(
+            onDismissRequest = { viewingHoliday = null },
+            title = { Text(holiday.name) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val start = runCatching { LocalDate.parse(holiday.date) }.getOrNull()
+                    val formatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+                    if (start != null) {
+                        Text(if (holiday.dayCount > 1) "${start.format(formatter)} – ${start.plusDays(holiday.dayCount - 1L).format(formatter)}" else start.format(formatter))
+                    }
+                    holiday.note?.let { Text(it) }
+                    Text("From ${engine.holidaySetName(holiday.setId)}. Holidays can't be edited - turn the whole calendar off in holiday settings if you don't want it.",
+                        style = MaterialTheme.typography.labelSmall, color = SentinelTextDim)
+                }
+            },
+            confirmButton = { TextButton(onClick = { viewingHoliday = null }) { Text("Done") } },
+            dismissButton = { TextButton(onClick = { viewingHoliday = null; showingHolidaySettings = true }) { Text("Holiday settings") } },
+        )
+    }
+}
+
+// Which holiday calendars to show. All off until someone turns one on; the choice follows the
+// account, so it applies on every device.
+@Composable
+private fun HolidaySettingsDialog(engine: OrganizerEngine, state: HolidayState, onDismiss: () -> Unit) {
+    LaunchedEffect(Unit) { if (state.catalog == null) engine.refreshHolidays(force = true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Holidays") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Holidays show on the calendar here and on your other devices, and in the calendar subscription link.",
+                    style = MaterialTheme.typography.labelSmall, color = SentinelTextDim)
+                val catalog = state.catalog
+                if (catalog == null) {
+                    Text("Connect to the server once to see the holiday calendars.", color = SentinelTextDim)
+                } else {
+                    catalog.forEach { set ->
+                        val on = set.id in state.sets
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                engine.setHolidaySets(if (on) state.sets - set.id else state.sets + set.id)
+                            }.padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Box(Modifier.size(10.dp).background(Color(HolidayColors.argb(set.id)), CircleShape))
+                            Column(Modifier.weight(1f)) {
+                                Text(set.name)
+                                Text(set.description, style = MaterialTheme.typography.labelSmall, color = SentinelTextDim)
+                            }
+                            Switch(checked = on, onCheckedChange = { checked ->
+                                engine.setHolidaySets(if (checked) state.sets + set.id else state.sets - set.id)
+                            })
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
 }
 
 // ---- reminders --------------------------------------------------------------------------------

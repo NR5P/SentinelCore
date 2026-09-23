@@ -138,6 +138,8 @@ struct OrganizerCalendarView: View {
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
     @State private var editing: EventEditorTarget?
     @State private var editingReminder: OrganizerItem?
+    @State private var viewingHoliday: Holiday?
+    @State private var showingHolidaySettings = false
     @State private var archiveLoaded = false
 
     private var calendar: Calendar { .current }
@@ -191,6 +193,23 @@ struct OrganizerCalendarView: View {
                 .frame(minWidth: 480, minHeight: 560)
                 #endif
         }
+        .sheet(item: $viewingHoliday) { holiday in
+            NavigationStack { HolidayDetail(holiday: holiday, showSettings: {
+                viewingHoliday = nil
+                showingHolidaySettings = true
+            }) }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 380, minHeight: 260)
+                #endif
+        }
+        .sheet(isPresented: $showingHolidaySettings) {
+            NavigationStack { HolidaySettingsView() }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 460, minHeight: 560)
+                #endif
+        }
         .task(id: month) { await loadArchiveIfNeeded() }
     }
 
@@ -208,6 +227,14 @@ struct OrganizerCalendarView: View {
             }
             .buttonStyle(.bordered)
             Spacer()
+            Button {
+                showingHolidaySettings = true
+            } label: {
+                Label("Holidays", systemImage: engine.holidaySets.isEmpty ? "star" : "star.fill")
+                    .labelStyle(.iconOnly)
+            }
+            .accessibilityLabel("Holiday calendars")
+            .help("Holiday calendars")
             Button {
                 editing = .new(day: selectedDay)
             } label: {
@@ -236,6 +263,7 @@ struct OrganizerCalendarView: View {
                     .lineLimit(1)
                     .padding(.horizontal, 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .italic(entry.isHoliday)
                     .background(entry.color(engine).opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
             }
             if entries.count > 3 {
@@ -271,6 +299,7 @@ struct OrganizerCalendarView: View {
                     switch entry.kind {
                     case let .event(occurrence): editing = .existing(occurrence)
                     case let .reminder(reminder): editingReminder = reminder
+                    case let .holiday(holiday): viewingHoliday = holiday
                     }
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
@@ -283,7 +312,11 @@ struct OrganizerCalendarView: View {
                             }
                         }
                         Spacer()
-                        SpaceTag(spaceId: entry.spaceId)
+                        if case let .holiday(holiday) = entry.kind {
+                            HolidayTag(setId: holiday.setId)
+                        } else if let spaceId = entry.spaceId {
+                            SpaceTag(spaceId: spaceId)
+                        }
                     }
                     .contentShape(Rectangle())
                 }
@@ -309,9 +342,9 @@ struct OrganizerCalendarView: View {
     }
 }
 
-// An event occurrence or a dated reminder, as the calendar shows it.
+// An event occurrence, a dated reminder or a holiday, as the calendar shows it.
 struct CalendarEntry: Identifiable {
-    enum Kind { case event(Occurrence), reminder(OrganizerItem) }
+    enum Kind { case event(Occurrence), reminder(OrganizerItem), holiday(Holiday) }
     let kind: Kind
     let start: Date
     let end: Date
@@ -320,28 +353,38 @@ struct CalendarEntry: Identifiable {
         switch kind {
         case let .event(occurrence): "e:\(occurrence.item.id):\(occurrence.start.timeIntervalSince1970)"
         case let .reminder(reminder): "r:\(reminder.id)"
+        case let .holiday(holiday): holiday.id
         }
     }
 
-    var item: OrganizerItem {
+    // The Organizer item behind it; holidays aren't items.
+    var item: OrganizerItem? {
         switch kind {
         case let .event(occurrence): occurrence.item
         case let .reminder(reminder): reminder
+        case .holiday: nil
         }
+    }
+
+    var isHoliday: Bool {
+        if case .holiday = kind { return true }
+        return false
     }
 
     var title: String {
         switch kind {
         case let .event(occurrence): occurrence.item.title.isEmpty ? "Untitled" : occurrence.item.title
         case let .reminder(reminder): "☐ " + (reminder.title.isEmpty ? "Reminder" : reminder.title)
+        case let .holiday(holiday): holiday.name
         }
     }
 
-    var spaceId: String { item.spaceId }
-    var location: String? { item.string("location") }
-    var allDay: Bool { item.bool("allDay") }
+    var spaceId: String? { item?.spaceId }
+    var location: String? { item?.string("location") }
+    var allDay: Bool { isHoliday || item?.bool("allDay") == true }
 
     var timeText: String {
+        if case let .holiday(holiday) = kind { return holiday.note ?? (holiday.dayCount > 1 ? "\(holiday.dayCount) days" : "All day") }
         if allDay { return "All day" }
         if case .reminder = kind { return "Due \(start.formatted(date: .omitted, time: .shortened))" }
         return "\(start.formatted(date: .omitted, time: .shortened)) – \(end.formatted(date: .omitted, time: .shortened))"
@@ -349,9 +392,13 @@ struct CalendarEntry: Identifiable {
 
     @MainActor
     func color(_ engine: OrganizerEngine) -> Color {
-        if case .reminder = kind { return SentinelTheme.amber }
-        if let hex = item.string("color"), let color = Color(hex: hex) { return color }
-        return engine.color(forSpace: item.spaceId)
+        switch kind {
+        case .reminder: return SentinelTheme.amber
+        case let .holiday(holiday): return Color(hex: HolidayColors.hex(holiday.setId)) ?? .secondary
+        case let .event(occurrence):
+            if let hex = occurrence.item.string("color"), let color = Color(hex: hex) { return color }
+            return engine.color(forSpace: occurrence.item.spaceId)
+        }
     }
 
     // Every day this entry covers, as start-of-day dates.
@@ -369,6 +416,10 @@ struct CalendarEntry: Identifiable {
     @MainActor
     static func between(_ from: Date, _ to: Date, engine: OrganizerEngine, spaceFilter: String?) -> [CalendarEntry] {
         var entries: [CalendarEntry] = []
+        // Holidays first on each day, and whatever space is picked - they belong to none.
+        for (holiday, start, end) in engine.holidays(from: from, to: to) {
+            entries.append(CalendarEntry(kind: .holiday(holiday), start: start, end: end))
+        }
         for event in engine.items(.event) where spaceFilter == nil || event.spaceId == spaceFilter {
             for occurrence in Recurrence.occurrences(of: event, from: from, to: to) {
                 entries.append(CalendarEntry(kind: .event(occurrence), start: occurrence.start, end: occurrence.end))
@@ -379,6 +430,111 @@ struct CalendarEntry: Identifiable {
             guard let due = OrganizerDates.parse(reminder.string("due"), allDay: reminder.bool("allDay")), due >= from, due < to else { continue }
             entries.append(CalendarEntry(kind: .reminder(reminder), start: due, end: due))
         }
-        return entries.sorted { $0.start < $1.start }
+        return entries.sorted { ($0.start, $0.isHoliday ? 0 : 1) < ($1.start, $1.isHoliday ? 0 : 1) }
+    }
+}
+
+// MARK: - holiday calendars
+
+struct HolidayTag: View {
+    @Environment(OrganizerEngine.self) private var engine
+    let setId: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle().fill(Color(hex: HolidayColors.hex(setId)) ?? .secondary).frame(width: 7, height: 7)
+            Text(engine.holidaySetName(setId))
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+}
+
+// Which holiday calendars to show. All off until someone turns one on; the choice follows the
+// account, so it applies on every device.
+struct HolidaySettingsView: View {
+    @Environment(OrganizerEngine.self) private var engine
+    @Environment(\.dismiss) private var dismiss
+    @State private var loading = false
+
+    var body: some View {
+        Form {
+            Section {
+                if let catalog = engine.holidayState.catalog {
+                    ForEach(catalog) { set in
+                        Toggle(isOn: binding(for: set.id)) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Circle().fill(Color(hex: HolidayColors.hex(set.id)) ?? .secondary)
+                                    .frame(width: 10, height: 10)
+                                    .padding(.top, 5)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(set.name)
+                                    Text(set.description).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                } else if loading {
+                    ProgressView()
+                } else {
+                    Text("Connect to the server once to see the holiday calendars.").foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("Holidays show on the calendar here and on your other devices, and in the calendar subscription link. They can't be edited.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Holidays")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+        }
+        .task {
+            guard engine.holidayState.catalog == nil else { return }
+            loading = true
+            await engine.refreshHolidays(force: true)
+            loading = false
+        }
+    }
+
+    private func binding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { engine.holidaySets.contains(id) },
+            set: { on in
+                var sets = engine.holidaySets.filter { $0 != id }
+                if on { sets.append(id) }
+                engine.setHolidaySets(sets)
+            })
+    }
+}
+
+struct HolidayDetail: View {
+    @Environment(OrganizerEngine.self) private var engine
+    @Environment(\.dismiss) private var dismiss
+    let holiday: Holiday
+    let showSettings: () -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Date", value: dates)
+                if let note = holiday.note { Text(note) }
+                HolidayTag(setId: holiday.setId)
+            } footer: {
+                Text("Holidays can't be edited. Turn the whole calendar off in holiday settings if you don't want it.")
+            }
+            Button("Holiday Settings", action: showSettings)
+        }
+        .formStyle(.grouped)
+        .navigationTitle(holiday.name)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+        }
+    }
+
+    private var dates: String {
+        guard let span = holiday.span(in: .current) else { return holiday.date }
+        let first = span.start.formatted(date: .abbreviated, time: .omitted)
+        guard holiday.dayCount > 1, let last = Calendar.current.date(byAdding: .day, value: -1, to: span.end) else { return first }
+        return "\(first) – \(last.formatted(date: .abbreviated, time: .omitted))"
     }
 }

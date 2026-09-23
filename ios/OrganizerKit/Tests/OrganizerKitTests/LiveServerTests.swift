@@ -291,6 +291,37 @@ final class LiveServerTests: XCTestCase {
 
     // MARK: helpers
 
+    // Holiday calendars are a per-person choice: made on one device, shown on the others, with
+    // the days worked out by the server.
+    func testAHolidayChoiceFollowsThePersonToTheirOtherDevices() async throws {
+        let (phone, phoneLink) = try device("phone")
+        let (tv, tvLink) = try device("tv")
+        await start(phone, phoneLink)
+        await start(tv, tvLink)
+
+        phone.setHolidaySets(["jewish", "us-federal"])
+        try await waitUntil { !phone.holidayState.dirty && !phone.holidayState.list.isEmpty }
+        await tv.refreshHolidays(force: true)
+        XCTAssertEqual(Set(tv.holidaySets), ["jewish", "us-federal"])
+
+        let calendar = Calendar.current
+        let september = calendar.date(from: DateComponents(year: 2026, month: 9, day: 1))!
+        let october = calendar.date(from: DateComponents(year: 2026, month: 10, day: 1))!
+        let names = tv.holidays(from: september, to: october).map(\.holiday.name)
+        XCTAssertTrue(names.contains("Rosh Hashanah"), "\(names)")
+        XCTAssertTrue(names.contains("Labor Day"), "\(names)")
+        let roshHashanah = try XCTUnwrap(tv.holidays(from: september, to: october).first { $0.holiday.name == "Rosh Hashanah" })
+        XCTAssertEqual(calendar.dateComponents([.month, .day], from: roshHashanah.start), DateComponents(month: 9, day: 12))
+        XCTAssertEqual(calendar.dateComponents([.day], from: roshHashanah.start, to: roshHashanah.end).day, 2)
+
+        // Turned off on the TV, gone from the phone.
+        tv.setHolidaySets([])
+        try await waitUntil { !tv.holidayState.dirty }
+        await phone.refreshHolidays(force: true)
+        XCTAssertTrue(phone.holidaySets.isEmpty)
+        XCTAssertTrue(phone.holidays(from: september, to: october).isEmpty)
+    }
+
     private func waitUntil(timeout: TimeInterval = 15, _ condition: @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {

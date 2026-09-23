@@ -51,6 +51,8 @@ public final class OrganizerEngine {
     public private(set) var policy: OfflinePolicy
     public private(set) var keptOffline: Set<String> = []
     public private(set) var plannedAlerts: [PlannedAlert] = []
+    // Holiday calendars: the choice, what there is, and the cached days. See Holidays.swift.
+    public private(set) var holidayState = HolidayState()
     @ObservationIgnored public var onAlertsChanged: (@MainActor ([PlannedAlert]) -> Void)?
 
     @ObservationIgnored private let store: LocalStore
@@ -73,6 +75,11 @@ public final class OrganizerEngine {
     @ObservationIgnored private var blobWorkAgain = false
     @ObservationIgnored private var missingBlobs: Set<String> = []
     @ObservationIgnored private var childIndex: (revision: Int, map: [String: [OrganizerItem]])?
+    @ObservationIgnored private var holidaysBusy = false
+    @ObservationIgnored private var holidaysAgain = false
+    @ObservationIgnored private var holidaysCheckedAt: Date?
+    // Bumped on every change of choice, so a send only counts as done for the choice it carried.
+    @ObservationIgnored private var holidayVersion = 0
 
     // `directory` nil keeps everything in memory (tests). `deviceId` has to be stable for this
     // install: it is the tiebreak in every clock this device writes.
@@ -98,6 +105,9 @@ public final class OrganizerEngine {
         }
         if let data = store.meta("keptOffline")?.data(using: .utf8), let saved = try? JSONDecoder().decode([String].self, from: data) {
             keptOffline = Set(saved)
+        }
+        if let data = store.meta("holidays")?.data(using: .utf8), let saved = try? JSONDecoder().decode(HolidayState.self, from: data) {
+            holidayState = saved
         }
         syncState.waitingChanges = pending.count
         replanAlerts()
@@ -469,6 +479,10 @@ public final class OrganizerEngine {
     private func adoptOwner(_ owner: String) {
         let stored = store.meta("owner")
         if let stored, stored != owner {
+            // Someone else's holiday choice isn't theirs either; the list of sets is.
+            var fresh = HolidayState()
+            fresh.catalog = holidayState.catalog
+            holidayState = fresh
             resetLocalCopy(keepPending: false)
         }
         store.setMeta("owner", owner)
@@ -483,6 +497,9 @@ public final class OrganizerEngine {
         cursor = 0
         spaces = []
         store.wipe(keepPending: keepPending)
+        // The wipe takes the holiday choice with the rest of the metadata. It's kept: a rebuilt
+        // server gets it back from here.
+        saveHolidays()
         syncState.waitingChanges = pending.count
         replanAlerts()
         changed()
@@ -591,6 +608,7 @@ public final class OrganizerEngine {
             }
         }
         startBlobWork()
+        Task { await refreshHolidays() }
     }
 
     private func syncOnce(restoreSpaces: [OrganizerSpace]?) async throws {
@@ -849,6 +867,105 @@ public final class OrganizerEngine {
             ? try await send("POST", "/api/organizer/calendar-feed/reset")
             : try await send("GET", "/api/organizer/calendar-feed")
         return try JSONDecoder.organizer.decode(FeedResponse.self, from: response.data).path
+    }
+
+    // MARK: - holiday calendars
+
+    public var holidaySets: [String] { holidayState.sets }
+
+    // Every holiday overlapping a range, whatever space is being looked at - they belong to none.
+    public func holidays(from: Date, to: Date) -> [(holiday: Holiday, start: Date, end: Date)] {
+        holidayState.list.compactMap { holiday in
+            guard let span = holiday.span(in: calendar), span.start < to, span.end > from else { return nil }
+            return (holiday, span.start, span.end)
+        }
+    }
+
+    public func holidaySetName(_ id: String) -> String {
+        holidayState.catalog?.first { $0.id == id }?.name ?? "Holidays"
+    }
+
+    public func setHolidaySets(_ sets: [String]) {
+        var seen = Set<String>()
+        holidayState.sets = sets.filter { seen.insert($0).inserted }
+        holidayState.dirty = true
+        holidayVersion += 1
+        saveHolidays()
+        Task { await refreshHolidays(force: true) }
+    }
+
+    // After a sync, and at most every five minutes unless forced: send an unsent choice or take
+    // the server's, then fetch the days again if the choice or the years have changed.
+    public func refreshHolidays(force: Bool = false) async {
+        guard transport != nil else { return }
+        if holidaysBusy {
+            if force { holidaysAgain = true }
+            return
+        }
+        if !force, !holidayState.dirty, let checked = holidaysCheckedAt, Date().timeIntervalSince(checked) < 300 { return }
+        holidaysBusy = true
+        defer {
+            holidaysBusy = false
+            if holidaysAgain {
+                holidaysAgain = false
+                Task { await refreshHolidays(force: true) }
+            }
+        }
+        do {
+            if holidayState.catalog == nil {
+                let response = try await send("GET", "/api/organizer/holidays/sets")
+                holidayState.catalog = try JSONDecoder().decode(HolidaySetsResponse.self, from: response.data).sets
+            }
+            if holidayState.dirty {
+                try await sendHolidaySets()
+            } else {
+                let version = holidayVersion
+                let response = try await send("GET", "/api/organizer/preferences")
+                // A choice made while this was out is newer than the answer - it goes up next time.
+                if version == holidayVersion {
+                    let chosen = try JSONDecoder().decode(HolidayPreferences.self, from: response.data).holidaySets
+                    if let chosen {
+                        holidayState.sets = chosen
+                    } else if !holidayState.sets.isEmpty {
+                        // Never chosen on this server - a rebuilt one - so this device's goes back.
+                        try await sendHolidaySets()
+                    }
+                }
+            }
+            let year = calendar.component(.year, from: Date())
+            let key = "\(holidayState.sets.sorted().joined(separator: ","))|\(year - 1)-\(year + 2)"
+            if holidayState.sets.isEmpty {
+                holidayState.list = []
+                holidayState.key = key
+            } else if holidayState.key != key {
+                let response = try await send("GET", "/api/organizer/holidays", query: [
+                    URLQueryItem(name: "sets", value: holidayState.sets.joined(separator: ",")),
+                    URLQueryItem(name: "from", value: String(year - 1)),
+                    URLQueryItem(name: "to", value: String(year + 2)),
+                ])
+                holidayState.list = try JSONDecoder().decode(HolidaysResponse.self, from: response.data).holidays
+                holidayState.key = key
+            }
+            holidaysCheckedAt = Date()
+            saveHolidays()
+        } catch {
+            // Unreachable, or an older server: the cached copy stays and the next sync tries again.
+        }
+    }
+
+    private func sendHolidaySets() async throws {
+        let version = holidayVersion
+        let body = try JSONEncoder().encode(HolidayPreferences(holidaySets: holidayState.sets))
+        do {
+            _ = try await send("PUT", "/api/organizer/preferences", body: body)
+        } catch OrganizerError.server(status: 400, _) {
+            // A set this server doesn't know; sending it again won't help.
+        }
+        if version == holidayVersion { holidayState.dirty = false }
+    }
+
+    private func saveHolidays() {
+        store.setMeta("holidays", (try? JSONEncoder().encode(holidayState)).flatMap { String(data: $0, encoding: .utf8) })
     }
 
     // MARK: - transport

@@ -289,4 +289,45 @@ class OrganizerEngineTest {
         assertEquals(listOf("Unsent"), second.items(OrganizerKinds.NOTE).map { it.title })
         assertEquals(1, second.syncState.value.waitingChanges)
     }
+
+    @Test
+    fun `holidays are off by default and the choice is kept`() {
+        val store = InMemoryOrganizerStore(directory())
+        val first = engine(store)
+        assertTrue(first.holidays.value.sets.isEmpty())
+        first.setHolidaySets(listOf("christian", "christian", "jewish"))
+        assertEquals(listOf("christian", "jewish"), first.holidays.value.sets)
+        val second = engine(store)
+        assertEquals(listOf("christian", "jewish"), second.holidays.value.sets)
+        assertTrue("an unsent choice is still unsent after a restart", second.holidays.value.dirty)
+    }
+
+    @Test
+    fun `a rebuilt server gets the holiday choice back from the phone`() = runBlocking {
+        val store = InMemoryOrganizerStore(directory())
+        engine(store).setHolidaySets(listOf("jewish"))
+        val engine = engine(store)
+        var sent: String? = null
+        val transport = ScriptedTransport { method, path, body ->
+            when {
+                path == "/api/organizer/status" -> ScriptedTransport.status()
+                path == "/api/organizer/holidays/sets" -> ScriptedTransport.json("""{"sets":[{"id":"jewish","name":"Jewish holidays","description":""}]}""")
+                path == "/api/organizer/preferences" && method == "PUT" -> {
+                    sent = String(body!!)
+                    ScriptedTransport.json(sent!!)
+                }
+                path == "/api/organizer/preferences" -> ScriptedTransport.json("""{"holidaySets":null}""")
+                path == "/api/organizer/holidays" -> ScriptedTransport.json(
+                    """{"holidays":[{"id":"holiday:jewish:20260912:rosh-hashanah","setId":"jewish","name":"Rosh Hashanah","date":"2026-09-12","days":2}]}""")
+                else -> ScriptedTransport.reply()
+            }
+        }
+        engine.connect(transport)
+        settle(engine)
+        engine.refreshHolidays(force = true)
+        assertEquals(listOf("jewish"), HolidayJson.strings(JSONObject(sent!!).getJSONArray("holidaySets")))
+        assertFalse(engine.holidays.value.dirty)
+        assertEquals(listOf("Rosh Hashanah"), engine.holidays.value.list.map { it.name })
+        assertEquals("Jewish holidays", engine.holidaySetName("jewish"))
+    }
 }

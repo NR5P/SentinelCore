@@ -278,4 +278,30 @@ class OrganizerLiveServerTest {
         val ics = withContext(Dispatchers.IO) { URL(serverA + path).readText() }
         assertTrue(ics.contains("SUMMARY:$title"))
     }
+
+    @Test
+    fun `a holiday choice follows the person to their other devices`() = runBlocking {
+        val (phone, phoneLink) = device("phone")
+        val (tablet, tabletLink) = device("tablet")
+        start(phone, phoneLink)
+        start(tablet, tabletLink)
+        phone.setHolidaySets(listOf("jewish", "us-federal"))
+        waitUntil { !phone.holidays.value.dirty && phone.holidays.value.list.isNotEmpty() }
+        tablet.refreshHolidays(force = true)
+        assertEquals(setOf("jewish", "us-federal"), tablet.holidays.value.sets.toSet())
+
+        val zone = java.time.ZoneId.systemDefault()
+        val september = java.time.LocalDate.of(2026, 9, 1).atStartOfDay(zone)
+        val found = tablet.holidaysBetween(september, september.plusMonths(1))
+        val roshHashanah = found.first { it.first.name == "Rosh Hashanah" }
+        assertEquals(java.time.LocalDate.of(2026, 9, 12), roshHashanah.second.toLocalDate())
+        assertEquals(2L, java.time.temporal.ChronoUnit.DAYS.between(roshHashanah.second, roshHashanah.third))
+        assertTrue(found.any { it.first.name == "Labor Day" })
+
+        tablet.setHolidaySets(emptyList())
+        waitUntil { !tablet.holidays.value.dirty }
+        phone.refreshHolidays(force = true)
+        assertTrue(phone.holidays.value.sets.isEmpty())
+        assertTrue(phone.holidaysBetween(september, september.plusMonths(1)).isEmpty())
+    }
 }

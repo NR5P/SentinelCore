@@ -347,4 +347,51 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(engine.items(.note).map(\.title), ["Unsent"])
         XCTAssertEqual(engine.syncState.waitingChanges, 1)
     }
+
+    // Nothing is shown until someone chooses, and the choice survives a restart.
+    func testHolidaysAreOffByDefaultAndTheChoiceIsKept() async throws {
+        let folder = directory()
+        do {
+            let engine = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)
+            XCTAssertTrue(engine.holidaySets.isEmpty)
+            XCTAssertTrue(engine.holidayState.list.isEmpty)
+            engine.setHolidaySets(["christian", "christian", "jewish"])
+            XCTAssertEqual(engine.holidaySets, ["christian", "jewish"])
+            XCTAssertTrue(engine.holidayState.dirty)
+        }
+        let engine = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)
+        XCTAssertEqual(engine.holidaySets, ["christian", "jewish"])
+        XCTAssertTrue(engine.holidayState.dirty, "an unsent choice is still unsent after a restart")
+    }
+
+    // A rebuilt server has no choice on record; the device that still has one sends it back.
+    func testARebuiltServerGetsTheHolidayChoiceBackFromTheDevice() async throws {
+        let folder = directory()
+        do {
+            let engine = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)
+            engine.setHolidaySets(["jewish"])
+        }
+        let engine = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)
+        var sent: [String]?
+        let transport = ScriptedTransport { request in
+            switch request.path {
+            case "/api/organizer/status": return ScriptedTransport.status(username: nil)
+            case "/api/organizer/holidays/sets": return ScriptedTransport.json(["sets": [["id": "jewish", "name": "Jewish holidays", "description": ""]]])
+            case "/api/organizer/preferences" where request.method == "PUT":
+                sent = (try? JSONSerialization.jsonObject(with: request.body ?? Data()) as? [String: Any])?["holidaySets"] as? [String]
+                return ScriptedTransport.json(["holidaySets": sent ?? []])
+            case "/api/organizer/preferences": return ScriptedTransport.json(["holidaySets": NSNull()])
+            case "/api/organizer/holidays":
+                return ScriptedTransport.json(["holidays": [["id": "holiday:jewish:20260912:rosh-hashanah", "setId": "jewish", "name": "Rosh Hashanah", "date": "2026-09-12", "days": 2]]])
+            default: return ScriptedTransport.reply()
+            }
+        }
+        engine.connect(transport)
+        await settle(engine)
+        await engine.refreshHolidays(force: true)
+        XCTAssertEqual(sent, ["jewish"])
+        XCTAssertFalse(engine.holidayState.dirty)
+        XCTAssertEqual(engine.holidayState.list.map(\.name), ["Rosh Hashanah"])
+        XCTAssertEqual(engine.holidaySetName("jewish"), "Jewish holidays")
+    }
 }
