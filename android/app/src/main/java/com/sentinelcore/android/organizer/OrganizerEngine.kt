@@ -98,6 +98,7 @@ class OrganizerEngine(
     private var waitJob: Job? = null
     private var debounceJob: Job? = null
     private var blobJob: Job? = null
+    private var blobWorkAgain = false
     private val syncMutex = Mutex()
     private val requestedPass = AtomicLong(0)
     @Volatile private var completedPass = 0L
@@ -355,11 +356,23 @@ class OrganizerEngine(
         store.blob(hash)?.let { store.saveBlob(it.copy(lastUsedMillis = System.currentTimeMillis())) }
     }
 
+    // One blob pass at a time. A request while one runs makes it go round again: the running pass
+    // took its list of attachments before the new one arrived, so dropping the request left an
+    // attachment unfetched until some later sync happened to start another pass.
     private fun startBlobWork() {
         if (transport == null) return
         synchronized(lock) {
-            if (blobJob?.isActive == true) return
-            blobJob = scope.launch { runBlobWork() }
+            if (blobJob?.isActive == true) {
+                blobWorkAgain = true
+                return
+            }
+            blobJob = scope.launch {
+                while (true) {
+                    synchronized(lock) { blobWorkAgain = false }
+                    runBlobWork()
+                    synchronized(lock) { if (!blobWorkAgain) return@launch }
+                }
+            }
         }
     }
 
@@ -551,6 +564,10 @@ class OrganizerEngine(
             }
             _syncState.update { it.copy(syncing = true) }
             try {
+                // A pass settles the calls made before it started - and only those, even when it
+                // fails. Settling everything on failure let a sync asked for the moment the
+                // network came back be answered by a pass that had started, and failed, while it
+                // was still down.
                 while (completedPass < requestedPass.get()) {
                     val pass = requestedPass.get()
                     try {
@@ -561,15 +578,15 @@ class OrganizerEngine(
                         completedPass = requestedPass.get()
                         throw error
                     } catch (_: OrganizerException.SignInRequired) {
-                        completedPass = requestedPass.get()
+                        completedPass = maxOf(completedPass, pass)
                         _syncState.update { it.copy(needsSignIn = true) }
                         return
                     } catch (_: OrganizerException.TurnedOff) {
-                        completedPass = requestedPass.get()
+                        completedPass = maxOf(completedPass, pass)
                         _syncState.update { it.copy(turnedOff = true) }
                         return
                     } catch (error: Exception) {
-                        completedPass = requestedPass.get()
+                        completedPass = maxOf(completedPass, pass)
                         _syncState.update {
                             it.copy(online = false, lastError = if (error is OrganizerException && error !is OrganizerException.Offline) error.message else it.lastError)
                         }

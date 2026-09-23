@@ -70,6 +70,7 @@ public final class OrganizerEngine {
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
     @ObservationIgnored private var waitTask: Task<Void, Never>?
     @ObservationIgnored private var blobTask: Task<Void, Never>?
+    @ObservationIgnored private var blobWorkAgain = false
     @ObservationIgnored private var missingBlobs: Set<String> = []
     @ObservationIgnored private var childIndex: (revision: Int, map: [String: [OrganizerItem]])?
 
@@ -333,10 +334,20 @@ public final class OrganizerEngine {
         store.saveBlob(record)
     }
 
+    // One blob pass at a time. A request while one runs makes it go round again: the running pass
+    // took its list of attachments before the new one arrived, so dropping the request left an
+    // attachment unfetched until some later sync happened to start another pass.
     private func startBlobWork() {
-        guard blobTask == nil, transport != nil else { return }
+        guard transport != nil else { return }
+        guard blobTask == nil else {
+            blobWorkAgain = true
+            return
+        }
         blobTask = Task { [weak self] in
-            await self?.runBlobWork()
+            repeat {
+                self?.blobWorkAgain = false
+                await self?.runBlobWork()
+            } while self?.blobWorkAgain == true && !Task.isCancelled
             self?.blobTask = nil
         }
     }
@@ -549,6 +560,9 @@ public final class OrganizerEngine {
             syncState.syncing = false
             syncState.waitingChanges = pending.count + inflight.count
         }
+        // A pass settles the calls made before it started - and only those, even when it fails.
+        // Settling everything on failure let a sync asked for the moment the network came back be
+        // answered by a pass that had started, and failed, while it was still down.
         while completedPass < requestedPass {
             let pass = requestedPass
             defer { completedPass = max(completedPass, pass) }
@@ -560,11 +574,9 @@ public final class OrganizerEngine {
                 syncState.lastSyncedAt = Date()
             } catch OrganizerError.signInRequired {
                 syncState.needsSignIn = true
-                completedPass = requestedPass
                 return
             } catch OrganizerError.turnedOff {
                 syncState.turnedOff = true
-                completedPass = requestedPass
                 return
             } catch is CancellationError {
                 completedPass = requestedPass
@@ -574,7 +586,6 @@ public final class OrganizerEngine {
                 if let organizerError = error as? OrganizerError, organizerError != .offline {
                     syncState.lastError = organizerError.localizedDescription
                 }
-                completedPass = requestedPass
                 scheduleSync(after: 20)
                 return
             }

@@ -58,6 +58,33 @@ final class ScriptedTransport: OrganizerTransport, @unchecked Sendable {
     }
 }
 
+// Unreachable for requests begun while `down` is set, however long they take to fail - like a long
+// poll left over from before the network dropped.
+final class FlakyTransport: OrganizerTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _down = false
+    private var _sentIds: [String] = []
+
+    var down: Bool {
+        get { lock.withLock { _down } }
+        set { lock.withLock { _down = newValue } }
+    }
+
+    var sentIds: [String] { lock.withLock { _sentIds } }
+
+    func send(method: String, path: String, query: [URLQueryItem], body: Data?, contentType: String?, timeout: TimeInterval?) async throws -> OrganizerHTTPResponse {
+        let wasDown = down
+        if path == "/api/organizer/wait" { try await Task.sleep(for: .seconds(3600)) }
+        if path == "/api/organizer/status" { return ScriptedTransport.status(username: nil) }
+        try await Task.sleep(for: .milliseconds(200))
+        if wasDown { throw OrganizerError.offline }
+        let object = try JSONSerialization.jsonObject(with: body ?? Data()) as? [String: Any]
+        let ids = (object?["changes"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
+        lock.withLock { _sentIds.append(contentsOf: ids) }
+        return ScriptedTransport.reply()
+    }
+}
+
 @MainActor
 final class EngineTests: XCTestCase {
     private var directories: [URL] = []
@@ -137,6 +164,24 @@ final class EngineTests: XCTestCase {
             .flatMap { try changes(in: $0) }.compactMap { $0["id"] as? String }
         XCTAssertTrue(sentIds.contains(second.id), "the edit made mid-sync was not sent before sync() returned")
         await first.value
+    }
+
+    // A sync asked for the moment the network came back must not be answered by a pass that
+    // started, and failed, while it was still down.
+    func testASyncAfterReconnectingIsNotAnsweredByAPassThatFailedWhileOffline() async throws {
+        let engine = try OrganizerEngine(directory: directory(), deviceId: "phone", policy: .computerDefault)
+        let transport = FlakyTransport()
+        engine.connect(transport)
+        await settle(engine)
+
+        transport.down = true
+        let failing = Task { await engine.sync() }
+        try await Task.sleep(for: .milliseconds(50))
+        transport.down = false
+        let note = engine.create(.note, fields: ["title": "written as the network came back"], spaceId: "family")
+        await engine.sync()
+        XCTAssertTrue(transport.sentIds.contains(note.id), "the sync after reconnecting was swallowed by the failed pass")
+        await failing.value
     }
 
     func testAFailedSyncKeepsEverythingQueued() async throws {

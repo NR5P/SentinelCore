@@ -131,6 +131,41 @@ class OrganizerEngineTest {
         first.await()
     }
 
+    // Unreachable for requests begun while `down` is set, however long they take to fail - like a
+    // long poll left over from before the network dropped.
+    private class FlakyTransport : OrganizerTransport {
+        @Volatile var down = false
+        val sentIds = mutableListOf<String>()
+
+        override suspend fun send(method: String, path: String, query: Map<String, String>, body: ByteArray?, contentType: String?, timeoutMillis: Int?): OrganizerResponse {
+            val wasDown = down
+            if (path == "/api/organizer/wait") delay(3_600_000)
+            if (path == "/api/organizer/status") return ScriptedTransport.status()
+            delay(200)
+            if (wasDown) throw OrganizerException.Offline()
+            val changes = JSONObject(String(body!!)).getJSONArray("changes")
+            synchronized(sentIds) { (0 until changes.length()).forEach { sentIds += changes.getJSONObject(it).getString("id") } }
+            return ScriptedTransport.reply()
+        }
+    }
+
+    @Test
+    fun `a sync after reconnecting is not answered by a pass that failed while offline`() = runBlocking {
+        val engine = engine(InMemoryOrganizerStore(directory()))
+        val transport = FlakyTransport()
+        engine.connect(transport)
+        settle(engine)
+
+        transport.down = true
+        val failing = async(Dispatchers.IO) { engine.sync() }
+        delay(50)
+        transport.down = false
+        val note = engine.create(OrganizerKinds.NOTE, mapOf("title" to "written as the network came back"), spaceId = "family")
+        engine.sync()
+        assertTrue("the sync after reconnecting was swallowed by the failed pass", synchronized(transport.sentIds) { note.id in transport.sentIds })
+        failing.await()
+    }
+
     @Test
     fun `a note body edit carries the clock it started from`() = runBlocking {
         val engine = engine(InMemoryOrganizerStore(directory()))
