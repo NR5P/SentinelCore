@@ -21,6 +21,7 @@ For a physical device, the device and Sentinel Core server must be on the same l
   automatic unsaved-gap skipping, object/severity filters, and shared reviewed/unreviewed state
 - Motion-trigger snapshots and clips
 - Live camera HLS playback with audio
+- Use this phone as one of the dashboard's cameras: its camera is pushed to the server over WebRTC (`stream-webrtc-android`, the same path as the web dashboard's publish page) from a foreground service, so the screen can be off; streaming resumes after a relaunch
 - FCM event alerts with foreground presentation, test delivery, and event deep links
 - Phone bottom navigation and tablet navigation rail
 - Pull-to-refresh equivalents and 30-second foreground refresh

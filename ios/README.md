@@ -26,6 +26,7 @@ The device and Sentinel Core server must currently be on the same local network.
   automatic unsaved-gap skipping, object/severity filters, and shared reviewed/unreviewed state
 - Trigger history with snapshot and recorded-clip playback
 - Live camera list and native HLS playback
+- Use this iPhone, iPad or Mac as one of the dashboard's cameras: its camera is pushed to the server over WebRTC (the `WebRTC` Swift package, the same path as the web dashboard's publish page), with the device kept awake by the app and streaming resumed after a relaunch
 - APNs event alerts with foreground presentation, test delivery, and event deep links
 - Optional dashboard username/password login
 - Server connection settings and health status

@@ -7,6 +7,15 @@
          existing photo uses the system Photo Picker instead, which needs no permission. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Using this phone as one of the dashboard's cameras (see publish/DevicePublisher): the
+         microphone only if the person includes it; the foreground service and its camera and
+         microphone types are what let the stream keep running with the screen off; the wake lock
+         keeps the CPU up for it. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"
@@ -19,6 +28,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SentinelCore.Starting"
         android:usesCleartextTraffic="true">
+        <service
+            android:name=".publish.DevicePublisherService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone" />
+
         <service
             android:name=".push.SentinelFirebaseMessagingService"
             android:exported="false">

@@ -214,6 +214,9 @@ public partial class SettingsView : UserControl
     private void OnManageCamerasClicked(object sender, RoutedEventArgs e) =>
         new CameraAdminWindow(_model) { Owner = this.OwnerWindow() }.ShowDialog();
 
+    private void OnDeviceCameraClicked(object sender, RoutedEventArgs e) =>
+        DeviceCameraWindow.Open(_model);
+
     private void OnKnownFacesClicked(object sender, RoutedEventArgs e) =>
         new KnownFacesWindow(_model) { Owner = this.OwnerWindow() }.ShowDialog();
 

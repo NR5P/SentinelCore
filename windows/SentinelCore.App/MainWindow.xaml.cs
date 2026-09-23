@@ -134,6 +134,7 @@ public partial class MainWindow : Window, INavigator
             case nameof(AppModel.IsConfigured):
             case nameof(AppModel.AuthStatus):
                 ApplyState();
+                ResumeDeviceCamera();
                 break;
             case nameof(AppModel.DeviceHubEnabled):
                 BuildSections();
@@ -144,6 +145,19 @@ public partial class MainWindow : Window, INavigator
                 ApplyBanner();
                 break;
         }
+    }
+
+    // If this PC was streaming as a camera when the app last closed, it goes back to being one as
+    // soon as the server is reachable - the window opens on its own, so it is obvious that it did.
+    // See DeviceCameraWindow.
+    private bool _deviceCameraResumed;
+
+    private void ResumeDeviceCamera()
+    {
+        if (_deviceCameraResumed || _model.ConnectionState != ConnectionState.Online || !_model.IsAdmin) return;
+        if (Views.DeviceCameraWindow.StoredCameraId is not { } cameraId) return;
+        _deviceCameraResumed = true;
+        Dispatcher.BeginInvoke(() => Views.DeviceCameraWindow.Open(_model, cameraId));
     }
 
     private void ApplyState()

@@ -97,7 +97,8 @@ struct AlertTakeoverView: View {
                 cameraId: camera.id,
                 mse: model.client.webSocketURL(path: "/api/cameras/\(camera.id.uuidString)/mse"),
                 hls: hls,
-                wantsAudio: camera.includeAudio == true),
+                wantsAudio: camera.includeAudio == true,
+                isDevicePublished: camera.isDevicePublished),
             client: model.client)
     }
 

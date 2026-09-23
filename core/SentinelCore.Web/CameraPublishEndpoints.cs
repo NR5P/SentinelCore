@@ -1,8 +1,10 @@
 namespace SentinelCore.Web;
 
-// Signaling for a camera that *is* a browser: a laptop or spare phone somewhere in the house
-// opens the publisher page, and its webcam becomes a camera in this dashboard. The mirror image
-// of the live-view WebRTC endpoint in CameraEndpoints - same SDP exchange, opposite direction.
+// Signaling for a camera that *is* a device: a laptop or spare phone somewhere in the house
+// opens the publisher page - or the Sentinel Core app on a phone, Mac or PC does the same thing
+// natively - and its camera becomes a camera in this dashboard. The mirror image of the live-view
+// WebRTC endpoint in CameraEndpoints - same SDP exchange, opposite direction. Every client speaks
+// exactly this: an SDP offer up as application/sdp, go2rtc's answer back, then a status poll.
 //
 // Why this exists at all: every other camera here is pulled, and a webcam has no address to pull.
 // Rather than teach the pipeline about a second kind of source, the publisher's video is pushed
@@ -29,7 +31,7 @@ public static class CameraPublishEndpoints
             var camera = await store.GetAsync(id, ct);
             if (camera is null) return Results.NotFound();
             if (!camera.IsBrowserPublished)
-                return Results.BadRequest(new { errors = new[] { "This camera has its own stream URL - it is not published from a browser." } });
+                return Results.BadRequest(new { errors = new[] { "This camera has its own stream URL - it is not published from a device." } });
 
             string offer;
             using (var reader = new StreamReader(http.Request.Body))
@@ -68,7 +70,7 @@ public static class CameraPublishEndpoints
             var camera = await store.GetAsync(id, ct);
             if (camera is null) return Results.NotFound();
             if (!camera.IsBrowserPublished)
-                return Results.BadRequest(new { errors = new[] { "This camera is not published from a browser." } });
+                return Results.BadRequest(new { errors = new[] { "This camera is not published from a device." } });
 
             var live = await webrtc.HasLivePublisherAsync(id, ct);
             var seen = watchdog.Presence.Get(id);

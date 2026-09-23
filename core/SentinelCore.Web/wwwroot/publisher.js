@@ -480,7 +480,9 @@ window.SentinelPublisher = (function () {
       "<em>Windows</em> - Settings → System → Power &amp; battery → Screen and sleep → set sleep to <em>Never</em> when plugged in; " +
       "<em>Linux</em> - Settings → Power → Automatic Suspend → off. " +
       "The dashboard reconnects on its own after a network blip or a reload, and if the server stops receiving video for " +
-      "two minutes it sends you a message (email, Telegram and the phone apps - whichever are set up) and another when it is back.";
+      "two minutes it sends you a message (email, Telegram and the phone apps - whichever are set up) and another when it is back. " +
+      "On a phone, a Mac or a PC, the Sentinel Core app can do this natively instead (Settings → Cameras → <em>Use this device as a camera</em>): " +
+      "it keeps the device awake itself, and an Android phone can even turn its screen off.";
   }
 
   // ---------------- Helpers ----------------

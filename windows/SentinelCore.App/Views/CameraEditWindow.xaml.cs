@@ -44,6 +44,12 @@ public partial class CameraEditWindow : Window
             _onvifPtzServiceUrl = existing.OnvifPtzServiceUrl;
             _onvifProfileToken = existing.OnvifProfileToken;
 
+            if (existing.IsDevicePublished)
+            {
+                StreamPanel.Visibility = Visibility.Collapsed;
+                PublishedNotice.Visibility = Visibility.Visible;
+            }
+
             MaskNotice.Visibility = existing.Password == SentinelSecrets.Mask
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -178,8 +184,9 @@ public partial class CameraEditWindow : Window
     private async void OnSaveClicked(object sender, RoutedEventArgs e)
     {
         var name = NameBox.Text.Trim();
-        var stream = StreamBox.Text.Trim();
-        if (name.Length == 0 || stream.Length == 0)
+        var isPublished = _existing?.IsDevicePublished == true;
+        var stream = isPublished ? "" : StreamBox.Text.Trim();
+        if (name.Length == 0 || (stream.Length == 0 && !isPublished))
         {
             Message("A camera needs a name and a stream address.");
             return;
@@ -196,6 +203,7 @@ public partial class CameraEditWindow : Window
             // Carried through every save so editing a camera's name doesn't unbind its PTZ.
             OnvifPtzServiceUrl = _onvifPtzServiceUrl,
             OnvifProfileToken = _onvifProfileToken,
+            IsBrowserPublished = isPublished,
         };
 
         SaveButton.IsEnabled = false;

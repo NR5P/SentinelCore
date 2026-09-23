@@ -28,6 +28,10 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(remoteServerURL, forKey: "remoteServerURL") }
     }
     @Published private(set) var activeServerURL: String = ""
+    // Whether the "this device as a camera" sheet is up. A flag on the model rather than a link
+    // in one screen because three things open it: the Live toolbar, Settings, and streaming that
+    // resumed on its own after a relaunch. See DeviceCameraView.
+    @Published var showDeviceCamera = false
     @Published private(set) var isUsingRemote = false
     // True while this session is talking plain HTTP to an HTTPS-configured server because this
     // device doesn't trust the server's self-generated certificate - see connect(). Surfaced in

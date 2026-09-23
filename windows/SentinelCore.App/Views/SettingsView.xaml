@@ -54,11 +54,12 @@
                         <TextBlock Text="CAMERAS" Style="{StaticResource GroupHeading}" />
                         <WrapPanel>
                             <Button Content="Manage Cameras" Margin="0,0,10,0" Click="OnManageCamerasClicked" />
+                            <Button Content="Use This PC as a Camera" Margin="0,0,10,0" Click="OnDeviceCameraClicked" />
                             <Button Content="Known Faces" Margin="0,0,10,0" Click="OnKnownFacesClicked" />
                             <Button Content="Known Vehicles" Click="OnKnownVehiclesClicked" />
                         </WrapPanel>
                         <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
-                                   Text="Known vehicles are number plates the AI treats as household rather than a stranger's." />
+                                   Text="Use This PC as a Camera streams this PC's webcam to the dashboard, the way the web dashboard's publish page does from a browser. Known vehicles are number plates the AI treats as household rather than a stranger's." />
                     </StackPanel>
                 </Border>
 

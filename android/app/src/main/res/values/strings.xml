@@ -4,4 +4,6 @@
     <string name="security_alert_channel_id">security_alerts</string>
     <string name="security_alert_channel_name">Security alerts</string>
     <string name="security_alert_channel_description">AI-reviewed camera security events from Sentinel Core</string>
+    <string name="device_camera_channel_name">This phone as a camera</string>
+    <string name="device_camera_channel_description">Shown while this phone is streaming as one of your Sentinel Core cameras</string>
 </resources>

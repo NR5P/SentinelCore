@@ -99,6 +99,10 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
 
+    // Using this phone as one of the dashboard's cameras: its video is pushed to the server over
+    // WebRTC, the same way the web dashboard's publish page does it. See DevicePublisher.
+    implementation("io.getstream:stream-webrtc-android:1.3.8")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 

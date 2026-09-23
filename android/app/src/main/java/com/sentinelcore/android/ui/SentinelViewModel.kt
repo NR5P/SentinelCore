@@ -59,6 +59,7 @@ import com.sentinelcore.android.data.SystemStatus
 import com.sentinelcore.android.data.TriggerConfig
 import com.sentinelcore.android.net.DiscoveredServer
 import com.sentinelcore.android.net.ServerDiscovery
+import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.PushTokenStore
 import com.sentinelcore.android.push.PushTokenUpdates
@@ -190,6 +191,10 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     init {
         repository.baseUrl = _state.value.serverUrl
+        // The device-camera engine shares this repository - same server, same session cookie -
+        // and outlives this ViewModel, since a foreground service keeps it streaming after the
+        // Activity is gone. See DevicePublisher.
+        DevicePublisher.attach(application, repository, ::log)
         refreshNotificationPermission()
         viewModelScope.launch {
             PushTokenUpdates.token.collect { token ->

@@ -1,0 +1,66 @@
+<Window x:Class="SentinelCore.App.Views.DeviceCameraWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="This PC as a camera" Height="760" Width="720" MinHeight="560" MinWidth="560">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Style="{StaticResource DialogHeader}">
+            <StackPanel>
+                <TextBlock Text="This PC as a camera" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" />
+                <TextBlock x:Name="SubtitleText" Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap"
+                           Text="Stream this PC's webcam to the dashboard. From there it is an ordinary camera: it appears on Live, records clips, fires trigger zones and gets analyzed like the rest." />
+            </StackPanel>
+        </Border>
+
+        <!-- What the app does to keep the stream going, and what only the person can do. -->
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <StackPanel>
+                <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Foreground="{StaticResource Green}"
+                           Text="✓ While streaming, this app holds the PC out of sleep and keeps the display on. You can minimize this window; don't close it." />
+                <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,6,0,0"
+                           Text="→ Plug it in. If it is a laptop, keep the lid open, or set Control Panel → Power Options → Choose what closing the lid does → Do nothing. If the app is closed or the PC restarts, streaming resumes the next time the app is opened." />
+                <TextBlock x:Name="StateText" Style="{StaticResource Monospace}" Margin="0,8,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <!-- Step one: which dashboard camera this PC is. Shown until chosen, then the page takes over. -->
+            <Border x:Name="ChoicePanel" Margin="18" VerticalAlignment="Top">
+                <StackPanel>
+                    <TextBlock Text="Which camera is this PC?" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" />
+                    <ListBox x:Name="TargetList" MaxHeight="220" Margin="0,0,0,10" DisplayMemberPath="Name" />
+                    <Button x:Name="UseExistingButton" Content="Stream to the selected camera" Style="{StaticResource PrimaryButton}"
+                            HorizontalAlignment="Left" Click="OnUseExistingClicked" Margin="0,0,0,18" />
+
+                    <TextBlock Text="Or make a new camera for this PC" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="NewNameBox" Grid.Column="0" />
+                        <Button x:Name="CreateButton" Grid.Column="1" Content="Create and stream" Margin="8,0,0,0" Click="OnCreateClicked" />
+                    </Grid>
+                    <TextBlock x:Name="ChoiceMessage" Style="{StaticResource Caption}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Step two: the dashboard's own publish page, running in WebView2 with this session's
+                 cookie - the same page a browser would show, with the camera picker, microphone switch,
+                 start/stop, and the server's confirmation that video is arriving. -->
+            <wv2:WebView2 x:Name="Web" Visibility="Collapsed" />
+
+            <StackPanel x:Name="Placeholder" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="440"
+                        Visibility="Collapsed">
+                <TextBlock x:Name="PlaceholderTitle" FontSize="16" HorizontalAlignment="Center"
+                           Foreground="{StaticResource SecondaryText}" />
+                <TextBlock x:Name="PlaceholderMessage" Style="{StaticResource Caption}" TextAlignment="Center"
+                           Margin="0,8,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -38,8 +38,14 @@ public partial class LiveView : UserControl
         // having to remember to say so.
         IsVisibleChanged += (_, _) => SetActive(IsVisible);
 
+        SetAdminControls();
         Rebuild();
     }
+
+    private void SetAdminControls() =>
+        DeviceCameraButton.Visibility = _model.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+
+    private void OnDeviceCameraClicked(object sender, RoutedEventArgs e) => DeviceCameraWindow.Open(_model);
 
     /// <summary>
     /// Whether the tiles should be streaming. A grid of WebView2 players decoding video nobody is
@@ -70,6 +76,10 @@ public partial class LiveView : UserControl
         if (e.PropertyName is nameof(AppModel.LiveCameras) or nameof(AppModel.IsLicensed))
         {
             Dispatcher.Invoke(Rebuild);
+        }
+        else if (e.PropertyName is nameof(AppModel.AuthStatus))
+        {
+            Dispatcher.Invoke(SetAdminControls);
         }
     }
 

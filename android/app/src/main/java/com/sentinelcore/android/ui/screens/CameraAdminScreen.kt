@@ -114,7 +114,14 @@ fun CameraAdminScreen(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(camera.name, style = MaterialTheme.typography.titleSmall)
-                                camera.streamUrl?.let {
+                                if (camera.isBrowserPublished) {
+                                    Text(
+                                        "streams from a device - a phone, a Mac, or a browser's publish page",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                camera.streamUrl?.takeIf { !camera.isBrowserPublished }?.let {
                                     Text(
                                         it,
                                         style = MaterialTheme.typography.bodySmall,

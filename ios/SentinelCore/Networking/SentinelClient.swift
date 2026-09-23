@@ -10,6 +10,12 @@ final class SentinelClient {
         session = Self.makeSession()
     }
 
+    // For the parts of the app that talk to the server through this client but live outside a
+    // view - DevicePublisher - so their diagnostics land in the same Settings log as requests do.
+    func log(_ message: String, level: DiagnosticLevel = .info) {
+        model.log(message, level: level)
+    }
+
     func resetSession() {
         session.invalidateAndCancel()
         session = Self.makeSession()
@@ -71,6 +77,27 @@ final class SentinelClient {
 
     func updateCamera(id: UUID, _ input: CameraInput) async throws {
         let _: EmptyResponse = try await send("/api/cameras/\(id.uuidString)", method: "PUT", body: input)
+    }
+
+    // The signaling half of streaming this device into a published camera (see DevicePublisher):
+    // the SDP offer goes up as raw text and go2rtc's answer comes back the same way. The same
+    // endpoint the web dashboard's publish page uses, authenticated by the same session cookie -
+    // there is deliberately no separate publish credential on the server.
+    func publishOffer(cameraId: UUID, sdp: String) async throws -> String {
+        guard let url = url(path: "/api/cameras/\(cameraId.uuidString)/publish") else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(sdp.utf8)
+        let data = try await performData(request)
+        guard let answer = String(data: data, encoding: .utf8), !answer.isEmpty else { throw ClientError.invalidResponse }
+        return answer
+    }
+
+    // Whether the server is actually receiving video for a published camera. Polled while this
+    // device streams, because a connected peer connection is not proof that frames are arriving.
+    func publishStatus(cameraId: UUID) async throws -> PublishStatus {
+        try await get("/api/cameras/\(cameraId.uuidString)/publish/status")
     }
 
     // The one way to see a camera's real password. Deliberately per-camera and on demand: the

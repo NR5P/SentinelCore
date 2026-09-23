@@ -14,6 +14,10 @@ struct LiveStreamSource: Hashable {
     // Whether an audio track is worth asking for: false for a grid tile, which is muted and stays
     // muted, true for the full-screen view where there is a mute button to turn off.
     let wantsAudio: Bool
+    // A camera whose video is pushed to the server by a device (a phone or Mac running this app,
+    // or a browser's publish page). Its MSE stream is a transcode the server starts on demand,
+    // which changes what a first-connect failure means - see mseFailed.
+    var isDevicePublished: Bool = false
 }
 
 // The live ladder for one camera tile: fMP4 over the server's WebSocket first, HLS if that can't
@@ -175,10 +179,24 @@ final class LiveStreamPlayer: ObservableObject {
             return
         }
 
-        // Failing without ever delivering a frame is instead the signature of a server that has no
-        // go2rtc at all, so it latches the tier off for every other tile too rather than having
+        // A device-published camera's MSE stream is a transcode the server starts when the first
+        // viewer asks for it, and a cold encode has nothing to emit for its first ten or twenty
+        // seconds - so "no media within 10s" on the first connect is the expected warm-up, not a
+        // verdict on the tier. Dial again, a few times; and never let it latch MSE off for the
+        // other tiles, which have nothing to do with it. A device that isn't streaming at all still
+        // ends up on HLS once the cap is spent. (Measured 2026-09-23: a phone's tile sat on
+        // CONNECTING for minutes because its first attempt latched every tile onto HLS.)
+        if !deliveredMedia, source.isDevicePublished, mseReconnects < Self.maxMseReconnects {
+            mseReconnects += 1
+            report(tier: "mse", outcome: "degraded", reason: reason, elapsedMs: elapsedMs)
+            scheduleMseReconnect(source)
+            return
+        }
+
+        // Failing without ever delivering a frame is otherwise the signature of a server that has
+        // no go2rtc at all, so it latches the tier off for every other tile too rather than having
         // each of them discover it separately.
-        if !deliveredMedia {
+        if !deliveredMedia, !source.isDevicePublished {
             Self.mseUnavailableUntil = Date().addingTimeInterval(Self.tierUnavailableTTL)
         }
         report(tier: "mse", outcome: "failed", reason: reason, elapsedMs: elapsedMs)

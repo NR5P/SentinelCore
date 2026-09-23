@@ -63,6 +63,7 @@ fun SettingsScreen(
     state: SentinelUiState,
     model: SentinelViewModel,
     onManageCameras: () -> Unit,
+    onDeviceCamera: () -> Unit,
     onManageAccounts: () -> Unit,
     onDashboardLogin: () -> Unit,
     onManageKnownFaces: () -> Unit,
@@ -196,6 +197,17 @@ fun SettingsScreen(
                         ) {
                             Text("Manage Cameras", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
+                        TextButton(
+                            onClick = onDeviceCamera,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Use This Phone as a Camera", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            "Stream this phone's camera to the dashboard, the way the web dashboard's publish page does from a browser.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 item {

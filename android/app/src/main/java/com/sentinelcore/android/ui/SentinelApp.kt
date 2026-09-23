@@ -45,6 +45,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.sentinelcore.android.data.ConnectionState
+import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.ui.components.ConnectionBadge
 import com.sentinelcore.android.ui.components.LocalIsLicensed
 import com.sentinelcore.android.ui.screens.AccountAdminScreen
@@ -54,6 +56,7 @@ import com.sentinelcore.android.ui.screens.CameraDiscoveryScreen
 import com.sentinelcore.android.ui.screens.CameraEditScreen
 import com.sentinelcore.android.ui.screens.CameraZoneEditorScreen
 import com.sentinelcore.android.ui.screens.DetailHeader
+import com.sentinelcore.android.ui.screens.DeviceCameraScreen
 import com.sentinelcore.android.ui.screens.DeviceDiscoveryScreen
 import com.sentinelcore.android.ui.screens.DeviceEditScreen
 import com.sentinelcore.android.ui.screens.DeviceHubScreen
@@ -186,6 +189,20 @@ private fun AppShell(
         val eventId = state.pendingPushEventId ?: return@LaunchedEffect
         navController.navigate("feed/event/$eventId") { launchSingleTop = true }
         model.consumePushEvent()
+    }
+
+    // If this phone was streaming as a camera when the app last ran, it goes back to being one as
+    // soon as the server is reachable - and shows the screen, so it is obvious that it did. The
+    // notification's tap lands on the same screen. See DevicePublisher.
+    val openDeviceCamera by DevicePublisher.openScreenRequested.collectAsStateWithLifecycle()
+    LaunchedEffect(state.connectionState, state.isAdmin, openDeviceCamera) {
+        if (!DevicePublisher.isAttached) return@LaunchedEffect
+        val resumed = state.connectionState == ConnectionState.ONLINE && state.isAdmin &&
+            DevicePublisher.resumeIfIntended() != null
+        if (resumed || openDeviceCamera) {
+            DevicePublisher.openScreenRequested.value = false
+            navController.navigate("settings/device-camera") { launchSingleTop = true }
+        }
     }
 
     val onSelectSection: (AppSection) -> Unit = { section ->
@@ -362,6 +379,7 @@ private fun SentinelNavHost(
                 state = state,
                 model = model,
                 onManageCameras = { navController.navigate("settings/cameras") },
+                onDeviceCamera = { navController.navigate("settings/device-camera") },
                 onManageAccounts = { navController.navigate("settings/accounts") },
                 onDashboardLogin = { navController.navigate("settings/login") },
                 onManageKnownFaces = { navController.navigate("settings/faces") },
@@ -507,6 +525,13 @@ private fun SentinelNavHost(
             )
         }
 
+        composable("settings/device-camera") {
+            DeviceCameraScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
         composable("settings/cameras") {
             CameraAdminScreen(
                 state = state,

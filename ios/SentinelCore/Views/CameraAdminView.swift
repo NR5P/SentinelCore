@@ -24,7 +24,12 @@ struct CameraAdminView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(camera.name).bold()
-                            if let streamUrl = camera.streamUrl {
+                            if camera.isDevicePublished {
+                                Text("streams from a device - a phone, a Mac, or a browser's publish page")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            } else if let streamUrl = camera.streamUrl {
                                 Text(streamUrl)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

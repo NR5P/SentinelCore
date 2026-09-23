@@ -144,6 +144,7 @@ fun CameraEditScreen(
                 ptzEnabled = ptzEnabled,
                 onvifPtzServiceUrl = onvifPtzServiceUrl,
                 onvifProfileToken = onvifProfileToken,
+                isBrowserPublished = camera?.isBrowserPublished == true,
             )
             try {
                 if (camera != null) {
@@ -167,7 +168,7 @@ fun CameraEditScreen(
             } else {
                 TextButton(
                     onClick = ::save,
-                    enabled = name.isNotBlank() && streamUrl.isNotBlank(),
+                    enabled = name.isNotBlank() && (streamUrl.isNotBlank() || camera?.isBrowserPublished == true),
                 ) {
                     Text("Save")
                 }
@@ -191,7 +192,14 @@ fun CameraEditScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        OutlinedTextField(
+                        if (camera?.isBrowserPublished == true) {
+                            // No address to edit: the device streams to the server, not the other way.
+                            Text(
+                                "Streams from a device (a phone, a Mac, or a browser's publish page). The device picks this camera when it starts streaming.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else OutlinedTextField(
                             value = streamUrl,
                             onValueChange = { streamUrl = it },
                             label = { Text("Stream URL or address") },

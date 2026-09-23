@@ -39,11 +39,18 @@ struct CameraEditView: View {
     }
 
     private var isNew: Bool { camera == nil }
+    private var isDevicePublished: Bool { camera?.isDevicePublished ?? false }
 
     var body: some View {
         Form {
             Section("Camera") {
                 SentinelTextField(label: "Name", prompt: "e.g. Driveway", text: $name)
+                if isDevicePublished {
+                    // No address to edit: the device streams to the server, not the other way.
+                    Text("Streams from a device (a phone, a Mac, or a browser's publish page). The device picks this camera when it starts streaming.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
                 SentinelTextField(
                     label: "Stream URL or address",
                     prompt: "rtsp://192.168.1.64:554/h264",
@@ -52,6 +59,7 @@ struct CameraEditView: View {
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                     #endif
+                }
                 SentinelTextField(label: "Username (optional)", text: $username)
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
@@ -142,7 +150,7 @@ struct CameraEditView: View {
                     Task { await save() }
                 }
                 .disabled(isSaving || name.trimmingCharacters(in: .whitespaces).isEmpty
-                    || streamUrl.trimmingCharacters(in: .whitespaces).isEmpty)
+                    || (streamUrl.trimmingCharacters(in: .whitespaces).isEmpty && !isDevicePublished))
             }
         }
         .onAppear {
@@ -229,7 +237,8 @@ struct CameraEditView: View {
             includeAudio: includeAudio,
             ptzEnabled: ptzEnabled,
             onvifPtzServiceUrl: onvifPtzServiceUrl,
-            onvifProfileToken: onvifProfileToken
+            onvifProfileToken: onvifProfileToken,
+            isBrowserPublished: camera?.isDevicePublished ?? false
         )
         do {
             if let camera {
@@ -246,7 +255,8 @@ struct CameraEditView: View {
                         username: input.username,
                         // Back to the mask, never the revealed value: this list is what the next
                         // edit loads from, and it should hold no more than the server just sent.
-                        password: (input.password?.isEmpty ?? true) ? nil : SentinelSecrets.mask
+                        password: (input.password?.isEmpty ?? true) ? nil : SentinelSecrets.mask,
+                        isBrowserPublished: camera.isBrowserPublished
                     )
                 }
             } else {

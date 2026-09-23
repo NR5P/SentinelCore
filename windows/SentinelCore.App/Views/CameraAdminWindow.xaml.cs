@@ -17,7 +17,9 @@ public partial class CameraAdminWindow : Window
     public sealed record CameraRow(Client.Models.Camera Camera)
     {
         public string Name => Camera.Name;
-        public string StreamUrl => Camera.StreamUrl ?? "No stream address";
+        public string StreamUrl => Camera.IsDevicePublished
+            ? "Streams from a device - a phone, a Mac, a PC running this app, or a browser's publish page"
+            : Camera.StreamUrl ?? "No stream address";
         public Visibility PtzVisibility => Camera.PtzEnabled == true ? Visibility.Visible : Visibility.Collapsed;
         public Visibility AudioVisibility => Camera.IncludeAudio == true ? Visibility.Visible : Visibility.Collapsed;
     }

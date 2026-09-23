@@ -40,6 +40,18 @@ struct RootView: View {
         .onChange(of: model.selectedEvent?.id) { _, eventId in
             if eventId != nil { selection = .events }
         }
+        .sheet(isPresented: $model.showDeviceCamera) {
+            DeviceCameraSheet().environmentObject(model)
+        }
+        // If this device was streaming as a camera when the app last ran, it goes back to being
+        // one as soon as the server is reachable - and shows the screen, so it is obvious that it
+        // did. See DevicePublisher.resumeIfIntended.
+        .onChange(of: model.connectionState) { _, state in
+            guard state == .online, model.isAdmin else { return }
+            if DevicePublisher.shared.resumeIfIntended(client: model.client) != nil {
+                model.showDeviceCamera = true
+            }
+        }
     }
 
     private var splitNavigation: some View {

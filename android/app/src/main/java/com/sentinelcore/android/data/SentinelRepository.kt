@@ -523,6 +523,30 @@ class SentinelRepository(
         )
     }
 
+    // The signaling half of streaming this phone into a published camera (see DevicePublisher):
+    // the SDP offer goes up as raw text and go2rtc's answer comes back the same way. The same
+    // endpoint the web dashboard's publish page uses, authenticated by the same session cookie -
+    // there is deliberately no separate publish credential on the server.
+    suspend fun publishOffer(cameraId: String, sdp: String): String = withContext(Dispatchers.IO) {
+        request(
+            "/api/cameras/${queryValue(cameraId)}/publish",
+            method = "POST",
+            body = sdp,
+            contentType = "application/sdp",
+        ).ifBlank { throw IOException("The server returned an empty answer.") }
+    }
+
+    // Whether the server is actually receiving video for a published camera. Polled while this
+    // phone streams, because a connected peer connection is not proof that frames are arriving.
+    suspend fun publishStatus(cameraId: String): PublishStatus = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/cameras/${queryValue(cameraId)}/publish/status"))
+        PublishStatus(
+            publishing = json.optBoolean("publishing"),
+            lastSeenAt = json.nullableString("lastSeenAt"),
+            missingSince = json.nullableString("missingSince"),
+        )
+    }
+
     suspend fun deleteCamera(id: String) = withContext(Dispatchers.IO) {
         request("/api/cameras/${queryValue(id)}", method = "DELETE")
     }
@@ -1488,6 +1512,7 @@ class SentinelRepository(
             onvifProfileToken = json.nullableString("onvifProfileToken"),
             username = json.nullableString("username"),
             password = json.nullableString("password"),
+            isBrowserPublished = json.optBoolean("isBrowserPublished"),
         )
 
     private fun JSONArray?.toStringList(): List<String> {
@@ -1752,6 +1777,7 @@ class SentinelRepository(
             .put("ptzEnabled", ptzEnabled)
             .put("onvifPtzServiceUrl", onvifPtzServiceUrl)
             .put("onvifProfileToken", onvifProfileToken)
+            .put("isBrowserPublished", isBrowserPublished)
 
     private fun polygonJson(points: List<Point2D>): JSONArray {
         val array = JSONArray()

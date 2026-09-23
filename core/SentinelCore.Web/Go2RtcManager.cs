@@ -244,8 +244,12 @@ public sealed class Go2RtcManager : IDisposable
     }
 
     // A stream go2rtc knows about lists every attached producer; the placeholder source shows up
-    // as one with no format, so only a producer that actually negotiated WebRTC counts as a live
-    // publisher.
+    // as one with no format, so only a producer that actually negotiated WebRTC counts - and only
+    // one that has received bytes. A WebRTC producer exists from the moment the SDP exchange
+    // completes, which is before ICE has connected and before any frame has arrived; a device
+    // whose media never made it (a firewalled UDP path, a sandbox that drops inbound packets)
+    // sits in that state indefinitely, and it must not read as "the server is receiving video" -
+    // that line is the one thing the publisher trusts before walking away.
     private static bool HasWebRtcProducer(System.Text.Json.JsonElement stream)
     {
         if (!stream.TryGetProperty("producers", out var producers) ||
@@ -256,7 +260,10 @@ public sealed class Go2RtcManager : IDisposable
         {
             if (producer.TryGetProperty("format_name", out var format) &&
                 format.ValueKind == System.Text.Json.JsonValueKind.String &&
-                format.GetString() == "webrtc")
+                format.GetString() == "webrtc" &&
+                producer.TryGetProperty("bytes_recv", out var bytes) &&
+                bytes.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                bytes.TryGetInt64(out var received) && received > 0)
                 return true;
         }
 

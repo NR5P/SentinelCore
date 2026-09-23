@@ -11,6 +11,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sentinelcore.android.ui.SentinelApp
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.theme.SentinelTheme
+import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.SentinelFirebaseMessagingService
 
@@ -43,6 +44,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handlePushIntent(intent: Intent?) {
         PushNavigation.open(intent?.getStringExtra(EventIdExtra))
+        DevicePublisher.requestScreen(intent)
     }
 
     companion object {

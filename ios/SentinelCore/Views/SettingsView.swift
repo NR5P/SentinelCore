@@ -1,6 +1,13 @@
 import SwiftUI
 
 struct SettingsView: View {
+    private var deviceCameraLabel: String {
+        #if os(iOS)
+        "Use This iPhone as a Camera"
+        #else
+        "Use This Mac as a Camera"
+        #endif
+    }
     @EnvironmentObject private var model: AppModel
     @State private var address = ""
     @State private var remoteAddress = ""
@@ -84,6 +91,11 @@ struct SettingsView: View {
                 Section("Cameras") {
                     NavigationLink("Manage Cameras") {
                         CameraAdminView()
+                    }
+                    Button {
+                        model.showDeviceCamera = true
+                    } label: {
+                        Label(deviceCameraLabel, systemImage: "video.badge.plus")
                     }
                 }
                 Section {

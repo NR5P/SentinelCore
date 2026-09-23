@@ -36,7 +36,9 @@
 		<string>_sentinelcore._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Sentinel Core uses the camera to take a reference photo when enrolling a known person for face recognition.</string>
+	<string>Sentinel Core uses the camera to stream this device as one of your security cameras, and to take a reference photo when enrolling a known person for face recognition.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Sentinel Core uses the microphone only if you choose to include sound while streaming this device as a security camera.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Sentinel Core connects to your camera security server and live video streams on your local network.</string>
 	<key>UILaunchScreen</key>

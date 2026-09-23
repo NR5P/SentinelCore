@@ -146,6 +146,11 @@ struct Camera: Codable, Identifiable, Hashable {
     // whole record, it doesn't merge, so these have to round-trip through every edit.
     let onvifPtzServiceUrl: String?
     let onvifProfileToken: String?
+    // This camera's video is pushed to the server by a device (a phone or Mac running the
+    // Sentinel Core app, or a browser's publish page). Optional so an older server still decodes.
+    let isBrowserPublished: Bool?
+
+    var isDevicePublished: Bool { isBrowserPublished ?? false }
 }
 
 struct CameraInput: Encodable {

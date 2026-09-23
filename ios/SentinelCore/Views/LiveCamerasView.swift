@@ -15,6 +15,7 @@ import SwiftUI
 
 struct LiveCamerasView: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var publisher = DevicePublisher.shared
     let isActive: Bool
 
     private static let tileSpacing: CGFloat = 16
@@ -54,6 +55,18 @@ struct LiveCamerasView: View {
         .navigationDestination(for: Camera.self) { LivePlayerView(camera: $0) }
         .refreshable { await model.connect() }
         .toolbar {
+            if model.isAdmin {
+                ToolbarItem {
+                    Button { model.showDeviceCamera = true } label: {
+                        Label("Use This Device as a Camera",
+                              systemImage: publisher.isPublishing ? "record.circle.fill" : "video.badge.plus")
+                    }
+                    .tint(publisher.isPublishing ? SentinelTheme.red : nil)
+                    .help(publisher.isPublishing
+                          ? "This device is streaming as \(publisher.target?.name ?? "a camera")"
+                          : "Stream this device's camera to the dashboard")
+                }
+            }
             ToolbarItem {
                 Button { Task { await model.connect(resetNetworkSession: true) } } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
@@ -265,7 +278,8 @@ private struct LiveCameraPreview: View {
         return LiveStreamRequest(
             isActive: isStreaming,
             source: LiveStreamSource(
-                cameraId: camera.id, mse: mseURL, hls: streamURL, wantsAudio: false))
+                cameraId: camera.id, mse: mseURL, hls: streamURL, wantsAudio: false,
+                isDevicePublished: camera.isDevicePublished))
     }
 }
 
@@ -502,7 +516,8 @@ struct LivePlayerView: View {
             hls: hls,
             // Only where there is something to hear: asking go2rtc for an audio track it then has
             // to carry costs bandwidth on every camera, and only two of these have audio at all.
-            wantsAudio: camera.includeAudio == true)
+            wantsAudio: camera.includeAudio == true,
+            isDevicePublished: camera.isDevicePublished)
     }
 }
 

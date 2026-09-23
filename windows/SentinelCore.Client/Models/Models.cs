@@ -173,6 +173,13 @@ public sealed class Camera
     // fetched only when someone presses Show.
     public string? Username { get; init; }
     public string? Password { get; init; }
+
+    // This camera's video is pushed to the server by a device - a browser on the publish page, a
+    // phone or Mac running the Sentinel Core app, or this PC (see DeviceCameraWindow) - rather
+    // than pulled from an address. Absent on an older server, which reads as an ordinary camera.
+    public bool? IsBrowserPublished { get; init; }
+
+    public bool IsDevicePublished => IsBrowserPublished == true;
 }
 
 // SettingsSecrets.Mask on the server. Any stored secret is replaced by this on its way out, and
@@ -202,6 +209,11 @@ public sealed class CameraInput
     public bool PtzEnabled { get; set; }
     public string? OnvifPtzServiceUrl { get; set; }
     public string? OnvifProfileToken { get; set; }
+
+    // Carried through every save of a device-published camera: the PUT overwrites the whole record,
+    // and without this an edit from here turned it back into an ordinary camera with no URL, which
+    // the server rejects. Set on create by DeviceCameraWindow when this PC becomes a camera.
+    public bool IsBrowserPublished { get; set; }
 }
 
 // The Live grid's tile order for the signed-in account - the same shape in both directions, so

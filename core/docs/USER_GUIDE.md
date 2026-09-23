@@ -556,6 +556,32 @@ your cameras. Nothing is installed on it: it opens a page, presses start, and it
 to the server for as long as that page stays open. From there it is an ordinary camera: it
 appears on the **LIVE** tab, records clips, fires trigger zones and gets analyzed like the rest.
 
+**If the device has the Sentinel Core app** (iPhone, iPad, Mac, Android, Windows), use the app
+instead of the browser — it is the same thing done natively, with no certificate step and with the
+device kept awake by the app itself. In the app: **Settings → Cameras → Use This Device as a
+Camera** (also the camera-plus button at the top of **Live**). Pick the dashboard camera this
+device should be, or let it make a new one named after the device, check the preview, and press
+**Start Streaming**. The screen says whether the server is actually receiving video, and lists
+what the app is handling for you and what it can't:
+
+- **iPhone / iPad:** the app keeps the screen on (no Auto-Lock change needed) and offers a *Dim
+  screen* button so it doesn't light the room. iOS takes the camera away from any app that isn't in
+  front, so leave Sentinel Core in front and plugged in; if the app is quit or the phone restarts,
+  it resumes streaming on its own the next time it is opened.
+- **Android:** the app runs a foreground service, so **the screen can be turned off** and the
+  camera keeps going. Plug it in, set battery use to *Unrestricted* (the screen has a button for
+  it), and don't swipe the app away from recents. The notification has a *Stop streaming* button.
+- **Mac:** the app holds the Mac out of idle sleep; the display may go dark and that is fine.
+  Keep the lid open and set *Prevent automatic sleeping on power adapter when the display is off*.
+  Hiding the app is fine; quitting it stops the stream (and it resumes on the next launch).
+- **Windows:** the app holds the PC out of sleep and keeps the display on while streaming. Keep
+  the lid open or set *Choose what closing the lid does* to *Do nothing*. Minimize the window,
+  don't close it.
+
+Everything below about the browser page — reconnecting, the two-minute "stopped streaming"
+message, editing the camera later — applies to the app the same way; the camera it creates is
+the same kind of camera.
+
 **If the camera is on the device you're using right now** (the usual case — a laptop with the
 dashboard open), it is one form. On the **CAMERAS** tab click **+ add webcam device** (next to
 **+ add camera**). The form asks for a name, whether to include the microphone, and shows

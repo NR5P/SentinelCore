@@ -155,6 +155,22 @@ struct Camera: Codable, Identifiable, Hashable {
     // only when someone presses Show. Optional so a response from an older server still decodes.
     let username: String?
     let password: String?
+    // This camera's video is pushed to the server by a device - a browser on the publish page, or
+    // this app streaming the phone/Mac it runs on (see DevicePublisher) - rather than pulled from
+    // an address. Optional so a response from an older server still decodes; absent reads as an
+    // ordinary camera.
+    let isBrowserPublished: Bool?
+
+    var isDevicePublished: Bool { isBrowserPublished ?? false }
+}
+
+// What the server knows about whether a device is streaming into a published camera right now,
+// from /api/cameras/{id}/publish/status. `publishing` is the honest answer - go2rtc is actually
+// receiving frames - as opposed to a peer connection that merely reports "connected".
+struct PublishStatus: Decodable {
+    let publishing: Bool
+    let lastSeenAt: Date?
+    let missingSince: Date?
 }
 
 // SettingsSecrets.Mask on the server. Any stored secret is replaced by this on its way out, and
@@ -180,6 +196,10 @@ struct CameraInput: Encodable {
     var ptzEnabled: Bool
     var onvifPtzServiceUrl: String?
     var onvifProfileToken: String?
+    // Carried through every save of a device-published camera: the PUT overwrites the whole record,
+    // and without this an edit from here turned it back into an ordinary camera with no URL, which
+    // the server rejects. Set on create by DeviceCameraView when this device becomes a camera.
+    var isBrowserPublished: Bool = false
 }
 
 // The Live grid's tile order for the signed-in account - the same shape in both directions, so

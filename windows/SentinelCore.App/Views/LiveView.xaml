@@ -15,10 +15,19 @@
                            Text="Drag a tile onto another to rearrange the grid. Double-click to open a camera." />
             </StackPanel>
 
-            <Button Grid.Column="1" Padding="10,6" Click="OnRefreshClicked" VerticalAlignment="Center"
-                    ToolTip="Refresh the camera list">
-                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" />
-            </Button>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- Admin only, like every other way of adding a camera - see SetAdminControls. -->
+                <Button x:Name="DeviceCameraButton" Padding="10,6" Margin="0,0,8,0" Click="OnDeviceCameraClicked"
+                        Visibility="Collapsed" ToolTip="Stream this PC's webcam to the dashboard as a camera">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" Margin="0,0,6,0" />
+                        <TextBlock Text="Use this PC as a camera" />
+                    </StackPanel>
+                </Button>
+                <Button Padding="10,6" Click="OnRefreshClicked" ToolTip="Refresh the camera list">
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" />
+                </Button>
+            </StackPanel>
         </Grid>
 
         <Grid>

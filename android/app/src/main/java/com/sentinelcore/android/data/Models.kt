@@ -137,6 +137,19 @@ data class Camera(
     // only when someone presses Show.
     val username: String? = null,
     val password: String? = null,
+    // This camera's video is pushed to the server by a device - a browser on the publish page, or
+    // this app streaming the phone it runs on (see DevicePublisher) - rather than pulled from an
+    // address. Absent on an older server, which reads as an ordinary camera.
+    val isBrowserPublished: Boolean = false,
+)
+
+// What the server knows about whether a device is streaming into a published camera right now,
+// from /api/cameras/{id}/publish/status. `publishing` is the honest answer - go2rtc is actually
+// receiving frames - as opposed to a peer connection that merely reports "connected".
+data class PublishStatus(
+    val publishing: Boolean,
+    val lastSeenAt: String?,
+    val missingSince: String?,
 )
 
 // SettingsSecrets.Mask on the server. Any stored secret is replaced by this on its way out, and
@@ -155,6 +168,10 @@ data class CameraInput(
     val ptzEnabled: Boolean,
     val onvifPtzServiceUrl: String?,
     val onvifProfileToken: String?,
+    // Carried through every save of a device-published camera: the PUT overwrites the whole record,
+    // and without this an edit from here turned it back into an ordinary camera with no URL, which
+    // the server rejects. Set on create by DeviceCameraScreen when this phone becomes a camera.
+    val isBrowserPublished: Boolean = false,
 )
 
 data class KnownFace(

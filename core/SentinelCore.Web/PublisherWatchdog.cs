@@ -107,10 +107,12 @@ public sealed class PublisherWatchdog(
         var text =
             $"The server stopped receiving video from \"{camera.Name}\" " +
             (lastSeen is null ? "a few minutes ago." : $"at {lastSeen.Value.ToLocalTime():yyyy-MM-dd HH:mm}.") + "\n\n" +
-            "The device it runs on has most likely gone to sleep, lost its network, or had the tab closed. " +
+            "The device it runs on has most likely gone to sleep, lost its network, or had the tab or app closed. " +
             "Nothing is being recorded from it, and its trigger zones are not being watched, until it is back.\n\n" +
-            "To fix it: wake the device, open the dashboard on it, and on the Cameras tab press edit on this camera " +
-            "and save (or reopen its publish page). Then keep the device plugged in with sleep turned off.\n\n" +
+            "To fix it: wake the device. If it streams from the Sentinel Core app (a phone, Mac or PC), open the app - " +
+            "it picks streaming back up on its own. If it streams from a browser, open the dashboard on it and on the " +
+            "Cameras tab press edit on this camera and save (or reopen its publish page). " +
+            "Then keep the device plugged in with sleep turned off.\n\n" +
             "You'll get one more message when it is streaming again.";
 
         logger.LogWarning("Webcam device {Camera} ({Id}) has stopped streaming (last seen {LastSeen})", camera.Name, camera.Id, lastSeen);

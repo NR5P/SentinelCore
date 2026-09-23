@@ -195,7 +195,8 @@ private struct LiveCameraPreview: View {
         return LiveStreamRequest(
             isActive: isStreaming,
             source: LiveStreamSource(
-                cameraId: camera.id, mse: mseURL, hls: streamURL, wantsAudio: false))
+                cameraId: camera.id, mse: mseURL, hls: streamURL, wantsAudio: false,
+                isDevicePublished: camera.isDevicePublished))
     }
 }
 
@@ -260,6 +261,7 @@ struct LivePlayerView: View {
             hls: hls,
             // Only where there is something to hear: asking go2rtc for an audio track it then has
             // to carry costs bandwidth on every camera, and only some of these have audio at all.
-            wantsAudio: camera.includeAudio == true)
+            wantsAudio: camera.includeAudio == true,
+            isDevicePublished: camera.isDevicePublished)
     }
 }

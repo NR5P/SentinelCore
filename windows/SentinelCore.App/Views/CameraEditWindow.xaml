@@ -26,10 +26,17 @@
                 <TextBlock Text="Name" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
                 <TextBox x:Name="NameBox" />
 
-                <TextBlock Text="Stream address" Style="{StaticResource FieldLabel}" />
-                <TextBox x:Name="StreamBox" />
-                <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
-                           Text="Usually an RTSP address, for example rtsp://192.168.1.60:554/h264Preview_01_main" />
+                <StackPanel x:Name="StreamPanel">
+                    <TextBlock Text="Stream address" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="StreamBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
+                               Text="Usually an RTSP address, for example rtsp://192.168.1.60:554/h264Preview_01_main" />
+                </StackPanel>
+                <!-- A device-published camera has no address to edit: the device streams to the
+                     server, not the other way. -->
+                <TextBlock x:Name="PublishedNotice" Style="{StaticResource Caption}" Margin="0,8,0,0"
+                           Visibility="Collapsed" TextWrapping="Wrap"
+                           Text="Streams from a device (a phone, a Mac, a PC running this app, or a browser's publish page). The device picks this camera when it starts streaming." />
 
                 <TextBlock Text="Username" Style="{StaticResource FieldLabel}" />
                 <TextBox x:Name="UsernameBox" />
