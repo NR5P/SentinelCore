@@ -643,6 +643,21 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "organizer",
+            Title = "ORGANIZER",
+            Group = SettingsGroups.Automation,
+            Endpoint = "/api/settings/organizer",
+            Basic = true,
+            DtoType = typeof(OrganizerSettingsDto),
+            Description = "Notes, calendar, reminders and Trello-style boards, shared across the dashboard and every app and kept on each device so they work with no signal. Everything is stored on this server; each device also keeps its own copy (how much is set in that app's settings), which is what lets a replacement server be filled back up from the devices if this one is ever lost. With login turned on, each person gets a Personal space as well as the shared Family one, and can make groups that only chosen people see.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the Organizer on the dashboard and in the apps. Turning it off hides it everywhere but deletes nothing - turn it back on and everything is where it was."),
+                Number("maxAttachmentMegabytes", "Largest Attachment (MB)", "The biggest single picture or file anyone can attach to a note, event, reminder or card. Every device keeping a full copy downloads every attachment, so this is also the most one attachment can cost a phone.", 1, 2048)
+            ]
+        },
+        new()
+        {
             Key = "packageTheftWatch",
             Title = "PACKAGE THEFT WATCH",
             Group = SettingsGroups.Ai,

@@ -19,6 +19,10 @@ namespace SentinelCore.Web;
 //   - Events, captured images, and the "reviewed" marks on them: history, not configuration, and
 //     large. An install restored from this file is your setup, not your past.
 //   - Login sessions: restoring one onto another machine would be handing over a live login.
+//   - Organizer attachments (the pictures and files themselves). Their descriptions are here,
+//     but the bytes would make this file as large as everyone's photo collection. Every device
+//     that syncs keeps its own copy, and after a restore the server lists the ones it's missing
+//     so the devices upload them again - see OrganizerStore.
 //
 // This intentionally includes secrets (SMTP password, bot tokens, API keys) and, since accounts
 // are here, password hashes - for a genuinely one-file restore. The exported file is as sensitive
@@ -34,13 +38,16 @@ public sealed record BackupDocument(
     IReadOnlyList<CameraGroup>? CameraGroups = null,
     IReadOnlyList<GateCheckConfig>? GateChecks = null,
     IReadOnlyList<Account>? Accounts = null,
-    IReadOnlyList<LiveOrderEntry>? LiveOrder = null);
+    IReadOnlyList<LiveOrderEntry>? LiveOrder = null,
+    // Added in schema 3: every Organizer space and item, clocks included, so a restore merges
+    // by the same newest-edit-wins rule as a device sync and can't roll anything back.
+    OrganizerBackup? Organizer = null);
 
 public static class BackupEndpoints
 {
-    // 2 added CameraGroups and GateChecks. Bumping this does not invalidate older exports - see
+    // 2 added CameraGroups and GateChecks; 3 added Organizer. Bumping this does not invalidate older exports - see
     // Validate, which accepts anything up to this number.
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
     private static readonly JsonSerializerOptions ImportOptions = new(JsonSerializerDefaults.Web);
 
     public static void MapBackupEndpoints(this WebApplication app)
@@ -58,7 +65,7 @@ public static class BackupEndpoints
         backup.MapGet("/export", async (
             AppSettingsFile settings, ICameraStore cameras, ICameraGroupStore cameraGroups,
             ITriggerConfigStore triggerConfigs, IGateCheckStore gateChecks,
-            IAccountStore accounts, ILiveOrderStore liveOrder, CancellationToken ct) =>
+            IAccountStore accounts, ILiveOrderStore liveOrder, IOrganizerStore organizer, CancellationToken ct) =>
         {
             var document = new BackupDocument(
                 CurrentSchemaVersion,
@@ -69,7 +76,8 @@ public static class BackupEndpoints
                 await cameraGroups.GetAllAsync(ct),
                 [.. (await gateChecks.GetAllAsync(ct)).Select(WithoutTransitionMemory)],
                 await accounts.GetAllAsync(ct),
-                await liveOrder.GetAllAsync(ct));
+                await liveOrder.GetAllAsync(ct),
+                await organizer.ExportAsync(ct));
 
             return Results.Ok(document);
         });
@@ -85,7 +93,7 @@ public static class BackupEndpoints
             HttpRequest request, HttpContext http, AppSettingsFile settings, ICameraStore cameras,
             ICameraGroupStore cameraGroups, ITriggerConfigStore triggerConfigs,
             IGateCheckStore gateChecks, IAccountStore accounts, ILiveOrderStore liveOrder,
-            CancellationToken ct) =>
+            IOrganizerStore organizer, CancellationToken ct) =>
         {
             BackupDocument? document;
             try
@@ -173,6 +181,10 @@ public static class BackupEndpoints
                 liveOrderRestored++;
             }
 
+            var organizerItemsRestored = document.Organizer is { } organizerBackup
+                ? await organizer.ImportAsync(organizerBackup, ct)
+                : 0;
+
             return Results.Ok(new
             {
                 success = true,
@@ -182,7 +194,8 @@ public static class BackupEndpoints
                 gateChecksRestored,
                 accountsRestored,
                 accountsSkipped,
-                liveOrderRestored
+                liveOrderRestored,
+                organizerItemsRestored
             });
         });
     }

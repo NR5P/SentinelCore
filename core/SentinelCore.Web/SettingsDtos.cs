@@ -634,3 +634,15 @@ public sealed class HostRebootSettingsDto
     [Range(0, 3600)]
     public int DelaySeconds { get; set; } = 60;
 }
+
+// Server settings for the Organizer. On by default: a household that never opens it pays nothing
+// for it, and one that does shouldn't have to find a switch first.
+public sealed class OrganizerSettingsDto
+{
+    public const string SectionName = "Organizer";
+
+    public bool Enabled { get; set; } = true;
+
+    [Range(1, 2048)]
+    public int MaxAttachmentMegabytes { get; set; } = 50;
+}

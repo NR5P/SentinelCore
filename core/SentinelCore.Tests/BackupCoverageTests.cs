@@ -55,7 +55,7 @@ public sealed class BackupCoverageTests : IDisposable
     [Fact]
     public void EveryConfigurationStore_IsEitherBackedUp_OrDeliberatelyExcluded()
     {
-        var backedUp = new[] { "Cameras", "CameraGroups", "TriggerZones", "GateChecks", "Accounts", "LiveOrder" };
+        var backedUp = new[] { "Cameras", "CameraGroups", "TriggerZones", "GateChecks", "Accounts", "LiveOrder", "Organizer" };
 
         // Excluded on purpose, each for a reason recorded next to it in BackupEndpoints:
         //   Sessions       - a live login; restoring one onto another machine would hand it over

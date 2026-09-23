@@ -210,6 +210,11 @@ builder.Services.AddSingleton<HlsStreamManager>();
 // How each person has dragged their Live tiles around - a per-account view preference, kept out
 // of cameras.db so the camera list itself stays the one canonical, order-agnostic answer.
 builder.Services.AddSingleton<ILiveOrderStore>(new SqliteLiveOrderStore(camerasRoot));
+// Notes, calendar, reminders and boards - see OrganizerStore. Attachments live beside it as
+// content-addressed files, swept daily once nothing points at them.
+builder.Services.AddSingleton<IOrganizerStore>(new SqliteOrganizerStore(camerasRoot));
+builder.Services.AddSingleton(new OrganizerBlobStore(camerasRoot));
+builder.Services.AddHostedService<OrganizerBlobSweepWorker>();
 // WebRTC live view via a go2rtc sidecar - see Go2RtcManager. Generous timeout: the SDP exchange
 // includes go2rtc gathering its ICE candidates, and the first request may also be paying the
 // sidecar's startup wait.
@@ -464,6 +469,7 @@ app.MapCameraPublishEndpoints();
 app.MapCertificateAuthorityEndpoints();
 app.MapCameraGroupEndpoints();
 app.MapLiveOrderEndpoints();
+app.MapOrganizerEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();

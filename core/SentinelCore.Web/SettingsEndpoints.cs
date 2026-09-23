@@ -51,7 +51,8 @@ public sealed record SettingsSnapshot(
     RepeatAlertsSettingsDto? RepeatAlerts = null,
     // Appended last, with a default, so a backup file written before this property existed still
     // deserializes - the same rule the properties above it follow.
-    ScheduledRecordingSettingsDto? ScheduledRecording = null);
+    ScheduledRecordingSettingsDto? ScheduledRecording = null,
+    OrganizerSettingsDto? Organizer = null);
 
 public static class SettingsEndpoints
 {
@@ -167,6 +168,9 @@ public static class SettingsEndpoints
 
         settings.MapPut("/scheduled-recording", async (ScheduledRecordingSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, ScheduledRecordingOptions.SectionName, ct));
+
+        settings.MapPut("/organizer", async (OrganizerSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, OrganizerSettingsDto.SectionName, ct));
 
         settings.MapPut("/package-theft-watch", async (PackageTheftWatchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "PackageTheftWatch", ct));
@@ -508,7 +512,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<RepeatAlertsSettingsDto>("RepeatAlerts", cancellationToken)
             ?? new RepeatAlertsSettingsDto(),
         await settings.GetSectionAsync<ScheduledRecordingSettingsDto>(
-            ScheduledRecordingOptions.SectionName, cancellationToken));
+            ScheduledRecordingOptions.SectionName, cancellationToken),
+        await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -553,6 +558,7 @@ public static class SettingsEndpoints
         MultiFrameAnalysis = snapshot.MultiFrameAnalysis ?? new(),
         TriggerRewind = snapshot.TriggerRewind ?? new(),
         ScheduledRecording = snapshot.ScheduledRecording ?? new(),
+        Organizer = snapshot.Organizer ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -631,6 +637,7 @@ public static class SettingsEndpoints
         if (snapshot.HostReboot is not null) await settings.MergeSectionAsync("HostReboot", snapshot.HostReboot, cancellationToken);
         if (snapshot.NuisanceAdvisor is not null) await settings.MergeSectionAsync("NuisanceAdvisor", snapshot.NuisanceAdvisor, cancellationToken);
         if (snapshot.ScheduledRecording is not null) await settings.MergeSectionAsync(ScheduledRecordingOptions.SectionName, snapshot.ScheduledRecording, cancellationToken);
+        if (snapshot.Organizer is not null) await settings.MergeSectionAsync(OrganizerSettingsDto.SectionName, snapshot.Organizer, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a
