@@ -290,6 +290,33 @@ public sealed class OrganizerLiveServerTests : IDisposable
     }
 
     [LiveServerFact]
+    public async Task AHolidayChoiceFollowsThePersonToTheirOtherDevices()
+    {
+        var (pc, pcLink) = Device("pc");
+        var (laptop, laptopLink) = Device("laptop");
+        await Start(pc, pcLink);
+        await Start(laptop, laptopLink);
+        pc.SetHolidaySets(new[] { "jewish", "us-federal" });
+        await WaitUntil(() => !pc.Holidays.Dirty && pc.Holidays.List.Count > 0);
+        await laptop.RefreshHolidaysAsync(force: true);
+        Assert.Equal(new[] { "jewish", "us-federal" }, laptop.HolidaySets.Order());
+
+        var zone = TimeZoneInfo.Local;
+        var september = OrganizerDates.StartOfDay(new DateTime(2026, 9, 1), zone);
+        var found = laptop.HolidaysBetween(september, OrganizerDates.StartOfDay(new DateTime(2026, 10, 1), zone));
+        var roshHashanah = found.Single(entry => entry.Holiday.Name == "Rosh Hashanah");
+        Assert.Equal(new DateTime(2026, 9, 12), OrganizerDates.InZone(roshHashanah.Start, zone).Date);
+        Assert.Equal(2, (roshHashanah.End.Date - roshHashanah.Start.Date).Days);
+        Assert.Contains(found, entry => entry.Holiday.Name == "Labor Day");
+
+        laptop.SetHolidaySets(Array.Empty<string>());
+        await WaitUntil(() => !laptop.Holidays.Dirty);
+        await pc.RefreshHolidaysAsync(force: true);
+        Assert.Empty(pc.HolidaySets);
+        Assert.Empty(pc.HolidaysBetween(september, september.AddDays(30)));
+    }
+
+    [LiveServerFact]
     public async Task TheSubscriptionFeedListsEvents()
     {
         var (pc, link) = Device("pc");

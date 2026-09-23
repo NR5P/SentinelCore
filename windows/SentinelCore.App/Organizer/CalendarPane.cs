@@ -21,6 +21,7 @@ public sealed class CalendarPane : OrganizerPane
     private readonly TextBlock _agendaTitle = new() { FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText };
     private DateTime _shownMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
     private DateTime _selected = DateTime.Today;
+    private readonly Button _holidaysButton;
 
     public CalendarPane(OrganizerEngine engine) : base(engine)
     {
@@ -41,6 +42,9 @@ public sealed class CalendarPane : OrganizerPane
         today.Margin = new Thickness(6, 0, 6, 0);
         nav.Children.Add(today);
         nav.Children.Add(Ui.Icon("", "Next month", () => Move(1)));
+        _holidaysButton = Ui.Button("Holidays…", OpenHolidaySettings, tooltip: "Show holidays from other calendars - none are on until you choose");
+        _holidaysButton.Margin = new Thickness(12, 0, 0, 0);
+        nav.Children.Add(_holidaysButton);
         DockPanel.SetDock(nav, Dock.Right);
         header.Children.Add(nav);
         header.Children.Add(_monthTitle);
@@ -102,6 +106,8 @@ public sealed class CalendarPane : OrganizerPane
         var gridStart = _shownMonth.AddDays(-(((int)_shownMonth.DayOfWeek - firstDay + 7) % 7));
         var gridEnd = gridStart.AddDays(42);
         var occurrences = Occurrences(gridStart, gridEnd);
+        var holidays = Engine.HolidaysBetween(OrganizerDates.StartOfDay(gridStart, Ui.Zone), OrganizerDates.StartOfDay(gridEnd, Ui.Zone));
+        _holidaysButton.Content = Engine.HolidaySets.Count == 0 ? "Holidays…" : $"Holidays ({Engine.HolidaySets.Count})…";
 
         _month.Children.Clear();
         _month.RowDefinitions.Clear();
@@ -122,14 +128,84 @@ public sealed class CalendarPane : OrganizerPane
         for (var index = 0; index < 42; index++)
         {
             var day = gridStart.AddDays(index);
-            var cell = DayCell(day, occurrences.Where(o => Covers(o, day)).ToList());
+            var cell = DayCell(day, occurrences.Where(o => Covers(o, day)).ToList(),
+                holidays.Where(h => CoversHoliday(h.Start, h.End, day)).Select(h => h.Holiday).ToList());
             Grid.SetRow(cell, 1 + index / 7);
             Grid.SetColumn(cell, index % 7);
             _month.Children.Add(cell);
         }
 
-        BuildAgenda(occurrences);
+        BuildAgenda(occurrences, holidays);
     }
+
+    private static bool CoversHoliday(DateTimeOffset start, DateTimeOffset end, DateTime day)
+    {
+        var zone = Ui.Zone;
+        return start < OrganizerDates.StartOfDay(day.AddDays(1), zone) && end > OrganizerDates.StartOfDay(day, zone);
+    }
+
+    private static Brush HolidayBrush(string setId, byte alpha = 255) => Ui.ColorBrush(HolidayColors.Hex(setId), alpha) ?? Palette.SecondaryText;
+
+    private Border HolidayChip(Holiday holiday)
+    {
+        var chip = new Border
+        {
+            Background = HolidayBrush(holiday.SetId, 50),
+            BorderBrush = HolidayBrush(holiday.SetId),
+            BorderThickness = new Thickness(2, 0, 0, 0),
+            Padding = new Thickness(4, 0, 2, 0),
+            Margin = new Thickness(0, 0, 0, 2),
+            Child = new TextBlock { Text = holiday.Name, FontSize = 11, FontStyle = FontStyles.Italic, Foreground = Palette.PrimaryText, TextTrimming = TextTrimming.CharacterEllipsis },
+            ToolTip = $"{holiday.Name} - {Engine.HolidaySetName(holiday.SetId)}",
+            Cursor = Cursors.Hand,
+        };
+        // On the press, and handled, so the day cell underneath doesn't rebuild the grid first.
+        chip.MouseLeftButtonDown += (_, e) =>
+        {
+            e.Handled = true;
+            ShowHoliday(holiday);
+        };
+        return chip;
+    }
+
+    private Border HolidayRow(Holiday holiday, DateTimeOffset start, bool showDay)
+    {
+        var text = new StackPanel();
+        text.Children.Add(new TextBlock { Text = holiday.Name, Foreground = Palette.PrimaryText, FontWeight = FontWeights.SemiBold, FontStyle = FontStyles.Italic, TextTrimming = TextTrimming.CharacterEllipsis });
+        var details = showDay ? Ui.When(start, true) : holiday.DayCount > 1 ? $"{holiday.DayCount} days" : "Holiday";
+        if (holiday.Note is { Length: > 0 } note) details += $" · {note}";
+        text.Children.Add(Ui.Caption(details));
+        var set = Ui.Caption(Engine.HolidaySetName(holiday.SetId));
+        set.Foreground = HolidayBrush(holiday.SetId);
+        text.Children.Add(set);
+        var row = new Border
+        {
+            Background = Ui.Brush("CardBackground"),
+            BorderBrush = HolidayBrush(holiday.SetId),
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(10, 8, 10, 8),
+            Margin = new Thickness(0, 0, 0, 6),
+            Child = text,
+            Cursor = Cursors.Hand,
+        };
+        row.MouseLeftButtonUp += (_, _) => ShowHoliday(holiday);
+        return row;
+    }
+
+    private void ShowHoliday(Holiday holiday)
+    {
+        var dates = holiday.Span(Ui.Zone) is { } span
+            ? holiday.DayCount > 1
+                ? $"{Ui.When(span.Start, true)} – {Ui.When(OrganizerDates.At(span.End.DateTime.AddDays(-1), Ui.Zone), true)}"
+                : Ui.When(span.Start, true)
+            : holiday.Date;
+        var message = $"{dates}\n\n" + (holiday.Note is { Length: > 0 } note ? $"{note}\n\n" : "") +
+                      $"From {Engine.HolidaySetName(holiday.SetId)}. Holidays can't be edited - turn the whole calendar off in Holidays… if you don't want it.";
+        MessageBox.Show(Window.GetWindow(this), message, holiday.Name, MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void OpenHolidaySettings() => new HolidaySettingsWindow(Engine) { Owner = Window.GetWindow(this) }.ShowDialog();
 
     /// <summary>Whether an occurrence is on a day - an all-day or overnight one covers every day it spans.</summary>
     private static bool Covers(Occurrence occurrence, DateTime day)
@@ -140,7 +216,7 @@ public sealed class CalendarPane : OrganizerPane
         return occurrence.Start < end && occurrence.End > start;
     }
 
-    private Border DayCell(DateTime day, List<Occurrence> events)
+    private Border DayCell(DateTime day, List<Occurrence> events, List<Holiday> holidays)
     {
         var inMonth = day.Month == _shownMonth.Month;
         var isToday = day == DateTime.Today;
@@ -153,8 +229,13 @@ public sealed class CalendarPane : OrganizerPane
             Foreground = isToday ? Palette.Green : inMonth ? Palette.PrimaryText : Palette.SecondaryText,
             Margin = new Thickness(2, 0, 0, 2),
         });
+        // Holidays first, then events, three lines in all before "+n more".
         const int shown = 3;
-        foreach (var occurrence in events.Take(events.Count > shown + 1 ? shown : shown + 1))
+        var total = holidays.Count + events.Count;
+        var room = total > shown + 1 ? shown : shown + 1;
+        foreach (var holiday in holidays.Take(room)) stack.Children.Add(HolidayChip(holiday));
+        room = Math.Max(0, room - holidays.Count);
+        foreach (var occurrence in events.Take(room))
         {
             var color = Ui.ColorBrush(occurrence.Item.String("color")) ?? Palette.Cyan;
             var label = occurrence.Item.Bool("allDay")
@@ -181,7 +262,7 @@ public sealed class CalendarPane : OrganizerPane
             };
             stack.Children.Add(chip);
         }
-        if (events.Count > shown + 1) stack.Children.Add(Ui.Caption($"+{events.Count - shown} more"));
+        if (total > shown + 1) stack.Children.Add(Ui.Caption($"+{total - shown} more"));
 
         var cell = new Border
         {
@@ -209,25 +290,35 @@ public sealed class CalendarPane : OrganizerPane
         return cell;
     }
 
-    private void BuildAgenda(List<Occurrence> occurrences)
+    private void BuildAgenda(List<Occurrence> occurrences, List<(Holiday Holiday, DateTimeOffset Start, DateTimeOffset End)> holidays)
     {
         var culture = CultureInfo.CurrentCulture;
         _agendaTitle.Text = _selected == DateTime.Today ? "Today" : _selected.ToString("dddd d MMMM", culture);
         _agenda.Children.Clear();
         var day = occurrences.Where(o => Covers(o, _selected)).ToList();
-        if (day.Count == 0)
+        var dayHolidays = holidays.Where(h => CoversHoliday(h.Start, h.End, _selected)).ToList();
+        foreach (var holiday in dayHolidays) _agenda.Children.Add(HolidayRow(holiday.Holiday, holiday.Start, showDay: false));
+        if (day.Count == 0 && dayHolidays.Count == 0)
         {
             _agenda.Children.Add(Ui.Caption("Nothing on this day."));
         }
         foreach (var occurrence in day) _agenda.Children.Add(AgendaRow(occurrence));
 
         // What's coming, so a quiet day doesn't hide next week.
-        var upcoming = Occurrences(_selected.AddDays(1), _selected.AddDays(15)).Take(12).ToList();
+        var from = OrganizerDates.StartOfDay(_selected.AddDays(1), Ui.Zone);
+        var to = OrganizerDates.StartOfDay(_selected.AddDays(15), Ui.Zone);
+        var upcoming = Occurrences(_selected.AddDays(1), _selected.AddDays(15))
+            .Select(o => (Start: o.Start, Row: (UIElement)AgendaRow(o, showDay: true)))
+            .Concat(Engine.HolidaysBetween(from, to).Where(h => h.Start >= from)
+                .Select(h => (Start: h.Start, Row: (UIElement)HolidayRow(h.Holiday, h.Start, showDay: true))))
+            .OrderBy(entry => entry.Start)
+            .Take(12)
+            .ToList();
         if (upcoming.Count == 0) return;
         var heading = Ui.Heading("Coming up");
         heading.Margin = new Thickness(0, 18, 0, 8);
         _agenda.Children.Add(heading);
-        foreach (var occurrence in upcoming) _agenda.Children.Add(AgendaRow(occurrence, showDay: true));
+        foreach (var entry in upcoming) _agenda.Children.Add(entry.Row);
     }
 
     private Border AgendaRow(Occurrence occurrence, bool showDay = false)

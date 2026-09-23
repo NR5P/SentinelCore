@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -112,6 +113,14 @@ public sealed class OrganizerEngine : IDisposable
     private IReadOnlySet<string> _keptOffline = new HashSet<string>();
     private IReadOnlyList<PlannedAlert> _plannedAlerts = Array.Empty<PlannedAlert>();
 
+    // Holiday calendars: the choice, what there is, and the cached days. See OrganizerHolidays.cs.
+    private HolidayState _holidays = new();
+    private readonly SemaphoreSlim _holidayGate = new(1, 1);
+    private volatile bool _holidaysAgain;
+    private DateTimeOffset _holidaysCheckedAt = DateTimeOffset.MinValue;
+    // Bumped on every change of choice, so a send only counts as done for the choice it carried.
+    private long _holidayVersion;
+
     public OrganizerEngine(IOrganizerLocalStore store, string deviceId, OfflinePolicy policy, Func<TimeZoneInfo>? zone = null)
     {
         _store = store;
@@ -153,6 +162,7 @@ public sealed class OrganizerEngine : IDisposable
                 }
                 catch (Exception) { }
             }
+            if (HolidayState.FromJson(store.Meta("holidays")) is { } holidays) _holidays = holidays;
             _syncState = _syncState with { WaitingChanges = _pending.Count };
         }
         ReplanAlerts();
@@ -689,7 +699,12 @@ public sealed class OrganizerEngine : IDisposable
     private void AdoptOwner(string owner)
     {
         var stored = _store.Meta("owner");
-        if (stored is not null && stored != owner) ResetLocalCopy(keepPending: false);
+        if (stored is not null && stored != owner)
+        {
+            // Someone else's holiday choice isn't theirs either; the list of sets is.
+            lock (_gate) _holidays = new HolidayState { Catalog = _holidays.Catalog };
+            ResetLocalCopy(keepPending: false);
+        }
         _store.SetMeta("owner", owner);
     }
 
@@ -705,6 +720,9 @@ public sealed class OrganizerEngine : IDisposable
             _cursor = 0;
             _spaces = Array.Empty<OrganizerSpace>();
             _store.Wipe(keepPending);
+            // The wipe takes the holiday choice with the rest of the metadata. It's kept: a rebuilt
+            // server gets it back from here.
+            _store.SetMeta("holidays", _holidays.ToJson());
             _syncState = _syncState with { WaitingChanges = _pending.Count };
         }
         ReplanAlerts();
@@ -844,6 +862,7 @@ public sealed class OrganizerEngine : IDisposable
             _syncGate.Release();
         }
         StartBlobWork();
+        _ = Task.Run(() => RefreshHolidaysAsync());
     }
 
     // A pass settles the requests made before it started - and only those. A failure used to mark
@@ -1185,6 +1204,142 @@ public sealed class OrganizerEngine : IDisposable
         }
         AlertsChanged?.Invoke(planned);
     }
+
+    // ---- holiday calendars -----------------------------------------------------------------
+
+    public HolidayState Holidays { get { lock (_gate) return _holidays; } }
+
+    public IReadOnlyList<string> HolidaySets => Holidays.Sets;
+
+    /// <summary>Every holiday overlapping a range, whatever space is being looked at - they belong to none.</summary>
+    public List<(Holiday Holiday, DateTimeOffset Start, DateTimeOffset End)> HolidaysBetween(DateTimeOffset from, DateTimeOffset to)
+    {
+        var zone = _zone();
+        var result = new List<(Holiday, DateTimeOffset, DateTimeOffset)>();
+        foreach (var holiday in Holidays.List)
+        {
+            if (holiday.Span(zone) is { } span && span.Start < to && span.End > from) result.Add((holiday, span.Start, span.End));
+        }
+        return result;
+    }
+
+    public string HolidaySetName(string id) => Holidays.Catalog?.FirstOrDefault(set => set.Id == id)?.Name ?? "Holidays";
+
+    public void SetHolidaySets(IEnumerable<string> sets)
+    {
+        lock (_gate)
+        {
+            _holidays = _holidays with { Sets = sets.Distinct().ToList(), Dirty = true };
+            SaveHolidaysLocked();
+        }
+        Interlocked.Increment(ref _holidayVersion);
+        RaiseChanged();
+        _ = Task.Run(() => RefreshHolidaysAsync(force: true));
+    }
+
+    /// <summary>
+    /// After a sync, and at most every five minutes unless forced: send an unsent choice or take
+    /// the server's, then fetch the days again if the choice or the years have changed.
+    /// </summary>
+    public async Task RefreshHolidaysAsync(bool force = false)
+    {
+        if (_transport is null) return;
+        if (!await _holidayGate.WaitAsync(0).ConfigureAwait(false))
+        {
+            if (force) _holidaysAgain = true;
+            return;
+        }
+        try
+        {
+            if (!force && !Holidays.Dirty && DateTimeOffset.UtcNow - _holidaysCheckedAt < TimeSpan.FromMinutes(5)) return;
+            if (Holidays.Catalog is null)
+            {
+                var reply = OrganizerJson.Parse((await SendAsync("GET", "/api/organizer/holidays/sets").ConfigureAwait(false)).Body);
+                var catalog = System.Text.Json.JsonSerializer.Deserialize<List<HolidaySet>>(reply["sets"]?.ToJsonString() ?? "[]", HolidayState.Json) ?? new();
+                lock (_gate) _holidays = _holidays with { Catalog = catalog };
+            }
+            if (Holidays.Dirty)
+            {
+                await SendHolidaySetsAsync().ConfigureAwait(false);
+            }
+            else
+            {
+                var version = Interlocked.Read(ref _holidayVersion);
+                var reply = OrganizerJson.Parse((await SendAsync("GET", "/api/organizer/preferences").ConfigureAwait(false)).Body);
+                // A choice made while this was out is newer than the answer - it goes up next time.
+                if (version == Interlocked.Read(ref _holidayVersion))
+                {
+                    if (reply["holidaySets"] is JsonArray chosen)
+                    {
+                        var sets = chosen.Select(node => node?.GetValue<string>()).OfType<string>().ToList();
+                        lock (_gate) _holidays = _holidays with { Sets = sets };
+                    }
+                    else if (Holidays.Sets.Count > 0)
+                    {
+                        // Never chosen on this server - a rebuilt one - so this PC's goes back.
+                        await SendHolidaySetsAsync().ConfigureAwait(false);
+                    }
+                }
+            }
+            var year = OrganizerDates.InZone(DateTimeOffset.UtcNow, _zone()).Year;
+            var current = Holidays;
+            var key = $"{string.Join(",", current.Sets.Order(StringComparer.Ordinal))}|{year - 1}-{year + 2}";
+            if (current.Sets.Count == 0)
+            {
+                lock (_gate) _holidays = _holidays with { List = Array.Empty<Holiday>(), Key = key };
+            }
+            else if (current.Key != key)
+            {
+                var reply = OrganizerJson.Parse((await SendAsync("GET", "/api/organizer/holidays", new Dictionary<string, string>
+                {
+                    ["sets"] = string.Join(",", current.Sets),
+                    ["from"] = (year - 1).ToString(CultureInfo.InvariantCulture),
+                    ["to"] = (year + 2).ToString(CultureInfo.InvariantCulture),
+                }).ConfigureAwait(false)).Body);
+                var list = System.Text.Json.JsonSerializer.Deserialize<List<Holiday>>(reply["holidays"]?.ToJsonString() ?? "[]", HolidayState.Json) ?? new();
+                lock (_gate) _holidays = _holidays with { List = list, Key = key };
+            }
+            _holidaysCheckedAt = DateTimeOffset.UtcNow;
+            lock (_gate) SaveHolidaysLocked();
+            RaiseChanged();
+        }
+        catch (Exception)
+        {
+            // Unreachable, or an older server: the cached copy stays and the next sync tries again.
+        }
+        finally
+        {
+            _holidayGate.Release();
+            if (_holidaysAgain)
+            {
+                _holidaysAgain = false;
+                _ = Task.Run(() => RefreshHolidaysAsync(force: true));
+            }
+        }
+    }
+
+    private async Task SendHolidaySetsAsync()
+    {
+        var version = Interlocked.Read(ref _holidayVersion);
+        var body = Encoding.UTF8.GetBytes(new JsonObject
+        {
+            ["holidaySets"] = new JsonArray(Holidays.Sets.Select(set => (JsonNode?)JsonValue.Create(set)).ToArray()),
+        }.ToJsonString());
+        try
+        {
+            await SendAsync("PUT", "/api/organizer/preferences", body: body).ConfigureAwait(false);
+        }
+        catch (OrganizerServerException error) when (error.Status == 400)
+        {
+            // A set this server doesn't know; sending it again won't help.
+        }
+        if (version == Interlocked.Read(ref _holidayVersion))
+        {
+            lock (_gate) _holidays = _holidays with { Dirty = false };
+        }
+    }
+
+    private void SaveHolidaysLocked() => _store.SetMeta("holidays", _holidays.ToJson());
 
     // ---- online-only actions ---------------------------------------------------------------
 

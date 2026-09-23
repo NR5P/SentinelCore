@@ -332,3 +332,87 @@ internal sealed class GroupsWindow : Window
         }
     }
 }
+
+/// <summary>
+/// Which holiday calendars show on the calendar. All off until someone turns one on; the choice
+/// follows the account, so it applies on every device.
+/// </summary>
+internal sealed class HolidaySettingsWindow : Window
+{
+    private readonly OrganizerEngine _engine;
+    private readonly StackPanel _list = new();
+
+    public HolidaySettingsWindow(OrganizerEngine engine)
+    {
+        _engine = engine;
+        Style = Ui.Style("Dialog");
+        Title = "Holidays";
+        Width = 520;
+        Height = 620;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+        var root = new DockPanel { Margin = new Thickness(18) };
+        var intro = Ui.Text("Add holidays to the calendar. They follow your account, so they show on your other devices too, and in the calendar subscription link.");
+        intro.Margin = new Thickness(0, 0, 0, 12);
+        DockPanel.SetDock(intro, Dock.Top);
+        root.Children.Add(intro);
+        var done = Ui.Button("Done", Close, "PrimaryButton");
+        done.HorizontalAlignment = HorizontalAlignment.Right;
+        done.MinWidth = 90;
+        done.IsCancel = true;
+        done.Margin = new Thickness(0, 12, 0, 0);
+        DockPanel.SetDock(done, Dock.Bottom);
+        root.Children.Add(done);
+        root.Children.Add(new ScrollViewer { Content = _list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        Content = root;
+        Build();
+        if (engine.Holidays.Catalog is null) _ = LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await _engine.RefreshHolidaysAsync(force: true);
+        Build();
+    }
+
+    private void Build()
+    {
+        _list.Children.Clear();
+        if (_engine.Holidays.Catalog is not { } catalog)
+        {
+            _list.Children.Add(Ui.Caption("Connect to the server once to see the holiday calendars."));
+            return;
+        }
+        foreach (var set in catalog)
+        {
+            var label = new StackPanel { Margin = new Thickness(6, 0, 0, 0) };
+            var name = new StackPanel { Orientation = Orientation.Horizontal };
+            name.Children.Add(new System.Windows.Shapes.Ellipse
+            {
+                Width = 9,
+                Height = 9,
+                Fill = Ui.ColorBrush(HolidayColors.Hex(set.Id)) ?? Palette.SecondaryText,
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            name.Children.Add(new TextBlock { Text = set.Name, FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText });
+            label.Children.Add(name);
+            label.Children.Add(Ui.Caption(set.Description));
+            var box = new CheckBox
+            {
+                Content = label,
+                IsChecked = _engine.HolidaySets.Contains(set.Id),
+                Margin = new Thickness(0, 0, 0, 12),
+                VerticalContentAlignment = VerticalAlignment.Top,
+            };
+            var id = set.Id;
+            box.Click += (_, _) =>
+            {
+                var sets = _engine.HolidaySets.Where(existing => existing != id).ToList();
+                if (box.IsChecked == true) sets.Add(id);
+                _engine.SetHolidaySets(sets);
+            };
+            _list.Children.Add(box);
+        }
+    }
+}

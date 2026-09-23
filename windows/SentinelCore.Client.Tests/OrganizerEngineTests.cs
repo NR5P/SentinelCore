@@ -339,4 +339,44 @@ public sealed class OrganizerEngineTests : IDisposable
         Assert.Empty(latest!);
         await Task.CompletedTask;
     }
+
+    [Fact]
+    public void HolidaysAreOffByDefaultAndTheChoiceIsKept()
+    {
+        var store = new InMemoryOrganizerStore(NewDirectory());
+        var first = Engine(store);
+        Assert.Empty(first.HolidaySets);
+        first.SetHolidaySets(new[] { "christian", "christian", "jewish" });
+        Assert.Equal(new[] { "christian", "jewish" }, first.HolidaySets);
+        var second = Engine(store);
+        Assert.Equal(new[] { "christian", "jewish" }, second.HolidaySets);
+        Assert.True(second.Holidays.Dirty, "an unsent choice is still unsent after a restart");
+    }
+
+    [Fact]
+    public async Task ARebuiltServerGetsTheHolidayChoiceBackFromThePC()
+    {
+        var store = new InMemoryOrganizerStore(NewDirectory());
+        Engine(store).SetHolidaySets(new[] { "jewish" });
+        var engine = Engine(store);
+        string? sent = null;
+        var transport = new ScriptedTransport((method, path, body) => (method, path) switch
+        {
+            (_, "/api/organizer/status") => ScriptedTransport.Status(),
+            (_, "/api/organizer/holidays/sets") => ScriptedTransport.Json("""{"sets":[{"id":"jewish","name":"Jewish holidays","description":""}]}"""),
+            ("PUT", "/api/organizer/preferences") => ScriptedTransport.Json(sent = Encoding.UTF8.GetString(body!)),
+            (_, "/api/organizer/preferences") => ScriptedTransport.Json("""{"holidaySets":null}"""),
+            (_, "/api/organizer/holidays") => ScriptedTransport.Json(
+                """{"holidays":[{"id":"holiday:jewish:20260912:rosh-hashanah","setId":"jewish","name":"Rosh Hashanah","date":"2026-09-12","days":2}]}"""),
+            _ => ScriptedTransport.Reply(),
+        });
+        engine.Connect(transport);
+        await Settle(engine);
+        await engine.RefreshHolidaysAsync(force: true);
+        Assert.Equal("""{"holidaySets":["jewish"]}""", sent);
+        Assert.False(engine.Holidays.Dirty);
+        var holiday = Assert.Single(engine.Holidays.List);
+        Assert.Equal(2, holiday.DayCount);
+        Assert.Equal("Jewish holidays", engine.HolidaySetName("jewish"));
+    }
 }
