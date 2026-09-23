@@ -14,6 +14,7 @@ import com.sentinelcore.android.ui.theme.SentinelTheme
 import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.organizer.OrganizerAlarms
 import com.sentinelcore.android.organizer.OrganizerNavigation
+import com.sentinelcore.android.widgets.OrganizerWidgets
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.SentinelFirebaseMessagingService
 
@@ -48,6 +49,11 @@ class MainActivity : ComponentActivity() {
         PushNavigation.open(intent?.getStringExtra(EventIdExtra))
         // A reminder or event alert (see OrganizerAlarms) opens the Organizer.
         if (intent?.getStringExtra(OrganizerAlarms.EXTRA_ITEM_ID) != null) OrganizerNavigation.open.value = true
+        // An Organizer widget on the home screen was tapped (see widgets/OrganizerWidgets).
+        intent?.getStringExtra(OrganizerWidgets.EXTRA_PANE)?.let { pane ->
+            OrganizerNavigation.pane.value = pane
+            OrganizerNavigation.open.value = true
+        }
         DevicePublisher.requestScreen(intent)
     }
 

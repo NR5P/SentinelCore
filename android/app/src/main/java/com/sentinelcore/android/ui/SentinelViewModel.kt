@@ -13,6 +13,7 @@ import com.sentinelcore.android.organizer.OrganizerAlarms
 import com.sentinelcore.android.organizer.OrganizerDevice
 import com.sentinelcore.android.organizer.OrganizerEngine
 import com.sentinelcore.android.organizer.SqliteOrganizerStore
+import com.sentinelcore.android.widgets.OrganizerWidgetBridge
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.sentinelcore.android.data.Account
@@ -213,6 +214,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     )
     private var organizerActive = true
     val state: StateFlow<SentinelUiState> = _state.asStateFlow()
+    // Keeps the home-screen widgets' copy current - see widgets/OrganizerWidgetBridge.
+    private val organizerWidgets = OrganizerWidgetBridge(application, organizer, organizerScope)
 
     private var connectionJob: Job? = null
     private var timelineJob: Job? = null
@@ -227,6 +230,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         OrganizerAlarms.ensureChannel(application)
         organizer.onAlertsChanged = { alerts -> OrganizerAlarms.schedule(application, alerts) }
         organizer.refreshAlerts()
+        organizerWidgets.start(state.map { it.organizerEnabled }.distinctUntilChanged())
         // The engine follows the connection: running while online and in the foreground.
         viewModelScope.launch {
             state.map { it.connectionState }.distinctUntilChanged().collect { updateOrganizerConnection() }
@@ -281,6 +285,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     // From the activity's lifecycle: a backgrounded app shouldn't hold a long poll open.
     fun setOrganizerActive(active: Boolean) {
         organizerActive = active
+        if (active) organizerWidgets.appBecameActive()
         if (active && organizer.isConnected) organizerScope.launch { organizer.sync() }
         updateOrganizerConnection()
     }

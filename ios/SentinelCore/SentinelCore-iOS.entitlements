@@ -4,5 +4,11 @@
 <dict>
     <key>aps-environment</key>
     <string>$(APS_ENVIRONMENT)</string>
+    <!-- Shared with the widget extension: the app writes the Organizer snapshot the home-screen
+         widgets read, and picks up reminders checked off on them. See OrganizerWidgetStore. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.sentinelcore.client</string>
+    </array>
 </dict>
 </plist>

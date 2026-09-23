@@ -104,6 +104,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("com.google.firebase:firebase-messaging:25.1.1")
+    // Home-screen widgets for the Organizer (widgets/OrganizerWidgets).
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")

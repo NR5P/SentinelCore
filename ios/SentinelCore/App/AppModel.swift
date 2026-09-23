@@ -90,9 +90,18 @@ final class AppModel: ObservableObject {
     // Whether the server last said the Organizer is switched on, remembered so the section is
     // there on an offline launch too.
     @Published var organizerLastKnownEnabled: Bool {
-        didSet { UserDefaults.standard.set(organizerLastKnownEnabled, forKey: "organizerEnabled") }
+        didSet {
+            UserDefaults.standard.set(organizerLastKnownEnabled, forKey: "organizerEnabled")
+            #if os(iOS)
+            organizerWidgets?.setEnabled(organizerLastKnownEnabled)
+            #endif
+        }
     }
     private var organizerActive = true
+    #if os(iOS)
+    // Keeps the Home Screen widgets' copy current - see OrganizerWidgets.swift.
+    private var organizerWidgets: OrganizerWidgetBridge?
+    #endif
     private var localNetworkBrowser: NWBrowser?
     private var isConnecting = false
     private var pendingPushEventId: UUID?
@@ -142,6 +151,9 @@ final class AppModel: ObservableObject {
         }
         Task { await refreshPushAuthorization() }
         organizer.onAlertsChanged = { alerts in OrganizerNotifications.schedule(alerts) }
+        #if os(iOS)
+        organizerWidgets = OrganizerWidgetBridge(engine: organizer, enabled: organizerLastKnownEnabled)
+        #endif
     }
 
     // The engine follows the connection: running while the app is online and in the foreground,
@@ -157,6 +169,9 @@ final class AppModel: ObservableObject {
     // Called from the scene phase: a background app shouldn't hold a long poll open.
     func setOrganizerActive(_ active: Bool) {
         organizerActive = active
+        #if os(iOS)
+        if active { organizerWidgets?.appBecameActive() }
+        #endif
         if active, organizer.isConnected {
             Task { await organizer.sync() }
         }

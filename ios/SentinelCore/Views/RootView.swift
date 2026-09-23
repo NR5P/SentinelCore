@@ -62,6 +62,14 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sentinelOrganizerOpened)) { _ in
             selection = .organizer
         }
+        // sentinelcore://organizer/<pane>, from tapping an Organizer widget on the Home Screen.
+        .onOpenURL { url in
+            guard url.scheme == "sentinelcore", url.host() == "organizer" else { return }
+            if let pane = url.pathComponents.dropFirst().first, ["calendar", "reminders", "notes", "boards"].contains(pane) {
+                UserDefaults.standard.set(pane, forKey: "organizerPane")
+            }
+            selection = .organizer
+        }
         // The server answering isn't the one this device last synced with. Asked wherever the
         // person happens to be, because nothing syncs until they answer.
         .alert("This server doesn't have your Organizer data",

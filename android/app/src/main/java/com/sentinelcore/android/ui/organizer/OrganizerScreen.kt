@@ -108,6 +108,7 @@ import com.sentinelcore.android.organizer.OrganizerDates
 import com.sentinelcore.android.organizer.OrganizerEngine
 import com.sentinelcore.android.organizer.OrganizerItem
 import com.sentinelcore.android.organizer.OrganizerKinds
+import com.sentinelcore.android.organizer.OrganizerNavigation
 import com.sentinelcore.android.organizer.Recurrence
 import com.sentinelcore.android.ui.theme.SentinelAmber
 import com.sentinelcore.android.ui.theme.SentinelCyan
@@ -141,6 +142,16 @@ class OrganizerRoutes(
 @Composable
 fun OrganizerScreen(engine: OrganizerEngine, routes: OrganizerRoutes) {
     var pane by rememberSaveable { mutableStateOf(0) }
+    // Opened from a home-screen widget: show the pane it was for.
+    val requestedPane by OrganizerNavigation.pane.collectAsStateWithLifecycle()
+    LaunchedEffect(requestedPane) {
+        when (requestedPane) {
+            "calendar" -> pane = 0
+            "reminders" -> pane = 1
+            "notes" -> pane = 2
+        }
+        OrganizerNavigation.pane.value = null
+    }
     var spaceFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()

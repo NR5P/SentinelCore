@@ -60,6 +60,41 @@
             </intent-filter>
         </receiver>
 
+        <!-- Organizer widgets for the home screen (widgets/OrganizerWidgets). -->
+        <receiver
+            android:name=".widgets.OrganizerCalendarWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_calendar_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/organizer_calendar_widget" />
+        </receiver>
+        <receiver
+            android:name=".widgets.OrganizerRemindersWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_reminders_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/organizer_reminders_widget" />
+        </receiver>
+        <receiver
+            android:name=".widgets.OrganizerNotesWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_notes_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/organizer_notes_widget" />
+        </receiver>
+
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification" />

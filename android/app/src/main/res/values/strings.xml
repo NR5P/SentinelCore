@@ -6,4 +6,10 @@
     <string name="security_alert_channel_description">AI-reviewed camera security events from Sentinel Core</string>
     <string name="device_camera_channel_name">This phone as a camera</string>
     <string name="device_camera_channel_description">Shown while this phone is streaming as one of your Sentinel Core cameras</string>
+    <string name="widget_calendar_label">Calendar</string>
+    <string name="widget_calendar_description">What\'s next on your Organizer calendar</string>
+    <string name="widget_reminders_label">Reminders</string>
+    <string name="widget_reminders_description">Your open Organizer reminders - tick one to check it off</string>
+    <string name="widget_notes_label">Notes</string>
+    <string name="widget_notes_description">Your pinned and latest Organizer notes</string>
 </resources>

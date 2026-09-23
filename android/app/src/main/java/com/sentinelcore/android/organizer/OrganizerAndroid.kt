@@ -176,6 +176,8 @@ class OrganizerAlarmReceiver : BroadcastReceiver() {
 // Set when an alert notification is tapped; the app shell navigates to the Organizer.
 object OrganizerNavigation {
     val open = kotlinx.coroutines.flow.MutableStateFlow(false)
+    // The pane to show when it opens - "calendar", "reminders" or "notes" - from a widget tap.
+    val pane = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 }
 
 // Alarms don't survive a reboot; this puts the planned ones back.
