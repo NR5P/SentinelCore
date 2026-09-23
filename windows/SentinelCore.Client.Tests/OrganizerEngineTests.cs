@@ -296,6 +296,45 @@ public sealed class OrganizerEngineTests : IDisposable
     }
 
     [Fact]
+    public void CommentsListOldestFirstAndOnlyTheirAuthorMayEditThem()
+    {
+        var engine = Engine(new InMemoryOrganizerStore(NewDirectory()));
+        var board = engine.Create(OrganizerKinds.Board, F(("title", "House")), spaceId: "family");
+        var column = engine.Create(OrganizerKinds.Column, F(("title", "To do")), parentId: board.Id);
+        var card = engine.Create(OrganizerKinds.Card, F(("title", "Paint")), parentId: column.Id);
+        var first = engine.Create(OrganizerKinds.Comment, F(("body", "which colour?")), parentId: card.Id);
+        var second = engine.Create(OrganizerKinds.Comment, F(("body", "blue")), parentId: card.Id);
+        Assert.Equal(card.Id, first.ParentId);
+        Assert.Equal("family", first.SpaceId);
+
+        var older = first with { CreatedAt = DateTimeOffset.Parse("2026-09-01T10:00:00Z") };
+        var newer = second with { CreatedAt = DateTimeOffset.Parse("2026-09-01T11:00:00Z") };
+        Assert.Equal(new[] { older.Id, newer.Id }, OrganizerComments.Sorted(new[] { newer, older }).Select(c => c.Id));
+        Assert.Equal(2, OrganizerComments.Of(engine, card.Id).Count);
+
+        var anna = older with { CreatedBy = "Anna" };
+        Assert.True(OrganizerComments.CanEdit(anna, "anna"));
+        Assert.False(OrganizerComments.CanEdit(anna, "ben"));
+        Assert.True(OrganizerComments.CanEdit(anna, null)); // login off
+        Assert.True(OrganizerComments.CanEdit(older with { CreatedBy = null }, "ben"));
+
+        var names = new Dictionary<string, string> { ["anna"] = "Anna Smith" };
+        Assert.Equal("Anna Smith", OrganizerComments.Author(anna, names));
+        Assert.Equal("ben", OrganizerComments.Author(older with { CreatedBy = "ben" }, names));
+        Assert.Null(OrganizerComments.Author(older with { CreatedBy = null }, names));
+
+        Assert.Null(OrganizerComments.EditChanges(first, "  which colour?  "));
+        Assert.Null(OrganizerComments.EditChanges(first, "   "));
+        var edit = OrganizerComments.EditChanges(first, "which paint colour?", DateTimeOffset.Parse("2026-09-02T08:00:00Z"))!;
+        engine.Update(first.Id, edit);
+        Assert.Equal("which paint colour?", engine.Item(first.Id)?.String("body"));
+        Assert.Equal("2026-09-02T08:00:00.000Z", engine.Item(first.Id)?.String("editedAt"));
+
+        engine.Delete(second.Id);
+        Assert.Equal(new[] { first.Id }, OrganizerComments.Of(engine, card.Id).Select(c => c.Id));
+    }
+
+    [Fact]
     public void AttachingWorksOfflineAndKeepsTheFile()
     {
         var engine = Engine(new InMemoryOrganizerStore(NewDirectory()));

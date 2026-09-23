@@ -9,9 +9,9 @@ Everything is an **item**:
 | property | meaning |
 |---|---|
 | `id` | Chosen by the client when the item is created (a UUID is fine; `[A-Za-z0-9_.:-]{1,80}`). It never changes. |
-| `kind` | `note`, `event`, `reminder`, `board`, `column`, `card` or `attachment`. It never changes. |
+| `kind` | `note`, `event`, `reminder`, `board`, `column`, `card`, `comment` or `attachment`. It never changes. |
 | `spaceId` | Which space the item is in (see below). A child always inherits its parent's space. |
-| `parentId` | A column belongs to a board, a card to a column, an attachment to any non-attachment, and a reminder may belong to another reminder (a sub-task). |
+| `parentId` | A column belongs to a board, a card to a column, a comment to a card, an attachment to any non-attachment, and a reminder may belong to another reminder (a sub-task). |
 | `deleted` | A tombstone. Deleted items stay on the server forever, as a few bytes, so that a stale device can't bring them back. |
 | `fields` | A free-form JSON object; see "Fields by kind". |
 | `clocks` | One clock per field, plus `spaceId`, `parentId` and `deleted`. |
@@ -41,6 +41,7 @@ next = max(now_ms, last_ms) ; counter = (next == last_ms) ? last_counter + 1 : 0
 - **Merging is per field: the newest clock wins.** Two devices editing different fields both keep their edits.
 - **The server clamps clocks more than 5 minutes ahead of its own time.** A phone whose clock is set to next year can't freeze fields.
 - **Deletes don't come undone by accident.** An edit to other fields never undeletes an item. Only `deleted: false` with a newer clock does.
+- **Only a comment's author can change it.** With login on, a change to an existing comment from anyone other than its `createdBy` is rejected unless it only sets `deleted`. Anyone who can see the card may delete a comment. Clients show the author from `createdBy`. After a rebuilt server is refilled from one device, every comment that device uploads is credited to that device's account.
 - **A note's `body` is the exception.** If a change carries `baseClocks.body`, the server checks it. If the stored body has a different clock and different text, both people rewrote the note. The newer text wins, and the other is saved as a new note titled "`<title>` (conflicted copy)" in the same space. Clients should always send `baseClocks.body`: the body clock the edit started from.
 
 ## Endpoints
@@ -148,6 +149,7 @@ Unknown fields must be preserved and round-tripped, so an older client never era
 | **board** | `title`, `color`, `archived`, `position` |
 | **column** | `title`, `position` |
 | **card** | `title`, `description` (Markdown), `position`, `labels[{name,color}]`, `due`, `completed`, `checklist[{id,text,done}]`, `assignees[]` (usernames), `cover` (attachment id), `links` |
+| **comment** | `body` (plain text), `editedAt` (set when the author changes `body` after posting). Shown oldest first, by `createdAt`. |
 | **attachment** | `hash` (required), `name`, `contentType`, `size`, `width`, `height`, `position` |
 
 Details for events:

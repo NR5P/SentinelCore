@@ -39,6 +39,7 @@ internal sealed class ItemEditorWindow : Window
     private readonly AttachmentsEditor _attachments;
     private readonly ChecklistEditor? _checklist;
     private readonly LabelsEditor? _labels;
+    private readonly CommentsEditor? _comments;
     private readonly WrapPanel _assignees = new();
     private readonly TextBlock _problem = new() { Foreground = Palette.Red, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
 
@@ -114,6 +115,12 @@ internal sealed class ItemEditorWindow : Window
         {
             _checklist = new ChecklistEditor(_original.GetValueOrDefault("checklist") as IReadOnlyList<object?> ?? Array.Empty<object?>());
             _labels = new LabelsEditor(_original.GetValueOrDefault("labels") as IReadOnlyList<object?> ?? Array.Empty<object?>());
+            // Comments hang off the card, so there's nothing to hang them on until it's saved.
+            if (existing is not null)
+            {
+                _comments = new CommentsEditor(engine, existing.Id);
+                Closed += (_, _) => _comments.Detach();
+            }
         }
 
         // Only a top-level thing chooses its space; a card is in its board's.
@@ -208,6 +215,11 @@ internal sealed class ItemEditorWindow : Window
         }
         Row("Links", _links);
         Row("Pictures and files", _attachments);
+        if (_kind == OrganizerKinds.Card)
+        {
+            if (_comments is not null) Row("Comments", _comments);
+            else Row("Comments", Ui.Caption("Comments can be added once the card is saved."));
+        }
         form.Children.Add(_problem);
 
         var footer = new DockPanel { LastChildFill = false };
@@ -294,6 +306,7 @@ internal sealed class ItemEditorWindow : Window
         {
             people = new List<OrganizerPerson>();
         }
+        _comments?.SetPeople(people);
         // Someone assigned on another device stays assigned even when the list can't be fetched.
         foreach (var username in assigned.Where(name => people.All(person => person.Username != name)))
         {
@@ -485,6 +498,228 @@ internal sealed class ItemEditorWindow : Window
         _engine.DeleteTree(_existing.Id);
         DialogResult = true;
         Close();
+    }
+}
+
+/// <summary>
+/// A card's comments. Posting, editing and deleting happen at once, not on the card's Save - like
+/// attachments. Follows sync while the card is open, but never redraws under a half-edited comment.
+/// </summary>
+internal sealed class CommentsEditor : StackPanel
+{
+    private readonly OrganizerEngine _engine;
+    private readonly string _cardId;
+    private readonly StackPanel _rows = new();
+    private readonly TextBox _new = new()
+    {
+        AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 44, MaxHeight = 160,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        ToolTip = "Enter posts; Shift+Enter starts a new line",
+    };
+    private readonly Ui.Coalescer _refresh;
+    private Dictionary<string, string> _names = new();
+    private string? _editing;
+    private TextBox? _editBox;
+    private string? _shown;
+    // What's typed into the comment being edited, kept across a redraw.
+    private string? _draft;
+
+    public CommentsEditor(OrganizerEngine engine, string cardId)
+    {
+        _engine = engine;
+        _cardId = cardId;
+        _refresh = new Ui.Coalescer(this, Refresh);
+        Children.Add(_rows);
+        var add = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
+        var post = Ui.Button("Post", Post);
+        post.Margin = new Thickness(8, 0, 0, 0);
+        post.VerticalAlignment = VerticalAlignment.Top;
+        DockPanel.SetDock(post, Dock.Right);
+        add.Children.Add(post);
+        add.Children.Add(_new);
+        Children.Add(add);
+        _new.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None) return;
+            Post();
+            e.Handled = true;
+        };
+        engine.Changed += _refresh.Request;
+        Rebuild();
+    }
+
+    /// <summary>Stops following sync. Called when the window closes.</summary>
+    public void Detach() => _engine.Changed -= _refresh.Request;
+
+    /// <summary>Display names for usernames, once the people list arrives.</summary>
+    public void SetPeople(IEnumerable<OrganizerPerson> people)
+    {
+        _names = new Dictionary<string, string>();
+        foreach (var person in people) _names[person.Username.ToLowerInvariant()] = person.Label;
+        _shown = null;
+        Refresh();
+    }
+
+    private string? Me => _engine.Status?.Username;
+
+    private void Refresh()
+    {
+        if (_editing is not null) return;
+        if (Signature() == _shown) return;
+        Rebuild();
+    }
+
+    private string Signature() =>
+        string.Join("|", OrganizerComments.Of(_engine, _cardId)
+            .Select(c => $"{c.Id}:{c.CreatedBy}:{c.String("editedAt")}:{c.String("body")}"));
+
+    private void Post()
+    {
+        if (_new.Text.Trim() is not { Length: > 0 } body) return;
+        try
+        {
+            _engine.Create(OrganizerKinds.Comment, new Dictionary<string, object?> { ["body"] = body }, parentId: _cardId);
+            _new.Text = "";
+            Rebuild();
+        }
+        catch (Exception error)
+        {
+            Ui.ShowError(this, error);
+        }
+    }
+
+    private void Rebuild()
+    {
+        _shown = Signature();
+        _draft = _editing is not null ? _editBox?.Text ?? _draft : null;
+        _rows.Children.Clear();
+        _editBox = null;
+        var comments = OrganizerComments.Of(_engine, _cardId);
+        if (_editing is not null && comments.All(c => c.Id != _editing)) _editing = null;
+        if (comments.Count == 0)
+        {
+            _rows.Children.Add(Ui.Caption("No comments yet."));
+            return;
+        }
+        foreach (var comment in comments) _rows.Children.Add(Row(comment));
+    }
+
+    private UIElement Row(OrganizerItem comment)
+    {
+        var row = new StackPanel { Margin = new Thickness(0, 4, 0, 8) };
+        var head = new DockPanel { LastChildFill = true };
+        var delete = Ui.Icon("", "Delete comment", () => DeleteComment(comment));
+        DockPanel.SetDock(delete, Dock.Right);
+        head.Children.Add(delete);
+        if (OrganizerComments.CanEdit(comment, Me) && _editing != comment.Id)
+        {
+            var edit = Ui.Icon("", "Edit comment", () =>
+            {
+                _editing = comment.Id;
+                _editBox = null;
+                _draft = null;
+                Rebuild();
+                _editBox?.Focus();
+                _editBox?.SelectAll();
+            });
+            edit.Margin = new Thickness(0, 0, 4, 0);
+            DockPanel.SetDock(edit, Dock.Right);
+            head.Children.Add(edit);
+        }
+        var byline = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        // With login off there's no author to show - just when.
+        var author = OrganizerComments.Author(comment, _names);
+        if (author is not null) byline.Inlines.Add(new System.Windows.Documents.Run(author + "  ") { FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText });
+        var when = comment.CreatedAt is { } created ? Ui.When(created, false) : "";
+        if (comment.String("editedAt") is { Length: > 0 }) when = (when + " (edited)").Trim();
+        if (when.Length > 0) byline.Inlines.Add(new System.Windows.Documents.Run(when) { Foreground = Palette.SecondaryText, FontSize = 11 });
+        head.Children.Add(byline);
+        row.Children.Add(head);
+
+        if (_editing == comment.Id)
+        {
+            var box = new TextBox
+            {
+                Text = _draft ?? comment.String("body") ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                MinHeight = 44, MaxHeight = 200, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Margin = new Thickness(0, 4, 0, 0),
+            };
+            void SaveEdit()
+            {
+                var current = _engine.Item(comment.Id);
+                _editing = null;
+                if (current is not null && OrganizerComments.EditChanges(current, box.Text) is { } changes)
+                {
+                    try
+                    {
+                        _engine.Update(current.Id, changes);
+                    }
+                    catch (Exception error)
+                    {
+                        Ui.ShowError(this, error);
+                    }
+                }
+                Rebuild();
+            }
+            void CancelEdit()
+            {
+                _editing = null;
+                Rebuild();
+            }
+            box.PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None)
+                {
+                    SaveEdit();
+                    e.Handled = true;
+                }
+                else if (e.Key == Key.Escape)
+                {
+                    // Escape leaves the edit, not the whole card.
+                    CancelEdit();
+                    e.Handled = true;
+                }
+            };
+            _editBox = box;
+            row.Children.Add(box);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
+            buttons.Children.Add(Ui.Button("Save", SaveEdit));
+            var cancel = Ui.Button("Cancel", CancelEdit);
+            cancel.Margin = new Thickness(8, 0, 0, 0);
+            buttons.Children.Add(cancel);
+            row.Children.Add(buttons);
+        }
+        else
+        {
+            // A read-only text box so the words can be selected and copied.
+            row.Children.Add(new TextBox
+            {
+                Text = comment.String("body") ?? "",
+                IsReadOnly = true,
+                TextWrapping = TextWrapping.Wrap,
+                BorderThickness = new Thickness(0),
+                Background = Brushes.Transparent,
+                Foreground = Palette.PrimaryText,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 2, 0, 0),
+            });
+        }
+        return row;
+    }
+
+    private void DeleteComment(OrganizerItem comment)
+    {
+        if (!Ui.Confirm(this, "Delete this comment? It goes from every device.")) return;
+        if (_editing == comment.Id) _editing = null;
+        try
+        {
+            _engine.DeleteTree(comment.Id);
+        }
+        catch (Exception error)
+        {
+            Ui.ShowError(this, error);
+        }
+        Rebuild();
     }
 }
 

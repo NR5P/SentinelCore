@@ -316,6 +316,8 @@ public sealed class BoardsPane : OrganizerPane
         if (checklist.Count > 0) badges.Add($"☑ {checklist.Count(item => item.GetValueOrDefault("done") is true)}/{checklist.Count}");
         var files = Engine.Children(card.Id, OrganizerKinds.Attachment).Count;
         if (files > 0) badges.Add($"{files} file{(files == 1 ? "" : "s")}");
+        var comments = Engine.Children(card.Id, OrganizerKinds.Comment).Count;
+        if (comments > 0) badges.Add($"{comments} comment{(comments == 1 ? "" : "s")}");
         if (card.String("description") is { Length: > 0 }) badges.Add("notes");
         var assignees = card.List("assignees").OfType<string>().ToList();
         if (assignees.Count > 0) badges.Add(string.Join(", ", assignees));

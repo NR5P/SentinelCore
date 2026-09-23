@@ -1330,6 +1330,7 @@ window.SentinelOrganizer = (function () {
   function cardHtml(card) {
     const f = card.fields;
     const attachments = S.children(card.id).filter((c) => c.kind === "attachment");
+    const comments = S.children(card.id).filter((c) => c.kind === "comment").length;
     const cover = f.cover ? attachments.find((a) => a.id === f.cover) : attachments.find((a) => String(a.fields.contentType).startsWith("image/"));
     const checklist = f.checklist || [];
     const done = checklist.filter((c) => c.done).length;
@@ -1342,6 +1343,7 @@ window.SentinelOrganizer = (function () {
         ${f.due ? `<span class="${overdue ? "org-overdue" : ""}">&#128339; ${escapeHtml(dueLabel({ fields: { due: f.due, allDay: f.due.length === 10 } }))}</span>` : ""}
         ${checklist.length ? `<span>&#9745; ${done}/${checklist.length}</span>` : ""}
         ${attachments.length ? `<span>&#128206; ${attachments.length}</span>` : ""}
+        ${comments ? `<span>&#128172; ${comments}</span>` : ""}
         ${f.description ? "<span>&#9776;</span>" : ""}
         ${(f.assignees || []).map((a) => `<span class="org-avatar" title="${escapeHtml(a)}">${escapeHtml(a.slice(0, 2).toUpperCase())}</span>`).join("")}
       </div>
@@ -1488,6 +1490,9 @@ window.SentinelOrganizer = (function () {
         <input class="field-input" id="card-new-check" placeholder="add an item and press enter" />
         ${linksEditor(f.links)}
         <div id="card-attachments"></div>
+        <div class="org-subsection">COMMENTS</div>
+        <div id="card-comments" class="org-comments"></div>
+        <textarea class="field-textarea" id="card-new-comment" rows="2" placeholder="write a comment, then press enter (shift+enter for a new line)"></textarea>
       </div>
       <div class="zone-editor-footer">
         <button class="btn" id="card-save">save</button>
@@ -1514,6 +1519,7 @@ window.SentinelOrganizer = (function () {
     });
     bindLinksEditor();
     renderAttachments(el("card-attachments"), () => card.id, () => card.id);
+    renderComments(el("card-comments"), el("card-new-comment"), card.id);
 
     el("card-cancel").addEventListener("click", closeModal);
     el("card-delete").addEventListener("click", () => { S.remove(card.id); closeModal(); });
@@ -1600,6 +1606,89 @@ window.SentinelOrganizer = (function () {
 
   // Pictures and files on an item. Drop, paste or pick; images show as thumbnails and open full
   // size, anything else downloads. `ensureParent` creates the item first when it's still new.
+  // A card's comments. Each is its own item, posted the moment it's written rather than on save,
+  // and the list follows sync while the card is open. Only the author may edit a comment (the
+  // server enforces it); anyone may delete one.
+  function renderComments(container, input, cardId) {
+    const me = S.status() && S.status().username;
+    const names = new Map();
+    let editing = null;
+
+    // No author means login is off: one shared household, so there is no name to show.
+    const nameOf = (username) => names.get(username.toLowerCase()) || username;
+    const mine = (comment) => !me || !comment.createdBy || comment.createdBy.toLowerCase() === me.toLowerCase();
+
+    const draw = () => {
+      const comments = S.children(cardId)
+        .filter((c) => c.kind === "comment")
+        .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      container.innerHTML = comments.length ? comments.map((c) => `
+        <div class="org-comment" data-comment="${escapeHtml(c.id)}">
+          <div class="org-comment-head">
+            ${c.createdBy ? `<span class="org-avatar">${escapeHtml(nameOf(c.createdBy).slice(0, 2).toUpperCase())}</span>
+            <strong>${escapeHtml(nameOf(c.createdBy))}</strong>` : ""}
+            <span class="event-count">${escapeHtml(new Date(c.createdAt).toLocaleString())}${c.fields.editedAt ? " (edited)" : ""}</span>
+            <span class="org-spacer"></span>
+            ${mine(c) && editing !== c.id ? `<button class="btn btn-small" data-edit-comment="${escapeHtml(c.id)}">edit</button>` : ""}
+            <button class="org-x" data-delete-comment="${escapeHtml(c.id)}" aria-label="delete comment">&times;</button>
+          </div>
+          ${editing === c.id
+            ? `<textarea class="field-textarea" data-editing rows="3">${escapeHtml(c.fields.body || "")}</textarea>
+               <div class="org-form-row"><button class="btn btn-small" data-save-comment>save</button><button class="btn btn-small" data-cancel-comment>cancel</button></div>`
+            : `<div class="org-comment-body">${escapeHtml(c.fields.body || "")}</div>`}
+        </div>`).join("") : `<div class="event-count">No comments yet.</div>`;
+
+      for (const button of container.querySelectorAll("[data-edit-comment]")) {
+        button.addEventListener("click", () => { editing = button.dataset.editComment; draw(); container.querySelector("[data-editing]").focus(); });
+      }
+      for (const button of container.querySelectorAll("[data-delete-comment]")) {
+        button.addEventListener("click", () => {
+          if (!confirm("Delete this comment?")) return;
+          if (editing === button.dataset.deleteComment) editing = null;
+          S.remove(button.dataset.deleteComment);
+          draw();
+        });
+      }
+      const box = container.querySelector("[data-editing]");
+      if (box) {
+        const save = () => {
+          const body = box.value.trim();
+          const comment = S.get(editing);
+          editing = null;
+          if (body && comment && body !== comment.fields.body) S.update(comment.id, { body, editedAt: new Date().toISOString() });
+          draw();
+        };
+        container.querySelector("[data-save-comment]").addEventListener("click", save);
+        container.querySelector("[data-cancel-comment]").addEventListener("click", () => { editing = null; draw(); });
+        box.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); save(); }
+          if (event.key === "Escape") { event.stopPropagation(); editing = null; draw(); }
+        });
+      }
+    };
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey) return;
+      event.preventDefault();
+      const body = input.value.trim();
+      if (!body) return;
+      S.create("comment", { body }, { parentId: cardId });
+      input.value = "";
+      draw();
+    });
+
+    // Follow sync while the card is open, but never redraw under someone's half-edited comment.
+    const unsubscribe = S.subscribe(() => {
+      if (!document.body.contains(container)) { unsubscribe(); return; }
+      if (!editing) draw();
+    });
+    loadPeople().then((list) => {
+      for (const p of list) names.set(p.username.toLowerCase(), p.displayName || p.username);
+      if (!editing && document.body.contains(container)) draw();
+    });
+    draw();
+  }
+
   function renderAttachments(container, parentIdOf, ensureParent) {
     const draw = () => {
       const parentId = parentIdOf();

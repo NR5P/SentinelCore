@@ -120,6 +120,68 @@ public sealed class OrganizerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task TwoPeopleCommentingOnACardOffline_BothKeepTheirComment()
+    {
+        var store = NewStore();
+        var clock = Clock(30);
+        await store.ApplyChangesAsync(Nathan,
+        [
+            Change("board1", OrganizerKinds.Board, clock, ("spaceId", "family"), ("title", "House")),
+            Change("col1", OrganizerKinds.Column, clock, ("parentId", "board1"), ("title", "To do")),
+            Change("card1", OrganizerKinds.Card, clock, ("parentId", "col1"), ("title", "Paint fence")),
+        ], null, Ct);
+
+        await store.ApplyChangesAsync(Nathan, [Change("c-nathan", OrganizerKinds.Comment, Clock(20, "phone"), ("parentId", "card1"), ("body", "Got the paint"))], null, Ct);
+        await store.ApplyChangesAsync(Terry, [Change("c-terry", OrganizerKinds.Comment, Clock(25, "laptop"), ("parentId", "card1"), ("body", "Wrong colour"))], null, Ct);
+
+        var comments = await store.GetItemsAsync(Nathan, OrganizerKinds.Comment, null, Ct);
+        Assert.Equal(["c-nathan", "c-terry"], comments.Select(c => c.Id).Order());
+        Assert.All(comments, c => Assert.Equal("family", c.SpaceId));
+        Assert.Equal("terry", comments.Single(c => c.Id == "c-terry").CreatedBy);
+    }
+
+    [Fact]
+    public async Task AComment_OnlyGoesOnACard()
+    {
+        var store = NewStore();
+        var clock = Clock(5);
+        await store.ApplyChangesAsync(Nathan, [Change("note1", OrganizerKinds.Note, clock, ("spaceId", "family"), ("title", "x"))], null, Ct);
+
+        var result = await store.ApplyChangesAsync(Nathan,
+        [
+            Change("on-note", OrganizerKinds.Comment, clock, ("parentId", "note1"), ("body", "a")),
+            Change("loose", OrganizerKinds.Comment, clock, ("spaceId", "family"), ("body", "b")),
+        ], null, Ct);
+
+        Assert.Equal(["loose", "on-note"], result.Rejected.Select(r => r.Id).Order());
+    }
+
+    [Fact]
+    public async Task OnlyTheAuthor_CanEditAComment_ButAnyoneCanDeleteIt()
+    {
+        var store = NewStore();
+        var clock = Clock(60);
+        await store.ApplyChangesAsync(Nathan,
+        [
+            Change("board1", OrganizerKinds.Board, clock, ("spaceId", "family"), ("title", "House")),
+            Change("col1", OrganizerKinds.Column, clock, ("parentId", "board1"), ("title", "To do")),
+            Change("card1", OrganizerKinds.Card, clock, ("parentId", "col1"), ("title", "Paint fence")),
+            Change("c1", OrganizerKinds.Comment, clock, ("parentId", "card1"), ("body", "Got the paint")),
+        ], null, Ct);
+
+        var bySarah = await store.ApplyChangesAsync(Terry, [Change("c1", OrganizerKinds.Comment, Clock(30), ("body", "Nathan forgot the paint"))], null, Ct);
+        Assert.Equal("c1", Assert.Single(bySarah.Rejected).Id);
+
+        var byNathan = await store.ApplyChangesAsync(Nathan, [Change("c1", OrganizerKinds.Comment, Clock(20), ("body", "Got the paint, and brushes"))], null, Ct);
+        Assert.Empty(byNathan.Rejected);
+        Assert.Equal("Got the paint, and brushes", (await OnlyItemAsync(store, Nathan, "c1")).Fields["body"]!.GetValue<string>());
+
+        var deleted = await store.ApplyChangesAsync(Terry, [Change("c1", OrganizerKinds.Comment, Clock(10), ("deleted", true))], null, Ct);
+        Assert.Empty(deleted.Rejected);
+        Assert.Empty(await store.GetItemsAsync(Nathan, OrganizerKinds.Comment, null, Ct));
+    }
+
+    [Fact]
     public async Task TwoPeopleRewritingTheSameNote_KeepsBothVersions()
     {
         var store = NewStore();

@@ -3631,6 +3631,30 @@ main {
   gap: 6px 14px;
 }
 
+.org-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.org-comment {
+  background: var(--bg-card);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.org-comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.org-comment-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .org-links {
   display: flex;
   flex-direction: column;

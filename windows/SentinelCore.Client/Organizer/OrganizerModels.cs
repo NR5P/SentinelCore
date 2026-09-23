@@ -20,7 +20,48 @@ public static class OrganizerKinds
     public const string Board = "board";
     public const string Column = "column";
     public const string Card = "card";
+    public const string Comment = "comment";
     public const string Attachment = "attachment";
+}
+
+/// <summary>
+/// Comments on a board card: items of kind <c>comment</c> under the card, with <c>body</c> and
+/// <c>editedAt</c>. The author is whoever created it, and only they may change it; anyone may
+/// delete one. The server enforces that; these keep the UI from offering what it would refuse.
+/// </summary>
+public static class OrganizerComments
+{
+    /// <summary>A card's comments, oldest first.</summary>
+    public static List<OrganizerItem> Of(OrganizerEngine engine, string cardId) =>
+        Sorted(engine.Children(cardId, OrganizerKinds.Comment));
+
+    public static List<OrganizerItem> Sorted(IEnumerable<OrganizerItem> comments) =>
+        comments.OrderBy(comment => comment.CreatedAt ?? DateTimeOffset.MaxValue).ThenBy(comment => comment.Id, StringComparer.Ordinal).ToList();
+
+    /// <summary>Whether <paramref name="username"/> (the signed-in account, null with login off)
+    /// may edit this comment. A comment with no recorded author, or any comment when there are no
+    /// accounts, is everyone's.</summary>
+    public static bool CanEdit(OrganizerItem comment, string? username) =>
+        string.IsNullOrEmpty(username)
+        || string.IsNullOrEmpty(comment.CreatedBy)
+        || string.Equals(comment.CreatedBy, username, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Who wrote it: a display name when one is known (keyed by lower-case username), the
+    /// username otherwise, and null when it wasn't recorded (login off, one shared household) -
+    /// then no name is shown at all.</summary>
+    public static string? Author(OrganizerItem comment, IReadOnlyDictionary<string, string>? names = null)
+    {
+        if (string.IsNullOrEmpty(comment.CreatedBy)) return null;
+        return names?.GetValueOrDefault(comment.CreatedBy.ToLowerInvariant()) is { Length: > 0 } name ? name : comment.CreatedBy;
+    }
+
+    /// <summary>The change for an author rewriting their comment, or null when there's nothing to save.</summary>
+    public static Dictionary<string, object?>? EditChanges(OrganizerItem comment, string body, DateTimeOffset? now = null)
+    {
+        body = body.Trim();
+        if (body.Length == 0 || body == comment.String("body")) return null;
+        return new Dictionary<string, object?> { ["body"] = body, ["editedAt"] = OrganizerDates.Timestamp(now) };
+    }
 }
 
 public sealed record OrganizerItem(

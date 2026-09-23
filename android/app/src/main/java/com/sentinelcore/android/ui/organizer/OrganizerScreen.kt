@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -742,6 +743,7 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
     val attachments = engine.children(card.id, OrganizerKinds.ATTACHMENT)
     val cover = attachments.firstOrNull { it.string("contentType")?.startsWith("image/") == true }
     val checklist = card.list("checklist")
+    val comments = engine.children(card.id, OrganizerKinds.COMMENT).size
     Box {
         Card(Modifier.fillMaxWidth().combinedClickable(onClick = { routes.openCard(card.id) }, onLongClick = { menu = true })) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -753,7 +755,7 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
                     }
                 }
                 Text(card.title.ifEmpty { "Card" }, textDecoration = if (card.bool("completed")) TextDecoration.LineThrough else null)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     card.string("due")?.let { dueText ->
                         OrganizerDates.parse(dueText, dueText.length == 10)?.let { due ->
                             val late = !card.bool("completed") && due.toLocalDate().isBefore(LocalDate.now())
@@ -762,6 +764,10 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
                     }
                     if (checklist.isNotEmpty()) Text("☑ ${checklist.count { (it as? Map<*, *>)?.get("done") == true }}/${checklist.size}", fontSize = 11.sp, color = SentinelTextDim)
                     if (attachments.isNotEmpty()) Text("📎 ${attachments.size}", fontSize = 11.sp, color = SentinelTextDim)
+                    if (comments > 0) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Comments", tint = SentinelTextDim, modifier = Modifier.size(12.dp))
+                        Text("$comments", fontSize = 11.sp, color = SentinelTextDim)
+                    }
                 }
             }
         }

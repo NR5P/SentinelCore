@@ -365,9 +365,15 @@ private struct BoardsTV: View {
                                         VStack(alignment: .leading, spacing: 8) {
                                             Text(card.title).strikethrough(card.bool("completed"))
                                             let checklist = card.fields["checklist"]?.array ?? []
-                                            if !checklist.isEmpty {
-                                                Text("\(checklist.filter { $0.object?["done"]?.bool == true }.count)/\(checklist.count) done")
-                                                    .font(.caption).foregroundStyle(.secondary)
+                                            let comments = engine.children(of: card.id, kind: .comment).count
+                                            if !checklist.isEmpty || comments > 0 {
+                                                HStack(spacing: 20) {
+                                                    if !checklist.isEmpty {
+                                                        Text("\(checklist.filter { $0.object?["done"]?.bool == true }.count)/\(checklist.count) done")
+                                                    }
+                                                    if comments > 0 { Label("\(comments)", systemImage: "bubble.left") }
+                                                }
+                                                .font(.caption).foregroundStyle(.secondary)
                                             }
                                         }
                                         .frame(width: 400, alignment: .leading)

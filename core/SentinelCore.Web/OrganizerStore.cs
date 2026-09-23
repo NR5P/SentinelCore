@@ -100,9 +100,12 @@ public static class OrganizerKinds
     public const string Column = "column";
     public const string Card = "card";
     public const string Attachment = "attachment";
+    public const string Comment = "comment";
 
     // What each kind may hang under. Null means "may stand alone". A reminder can be a sub-task of
-    // another reminder; an attachment can go on anything but another attachment.
+    // another reminder; an attachment can go on anything but another attachment. A comment is its
+    // own item under a card rather than a list inside the card, so two people commenting offline
+    // both keep their comment instead of one list overwriting the other.
     private static readonly Dictionary<string, string[]?> Parents = new(StringComparer.Ordinal)
     {
         [Note] = null,
@@ -112,10 +115,11 @@ public static class OrganizerKinds
         [Column] = [Board],
         [Card] = [Column],
         [Attachment] = [Note, Event, Reminder, Board, Column, Card],
+        [Comment] = [Card],
     };
 
     // Kinds that are never valid without a parent.
-    private static readonly HashSet<string> NeedsParent = new(StringComparer.Ordinal) { Column, Card, Attachment };
+    private static readonly HashSet<string> NeedsParent = new(StringComparer.Ordinal) { Column, Card, Attachment, Comment };
 
     public static bool IsKnown(string kind) => Parents.ContainsKey(kind);
 
@@ -523,6 +527,15 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
         {
             if (existing.Kind != change.Kind) return new ApplyOutcome("An item can't change what kind of thing it is.");
             if (!visible.Contains(existing.SpaceId)) return new ApplyOutcome("You don't have access to that item.");
+
+            // A comment's words belong to whoever wrote it. Anyone who can see the card may delete
+            // one, since tidying a board is everyone's job, but only the author may change it.
+            if (existing.Kind == OrganizerKinds.Comment && user.Username is not null && existing.CreatedBy is not null
+                && !string.Equals(existing.CreatedBy, user.Username, StringComparison.OrdinalIgnoreCase)
+                && change.Fields.Any(field => field.Key != "deleted"))
+            {
+                return new ApplyOutcome("Only the person who wrote a comment can change it.");
+            }
         }
 
         var item = existing ?? new OrganizerItem

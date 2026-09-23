@@ -656,6 +656,8 @@ private struct CardTile: View {
                 }
                 if !checklist.isEmpty { Label("\(done)/\(checklist.count)", systemImage: "checklist") }
                 if !attachments.isEmpty { Label("\(attachments.count)", systemImage: "paperclip") }
+                let comments = engine.children(of: card.id, kind: .comment).count
+                if comments > 0 { Label("\(comments)", systemImage: "bubble.left") }
                 if card.string("description") != nil { Image(systemName: "text.alignleft") }
                 ForEach((card.fields["assignees"]?.array ?? []).compactMap(\.string), id: \.self) { person in
                     Text(person.prefix(2).uppercased())

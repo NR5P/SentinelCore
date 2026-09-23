@@ -88,7 +88,7 @@ public struct OfflinePolicy: Codable, Hashable, Sendable {
                 // A board is a working surface - dropping a card that's still on it would make the
                 // board look wrong offline. Only finished cards age out.
                 return !item.bool("completed") || (item.updatedAt ?? now) >= cutoff
-            case .board, .column, .attachment:
+            case .board, .column, .comment, .attachment:
                 return true
             }
         }

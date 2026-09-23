@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -37,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import com.sentinelcore.android.organizer.OrganizerComments
 import com.sentinelcore.android.organizer.OrganizerDates
 import com.sentinelcore.android.organizer.OrganizerEngine
 import com.sentinelcore.android.organizer.OrganizerItem
@@ -486,6 +488,84 @@ fun CardEditorScreen(engine: OrganizerEngine, itemId: String, onDone: () -> Unit
         }
         LinksEditor(links) { links = it }
         AttachmentsEditor(engine, itemId) { itemId }
+        CommentsSection(engine, itemId, people)
         DeleteButton("Delete card") { engine.deleteTree(itemId); onDone() }
+    }
+}
+
+// A card's comments. Each is its own item, posted the moment it's written rather than on the
+// card's Save, and the list follows sync while the card is open - an edit in progress lives in this
+// composable's own state, so a sync redrawing the list never wipes it. Only the author may edit a
+// comment (the server enforces it); anyone may delete one.
+@Composable
+private fun CommentsSection(engine: OrganizerEngine, cardId: String, people: List<OrganizerPerson>) {
+    rememberOrganizerRevision(engine)
+    val me = engine.status.collectAsStateValue()?.username
+    val comments = OrganizerComments.sorted(engine.children(cardId, OrganizerKinds.COMMENT))
+    var newComment by remember { mutableStateOf("") }
+    var editingId by remember { mutableStateOf<String?>(null) }
+    var editText by remember { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf<String?>(null) }
+    val stamp = remember { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()) }
+
+    // Someone else deleted the comment being edited: nothing left to save.
+    val editing = editingId?.takeIf { id -> comments.any { it.id == id } }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Comments", color = SentinelCyan, style = MaterialTheme.typography.labelLarge)
+        if (comments.isEmpty()) Text("No comments yet.", style = MaterialTheme.typography.bodySmall, color = SentinelTextDim)
+        comments.forEach { comment ->
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        OrganizerComments.authorName(comment.createdBy, people)?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+                        Text(
+                            (comment.createdAt?.let(stamp::format) ?: "") + if (comment.string("editedAt") != null) " (edited)" else "",
+                            style = MaterialTheme.typography.labelSmall, color = SentinelTextDim,
+                        )
+                    }
+                    if (OrganizerComments.canEdit(comment, me) && editing != comment.id) {
+                        TextButton(onClick = { editingId = comment.id; editText = comment.string("body").orEmpty() }) { Text("Edit") }
+                    }
+                    IconButton(onClick = { confirmDelete = comment.id }) { Icon(Icons.Default.Close, contentDescription = "Delete comment") }
+                }
+                if (editing == comment.id) {
+                    OutlinedTextField(editText, { editText = it }, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            engine.item(comment.id)?.let { current ->
+                                OrganizerComments.editFields(current, editText)?.let { engine.update(current.id, it) }
+                            }
+                            editingId = null
+                        }) { Text("Save") }
+                        TextButton(onClick = { editingId = null }) { Text("Cancel") }
+                    }
+                } else {
+                    SelectionContainer { Text(comment.string("body").orEmpty()) }
+                }
+            }
+        }
+        OutlinedTextField(newComment, { newComment = it }, label = { Text("Write a comment") }, modifier = Modifier.fillMaxWidth(),
+            trailingIcon = {
+                TextButton(enabled = newComment.isNotBlank(), onClick = {
+                    engine.create(OrganizerKinds.COMMENT, mapOf("body" to newComment.trim()), parentId = cardId)
+                    newComment = ""
+                }) { Text("Post") }
+            })
+    }
+
+    confirmDelete?.let { id ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("Delete this comment?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = null
+                    if (editingId == id) editingId = null
+                    engine.delete(id)
+                }) { Text("Delete", color = SentinelRed) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
+        )
     }
 }

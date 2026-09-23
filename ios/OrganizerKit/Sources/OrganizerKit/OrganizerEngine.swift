@@ -100,6 +100,15 @@ public final class OrganizerEngine {
         for change in pending.values { change.clocks.values.forEach { clock.observe($0) } }
         serverId = store.meta("serverId")
         cursor = Int64(store.meta("cursor") ?? "") ?? 0
+        // Syncs by an older build skipped kinds it didn't know (see KnownItems), and the cursor
+        // has moved past them. When this build knows a different set, start over once so they
+        // arrive. A full sync is idempotent, so the only cost is one larger download.
+        let kinds = OrganizerKind.allCases.map(\.rawValue).joined(separator: ",")
+        if store.meta("kinds") != kinds {
+            cursor = 0
+            store.setMeta("cursor", "0")
+            store.setMeta("kinds", kinds)
+        }
         if let data = store.meta("spaces")?.data(using: .utf8), let saved = try? JSONDecoder.organizer.decode([OrganizerSpace].self, from: data) {
             spaces = saved
         }

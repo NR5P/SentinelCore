@@ -313,6 +313,87 @@ final class EngineTests: XCTestCase {
         XCTAssertTrue(engine.items(.card).isEmpty)
     }
 
+    // A comment from someone else arrives by sync (before `comment` was a known kind, one such item
+    // failed the whole response); it lists oldest first next to one posted here, only the author
+    // may edit, and an edit stamps editedAt.
+    func testCardCommentsSyncInOldestFirstAndOnlyTheAuthorEdits() async throws {
+        let engine = try OrganizerEngine(directory: directory(), deviceId: "phone", policy: .computerDefault)
+        let board = engine.create(.board, fields: ["title": "House"], spaceId: "family")
+        let column = engine.create(.column, fields: ["title": "To do"], parentId: board.id)
+        let card = engine.create(.card, fields: ["title": "Paint"], parentId: column.id)
+        let transport = ScriptedTransport { request in
+            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: "Nathan") : ScriptedTransport.reply(items: [[
+                "id": "from-anna", "kind": "comment", "spaceId": "family", "parentId": card.id, "deleted": false,
+                "fields": ["body": "Which colour?"], "clocks": [:], "seq": 1,
+                "createdAt": "2020-01-01T10:00:00.1234567+00:00", "createdBy": "anna",
+            ]])
+        }
+        engine.connect(transport)
+        await settle(engine)
+
+        let mine = try XCTUnwrap(engine.postComment("  Blue  ", on: card.id))
+        XCTAssertEqual(mine.string("body"), "Blue")
+        XCTAssertEqual(mine.createdBy, "Nathan")
+        XCTAssertNil(engine.postComment("   ", on: card.id))
+        XCTAssertEqual(engine.comments(on: card.id).map(\.id), ["from-anna", mine.id])
+
+        let theirs = try XCTUnwrap(engine.item("from-anna"))
+        XCTAssertFalse(theirs.isAuthored(by: "nathan"))
+        XCTAssertTrue(mine.isAuthored(by: "NATHAN"))
+        XCTAssertTrue(theirs.isAuthored(by: nil), "login off: anyone may edit")
+        XCTAssertTrue(OrganizerItem(id: "x", kind: .comment, spaceId: "family").isAuthored(by: "nathan"), "unknown author")
+
+        XCTAssertNil(engine.item(mine.id)?.editedAt)
+        XCTAssertFalse(engine.editComment(mine.id, body: "Blue"), "unchanged body is not an edit")
+        XCTAssertTrue(engine.editComment(mine.id, body: "Dark blue"))
+        XCTAssertEqual(engine.item(mine.id)?.string("body"), "Dark blue")
+        XCTAssertNotNil(engine.item(mine.id)?.editedAt)
+
+        engine.delete("from-anna")
+        XCTAssertEqual(engine.comments(on: card.id).map(\.id), [mine.id])
+        engine.deleteTree(card.id)
+        XCTAssertTrue(engine.comments(on: card.id).isEmpty)
+        XCTAssertNil(engine.item(mine.id))
+    }
+
+    func testAKindThisBuildDoesNotKnow_IsSkipped_NotAFailedSync() async throws {
+        let engine = try OrganizerEngine(directory: directory(), deviceId: "phone", policy: .computerDefault)
+        let transport = ScriptedTransport { request in
+            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: "Nathan") : ScriptedTransport.reply(items: [
+                ["id": "from-the-future", "kind": "sticker", "spaceId": "family", "deleted": false,
+                 "fields": ["shape": "star"], "clocks": [:], "seq": 1],
+                ["id": "n1", "kind": "note", "spaceId": "family", "deleted": false,
+                 "fields": ["title": "Groceries"], "clocks": [:], "seq": 2],
+            ])
+        }
+        engine.connect(transport)
+        await settle(engine)
+
+        XCTAssertEqual(engine.item("n1")?.string("title"), "Groceries")
+        XCTAssertNil(engine.item("from-the-future"))
+    }
+
+    func testAnUpdateThatAddsKinds_StartsTheCursorOver() throws {
+        let dir = directory()
+        do {
+            let engine = try OrganizerEngine(directory: dir, deviceId: "phone", policy: .computerDefault)
+            _ = engine
+        }
+        // Pretend the previous build synced up to 500 knowing fewer kinds.
+        let store = try LocalStore(directory: dir)
+        store.setMeta("cursor", "500")
+        store.setMeta("kinds", "note,event")
+        let upgraded = try OrganizerEngine(directory: dir, deviceId: "phone", policy: .computerDefault)
+        XCTAssertEqual(try LocalStore(directory: dir).meta("cursor"), "0")
+        _ = upgraded
+
+        // And a build that knows the same kinds keeps its place.
+        let same = try LocalStore(directory: dir)
+        same.setMeta("cursor", "500")
+        _ = try OrganizerEngine(directory: dir, deviceId: "phone", policy: .computerDefault)
+        XCTAssertEqual(try LocalStore(directory: dir).meta("cursor"), "500")
+    }
+
     func testAttachingWorksOfflineAndKeepsTheFile() throws {
         let engine = try OrganizerEngine(directory: directory(), deviceId: "phone", policy: .computerDefault)
         let note = engine.create(.note, fields: ["title": "Photo"], spaceId: "family")

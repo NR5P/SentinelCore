@@ -475,6 +475,7 @@ struct CardEditor: View {
             }
             LinksSection(links: $links)
             AttachmentsSection(parentId: card.id) { card.id }
+            CardCommentsSection(cardId: card.id, people: people)
             Section {
                 Button("Delete Card", role: .destructive) {
                     engine.deleteTree(card.id)
@@ -539,5 +540,108 @@ struct CardEditor: View {
         if !people.isEmpty { fields["assignees"] = assignees.isEmpty ? .null : .array(assignees.sorted().map(JSONValue.string)) }
         let changes = changedFields(item.fields, fields)
         if !changes.isEmpty { engine.update(item.id, changes) }
+    }
+}
+
+// A card's comments. Each is its own item, posted the moment it's written rather than with the
+// card's Save, and the list follows sync while the card is open - the engine is observable, so
+// other people's comments appear as they arrive. An edit in progress lives in this view's state,
+// so a redraw from sync never wipes it. Only the author may edit (the server enforces it);
+// anyone may delete.
+struct CardCommentsSection: View {
+    @Environment(OrganizerEngine.self) private var engine
+    let cardId: String
+    let people: [OrganizerPerson]
+
+    @State private var draft = ""
+    @State private var editingId: String?
+    @State private var editText = ""
+    @State private var confirmingDelete: OrganizerItem?
+
+    var body: some View {
+        let comments = engine.comments(on: cardId)
+        let me = engine.status?.username
+        Section("Comments") {
+            if comments.isEmpty {
+                Text("No comments yet.").foregroundStyle(.secondary)
+            }
+            ForEach(comments) { comment in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        // No author at all with login off (one shared household): just the date.
+                        if let author = name(of: comment.createdBy) {
+                            Text(author).font(.subheadline.bold())
+                        }
+                        Text(stamp(comment)).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        if comment.isAuthored(by: me), editingId != comment.id {
+                            Button("Edit") {
+                                editText = comment.string("body") ?? ""
+                                editingId = comment.id
+                            }
+                            .font(.caption)
+                        }
+                        Button {
+                            confirmingDelete = comment
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .font(.caption)
+                        .accessibilityLabel("Delete comment")
+                    }
+                    .buttonStyle(.borderless)
+                    if editingId == comment.id {
+                        TextField("Comment", text: $editText, axis: .vertical)
+                            .lineLimit(2...8)
+                            .textFieldStyle(.roundedBorder)
+                        HStack {
+                            Button("Cancel") { editingId = nil }
+                            Spacer()
+                            Button("Save") {
+                                engine.editComment(comment.id, body: editText)
+                                editingId = nil
+                            }
+                            .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                        .buttonStyle(.borderless)
+                    } else {
+                        Text(comment.string("body") ?? "")
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            HStack(alignment: .bottom) {
+                TextField("Write a comment", text: $draft, axis: .vertical)
+                    .lineLimit(1...6)
+                Button("Post") {
+                    if engine.postComment(draft, on: cardId) != nil { draft = "" }
+                }
+                .buttonStyle(.borderless)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .onChange(of: comments.map(\.id)) { _, ids in
+            // Someone deleted the comment being edited.
+            if let editingId, !ids.contains(editingId) { self.editingId = nil }
+        }
+        .confirmationDialog("Delete this comment?", isPresented: Binding(get: { confirmingDelete != nil }, set: { if !$0 { confirmingDelete = nil } }),
+                            titleVisibility: .visible, presenting: confirmingDelete) { comment in
+            Button("Delete", role: .destructive) {
+                if editingId == comment.id { editingId = nil }
+                engine.delete(comment.id)
+            }
+        }
+    }
+
+    private func name(of username: String?) -> String? {
+        guard let username, !username.isEmpty else { return nil }
+        return people.first { $0.username.caseInsensitiveCompare(username) == .orderedSame }?.label ?? username
+    }
+
+    private func stamp(_ comment: OrganizerItem) -> String {
+        let when = comment.createdAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? ""
+        return comment.editedAt == nil ? when : "\(when) (edited)"
     }
 }

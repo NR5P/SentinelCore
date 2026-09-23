@@ -1,7 +1,7 @@
 import Foundation
 
 public enum OrganizerKind: String, Codable, CaseIterable, Sendable {
-    case note, event, reminder, board, column, card, attachment
+    case note, event, reminder, board, column, card, comment, attachment
 }
 
 // One item as this device holds it. spaceId/parentId/deleted are properties here but travel as
@@ -141,6 +141,42 @@ struct SyncResponse: Decodable {
     var removed: [String]
     var rejected: [OrganizerRejection]
     var missingBlobs: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case serverId, reset, cursor, hasMore, spaces, items, removed, rejected, missingBlobs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        serverId = try container.decode(String.self, forKey: .serverId)
+        reset = try container.decode(Bool.self, forKey: .reset)
+        cursor = try container.decode(Int64.self, forKey: .cursor)
+        hasMore = try container.decode(Bool.self, forKey: .hasMore)
+        spaces = try container.decode([OrganizerSpace].self, forKey: .spaces)
+        items = try container.decode(KnownItems.self, forKey: .items).items
+        removed = try container.decode([String].self, forKey: .removed)
+        rejected = try container.decode([OrganizerRejection].self, forKey: .rejected)
+        missingBlobs = try container.decode([String].self, forKey: .missingBlobs)
+    }
+}
+
+// The items of a reply, minus any kind this build doesn't know. A newer server can add a kind
+// (comments did); one item this build can't decode must not fail the whole sync and leave the
+// device stuck. The engine resyncs from scratch after an update adds kinds, so nothing skipped
+// here is lost for good - see OrganizerEngine's "kinds" meta.
+struct KnownItems: Decodable {
+    var items: [OrganizerItem] = []
+
+    private struct KindProbe: Decodable { var kind: String }
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        while !container.isAtEnd {
+            let element = try container.superDecoder()
+            guard OrganizerKind(rawValue: try KindProbe(from: element).kind) != nil else { continue }
+            items.append(try OrganizerItem(from: element))
+        }
+    }
 }
 
 public struct OrganizerPerson: Codable, Hashable, Identifiable, Sendable {
@@ -151,7 +187,15 @@ public struct OrganizerPerson: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct PeopleResponse: Decodable { var people: [OrganizerPerson] }
-struct ItemsResponse: Decodable { var items: [OrganizerItem] }
+struct ItemsResponse: Decodable {
+    var items: [OrganizerItem]
+
+    private enum CodingKeys: String, CodingKey { case items }
+
+    init(from decoder: Decoder) throws {
+        items = try decoder.container(keyedBy: CodingKeys.self).decode(KnownItems.self, forKey: .items).items
+    }
+}
 struct FeedResponse: Decodable { var path: String }
 struct WaitResponse: Decodable { var cursor: Int64 }
 

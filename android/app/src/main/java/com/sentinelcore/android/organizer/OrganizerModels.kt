@@ -22,6 +22,35 @@ object OrganizerKinds {
     const val COLUMN = "column"
     const val CARD = "card"
     const val ATTACHMENT = "attachment"
+    const val COMMENT = "comment"
+}
+
+// Comments on a board card: each is its own item under the card, with `body` and, once its author
+// changes it, `editedAt`. The author is `createdBy`; only they may edit it (the server enforces
+// that), while anyone who can see the card may delete it.
+object OrganizerComments {
+    // Oldest first. Ones not yet stamped by the server still carry the local creation time.
+    fun sorted(comments: List<OrganizerItem>): List<OrganizerItem> =
+        comments.sortedWith(compareBy({ it.createdAt ?: Instant.MAX }, { it.id }))
+
+    // With login off (no username) or an author-less comment, everyone may edit.
+    fun canEdit(comment: OrganizerItem, username: String?): Boolean {
+        val author = comment.createdBy
+        return username.isNullOrBlank() || author.isNullOrBlank() || author.equals(username, ignoreCase = true)
+    }
+
+    // Null when there's no author: login is off, one shared household, so there is no name to show.
+    fun authorName(createdBy: String?, people: List<OrganizerPerson>): String? {
+        if (createdBy.isNullOrBlank()) return null
+        return people.firstOrNull { it.username.equals(createdBy, ignoreCase = true) }?.label ?: createdBy
+    }
+
+    // The fields an edit sends, or nothing when the text is blank or unchanged.
+    fun editFields(comment: OrganizerItem, newBody: String, now: Instant = Instant.now()): Map<String, Any?>? {
+        val body = newBody.trim()
+        if (body.isEmpty() || body == comment.string("body")) return null
+        return mapOf("body" to body, "editedAt" to now.toString())
+    }
 }
 
 data class OrganizerItem(
