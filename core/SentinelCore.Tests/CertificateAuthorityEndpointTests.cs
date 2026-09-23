@@ -34,7 +34,7 @@ public sealed class CertificateAuthorityEndpointTests : IDisposable
         try { TempDirectories.Delete(_dataDirectory); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
-    private WebApplicationFactory<WebProgram> CreateFactory(string? authorityPath) => new WebApplicationFactory<WebProgram>()
+    private WebApplicationFactory<WebProgram> CreateFactory(string? authorityPath, string? certificatePath = null) => new WebApplicationFactory<WebProgram>()
         .WithWebHostBuilder(builder =>
         {
             builder
@@ -43,7 +43,15 @@ public sealed class CertificateAuthorityEndpointTests : IDisposable
                 .UseSetting("Bridge:DataDirectory", _dataDirectory)
                 // The test host has no HTTPS listener, so Program.cs never provisions an authority
                 // of its own; the path is planted the way Program.cs would have recorded it.
-                .UseSetting("Https:Enabled", "false");
+                .UseSetting("Https:Enabled", "false")
+                // Pinned too, because the Web project's own appsettings.json is loaded here: on the
+                // deployed server it names the real certs/server.crt with a real ca.crt beside it,
+                // Program.cs found that sibling, and the "no authority" case answered 200 on the
+                // one machine where it matters. UseSetting rather than ConfigureAppConfiguration:
+                // Program.cs reads these before the host is built, and only UseSetting is visible
+                // that early - see WebHostTestSettings and TestHostConfigurationTests.
+                .UseSetting("Https:CertificatePath", certificatePath ?? "")
+                .UseSetting("Https:KeyPath", "");
             if (authorityPath is not null)
                 builder.UseSetting(CertificateAuthorityEndpoints.ConfigurationKey, authorityPath);
         });
@@ -120,8 +128,7 @@ public sealed class CertificateAuthorityEndpointTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(certs, "server.crt"), "-----BEGIN CERTIFICATE-----\nserver\n", ct);
         await File.WriteAllTextAsync(Path.Combine(certs, "ca.crt"), pem, ct);
 
-        using var factory = CreateFactory(authorityPath: null)
-            .WithWebHostBuilder(builder => builder.UseSetting("Https:CertificatePath", Path.Combine(certs, "server.crt")));
+        using var factory = CreateFactory(authorityPath: null, certificatePath: Path.Combine(certs, "server.crt"));
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync("/api/certificate-authority", ct);
