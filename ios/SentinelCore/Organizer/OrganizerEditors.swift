@@ -446,7 +446,12 @@ struct CardEditor: View {
                 TextField("Labels, comma separated", text: $labels)
             }
             Section("Description") {
-                TextField("Details", text: $description, axis: .vertical).lineLimit(3...12)
+                // Labels hidden and leading-aligned: in a grouped Form on the Mac a titled field keeps
+                // its title on the left and right-aligns what you type.
+                TextField("Details", text: $description, prompt: Text("Add a more detailed description…"), axis: .vertical)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3...12)
             }
             Section("Checklist") {
                 ForEach($checklist) { $entry in
@@ -456,7 +461,9 @@ struct CardEditor: View {
                         #endif
                 }
                 .onDelete { checklist.remove(atOffsets: $0) }
-                TextField("Add an item", text: $newCheck)
+                TextField("Add an item", text: $newCheck, prompt: Text("Add an item"))
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
                     .onSubmit {
                         let text = newCheck.trimmingCharacters(in: .whitespaces)
                         guard !text.isEmpty else { return }
@@ -543,11 +550,15 @@ struct CardEditor: View {
     }
 }
 
-// A card's comments. Each is its own item, posted the moment it's written rather than with the
-// card's Save, and the list follows sync while the card is open - the engine is observable, so
-// other people's comments appear as they arrive. An edit in progress lives in this view's state,
-// so a redraw from sync never wipes it. Only the author may edit (the server enforces it);
-// anyone may delete.
+// A card's comments, laid out like Trello's activity feed: a "Write a comment" box, then the
+// comments newest first, each with the author's initials, name and time over the text, and small
+// Edit / Delete links under it. The whole feed is one form row so it reads as a conversation
+// under the card rather than a column of settings rows.
+//
+// Each comment is its own item, posted the moment it's written rather than with the card's Save,
+// and the feed follows sync while the card is open - the engine is observable, so other people's
+// comments appear as they arrive. An edit in progress lives in this view's state, so a redraw
+// from sync never wipes it. Only the author may edit (the server enforces it); anyone may delete.
 struct CardCommentsSection: View {
     @Environment(OrganizerEngine.self) private var engine
     let cardId: String
@@ -557,69 +568,25 @@ struct CardCommentsSection: View {
     @State private var editingId: String?
     @State private var editText = ""
     @State private var confirmingDelete: OrganizerItem?
+    @FocusState private var composing: Bool
 
     var body: some View {
         let comments = engine.comments(on: cardId)
         let me = engine.status?.username
-        Section("Comments") {
-            if comments.isEmpty {
-                Text("No comments yet.").foregroundStyle(.secondary)
-            }
-            ForEach(comments) { comment in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        // No author at all with login off (one shared household): just the date.
-                        if let author = name(of: comment.createdBy) {
-                            Text(author).font(.subheadline.bold())
-                        }
-                        Text(stamp(comment)).font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        if comment.isAuthored(by: me), editingId != comment.id {
-                            Button("Edit") {
-                                editText = comment.string("body") ?? ""
-                                editingId = comment.id
-                            }
-                            .font(.caption)
-                        }
-                        Button {
-                            confirmingDelete = comment
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .font(.caption)
-                        .accessibilityLabel("Delete comment")
-                    }
-                    .buttonStyle(.borderless)
-                    if editingId == comment.id {
-                        TextField("Comment", text: $editText, axis: .vertical)
-                            .lineLimit(2...8)
-                            .textFieldStyle(.roundedBorder)
-                        HStack {
-                            Button("Cancel") { editingId = nil }
-                            Spacer()
-                            Button("Save") {
-                                engine.editComment(comment.id, body: editText)
-                                editingId = nil
-                            }
-                            .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                        .buttonStyle(.borderless)
-                    } else {
-                        Text(comment.string("body") ?? "")
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+        Section {
+            VStack(alignment: .leading, spacing: 16) {
+                composer(me: me)
+                ForEach(comments.reversed()) { comment in
+                    row(comment, me: me)
                 }
-                .padding(.vertical, 2)
             }
-            HStack(alignment: .bottom) {
-                TextField("Write a comment", text: $draft, axis: .vertical)
-                    .lineLimit(1...6)
-                Button("Post") {
-                    if engine.postComment(draft, on: cardId) != nil { draft = "" }
+            .padding(.vertical, 6)
+        } header: {
+            HStack {
+                Label("Comments", systemImage: "text.bubble")
+                if !comments.isEmpty {
+                    Text("\(comments.count)").foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderless)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .onChange(of: comments.map(\.id)) { _, ids in
@@ -635,6 +602,88 @@ struct CardCommentsSection: View {
         }
     }
 
+    private func composer(me: String?) -> some View {
+        let empty = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return HStack(alignment: .top, spacing: 10) {
+            CommentAvatar(name: name(of: me))
+            VStack(alignment: .leading, spacing: 8) {
+                CommentTextBox(prompt: "Write a comment…", text: $draft)
+                    .focused($composing)
+                // Like Trello, the button only shows once you're writing. "Post", not Trello's
+                // "Save", so it isn't confused with the card's own Save in the toolbar.
+                if composing || !empty {
+                    HStack(spacing: 12) {
+                        Button("Post") { post() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(empty)
+                            .keyboardShortcut(.return, modifiers: .command)
+                        if !empty {
+                            Button("Discard") { draft = ""; composing = false }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func row(_ comment: OrganizerItem, me: String?) -> some View {
+        let author = name(of: comment.createdBy)
+        return HStack(alignment: .top, spacing: 10) {
+            CommentAvatar(name: author)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    // No author at all with login off (one shared household): just the time.
+                    if let author { Text(author).font(.subheadline.bold()) }
+                    Text(stamp(comment)).font(.caption).foregroundStyle(.secondary)
+                }
+                if editingId == comment.id {
+                    CommentTextBox(prompt: "Comment", text: $editText)
+                    HStack(spacing: 12) {
+                        Button("Save") {
+                            engine.editComment(comment.id, body: editText)
+                            editingId = nil
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("Cancel") { editingId = nil }
+                            .buttonStyle(.borderless)
+                    }
+                    .controlSize(.small)
+                    .padding(.top, 4)
+                } else {
+                    Text(comment.string("body") ?? "")
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                    HStack(spacing: 4) {
+                        if comment.isAuthored(by: me) {
+                            Button("Edit") {
+                                editText = comment.string("body") ?? ""
+                                editingId = comment.id
+                            }
+                            Text("•")
+                        }
+                        Button("Delete") { confirmingDelete = comment }
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func post() {
+        if engine.postComment(draft, on: cardId) != nil {
+            draft = ""
+            composing = false
+        }
+    }
+
     private func name(of username: String?) -> String? {
         guard let username, !username.isEmpty else { return nil }
         return people.first { $0.username.caseInsensitiveCompare(username) == .orderedSame }?.label ?? username
@@ -643,5 +692,60 @@ struct CardCommentsSection: View {
     private func stamp(_ comment: OrganizerItem) -> String {
         let when = comment.createdAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? ""
         return comment.editedAt == nil ? when : "\(when) (edited)"
+    }
+}
+
+// A multi-line box that types left to right from the leading edge with its prompt inside it.
+// A plain TextField in a grouped Form on the Mac shows its title as a label on the left and
+// right-aligns what you type, which is wrong for writing prose.
+struct CommentTextBox: View {
+    let prompt: String
+    @Binding var text: String
+
+    var body: some View {
+        TextField("", text: $text, prompt: Text(prompt), axis: .vertical)
+            .labelsHidden()
+            .accessibilityLabel(prompt)
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.leading)
+            .lineLimit(2...10)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+    }
+}
+
+// The round initials badge beside a comment; a plain person symbol when there's no name (login off).
+struct CommentAvatar: View {
+    let name: String?
+
+    var body: some View {
+        ZStack {
+            Circle().fill(color.gradient)
+            if let initials {
+                Text(initials).font(.caption.bold()).foregroundStyle(.white)
+            } else {
+                Image(systemName: "person.fill").font(.caption).foregroundStyle(.white)
+            }
+        }
+        .frame(width: 30, height: 30)
+        .accessibilityHidden(true)
+    }
+
+    private var initials: String? {
+        guard let name, !name.isEmpty else { return nil }
+        let words = name.split(whereSeparator: { $0 == " " || $0 == "." || $0 == "_" })
+        let letters = words.count > 1 ? words.prefix(2).compactMap(\.first).map(String.init).joined() : String(name.prefix(2))
+        return letters.uppercased()
+    }
+
+    // Stable per person, so the same author keeps the same colour on every device.
+    private var color: Color {
+        guard let name, !name.isEmpty else { return .gray }
+        let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal, .indigo, .red]
+        let sum = name.lowercased().unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return palette[sum % palette.count]
     }
 }

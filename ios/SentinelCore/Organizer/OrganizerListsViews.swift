@@ -550,6 +550,10 @@ private struct ColumnView: View {
             ForEach(cards) { card in
                 CardTile(card: card)
                     .onTapGesture { editCard(card) }
+                    // A tap gesture alone is invisible to VoiceOver; this makes the tile a button.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { editCard(card) }
                     .draggable(card.id)
                     .dropDestination(for: String.self) { ids, _ in
                         guard let id = ids.first else { return false }
