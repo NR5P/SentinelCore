@@ -13,7 +13,7 @@ namespace SentinelCore.Web;
 // for one edited occurrence of a repeating event, alerts (minutes before), and links.
 public static class OrganizerCalendarFeed
 {
-    public static string Build(IEnumerable<OrganizerItem> events, IReadOnlyList<OrganizerSpace> spaces)
+    public static string Build(IEnumerable<OrganizerItem> events, IReadOnlyList<OrganizerSpace> spaces, IReadOnlyList<Holiday>? holidays = null)
     {
         var builder = new StringBuilder();
         Line(builder, "BEGIN:VCALENDAR");
@@ -90,6 +90,24 @@ public static class OrganizerCalendarFeed
                 Line(builder, "END:VALARM");
             }
 
+            Line(builder, "END:VEVENT");
+        }
+
+        // Holiday calendars this person turned on - all-day, read-only, stable ids so a calendar
+        // app updates rather than duplicates them on each poll.
+        var stamp = Utc(DateTimeOffset.UtcNow);
+        foreach (var holiday in holidays ?? [])
+        {
+            Line(builder, "BEGIN:VEVENT");
+            Line(builder, $"UID:{holiday.Id}@sentinelcore");
+            Line(builder, $"DTSTAMP:{stamp}");
+            Line(builder, $"DTSTART;VALUE=DATE:{holiday.Date:yyyyMMdd}");
+            Line(builder, $"DTEND;VALUE=DATE:{holiday.Date.AddDays(Math.Max(1, holiday.Days)):yyyyMMdd}");
+            Line(builder, $"SUMMARY:{Escape(holiday.Name)}");
+            if (holiday.Note is { Length: > 0 } note) Line(builder, $"DESCRIPTION:{Escape(note)}");
+            var set = OrganizerHolidays.Sets.FirstOrDefault(candidate => candidate.Id == holiday.SetId);
+            if (set is not null) Line(builder, $"CATEGORIES:{Escape(set.Name)}");
+            Line(builder, "TRANSP:TRANSPARENT");
             Line(builder, "END:VEVENT");
         }
 

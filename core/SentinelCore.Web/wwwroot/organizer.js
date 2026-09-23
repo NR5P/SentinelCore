@@ -419,8 +419,25 @@ window.SentinelOrganizer = (function () {
 
   // ---- calendar -----------------------------------------------------------------------------
 
+  // One color per holiday calendar, the same in every app.
+  const HOLIDAY_COLORS = {
+    "us-federal": "#4a9dff", "us-observances": "#93a2ad", christian: "#c98bff", orthodox: "#ff9a52",
+    jewish: "#4ae8ff", islamic: "#7fd67f", hindu: "#ffd84a", chinese: "#ff4d5e"
+  };
+
+  function holidaySetName(setId) {
+    const set = (S.holidayCatalog() || []).find((candidate) => candidate.id === setId);
+    return set ? set.name : "holiday";
+  }
+
   function entriesBetween(from, to) {
     const entries = [];
+    // Holidays belong to no space, so they show whichever space is picked.
+    for (const holiday of S.holidays()) {
+      const start = fromYmd(holiday.date);
+      const end = addDays(start, holiday.days || 1);
+      if (start < to && end > from) entries.push({ type: "holiday", holiday, start, end });
+    }
     for (const event of S.all("event").filter(inFilter)) {
       for (const occurrence of occurrences(event, from, to)) entries.push({ type: "event", ...occurrence });
     }
@@ -439,10 +456,9 @@ window.SentinelOrganizer = (function () {
     const entries = entriesBetween(gridStart, gridEnd);
     const byDay = new Map();
     for (const entry of entries) {
-      const allDay = entry.type === "event" ? entry.event.fields.allDay : entry.reminder.fields.allDay;
-      // A multi-day event shows on every day it covers.
+      // A multi-day event or holiday shows on every day it covers.
       let day = new Date(entry.start.getFullYear(), entry.start.getMonth(), entry.start.getDate());
-      const last = entry.type === "event" ? new Date(entry.end.getTime() - (allDay ? 1 : 1)) : entry.start;
+      const last = entry.type === "reminder" ? entry.start : new Date(entry.end.getTime() - 1);
       while (day <= last || ymd(day) === ymd(entry.start)) {
         const key = ymd(day);
         if (!byDay.has(key)) byDay.set(key, []);
@@ -475,6 +491,7 @@ window.SentinelOrganizer = (function () {
         <button class="btn btn-small" id="org-cal-next" aria-label="next month">&rsaquo;</button>
         <button class="btn btn-small" id="org-cal-today">today</button>
         <span class="org-spacer"></span>
+        <button class="btn btn-small" id="org-cal-holidays" title="Show holidays from other calendars">holidays${S.holidaySets().length ? ` (${S.holidaySets().length})` : ""}</button>
         <button class="btn" id="org-cal-add">+ event</button>
       </div>
       <div class="org-cal-grid">
@@ -493,6 +510,7 @@ window.SentinelOrganizer = (function () {
     el("org-cal-next").addEventListener("click", () => { monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1); renderCalendar(); });
     el("org-cal-today").addEventListener("click", () => { monthCursor = firstOfMonth(new Date()); selectedDay = ymd(new Date()); renderCalendar(); });
     el("org-cal-add").addEventListener("click", () => openEventEditor(null, { day: selectedDay }));
+    el("org-cal-holidays").addEventListener("click", openHolidaySettings);
     el("org-day-add").addEventListener("click", () => openEventEditor(null, { day: selectedDay }));
     for (const cell of root.querySelectorAll("[data-day]")) {
       cell.addEventListener("click", (event) => {
@@ -509,6 +527,10 @@ window.SentinelOrganizer = (function () {
   }
 
   function entryChip(entry) {
+    if (entry.type === "holiday") {
+      const h = entry.holiday;
+      return `<div class="org-entry org-entry-holiday" style="border-left-color:${escapeHtml(HOLIDAY_COLORS[h.setId] || "#93a2ad")}" data-entry="h:${escapeHtml(h.id)}" title="${escapeHtml(h.name)}">${escapeHtml(h.name)}</div>`;
+    }
     if (entry.type === "reminder") {
       return `<div class="org-entry org-entry-reminder" data-entry="r:${escapeHtml(entry.reminder.id)}" title="${escapeHtml(entry.reminder.fields.title)}">&#9744; ${escapeHtml(entry.reminder.fields.title || "reminder")}</div>`;
     }
@@ -518,6 +540,16 @@ window.SentinelOrganizer = (function () {
   }
 
   function entryRow(entry) {
+    if (entry.type === "holiday") {
+      const h = entry.holiday;
+      return `<div class="org-row org-row-holiday" data-entry="h:${escapeHtml(h.id)}">
+        <span class="org-row-time">holiday</span>
+        <span class="org-row-title" style="border-left-color:${escapeHtml(HOLIDAY_COLORS[h.setId] || "#93a2ad")}">${escapeHtml(h.name)}
+          ${h.note ? `<span class="org-row-sub">${escapeHtml(h.note)}</span>` : ""}
+        </span>
+        <span class="org-tag" style="color:${escapeHtml(HOLIDAY_COLORS[h.setId] || "#93a2ad")}">${escapeHtml(holidaySetName(h.setId))}</span>
+      </div>`;
+    }
     if (entry.type === "reminder") {
       const r = entry.reminder;
       return `<div class="org-row" data-entry="r:${escapeHtml(r.id)}">
@@ -545,8 +577,57 @@ window.SentinelOrganizer = (function () {
       node.addEventListener("click", (event) => {
         event.stopPropagation();
         const [type, id, ...rest] = node.dataset.entry.split(":");
-        if (type === "r") openReminderEditor(S.get(id));
+        if (type === "h") openHolidayInfo([id, ...rest].join(":"));
+        else if (type === "r") openReminderEditor(S.get(id));
         else openEventEditor(S.get(id), { original: rest.join(":") || null });
+      });
+    }
+  }
+
+  // ---- holiday calendars ----------------------------------------------------------------------
+
+  function openHolidayInfo(id) {
+    const h = S.holidays().find((candidate) => candidate.id === id);
+    if (!h) return;
+    const start = fromYmd(h.date);
+    const days = h.days || 1;
+    const dates = days > 1 ? `${formatDate(start)} - ${formatDate(addDays(start, days - 1))} (${days} days)` : formatDate(start);
+    openModal(`
+      <div class="zone-editor-header"><span>${escapeHtml(h.name.toUpperCase())}</span></div>
+      <div class="wizard-body">
+        <p>${escapeHtml(dates)}</p>
+        ${h.note ? `<p>${escapeHtml(h.note)}</p>` : ""}
+        <p class="event-count">From ${escapeHtml(holidaySetName(h.setId))}. Holidays can't be edited - turn the whole calendar off in holiday settings if you don't want it.</p>
+      </div>
+      <div class="zone-editor-footer">
+        <button class="btn" id="org-holiday-settings">holiday settings</button>
+        <button class="btn" id="org-close">close</button>
+      </div>`);
+    el("org-close").addEventListener("click", closeModal);
+    el("org-holiday-settings").addEventListener("click", openHolidaySettings);
+  }
+
+  function openHolidaySettings() {
+    const catalog = S.holidayCatalog();
+    const chosen = new Set(S.holidaySets());
+    openModal(`
+      <div class="zone-editor-header"><span>HOLIDAYS</span></div>
+      <div class="wizard-body">
+        <p>Add holidays to the calendar. They follow your account, so they show in the apps too, and in the calendar subscription link.</p>
+        ${catalog ? catalog.map((set) => `
+          <label class="org-holiday-set">
+            <input type="checkbox" data-holiday-set="${escapeHtml(set.id)}"${chosen.has(set.id) ? " checked" : ""} />
+            <span class="org-dot" style="background:${escapeHtml(HOLIDAY_COLORS[set.id] || "#93a2ad")}"></span>
+            <span><strong>${escapeHtml(set.name)}</strong><br /><span class="event-count">${escapeHtml(set.description)}</span></span>
+          </label>`).join("") : "<p>Connect to the server once to see the holiday calendars.</p>"}
+      </div>
+      <div class="zone-editor-footer"><button class="btn" id="org-close">done</button></div>`);
+    el("org-close").addEventListener("click", closeModal);
+    if (!catalog) S.refreshHolidays().then(() => { if (S.holidayCatalog()) openHolidaySettings(); });
+    for (const box of document.querySelectorAll("[data-holiday-set]")) {
+      box.addEventListener("change", () => {
+        const sets = [...document.querySelectorAll("[data-holiday-set]")].filter((b) => b.checked).map((b) => b.dataset.holidaySet);
+        S.setHolidaySets(sets);
       });
     }
   }

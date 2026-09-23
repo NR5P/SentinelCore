@@ -358,6 +358,97 @@ window.SentinelOrganizerSync = (function () {
     return Array.from(H, (x) => x.toString(16).padStart(8, "0")).join("");
   }
 
+  // ---- holiday calendars --------------------------------------------------------------------
+
+  // Holiday calendars the person chose (none by default), the list of what there is, and the
+  // days themselves for last year through two years ahead - all kept here so the calendar shows
+  // them offline. The choice lives on the server per person; see ORGANIZER_SYNC.md.
+  let holidayState = { sets: [], dirty: false, catalog: null, key: null, list: [] };
+  let holidaysCheckedAt = 0;
+  let holidaysBusy = false;
+  let holidaysAgain = false;
+  // Bumped on every change of choice, so a send only counts as done for the choice it carried -
+  // ticking a second calendar while the first was on its way used to be marked sent and lost.
+  let holidayVersion = 0;
+
+  function saveHolidays() {
+    return put("meta", "holidays", holidayState);
+  }
+
+  async function sendHolidaySets() {
+    const version = holidayVersion;
+    const response = await fetch("/api/organizer/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ holidaySets: holidayState.sets })
+    });
+    // A 400 means a set this server doesn't know - sending it again won't help.
+    if ((response.ok || response.status === 400) && version === holidayVersion) holidayState.dirty = false;
+  }
+
+  async function refreshHolidays(force) {
+    if (holidaysBusy) {
+      if (force) holidaysAgain = true;
+      return;
+    }
+    if (!force && !holidayState.dirty && Date.now() - holidaysCheckedAt < 5 * 60 * 1000) return;
+    holidaysBusy = true;
+    try {
+      if (!holidayState.catalog) {
+        const response = await fetch("/api/organizer/holidays/sets");
+        if (response.ok) holidayState.catalog = (await response.json()).sets || [];
+      }
+      if (holidayState.dirty) {
+        await sendHolidaySets();
+      } else {
+        const version = holidayVersion;
+        const response = await fetch("/api/organizer/preferences");
+        // A choice made while this was out is newer than the server's answer - it goes up next.
+        if (response.ok && version === holidayVersion) {
+          const chosen = (await response.json()).holidaySets;
+          // Never chosen on this server - a rebuilt one - so this browser's choice goes back up.
+          if (chosen == null) {
+            if (holidayState.sets.length) await sendHolidaySets();
+          } else {
+            holidayState.sets = chosen;
+          }
+        }
+      }
+      const year = new Date().getFullYear();
+      const key = `${[...holidayState.sets].sort().join(",")}|${year - 1}-${year + 2}`;
+      if (!holidayState.sets.length) {
+        holidayState.list = [];
+        holidayState.key = key;
+      } else if (holidayState.key !== key) {
+        const response = await fetch(`/api/organizer/holidays?sets=${encodeURIComponent(holidayState.sets.join(","))}&from=${year - 1}&to=${year + 2}`);
+        if (response.ok) {
+          holidayState.list = (await response.json()).holidays || [];
+          holidayState.key = key;
+        }
+      }
+      holidaysCheckedAt = Date.now();
+      await saveHolidays();
+      emit();
+    } catch {
+      // Unreachable: the cached copy stays, and the next sync tries again.
+    } finally {
+      holidaysBusy = false;
+      if (holidaysAgain) {
+        holidaysAgain = false;
+        refreshHolidays(true);
+      }
+    }
+  }
+
+  function setHolidaySets(sets) {
+    holidayState.sets = [...new Set(sets)];
+    holidayState.dirty = true;
+    holidayVersion++;
+    saveHolidays();
+    emit();
+    refreshHolidays(true);
+  }
+
   // ---- sync ---------------------------------------------------------------------------------
 
   function scheduleSync(delay) {
@@ -381,6 +472,7 @@ window.SentinelOrganizerSync = (function () {
       lastError = null;
       lastSyncedAt = new Date();
       uploadBlobs();
+      refreshHolidays();
     } catch (err) {
       online = false;
       lastError = err && err.message;
@@ -595,6 +687,8 @@ window.SentinelOrganizerSync = (function () {
     }
     for (const [id, change] of await getAll("pending")) pending.set(id, change);
     for (const [hash, blob] of await getAll("blobs")) localBlobUrls.set(hash, URL.createObjectURL(blob));
+    const storedHolidays = await get("meta", "holidays");
+    if (storedHolidays) holidayState = { ...holidayState, ...storedHolidays };
 
     // Signing in as someone else in this browser must not show them the last person's copy.
     await refreshStatus();
@@ -604,6 +698,8 @@ window.SentinelOrganizerSync = (function () {
       pending.clear();
       await Promise.all([clear("items"), clear("pending"), clear("blobs")]);
       meta = { serverId: null, cursor: 0, spaces: [] };
+      holidayState = { sets: [], dirty: false, catalog: holidayState.catalog, key: null, list: [] };
+      await saveHolidays();
     }
     if (owner !== null) meta.owner = owner;
 
@@ -657,6 +753,11 @@ window.SentinelOrganizerSync = (function () {
       waitingChanges: pending.size + inflight.size
     }),
     clearError: () => { lastError = null; emit(); },
+    holidaySets: () => holidayState.sets,
+    holidayCatalog: () => holidayState.catalog,
+    holidays: () => holidayState.list,
+    setHolidaySets,
+    refreshHolidays: () => refreshHolidays(true),
     sha256Hex
   };
 })();

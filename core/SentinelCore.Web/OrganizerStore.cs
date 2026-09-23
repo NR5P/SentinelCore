@@ -216,6 +216,11 @@ public interface IOrganizerStore
     // Who a calendar-subscription token belongs to, or null for an unknown/revoked token.
     Task<OrganizerUser?> ResolveFeedTokenAsync(string token, CancellationToken cancellationToken);
 
+    // One person's Organizer preferences as JSON (which holiday calendars they show), or null
+    // when they've never saved any. Kept per person so every device they use shows the same.
+    Task<string?> GetPreferencesAsync(OrganizerUser user, CancellationToken cancellationToken);
+    Task SetPreferencesAsync(OrganizerUser user, string json, CancellationToken cancellationToken);
+
     Task<OrganizerBackup> ExportAsync(CancellationToken cancellationToken);
     Task<int> ImportAsync(OrganizerBackup backup, CancellationToken cancellationToken);
 
@@ -933,6 +938,36 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
     }
 
     private static string UserKey(OrganizerUser user) => user.Username ?? "";
+
+    // ---- preferences ---------------------------------------------------------------------------
+
+    // In Meta rather than a table of their own: a few bytes per person, and a rebuilt server that
+    // lost them gets them back from the first device that still has them (see the clients).
+    public async Task<string?> GetPreferencesAsync(OrganizerUser user, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            return ReadMeta("prefs:" + UserKey(user));
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task SetPreferencesAsync(OrganizerUser user, string json, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            WriteMeta("prefs:" + UserKey(user), json);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
 
     // ---- backup -------------------------------------------------------------------------------
 

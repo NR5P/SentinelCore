@@ -26,6 +26,12 @@ public sealed class OrganizerGroupRequest
     public string? Color { get; set; }
 }
 
+public sealed class OrganizerPreferences
+{
+    // Holiday calendar ids from OrganizerHolidays.Sets. Null in a reply means never saved.
+    public List<string>? HolidaySets { get; set; }
+}
+
 public static class OrganizerEndpoints
 {
     private const int DefaultPageSize = 2000;
@@ -213,6 +219,41 @@ public static class OrganizerEndpoints
             return Results.File(thumbnail, "image/jpeg");
         });
 
+        // Holiday calendars: what there is, and the days in the ones asked for. Computed, not
+        // stored - see OrganizerHolidays.
+        enabled.MapGet("/holidays/sets", () =>
+            Results.Ok(new { sets = OrganizerHolidays.Sets.Select(set => new { id = set.Id, name = set.Name, description = set.Description }) }));
+
+        enabled.MapGet("/holidays", (string? sets, int? from, int? to) =>
+        {
+            var thisYear = DateTime.UtcNow.Year;
+            var fromYear = from ?? thisYear - 1;
+            var toYear = to ?? thisYear + 2;
+            if (toYear < fromYear || toYear - fromYear > 10)
+                return Results.BadRequest(new { error = "Ask for at most ten years at a time." });
+            var ids = (sets ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return Results.Ok(new
+            {
+                from = fromYear,
+                to = toYear,
+                holidays = OrganizerHolidays.Between(ids, fromYear, toYear).Select(HolidayToWire),
+            });
+        });
+
+        // Per-person preferences, so a choice made on one device shows on all of them.
+        enabled.MapGet("/preferences", async (HttpContext context, IOrganizerStore store, CancellationToken ct) =>
+            Results.Ok(ReadPreferences(await store.GetPreferencesAsync(UserOf(context), ct)) ?? new OrganizerPreferences()));
+
+        enabled.MapPut("/preferences", async (OrganizerPreferences request, HttpContext context, IOrganizerStore store, CancellationToken ct) =>
+        {
+            var unknown = (request.HolidaySets ?? []).Where(id => !OrganizerHolidays.IsKnown(id)).ToList();
+            if (unknown.Count > 0)
+                return Results.BadRequest(new { error = $"There's no holiday calendar called {string.Join(", ", unknown)}." });
+            var saved = new OrganizerPreferences { HolidaySets = (request.HolidaySets ?? []).Distinct().ToList() };
+            await store.SetPreferencesAsync(UserOf(context), System.Text.Json.JsonSerializer.Serialize(saved, PreferencesJson), ct);
+            return Results.Ok(saved);
+        });
+
         // The private subscription link for Apple/Google/Outlook calendars. Those apps can't sign
         // in, so the link itself is the credential - hence a reset that makes the old one stop
         // working.
@@ -227,11 +268,41 @@ public static class OrganizerEndpoints
             if (await store.ResolveFeedTokenAsync(token, ct) is not { } owner) return Results.NotFound();
             var spaces = await store.GetVisibleSpacesAsync(owner, ct);
             var events = await store.GetItemsAsync(owner, OrganizerKinds.Event, null, ct);
-            return Results.Text(OrganizerCalendarFeed.Build(events, spaces), "text/calendar; charset=utf-8");
+            // The holiday calendars this person turned on come along too, a year back and two ahead.
+            var year = DateTime.UtcNow.Year;
+            var holidays = ReadPreferences(await store.GetPreferencesAsync(owner, ct))?.HolidaySets is { Count: > 0 } chosen
+                ? OrganizerHolidays.Between(chosen, year - 1, year + 2)
+                : [];
+            return Results.Text(OrganizerCalendarFeed.Build(events, spaces, holidays), "text/calendar; charset=utf-8");
         }).AllowAnonymous();
     }
 
     private static string FeedPath(string token) => $"/api/organizer/feed/{token}.ics";
+
+    private static readonly System.Text.Json.JsonSerializerOptions PreferencesJson = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private static OrganizerPreferences? ReadPreferences(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<OrganizerPreferences>(json, PreferencesJson);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static object HolidayToWire(Holiday holiday) => new
+    {
+        id = holiday.Id,
+        setId = holiday.SetId,
+        name = holiday.Name,
+        date = holiday.Date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+        days = holiday.Days,
+        note = holiday.Note,
+    };
 
     public static OrganizerUser UserOf(HttpContext context) =>
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) is { Length: > 0 } && context.User.Identity?.Name is { Length: > 0 } name

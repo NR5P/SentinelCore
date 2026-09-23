@@ -60,6 +60,10 @@ All endpoints are under `/api/organizer` and use the dashboard session cookie. T
 | PUT | `/blobs/{sha256}` | Upload an attachment's bytes (raw body). It is rejected if the bytes don't hash to the name. |
 | GET | `/blobs/{sha256}[?download=true]` | Download, allowed only if you can see an attachment pointing at it. Range requests work, and the response is cacheable forever. |
 | GET | `/blobs/{sha256}/thumbnail` | A JPEG of at most 512px on the long edge, for images only. Otherwise `404`. |
+| GET | `/holidays/sets` | `{sets:[{id, name, description}]}`: the holiday calendars there are. |
+| GET | `/holidays?sets=a,b&from=2025&to=2028` | `{from, to, holidays:[{id, setId, name, date, days, note}]}`. At most ten years per request. |
+| GET | `/preferences` | `{holidaySets}`: this person's chosen holiday calendars, or `null` if they never chose. |
+| PUT | `/preferences` | `{holidaySets:[...]}`. Unknown ids are rejected. |
 | GET | `/calendar-feed` | `{path}` of this person's private `.ics` subscription link. |
 | POST | `/calendar-feed/reset` | Mint a new link, which kills the old one. |
 | GET | `/feed/{token}.ics` | The feed itself, with no session needed; the token is the credential. |
@@ -154,6 +158,19 @@ Details for events:
 
 Details for reminders:
 - **Completing a repeating reminder** moves `due` to the next occurrence and leaves `completed` false.
+
+## Holiday calendars
+
+People can add holiday calendars to the calendar: US federal holidays, US observances, Christian, Orthodox Christian, Jewish, Islamic and Hindu holidays, and Lunar New Year with the Chinese festivals. The server works them out (`SentinelCore.Web/OrganizerHolidays.cs`), because several need a Hebrew, Umm al-Qura or Chinese calendar. **None is shown unless the person turns it on.**
+
+- **They aren't items.** They are all-day, read-only, and never synced as changes. `id` is stable (`holiday:<set>:<yyyyMMdd>:<slug>`). `days` is how many days it lasts: 8 for Hanukkah, 7 for Sukkot. `note` is optional, for example "Begins at sundown the evening before."
+- **The choice is per person, not per device.** It is kept on the server, so turning on Jewish holidays on the phone shows them on the TV too. Each client also keeps it locally, with a "not yet sent" flag, so it works offline.
+- **Clients cache the dates.** Each client caches the holidays for last year through two years ahead, keyed by the chosen sets, and shows them offline. It also caches the set list, so the settings screen works offline once it has been fetched.
+- **Keeping it current.** After a successful sync, and at most every few minutes, the client does the following:
+  - If the local choice hasn't been sent yet, it PUTs it.
+  - Otherwise it GETs `/preferences`. If that is `null` and the device has a choice (a rebuilt server), it PUTs the device's. If not, it adopts the server's.
+  - It then fetches `/holidays` again if the sets or the year range differ from what's cached.
+- **The subscription feed.** The `.ics` feed includes the chosen holidays, last year through two years ahead.
 
 ## Alerts
 
