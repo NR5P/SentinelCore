@@ -34,3 +34,6 @@ android/*.jks
 android/*.keystore
 android/app/*.jks
 android/app/*.keystore
+
+# Google Play Developer API service-account key (lives outside the repo, but belt and braces).
+**/play-publisher*.json

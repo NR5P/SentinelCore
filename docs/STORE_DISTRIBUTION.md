@@ -95,6 +95,9 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
    (see §6), category *Tools*.
 3. **Build [script]:** `scripts/bump-build.sh` (if not already done for this round), then
    `android/release.sh` → `android/app/build/outputs/bundle/release/app-release.aab`.
+   With the service account from step 5 configured, the same command also **uploads to the
+   internal track** and finishes the rollout - no browser needed. Without it, the script prints
+   where the `.aab` is for a manual upload.
 4. **Internal testing [you]:** Play Console → Testing → Internal testing → Create new release →
    upload the `.aab` → Testers tab → create a list of Gmail addresses → save → **Start rollout**.
    Copy the opt-in link and send it to testers; they tap it once, install from Play, and update
@@ -103,6 +106,23 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
    Note: a Play developer account created after Nov 2023 as a *personal* account must run a
    closed test with 12 testers for 14 days before it may publish to production. That does not
    affect internal testing.
+
+5. **Automatic uploads [you], once.** `android/scripts/play-upload.py` talks to the Play
+   Developer API with a *service account* - a robot identity you invite to the Play Console.
+   - https://console.cloud.google.com → project picker → choose the Firebase project
+     (`firebase-project-id`; Firebase projects are Google Cloud projects) → **IAM & Admin →
+     Service Accounts → Create service account**: name `play-publisher`, no roles → Done.
+   - Open it → **Keys → Add key → Create new key → JSON**. Save the download as
+     `~/sentinelcore-play-publisher.json` (outside the repo; gitignored anyway).
+   - Play Console → **Users and permissions → Invite new users** → email = the service
+     account's address (`play-publisher@firebase-project-id.iam.gserviceaccount.com`) →
+     **App permissions → Add app → Sentinel Core** → tick **Release apps to testing tracks**
+     (and *Manage testing tracks and edit tester lists*) → **Invite user**. Takes a few minutes
+     to become active.
+   - Add one line to `android/keystore.properties`:
+     `playServiceAccountJson=/Users/you/sentinelcore-play-publisher.json`
+   - Verify: `python3 android/scripts/play-upload.py --key ~/sentinelcore-play-publisher.json --check`
+     should print the current internal release. From then on `android/release.sh` uploads.
 
 ## 6. Review prep (needed for external TestFlight and for anything beyond Play internal)
 
@@ -140,4 +160,6 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
 scripts/bump-build.sh && git commit -am "Build N" && ios/scripts/release.sh && appletv/scripts/release.sh && android/release.sh
 ```
 
-then upload the `.aab` in Play Console. Testers on both stores update automatically.
+Testers on both stores update automatically: TestFlight installs new builds in the background,
+Play auto-updates like any store app (usually within a day; a tester can force it from the Play
+Store's *Manage apps & device*).
