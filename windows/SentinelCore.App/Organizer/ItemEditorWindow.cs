@@ -217,7 +217,12 @@ internal sealed class ItemEditorWindow : Window
         Row("Pictures and files", _attachments);
         if (_kind == OrganizerKinds.Card)
         {
-            if (_comments is not null) Row("Comments", _comments);
+            // Not a Row: the comments carry their own heading and read as a feed under the card.
+            if (_comments is not null)
+            {
+                _comments.Margin = new Thickness(0, 22, 0, 0);
+                form.Children.Add(_comments);
+            }
             else Row("Comments", Ui.Caption("Comments can be added once the card is saved."));
         }
         form.Children.Add(_problem);
@@ -502,20 +507,35 @@ internal sealed class ItemEditorWindow : Window
 }
 
 /// <summary>
-/// A card's comments. Posting, editing and deleting happen at once, not on the card's Save - like
-/// attachments. Follows sync while the card is open, but never redraws under a half-edited comment.
+/// A card's comments, laid out like Trello's activity feed: a "Write a comment…" box with the
+/// writer's initials beside it, then the comments newest first - initials, name and time over a
+/// bubble of text, with small Edit / Delete links under it. Posting, editing and deleting happen at
+/// once, not on the card's Save - like attachments. Follows sync while the card is open, but never
+/// redraws under a half-edited comment.
 /// </summary>
 internal sealed class CommentsEditor : StackPanel
 {
+    // Same order as the Apple and Android apps, so a person keeps one colour everywhere.
+    private static readonly Color[] AvatarColors =
+    {
+        Color.FromRgb(0x0A, 0x84, 0xFF), Color.FromRgb(0x30, 0xD1, 0x58), Color.FromRgb(0xFF, 0x9F, 0x0A), Color.FromRgb(0xBF, 0x5A, 0xF2),
+        Color.FromRgb(0xFF, 0x37, 0x5F), Color.FromRgb(0x40, 0xC8, 0xE0), Color.FromRgb(0x5E, 0x5C, 0xE6), Color.FromRgb(0xFF, 0x45, 0x3A),
+    };
+
     private readonly OrganizerEngine _engine;
     private readonly string _cardId;
+    private readonly TextBlock _count = new() { Foreground = Palette.SecondaryText, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+    private readonly Border _composerAvatar = new();
     private readonly StackPanel _rows = new();
     private readonly TextBox _new = new()
     {
-        AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 44, MaxHeight = 160,
-        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 52, MaxHeight = 160,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(8, 6, 8, 6),
         ToolTip = "Enter posts; Shift+Enter starts a new line",
     };
+    private readonly StackPanel _composeButtons = new() { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+    private readonly Button _post;
+    private readonly Button _discard;
     private readonly Ui.Coalescer _refresh;
     private Dictionary<string, string> _names = new();
     private string? _editing;
@@ -529,22 +549,41 @@ internal sealed class CommentsEditor : StackPanel
         _engine = engine;
         _cardId = cardId;
         _refresh = new Ui.Coalescer(this, Refresh);
-        Children.Add(_rows);
-        var add = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
-        var post = Ui.Button("Post", Post);
-        post.Margin = new Thickness(8, 0, 0, 0);
-        post.VerticalAlignment = VerticalAlignment.Top;
-        DockPanel.SetDock(post, Dock.Right);
-        add.Children.Add(post);
-        add.Children.Add(_new);
-        Children.Add(add);
+
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+        header.Children.Add(Ui.Glyph("", Ui.Brush("Cyan"), 14));
+        var title = Ui.Heading("Comments");
+        title.Margin = new Thickness(8, 0, 0, 0);
+        title.VerticalAlignment = VerticalAlignment.Center;
+        header.Children.Add(title);
+        header.Children.Add(_count);
+        Children.Add(header);
+
+        // Like Trello, the Post button only shows once you're writing.
+        _post = Ui.Button("Post", Post, "PrimaryButton");
+        _post.MinWidth = 70;
+        _discard = Ui.Button("Discard", () => { _new.Text = ""; Keyboard.ClearFocus(); UpdateComposer(); }, "LinkButton");
+        _discard.Margin = new Thickness(12, 0, 0, 0);
+        _composeButtons.Children.Add(_post);
+        _composeButtons.Children.Add(_discard);
+        var box = new StackPanel();
+        box.Children.Add(WithPlaceholder(_new, "Write a comment…"));
+        box.Children.Add(_composeButtons);
+        Children.Add(Beside(_composerAvatar, box));
+        _new.TextChanged += (_, _) => UpdateComposer();
+        _new.GotKeyboardFocus += (_, _) => UpdateComposer();
+        _new.LostKeyboardFocus += (_, _) => UpdateComposer();
         _new.PreviewKeyDown += (_, e) =>
         {
             if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None) return;
             Post();
             e.Handled = true;
         };
+
+        _rows.Margin = new Thickness(0, 6, 0, 0);
+        Children.Add(_rows);
         engine.Changed += _refresh.Request;
+        UpdateComposer();
         Rebuild();
     }
 
@@ -562,6 +601,17 @@ internal sealed class CommentsEditor : StackPanel
 
     private string? Me => _engine.Status?.Username;
 
+    private string? NameOf(string? username) =>
+        string.IsNullOrEmpty(username) ? null : _names.GetValueOrDefault(username.ToLowerInvariant()) is { Length: > 0 } name ? name : username;
+
+    private void UpdateComposer()
+    {
+        var hasText = _new.Text.Trim().Length > 0;
+        _composeButtons.Visibility = hasText || _new.IsKeyboardFocused ? Visibility.Visible : Visibility.Collapsed;
+        _post.IsEnabled = hasText;
+        _discard.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void Refresh()
     {
         if (_editing is not null) return;
@@ -570,7 +620,7 @@ internal sealed class CommentsEditor : StackPanel
     }
 
     private string Signature() =>
-        string.Join("|", OrganizerComments.Of(_engine, _cardId)
+        Me + "|" + string.Join("|", OrganizerComments.Of(_engine, _cardId)
             .Select(c => $"{c.Id}:{c.CreatedBy}:{c.String("editedAt")}:{c.String("body")}"));
 
     private void Post()
@@ -594,55 +644,33 @@ internal sealed class CommentsEditor : StackPanel
         _draft = _editing is not null ? _editBox?.Text ?? _draft : null;
         _rows.Children.Clear();
         _editBox = null;
+        _composerAvatar.Child = Avatar(NameOf(Me));
         var comments = OrganizerComments.Of(_engine, _cardId);
         if (_editing is not null && comments.All(c => c.Id != _editing)) _editing = null;
-        if (comments.Count == 0)
-        {
-            _rows.Children.Add(Ui.Caption("No comments yet."));
-            return;
-        }
-        foreach (var comment in comments) _rows.Children.Add(Row(comment));
+        _count.Text = comments.Count > 0 ? comments.Count.ToString(System.Globalization.CultureInfo.CurrentCulture) : "";
+        for (var i = comments.Count - 1; i >= 0; i--) _rows.Children.Add(Row(comments[i]));
     }
 
     private UIElement Row(OrganizerItem comment)
     {
-        var row = new StackPanel { Margin = new Thickness(0, 4, 0, 8) };
-        var head = new DockPanel { LastChildFill = true };
-        var delete = Ui.Icon("", "Delete comment", () => DeleteComment(comment));
-        DockPanel.SetDock(delete, Dock.Right);
-        head.Children.Add(delete);
-        if (OrganizerComments.CanEdit(comment, Me) && _editing != comment.Id)
-        {
-            var edit = Ui.Icon("", "Edit comment", () =>
-            {
-                _editing = comment.Id;
-                _editBox = null;
-                _draft = null;
-                Rebuild();
-                _editBox?.Focus();
-                _editBox?.SelectAll();
-            });
-            edit.Margin = new Thickness(0, 0, 4, 0);
-            DockPanel.SetDock(edit, Dock.Right);
-            head.Children.Add(edit);
-        }
-        var byline = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-        // With login off there's no author to show - just when.
         var author = OrganizerComments.Author(comment, _names);
+        var body = new StackPanel();
+
+        var byline = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 0, 4) };
+        // With login off there's no author to show - just when.
         if (author is not null) byline.Inlines.Add(new System.Windows.Documents.Run(author + "  ") { FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText });
         var when = comment.CreatedAt is { } created ? Ui.When(created, false) : "";
         if (comment.String("editedAt") is { Length: > 0 }) when = (when + " (edited)").Trim();
         if (when.Length > 0) byline.Inlines.Add(new System.Windows.Documents.Run(when) { Foreground = Palette.SecondaryText, FontSize = 11 });
-        head.Children.Add(byline);
-        row.Children.Add(head);
+        body.Children.Add(byline);
 
         if (_editing == comment.Id)
         {
             var box = new TextBox
             {
                 Text = _draft ?? comment.String("body") ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
-                MinHeight = 44, MaxHeight = 200, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Margin = new Thickness(0, 4, 0, 0),
+                MinHeight = 52, MaxHeight = 200, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Padding = new Thickness(8, 6, 8, 6),
             };
             void SaveEdit()
             {
@@ -681,30 +709,111 @@ internal sealed class CommentsEditor : StackPanel
                 }
             };
             _editBox = box;
-            row.Children.Add(box);
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0) };
-            buttons.Children.Add(Ui.Button("Save", SaveEdit));
-            var cancel = Ui.Button("Cancel", CancelEdit);
-            cancel.Margin = new Thickness(8, 0, 0, 0);
+            body.Children.Add(box);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+            var save = Ui.Button("Save", SaveEdit, "PrimaryButton");
+            save.MinWidth = 70;
+            buttons.Children.Add(save);
+            var cancel = Ui.Button("Cancel", CancelEdit, "LinkButton");
+            cancel.Margin = new Thickness(12, 0, 0, 0);
             buttons.Children.Add(cancel);
-            row.Children.Add(buttons);
+            body.Children.Add(buttons);
         }
         else
         {
-            // A read-only text box so the words can be selected and copied.
-            row.Children.Add(new TextBox
+            // A read-only text box in a bubble, so the words can be selected and copied.
+            body.Children.Add(new Border
             {
-                Text = comment.String("body") ?? "",
-                IsReadOnly = true,
-                TextWrapping = TextWrapping.Wrap,
-                BorderThickness = new Thickness(0),
-                Background = Brushes.Transparent,
-                Foreground = Palette.PrimaryText,
-                Padding = new Thickness(0),
-                Margin = new Thickness(0, 2, 0, 0),
+                Background = Ui.Brush("CardBackground"),
+                BorderBrush = Ui.Brush("CardBorder"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 7, 10, 7),
+                Child = new TextBox
+                {
+                    Text = comment.String("body") ?? "",
+                    IsReadOnly = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    BorderThickness = new Thickness(0),
+                    Background = Brushes.Transparent,
+                    Foreground = Palette.PrimaryText,
+                    Padding = new Thickness(0),
+                },
             });
+            var links = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 0) };
+            if (OrganizerComments.CanEdit(comment, Me))
+            {
+                links.Children.Add(SmallLink("Edit", () =>
+                {
+                    _editing = comment.Id;
+                    _editBox = null;
+                    _draft = null;
+                    Rebuild();
+                    _editBox?.Focus();
+                    _editBox?.SelectAll();
+                }));
+                links.Children.Add(new TextBlock { Text = "•", Foreground = Palette.SecondaryText, FontSize = 11, Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
+            }
+            links.Children.Add(SmallLink("Delete", () => DeleteComment(comment)));
+            body.Children.Add(links);
         }
+
+        var row = Beside(new Border { Child = Avatar(author) }, body);
+        row.Margin = new Thickness(0, 8, 0, 6);
         return row;
+    }
+
+    private static Button SmallLink(string text, Action onClick)
+    {
+        var link = Ui.Button(text, onClick, "LinkButton");
+        link.Foreground = Palette.SecondaryText;
+        link.FontSize = 11;
+        link.Cursor = Cursors.Hand;
+        return link;
+    }
+
+    /// <summary>An avatar on the left with <paramref name="content"/> filling the rest, both top-aligned.</summary>
+    private static Grid Beside(FrameworkElement avatar, UIElement content)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        avatar.Margin = new Thickness(0, 0, 10, 0);
+        avatar.VerticalAlignment = VerticalAlignment.Top;
+        grid.Children.Add(avatar);
+        Grid.SetColumn(content, 1);
+        grid.Children.Add(content);
+        return grid;
+    }
+
+    /// <summary>The round initials badge beside a comment; a person glyph when there's no name (login off).</summary>
+    private static UIElement Avatar(string? name)
+    {
+        var initials = OrganizerComments.Initials(name);
+        var color = name is { Length: > 0 } ? AvatarColors[OrganizerComments.ColorIndex(name, AvatarColors.Length)] : Color.FromRgb(0x6B, 0x77, 0x80);
+        return new Border
+        {
+            Width = 32, Height = 32, CornerRadius = new CornerRadius(16),
+            Background = new SolidColorBrush(color),
+            Child = initials is not null
+                ? new TextBlock { Text = initials, Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+                : new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), Foreground = Brushes.White, FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+        };
+    }
+
+    /// <summary>Grey prompt text inside <paramref name="box"/> while it's empty - WPF has no placeholder of its own.</summary>
+    private static Grid WithPlaceholder(TextBox box, string prompt)
+    {
+        var hint = new TextBlock
+        {
+            Text = prompt, Foreground = Palette.SecondaryText, IsHitTestVisible = false,
+            Margin = new Thickness(11, 7, 8, 0), VerticalAlignment = VerticalAlignment.Top,
+        };
+        box.TextChanged += (_, _) => hint.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        var grid = new Grid();
+        grid.Children.Add(box);
+        grid.Children.Add(hint);
+        return grid;
     }
 
     private void DeleteComment(OrganizerItem comment)

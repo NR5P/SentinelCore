@@ -55,6 +55,21 @@ public static class OrganizerComments
         return names?.GetValueOrDefault(comment.CreatedBy.ToLowerInvariant()) is { Length: > 0 } name ? name : comment.CreatedBy;
     }
 
+    /// <summary>The two letters on a comment's avatar: first letters of the first two words, or the
+    /// first two letters of a one-word name. Null without a name (login off), which shows a person glyph.</summary>
+    public static string? Initials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var words = name.Split(new[] { ' ', '.', '_' }, StringSplitOptions.RemoveEmptyEntries);
+        var letters = words.Length > 1 ? string.Concat(words.Take(2).Select(word => word[0])) : name.Trim()[..Math.Min(2, name.Trim().Length)];
+        return letters.ToUpperInvariant();
+    }
+
+    /// <summary>Which avatar colour a person gets, out of <paramref name="count"/>. Stable per name,
+    /// and the same sum of characters as the Apple and Android apps, so an author keeps one colour
+    /// on every device.</summary>
+    public static int ColorIndex(string name, int count) => name.ToLowerInvariant().Sum(c => (int)c) % count;
+
     /// <summary>The change for an author rewriting their comment, or null when there's nothing to save.</summary>
     public static Dictionary<string, object?>? EditChanges(OrganizerItem comment, string body, DateTimeOffset? now = null)
     {

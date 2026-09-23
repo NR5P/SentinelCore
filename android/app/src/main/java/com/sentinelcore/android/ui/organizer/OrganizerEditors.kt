@@ -1,6 +1,21 @@
 package com.sentinelcore.android.ui.organizer
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.outlined.Comment
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.Button
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -493,65 +508,104 @@ fun CardEditorScreen(engine: OrganizerEngine, itemId: String, onDone: () -> Unit
     }
 }
 
-// A card's comments. Each is its own item, posted the moment it's written rather than on the
-// card's Save, and the list follows sync while the card is open - an edit in progress lives in this
+// A card's comments, laid out like Trello's activity feed: a "Write a comment" box with the
+// writer's initials beside it, then the comments newest first - initials, name and time over a
+// bubble of text, with small Edit / Delete links under it.
+//
+// Each comment is its own item, posted the moment it's written rather than on the card's Save,
+// and the list follows sync while the card is open - an edit in progress lives in this
 // composable's own state, so a sync redrawing the list never wipes it. Only the author may edit a
 // comment (the server enforces it); anyone may delete one.
 @Composable
 private fun CommentsSection(engine: OrganizerEngine, cardId: String, people: List<OrganizerPerson>) {
     rememberOrganizerRevision(engine)
     val me = engine.status.collectAsStateValue()?.username
-    val comments = OrganizerComments.sorted(engine.children(cardId, OrganizerKinds.COMMENT))
+    val comments = OrganizerComments.sorted(engine.children(cardId, OrganizerKinds.COMMENT)).asReversed()
     var newComment by remember { mutableStateOf("") }
+    var composing by remember { mutableStateOf(false) }
     var editingId by remember { mutableStateOf<String?>(null) }
     var editText by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
-    val stamp = remember { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()) }
+    val stamp = remember { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withZone(ZoneId.systemDefault()) }
+    val focus = LocalFocusManager.current
 
     // Someone else deleted the comment being edited: nothing left to save.
     val editing = editingId?.takeIf { id -> comments.any { it.id == id } }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Comments", color = SentinelCyan, style = MaterialTheme.typography.labelLarge)
-        if (comments.isEmpty()) Text("No comments yet.", style = MaterialTheme.typography.bodySmall, color = SentinelTextDim)
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.AutoMirrored.Outlined.Comment, contentDescription = null, tint = SentinelCyan, modifier = Modifier.size(18.dp))
+            Text("Comments", color = SentinelCyan, style = MaterialTheme.typography.labelLarge)
+            if (comments.isNotEmpty()) Text("${comments.size}", color = SentinelTextDim, style = MaterialTheme.typography.labelLarge)
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CommentAvatar(OrganizerComments.authorName(me, people))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    newComment, { newComment = it },
+                    placeholder = { Text("Write a comment…") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { composing = it.isFocused },
+                )
+                // Like Trello, the button only shows once you're writing.
+                if (composing || newComment.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(enabled = newComment.isNotBlank(), onClick = {
+                            engine.create(OrganizerKinds.COMMENT, mapOf("body" to newComment.trim()), parentId = cardId)
+                            newComment = ""
+                            focus.clearFocus()
+                        }) { Text("Post") }
+                        if (newComment.isNotBlank()) TextButton(onClick = { newComment = ""; focus.clearFocus() }) { Text("Discard") }
+                    }
+                }
+            }
+        }
+
         comments.forEach { comment ->
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        OrganizerComments.authorName(comment.createdBy, people)?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+            val author = OrganizerComments.authorName(comment.createdBy, people)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CommentAvatar(author)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // No author at all with login off (one shared household): just the time.
+                        author?.let { Text(it, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold) }
                         Text(
                             (comment.createdAt?.let(stamp::format) ?: "") + if (comment.string("editedAt") != null) " (edited)" else "",
                             style = MaterialTheme.typography.labelSmall, color = SentinelTextDim,
                         )
                     }
-                    if (OrganizerComments.canEdit(comment, me) && editing != comment.id) {
-                        TextButton(onClick = { editingId = comment.id; editText = comment.string("body").orEmpty() }) { Text("Edit") }
-                    }
-                    IconButton(onClick = { confirmDelete = comment.id }) { Icon(Icons.Default.Close, contentDescription = "Delete comment") }
-                }
-                if (editing == comment.id) {
-                    OutlinedTextField(editText, { editText = it }, modifier = Modifier.fillMaxWidth())
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = {
-                            engine.item(comment.id)?.let { current ->
-                                OrganizerComments.editFields(current, editText)?.let { engine.update(current.id, it) }
+                    if (editing == comment.id) {
+                        OutlinedTextField(editText, { editText = it }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(enabled = editText.isNotBlank(), onClick = {
+                                engine.item(comment.id)?.let { current ->
+                                    OrganizerComments.editFields(current, editText)?.let { engine.update(current.id, it) }
+                                }
+                                editingId = null
+                            }) { Text("Save") }
+                            TextButton(onClick = { editingId = null }) { Text("Cancel") }
+                        }
+                    } else {
+                        SelectionContainer {
+                            Text(
+                                comment.string("body").orEmpty(),
+                                modifier = Modifier.fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (OrganizerComments.canEdit(comment, me)) {
+                                CommentLink("Edit") { editingId = comment.id; editText = comment.string("body").orEmpty() }
+                                Text("•", style = MaterialTheme.typography.labelSmall, color = SentinelTextDim)
                             }
-                            editingId = null
-                        }) { Text("Save") }
-                        TextButton(onClick = { editingId = null }) { Text("Cancel") }
+                            CommentLink("Delete") { confirmDelete = comment.id }
+                        }
                     }
-                } else {
-                    SelectionContainer { Text(comment.string("body").orEmpty()) }
                 }
             }
         }
-        OutlinedTextField(newComment, { newComment = it }, label = { Text("Write a comment") }, modifier = Modifier.fillMaxWidth(),
-            trailingIcon = {
-                TextButton(enabled = newComment.isNotBlank(), onClick = {
-                    engine.create(OrganizerKinds.COMMENT, mapOf("body" to newComment.trim()), parentId = cardId)
-                    newComment = ""
-                }) { Text("Post") }
-            })
     }
 
     confirmDelete?.let { id ->
@@ -567,5 +621,34 @@ private fun CommentsSection(engine: OrganizerEngine, cardId: String, people: Lis
             },
             dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
         )
+    }
+}
+
+// A small grey text link under a comment, with a finger-sized touch target.
+@Composable
+private fun CommentLink(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelMedium,
+        color = SentinelTextDim,
+        modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+    )
+}
+
+// Same order as the Apple and Windows apps, so a person keeps one colour everywhere.
+private val avatarColors = listOf(
+    Color(0xFF0A84FF), Color(0xFF30D158), Color(0xFFFF9F0A), Color(0xFFBF5AF2),
+    Color(0xFFFF375F), Color(0xFF40C8E0), Color(0xFF5E5CE6), Color(0xFFFF453A),
+)
+
+// The round initials badge beside a comment; a plain person icon when there's no name (login off).
+@Composable
+private fun CommentAvatar(name: String?) {
+    val initials = OrganizerComments.initials(name)
+    val color = if (name.isNullOrBlank()) Color.Gray else avatarColors[OrganizerComments.colorIndex(name, avatarColors.size)]
+    Box(Modifier.size(32.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
+        if (initials != null) Text(initials, color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        else Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
     }
 }

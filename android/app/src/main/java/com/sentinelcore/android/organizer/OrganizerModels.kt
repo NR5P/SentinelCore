@@ -45,6 +45,18 @@ object OrganizerComments {
         return people.firstOrNull { it.username.equals(createdBy, ignoreCase = true) }?.label ?: createdBy
     }
 
+    // The two letters on a comment's avatar: first letters of the first two words, or the first two
+    // letters of a one-word name. Null without a name (login off), which shows a person icon.
+    fun initials(name: String?): String? {
+        if (name.isNullOrBlank()) return null
+        val words = name.split(' ', '.', '_').filter { it.isNotEmpty() }
+        return (if (words.size > 1) words.take(2).joinToString("") { it.take(1) } else name.trim().take(2)).uppercase()
+    }
+
+    // Which avatar colour a person gets, out of `count`. Stable per name, and the same sum of
+    // characters as the Apple and Windows apps, so an author keeps one colour on every device.
+    fun colorIndex(name: String, count: Int): Int = name.lowercase().sumOf { it.code } % count
+
     // The fields an edit sends, or nothing when the text is blank or unchanged.
     fun editFields(comment: OrganizerItem, newBody: String, now: Instant = Instant.now()): Map<String, Any?>? {
         val body = newBody.trim()

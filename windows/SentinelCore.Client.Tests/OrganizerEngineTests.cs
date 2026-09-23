@@ -380,6 +380,21 @@ public sealed class OrganizerEngineTests : IDisposable
     }
 
     [Fact]
+    public void CommentAvatarsShowInitialsInAStableColour()
+    {
+        Assert.Equal("AS", OrganizerComments.Initials("Alice Smith"));
+        Assert.Equal("NR", OrganizerComments.Initials("nathan.rigg"));
+        Assert.Equal("BO", OrganizerComments.Initials("bob"));
+        Assert.Equal("B", OrganizerComments.Initials("b"));
+        Assert.Null(OrganizerComments.Initials(null));
+        Assert.Null(OrganizerComments.Initials(" "));
+
+        Assert.Equal(OrganizerComments.ColorIndex("Nathan", 8), OrganizerComments.ColorIndex("nathan", 8));
+        // "ab" = 97 + 98 = 195, and 195 % 8 = 3 - the same sum the Apple and Android apps use.
+        Assert.Equal(3, OrganizerComments.ColorIndex("ab", 8));
+    }
+
+    [Fact]
     public void HolidaysAreOffByDefaultAndTheChoiceIsKept()
     {
         var store = new InMemoryOrganizerStore(NewDirectory());
