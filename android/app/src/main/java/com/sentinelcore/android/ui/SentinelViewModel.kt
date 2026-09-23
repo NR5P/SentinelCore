@@ -11,9 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.sentinelcore.android.organizer.AppOrganizerTransport
 import com.sentinelcore.android.organizer.OrganizerAlarms
 import com.sentinelcore.android.organizer.OrganizerDevice
-import com.sentinelcore.android.organizer.OrganizerEngine
-import com.sentinelcore.android.organizer.SqliteOrganizerStore
-import com.sentinelcore.android.widgets.OrganizerWidgetBridge
+import com.sentinelcore.android.organizer.OrganizerRuntime
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.sentinelcore.android.data.Account
@@ -201,21 +199,16 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         ),
     )
 
-    // Notes, calendar, reminders and boards - see organizer/OrganizerEngine. Created up front
+    // Notes, calendar, reminders and boards - see organizer/OrganizerEngine and OrganizerRuntime,
+    // which owns it: the same engine serves background syncs when no screen is open. Created up front
     // and independent of the connection: this device's copy works offline, before the server has
     // been reached this launch. Its own scope on IO, since a sync applies server replies to the
     // local SQLite copy and that belongs off the main thread.
-    private val organizerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    val organizer = OrganizerEngine(
-        SqliteOrganizerStore(application, OrganizerDevice.directory(application)),
-        OrganizerDevice.id(application),
-        OrganizerDevice.policy(application),
-        organizerScope,
-    )
+    private val organizerRuntime = OrganizerRuntime.get(application)
+    private val organizerScope = organizerRuntime.scope
+    val organizer = organizerRuntime.engine
     private var organizerActive = true
     val state: StateFlow<SentinelUiState> = _state.asStateFlow()
-    // Keeps the home-screen widgets' copy current - see widgets/OrganizerWidgetBridge.
-    private val organizerWidgets = OrganizerWidgetBridge(application, organizer, organizerScope)
 
     private var connectionJob: Job? = null
     private var timelineJob: Job? = null
@@ -227,10 +220,6 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         // Activity is gone. See DevicePublisher.
         DevicePublisher.attach(application, repository, ::log)
         refreshNotificationPermission()
-        OrganizerAlarms.ensureChannel(application)
-        organizer.onAlertsChanged = { alerts -> OrganizerAlarms.schedule(application, alerts) }
-        organizer.refreshAlerts()
-        organizerWidgets.start(state.map { it.organizerEnabled }.distinctUntilChanged())
         // The engine follows the connection: running while online and in the foreground.
         viewModelScope.launch {
             state.map { it.connectionState }.distinctUntilChanged().collect { updateOrganizerConnection() }
@@ -238,7 +227,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             organizer.status.collect { status ->
                 if (status != null) {
-                    OrganizerDevice.saveLastKnownEnabled(application, status.enabled)
+                    organizerRuntime.setEnabled(application, status.enabled)
                     _state.update { it.copy(organizerEnabled = status.enabled) }
                 }
             }
@@ -269,8 +258,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         super.onCleared()
         serverDiscovery.stop()
+        // The engine and its scope belong to the process (OrganizerRuntime), not this screen.
         organizer.disconnect()
-        organizerScope.cancel()
     }
 
     private fun updateOrganizerConnection() {
@@ -285,7 +274,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     // From the activity's lifecycle: a backgrounded app shouldn't hold a long poll open.
     fun setOrganizerActive(active: Boolean) {
         organizerActive = active
-        if (active) organizerWidgets.appBecameActive()
+        if (active) organizerRuntime.widgets.appBecameActive()
         if (active && organizer.isConnected) organizerScope.launch { organizer.sync() }
         updateOrganizerConnection()
     }
@@ -1290,8 +1279,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         private const val PTZ_STOP_ATTEMPTS = 3
         private const val PTZ_STOP_BACKOFF_MS = 150L
 
-        private const val SERVER_URL_KEY = "server_url"
-        private const val REMOTE_SERVER_URL_KEY = "remote_server_url"
+        // Read by widgets/OrganizerBackgroundSync too, which syncs with no ViewModel around.
+        const val SERVER_URL_KEY = "server_url"
+        const val REMOTE_SERVER_URL_KEY = "remote_server_url"
         private const val PUSH_ENABLED_KEY = "push_registration_enabled"
         private const val ADVANCED_SETTINGS_KEY = "settings_show_advanced"
     }

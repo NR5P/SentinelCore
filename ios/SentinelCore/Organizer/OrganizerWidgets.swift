@@ -47,6 +47,14 @@ final class OrganizerWidgetBridge {
         scheduleWrite()
     }
 
+    // Now rather than after the usual pause: a background wake-up has seconds left, and the
+    // widgets should reflect the sync it just did.
+    func writeNow() {
+        pendingWrite?.cancel()
+        applyActions()
+        write()
+    }
+
     func applyActions() {
         for action in store.takeActions() {
             guard let reminder = engine.item(action.reminderId), reminder.kind == .reminder, !reminder.bool("completed") else { continue }

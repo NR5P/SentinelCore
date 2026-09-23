@@ -117,4 +117,33 @@ class OrganizerWidgetSnapshotTest {
         assertEquals(listOf(bins.id), files.takeActions().map { it.reminderId })
         assertTrue(files.pendingActions().isEmpty())
     }
+
+    // The app woken in the background by the server's silent push: one sync, nothing left running.
+    @Test
+    fun syncOnceSendsWaitingEditsAndLeavesNothingRunning() = kotlinx.coroutines.runBlocking {
+        val engine = engine()
+        engine.create(OrganizerKinds.REMINDER, mapOf("title" to "Bins", "completed" to false), spaceId = "family")
+        val transport = com.sentinelcore.android.organizer.ScriptedTransport { _, path, _ ->
+            if (path == "/api/organizer/status") com.sentinelcore.android.organizer.ScriptedTransport.status()
+            else com.sentinelcore.android.organizer.ScriptedTransport.reply()
+        }
+
+        assertTrue(engine.syncOnce(transport))
+        assertFalse(engine.isConnected)
+        assertTrue(transport.syncBodies().any { it.toString().contains("Bins") })
+        assertFalse(transport.requests.any { it.first == "/api/organizer/wait" })
+    }
+
+    @Test
+    fun syncOnceWhenAlreadyConnectedStaysConnected() = kotlinx.coroutines.runBlocking {
+        val engine = engine()
+        val transport = com.sentinelcore.android.organizer.ScriptedTransport { _, path, _ ->
+            if (path == "/api/organizer/status") com.sentinelcore.android.organizer.ScriptedTransport.status()
+            else com.sentinelcore.android.organizer.ScriptedTransport.reply()
+        }
+        engine.connect(transport)
+        engine.syncOnce(transport)
+        assertTrue(engine.isConnected)
+        engine.disconnect()
+    }
 }

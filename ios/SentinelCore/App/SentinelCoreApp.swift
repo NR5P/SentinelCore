@@ -11,7 +11,9 @@ struct SentinelCoreApp: App {
     @NSApplicationDelegateAdaptor(SentinelApplicationDelegate.self) private var applicationDelegate
     #endif
 
-    @StateObject private var appModel = AppModel()
+    // The one AppModel, shared with the app delegate: a silent push or background refresh can
+    // launch the app with no window, and still needs it to sync the Organizer.
+    @StateObject private var appModel = AppModel.shared
 
     init() {
         #if os(iOS)

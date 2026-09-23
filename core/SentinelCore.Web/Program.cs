@@ -214,6 +214,8 @@ builder.Services.AddSingleton<ILiveOrderStore>(new SqliteLiveOrderStore(camerasR
 // content-addressed files, swept daily once nothing points at them.
 builder.Services.AddSingleton<IOrganizerStore>(new SqliteOrganizerStore(camerasRoot));
 builder.Services.AddSingleton(new OrganizerBlobStore(camerasRoot));
+builder.Services.AddSingleton(sp => new OrganizerPushNudger(
+    sp.GetRequiredService<AppSettingsFile>(), sp.GetRequiredService<PushNotificationDispatcher>(), sp.GetRequiredService<ILogger<OrganizerPushNudger>>()));
 builder.Services.AddHostedService<OrganizerBlobSweepWorker>();
 // WebRTC live view via a go2rtc sidecar - see Go2RtcManager. Generous timeout: the SDP exchange
 // includes go2rtc gathering its ICE candidates, and the first request may also be paying the

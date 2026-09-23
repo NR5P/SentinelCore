@@ -27,12 +27,14 @@ class OrganizerWidgetBridge(
     // Bumped when the app comes forward: the two-week window moves on with the date even when
     // nothing was edited.
     private val refresh = MutableStateFlow(0)
-    private var lastWritten: OrganizerWidgetSnapshot? = null
+    @Volatile private var lastWritten: OrganizerWidgetSnapshot? = null
+    @Volatile private var lastEnabled = false
 
     fun start(enabled: Flow<Boolean>) {
         scope.launch {
             combine(engine.revision, engine.spaces, engine.holidays, enabled, refresh) { _, _, _, isEnabled, _ -> isEnabled }
                 .collectLatest { isEnabled ->
+                    lastEnabled = isEnabled
                     // A sync applies a reply in several steps; one write after they settle is enough.
                     delay(500)
                     write(isEnabled)
@@ -46,6 +48,13 @@ class OrganizerWidgetBridge(
     fun appBecameActive() {
         applyActions()
         refresh.update { it + 1 }
+    }
+
+    // Now rather than after the usual pause: a background sync has little time left, and the
+    // widgets should show what it just fetched.
+    suspend fun writeNow() {
+        applyActions()
+        write(lastEnabled)
     }
 
     fun applyActions() {

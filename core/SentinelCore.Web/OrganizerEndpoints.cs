@@ -73,7 +73,8 @@ public static class OrganizerEndpoints
                 : Results.NotFound(new { error = "The Organizer is turned off in Settings." });
         });
 
-        enabled.MapPost("/sync", async (OrganizerSyncRequest request, HttpContext context, IOrganizerStore store, OrganizerBlobStore blobs, CancellationToken ct) =>
+        enabled.MapPost("/sync", async (OrganizerSyncRequest request, HttpContext context, IOrganizerStore store, OrganizerBlobStore blobs,
+            OrganizerPushNudger nudger, CancellationToken ct) =>
         {
             var user = UserOf(context);
             var reset = request.ServerId is not null && request.ServerId != store.ServerId;
@@ -86,6 +87,8 @@ public static class OrganizerEndpoints
                 var result = await store.ApplyChangesAsync(user, request.Changes, request.RestoreSpaces, ct);
                 rejected = result.Rejected;
                 pushed = result.Items;
+                // Wake the other devices so their widgets catch up - see OrganizerPushNudger.
+                if (pushed.Count > 0) nudger.Changed();
             }
 
             var pull = await store.PullAsync(

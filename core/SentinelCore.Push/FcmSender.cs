@@ -39,7 +39,20 @@ public sealed class FcmSender(
             $"https://fcm.googleapis.com/v1/projects/{Uri.EscapeDataString(options.ProjectId)}/messages:send")
         {
             Content = new StringContent(
-                JsonSerializer.Serialize(new
+                message.Silent
+                    // Data only, so Android shows nothing and hands it to the app's messaging
+                    // service. Normal priority: it isn't urgent, and high priority is meant for
+                    // messages the person sees.
+                    ? JsonSerializer.Serialize(new
+                    {
+                        message = new
+                        {
+                            fid = deviceToken,
+                            data = new Dictionary<string, string> { ["eventType"] = message.EventType ?? string.Empty },
+                            android = new { priority = "normal" }
+                        }
+                    })
+                    : JsonSerializer.Serialize(new
                 {
                     message = new
                     {

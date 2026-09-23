@@ -178,6 +178,102 @@ public sealed class PushDispatcherTests
         File.Delete(accountPath);
     }
 
+    // ---- Silent pushes (the Organizer's "something changed") ------------------------------------
+    //
+    // Apple only delivers a background push with push-type background at priority 5 and no alert;
+    // get either header wrong and it is rejected or shown. On Android a notification block would
+    // put a blank notification on screen.
+
+    [Fact]
+    public async Task SendAsync_ASilentPushToApple_IsABackgroundPushWithNothingToShow()
+    {
+        using var key = NewSigningKey(out var keyPath);
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new ApnsCapture();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        var report = await dispatcher.SendAsync(NewOptions(keyPath), PushMessage.OrganizerChanged(), CancellationToken.None);
+
+        Assert.Equal(1, report.Delivered);
+        Assert.Equal("background", handler.PushType);
+        Assert.Equal("5", handler.Priority);
+        var root = JsonDocument.Parse(handler.Body!).RootElement;
+        var aps = root.GetProperty("aps");
+        Assert.Equal(1, aps.GetProperty("content-available").GetInt32());
+        Assert.False(aps.TryGetProperty("alert", out _));
+        Assert.False(aps.TryGetProperty("sound", out _));
+        Assert.Equal(PushMessage.OrganizerChangedType, root.GetProperty("eventType").GetString());
+
+        File.Delete(keyPath);
+    }
+
+    [Fact]
+    public async Task SendAsync_ASilentPushToAndroid_IsDataOnly()
+    {
+        using var key = NewServiceAccountKey(out var accountPath);
+        var store = new FakePushDeviceStore(NewDevice("android", "installation-id", "Pixel 8"));
+        var handler = new FirebaseHandler();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        var report = await dispatcher.SendAsync(NewFirebaseOptions(accountPath), PushMessage.OrganizerChanged(), CancellationToken.None);
+
+        Assert.Equal(1, report.Delivered);
+        var message = JsonDocument.Parse(handler.SendBody!).RootElement.GetProperty("message");
+        Assert.False(message.TryGetProperty("notification", out _));
+        Assert.False(message.GetProperty("android").TryGetProperty("notification", out _));
+        Assert.Equal(PushMessage.OrganizerChangedType, message.GetProperty("data").GetProperty("eventType").GetString());
+
+        File.Delete(accountPath);
+    }
+
+    // The deployed relay predates silent pushes and would deliver one as an empty alert.
+    [Fact]
+    public async Task SendAsync_ASilentPush_NeverGoesThroughTheRelay()
+    {
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new RelayHandler(_ => (HttpStatusCode.OK, """{"status":"delivered"}"""));
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger(), new FixedLicenseSource("{lic}"));
+
+        var report = await dispatcher.SendAsync(NewRelayOptions(), PushMessage.OrganizerChanged(), CancellationToken.None);
+
+        Assert.Equal(0, report.Attempted);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_ASilentPush_SkipsTheAppleTv()
+    {
+        using var key = NewSigningKey(out var keyPath);
+        var tv = NewDevice("apple", "tv-token", "Apple TV") with { AppVariant = "tvos" };
+        var store = new FakePushDeviceStore(tv, NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new ApnsCapture();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        var report = await dispatcher.SendAsync(NewOptions(keyPath), PushMessage.OrganizerChanged(), CancellationToken.None);
+
+        Assert.Equal(1, report.Attempted);
+        Assert.Equal(["/3/device/phone-token"], handler.Paths);
+
+        File.Delete(keyPath);
+    }
+
+    private sealed class ApnsCapture : HttpMessageHandler
+    {
+        public string? PushType { get; private set; }
+        public string? Priority { get; private set; }
+        public string? Body { get; private set; }
+        public List<string> Paths { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Paths.Add(request.RequestUri!.AbsolutePath);
+            PushType = request.Headers.GetValues("apns-push-type").Single();
+            Priority = request.Headers.GetValues("apns-priority").Single();
+            Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
+        }
+    }
+
     // ---- Relay mode -------------------------------------------------------------------------
     //
     // An install with no Apple/Firebase credentials of its own hands each push to the relay,

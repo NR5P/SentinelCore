@@ -85,10 +85,19 @@ public sealed class PushNotificationDispatcher(
         foreach (var device in registered)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // Silent pushes only go direct - an older relay would show them as a blank alert - and
+            // never to the Apple TV, which has nothing to do in the background.
+            var provider = PushProviderSelection.For(options, device.Platform);
+            if (message.Silent && (provider == PushProvider.Relay ||
+                                   string.Equals(device.AppVariant, "tvos", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
             PushAttempt attempt;
             try
             {
-                attempt = PushProviderSelection.For(options, device.Platform) switch
+                attempt = provider switch
                 {
                     PushProvider.Direct when device.Platform == PushPlatforms.Apple =>
                         await apns.SendAsync(

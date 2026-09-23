@@ -103,4 +103,31 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertEqual(store.takeActions().map(\.reminderId), ["r1"])
         XCTAssertTrue(store.pendingActions().isEmpty)
     }
+
+    // A silent push wakes the app in the background: one sync, then nothing left running.
+    func testSyncOnceSendsWaitingEditsAndLeavesNothingRunning() async throws {
+        let engine = try engine()
+        engine.create(.reminder, fields: ["title": "Bins", "completed": false], spaceId: "family")
+        let transport = ScriptedTransport { request in
+            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: nil) : ScriptedTransport.reply()
+        }
+
+        let online = await engine.syncOnce(transport)
+
+        XCTAssertTrue(online)
+        XCTAssertFalse(engine.isConnected)
+        XCTAssertTrue(transport.requests.contains { $0.path == "/api/organizer/sync" && $0.body.map { String(decoding: $0, as: UTF8.self).contains("Bins") } == true })
+        XCTAssertFalse(transport.requests.contains { $0.path == "/api/organizer/wait" })
+    }
+
+    func testSyncOnceWhenAlreadyConnectedStaysConnected() async throws {
+        let engine = try engine()
+        let transport = ScriptedTransport { request in
+            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: nil) : ScriptedTransport.reply()
+        }
+        engine.connect(transport)
+        await engine.syncOnce(transport)
+        XCTAssertTrue(engine.isConnected)
+        engine.disconnect()
+    }
 }

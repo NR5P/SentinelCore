@@ -95,6 +95,8 @@ class OrganizerEngine(
     private var childIndex: Pair<Long, Map<String, List<OrganizerItem>>>? = null
 
     @Volatile private var transport: OrganizerTransport? = null
+    // Set while syncOnce holds a transport it borrowed; a real connect() in the meantime keeps it.
+    @Volatile private var borrowedTransport = false
     private var waitJob: Job? = null
     private var debounceJob: Job? = null
     private var blobJob: Job? = null
@@ -462,6 +464,7 @@ class OrganizerEngine(
 
     fun connect(transport: OrganizerTransport) {
         this.transport = transport
+        borrowedTransport = false
         scope.launch {
             refreshStatus()
             sync()
@@ -479,6 +482,24 @@ class OrganizerEngine(
             blobJob = null
         }
         transport = null
+    }
+
+    // One sync and nothing after it - no long poll - for the app woken in the background (the
+    // server's silent push, the periodic refresh). Already connected, it just syncs. Returns
+    // whether the server answered.
+    suspend fun syncOnce(transport: OrganizerTransport): Boolean {
+        if (this.transport != null) {
+            sync()
+            return _syncState.value.online
+        }
+        this.transport = transport
+        borrowedTransport = true
+        refreshStatus()
+        sync()
+        val online = _syncState.value.online
+        // Unless the app came forward and connected for real meanwhile.
+        if (borrowedTransport) disconnect()
+        return online
     }
 
     suspend fun refreshStatus() {

@@ -48,26 +48,34 @@ public sealed class ApnsSender(
             Version = HttpVersion.Version20,
             VersionPolicy = HttpVersionPolicy.RequestVersionExact,
             Content = new StringContent(
-                JsonSerializer.Serialize(new
-                {
-                    aps = new Dictionary<string, object?>
+                message.Silent
+                    // A background push: content-available and nothing to show. Apple requires
+                    // push-type background at priority 5 for these, and rations them per device.
+                    ? JsonSerializer.Serialize(new
                     {
-                        ["alert"] = new { title = message.Title, body = message.Body },
-                        ["sound"] = "default",
-                        ["category"] = "SECURITY_EVENT",
-                        ["thread-id"] = message.Camera ?? "sentinel-core"
-                    },
-                    eventId = message.EventId,
-                    camera = message.Camera,
-                    eventType = message.EventType
-                }),
+                        aps = new Dictionary<string, object?> { ["content-available"] = 1 },
+                        eventType = message.EventType
+                    })
+                    : JsonSerializer.Serialize(new
+                    {
+                        aps = new Dictionary<string, object?>
+                        {
+                            ["alert"] = new { title = message.Title, body = message.Body },
+                            ["sound"] = "default",
+                            ["category"] = "SECURITY_EVENT",
+                            ["thread-id"] = message.Camera ?? "sentinel-core"
+                        },
+                        eventId = message.EventId,
+                        camera = message.Camera,
+                        eventType = message.EventType
+                    }),
                 Encoding.UTF8,
                 "application/json")
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("bearer", providerToken);
         request.Headers.TryAddWithoutValidation("apns-topic", topic);
-        request.Headers.TryAddWithoutValidation("apns-push-type", "alert");
-        request.Headers.TryAddWithoutValidation("apns-priority", "10");
+        request.Headers.TryAddWithoutValidation("apns-push-type", message.Silent ? "background" : "alert");
+        request.Headers.TryAddWithoutValidation("apns-priority", message.Silent ? "5" : "10");
 
         using var response = await httpClientFactory.CreateClient(PushSenders.HttpClientName)
             .SendAsync(request, cancellationToken);

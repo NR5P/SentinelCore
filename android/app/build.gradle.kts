@@ -107,6 +107,8 @@ dependencies {
     // Home-screen widgets for the Organizer (widgets/OrganizerWidgets).
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
+    // Syncing the Organizer in the background so the widgets stay current (widgets/OrganizerBackgroundSync).
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")

@@ -12,6 +12,7 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.sentinelcore.android.MainActivity
 import com.sentinelcore.android.R
+import com.sentinelcore.android.widgets.OrganizerBackgroundSync
 import kotlinx.coroutines.flow.MutableStateFlow
 
 object PushNavigation {
@@ -75,6 +76,11 @@ class SentinelFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        // The server's silent "the Organizer changed" - sync in the background, show nothing.
+        if (message.data["eventType"] == "organizer-changed") {
+            OrganizerBackgroundSync.syncSoon(this)
+            return
+        }
         val title = message.notification?.title
             ?: message.data["title"]
             ?: "Sentinel Core alert"

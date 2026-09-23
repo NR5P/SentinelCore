@@ -66,6 +66,8 @@ public final class OrganizerEngine {
     @ObservationIgnored private var serverId: String?
     @ObservationIgnored private var cursor: Int64 = 0
     @ObservationIgnored private var transport: (any OrganizerTransport)?
+    // Set while syncOnce holds a transport it borrowed; a real connect() in the meantime keeps it.
+    @ObservationIgnored private var borrowedTransport = false
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var requestedPass = 0
     @ObservationIgnored private var completedPass = 0
@@ -450,6 +452,7 @@ public final class OrganizerEngine {
 
     public func connect(_ transport: any OrganizerTransport) {
         self.transport = transport
+        borrowedTransport = false
         Task {
             await refreshStatus()
             await sync()
@@ -468,6 +471,25 @@ public final class OrganizerEngine {
     }
 
     public var isConnected: Bool { transport != nil }
+
+    // One sync and nothing after it - no long poll - for an app woken in the background (a
+    // silent push, a background refresh). Already connected, it just syncs. Returns whether the
+    // server answered.
+    @discardableResult
+    public func syncOnce(_ transport: any OrganizerTransport) async -> Bool {
+        if self.transport != nil {
+            await sync()
+            return syncState.online
+        }
+        self.transport = transport
+        borrowedTransport = true
+        await refreshStatus()
+        await sync()
+        let online = syncState.online
+        // Unless the app came forward and connected for real meanwhile.
+        if borrowedTransport { disconnect() }
+        return online
+    }
 
     public func refreshStatus() async {
         do {

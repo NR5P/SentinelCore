@@ -133,7 +133,21 @@ final class SentinelApplicationDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         PushNotificationCoordinator.shared.configure()
         PushNotificationCoordinator.shared.registerWithAPNs()
+        OrganizerBackgroundRefresh.register()
+        OrganizerBackgroundRefresh.schedule()
         return true
+    }
+
+    // A silent push - the server saying the Organizer changed. See OrganizerBackgroundRefresh.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        let eventType = userInfo["eventType"] as? String
+        Task { @MainActor in
+            completionHandler(await OrganizerBackgroundRefresh.handleRemoteNotification(eventType: eventType))
+        }
     }
 
     func application(

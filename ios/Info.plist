@@ -33,6 +33,10 @@
 			</array>
 		</dict>
 	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.sentinelcore.client.organizer-refresh</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -65,6 +69,14 @@
 	<string>Sentinel Core uses the microphone only if you choose to include sound while streaming this device as a security camera.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Sentinel Core connects to your camera security server and live video streams on your local network.</string>
+	<!-- Keeping the Organizer and its Home Screen widgets current while the app is closed: the
+	     server's silent push (remote-notification) and a periodic background refresh (fetch).
+	     See OrganizerBackgroundRefresh. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

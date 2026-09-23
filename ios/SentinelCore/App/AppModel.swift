@@ -20,6 +20,8 @@ struct DiscoveredServer: Identifiable, Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    static let shared = AppModel()
+
     @Published var serverURL: String {
         didSet { UserDefaults.standard.set(serverURL, forKey: "serverURL") }
     }
@@ -166,11 +168,39 @@ final class AppModel: ObservableObject {
         }
     }
 
+    #if os(iOS)
+    // Woken in the background - by the server's silent "Organizer changed" push, or by a
+    // background refresh - to bring this device's copy and the Home Screen widgets up to date.
+    // No window and about 30 seconds, so one sync and no long poll (OrganizerEngine.syncOnce).
+    // The address last used may be the wrong one now (the phone left home), so a failed sync
+    // re-picks between the local and remote address once, as connect() would.
+    func refreshOrganizerInBackground() async {
+        guard isConfigured, organizerLastKnownEnabled else { return }
+        if activeServerURL.isEmpty { await resolveActiveServerURL() }
+        let tried = activeServerURL
+        var online = await organizer.syncOnce(AppOrganizerTransport(client: client))
+        if !online {
+            await resolveActiveServerURL()
+            if activeServerURL != tried {
+                online = await organizer.syncOnce(AppOrganizerTransport(client: client))
+            }
+        }
+        // An untrusted HTTPS certificate on the local address: the plain-HTTP port, as connect() does.
+        if !online, !isUsingRemote, let fallback = Self.httpFallbackAddress(for: activeServerURL),
+           await client.probeReachable(fallback) {
+            activeServerURL = fallback
+            online = await organizer.syncOnce(AppOrganizerTransport(client: client))
+        }
+        log("Background Organizer refresh \(online ? "synced" : "could not reach the server")", level: online ? .info : .notice)
+        organizerWidgets?.writeNow()
+    }
+    #endif
+
     // Called from the scene phase: a background app shouldn't hold a long poll open.
     func setOrganizerActive(_ active: Bool) {
         organizerActive = active
         #if os(iOS)
-        if active { organizerWidgets?.appBecameActive() }
+        if active { organizerWidgets?.appBecameActive() } else { OrganizerBackgroundRefresh.schedule() }
         #endif
         if active, organizer.isConnected {
             Task { await organizer.sync() }
