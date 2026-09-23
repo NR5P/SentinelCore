@@ -6,6 +6,9 @@ struct RootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection? = .events
+    @State private var morePath: [AppSection] = []
+    @AppStorage(TabBarLayout.storageKey) private var tabBarSections = ""
+    @State private var editingTabBar = false
 
     // Whether the server has the Organizer on - its own answer when it has given one this
     // launch, otherwise what it said last time, so the section is there offline too.
@@ -94,9 +97,18 @@ struct RootView: View {
         }
     }
 
+    private var compactLayout: TabBarLayout {
+        TabBarLayout(pinned: TabBarLayout.decode(tabBarSections), visible: visibleSections)
+    }
+
+    private var visibleSections: [AppSection] {
+        AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled)
+    }
+
     private var compactNavigation: some View {
-        TabView(selection: compactSelection) {
-            ForEach(AppSection.compactTabCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled)) { section in
+        let layout = compactLayout
+        return TabView(selection: compactSelection) {
+            ForEach(layout.bar) { section in
                 NavigationStack {
                     sectionView(section)
                         .navigationDestination(item: $model.selectedEvent) { event in
@@ -104,15 +116,65 @@ struct RootView: View {
                         }
                 }
                 .tabItem { Label(section.title, systemImage: section.icon) }
-                .tag(section)
+                .tag(CompactTab.section(section))
+            }
+            if layout.showsMore {
+                NavigationStack(path: $morePath) {
+                    MoreSectionsView(sections: layout.more) { editingTabBar = true }
+                        .navigationDestination(for: AppSection.self) { section in
+                            sectionView(section)
+                        }
+                        .navigationDestination(item: $model.selectedEvent) { event in
+                            EventDetailView(event: event)
+                        }
+                }
+                .tabItem { Label("More", systemImage: "ellipsis.circle") }
+                .tag(CompactTab.more)
+            }
+        }
+        // Changing which tabs exist in place leaves UIKit's tab controller showing a blank page
+        // for the selected one, so a new bar is a new TabView.
+        .id(layout.bar)
+        .sheet(isPresented: $editingTabBar) {
+            NavigationStack { TabBarEditor(visible: visibleSections, inSheet: true) }
+        }
+        // `selection` stays the one answer to "which section is on screen", on the tab bar and
+        // in the sidebar alike. A section without a tab is on screen when it is pushed on More,
+        // so whatever sends the app to one (a tapped Organizer alert, an event) lands there.
+        .onChange(of: selection) { _, section in showUnderMoreIfNeeded(section) }
+        .onChange(of: layout) { _, _ in showUnderMoreIfNeeded(selection) }
+        .onAppear { showUnderMoreIfNeeded(selection) }
+        .onChange(of: morePath) { _, path in
+            // Only while More is the tab on screen - a section with a tab owns `selection` then.
+            if selection.map({ !compactLayout.bar.contains($0) }) ?? true {
+                selection = path.last
             }
         }
     }
 
-    private var compactSelection: Binding<AppSection> {
+    private func showUnderMoreIfNeeded(_ section: AppSection?) {
+        let layout = compactLayout
+        guard let section, !layout.bar.contains(section) else { return }
+        if layout.more.contains(section) {
+            if morePath.last != section { morePath = [section] }
+        } else {
+            // Switched off server-side while it was on screen.
+            selection = layout.bar.first
+        }
+    }
+
+    private var compactSelection: Binding<CompactTab> {
         Binding(
-            get: { selection ?? .events },
-            set: { selection = $0 }
+            get: {
+                if let selection, compactLayout.bar.contains(selection) { return .section(selection) }
+                return .more
+            },
+            set: { tab in
+                switch tab {
+                case .section(let section): selection = section
+                case .more: selection = morePath.last
+                }
+            }
         )
     }
 
@@ -126,6 +188,11 @@ struct RootView: View {
         case .settings: SettingsView()
         }
     }
+}
+
+private enum CompactTab: Hashable {
+    case section(AppSection)
+    case more
 }
 
 // "Feed" and "Triggers" used to be separate sections - one for AI-analysed alerts, one for raw
@@ -161,26 +228,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         allCases.filter { ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) }
     }
 
-    // An iPhone tab bar holds five items; a sixth makes UIKit collapse the overflow into its own
-    // "More" navigation controller, which cannot host these sections - a NavigationStack inside
-    // it crashes outright ("attempt to nest wrapped navigation controllers"), and without one
-    // the section renders blank.
-    //
-    // Merging Feed and Triggers into one Events section brought the maximum back to exactly five
-    // (Events, Timeline, Live, Device Hub, Settings), so Settings no longer has to be displaced
-    // when the Device Hub is switched on - it keeps its tab in every configuration.
-    //
-    // The Organizer made it six again. With both it and the Device Hub on, the Device Hub gives
-    // up its tab and becomes a row at the top of Settings (see SettingsView) - it is off by
-    // default and the less-visited of the two, and Settings is always one tap away.
-    static func compactTabCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
-        let visible = visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled)
-        return visible.count > 5 ? visible.filter { $0 != .devices } : visible
-    }
-
-    static func deviceHubIsInSettings(deviceHubEnabled: Bool, organizerEnabled: Bool) -> Bool {
-        deviceHubEnabled && !compactTabCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled).contains(.devices)
-    }
+    // Which of these get a tab on an iPhone is up to the person - see TabBarLayout.
 
     // Every section, on every platform with a sidebar. macOS also has a real Settings scene on
     // Cmd+, (see SentinelCoreApp), and for a while that was the *only* way in - the row was

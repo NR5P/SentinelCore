@@ -11,14 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Lightbulb
-import androidx.compose.material.icons.filled.Radar
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -33,9 +27,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -250,6 +248,11 @@ private fun AppShell(
         }
     }
 
+    val context = LocalContext.current
+    val tabBarPreferences = remember { TabBarPreferences(context.applicationContext) }
+    val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled)
+    val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
         if (useRail) {
@@ -263,20 +266,36 @@ private fun AppShell(
                     navController = navController,
                     state = state,
                     model = model,
+                    tabBarPreferences = tabBarPreferences,
+                    // The rail shows every section, so there is no bar to customize.
+                    onCustomizeTabBar = null,
                     modifier = Modifier.weight(1f),
                 )
             }
         } else {
+            val layout = tabBarPreferences.layout(visibleSections)
+            var showMore by rememberSaveable { mutableStateOf(false) }
             Scaffold(
                 containerColor = SentinelBackground,
                 bottomBar = {
                     NavigationBar(containerColor = SentinelPanel) {
-                        AppSection.bottomBar(state.deviceHubEnabled, state.organizerEnabled).forEach { item ->
+                        layout.bar.forEach { item ->
                             NavigationBarItem(
                                 selected = selectedSection == item,
                                 onClick = { onSelectSection(item) },
                                 icon = { Icon(item.icon, contentDescription = item.title) },
                                 label = { Text(item.title) },
+                            )
+                        }
+                        if (layout.showsMore) {
+                            // Selected whenever the section on screen has no tab of its own -
+                            // whether it was picked from More or reached by a deep link (a pushed
+                            // alert, a tapped Organizer alert, the device-camera screen).
+                            NavigationBarItem(
+                                selected = selectedSection !in layout.bar,
+                                onClick = { showMore = true },
+                                icon = { Icon(Icons.Default.MoreHoriz, contentDescription = "More") },
+                                label = { Text("More") },
                             )
                         }
                     }
@@ -286,18 +305,39 @@ private fun AppShell(
                     navController = navController,
                     state = state,
                     model = model,
+                    tabBarPreferences = tabBarPreferences,
+                    onCustomizeTabBar = openTabBarEditor,
                     modifier = Modifier.padding(padding),
+                )
+            }
+            if (showMore && layout.showsMore) {
+                MoreSectionsSheet(
+                    sections = layout.more,
+                    onSelect = { section ->
+                        showMore = false
+                        onSelectSection(section)
+                    },
+                    onEdit = {
+                        showMore = false
+                        openTabBarEditor()
+                    },
+                    onDismiss = { showMore = false },
                 )
             }
         }
     }
 }
 
+// Under Settings, so the bar highlights Settings (or More, if Settings has no tab) while it's open.
+private const val TAB_BAR_EDITOR_ROUTE = "settings/tab-bar"
+
 @Composable
 private fun SentinelNavHost(
     navController: NavHostController,
     state: SentinelUiState,
     model: SentinelViewModel,
+    tabBarPreferences: TabBarPreferences,
+    onCustomizeTabBar: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     NavHost(navController = navController, startDestination = AppSection.EVENTS.route, modifier = modifier) {
@@ -426,11 +466,14 @@ private fun SentinelNavHost(
                 onLicense = { navController.navigate("settings/license") },
                 onManageSchedules = { navController.navigate("settings/schedules") },
                 onServerSettings = { navController.navigate("settings/server") },
-                onDeviceHub = if (AppSection.deviceHubInSettings(state.deviceHubEnabled, state.organizerEnabled)) {
-                    { navController.navigate(AppSection.DEVICES.route) }
-                } else {
-                    null
-                },
+                onCustomizeTabBar = onCustomizeTabBar,
+            )
+        }
+        composable(TAB_BAR_EDITOR_ROUTE) {
+            TabBarEditorScreen(
+                preferences = tabBarPreferences,
+                visible = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled),
+                onBack = { navController.popBackStack() },
             )
         }
 
@@ -743,34 +786,5 @@ private fun SentinelNavigationRail(
             state.connectionState,
             Modifier.padding(horizontal = 10.dp, vertical = 18.dp),
         )
-    }
-}
-
-private enum class AppSection(
-    val title: String,
-    val icon: ImageVector,
-    val route: String,
-) {
-    EVENTS("Events", Icons.Default.Security, "events"),
-    TIMELINE("Timeline", Icons.Default.History, "timeline"),
-    LIVE("Live", Icons.Default.LiveTv, "live"),
-    ORGANIZER("Organizer", Icons.Default.CalendarMonth, "organizer"),
-    DEVICES("Devices", Icons.Default.Lightbulb, "devices"),
-    SETTINGS("Settings", Icons.Default.Settings, "settings"),
-    ;
-
-    companion object {
-        // The Device Hub and the Organizer can each be switched off server-side.
-        fun visible(deviceHubEnabled: Boolean, organizerEnabled: Boolean): List<AppSection> =
-            entries.filter { (it != DEVICES || deviceHubEnabled) && (it != ORGANIZER || organizerEnabled) }
-
-        // A bottom bar has room for five before the labels start to crush. With both the
-        // Organizer and the Device Hub on, the Device Hub moves to the top of Settings - the same
-        // rule as the iPhone app. The navigation rail on a tablet keeps everything.
-        fun bottomBar(deviceHubEnabled: Boolean, organizerEnabled: Boolean): List<AppSection> =
-            visible(deviceHubEnabled, organizerEnabled).let { all -> if (all.size > 5) all - DEVICES else all }
-
-        fun deviceHubInSettings(deviceHubEnabled: Boolean, organizerEnabled: Boolean) =
-            deviceHubEnabled && DEVICES !in bottomBar(deviceHubEnabled, organizerEnabled)
     }
 }

@@ -74,9 +74,9 @@ fun SettingsScreen(
     onLicense: () -> Unit,
     onManageSchedules: () -> Unit,
     onServerSettings: () -> Unit,
-    // Set when the Device Hub has given up its bottom-bar tab to the Organizer - see
-    // AppSection.bottomBar.
-    onDeviceHub: (() -> Unit)? = null,
+    // Set while the phone-width bottom bar is in use; the tablet's rail shows every section and
+    // has nothing to customize. See TabBarLayout.
+    onCustomizeTabBar: (() -> Unit)? = null,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
     var remoteAddress by rememberSaveable { mutableStateOf(state.remoteServerUrl) }
@@ -100,12 +100,17 @@ fun SettingsScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            if (onDeviceHub != null) {
+            if (onCustomizeTabBar != null) {
                 item {
-                    SettingsSection("Device Hub") {
-                        TextButton(onClick = onDeviceHub, modifier = Modifier.fillMaxWidth()) {
-                            Text("Open the Device Hub", color = SentinelGreen)
+                    SettingsSection("Tab bar") {
+                        TextButton(onClick = onCustomizeTabBar, modifier = Modifier.fillMaxWidth()) {
+                            Text("Customize tab bar", color = SentinelGreen, modifier = Modifier.weight(1f))
                         }
+                        Text(
+                            "Choose which sections have a tab at the bottom of the screen. The rest are under More.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

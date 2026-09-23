@@ -18,16 +18,15 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            // On an iPhone with both the Organizer and the Device Hub on, the Device Hub lives
-            // here rather than in the tab bar - see AppSection.compactTabCases.
-            if horizontalSizeClass == .compact,
-               AppSection.deviceHubIsInSettings(deviceHubEnabled: model.deviceHubEnabled,
-                                                organizerEnabled: model.organizer.status?.enabled ?? model.organizerLastKnownEnabled) {
+            // Which sections have a tab on an iPhone - also on the More tab, whenever there is one.
+            if horizontalSizeClass == .compact {
                 Section {
                     NavigationLink {
-                        DeviceHubView(isActive: true)
+                        TabBarEditor(visible: AppSection.visibleCases(
+                            deviceHubEnabled: model.deviceHubEnabled,
+                            organizerEnabled: model.organizer.status?.enabled ?? model.organizerLastKnownEnabled))
                     } label: {
-                        Label("Device Hub", systemImage: "lightbulb.fill")
+                        Label("Customize Tab Bar", systemImage: "square.grid.2x2")
                     }
                 }
             }
@@ -152,9 +151,6 @@ struct SettingsView: View {
                 } header: {
                     Text("Schedules")
                 } footer: {
-                    // A row here rather than a tab of its own: the iPhone tab bar is already at
-                    // the five items UIKit can show without collapsing into a "More" list, which
-                    // these screens cannot survive - see AppSection.compactTabCases.
                     Text("Switch a device, publish MQTT, or call an API endpoint at a time of your choosing — or at sunset, or when it gets dark.")
                 }
                 Section {
