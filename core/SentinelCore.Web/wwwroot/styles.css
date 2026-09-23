@@ -3442,7 +3442,8 @@ main {
 .org-columns {
   display: flex;
   gap: 12px;
-  align-items: flex-start;
+  /* Every column as tall as the tallest, so a short one is still a big target to drop a card on. */
+  align-items: stretch;
   overflow-x: auto;
   padding-bottom: 12px;
 }
@@ -3482,7 +3483,8 @@ main {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 24px;
+  flex: 1 1 auto;
+  min-height: 60px;
   overflow-y: auto;
   border-radius: 3px;
 }

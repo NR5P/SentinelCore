@@ -8,7 +8,29 @@ import androidx.compose.ui.text.font.FontStyle
 import com.sentinelcore.android.organizer.Holiday
 import com.sentinelcore.android.organizer.HolidayColors
 import com.sentinelcore.android.organizer.HolidayState
+import android.content.ClipData
+import android.content.ClipDescription
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.draganddrop.dragAndDropSource
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.DragAndDropTransferData
+import androidx.compose.ui.draganddrop.mimeTypes
+import androidx.compose.ui.draganddrop.toAndroidDragEvent
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -609,11 +631,68 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
     val boards = engine.items(OrganizerKinds.BOARD).filter { (filter == null || it.spaceId == filter) && !it.bool("archived") }.sortedBy { it.sortPosition }
     val board = boards.firstOrNull { it.id == selectedId } ?: boards.firstOrNull()
 
-    Column(Modifier.fillMaxSize()) {
+    val scope = rememberCoroutineScope()
+    val zones = remember { DropZones() }
+    // One drop target for the whole screen, working out what's under the finger from where each
+    // chip, column and card was last laid out. Compose only offers a drag to targets that existed
+    // when it started, so per-column targets would miss the columns of a board opened mid-drag.
+    val paneTarget = remember {
+        object : DragAndDropTarget {
+            var opener: Job? = null
+            var openerFor: String? = null
+            fun stop() { opener?.cancel(); opener = null; openerFor = null; zones.hovered = null }
+            override fun onMoved(event: DragAndDropEvent) {
+                val hit = zones.hit(event.position())
+                zones.hovered = hit
+                // Held over a board's chip a moment, the board opens so the card can go in any column.
+                val chip = (hit as? DropHit.Chip)?.boardId
+                if (chip != openerFor) {
+                    opener?.cancel()
+                    openerFor = chip
+                    opener = chip?.let { id -> scope.launch { delay(700); selectedId = id } }
+                }
+            }
+            override fun onExited(event: DragAndDropEvent) = stop()
+            override fun onEnded(event: DragAndDropEvent) = stop()
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                val hit = zones.hit(event.position())
+                stop()
+                val cardId = draggedCardId(event) ?: return false
+                when (hit) {
+                    // Let go on a board's chip: the bottom of its first column.
+                    is DropHit.Chip -> {
+                        val first = engine.children(hit.boardId, OrganizerKinds.COLUMN).minByOrNull { it.sortPosition } ?: return false
+                        moveCardToEnd(engine, cardId, first)
+                    }
+                    // On a card: just above it.
+                    is DropHit.Card -> {
+                        if (hit.cardId == cardId) return true
+                        val column = engine.item(hit.columnId) ?: return false
+                        val target = engine.item(hit.cardId) ?: return false
+                        val others = engine.children(column.id, OrganizerKinds.CARD).filter { it.id != cardId }.sortedBy { it.sortPosition }
+                        val index = others.indexOfFirst { it.id == target.id }
+                        val previous = if (index > 0) others[index - 1].sortPosition else target.sortPosition - 1
+                        moveCard(engine, cardId, column, (previous + target.sortPosition) / 2)
+                    }
+                    // Anywhere else in a column: its bottom.
+                    is DropHit.Column -> moveCardToEnd(engine, cardId, engine.item(hit.columnId) ?: return false)
+                    null -> return false
+                }
+                return true
+            }
+        }
+    }
+    Column(Modifier.fillMaxSize().dragAndDropTarget(shouldStartDragAndDrop = ::isCardDrag, target = paneTarget)) {
         LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(boards, key = { it.id }) { item ->
+                val chipFill = when {
+                    (zones.hovered as? DropHit.Chip)?.boardId == item.id -> SentinelGreen.copy(alpha = 0.35f)
+                    item.id == board?.id -> SentinelGreen.copy(alpha = 0.18f)
+                    else -> MaterialTheme.colorScheme.surfaceVariant
+                }
                 Row(
-                    Modifier.clip(RoundedCornerShape(50)).background(if (item.id == board?.id) SentinelGreen.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant)
+                    Modifier.clip(RoundedCornerShape(50)).background(chipFill)
+                        .dropZone(zones.chips, item.id)
                         .clickable { selectedId = item.id }.padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -640,7 +719,7 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
         val columns = engine.children(board.id, OrganizerKinds.COLUMN).sortedBy { it.sortPosition }
         LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
             items(columns, key = { it.id }) { column ->
-                BoardColumn(engine, column, columns, routes, onRename = { nameText = column.title; naming = "renameColumn" to column.id })
+                BoardColumn(engine, column, columns, boards, zones, routes, onRename = { nameText = column.title; naming = "renameColumn" to column.id })
             }
         }
     }
@@ -686,12 +765,16 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BoardColumn(engine: OrganizerEngine, column: OrganizerItem, columns: List<OrganizerItem>, routes: OrganizerRoutes, onRename: () -> Unit) {
+private fun BoardColumn(engine: OrganizerEngine, column: OrganizerItem, columns: List<OrganizerItem>, boards: List<OrganizerItem>, zones: DropZones, routes: OrganizerRoutes, onRename: () -> Unit) {
     var newCard by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     val cards = engine.children(column.id, OrganizerKinds.CARD).sortedBy { it.sortPosition }
+    val targeted = zones.hovered.let { it is DropHit.Column && it.columnId == column.id || it is DropHit.Card && it.columnId == column.id }
     Column(
-        Modifier.width(270.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)).padding(10.dp),
+        Modifier.width(270.dp).fillMaxHeight().clip(RoundedCornerShape(10.dp))
+            .background(if (targeted) SentinelGreen.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .dropZone(zones.columns, column.id)
+            .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -708,8 +791,8 @@ private fun BoardColumn(engine: OrganizerEngine, column: OrganizerItem, columns:
                 }
             }
         }
-        LazyColumn(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(cards, key = { it.id }) { card -> CardTile(engine, card, cards, column, columns, routes) }
+        LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(cards, key = { it.id }) { card -> CardTile(engine, card, cards, column, columns, boards, zones, routes) }
         }
         OutlinedTextField(
             value = newCard, onValueChange = { newCard = it }, singleLine = true, label = { Text("Add a card") },
@@ -734,18 +817,34 @@ private fun moveColumn(engine: OrganizerEngine, columns: List<OrganizerItem>, in
     }
 }
 
-// Long-press for Move to / Move up / Move down - Compose has no cross-list drag and drop to lean on,
-// and a menu is also what works for people who find dragging on a phone fiddly.
+// Tap to open, long-press and drag to move - onto another column, another card, or a board's chip
+// at the top. The ⋮ menu does the same moves for people who find dragging on a phone fiddly.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<OrganizerItem>, column: OrganizerItem, columns: List<OrganizerItem>, routes: OrganizerRoutes) {
+private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<OrganizerItem>, column: OrganizerItem, columns: List<OrganizerItem>, boards: List<OrganizerItem>, zones: DropZones, routes: OrganizerRoutes) {
     var menu by remember { mutableStateOf(false) }
+    var pickingBoard by remember { mutableStateOf(false) }
     val attachments = engine.children(card.id, OrganizerKinds.ATTACHMENT)
     val cover = attachments.firstOrNull { it.string("contentType")?.startsWith("image/") == true }
     val checklist = card.list("checklist")
     val comments = engine.children(card.id, OrganizerKinds.COMMENT).size
     Box {
-        Card(Modifier.fillMaxWidth().combinedClickable(onClick = { routes.openCard(card.id) }, onLongClick = { menu = true })) {
+        Card(
+            Modifier.fillMaxWidth()
+                .dragAndDropSource {
+                    detectTapGestures(
+                        onTap = { routes.openCard(card.id) },
+                        onLongPress = {
+                            startTransfer(DragAndDropTransferData(ClipData(ClipDescription(card.title, arrayOf(CARD_MIME)), ClipData.Item(card.id))))
+                        },
+                    )
+                }
+                .dropZone(zones.cards, card.id, column.id)
+                .semantics(mergeDescendants = true) {
+                    role = Role.Button
+                    onClick(label = "Open") { routes.openCard(card.id); true }
+                },
+        ) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 cover?.string("hash")?.let { OrganizerImage(engine, it, Modifier.fillMaxWidth().height(110.dp).clip(RoundedCornerShape(6.dp))) }
                 val labels = card.list("labels").mapNotNull { (it as? Map<*, *>)?.get("name") as? String }
@@ -754,7 +853,12 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
                         labels.forEach { Text(it, fontSize = 10.sp, modifier = Modifier.background(SentinelCyan.copy(alpha = 0.25f), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp)) }
                     }
                 }
-                Text(card.title.ifEmpty { "Card" }, textDecoration = if (card.bool("completed")) TextDecoration.LineThrough else null)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(card.title.ifEmpty { "Card" }, textDecoration = if (card.bool("completed")) TextDecoration.LineThrough else null, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { menu = true }, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Card options", tint = SentinelTextDim, modifier = Modifier.size(18.dp))
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     card.string("due")?.let { dueText ->
                         OrganizerDates.parse(dueText, dueText.length == 10)?.let { due ->
@@ -775,10 +879,13 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
             columns.filter { it.id != column.id }.forEach { other ->
                 DropdownMenuItem(text = { Text("Move to ${other.title}") }, onClick = {
                     menu = false
-                    val last = engine.children(other.id, OrganizerKinds.CARD).map { it.sortPosition }.filter { it < 1e9 }.maxOrNull() ?: 0.0
-                    engine.update(card.id, mapOf("parentId" to other.id, "position" to last + 1))
+                    moveCardToEnd(engine, card.id, other)
                 })
             }
+            if (boards.any { it.id != column.parentId }) DropdownMenuItem(text = { Text("Move to another board…") }, onClick = {
+                menu = false
+                pickingBoard = true
+            })
             val index = cards.indexOf(card)
             if (index > 0) DropdownMenuItem(text = { Text("Move up") }, onClick = {
                 menu = false
@@ -797,4 +904,80 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
             DropdownMenuItem(text = { Text("Delete", color = SentinelRed) }, onClick = { menu = false; engine.deleteTree(card.id) })
         }
     }
+    if (pickingBoard) {
+        AlertDialog(
+            onDismissRequest = { pickingBoard = false },
+            title = { Text("Move \"${card.title.ifEmpty { "Card" }}\" to") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    boards.filter { it.id != column.parentId }.forEach { other ->
+                        Text(other.title.ifEmpty { "Board" }, color = SentinelCyan, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                        engine.children(other.id, OrganizerKinds.COLUMN).sortedBy { it.sortPosition }.forEach { target ->
+                            TextButton(onClick = { pickingBoard = false; moveCardToEnd(engine, card.id, target) }) { Text(target.title) }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { pickingBoard = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+// What a dragged card carries: its id, under a type of its own so a text field ("Add a card")
+// can't take the drop and type the id into itself.
+private const val CARD_MIME = "application/x-sentinelcore-card"
+
+private fun isCardDrag(event: DragAndDropEvent): Boolean = CARD_MIME in event.mimeTypes()
+
+private fun DragAndDropEvent.position(): Offset = toAndroidDragEvent().let { Offset(it.x, it.y) }
+
+private sealed interface DropHit {
+    data class Chip(val boardId: String) : DropHit
+    data class Column(val columnId: String) : DropHit
+    data class Card(val cardId: String, val columnId: String) : DropHit
+}
+
+// Where each board chip, column and card is on screen, kept up to date as they're laid out and
+// forgotten when they leave the screen - what the board screen's one drop target hit-tests.
+private class DropZones {
+    val chips = mutableMapOf<String, Pair<Rect, String?>>()
+    val columns = mutableMapOf<String, Pair<Rect, String?>>()
+    val cards = mutableMapOf<String, Pair<Rect, String?>>()
+    var hovered by mutableStateOf<DropHit?>(null)
+
+    fun hit(point: Offset): DropHit? {
+        chips.entries.firstOrNull { point in it.value.first }?.let { return DropHit.Chip(it.key) }
+        cards.entries.firstOrNull { point in it.value.first }?.let { return DropHit.Card(it.key, it.value.second!!) }
+        columns.entries.firstOrNull { point in it.value.first }?.let { return DropHit.Column(it.key) }
+        return null
+    }
+}
+
+@Composable
+private fun Modifier.dropZone(zones: MutableMap<String, Pair<Rect, String?>>, id: String, parent: String? = null): Modifier {
+    DisposableEffect(zones, id) { onDispose { zones.remove(id) } }
+    return onGloballyPositioned { zones[id] = it.boundsInRoot() to parent }
+}
+
+private fun draggedCardId(event: DragAndDropEvent): String? {
+    val clip = event.toAndroidDragEvent().clipData ?: return null
+    if (clip.itemCount == 0 || clip.description?.hasMimeType(CARD_MIME) != true) return null
+    return clip.getItemAt(0).text?.toString()
+}
+
+// Puts a card into a column, which may be on another board or in another space. The server would
+// move the card's comments and attachments into the new space anyway; sending the space too lets
+// this phone do the same straight away.
+private fun moveCard(engine: OrganizerEngine, cardId: String, column: OrganizerItem, position: Double) {
+    val card = engine.item(cardId)?.takeIf { it.kind == OrganizerKinds.CARD } ?: return
+    val changes = mutableMapOf<String, Any?>("position" to position)
+    if (card.parentId != column.id) changes["parentId"] = column.id
+    if (card.spaceId != column.spaceId) changes["spaceId"] = column.spaceId
+    engine.update(cardId, changes)
+}
+
+private fun moveCardToEnd(engine: OrganizerEngine, cardId: String, column: OrganizerItem) {
+    val last = engine.children(column.id, OrganizerKinds.CARD).filter { it.id != cardId }.map { it.sortPosition }.filter { it < 1e9 }.maxOrNull() ?: 0.0
+    moveCard(engine, cardId, column, last + 1)
 }

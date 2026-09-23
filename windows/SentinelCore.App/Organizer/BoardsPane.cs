@@ -8,7 +8,8 @@ using SentinelCore.Client.Organizer;
 namespace SentinelCore.App.Organizer;
 
 /// <summary>
-/// Trello-style boards: columns of cards, dragged between columns or moved from a card's menu.
+/// Trello-style boards: columns of cards, dragged between columns or moved from a card's menu -
+/// to another column or to a column on another board.
 /// Order is a float <c>position</c> on each card and column, and a card dropped between two others
 /// takes the midpoint of theirs - so moving one card only ever rewrites that card.
 /// </summary>
@@ -338,15 +339,23 @@ public sealed class BoardsPane : OrganizerPane
         var move = new MenuItem { Header = "Move to" };
         foreach (var target in Columns(board.Id).Where(other => other.Id != column.Id))
         {
-            move.Items.Add(MenuItem(target.Title, () =>
-            {
-                var targetCards = Cards(target.Id);
-                var position = targetCards.Count == 0 ? 1.0 : targetCards.Max(other => other.SortPosition) + 1;
-                Engine.Update(card.Id, new Dictionary<string, object?> { ["parentId"] = target.Id, ["position"] = position });
-            }));
+            move.Items.Add(MenuItem(target.Title, () => MoveCardToEnd(card.Id, target)));
         }
         move.IsEnabled = move.Items.Count > 0;
         menu.Items.Add(move);
+        var toBoard = new MenuItem { Header = "Move to board" };
+        foreach (var other in Boards().Where(other => other.Id != board.Id))
+        {
+            var boardItem = new MenuItem { Header = other.Title.Length == 0 ? "Untitled board" : other.Title };
+            foreach (var target in Columns(other.Id))
+            {
+                boardItem.Items.Add(MenuItem(target.Title, () => MoveCardToEnd(card.Id, target)));
+            }
+            boardItem.IsEnabled = boardItem.Items.Count > 0;
+            toBoard.Items.Add(boardItem);
+        }
+        toBoard.IsEnabled = toBoard.Items.Count > 0;
+        menu.Items.Add(toBoard);
         var images = Engine.Children(card.Id, OrganizerKinds.Attachment)
             .Where(item => item.String("contentType")?.StartsWith("image/", StringComparison.Ordinal) == true).ToList();
         if (images.Count > 0)
@@ -433,10 +442,27 @@ public sealed class BoardsPane : OrganizerPane
         else if (index >= others.Count) position = others[^1].SortPosition + 1;
         else position = (others[index - 1].SortPosition + others[index].SortPosition) / 2;
 
+        MoveCard(cardId, column, position);
+    }
+
+    /// <summary>
+    /// Puts a card into a column, which may be on another board or in another space. The server
+    /// would move the card's comments and attachments into the new space anyway; sending the space
+    /// too lets this device do the same straight away.
+    /// </summary>
+    private void MoveCard(string cardId, OrganizerItem column, double position)
+    {
         if (Engine.Item(cardId) is not { } card) return;
         var changes = new Dictionary<string, object?> { ["position"] = position };
         if (card.ParentId != column.Id) changes["parentId"] = column.Id;
+        if (card.SpaceId != column.SpaceId) changes["spaceId"] = column.SpaceId;
         Engine.Update(cardId, changes);
+    }
+
+    private void MoveCardToEnd(string cardId, OrganizerItem column)
+    {
+        var others = Cards(column.Id).Where(other => other.Id != cardId).ToList();
+        MoveCard(cardId, column, others.Count == 0 ? 1.0 : others.Max(other => other.SortPosition) + 1);
     }
 
     private void MoveColumn(OrganizerItem board, OrganizerItem column, int direction)

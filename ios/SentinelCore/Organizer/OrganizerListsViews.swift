@@ -385,6 +385,7 @@ struct OrganizerBoardsView: View {
     @State private var naming: NamingTarget?
     @State private var nameText = ""
     @State private var confirmingDelete = false
+    @State private var targetedBoardId: String?
 
     private enum NamingTarget: Identifiable, Equatable {
         case newBoard, renameBoard(String), newColumn(String), renameColumn(String)
@@ -411,9 +412,19 @@ struct OrganizerBoardsView: View {
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(item.id == board?.id ? SentinelTheme.green.opacity(0.18) : Color.primary.opacity(0.06), in: Capsule())
+                            .background(chipFill(item, selected: item.id == board?.id), in: Capsule())
                         }
                         .buttonStyle(.plain)
+                        // Hovering a dragged card over a board opens it, so the card can go into
+                        // any of its columns; letting go on the chip itself files it in the first.
+                        .springLoadingBehavior(.enabled)
+                        .dropDestination(for: CardDrag.self) { drags, _ in
+                            guard let drag = drags.first,
+                                  let column = engine.children(of: item.id, kind: .column).min(by: { $0.sortPosition < $1.sortPosition })
+                            else { return false }
+                            engine.moveCardToEnd(drag.id, of: column)
+                            return true
+                        } isTargeted: { targetedBoardId = $0 ? item.id : (targetedBoardId == item.id ? nil : targetedBoardId) }
                     }
                     Button("New Board", systemImage: "plus") { nameText = ""; naming = .newBoard }
                         .buttonStyle(.bordered)
@@ -445,7 +456,7 @@ struct OrganizerBoardsView: View {
                     HStack(alignment: .top, spacing: 12) {
                         let columns = engine.children(of: board.id, kind: .column).sorted { $0.sortPosition < $1.sortPosition }
                         ForEach(columns) { column in
-                            ColumnView(column: column, columns: columns, editCard: { editingCard = $0 }, rename: {
+                            ColumnView(column: column, columns: columns, boards: boards, editCard: { editingCard = $0 }, rename: {
                                 nameText = column.title
                                 naming = .renameColumn(column.id)
                             })
@@ -467,8 +478,8 @@ struct OrganizerBoardsView: View {
             } else {
                 ContentUnavailableView("No boards yet", systemImage: "rectangle.split.3x1",
                                        description: Text("Make one to track anything in columns - chores, projects, a move."))
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
         }
         .padding(.top, 8)
         .sheet(item: $editingCard) { card in
@@ -483,6 +494,11 @@ struct OrganizerBoardsView: View {
             Button("Cancel", role: .cancel) { naming = nil }
             Button("Save") { commitName() }
         }
+    }
+
+    private func chipFill(_ item: OrganizerItem, selected: Bool) -> Color {
+        if item.id == targetedBoardId { return SentinelTheme.green.opacity(0.35) }
+        return selected ? SentinelTheme.green.opacity(0.18) : Color.primary.opacity(0.06)
     }
 
     private var namingTitle: String {
@@ -517,10 +533,44 @@ struct OrganizerBoardsView: View {
     }
 }
 
+// What a dragged card carries. Its own type rather than a plain string, so a text field under the
+// drop point ("Add a card") can't take it and type the card's id instead of moving the card.
+struct CardDrag: Codable, Transferable {
+    let id: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .organizerCard)
+    }
+}
+
+extension UTType {
+    // Declared in Info.plist (UTExportedTypeDeclarations).
+    static let organizerCard = UTType(exportedAs: "com.sentinelcore.client.organizer-card")
+}
+
+extension OrganizerEngine {
+    // Puts a card into a column at a position - the column may be on another board, even one in
+    // another space. The server would move the card's comments and attachments into the new space
+    // anyway; sending the space too lets this device do the same straight away.
+    func moveCard(_ cardId: String, to column: OrganizerItem, position: Double) {
+        guard let card = item(cardId), card.kind == .card else { return }
+        var changes: [String: JSONValue] = ["position": .number(position)]
+        if card.parentId != column.id { changes["parentId"] = .string(column.id) }
+        if card.spaceId != column.spaceId { changes["spaceId"] = .string(column.spaceId) }
+        update(cardId, changes)
+    }
+
+    func moveCardToEnd(_ cardId: String, of column: OrganizerItem) {
+        let last = children(of: column.id, kind: .card).filter { $0.id != cardId }.map(\.sortPosition).filter { $0 < 1e9 }.max() ?? 0
+        moveCard(cardId, to: column, position: last + 1)
+    }
+}
+
 private struct ColumnView: View {
     @Environment(OrganizerEngine.self) private var engine
     let column: OrganizerItem
     let columns: [OrganizerItem]
+    let boards: [OrganizerItem]
     var editCard: (OrganizerItem) -> Void
     var rename: () -> Void
 
@@ -547,49 +597,75 @@ private struct ColumnView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
             }
-            ForEach(cards) { card in
-                CardTile(card: card)
-                    .onTapGesture { editCard(card) }
-                    // A tap gesture alone is invisible to VoiceOver; this makes the tile a button.
-                    .accessibilityElement(children: .combine)
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { editCard(card) }
-                    .draggable(card.id)
-                    .dropDestination(for: String.self) { ids, _ in
-                        guard let id = ids.first else { return false }
-                        place(id, before: card, in: cards)
-                        return true
+            // The column runs the height of the board, so the whole of it - not just the space the
+            // cards happen to take - is somewhere to drop a card; long columns scroll on their own.
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(cards) { card in
+                        cardTile(card, in: cards)
                     }
-                    .contextMenu {
-                        Menu("Move To") {
-                            ForEach(columns.filter { $0.id != column.id }) { other in
-                                Button(other.title) { moveToEnd(card.id, of: other) }
-                            }
+                    TextField("Add a card", text: $newCard)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            let title = newCard.trimmingCharacters(in: .whitespaces)
+                            guard !title.isEmpty else { return }
+                            let last = cards.map(\.sortPosition).filter { $0 < 1e9 }.max() ?? 0
+                            engine.create(.card, fields: ["title": .string(title), "position": .number(last + 1)], parentId: column.id)
+                            newCard = ""
                         }
-                        Button(card.bool("completed") ? "Mark Not Done" : "Mark Done") {
-                            engine.update(card.id, ["completed": .bool(!card.bool("completed"))])
-                        }
-                        Button("Delete", systemImage: "trash", role: .destructive) { engine.deleteTree(card.id) }
-                    }
-            }
-            TextField("Add a card", text: $newCard)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit {
-                    let title = newCard.trimmingCharacters(in: .whitespaces)
-                    guard !title.isEmpty else { return }
-                    let last = cards.map(\.sortPosition).filter { $0 < 1e9 }.max() ?? 0
-                    engine.create(.card, fields: ["title": .string(title), "position": .number(last + 1)], parentId: column.id)
-                    newCard = ""
                 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
         }
         .padding(10)
         .frame(width: 270, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(targeted ? SentinelTheme.green.opacity(0.1) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-        .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first else { return false }
-            moveToEnd(id, of: column)
+        .dropDestination(for: CardDrag.self) { drags, _ in
+            guard let drag = drags.first else { return false }
+            engine.moveCardToEnd(drag.id, of: column)
             return true
         } isTargeted: { targeted = $0 }
+    }
+
+    private func cardTile(_ card: OrganizerItem, in cards: [OrganizerItem]) -> some View {
+        CardTile(card: card)
+            .onTapGesture { editCard(card) }
+            // A tap gesture alone is invisible to VoiceOver; this makes the tile a button.
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { editCard(card) }
+            .draggable(CardDrag(id: card.id)) {
+                CardTile(card: card).frame(width: 250).environment(engine)
+            }
+            .dropDestination(for: CardDrag.self) { drags, _ in
+                guard let drag = drags.first else { return false }
+                place(drag.id, before: card, in: cards)
+                return true
+            }
+            .contextMenu {
+                Menu("Move To", systemImage: "arrow.right") {
+                    ForEach(columns.filter { $0.id != column.id }) { other in
+                        Button(other.title) { engine.moveCardToEnd(card.id, of: other) }
+                    }
+                }
+                let otherBoards = boards.filter { $0.id != column.parentId }
+                if !otherBoards.isEmpty {
+                    Menu("Move to Board", systemImage: "rectangle.split.3x1") {
+                        ForEach(otherBoards) { board in
+                            Menu(board.title.isEmpty ? "Board" : board.title) {
+                                ForEach(engine.children(of: board.id, kind: .column).sorted { $0.sortPosition < $1.sortPosition }) { target in
+                                    Button(target.title) { engine.moveCardToEnd(card.id, of: target) }
+                                }
+                            }
+                        }
+                    }
+                }
+                Button(card.bool("completed") ? "Mark Not Done" : "Mark Done") {
+                    engine.update(card.id, ["completed": .bool(!card.bool("completed"))])
+                }
+                Button("Delete", systemImage: "trash", role: .destructive) { engine.deleteTree(card.id) }
+            }
     }
 
     private func move(by offset: Int) {
@@ -608,17 +684,7 @@ private struct ColumnView: View {
         let others = cards.filter { $0.id != cardId }
         guard cardId != target.id, let index = others.firstIndex(of: target) else { return }
         let previous = index > 0 ? others[index - 1].sortPosition : target.sortPosition - 1
-        var changes: [String: JSONValue] = ["position": .number((previous + target.sortPosition) / 2)]
-        if engine.item(cardId)?.parentId != column.id { changes["parentId"] = .string(column.id) }
-        engine.update(cardId, changes)
-    }
-
-    private func moveToEnd(_ cardId: String, of target: OrganizerItem) {
-        guard let card = engine.item(cardId), card.kind == .card else { return }
-        let last = engine.children(of: target.id, kind: .card).filter { $0.id != cardId }.map(\.sortPosition).filter { $0 < 1e9 }.max() ?? 0
-        var changes: [String: JSONValue] = ["position": .number(last + 1)]
-        if card.parentId != target.id { changes["parentId"] = .string(target.id) }
-        engine.update(cardId, changes)
+        engine.moveCard(cardId, to: column, position: (previous + target.sortPosition) / 2)
     }
 }
 

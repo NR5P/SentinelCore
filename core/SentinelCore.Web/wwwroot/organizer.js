@@ -23,6 +23,7 @@ window.SentinelOrganizer = (function () {
   let visible = false;
   let renderQueued = false;
   let dragging = null;
+  const CARD_DRAG_TYPE = "application/x-sentinelcore-card";
   let people = null;
 
   const el = (id) => document.getElementById(id);
@@ -1279,6 +1280,7 @@ window.SentinelOrganizer = (function () {
 
     for (const tab of root.querySelectorAll("[data-board]")) {
       tab.addEventListener("click", () => { selectedBoardId = tab.dataset.board; renderBoards(); });
+      bindBoardTabDrop(tab);
     }
     el("org-board-add").addEventListener("click", () => {
       const title = prompt("Board name", "New board");
@@ -1400,7 +1402,9 @@ window.SentinelOrganizer = (function () {
         dragging = card.dataset.card;
         card.classList.add("org-dragging");
         event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", dragging);
+        // A type of its own, not text/plain: a text box under the pointer ("+ add a card") would
+        // otherwise take the drop and type the card's id into itself instead of moving the card.
+        event.dataTransfer.setData(CARD_DRAG_TYPE, dragging);
       });
       card.addEventListener("dragend", () => {
         dragging = null;
@@ -1408,11 +1412,13 @@ window.SentinelOrganizer = (function () {
         queueRender();
       });
     }
-    for (const zone of root.querySelectorAll("[data-drop-column]")) {
-      zone.addEventListener("dragover", (event) => {
+    // The whole column takes a drop, not just the strip its cards happen to fill.
+    for (const column of root.querySelectorAll("[data-column]")) {
+      const zone = column.querySelector("[data-drop-column]");
+      column.addEventListener("dragover", (event) => {
         if (!dragging) return;
         event.preventDefault();
-        zone.classList.add("org-drop-target");
+        column.classList.add("org-drop-target");
         const after = cardAfterPointer(zone, event.clientY);
         const node = root.querySelector(`[data-card="${CSS.escape(dragging)}"]`);
         if (node) {
@@ -1420,27 +1426,94 @@ window.SentinelOrganizer = (function () {
           else zone.appendChild(node);
         }
       });
-      zone.addEventListener("dragleave", () => zone.classList.remove("org-drop-target"));
-      zone.addEventListener("drop", (event) => {
+      column.addEventListener("dragleave", (event) => {
+        if (!column.contains(event.relatedTarget)) column.classList.remove("org-drop-target");
+      });
+      column.addEventListener("drop", (event) => {
         event.preventDefault();
-        zone.classList.remove("org-drop-target");
+        column.classList.remove("org-drop-target");
         const cardId = dragging;
         if (!cardId) return;
-        // The node is already where it was dropped; read its neighbours to find a position
-        // between them, so only the moved card is written - not every card in the column.
+        // Usually the node is already where it was dropped. After hovering a board tab opened
+        // another board it isn't on the page at all, so the pointer says where it goes instead.
+        // Either way only the moved card is written, at a position between its new neighbours.
         const nodes = [...zone.querySelectorAll("[data-card]")];
-        const index = nodes.findIndex((n) => n.dataset.card === cardId);
-        const before = index > 0 ? S.get(nodes[index - 1].dataset.card) : null;
-        const after = index < nodes.length - 1 ? S.get(nodes[index + 1].dataset.card) : null;
+        let index = nodes.findIndex((n) => n.dataset.card === cardId);
+        let beforeNode, afterNode;
+        if (index >= 0) {
+          beforeNode = nodes[index - 1];
+          afterNode = nodes[index + 1];
+        } else {
+          afterNode = cardAfterPointer(zone, event.clientY);
+          index = afterNode ? nodes.indexOf(afterNode) : nodes.length;
+          beforeNode = nodes[index - 1];
+        }
+        const before = beforeNode ? S.get(beforeNode.dataset.card) : null;
+        const after = afterNode ? S.get(afterNode.dataset.card) : null;
         const lo = before ? before.fields.position ?? 0 : 0;
         const hi = after ? after.fields.position ?? lo + 2 : lo + 2;
-        const card = S.get(cardId);
-        const changes = { position: (lo + hi) / 2 };
-        if (card.parentId !== zone.dataset.dropColumn) changes.parentId = zone.dataset.dropColumn;
         dragging = null;
-        S.update(cardId, changes);
+        moveCard(cardId, S.get(zone.dataset.dropColumn), (lo + hi) / 2);
       });
     }
+  }
+
+  // A board tab takes a dragged card too: letting go on it files the card at the bottom of that
+  // board's first column, and hovering a moment opens the board so it can go in any column.
+  function bindBoardTabDrop(tab) {
+    let timer = null;
+    const stop = () => { clearTimeout(timer); timer = null; tab.classList.remove("org-drop-target"); };
+    tab.addEventListener("dragover", (event) => {
+      if (!dragging) return;
+      event.preventDefault();
+      tab.classList.add("org-drop-target");
+      if (!timer && tab.dataset.board !== selectedBoardId) {
+        timer = setTimeout(() => { selectedBoardId = tab.dataset.board; renderBoards(); }, 700);
+      }
+    });
+    tab.addEventListener("dragleave", stop);
+    tab.addEventListener("drop", (event) => {
+      event.preventDefault();
+      stop();
+      const cardId = dragging;
+      const column = firstColumn(tab.dataset.board);
+      if (!cardId || !column) return;
+      dragging = null;
+      moveCardToEnd(cardId, column);
+      queueRender();
+    });
+  }
+
+  function firstColumn(boardId) {
+    return S.children(boardId).filter((c) => c.kind === "column").sort(byPosition)[0] || null;
+  }
+
+  // Puts a card into a column, which may be on another board or in another space. The server
+  // would move the card's comments and attachments into the new space anyway; sending the space
+  // too lets this copy do the same straight away.
+  function moveCard(cardId, column, position) {
+    const card = S.get(cardId);
+    if (!card || !column) return;
+    const changes = { position };
+    if (card.parentId !== column.id) changes.parentId = column.id;
+    if (card.spaceId !== column.spaceId) changes.spaceId = column.spaceId;
+    S.update(cardId, changes);
+  }
+
+  function moveCardToEnd(cardId, column) {
+    const cards = S.children(column.id).filter((c) => c.kind === "card" && c.id !== cardId);
+    moveCard(cardId, column, cards.reduce((max, c) => Math.max(max, c.fields.position || 0), 0) + 1);
+  }
+
+  // Every column on every open board, grouped by board - where the card editor can send a card.
+  function columnOptions(card) {
+    const boards = S.all("board").filter((b) => !b.fields.archived).sort(byPosition);
+    return boards.map((b) => {
+      const columns = S.children(b.id).filter((c) => c.kind === "column").sort(byPosition);
+      if (!columns.length) return "";
+      return `<optgroup label="${escapeHtml(b.fields.title || "board")}">${columns.map((c) =>
+        `<option value="${escapeHtml(c.id)}"${c.id === card.parentId ? " selected" : ""}>${escapeHtml(c.fields.title || "column")}</option>`).join("")}</optgroup>`;
+    }).join("");
   }
 
   function cardAfterPointer(zone, y) {
@@ -1474,6 +1547,10 @@ window.SentinelOrganizer = (function () {
       <div class="org-form">
         <input class="field-input org-title-input" id="card-title" value="${escapeHtml(f.title || "")}" placeholder="title" />
         <label class="org-check"><input type="checkbox" id="card-done"${f.completed ? " checked" : ""}> done</label>
+        <div class="org-form-row">
+          <label>list</label>
+          <select class="field-input" id="card-column">${columnOptions(card)}</select>
+        </div>
         <div class="org-form-row">
           <label>due</label>
           <input type="date" class="field-input" id="card-date" value="${due ? ymd(due) : ""}" />
@@ -1539,6 +1616,8 @@ window.SentinelOrganizer = (function () {
       if (list.length) fields.assignees = [...document.querySelectorAll("[data-assignee]:checked")].map((b) => b.dataset.assignee);
       const changes = changedFields(f, fields);
       if (Object.keys(changes).length) S.update(card.id, changes);
+      const columnId = el("card-column").value;
+      if (columnId && columnId !== card.parentId) moveCardToEnd(card.id, S.get(columnId));
       closeModal();
     });
   }
