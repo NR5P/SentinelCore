@@ -268,10 +268,18 @@ window.SentinelOrganizerSync = (function () {
     return item;
   }
 
+  // One upload run at a time. A request during a run makes it go round again: the run read its
+  // list of files before the new one was attached.
   let uploading = false;
+  let uploadAgain = false;
   async function uploadBlobs() {
-    if (uploading || !online) return;
+    if (!online) return;
+    if (uploading) {
+      uploadAgain = true;
+      return;
+    }
     uploading = true;
+    uploadAgain = false;
     try {
       for (const [hash, blob] of await getAll("blobs")) {
         const response = await fetch(`/api/organizer/blobs/${hash}`, { method: "PUT", body: blob });
@@ -288,9 +296,11 @@ window.SentinelOrganizerSync = (function () {
       }
     } catch {
       // Offline - the next sync retries.
+      uploadAgain = false;
     } finally {
       uploading = false;
     }
+    if (uploadAgain) uploadBlobs();
   }
 
   // Before the upload lands the server can't serve the file, so show the local copy.
@@ -374,8 +384,10 @@ window.SentinelOrganizerSync = (function () {
     } catch (err) {
       online = false;
       lastError = err && err.message;
-      // Back off; an edit or the browser coming back online will try sooner.
-      scheduleSync(15000);
+      // Back off; an edit or the browser coming back online will try sooner. A sync asked for
+      // while this failing pass was out - the "online" event, typically - may be the network
+      // coming back, so it gets its own attempt now rather than waiting out the back-off.
+      scheduleSync(syncAgain ? 0 : 15000);
     } finally {
       syncing = false;
       emit();
