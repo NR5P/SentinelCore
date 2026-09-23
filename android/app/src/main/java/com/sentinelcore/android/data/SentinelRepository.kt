@@ -1208,6 +1208,48 @@ class SentinelRepository(
         )
     }
 
+    // The Organizer's way to the server (see organizer/OrganizerEngine): the same address and
+    // session cookie as every other request here. Hands back any status rather than throwing on
+    // non-2xx, because the sync engine gives 401 and 404 their own meanings; only a failure to
+    // reach the server at all throws. Not logged per request - the engine holds a long poll open
+    // all day, and each tick would bury the Diagnostics screen.
+    suspend fun organizerRequest(
+        method: String,
+        path: String,
+        query: Map<String, String>,
+        body: ByteArray?,
+        contentType: String?,
+        timeoutMillis: Int?,
+    ): Pair<Int, ByteArray> = withContext(Dispatchers.IO) {
+        val queryString = query.entries.joinToString("&") {
+            "${java.net.URLEncoder.encode(it.key, "UTF-8")}=${java.net.URLEncoder.encode(it.value, "UTF-8")}"
+        }
+        val url = URL((absoluteUrl(path) ?: throw IOException("No server address.")) + if (queryString.isEmpty()) "" else "?$queryString")
+        val connection = openConnection(url)
+        try {
+            timeoutMillis?.let { connection.readTimeout = it }
+            connection.requestMethod = method
+            connection.setRequestProperty("Accept", "application/json")
+            if (body != null) {
+                connection.doOutput = true
+                contentType?.let { connection.setRequestProperty("Content-Type", it) }
+                connection.outputStream.use { it.write(body) }
+            }
+            val status = connection.responseCode
+            storeCookies(connection)
+            val bytes = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.use { it.readBytes() } ?: ByteArray(0)
+            status to bytes
+        } catch (error: IOException) {
+            if (path != "/api/organizer/wait") {
+                logger("Organizer $method $path failed: ${error.message ?: error.javaClass.simpleName}", DiagnosticLevel.NOTICE)
+            }
+            throw error
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     private fun request(
         path: String,
         method: String = "GET",

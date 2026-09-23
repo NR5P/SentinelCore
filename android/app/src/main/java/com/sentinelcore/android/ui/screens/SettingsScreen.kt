@@ -74,6 +74,9 @@ fun SettingsScreen(
     onLicense: () -> Unit,
     onManageSchedules: () -> Unit,
     onServerSettings: () -> Unit,
+    // Set when the Device Hub has given up its bottom-bar tab to the Organizer - see
+    // AppSection.bottomBar.
+    onDeviceHub: (() -> Unit)? = null,
 ) {
     var address by rememberSaveable { mutableStateOf(state.serverUrl) }
     var remoteAddress by rememberSaveable { mutableStateOf(state.remoteServerUrl) }
@@ -97,6 +100,16 @@ fun SettingsScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            if (onDeviceHub != null) {
+                item {
+                    SettingsSection("Device Hub") {
+                        TextButton(onClick = onDeviceHub, modifier = Modifier.fillMaxWidth()) {
+                            Text("Open the Device Hub", color = SentinelGreen)
+                        }
+                    }
+                }
+            }
+
             item {
                 SettingsSection("Server") {
                     OutlinedTextField(
@@ -151,6 +164,14 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Save and Reconnect")
+                    }
+                }
+            }
+
+            if (state.organizerEnabled) {
+                item {
+                    SettingsSection("Organizer on this phone") {
+                        com.sentinelcore.android.ui.organizer.OrganizerOfflineSettings(model.organizer)
                     }
                 }
             }

@@ -16,6 +16,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Organizer reminder and event alerts are raised on the phone itself (organizer/
+         OrganizerAlarms) so they fire with no signal. Exact timing needs the person's say-so on
+         Android 12+ (Settings, Alarms & reminders); without it they arrive within a few minutes.
+         Alarms are cleared by a reboot, hence the boot receiver that puts them back. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -40,6 +46,19 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <receiver
+            android:name=".organizer.OrganizerAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".organizer.OrganizerBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"

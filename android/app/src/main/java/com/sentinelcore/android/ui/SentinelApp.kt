@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.History
@@ -46,6 +47,19 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sentinelcore.android.data.ConnectionState
+import com.sentinelcore.android.organizer.OrganizerNavigation
+import com.sentinelcore.android.ui.organizer.CardEditorScreen
+import com.sentinelcore.android.ui.organizer.EventEditorScreen
+import com.sentinelcore.android.ui.organizer.NoteEditorScreen
+import com.sentinelcore.android.ui.organizer.OrganizerGroupsScreen
+import com.sentinelcore.android.ui.organizer.OrganizerRoutes
+import com.sentinelcore.android.ui.organizer.OrganizerScreen
+import com.sentinelcore.android.ui.organizer.OrganizerSubscribeScreen
+import com.sentinelcore.android.ui.organizer.ReminderEditorScreen
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.ui.components.ConnectionBadge
 import com.sentinelcore.android.ui.components.LocalIsLicensed
@@ -106,6 +120,19 @@ fun SentinelApp(model: SentinelViewModel) {
     // for the rest of the app's lifetime.
     LaunchedEffect(state.isConfigured) {
         if (state.isConfigured) model.stopDiscovery() else model.startDiscovery()
+    }
+    // The Organizer holds a long poll open while the app is in front; not in the background.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> model.setOrganizerActive(true)
+                Lifecycle.Event.ON_STOP -> model.setOrganizerActive(false)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // Provided once here so the views that draw the UNLICENSED mark - SentinelRemoteImage, the
@@ -205,6 +232,15 @@ private fun AppShell(
         }
     }
 
+    // A reminder or event alert was tapped - see OrganizerAlarms.
+    val openOrganizer by OrganizerNavigation.open.collectAsStateWithLifecycle()
+    LaunchedEffect(openOrganizer, state.organizerEnabled) {
+        if (openOrganizer && state.organizerEnabled) {
+            OrganizerNavigation.open.value = false
+            navController.navigate(AppSection.ORGANIZER.route) { launchSingleTop = true }
+        }
+    }
+
     val onSelectSection: (AppSection) -> Unit = { section ->
         // Every tab switch becomes a real back-stack entry (no popUpTo/saveState) so system back
         // actually walks backward through tab history instead of exiting immediately - guarded
@@ -235,7 +271,7 @@ private fun AppShell(
                 containerColor = SentinelBackground,
                 bottomBar = {
                     NavigationBar(containerColor = SentinelPanel) {
-                        AppSection.visible(state.deviceHubEnabled).forEach { item ->
+                        AppSection.bottomBar(state.deviceHubEnabled, state.organizerEnabled).forEach { item ->
                             NavigationBarItem(
                                 selected = selectedSection == item,
                                 onClick = { onSelectSection(item) },
@@ -390,7 +426,63 @@ private fun SentinelNavHost(
                 onLicense = { navController.navigate("settings/license") },
                 onManageSchedules = { navController.navigate("settings/schedules") },
                 onServerSettings = { navController.navigate("settings/server") },
+                onDeviceHub = if (AppSection.deviceHubInSettings(state.deviceHubEnabled, state.organizerEnabled)) {
+                    { navController.navigate(AppSection.DEVICES.route) }
+                } else {
+                    null
+                },
             )
+        }
+
+        composable(AppSection.ORGANIZER.route) {
+            OrganizerScreen(
+                engine = model.organizer,
+                routes = OrganizerRoutes(
+                    openEvent = { id, day, original ->
+                        val query = listOfNotNull(day?.let { "day=$it" }, original?.let { "original=${Uri.encode(it)}" }).joinToString("&")
+                        navController.navigate("organizer/event/${id ?: "new"}" + if (query.isEmpty()) "" else "?$query")
+                    },
+                    openReminder = { navController.navigate("organizer/reminder/${it ?: "new"}") },
+                    openNote = { navController.navigate("organizer/note/${it ?: "new"}") },
+                    openCard = { navController.navigate("organizer/card/$it") },
+                    openGroups = { navController.navigate("organizer/groups") },
+                    openSubscribe = { navController.navigate("organizer/subscribe") },
+                ),
+            )
+        }
+        composable(
+            route = "organizer/event/{id}?day={day}&original={original}",
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("day") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("original") { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
+        ) { entry ->
+            val id = entry.arguments?.getString("id")?.takeIf { it != "new" }
+            EventEditorScreen(
+                engine = model.organizer,
+                itemId = id,
+                day = entry.arguments?.getString("day")?.let(java.time.LocalDate::parse),
+                originalStart = entry.arguments?.getString("original"),
+                onDone = { navController.popBackStack() },
+            )
+        }
+        composable("organizer/reminder/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            ReminderEditorScreen(model.organizer, entry.arguments?.getString("id")?.takeIf { it != "new" }) { navController.popBackStack() }
+        }
+        composable("organizer/note/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            NoteEditorScreen(model.organizer, entry.arguments?.getString("id")?.takeIf { it != "new" }) { navController.popBackStack() }
+        }
+        composable("organizer/card/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            CardEditorScreen(model.organizer, entry.arguments?.getString("id").orEmpty()) { navController.popBackStack() }
+        }
+        composable("organizer/groups") {
+            OrganizerGroupsScreen(model.organizer) { navController.popBackStack() }
+        }
+        composable("organizer/subscribe") {
+            // The remote address if there is one: a calendar service out on the internet can't
+            // reach a LAN address.
+            OrganizerSubscribeScreen(model.organizer, state.remoteServerUrl.ifBlank { state.activeServerUrl }) { navController.popBackStack() }
         }
 
         composable("settings/schedules") {
@@ -638,7 +730,7 @@ private fun SentinelNavigationRail(
             }
         },
     ) {
-        AppSection.visible(state.deviceHubEnabled).forEach { item ->
+        AppSection.visible(state.deviceHubEnabled, state.organizerEnabled).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { onSelected(item) },
@@ -662,15 +754,23 @@ private enum class AppSection(
     EVENTS("Events", Icons.Default.Security, "events"),
     TIMELINE("Timeline", Icons.Default.History, "timeline"),
     LIVE("Live", Icons.Default.LiveTv, "live"),
+    ORGANIZER("Organizer", Icons.Default.CalendarMonth, "organizer"),
     DEVICES("Devices", Icons.Default.Lightbulb, "devices"),
     SETTINGS("Settings", Icons.Default.Settings, "settings"),
     ;
 
     companion object {
-        // The Device Hub is off by default and only appears once it's switched on server-side.
-        // Compose's NavigationBar has no five-item limit like an iPhone tab bar, so this is a
-        // plain filter with no other destination displaced.
-        fun visible(deviceHubEnabled: Boolean): List<AppSection> =
-            entries.filter { it != DEVICES || deviceHubEnabled }
+        // The Device Hub and the Organizer can each be switched off server-side.
+        fun visible(deviceHubEnabled: Boolean, organizerEnabled: Boolean): List<AppSection> =
+            entries.filter { (it != DEVICES || deviceHubEnabled) && (it != ORGANIZER || organizerEnabled) }
+
+        // A bottom bar has room for five before the labels start to crush. With both the
+        // Organizer and the Device Hub on, the Device Hub moves to the top of Settings - the same
+        // rule as the iPhone app. The navigation rail on a tablet keeps everything.
+        fun bottomBar(deviceHubEnabled: Boolean, organizerEnabled: Boolean): List<AppSection> =
+            visible(deviceHubEnabled, organizerEnabled).let { all -> if (all.size > 5) all - DEVICES else all }
+
+        fun deviceHubInSettings(deviceHubEnabled: Boolean, organizerEnabled: Boolean) =
+            deviceHubEnabled && DEVICES !in bottomBar(deviceHubEnabled, organizerEnabled)
     }
 }

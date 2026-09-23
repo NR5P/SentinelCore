@@ -12,6 +12,8 @@ import com.sentinelcore.android.ui.SentinelApp
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.theme.SentinelTheme
 import com.sentinelcore.android.publish.DevicePublisher
+import com.sentinelcore.android.organizer.OrganizerAlarms
+import com.sentinelcore.android.organizer.OrganizerNavigation
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.SentinelFirebaseMessagingService
 
@@ -44,6 +46,8 @@ class MainActivity : ComponentActivity() {
 
     private fun handlePushIntent(intent: Intent?) {
         PushNavigation.open(intent?.getStringExtra(EventIdExtra))
+        // A reminder or event alert (see OrganizerAlarms) opens the Organizer.
+        if (intent?.getStringExtra(OrganizerAlarms.EXTRA_ITEM_ID) != null) OrganizerNavigation.open.value = true
         DevicePublisher.requestScreen(intent)
     }
 

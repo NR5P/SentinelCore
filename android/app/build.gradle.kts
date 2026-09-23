@@ -71,6 +71,16 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // The Organizer's real-server tests (OrganizerLiveServerTest) find the throwaway servers
+        // scripts/with-organizer-servers.sh starts through these; plain test runs skip them.
+        unitTests.all { test ->
+            listOf("ORGANIZER_TEST_SERVER_A", "ORGANIZER_TEST_SERVER_B").forEach { name ->
+                System.getenv(name)?.let { test.environment(name, it) }
+            }
+        }
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
@@ -107,4 +117,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
+    // android.jar's org.json is a stub that throws on the JVM; the Organizer's sync code speaks
+    // JSON throughout, so its unit tests need the real thing.
+    testImplementation("org.json:json:20240303")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 }

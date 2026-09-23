@@ -8,6 +8,11 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.sentinelcore.android.organizer.AppOrganizerTransport
+import com.sentinelcore.android.organizer.OrganizerAlarms
+import com.sentinelcore.android.organizer.OrganizerDevice
+import com.sentinelcore.android.organizer.OrganizerEngine
+import com.sentinelcore.android.organizer.SqliteOrganizerStore
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.sentinelcore.android.data.Account
@@ -67,6 +72,12 @@ import java.net.URI
 import java.time.Instant
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -90,6 +101,9 @@ data class SentinelUiState(
     // it is unencrypted, and that shouldn't be silent.
     val isUsingHttpFallback: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.NOT_CONFIGURED,
+    // Whether the server has the Organizer switched on - its own answer once it has given one
+    // this launch, otherwise what it said last time, so the section is there offline too.
+    val organizerEnabled: Boolean = false,
     // Whether the server this app is talking to is older than it expects. Advisory: nothing in the
     // app behaves differently, it just says so - see ServerCompatibility.
     val serverCompatibility: ServerCompatibility = ServerCompatibility.Unknown,
@@ -182,8 +196,22 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             serverUrl = preferences.getString(SERVER_URL_KEY, "").orEmpty(),
             remoteServerUrl = preferences.getString(REMOTE_SERVER_URL_KEY, "").orEmpty(),
             pushRegistrationEnabled = preferences.getBoolean(PUSH_ENABLED_KEY, false),
+            organizerEnabled = OrganizerDevice.lastKnownEnabled(application),
         ),
     )
+
+    // Notes, calendar, reminders and boards - see organizer/OrganizerEngine. Created up front
+    // and independent of the connection: this device's copy works offline, before the server has
+    // been reached this launch. Its own scope on IO, since a sync applies server replies to the
+    // local SQLite copy and that belongs off the main thread.
+    private val organizerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val organizer = OrganizerEngine(
+        SqliteOrganizerStore(application, OrganizerDevice.directory(application)),
+        OrganizerDevice.id(application),
+        OrganizerDevice.policy(application),
+        organizerScope,
+    )
+    private var organizerActive = true
     val state: StateFlow<SentinelUiState> = _state.asStateFlow()
 
     private var connectionJob: Job? = null
@@ -196,6 +224,21 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         // Activity is gone. See DevicePublisher.
         DevicePublisher.attach(application, repository, ::log)
         refreshNotificationPermission()
+        OrganizerAlarms.ensureChannel(application)
+        organizer.onAlertsChanged = { alerts -> OrganizerAlarms.schedule(application, alerts) }
+        organizer.refreshAlerts()
+        // The engine follows the connection: running while online and in the foreground.
+        viewModelScope.launch {
+            state.map { it.connectionState }.distinctUntilChanged().collect { updateOrganizerConnection() }
+        }
+        viewModelScope.launch {
+            organizer.status.collect { status ->
+                if (status != null) {
+                    OrganizerDevice.saveLastKnownEnabled(application, status.enabled)
+                    _state.update { it.copy(organizerEnabled = status.enabled) }
+                }
+            }
+        }
         viewModelScope.launch {
             PushTokenUpdates.token.collect { token ->
                 if (!token.isNullOrBlank()) syncPushRegistration(token)
@@ -222,6 +265,24 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         super.onCleared()
         serverDiscovery.stop()
+        organizer.disconnect()
+        organizerScope.cancel()
+    }
+
+    private fun updateOrganizerConnection() {
+        val online = _state.value.connectionState == ConnectionState.ONLINE
+        if (online && organizerActive) {
+            if (!organizer.isConnected) organizer.connect(AppOrganizerTransport(repository))
+        } else if (organizer.isConnected) {
+            organizer.disconnect()
+        }
+    }
+
+    // From the activity's lifecycle: a backgrounded app shouldn't hold a long poll open.
+    fun setOrganizerActive(active: Boolean) {
+        organizerActive = active
+        if (active && organizer.isConnected) organizerScope.launch { organizer.sync() }
+        updateOrganizerConnection()
     }
 
     fun connect(resetNetworkSession: Boolean = false) {
