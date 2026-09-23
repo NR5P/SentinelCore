@@ -1,8 +1,14 @@
+import OrganizerKit
 import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection = .live
+
+    private var organizerEnabled: Bool {
+        model.organizer.status?.enabled ?? model.organizerLastKnownEnabled
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,7 +24,7 @@ struct RootView: View {
                     LoginView()
                 } else {
                     TabView(selection: $selection) {
-                        ForEach(AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled)) { section in
+                        ForEach(AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled)) { section in
                             NavigationStack {
                                 sectionView(section)
                                     .navigationDestination(item: $model.selectedEvent) { event in
@@ -46,6 +52,21 @@ struct RootView: View {
         .fullScreenCover(item: $model.alertTakeover) { event in
             AlertTakeoverView(event: event)
         }
+        .environment(model.organizer)
+        .onChange(of: model.organizer.status?.enabled) { _, enabled in
+            if let enabled { model.organizerLastKnownEnabled = enabled }
+        }
+        .onChange(of: scenePhase) { _, phase in model.setOrganizerActive(phase == .active) }
+        // Same question the phone app asks when the server has been replaced. A TV only holds a
+        // light copy, so using the server's is the likely answer here - but it's the person's call.
+        .alert("This server doesn't have your Organizer data",
+               isPresented: Binding(get: { model.organizer.resetPrompt != nil }, set: { _ in }),
+               presenting: model.organizer.resetPrompt) { _ in
+            Button("Use the Server's Copy") { Task { await model.organizer.resolveReset(upload: false) } }
+            Button("Upload This TV's Copy") { Task { await model.organizer.resolveReset(upload: true) } }
+        } message: { prompt in
+            Text("This TV has \(prompt.localCount) Organizer items from a server that isn't the one answering now.")
+        }
     }
 
     @ViewBuilder private func sectionView(_ section: AppSection) -> some View {
@@ -53,6 +74,7 @@ struct RootView: View {
         case .live: LiveCamerasView(isActive: selection == .live)
         case .events: AlertFeedView()
         case .devices: DeviceHubView(isActive: selection == .devices)
+        case .organizer: OrganizerTVView()
         case .settings: SettingsView()
         }
     }
@@ -62,12 +84,13 @@ struct RootView: View {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events tab over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case live, events, devices, settings
+    case live, events, organizer, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .live: "Live"
         case .events: "Events"
+        case .organizer: "Organizer"
         case .devices: "Device Hub"
         case .settings: "Settings"
         }
@@ -76,6 +99,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .live: "video.fill"
         case .events: "shield.lefthalf.filled"
+        case .organizer: "calendar"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
@@ -83,8 +107,8 @@ enum AppSection: String, CaseIterable, Identifiable {
 
     // The Device Hub is off by default and only appears once it's switched on server-side.
     // tvOS has no five-tab limit like the iPhone tab bar, so this is a plain filter.
-    static func visibleCases(deviceHubEnabled: Bool) -> [AppSection] {
-        allCases.filter { $0 != .devices || deviceHubEnabled }
+    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
+        allCases.filter { ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) }
     }
 }
 

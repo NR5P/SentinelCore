@@ -15,6 +15,10 @@
     <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
+    <!-- Attaching a file to an Organizer note, event or card: the file picker hands the app a
+         file the person chose, which the sandbox only lets it read with this. -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
     <key>com.apple.developer.aps-environment</key>
     <string>$(APS_ENVIRONMENT)</string>
 </dict>

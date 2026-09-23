@@ -1,9 +1,17 @@
+import OrganizerKit
 import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection? = .events
+
+    // Whether the server has the Organizer on - its own answer when it has given one this
+    // launch, otherwise what it said last time, so the section is there offline too.
+    private var organizerEnabled: Bool {
+        model.organizer.status?.enabled ?? model.organizerLastKnownEnabled
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,13 +49,33 @@ struct RootView: View {
             if eventId != nil { selection = .events }
         }
         .background { DeviceCameraPresenter() }
+        .environment(model.organizer)
+        .onChange(of: model.organizer.status?.enabled) { _, enabled in
+            if let enabled { model.organizerLastKnownEnabled = enabled }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            model.setOrganizerActive(phase == .active)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sentinelOrganizerOpened)) { _ in
+            selection = .organizer
+        }
+        // The server answering isn't the one this device last synced with. Asked wherever the
+        // person happens to be, because nothing syncs until they answer.
+        .alert("This server doesn't have your Organizer data",
+               isPresented: Binding(get: { model.organizer.resetPrompt != nil }, set: { _ in }),
+               presenting: model.organizer.resetPrompt) { _ in
+            Button("Upload This Device's Copy") { Task { await model.organizer.resolveReset(upload: true) } }
+            Button("Use the Server's Copy", role: .destructive) { Task { await model.organizer.resolveReset(upload: false) } }
+        } message: { prompt in
+            Text("This device has \(prompt.localCount) Organizer items from a server that isn't the one answering now\(prompt.serverCount.map { " (it has \($0))" } ?? ""). If the old server was lost or reinstalled, upload this copy to fill the new one back up - anything already on the new server is kept, and newer edits win. Using the server's copy replaces what's on this device.")
+        }
     }
 
     private var splitNavigation: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 BrandHeader()
-                List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled), selection: $selection) { section in
+                List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled), selection: $selection) { section in
                     Label(section.title, systemImage: section.icon).tag(section)
                 }
                 .listStyle(.sidebar)
@@ -68,7 +96,7 @@ struct RootView: View {
 
     private var compactNavigation: some View {
         TabView(selection: compactSelection) {
-            ForEach(AppSection.compactTabCases(deviceHubEnabled: model.deviceHubEnabled)) { section in
+            ForEach(AppSection.compactTabCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled)) { section in
                 NavigationStack {
                     sectionView(section)
                         .navigationDestination(item: $model.selectedEvent) { event in
@@ -94,6 +122,7 @@ struct RootView: View {
         case .timeline: RecordingTimelineView()
         case .live: LiveCamerasView(isActive: selection == .live)
         case .devices: DeviceHubView(isActive: selection == .devices)
+        case .organizer: OrganizerView()
         case .settings: SettingsView()
         }
     }
@@ -103,13 +132,14 @@ struct RootView: View {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events section over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case events, timeline, live, devices, settings
+    case events, timeline, live, organizer, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .events: "Events"
         case .timeline: "Timeline"
         case .live: "Live"
+        case .organizer: "Organizer"
         case .devices: "Device Hub"
         case .settings: "Settings"
         }
@@ -119,15 +149,16 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .events: "shield.lefthalf.filled"
         case .timeline: "clock.arrow.circlepath"
         case .live: "video.fill"
+        case .organizer: "calendar"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
     }
 
-    // The Device Hub is off by default and only appears once it's switched on server-side, so
-    // every list of sections is filtered rather than using allCases directly.
-    static func visibleCases(deviceHubEnabled: Bool) -> [AppSection] {
-        allCases.filter { $0 != .devices || deviceHubEnabled }
+    // The Device Hub and the Organizer can each be switched off server-side, so every list of
+    // sections is filtered rather than using allCases directly.
+    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
+        allCases.filter { ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) }
     }
 
     // An iPhone tab bar holds five items; a sixth makes UIKit collapse the overflow into its own
@@ -138,8 +169,17 @@ enum AppSection: String, CaseIterable, Identifiable {
     // Merging Feed and Triggers into one Events section brought the maximum back to exactly five
     // (Events, Timeline, Live, Device Hub, Settings), so Settings no longer has to be displaced
     // when the Device Hub is switched on - it keeps its tab in every configuration.
-    static func compactTabCases(deviceHubEnabled: Bool) -> [AppSection] {
-        visibleCases(deviceHubEnabled: deviceHubEnabled)
+    //
+    // The Organizer made it six again. With both it and the Device Hub on, the Device Hub gives
+    // up its tab and becomes a row at the top of Settings (see SettingsView) - it is off by
+    // default and the less-visited of the two, and Settings is always one tap away.
+    static func compactTabCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
+        let visible = visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled)
+        return visible.count > 5 ? visible.filter { $0 != .devices } : visible
+    }
+
+    static func deviceHubIsInSettings(deviceHubEnabled: Bool, organizerEnabled: Bool) -> Bool {
+        deviceHubEnabled && !compactTabCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled).contains(.devices)
     }
 
     // Every section, on every platform with a sidebar. macOS also has a real Settings scene on
@@ -149,8 +189,8 @@ enum AppSection: String, CaseIterable, Identifiable {
     // (Manage Cameras, Manage Accounts, Manage Known Faces, Server Settings) did nothing at all
     // when clicked. The sidebar row renders into the split view's detail column, which does have
     // one, so those screens work from here. Both routes now lead to the same place.
-    static func sidebarCases(deviceHubEnabled: Bool) -> [AppSection] {
-        visibleCases(deviceHubEnabled: deviceHubEnabled)
+    static func sidebarCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
+        visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled)
     }
 }
 

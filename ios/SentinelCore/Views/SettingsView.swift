@@ -1,3 +1,4 @@
+import OrganizerKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -9,6 +10,7 @@ struct SettingsView: View {
         #endif
     }
     @EnvironmentObject private var model: AppModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var address = ""
     @State private var remoteAddress = ""
     @State private var showingDiagnostics = false
@@ -16,6 +18,19 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            // On an iPhone with both the Organizer and the Device Hub on, the Device Hub lives
+            // here rather than in the tab bar - see AppSection.compactTabCases.
+            if horizontalSizeClass == .compact,
+               AppSection.deviceHubIsInSettings(deviceHubEnabled: model.deviceHubEnabled,
+                                                organizerEnabled: model.organizer.status?.enabled ?? model.organizerLastKnownEnabled) {
+                Section {
+                    NavigationLink {
+                        DeviceHubView(isActive: true)
+                    } label: {
+                        Label("Device Hub", systemImage: "lightbulb.fill")
+                    }
+                }
+            }
             Section("Server") {
                 // Both addresses are typed in by hand, and the label has to survive being filled
                 // in: a bare TextField in a Form draws no box, and its placeholder - the only
@@ -64,6 +79,10 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if model.organizer.status?.enabled ?? model.organizerLastKnownEnabled {
+                OrganizerOfflineSettingsSection()
             }
 
             Section("Account") {

@@ -1,0 +1,864 @@
+import CryptoKit
+import Foundation
+import Observation
+
+// The Organizer on an Apple device: this device's copy, every edit made to it, and keeping it in
+// step with the server. The rules are core/docs/ORGANIZER_SYNC.md; the dashboard's
+// organizer-sync.js is the same algorithm in JavaScript, and the two should read alike.
+//
+// Every edit lands in the local copy at once, stamped with a fresh clock per field, and joins a
+// queue of pending changes that `sync()` pushes. Pending changes for one item coalesce, so typing
+// into a note sends one change rather than one per keystroke. A queue survives the app being
+// killed - it is on disk before `update` returns.
+//
+// Views read through `items(_:)`, `item(_:)` and `children(of:)`, which touch `revision`, so any
+// change - local or synced in - redraws whatever used them.
+@MainActor
+@Observable
+public final class OrganizerEngine {
+    public struct SyncState: Equatable, Sendable {
+        public var online = false
+        public var syncing = false
+        public var lastSyncedAt: Date?
+        public var lastError: String?
+        public var waitingChanges = 0
+        public var needsSignIn = false
+        public var turnedOff = false
+    }
+
+    // The server answering isn't the one this device last synced with - it was rebuilt, or this
+    // is a different install. Nothing is sent until the person decides what to do.
+    public struct ResetPrompt: Equatable, Identifiable, Sendable {
+        public var id: String
+        public var localCount: Int
+        public var serverCount: Int?
+    }
+
+    public struct StorageSummary: Equatable, Sendable {
+        public var itemCount: Int
+        public var serverItemCount: Int?
+        public var attachmentCount: Int
+        public var attachmentsWithOriginal: Int
+        public var bytesOnDevice: Int64
+        public var waitingUploads: Int
+    }
+
+    public private(set) var revision = 0
+    public private(set) var status: OrganizerStatus?
+    public private(set) var spaces: [OrganizerSpace] = []
+    public private(set) var syncState = SyncState()
+    public var resetPrompt: ResetPrompt?
+    public private(set) var policy: OfflinePolicy
+    public private(set) var keptOffline: Set<String> = []
+    public private(set) var plannedAlerts: [PlannedAlert] = []
+    @ObservationIgnored public var onAlertsChanged: (@MainActor ([PlannedAlert]) -> Void)?
+
+    @ObservationIgnored private let store: LocalStore
+    @ObservationIgnored private var clock: HybridClock
+    @ObservationIgnored private let calendar: Calendar
+    @ObservationIgnored private var items: [String: OrganizerItem] = [:]
+    // Things beyond this device's offline window, fetched to look at while online. Never saved.
+    @ObservationIgnored private var archive: [String: OrganizerItem] = [:]
+    @ObservationIgnored private var pending: [String: OrganizerChange] = [:]
+    @ObservationIgnored private var inflight: [String: OrganizerChange] = [:]
+    @ObservationIgnored private var serverId: String?
+    @ObservationIgnored private var cursor: Int64 = 0
+    @ObservationIgnored private var transport: (any OrganizerTransport)?
+    @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var requestedPass = 0
+    @ObservationIgnored private var completedPass = 0
+    @ObservationIgnored private var debounceTask: Task<Void, Never>?
+    @ObservationIgnored private var waitTask: Task<Void, Never>?
+    @ObservationIgnored private var blobTask: Task<Void, Never>?
+    @ObservationIgnored private var missingBlobs: Set<String> = []
+    @ObservationIgnored private var childIndex: (revision: Int, map: [String: [OrganizerItem]])?
+
+    // `directory` nil keeps everything in memory (tests). `deviceId` has to be stable for this
+    // install: it is the tiebreak in every clock this device writes.
+    public init(directory: URL?, deviceId: String, policy: OfflinePolicy, calendar: Calendar = .current) throws {
+        store = try LocalStore(directory: directory)
+        clock = HybridClock(deviceId: deviceId)
+        self.policy = policy
+        self.calendar = calendar
+
+        // "Off" keeps nothing between launches - only what has edits that never made it up.
+        if policy.mode == .off { store.clearItems(keeping: Set(store.loadPending().keys)) }
+
+        for item in store.loadItems() {
+            items[item.id] = item
+            item.clocks.values.forEach { clock.observe($0) }
+        }
+        pending = store.loadPending()
+        for change in pending.values { change.clocks.values.forEach { clock.observe($0) } }
+        serverId = store.meta("serverId")
+        cursor = Int64(store.meta("cursor") ?? "") ?? 0
+        if let data = store.meta("spaces")?.data(using: .utf8), let saved = try? JSONDecoder.organizer.decode([OrganizerSpace].self, from: data) {
+            spaces = saved
+        }
+        if let data = store.meta("keptOffline")?.data(using: .utf8), let saved = try? JSONDecoder().decode([String].self, from: data) {
+            keptOffline = Set(saved)
+        }
+        syncState.waitingChanges = pending.count
+        replanAlerts()
+    }
+
+    // MARK: - reading
+
+    public func items(_ kind: OrganizerKind) -> [OrganizerItem] {
+        _ = revision
+        var out = items.values.filter { $0.kind == kind && !$0.deleted }
+        for item in archive.values where item.kind == kind && !item.deleted && items[item.id] == nil { out.append(item) }
+        return out
+    }
+
+    public func item(_ id: String) -> OrganizerItem? {
+        _ = revision
+        guard let item = items[id] ?? archive[id], !item.deleted else { return nil }
+        return item
+    }
+
+    public func children(of id: String, kind: OrganizerKind? = nil) -> [OrganizerItem] {
+        _ = revision
+        if childIndex?.revision != revision {
+            var map: [String: [OrganizerItem]] = [:]
+            for item in items.values where !item.deleted {
+                if let parent = item.parentId { map[parent, default: []].append(item) }
+            }
+            for item in archive.values where !item.deleted && items[item.id] == nil {
+                if let parent = item.parentId { map[parent, default: []].append(item) }
+            }
+            childIndex = (revision, map)
+        }
+        let all = childIndex?.map[id] ?? []
+        return kind.map { kind in all.filter { $0.kind == kind } } ?? all
+    }
+
+    public var visibleSpaces: [OrganizerSpace] { spaces.isEmpty ? [.family] : spaces }
+
+    public func space(_ id: String) -> OrganizerSpace? { visibleSpaces.first { $0.id == id } }
+
+    // Where something new goes when nobody says otherwise: this person's own space if there is
+    // one, otherwise Family.
+    public var defaultSpaceId: String {
+        visibleSpaces.first { $0.kind == .personal }?.id ?? OrganizerSpace.family.id
+    }
+
+    // MARK: - editing
+
+    @discardableResult
+    public func create(_ kind: OrganizerKind, fields: [String: JSONValue], spaceId: String? = nil, parentId: String? = nil) -> OrganizerItem {
+        let parent = parentId.flatMap { items[$0] ?? archive[$0] }
+        let now = Date()
+        var item = OrganizerItem(
+            id: UUID().uuidString.lowercased(), kind: kind,
+            spaceId: parent?.spaceId ?? spaceId ?? defaultSpaceId,
+            parentId: parent?.id,
+            createdAt: now, createdBy: status?.username, updatedAt: now, updatedBy: status?.username)
+        var structural: [String: JSONValue] = parent.map { ["parentId": .string($0.id)] } ?? ["spaceId": .string(item.spaceId)]
+        structural.merge(fields) { $1 }
+        edit(&item, structural)
+        return item
+    }
+
+    // `.null` clears a field.
+    public func update(_ id: String, _ changes: [String: JSONValue]) {
+        guard var item = items[id] ?? archive[id] else { return }
+        archive[id] = nil
+        let movedSpace = changes["spaceId"]?.string.map { $0 != item.spaceId } ?? false
+        edit(&item, changes)
+        if movedSpace { cascadeSpace(from: item) }
+    }
+
+    public func delete(_ id: String) {
+        update(id, ["deleted": true])
+    }
+
+    // An item and everything under it - a board's columns and cards, a note's attachments. The
+    // server keeps children of a deleted parent as they are, so every client deletes the tree.
+    public func deleteTree(_ id: String) {
+        var queue = [id]
+        var seen: Set<String> = []
+        while let next = queue.popLast(), seen.insert(next).inserted {
+            queue.append(contentsOf: children(of: next).map(\.id))
+            delete(next)
+        }
+    }
+
+    private func edit(_ item: inout OrganizerItem, _ changes: [String: JSONValue]) {
+        var change = pending[item.id] ?? OrganizerChange(id: item.id, kind: item.kind)
+        for (name, value) in changes {
+            // The note body's starting point, sent so the server can tell two people rewrote the
+            // same note rather than letting the later one silently win.
+            if name == "body", item.kind == .note, let current = item.clocks["body"],
+               change.baseClocks?["body"] == nil, inflight[item.id]?.baseClocks?["body"] == nil {
+                change.baseClocks = ["body": current]
+            }
+            let stamp = clock.next()
+            Self.applyField(&item, name: name, value: value, clock: stamp)
+            change.fields[name] = value
+            change.clocks[name] = stamp
+        }
+        item.updatedAt = Date()
+        item.updatedBy = status?.username ?? item.updatedBy
+        items[item.id] = item
+        pending[item.id] = change
+        store.save([item])
+        persistPending(item.id)
+        syncState.waitingChanges = pending.count + inflight.count
+        changed()
+        scheduleSync(after: 0.8)
+    }
+
+    private static func applyField(_ item: inout OrganizerItem, name: String, value: JSONValue, clock: String) {
+        switch name {
+        case "spaceId": if let space = value.string { item.spaceId = space }
+        case "parentId": item.parentId = value.string
+        case "deleted": item.deleted = value.bool ?? false
+        default:
+            if value.isNull { item.fields[name] = nil } else { item.fields[name] = value }
+        }
+        item.clocks[name] = clock
+    }
+
+    private func cascadeSpace(from root: OrganizerItem) {
+        var queue = [root.id]
+        var touched: [OrganizerItem] = []
+        while let parentId = queue.popLast() {
+            for var child in items.values where child.parentId == parentId {
+                queue.append(child.id)
+                guard child.spaceId != root.spaceId else { continue }
+                child.spaceId = root.spaceId
+                items[child.id] = child
+                touched.append(child)
+            }
+        }
+        store.save(touched)
+        changed()
+    }
+
+    private func persistPending(_ id: String) {
+        let merged: OrganizerChange? = switch (inflight[id], pending[id]) {
+        case let (older?, newer?): older.merging(newer)
+        case let (older?, nil): older
+        case let (nil, newer?): newer
+        case (nil, nil): nil
+        }
+        store.savePending(merged, id: id)
+    }
+
+    private func changed() {
+        revision &+= 1
+    }
+
+    // MARK: - attachments
+
+    // Keeps the file on this device straight away and creates the attachment item; the bytes go
+    // up whenever the server is reachable. Works with no signal at all.
+    @discardableResult
+    public func attach(_ data: Data, name: String, contentType: String, to parentId: String, width: Int? = nil, height: Int? = nil) throws -> OrganizerItem {
+        if let limit = status?.maxAttachmentBytes, Int64(data.count) > limit {
+            throw OrganizerError.server(status: 413, message: "\(name) is larger than the \(limit / 1_048_576) MB attachment limit.")
+        }
+        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        try data.write(to: store.originalURL(hash), options: .atomic)
+        store.saveBlob(.init(hash: hash, needsUpload: true, hasOriginal: true, size: Int64(data.count), lastUsed: Date()))
+        let siblings = children(of: parentId, kind: .attachment).count
+        var fields: [String: JSONValue] = [
+            "hash": .string(hash), "name": .string(name), "contentType": .string(contentType),
+            "size": .number(Double(data.count)), "position": .number(Double(siblings)),
+        ]
+        if let width { fields["width"] = .number(Double(width)) }
+        if let height { fields["height"] = .number(Double(height)) }
+        let item = create(.attachment, fields: fields, parentId: parentId)
+        startBlobWork()
+        return item
+    }
+
+    public func hasOriginal(_ hash: String) -> Bool {
+        FileManager.default.fileExists(atPath: store.originalURL(hash).path)
+    }
+
+    // Image bytes to show. A thumbnail request is happy with the original if that's what's here.
+    public func imageData(hash: String, thumbnail: Bool) async -> Data? {
+        let original = store.originalURL(hash)
+        if let data = try? Data(contentsOf: original) {
+            touch(hash)
+            return data
+        }
+        let thumbURL = store.thumbnailURL(hash)
+        if thumbnail, let data = try? Data(contentsOf: thumbURL) { return data }
+        do {
+            let data = try await download(hash: hash, thumbnail: thumbnail)
+            return data
+        } catch {
+            return thumbnail ? nil : try? Data(contentsOf: thumbURL)
+        }
+    }
+
+    // A file URL for the original, named as it was attached, for opening or sharing.
+    public func fileForOpening(hash: String, name: String) async throws -> URL {
+        if !hasOriginal(hash) { _ = try await download(hash: hash, thumbnail: false) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("organizer-open-\(hash.prefix(12))", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let safeName = name.replacingOccurrences(of: "/", with: "-").isEmpty ? hash : name.replacingOccurrences(of: "/", with: "-")
+        let target = folder.appendingPathComponent(safeName)
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.copyItem(at: store.originalURL(hash), to: target)
+        return target
+    }
+
+    private func download(hash: String, thumbnail: Bool) async throws -> Data {
+        let response = try await send("GET", "/api/organizer/blobs/\(hash)" + (thumbnail ? "/thumbnail" : ""), timeout: 120)
+        let data = response.data
+        if thumbnail {
+            try data.write(to: store.thumbnailURL(hash), options: .atomic)
+            var record = store.blob(hash) ?? .init(hash: hash, needsUpload: false, hasOriginal: false, size: 0, lastUsed: Date())
+            record.lastUsed = Date()
+            store.saveBlob(record)
+        } else {
+            try data.write(to: store.originalURL(hash), options: .atomic)
+            var record = store.blob(hash) ?? .init(hash: hash, needsUpload: false, hasOriginal: true, size: 0, lastUsed: Date())
+            record.hasOriginal = true
+            record.size = Int64(data.count)
+            record.lastUsed = Date()
+            store.saveBlob(record)
+            enforceStorageCap()
+        }
+        return data
+    }
+
+    private func touch(_ hash: String) {
+        guard var record = store.blob(hash) else { return }
+        record.lastUsed = Date()
+        store.saveBlob(record)
+    }
+
+    private func startBlobWork() {
+        guard blobTask == nil, transport != nil else { return }
+        blobTask = Task { [weak self] in
+            await self?.runBlobWork()
+            self?.blobTask = nil
+        }
+    }
+
+    // Uploads first (files attached here, and anything the server says it lost that this device
+    // still has), then downloads by policy, then tidying.
+    private func runBlobWork() async {
+        let referenced = Set(items.values.filter { $0.kind == .attachment && !$0.deleted }.compactMap { $0.string("hash") })
+
+        for record in store.allBlobs() where record.needsUpload || (missingBlobs.contains(record.hash) && record.hasOriginal) {
+            guard let data = try? Data(contentsOf: store.originalURL(record.hash)) else { continue }
+            do {
+                let response = try await transport?.send(
+                    method: "PUT", path: "/api/organizer/blobs/\(record.hash)", query: [], body: data,
+                    contentType: "application/octet-stream", timeout: 300)
+                guard let response else { return }
+                if (200..<300).contains(response.status) {
+                    var updated = record
+                    updated.needsUpload = false
+                    store.saveBlob(updated)
+                    missingBlobs.remove(record.hash)
+                } else if response.status == 400 || response.status == 413 {
+                    var updated = record
+                    updated.needsUpload = false
+                    store.saveBlob(updated)
+                    syncState.lastError = Self.message(from: response.data) ?? "An attachment was too large to upload."
+                } else {
+                    return
+                }
+            } catch {
+                return
+            }
+        }
+
+        if policy.attachments != .none {
+            let attachments = items.values.filter { $0.kind == .attachment && !$0.deleted }
+            for attachment in attachments {
+                guard let hash = attachment.string("hash"), !Task.isCancelled else { continue }
+                let isImage = attachment.string("contentType")?.hasPrefix("image/") == true
+                do {
+                    if policy.attachments == .full, !hasOriginal(hash) {
+                        _ = try await download(hash: hash, thumbnail: false)
+                    } else if policy.attachments == .thumbnails, isImage, !hasOriginal(hash),
+                              !FileManager.default.fileExists(atPath: store.thumbnailURL(hash).path) {
+                        _ = try await download(hash: hash, thumbnail: true)
+                    }
+                } catch OrganizerError.offline {
+                    break
+                } catch {
+                    continue
+                }
+            }
+        }
+
+        // Files nothing here points at any more, unless they still have to go up.
+        for record in store.allBlobs() where !referenced.contains(record.hash) && !record.needsUpload {
+            store.deleteBlob(record.hash)
+        }
+        enforceStorageCap()
+        changed()
+    }
+
+    // Least recently looked-at originals go first. Never a file that hasn't been uploaded yet,
+    // and never thumbnails, which are small and are what keeps a light copy looking complete.
+    private func enforceStorageCap() {
+        guard let cap = policy.storageCapBytes else { return }
+        var records = store.allBlobs().filter(\.hasOriginal)
+        var total = records.reduce(Int64(0)) { $0 + $1.size }
+        guard total > cap else { return }
+        records.sort { $0.lastUsed < $1.lastUsed }
+        for record in records where total > cap && !record.needsUpload {
+            try? FileManager.default.removeItem(at: store.originalURL(record.hash))
+            var updated = record
+            updated.hasOriginal = false
+            store.saveBlob(updated)
+            total -= record.size
+        }
+    }
+
+    // MARK: - connection
+
+    public func connect(_ transport: any OrganizerTransport) {
+        self.transport = transport
+        Task {
+            await refreshStatus()
+            await sync()
+            startWaiting()
+        }
+    }
+
+    public func disconnect() {
+        waitTask?.cancel()
+        waitTask = nil
+        debounceTask?.cancel()
+        debounceTask = nil
+        blobTask?.cancel()
+        blobTask = nil
+        transport = nil
+    }
+
+    public var isConnected: Bool { transport != nil }
+
+    public func refreshStatus() async {
+        do {
+            let response = try await send("GET", "/api/organizer/status")
+            let fresh = try JSONDecoder.organizer.decode(OrganizerStatus.self, from: response.data)
+            adoptOwner(fresh.username ?? "")
+            status = fresh
+            syncState.turnedOff = !fresh.enabled
+            syncState.needsSignIn = false
+        } catch OrganizerError.signInRequired {
+            syncState.needsSignIn = true
+        } catch {
+            // Keep the last status; offline is reported by sync.
+        }
+    }
+
+    // Signing in as someone else on this device must not show them the last person's copy.
+    private func adoptOwner(_ owner: String) {
+        let stored = store.meta("owner")
+        if let stored, stored != owner {
+            resetLocalCopy(keepPending: false)
+        }
+        store.setMeta("owner", owner)
+    }
+
+    private func resetLocalCopy(keepPending: Bool) {
+        items = [:]
+        archive = [:]
+        inflight = [:]
+        if !keepPending { pending = [:] }
+        serverId = nil
+        cursor = 0
+        spaces = []
+        store.wipe(keepPending: keepPending)
+        syncState.waitingChanges = pending.count
+        replanAlerts()
+        changed()
+    }
+
+    private func scheduleSync(after delay: TimeInterval) {
+        debounceTask?.cancel()
+        guard transport != nil else { return }
+        debounceTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await self?.sync()
+        }
+    }
+
+    private func startWaiting() {
+        waitTask?.cancel()
+        waitTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if self.resetPrompt != nil || self.syncState.turnedOff || self.syncState.needsSignIn {
+                    try? await Task.sleep(for: .seconds(30))
+                    if self.syncState.turnedOff || self.syncState.needsSignIn { await self.refreshStatus() }
+                    continue
+                }
+                do {
+                    let response = try await self.send("GET", "/api/organizer/wait",
+                                                       query: [URLQueryItem(name: "cursor", value: String(self.cursor)), URLQueryItem(name: "timeout", value: "25")],
+                                                       timeout: 40)
+                    let answer = try JSONDecoder.organizer.decode(WaitResponse.self, from: response.data)
+                    if answer.cursor != self.cursor { await self.sync() }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self.syncState.online = false
+                    try? await Task.sleep(for: .seconds(15))
+                    await self.sync()
+                }
+            }
+        }
+    }
+
+    // MARK: - sync
+
+    // Returns once a sync pass that started after this call has finished - so an edit made just
+    // before calling it has been sent. Passes never overlap: a call that arrives while one is
+    // running waits for it and then, if its edit might have missed that pass, for the next.
+    //
+    // This used to be a "sync again" flag checked at the bottom of the running pass. A call that
+    // landed after that check but before the pass returned set the flag, awaited the finished
+    // pass, and returned without its edit having gone anywhere - found by running the two-device
+    // tests against the real server repeatedly.
+    public func sync() async {
+        requestedPass += 1
+        let wanted = requestedPass
+        while completedPass < wanted {
+            if let running = syncTask {
+                await running.value
+                continue
+            }
+            let task = Task { await self.runSyncLoop() }
+            syncTask = task
+            await task.value
+        }
+    }
+
+    private func runSyncLoop() async {
+        defer { syncTask = nil }
+        guard transport != nil else {
+            completedPass = requestedPass
+            return
+        }
+        syncState.syncing = true
+        defer {
+            syncState.syncing = false
+            syncState.waitingChanges = pending.count + inflight.count
+        }
+        while completedPass < requestedPass {
+            let pass = requestedPass
+            defer { completedPass = max(completedPass, pass) }
+            do {
+                try await syncOnce(restoreSpaces: nil)
+                syncState.online = true
+                syncState.needsSignIn = false
+                syncState.turnedOff = false
+                syncState.lastSyncedAt = Date()
+            } catch OrganizerError.signInRequired {
+                syncState.needsSignIn = true
+                completedPass = requestedPass
+                return
+            } catch OrganizerError.turnedOff {
+                syncState.turnedOff = true
+                completedPass = requestedPass
+                return
+            } catch is CancellationError {
+                completedPass = requestedPass
+                return
+            } catch {
+                syncState.online = false
+                if let organizerError = error as? OrganizerError, organizerError != .offline {
+                    syncState.lastError = organizerError.localizedDescription
+                }
+                completedPass = requestedPass
+                scheduleSync(after: 20)
+                return
+            }
+        }
+        startBlobWork()
+    }
+
+    private func syncOnce(restoreSpaces: [OrganizerSpace]?) async throws {
+        guard resetPrompt == nil else { return }
+        for (id, change) in pending { inflight[id] = inflight[id].map { $0.merging(change) } ?? change }
+        pending = [:]
+
+        var first = true
+        var hasMore = true
+        while hasMore {
+            let request = SyncRequest(
+                serverId: serverId, cursor: cursor, knownSpaces: spaces.map(\.id),
+                changes: first ? Array(inflight.values) : [], restoreSpaces: first ? restoreSpaces : nil, limit: nil)
+            let reply: SyncResponse
+            do {
+                let body = try JSONEncoder.organizer.encode(request)
+                let response = try await send("POST", "/api/organizer/sync", body: body, timeout: 60)
+                reply = try JSONDecoder.organizer.decode(SyncResponse.self, from: response.data)
+            } catch {
+                restoreInflight()
+                throw error
+            }
+
+            if reply.reset {
+                restoreInflight()
+                await handleReset(reply)
+                return
+            }
+            apply(reply, settlesInflight: first)
+            first = false
+            hasMore = reply.hasMore
+        }
+    }
+
+    private func restoreInflight() {
+        for (id, change) in inflight {
+            pending[id] = pending[id].map { change.merging($0) } ?? change
+        }
+        inflight = [:]
+    }
+
+    private func apply(_ reply: SyncResponse, settlesInflight: Bool) {
+        var saved: [OrganizerItem] = []
+        var dropped: [String] = []
+
+        for id in reply.removed {
+            items[id] = nil
+            dropped.append(id)
+        }
+
+        let echoed = Set(reply.items.map(\.id))
+        for var item in reply.items {
+            item.clocks.values.forEach { clock.observe($0) }
+            // Edits made while this request was out are newer than anything in it - lay them back on.
+            if let newer = pending[item.id] {
+                for (name, value) in newer.fields {
+                    Self.applyField(&item, name: name, value: value, clock: newer.clocks[name] ?? "")
+                }
+            }
+            items[item.id] = item
+            archive[item.id] = nil
+            saved.append(item)
+        }
+
+        if settlesInflight {
+            for rejection in reply.rejected {
+                syncState.lastError = rejection.error
+                // Refused and not on the server at all - a new item that can never be created.
+                if !echoed.contains(rejection.id), pending[rejection.id] == nil, items[rejection.id]?.seq == nil {
+                    items[rejection.id] = nil
+                    dropped.append(rejection.id)
+                }
+            }
+            let settled = Array(inflight.keys)
+            inflight = [:]
+            settled.forEach(persistPending)
+        }
+
+        spaces = reply.spaces
+        let visible = Set(spaces.map(\.id))
+        for (id, item) in items where !visible.contains(item.spaceId) && pending[id] == nil {
+            items[id] = nil
+            dropped.append(id)
+        }
+
+        let prune = policy.itemsToPrune(items, protected: Set(pending.keys).union(keptOffline), calendar: calendar)
+        for id in prune {
+            items[id] = nil
+            dropped.append(id)
+        }
+
+        cursor = reply.cursor
+        serverId = reply.serverId
+        missingBlobs = Set(reply.missingBlobs)
+        store.save(saved.filter { items[$0.id] != nil })
+        store.deleteItems(dropped)
+        store.setMeta("cursor", String(cursor))
+        store.setMeta("serverId", serverId)
+        store.setMeta("spaces", (try? JSONEncoder.organizer.encode(spaces)).flatMap { String(data: $0, encoding: .utf8) })
+        replanAlerts()
+        changed()
+    }
+
+    private func handleReset(_ reply: SyncResponse) async {
+        let live = items.values.filter { !$0.deleted }.count
+        if serverId == nil || live == 0 {
+            // Nothing here worth offering - just take the server's copy.
+            resetLocalCopy(keepPending: serverId == nil)
+            serverId = reply.serverId
+            store.setMeta("serverId", serverId)
+            requestedPass += 1
+            return
+        }
+        await refreshStatus()
+        resetPrompt = ResetPrompt(id: reply.serverId, localCount: live, serverCount: status?.itemCount)
+    }
+
+    // The person's answer to a ResetPrompt. Uploading sends every item with the clocks it already
+    // has, so the server merges it exactly like the original edits - anything newer already on
+    // the new server still wins - and brings the groups back with it.
+    public func resolveReset(upload: Bool) async {
+        guard let prompt = resetPrompt else { return }
+        resetPrompt = nil
+        if upload {
+            var restore: [String: OrganizerChange] = [:]
+            for item in items.values {
+                var fields = item.fields
+                fields["spaceId"] = .string(item.spaceId)
+                fields["deleted"] = .bool(item.deleted)
+                if let parentId = item.parentId { fields["parentId"] = .string(parentId) }
+                var clocks: [String: String] = [:]
+                let fallback = clock.next()
+                for name in fields.keys { clocks[name] = item.clocks[name] ?? fallback }
+                restore[item.id] = OrganizerChange(id: item.id, kind: item.kind, fields: fields, clocks: clocks)
+            }
+            for (id, change) in pending { restore[id] = restore[id].map { $0.merging(change) } ?? change }
+            pending = [:]
+            inflight = restore
+            restore.keys.forEach(persistPending)
+            serverId = prompt.id
+            cursor = 0
+            store.setMeta("serverId", serverId)
+            store.setMeta("cursor", "0")
+            let groups = spaces.filter { $0.kind == .group }
+            syncState.syncing = true
+            do {
+                try await syncOnce(restoreSpaces: groups)
+                syncState.online = true
+                syncState.lastSyncedAt = Date()
+                missingBlobs.formUnion(store.allBlobs().filter(\.hasOriginal).map(\.hash))
+            } catch {
+                syncState.online = false
+            }
+            syncState.syncing = false
+            syncState.waitingChanges = pending.count + inflight.count
+            startBlobWork()
+        } else {
+            resetLocalCopy(keepPending: false)
+            serverId = prompt.id
+            store.setMeta("serverId", serverId)
+            await sync()
+        }
+    }
+
+    // MARK: - policy
+
+    public func setPolicy(_ newPolicy: OfflinePolicy) {
+        let widened = newPolicy.widens(policy)
+        policy = newPolicy
+        if widened {
+            // Items thrown away under the old policy are behind the cursor now; read everything
+            // again once.
+            cursor = 0
+            store.setMeta("cursor", "0")
+        } else {
+            let prune = policy.itemsToPrune(items, protected: Set(pending.keys).union(keptOffline), calendar: calendar)
+            for id in prune { items[id] = nil }
+            store.deleteItems(Array(prune))
+            changed()
+        }
+        Task {
+            await sync()
+            enforceStorageCap()
+        }
+    }
+
+    public func setKeptOffline(_ id: String, _ keep: Bool) {
+        if keep { keptOffline.insert(id) } else { keptOffline.remove(id) }
+        store.setMeta("keptOffline", (try? JSONEncoder().encode(Array(keptOffline))).flatMap { String(data: $0, encoding: .utf8) })
+    }
+
+    public func storageSummary() -> StorageSummary {
+        let attachments = items.values.filter { $0.kind == .attachment && !$0.deleted }
+        let blobs = store.allBlobs()
+        var bytes: Int64 = 0
+        for record in blobs where record.hasOriginal { bytes += record.size }
+        if let thumbnails = try? FileManager.default.contentsOfDirectory(at: store.thumbnailDirectory, includingPropertiesForKeys: [.fileSizeKey]) {
+            for file in thumbnails { bytes += Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        }
+        return StorageSummary(
+            itemCount: items.values.filter { !$0.deleted }.count,
+            serverItemCount: status?.itemCount,
+            attachmentCount: attachments.count,
+            attachmentsWithOriginal: attachments.filter { $0.string("hash").map(hasOriginal) ?? false }.count,
+            bytesOnDevice: bytes,
+            waitingUploads: blobs.filter(\.needsUpload).count)
+    }
+
+    // MARK: - alerts
+
+    private func replanAlerts() {
+        let planned = AlertPlanner.plan(items: Array(items.values), calendar: calendar)
+        guard planned != plannedAlerts else { return }
+        plannedAlerts = planned
+        onAlertsChanged?(planned)
+    }
+
+    public func refreshAlerts() {
+        plannedAlerts = AlertPlanner.plan(items: Array(items.values), calendar: calendar)
+        onAlertsChanged?(plannedAlerts)
+    }
+
+    // MARK: - online-only actions
+
+    // Everything of one kind, including what this device's offline window leaves out - for
+    // browsing back further than a light copy keeps. Held in memory only.
+    public func loadArchive(_ kind: OrganizerKind) async throws {
+        let response = try await send("GET", "/api/organizer/items", query: [URLQueryItem(name: "kind", value: kind.rawValue)])
+        let fetched = try JSONDecoder.organizer.decode(ItemsResponse.self, from: response.data).items
+        for item in fetched where items[item.id] == nil { archive[item.id] = item }
+        changed()
+    }
+
+    public func people() async throws -> [OrganizerPerson] {
+        let response = try await send("GET", "/api/organizer/people")
+        return try JSONDecoder.organizer.decode(PeopleResponse.self, from: response.data).people
+    }
+
+    public func saveGroup(id: String?, _ input: OrganizerGroupInput) async throws {
+        let body = try JSONEncoder.organizer.encode(input)
+        if let id {
+            _ = try await send("PUT", "/api/organizer/spaces/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)", body: body)
+        } else {
+            _ = try await send("POST", "/api/organizer/spaces", body: body)
+        }
+        await sync()
+    }
+
+    public func deleteGroup(id: String) async throws {
+        _ = try await send("DELETE", "/api/organizer/spaces/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)")
+        await sync()
+    }
+
+    public func calendarFeedPath(reset: Bool = false) async throws -> String {
+        let response = reset
+            ? try await send("POST", "/api/organizer/calendar-feed/reset")
+            : try await send("GET", "/api/organizer/calendar-feed")
+        return try JSONDecoder.organizer.decode(FeedResponse.self, from: response.data).path
+    }
+
+    // MARK: - transport
+
+    private func send(_ method: String, _ path: String, query: [URLQueryItem] = [], body: Data? = nil, timeout: TimeInterval? = nil) async throws -> OrganizerHTTPResponse {
+        guard let transport else { throw OrganizerError.offline }
+        let response = try await transport.send(
+            method: method, path: path, query: query, body: body,
+            contentType: body == nil ? nil : "application/json", timeout: timeout)
+        switch response.status {
+        case 200..<300: return response
+        case 401: throw OrganizerError.signInRequired
+        case 404 where Self.message(from: response.data)?.contains("turned off") == true: throw OrganizerError.turnedOff
+        default: throw OrganizerError.server(status: response.status, message: Self.message(from: response.data))
+        }
+    }
+
+    static func message(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let error = object["error"] as? String { return error }
+        if let errors = object["errors"] as? [String] { return errors.joined(separator: "\n") }
+        return nil
+    }
+}

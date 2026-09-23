@@ -11,9 +11,42 @@ final class SentinelClient {
         session = Self.makeSession()
     }
 
+    // Separate from `session` only for its timeouts: the main session gives up after 15 seconds,
+    // which would cut off the Organizer's 25-second long poll every time. Same shared cookie
+    // storage, so it is signed in exactly when the rest of the app is.
+    private lazy var organizerSession: URLSession = Self.makeOrganizerSession()
+
+    private static func makeOrganizerSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpCookieStorage = .shared
+        configuration.httpShouldSetCookies = true
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 600
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }
+
+    // The Organizer's way to the server - the same session cookie and chosen address as every
+    // other request. Hands back any status rather than throwing, since the sync engine gives 401
+    // and 404 their own meanings. See the iOS app's copy for the longer story.
+    func organizerRequest(
+        method: String, path: String, query: [URLQueryItem], body: Data?, contentType: String?, timeout: TimeInterval?
+    ) async throws -> (status: Int, data: Data) {
+        guard let url = url(path: path, query: query) else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.httpBody = body
+        if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        if let timeout { request.timeoutInterval = timeout }
+        let (data, response) = try await organizerSession.data(for: request)
+        return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+    }
+
     func resetSession() {
         session.invalidateAndCancel()
         session = Self.makeSession()
+        organizerSession.invalidateAndCancel()
+        organizerSession = Self.makeOrganizerSession()
         model.log("Created a fresh network session")
     }
 

@@ -125,7 +125,9 @@ Response:
    - On no: wipe the local copy, including pending changes (they describe items on the old server), and take the server's.
 5. **Light mode**, per device and chosen in that app's settings. Prune after each sync:
    - Past events whose end is before the window, and completed reminders completed before it, are dropped.
-   - Notes and cards not updated within the window are dropped, unless pinned locally ("keep offline").
+   - Notes not updated within the window are dropped, unless pinned (the note's own `pinned` field, or pinned locally with "keep offline").
+   - Cards stay while they're still open on a board; only completed cards not updated within the window are dropped. A board missing cards offline would look wrong.
+   - Boards and columns are always kept. Children (attachments, steps) go with their parent, and a kept item keeps its ancestors.
    - Items with pending changes are never pruned.
    - With pictures set to thumbnails, keep `/thumbnail` only and fetch originals on open.
    - Widening the window resets the cursor to 0 for one full sync.

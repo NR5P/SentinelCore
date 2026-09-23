@@ -74,6 +74,7 @@ struct SentinelCoreApp: App {
                 SettingsView()
             }
             .environmentObject(appModel)
+            .environment(appModel.organizer)
             .environment(\.isLicensed, appModel.isLicensed)
             .frame(minWidth: 480, minHeight: 520)
         }

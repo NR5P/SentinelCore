@@ -16,9 +16,27 @@ final class SentinelClient {
         model.log(message, level: level)
     }
 
+    // Separate from `session` only for its timeouts: the main session gives up on any request
+    // after 15 seconds, which would cut off the Organizer's 25-second long poll every time and
+    // any attachment upload bigger than a few megabytes. Same shared cookie storage, so it is
+    // signed in exactly when the rest of the app is.
+    private lazy var organizerSession: URLSession = Self.makeOrganizerSession()
+
+    private static func makeOrganizerSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpCookieStorage = .shared
+        configuration.httpShouldSetCookies = true
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 600
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }
+
     func resetSession() {
         session.invalidateAndCancel()
         session = Self.makeSession()
+        organizerSession.invalidateAndCancel()
+        organizerSession = Self.makeOrganizerSession()
         model.log("Created a fresh network session")
     }
 
@@ -696,6 +714,31 @@ final class SentinelClient {
         components.scheme = scheme == "https" ? "wss" : "ws"
         components.path = path
         return components.url
+    }
+
+    // The Organizer's way to the server (see OrganizerKit, and OrganizerTransport in
+    // OrganizerSupport.swift): the same session, cookie and chosen local/remote address as every
+    // other request here. Hands back any status rather than throwing on non-2xx, because the sync
+    // engine gives 401 and 404 their own meanings. Not logged per request - the engine holds a
+    // long poll open all day, and every tick would bury the diagnostics log. Failures are.
+    func organizerRequest(
+        method: String, path: String, query: [URLQueryItem], body: Data?, contentType: String?, timeout: TimeInterval?
+    ) async throws -> (status: Int, data: Data) {
+        guard let url = url(path: path, query: query) else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.httpBody = body
+        if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        if let timeout { request.timeoutInterval = timeout }
+        do {
+            let (data, response) = try await organizerSession.data(for: request)
+            return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+        } catch {
+            if (error as? URLError)?.code != .cancelled, path != "/api/organizer/wait" {
+                model.log("Organizer \(method) \(path) failed: \(describe(error))", level: .notice)
+            }
+            throw error
+        }
     }
 
     func url(path: String, query: [URLQueryItem] = []) -> URL? {

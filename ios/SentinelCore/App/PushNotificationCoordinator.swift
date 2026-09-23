@@ -108,6 +108,13 @@ final class PushAppDelegate: NSObject, UNUserNotificationCenterDelegate, @unchec
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        // A reminder or event alert - see OrganizerNotifications.
+        if let itemId = response.notification.request.content.userInfo["organizerItemId"] as? String {
+            await MainActor.run {
+                NotificationCenter.default.post(name: .sentinelOrganizerOpened, object: itemId)
+            }
+            return
+        }
         guard let eventId = response.notification.request.content.userInfo["eventId"] as? String else {
             return
         }

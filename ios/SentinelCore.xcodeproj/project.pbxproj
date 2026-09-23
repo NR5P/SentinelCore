@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		A00000000000000000000012 /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000000000000000000010 /* AVKit.framework */; };
 		A00000000000000000000022 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000021 /* WebRTC */; };
+		A00000000000000000000032 /* OrganizerKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000031 /* OrganizerKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +32,7 @@
 			files = (
 				A00000000000000000000012 /* AVKit.framework in Frameworks */,
 				A00000000000000000000022 /* WebRTC in Frameworks */,
+				A00000000000000000000032 /* OrganizerKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -83,6 +85,7 @@
 			name = SentinelCore;
 			packageProductDependencies = (
 				A00000000000000000000021 /* WebRTC */,
+				A00000000000000000000031 /* OrganizerKit */,
 			);
 			productName = SentinelCore;
 			productReference = A00000000000000000000001 /* SentinelCore.app */;
@@ -114,6 +117,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A00000000000000000000020 /* XCRemoteSwiftPackageReference "WebRTC" */,
+				A00000000000000000000030 /* XCLocalSwiftPackageReference "OrganizerKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A00000000000000000000005 /* Products */;
@@ -278,6 +282,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		A00000000000000000000030 /* XCLocalSwiftPackageReference "OrganizerKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = OrganizerKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		A00000000000000000000020 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -294,6 +305,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A00000000000000000000020 /* XCRemoteSwiftPackageReference "WebRTC" */;
 			productName = WebRTC;
+		};
+		A00000000000000000000031 /* OrganizerKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OrganizerKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

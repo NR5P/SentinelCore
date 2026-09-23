@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Network
+import OrganizerKit
 import OSLog
 import UserNotifications
 
@@ -40,7 +41,9 @@ final class AppModel: ObservableObject {
     // Whether the server this app is talking to is older than it expects. Advisory: nothing in the
     // app behaves differently, it just says so - see ServerCompatibility.
     @Published private(set) var serverCompatibility: ServerCompatibility = .unknown
-    @Published var connectionState: ConnectionState = .checking
+    @Published var connectionState: ConnectionState = .checking {
+        didSet { updateOrganizerConnection() }
+    }
     @Published var authStatus: AuthStatus?
     // The single Events list: motion and the AI's read of it, already joined server-side into one
     // row per moment. This replaced two separately-fetched lists (events and triggers), which had
@@ -79,6 +82,17 @@ final class AppModel: ObservableObject {
     @Published private(set) var discoveredServers: [DiscoveredServer] = []
 
     private(set) lazy var client = SentinelClient(model: self)
+
+    // Notes, calendar, reminders and boards - see OrganizerKit. Created up front and independent
+    // of the connection: this device's copy is usable offline, before the server has ever been
+    // reached this launch.
+    let organizer: OrganizerEngine
+    // Whether the server last said the Organizer is switched on, remembered so the section is
+    // there on an offline launch too.
+    @Published var organizerLastKnownEnabled: Bool {
+        didSet { UserDefaults.standard.set(organizerLastKnownEnabled, forKey: "organizerEnabled") }
+    }
+    private var organizerActive = true
     private var localNetworkBrowser: NWBrowser?
     private var isConnecting = false
     private var pendingPushEventId: UUID?
@@ -88,6 +102,14 @@ final class AppModel: ObservableObject {
         serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
         remoteServerURL = UserDefaults.standard.string(forKey: "remoteServerURL") ?? ""
         pushRegistrationEnabled = UserDefaults.standard.bool(forKey: "pushRegistrationEnabled")
+        organizerLastKnownEnabled = UserDefaults.standard.object(forKey: "organizerEnabled") as? Bool ?? false
+        do {
+            organizer = try OrganizerEngine(directory: OrganizerDevice.directory, deviceId: OrganizerDevice.id, policy: OrganizerDevice.savedPolicy)
+        } catch {
+            // A copy that can't be opened (a corrupt file, a full disk) must not take the rest of
+            // the app down with it; run from memory and say so in the diagnostics.
+            organizer = try! OrganizerEngine(directory: nil, deviceId: OrganizerDevice.id, policy: OrganizerDevice.savedPolicy)
+        }
         observers.append(NotificationCenter.default.addObserver(
             forName: .sentinelPushTokenChanged,
             object: nil,
@@ -119,6 +141,26 @@ final class AppModel: ObservableObject {
             Task { await openPushEvent(id) }
         }
         Task { await refreshPushAuthorization() }
+        organizer.onAlertsChanged = { alerts in OrganizerNotifications.schedule(alerts) }
+    }
+
+    // The engine follows the connection: running while the app is online and in the foreground,
+    // stopped otherwise. Its own copy and queue carry on either way.
+    private func updateOrganizerConnection() {
+        if connectionState == .online, organizerActive {
+            if !organizer.isConnected { organizer.connect(AppOrganizerTransport(client: client)) }
+        } else if organizer.isConnected {
+            organizer.disconnect()
+        }
+    }
+
+    // Called from the scene phase: a background app shouldn't hold a long poll open.
+    func setOrganizerActive(_ active: Bool) {
+        organizerActive = active
+        if active, organizer.isConnected {
+            Task { await organizer.sync() }
+        }
+        updateOrganizerConnection()
     }
 
     var isConfigured: Bool { URL(string: serverURL)?.host != nil }

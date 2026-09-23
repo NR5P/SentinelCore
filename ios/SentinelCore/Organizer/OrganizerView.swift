@@ -1,0 +1,384 @@
+import OrganizerKit
+import SwiftUI
+
+// The Organizer section: calendar, reminders, notes and boards over this device's copy (see
+// OrganizerKit), with a filter for which space to show. Every screen here reads the engine
+// directly, so an edit from another device appears as soon as it syncs in.
+struct OrganizerView: View {
+    enum Pane: String, CaseIterable, Identifiable {
+        case calendar, reminders, notes, boards
+        var id: Self { self }
+        var title: String { rawValue.capitalized }
+        var icon: String {
+            switch self {
+            case .calendar: "calendar"
+            case .reminders: "checklist"
+            case .notes: "note.text"
+            case .boards: "rectangle.split.3x1"
+            }
+        }
+    }
+
+    @EnvironmentObject private var model: AppModel
+    @Environment(OrganizerEngine.self) private var engine
+    @AppStorage("organizerPane") private var pane: Pane = .calendar
+    @AppStorage("organizerSpaceFilter") private var spaceFilter = "all"
+    @State private var showingGroups = false
+    @State private var showingSubscribe = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Show", selection: $pane) {
+                ForEach(Pane.allCases) { pane in
+                    Label(pane.title, systemImage: pane.icon).tag(pane)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            OrganizerSyncBanner()
+
+            Group {
+                switch pane {
+                case .calendar: OrganizerCalendarView(spaceFilter: effectiveFilter)
+                case .reminders: OrganizerRemindersView(spaceFilter: effectiveFilter)
+                case .notes: OrganizerNotesView(spaceFilter: effectiveFilter)
+                case .boards: OrganizerBoardsView(spaceFilter: effectiveFilter)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationTitle("Organizer")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Picker("Show", selection: $spaceFilter) {
+                        Label("Everything", systemImage: "square.stack.3d.up").tag("all")
+                        ForEach(engine.visibleSpaces) { space in
+                            Text(space.name).tag(space.id)
+                        }
+                    }
+                    Divider()
+                    Button("Groups…", systemImage: "person.3") { showingGroups = true }
+                    Button("Subscribe in Another Calendar…", systemImage: "calendar.badge.plus") { showingSubscribe = true }
+                    Button("Sync Now", systemImage: "arrow.triangle.2.circlepath") { Task { await engine.sync() } }
+                } label: {
+                    Label(filterLabel, systemImage: "line.3.horizontal.decrease.circle")
+                }
+            }
+        }
+        .sheet(isPresented: $showingGroups) {
+            NavigationStack { OrganizerGroupsView() }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 460, minHeight: 480)
+                #endif
+        }
+        .sheet(isPresented: $showingSubscribe) {
+            NavigationStack { OrganizerSubscribeView() }
+                .environment(engine)
+                .environmentObject(model)
+                #if os(macOS)
+                .frame(minWidth: 460, minHeight: 360)
+                #endif
+        }
+    }
+
+    // A filter naming a space this person can no longer see shows everything instead.
+    private var effectiveFilter: String? {
+        spaceFilter == "all" || engine.space(spaceFilter) == nil ? nil : spaceFilter
+    }
+
+    private var filterLabel: String {
+        effectiveFilter.map { engine.spaceName($0) } ?? "Everything"
+    }
+}
+
+// One line under the tabs, only when there's something to say: offline with edits waiting, or a
+// sync problem. Quiet when everything is up to date.
+struct OrganizerSyncBanner: View {
+    @Environment(OrganizerEngine.self) private var engine
+
+    var body: some View {
+        let state = engine.syncState
+        if let message = message(state) {
+            HStack(spacing: 8) {
+                Image(systemName: state.online ? "exclamationmark.triangle" : "icloud.slash")
+                Text(message).font(.caption)
+                Spacer()
+            }
+            .foregroundStyle(state.online ? SentinelTheme.red : SentinelTheme.amber)
+            .padding(.horizontal)
+            .padding(.vertical, 6)
+            .background((state.online ? SentinelTheme.red : SentinelTheme.amber).opacity(0.1))
+        }
+    }
+
+    private func message(_ state: OrganizerEngine.SyncState) -> String? {
+        if state.needsSignIn { return "Sign in again to sync the Organizer." }
+        if !state.online, engine.isConnected || state.waitingChanges > 0 {
+            return state.waitingChanges > 0
+                ? "Offline - \(state.waitingChanges) change\(state.waitingChanges == 1 ? "" : "s") saved on this device, will sync when the server is back"
+                : "Offline - showing this device's copy"
+        }
+        if let error = state.lastError { return error }
+        return nil
+    }
+}
+
+// MARK: - calendar
+
+struct OrganizerCalendarView: View {
+    @Environment(OrganizerEngine.self) private var engine
+    let spaceFilter: String?
+
+    @State private var month = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date()))!
+    @State private var selectedDay = Calendar.current.startOfDay(for: Date())
+    @State private var editing: EventEditorTarget?
+    @State private var editingReminder: OrganizerItem?
+    @State private var archiveLoaded = false
+
+    private var calendar: Calendar { .current }
+
+    var body: some View {
+        let gridStart = calendar.date(byAdding: .day, value: -(calendar.component(.weekday, from: month) - 1), to: month)!
+        let gridEnd = calendar.date(byAdding: .day, value: 42, to: gridStart)!
+        let entries = CalendarEntry.between(gridStart, gridEnd, engine: engine, spaceFilter: spaceFilter)
+        let byDay = Dictionary(grouping: entries.flatMap { entry in entry.days(calendar).map { ($0, entry) } }, by: \.0)
+            .mapValues { $0.map(\.1) }
+
+        ScrollView {
+            VStack(spacing: 12) {
+                header
+                // Plain rows, not a LazyVGrid: inside a ScrollView the lazy grid sized its rows
+                // from an estimate, hid the first week and let the day list below draw over the
+                // grid (seen on the iPhone simulator).
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        ForEach(Array(calendar.veryShortWeekdaySymbols.enumerated()), id: \.offset) { _, symbol in
+                            Text(symbol).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 4)
+                        }
+                    }
+                    ForEach(0..<6, id: \.self) { week in
+                        HStack(spacing: 0) {
+                            ForEach(0..<7, id: \.self) { weekday in
+                                let day = calendar.date(byAdding: .day, value: week * 7 + weekday, to: gridStart)!
+                                dayCell(day, entries: byDay[day] ?? [])
+                            }
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
+
+                dayDetail(entries: (byDay[selectedDay] ?? []).sorted { $0.start < $1.start })
+            }
+            .padding()
+        }
+        .sheet(item: $editing) { target in
+            NavigationStack { EventEditor(target: target) }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 520, minHeight: 620)
+                #endif
+        }
+        .sheet(item: $editingReminder) { reminder in
+            NavigationStack { ReminderEditor(reminder: reminder, parentId: nil) }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 480, minHeight: 560)
+                #endif
+        }
+        .task(id: month) { await loadArchiveIfNeeded() }
+    }
+
+    private var header: some View {
+        HStack {
+            Button { shiftMonth(-1) } label: { Image(systemName: "chevron.left") }
+            Text(month.formatted(.dateTime.month(.wide).year()))
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Button { shiftMonth(1) } label: { Image(systemName: "chevron.right") }
+            Button("Today") {
+                month = calendar.date(from: calendar.dateComponents([.year, .month], from: Date()))!
+                selectedDay = calendar.startOfDay(for: Date())
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+            Button {
+                editing = .new(day: selectedDay)
+            } label: {
+                Label("New Event", systemImage: "plus")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityLabel("New event")
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private func dayCell(_ day: Date, entries: [CalendarEntry]) -> some View {
+        let inMonth = calendar.isDate(day, equalTo: month, toGranularity: .month)
+        let isToday = calendar.isDateInToday(day)
+        let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("\(calendar.component(.day, from: day))")
+                .font(.caption.weight(isToday ? .bold : .regular))
+                .foregroundStyle(isToday ? Color.black : (inMonth ? .primary : .secondary))
+                .padding(.horizontal, 5)
+                .background { if isToday { Capsule().fill(SentinelTheme.green) } }
+            ForEach(entries.prefix(3)) { entry in
+                Text(entry.title)
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+                    .padding(.horizontal, 3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(entry.color(engine).opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
+            }
+            if entries.count > 3 {
+                Text("+\(entries.count - 3)").font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(3)
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .topLeading)
+        .background(isSelected ? SentinelTheme.green.opacity(0.12) : (inMonth ? Color.clear : Color.primary.opacity(0.03)))
+        .overlay { Rectangle().stroke(.quaternary, lineWidth: 0.5) }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { editing = .new(day: day) }
+        .onTapGesture { selectedDay = day }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(day.formatted(date: .complete, time: .omitted)), \(entries.count) item\(entries.count == 1 ? "" : "s")")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func dayDetail(entries: [CalendarEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(selectedDay.formatted(date: .complete, time: .omitted)).font(.headline).foregroundStyle(SentinelTheme.cyan)
+                Spacer()
+                Button("Add Event", systemImage: "plus") { editing = .new(day: selectedDay) }
+                    .buttonStyle(.borderless)
+            }
+            if entries.isEmpty {
+                Text("Nothing on this day").foregroundStyle(.secondary).font(.callout)
+            }
+            ForEach(entries) { entry in
+                Button {
+                    switch entry.kind {
+                    case let .event(occurrence): editing = .existing(occurrence)
+                    case let .reminder(reminder): editingReminder = reminder
+                    }
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        RoundedRectangle(cornerRadius: 2).fill(entry.color(engine)).frame(width: 4)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.title).font(.body)
+                            Text(entry.timeText).font(.caption).foregroundStyle(.secondary)
+                            if let location = entry.location, !location.isEmpty {
+                                Label(location, systemImage: "mappin").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        SpaceTag(spaceId: entry.spaceId)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Divider()
+            }
+        }
+        .sentinelCard()
+    }
+
+    private func shiftMonth(_ by: Int) {
+        month = calendar.date(byAdding: .month, value: by, to: month) ?? month
+    }
+
+    // A light copy drops events older than its window; looking back past it fetches the rest
+    // from the server for this session.
+    private func loadArchiveIfNeeded() async {
+        guard !archiveLoaded, engine.policy.mode != .full,
+              let window = engine.policy.windowDays,
+              let cutoff = calendar.date(byAdding: .day, value: -window, to: Date()),
+              month < cutoff else { return }
+        archiveLoaded = (try? await engine.loadArchive(.event)) != nil
+    }
+}
+
+// An event occurrence or a dated reminder, as the calendar shows it.
+struct CalendarEntry: Identifiable {
+    enum Kind { case event(Occurrence), reminder(OrganizerItem) }
+    let kind: Kind
+    let start: Date
+    let end: Date
+
+    var id: String {
+        switch kind {
+        case let .event(occurrence): "e:\(occurrence.item.id):\(occurrence.start.timeIntervalSince1970)"
+        case let .reminder(reminder): "r:\(reminder.id)"
+        }
+    }
+
+    var item: OrganizerItem {
+        switch kind {
+        case let .event(occurrence): occurrence.item
+        case let .reminder(reminder): reminder
+        }
+    }
+
+    var title: String {
+        switch kind {
+        case let .event(occurrence): occurrence.item.title.isEmpty ? "Untitled" : occurrence.item.title
+        case let .reminder(reminder): "☐ " + (reminder.title.isEmpty ? "Reminder" : reminder.title)
+        }
+    }
+
+    var spaceId: String { item.spaceId }
+    var location: String? { item.string("location") }
+    var allDay: Bool { item.bool("allDay") }
+
+    var timeText: String {
+        if allDay { return "All day" }
+        if case .reminder = kind { return "Due \(start.formatted(date: .omitted, time: .shortened))" }
+        return "\(start.formatted(date: .omitted, time: .shortened)) – \(end.formatted(date: .omitted, time: .shortened))"
+    }
+
+    @MainActor
+    func color(_ engine: OrganizerEngine) -> Color {
+        if case .reminder = kind { return SentinelTheme.amber }
+        if let hex = item.string("color"), let color = Color(hex: hex) { return color }
+        return engine.color(forSpace: item.spaceId)
+    }
+
+    // Every day this entry covers, as start-of-day dates.
+    func days(_ calendar: Calendar) -> [Date] {
+        var day = calendar.startOfDay(for: start)
+        let last = end > start ? end.addingTimeInterval(-1) : start
+        var out: [Date] = []
+        while day <= last && out.count < 60 {
+            out.append(day)
+            day = calendar.date(byAdding: .day, value: 1, to: day)!
+        }
+        return out.isEmpty ? [calendar.startOfDay(for: start)] : out
+    }
+
+    @MainActor
+    static func between(_ from: Date, _ to: Date, engine: OrganizerEngine, spaceFilter: String?) -> [CalendarEntry] {
+        var entries: [CalendarEntry] = []
+        for event in engine.items(.event) where spaceFilter == nil || event.spaceId == spaceFilter {
+            for occurrence in Recurrence.occurrences(of: event, from: from, to: to) {
+                entries.append(CalendarEntry(kind: .event(occurrence), start: occurrence.start, end: occurrence.end))
+            }
+        }
+        for reminder in engine.items(.reminder) where reminder.parentId == nil && !reminder.bool("completed")
+            && (spaceFilter == nil || reminder.spaceId == spaceFilter) {
+            guard let due = OrganizerDates.parse(reminder.string("due"), allDay: reminder.bool("allDay")), due >= from, due < to else { continue }
+            entries.append(CalendarEntry(kind: .reminder(reminder), start: due, end: due))
+        }
+        return entries.sorted { $0.start < $1.start }
+    }
+}

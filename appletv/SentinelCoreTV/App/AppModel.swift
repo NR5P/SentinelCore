@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OrganizerKit
 import Network
 import UserNotifications
 
@@ -33,7 +34,9 @@ final class AppModel: ObservableObject {
     // Whether the server this app is talking to is older than it expects. Advisory: nothing in the
     // app behaves differently, it just says so - see ServerCompatibility.
     @Published private(set) var serverCompatibility: ServerCompatibility = .unknown
-    @Published var connectionState: ConnectionState = .checking
+    @Published var connectionState: ConnectionState = .checking {
+        didSet { updateOrganizerConnection() }
+    }
     @Published var authStatus: AuthStatus?
     // The single Events list: motion and the AI's read of it, already joined server-side into one
     // row per moment. This replaced two separately-fetched lists (alerts and triggers), which had
@@ -70,12 +73,26 @@ final class AppModel: ObservableObject {
     @Published private(set) var discoveredServers: [DiscoveredServer] = []
 
     private(set) lazy var client = SentinelClient(model: self)
+
+    // Notes, calendar, reminders and boards - see OrganizerKit. The TV keeps a small light copy
+    // in its caches (tvOS may clear those, which only means the next launch re-reads it).
+    let organizer: OrganizerEngine
+    @Published var organizerLastKnownEnabled: Bool {
+        didSet { UserDefaults.standard.set(organizerLastKnownEnabled, forKey: "organizerEnabled") }
+    }
+    private var organizerActive = true
     private var localNetworkBrowser: NWBrowser?
     private var isConnecting = false
     private var pendingPushEventId: UUID?
     private var observers: [NSObjectProtocol] = []
 
     init() {
+        organizerLastKnownEnabled = UserDefaults.standard.object(forKey: "organizerEnabled") as? Bool ?? false
+        do {
+            organizer = try OrganizerEngine(directory: OrganizerDevice.directory, deviceId: OrganizerDevice.id, policy: .televisionDefault)
+        } catch {
+            organizer = try! OrganizerEngine(directory: nil, deviceId: OrganizerDevice.id, policy: .televisionDefault)
+        }
         serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
         pushRegistrationEnabled = UserDefaults.standard.bool(forKey: "pushRegistrationEnabled")
         observers.append(NotificationCenter.default.addObserver(
@@ -115,6 +132,22 @@ final class AppModel: ObservableObject {
             Task { await openPushEvent(id) }
         }
         Task { await refreshPushAuthorization() }
+    }
+
+    // The engine follows the connection: running while the app is online and in the foreground,
+    // stopped otherwise.
+    private func updateOrganizerConnection() {
+        if connectionState == .online, organizerActive {
+            if !organizer.isConnected { organizer.connect(AppOrganizerTransport(client: client)) }
+        } else if organizer.isConnected {
+            organizer.disconnect()
+        }
+    }
+
+    func setOrganizerActive(_ active: Bool) {
+        organizerActive = active
+        if active, organizer.isConnected { Task { await organizer.sync() } }
+        updateOrganizerConnection()
     }
 
     var isConfigured: Bool { URL(string: serverURL)?.host != nil }
