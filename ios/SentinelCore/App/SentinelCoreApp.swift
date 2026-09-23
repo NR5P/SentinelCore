@@ -50,6 +50,16 @@ struct SentinelCoreApp: App {
         #endif
 
         #if os(macOS)
+        // "This Mac as a camera" in its own window - opened from Settings, the Live toolbar, or
+        // on its own when a stream resumes after a relaunch (DeviceCameraPresenter in RootView).
+        // A window, not a sheet: see that presenter for the crash a sheet caused here.
+        Window("This Mac as a Camera", id: DeviceCameraSheet.windowId) {
+            DeviceCameraSheet()
+                .environmentObject(appModel)
+                .environment(\.isLicensed, appModel.isLicensed)
+        }
+        .defaultSize(width: 600, height: 760)
+
         // Cmd+, and the app-menu "Settings…" item. The same screen is also a sidebar row in the
         // main window (see AppSection.sidebarCases) - this is the Mac convention on top of it,
         // not instead of it.

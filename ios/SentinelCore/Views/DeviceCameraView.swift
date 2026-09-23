@@ -389,6 +389,9 @@ struct DeviceCameraView: View {
 // The screen as the app presents it: from the Live toolbar and from Settings, and on its own
 // when streaming resumed after a relaunch - so the person sees that it did.
 struct DeviceCameraSheet: View {
+    // The macOS Window scene this is shown in - see SentinelCoreApp and DeviceCameraPresenter.
+    static let windowId = "device-camera"
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
 

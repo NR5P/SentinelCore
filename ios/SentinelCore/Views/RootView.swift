@@ -40,18 +40,7 @@ struct RootView: View {
         .onChange(of: model.selectedEvent?.id) { _, eventId in
             if eventId != nil { selection = .events }
         }
-        .sheet(isPresented: $model.showDeviceCamera) {
-            DeviceCameraSheet().environmentObject(model)
-        }
-        // If this device was streaming as a camera when the app last ran, it goes back to being
-        // one as soon as the server is reachable - and shows the screen, so it is obvious that it
-        // did. See DevicePublisher.resumeIfIntended.
-        .onChange(of: model.connectionState) { _, state in
-            guard state == .online, model.isAdmin else { return }
-            if DevicePublisher.shared.resumeIfIntended(client: model.client) != nil {
-                model.showDeviceCamera = true
-            }
-        }
+        .background { DeviceCameraPresenter() }
     }
 
     private var splitNavigation: some View {
@@ -232,5 +221,45 @@ struct ConnectionBadge: View {
         case .offline: SentinelTheme.red
         case .notConfigured: .secondary
         }
+    }
+}
+
+// Presents the "this device as a camera" screen and resumes a stream that was running when the
+// app last quit.
+//
+// On the Mac the screen is its own window (see SentinelCoreApp), not a sheet. A `.sheet` bound to
+// this flag - anywhere in the hierarchy, even unpresented - made the Mac app crash inside
+// SwiftUI's own hit-testing and body evaluation (EXC_BAD_ACCESS in the Swift executor check) on
+// macOS 26; bisected on 2026-09-23, and gone with the sheet gone. A window also suits a camera
+// surface that is left open for days. iOS keeps the sheet, where it has been fine.
+private struct DeviceCameraPresenter: View {
+    @EnvironmentObject private var model: AppModel
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            #if os(iOS)
+            .sheet(isPresented: $model.showDeviceCamera) {
+                DeviceCameraSheet().environmentObject(model)
+            }
+            #else
+            .onChange(of: model.showDeviceCamera) { _, wanted in
+                guard wanted else { return }
+                openWindow(id: DeviceCameraSheet.windowId)
+                model.showDeviceCamera = false
+            }
+            #endif
+            // If this device was streaming as a camera when the app last ran, it goes back to
+            // being one as soon as the server is reachable - and shows the screen, so it is
+            // obvious that it did. See DevicePublisher.resumeIfIntended.
+            .onChange(of: model.connectionState) { _, state in
+                guard state == .online, model.isAdmin else { return }
+                if DevicePublisher.shared.resumeIfIntended(client: model.client) != nil {
+                    model.showDeviceCamera = true
+                }
+            }
     }
 }
