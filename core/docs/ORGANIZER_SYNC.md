@@ -122,8 +122,7 @@ Response:
 4. **Rebuilt server (`reset: true`).** The server this device last spoke to is gone, and nothing was applied.
    - If the device holds data, ask its owner: "This server doesn't have your Organizer data (it has N items). Upload this device's copy?" Use `itemCount` from `/status`.
    - On yes: sync again with the new `serverId`, `cursor: 0`, every local item as a change (all fields with their stored clocks, plus `spaceId`/`parentId`/`deleted`), and `restoreSpaces` = the local group definitions. Then upload the missing blobs.
-   - On no: wipe the local copy and take the server's.
-   - Pending changes survive either way.
+   - On no: wipe the local copy, including pending changes (they describe items on the old server), and take the server's.
 5. **Light mode**, per device and chosen in that app's settings. Prune after each sync:
    - Past events whose end is before the window, and completed reminders completed before it, are dropped.
    - Notes and cards not updated within the window are dropped, unless pinned locally ("keep offline").

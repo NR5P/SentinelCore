@@ -518,7 +518,8 @@ const views = {
   devices: document.getElementById("view-devices"),
   docs: document.getElementById("view-docs"),
   settings: document.getElementById("view-settings"),
-  accounts: document.getElementById("view-accounts")
+  accounts: document.getElementById("view-accounts"),
+  organizer: document.getElementById("view-organizer")
 };
 let settingsLoaded = false;
 let camerasLoaded = false;
@@ -535,6 +536,7 @@ for (const tab of tabs) {
     if (currentView === "timeline" && target !== "timeline") window.GateWatchTimeline.stop();
     // Device state polls every few seconds while the tab is open - stop it the moment it isn't.
     if (currentView === "devices" && target !== "devices") window.GateWatchDevices.stop();
+    if (currentView === "organizer" && target !== "organizer") window.SentinelOrganizer.hide();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -556,6 +558,7 @@ for (const tab of tabs) {
     if (target === "automations") window.SentinelSchedules.loadActivePane();
     if (target === "devices") window.GateWatchDevices.load();
     if (target === "docs") window.GateWatchDocs.load();
+    if (target === "organizer") window.SentinelOrganizer.show();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;
       window.GateWatchTimeline.load();

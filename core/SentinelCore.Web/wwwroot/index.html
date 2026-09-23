@@ -28,6 +28,7 @@
       <button class="tab" data-view="timeline" data-tip-below data-tip="Review saved trigger clips across a day, with Sentinel AI events marked on the time rail.">timeline</button>
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones.">cameras</button>
+      <button class="tab hidden" id="tab-organizer" data-view="organizer" data-tip-below data-tip="Notes, calendar, reminders and boards - shared with the SentinelCore apps on every device, and kept on each one so they work with no signal.">organizer</button>
       <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
       <button class="tab hidden" id="tab-devices" data-view="devices" data-tip-below data-tip-right data-tip="Switch lights, plugs, and other MQTT devices on and off. Only appears when the Device Hub is turned on in Settings.">device hub</button>
       <button class="tab" data-view="docs" data-tip-below data-tip-right data-tip="The full User Guide, Deployment guide, and Push Notifications setup - viewable as PDFs without leaving the dashboard.">docs</button>
@@ -251,6 +252,30 @@
       <div id="cameras-root" class="settings-root">
         <div class="empty-state">loading cameras&hellip;</div>
       </div>
+    </section>
+
+    <section id="view-organizer" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">ORGANIZER</div>
+        <div class="toolbar-actions">
+          <span id="org-sync-state" class="event-count" data-tip-below data-tip-right data-tip="Everything is kept in this browser as well as on the server, so edits made while the server is unreachable are saved and sent when it's back.">connecting&hellip;</span>
+          <button id="org-groups-btn" class="btn" data-tip-below data-tip-right data-tip="Personal, Family and groups: who can see what.">groups</button>
+          <button id="org-subscribe-btn" class="btn" data-tip-below data-tip-right data-tip="A private link that shows your events in Apple, Google or Outlook calendar.">subscribe</button>
+        </div>
+      </div>
+      <div class="org-bar">
+        <nav class="tabs" id="org-subtabs">
+          <button class="tab active" data-org-pane="calendar">calendar</button>
+          <button class="tab" data-org-pane="reminders">reminders</button>
+          <button class="tab" data-org-pane="notes">notes</button>
+          <button class="tab" data-org-pane="boards">boards</button>
+        </nav>
+        <div class="org-spaces" id="org-spaces"></div>
+      </div>
+      <div id="org-pane-calendar" class="tab-pane"></div>
+      <div id="org-pane-reminders" class="tab-pane hidden"></div>
+      <div id="org-pane-notes" class="tab-pane hidden"></div>
+      <div id="org-pane-boards" class="tab-pane hidden"></div>
     </section>
 
     <section id="view-automations" class="view hidden">
@@ -640,6 +665,10 @@
     </div>
   </div>
 
+  <div id="org-modal" class="lightbox hidden">
+    <div class="zone-editor-panel org-modal-panel" id="org-modal-panel"></div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/hls.min.js"></script>
@@ -658,5 +687,7 @@
   <script src="devices.js"></script>
   <script src="timeline.js"></script>
   <script src="docs.js"></script>
+  <script src="organizer-sync.js"></script>
+  <script src="organizer.js"></script>
 </body>
 </html>

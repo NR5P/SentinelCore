@@ -26,7 +26,18 @@ public static class OrganizerCalendarFeed
         Line(builder, "X-PUBLISHED-TTL:PT15M");
 
         var spaceNames = spaces.ToDictionary(space => space.Id, space => space.Name, StringComparer.Ordinal);
-        foreach (var item in events)
+        var eventList = events.ToList();
+
+        // An edited occurrence is excluded from its series (exdates) AND published as an override
+        // (RECURRENCE-ID). Inside SentinelCore the exclusion is what hides the original; in an
+        // iCalendar feed the override already does that, and Google drops an override whose date
+        // is also an EXDATE - so those dates are left out of the series' EXDATE list here.
+        var overridden = eventList
+            .Where(item => Text(item.Fields, "seriesId") is not null && Text(item.Fields, "originalStart") is not null)
+            .Select(item => (Text(item.Fields, "seriesId")!, Text(item.Fields, "originalStart")!))
+            .ToHashSet();
+
+        foreach (var item in eventList)
         {
             var start = Text(item.Fields, "start");
             if (start is null) continue;
@@ -62,7 +73,9 @@ public static class OrganizerCalendarFeed
                 Line(builder, $"RRULE:{rule}");
                 foreach (var exdate in item.Fields["exdates"] as JsonArray ?? [])
                 {
-                    if (exdate is JsonValue value && value.TryGetValue<string>(out var text) && DateProperty("EXDATE", text, allDay, timeZone) is { } exdateLine)
+                    if (exdate is JsonValue value && value.TryGetValue<string>(out var text)
+                        && !overridden.Contains((item.Id, text))
+                        && DateProperty("EXDATE", text, allDay, timeZone) is { } exdateLine)
                         Line(builder, exdateLine);
                 }
             }

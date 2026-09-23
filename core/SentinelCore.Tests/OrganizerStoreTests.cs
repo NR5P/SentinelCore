@@ -414,4 +414,43 @@ public sealed class OrganizerStoreTests : IDisposable
         Assert.Contains("DTSTART;VALUE=DATE:20261225\r\n", ics);
         Assert.DoesNotContain("ATTACH", ics);
     }
+
+    // One edited occurrence travels as an override with RECURRENCE-ID. Listing its date as an
+    // EXDATE as well makes Google drop the override, so the edited session would vanish.
+    [Fact]
+    public void CalendarFeed_DoesNotExcludeAnOccurrenceThatHasAnOverride()
+    {
+        var series = new OrganizerItem
+        {
+            Id = "series",
+            Kind = OrganizerKinds.Event,
+            SpaceId = "family",
+            Fields = new JsonObject
+            {
+                ["title"] = "Practice",
+                ["start"] = "2026-09-23T15:00:00Z",
+                ["recurrence"] = "FREQ=WEEKLY",
+                ["exdates"] = new JsonArray("2026-09-30T15:00:00Z", "2026-10-07T15:00:00Z"),
+            },
+        };
+        var moved = new OrganizerItem
+        {
+            Id = "moved",
+            Kind = OrganizerKinds.Event,
+            SpaceId = "family",
+            Fields = new JsonObject
+            {
+                ["title"] = "Away game",
+                ["start"] = "2026-10-07T18:00:00Z",
+                ["seriesId"] = "series",
+                ["originalStart"] = "2026-10-07T15:00:00Z",
+            },
+        };
+
+        var ics = OrganizerCalendarFeed.Build([series, moved], []);
+
+        Assert.Contains("EXDATE:20260930T150000Z", ics);
+        Assert.DoesNotContain("EXDATE:20261007T150000Z", ics);
+        Assert.Contains("RECURRENCE-ID:20261007T150000Z", ics);
+    }
 }
