@@ -283,6 +283,11 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         if (enabled == false) {
             return false to "The Organizer is turned off. It's in the dashboard's Settings, under Organizer."
         }
+        // Until the first sync this phone doesn't know the person's own space, and new things
+        // would default to Family - where everyone sees them.
+        if (organizer.spaces.value.isEmpty()) {
+            return false to "Sentinel Core hasn't synced your Organizer yet. Try again once it has connected to your server."
+        }
         return if (kind == OrganizerKinds.NOTE) {
             organizer.create(OrganizerKinds.NOTE, VoiceCapture.note(text))
             true to "Saved your note."

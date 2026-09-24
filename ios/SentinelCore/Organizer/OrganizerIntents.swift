@@ -198,11 +198,13 @@ struct SentinelShortcuts: AppShortcutsProvider {
 enum VoiceOrganizerError: Error, CustomLocalizedStringResourceConvertible {
     case notSetUp
     case turnedOff
+    case notSynced
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .notSetUp: "Sentinel Core isn't connected to a server yet. Open the app to set it up."
         case .turnedOff: "The Organizer is turned off. It's in the dashboard's Settings, under Organizer."
+        case .notSynced: "Sentinel Core hasn't synced your Organizer yet. Open the app while it can reach your server, then try again."
         }
     }
 }
@@ -237,6 +239,9 @@ enum VoiceOrganizer {
         // knowing - a first launch with no signal - keeps the item to send when it can.
         let enabled = model.organizer.status?.enabled ?? model.organizerEnabledIfKnown
         if enabled == false || model.organizer.syncState.turnedOff { throw VoiceOrganizerError.turnedOff }
+        // Until the first sync this device doesn't know the person's own space, and new things
+        // would default to Family - where everyone sees them.
+        guard model.organizer.knowsSpaces else { throw VoiceOrganizerError.notSynced }
         return model
     }
 

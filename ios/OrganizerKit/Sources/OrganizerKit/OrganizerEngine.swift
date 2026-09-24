@@ -165,14 +165,26 @@ public final class OrganizerEngine {
         visibleSpaces.first { $0.kind == .personal }?.id ?? OrganizerSpace.family.id
     }
 
+    // Whether the server has told this device which spaces there are. Until then defaultSpaceId
+    // falls back to Family, so anything added without a person choosing - by Siri, or brought in
+    // from Apple Reminders - waits for this rather than risk landing where everyone sees it.
+    public var knowsSpaces: Bool { !spaces.isEmpty }
+
+    // Whether this device holds an item with this id, deleted or not. For imports that choose
+    // their own ids: a second device bringing in the same thing must neither duplicate it nor
+    // bring back one somebody deleted.
+    public func knows(_ id: String) -> Bool { items[id] != nil || archive[id] != nil }
+
     // MARK: - editing
 
+    // `id` is for imports whose ids must come out the same on every device (see
+    // AppleReminderImport); everything else gets a fresh one.
     @discardableResult
-    public func create(_ kind: OrganizerKind, fields: [String: JSONValue], spaceId: String? = nil, parentId: String? = nil) -> OrganizerItem {
+    public func create(_ kind: OrganizerKind, fields: [String: JSONValue], spaceId: String? = nil, parentId: String? = nil, id: String? = nil) -> OrganizerItem {
         let parent = parentId.flatMap { items[$0] ?? archive[$0] }
         let now = Date()
         var item = OrganizerItem(
-            id: UUID().uuidString.lowercased(), kind: kind,
+            id: id ?? UUID().uuidString.lowercased(), kind: kind,
             spaceId: parent?.spaceId ?? spaceId ?? defaultSpaceId,
             parentId: parent?.id,
             createdAt: now, createdBy: status?.username, updatedAt: now, updatedBy: status?.username)

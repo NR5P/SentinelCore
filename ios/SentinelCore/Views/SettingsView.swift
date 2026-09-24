@@ -82,6 +82,7 @@ struct SettingsView: View {
 
             if model.organizer.status?.enabled ?? model.organizerLastKnownEnabled {
                 OrganizerOfflineSettingsSection()
+                RemindersInboxSection()
             }
 
             Section("Account") {
