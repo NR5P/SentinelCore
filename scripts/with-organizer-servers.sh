@@ -29,7 +29,10 @@ start_server() {
     local name="$1" port="$2"
     local data="$scratch/$name"
     mkdir -p "$data"
-    echo '{"Setup":{"Completed":true}}' > "$data/appsettings.json"
+    # Login off, as an admin can set it in Settings: since the first-launch login requirement a
+    # missing Auth section means every API call is 401 until an admin account exists. Same as the
+    # server tests' WebHostTestSettings.LoginOffSettings.
+    echo '{"Setup":{"Completed":true},"Auth":{"Enabled":false}}' > "$data/appsettings.json"
     if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
         echo "port $port is already in use - a server left over from an earlier run? Refusing to test against it." >&2
         return 1
@@ -42,11 +45,19 @@ start_server() {
         --InternetExposed:Enabled=false --Bridge:DataDirectory="$data" --CamerasDataDirectory="$data" \
         --MainAppSettingsPath="$data/appsettings.json" > "$data/server.log" 2>&1) &
     pids+=($!)
+    local code=000
     for _ in $(seq 1 60); do
-        curl -fsS "http://127.0.0.1:$port/api/organizer/status" >/dev/null 2>&1 && return 0
+        code="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/organizer/status" 2>/dev/null || true)"
+        [ "$code" = 200 ] && return 0
+        # Up but refusing (401 = login is on): waiting longer won't help.
+        case "$code" in 4*) break ;; esac
         sleep 1
     done
-    echo "server $name did not start; log:" >&2
+    if [ "$code" = 000 ]; then
+        echo "server $name did not start; log:" >&2
+    else
+        echo "server $name is up but /api/organizer/status answered HTTP $code; log:" >&2
+    fi
     tail -40 "$data/server.log" >&2
     return 1
 }

@@ -88,7 +88,9 @@ dotnet test                    # ~1,360 tests, about two minutes
   3320/3443, creates real certificates and advertises itself over mDNS. For a safe local run,
   use what `scripts/with-organizer-servers.sh` does: `--Urls=http://127.0.0.1:<port>
   --Https:Enabled=false --Discovery:Enabled=false --InternetExposed:Enabled=false` with the data
-  directories pointed at a scratch folder.
+  directories pointed at a scratch folder. Its scratch `appsettings.json` is
+  `{"Setup":{"Completed":true},"Auth":{"Enabled":false}}`: without the explicit `Auth:Enabled=false`
+  a fresh server requires a login and answers 401 to every API call until an admin account exists.
 
 HomeKit sidecar:
 
@@ -154,8 +156,9 @@ scripts/with-organizer-servers.sh swift test --package-path ios/OrganizerKit   #
 ```
 
 `with-organizer-servers.sh` starts two throwaway servers on loopback (ports 8911 and 8912, or
-`ORGANIZER_PORT_A` / `ORGANIZER_PORT_B`) with scratch data, and exports their addresses so the
-live two-device and server-replacement tests run. If a port is already taken, most likely by
+`ORGANIZER_PORT_A` / `ORGANIZER_PORT_B`) with scratch data and the login turned off
+(`Auth:Enabled=false`, as the server tests' `LoginOffSettings` do), and exports their addresses so
+the live two-device and server-replacement tests run. If a port is already taken, most likely by
 another session's servers, pick different ones rather than killing it.
 
 For a Swift model or wire-format change, a quick decode check needs no simulator:
