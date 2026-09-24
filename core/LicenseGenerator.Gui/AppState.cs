@@ -11,6 +11,12 @@ public sealed class AppState
     public string? OutputDirectory { get; set; }
     public string? Product { get; set; }
 
+    // Where the push relay runs - see RelayBlockList. Null means "the default", so a default that
+    // changes in a later build reaches everyone who never customised it.
+    public string? RelaySshTarget { get; set; }
+    public string? RelayConfigPath { get; set; }
+    public string? RelayServiceName { get; set; }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     private static string StatePath

@@ -138,6 +138,16 @@ public sealed class RelayDeviceStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    // Every registration a license holds - see RelayOptions.BlockedLicenseIds.
+    public async Task<int> RemoveLicenseAsync(Guid licenseId, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM Devices WHERE LicenseId = $licenseId;";
+        command.Parameters.AddWithValue("$licenseId", licenseId.ToString("N"));
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<int> CountAsync(Guid licenseId, CancellationToken cancellationToken)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);

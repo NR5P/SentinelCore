@@ -8,6 +8,8 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using SentinelCore.Licensing;
 using Xunit;
@@ -189,6 +191,75 @@ public sealed class PushRelayEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task ABlockedLicense_IsRefusedEverything_AndNothingReachesApple()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var handler = new RecordingHandler(_ => (HttpStatusCode.OK, "{}"));
+        var (blockedId, blocked) = IssueWithId("Leaked Copy");
+        using var factory = CreateFactory(handler, blockedLicenseIds: [blockedId.ToString()]);
+        using var client = factory.CreateClient();
+
+        using var register = await client.PostAsJsonAsync("/v1/devices", RegisterBody("leaked-phone"), ct, blocked);
+        using var push = await client.PostAsJsonAsync("/v1/push", PushBody("leaked-phone"), ct, blocked);
+
+        // 403, not 404: Core re-registers and retries after a 404, which would loop.
+        Assert.Equal(HttpStatusCode.Forbidden, register.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, push.StatusCode);
+        var body = JsonDocument.Parse(await push.Content.ReadAsStringAsync(ct)).RootElement;
+        Assert.Equal(RelayHost::SentinelCore.PushRelay.LicenseAuthMiddleware.BlockedMessage, body.GetProperty("error").GetString());
+        Assert.Empty(handler.Requests);
+    }
+
+    // The whole point: a license that was already working stops, its phones stop receiving, and
+    // the tokens it held are free at once rather than after StaleTokenTakeoverDays.
+    [Fact]
+    public async Task BlockingALicense_TakesEffectWithoutARestart_AndFreesItsDevices()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var handler = new RecordingHandler(_ => (HttpStatusCode.OK, "{}"));
+        var (sharedId, shared) = IssueWithId("Shared Around");
+        var owner = Issue("Real Owner");
+        var bystander = Issue("Someone Else");
+        using var factory = CreateFactory(handler);
+        using var client = factory.CreateClient();
+
+        using (var r = await client.PostAsJsonAsync("/v1/devices", RegisterBody("phone-1"), ct, shared))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var r = await client.PostAsJsonAsync("/v1/devices", RegisterBody("bystander-phone"), ct, bystander))
+            Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using (var taken = await client.PostAsJsonAsync("/v1/devices", RegisterBody("phone-1"), ct, owner))
+            Assert.Equal(HttpStatusCode.Conflict, taken.StatusCode);
+
+        // What editing appsettings.json on the box does: the host reloads its configuration.
+        var configuration = (IConfigurationRoot)factory.Services.GetRequiredService<IConfiguration>();
+        configuration.Providers.OfType<MemoryConfigurationProvider>().Last().Set("Relay:BlockedLicenseIds:0", sharedId.ToString("N"));
+        configuration.Reload();
+
+        using (var refused = await client.PostAsJsonAsync("/v1/push", PushBody("phone-1"), ct, shared))
+            Assert.Equal(HttpStatusCode.Forbidden, refused.StatusCode);
+        Assert.Empty(handler.Requests);
+
+        // Its registration is gone, so the phone's real owner can claim it straight away...
+        using (var claimed = await client.PostAsJsonAsync("/v1/devices", RegisterBody("phone-1"), ct, owner))
+            Assert.Equal(HttpStatusCode.OK, claimed.StatusCode);
+        // ...and nobody else was touched.
+        using (var unaffected = await client.PostAsJsonAsync("/v1/push", PushBody("bystander-phone"), ct, bystander))
+            Assert.Equal(HttpStatusCode.OK, unaffected.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnUnreadableBlockedEntry_IsIgnored_RatherThanTakingTheRelayDown()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory(new RecordingHandler(_ => (HttpStatusCode.OK, "{}")), blockedLicenseIds: ["not-a-license-id"]);
+        using var client = factory.CreateClient();
+
+        using var register = await client.PostAsJsonAsync("/v1/devices", RegisterBody("fine"), ct, Issue("Jane Doe"));
+
+        Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+    }
+
+    [Fact]
     public async Task Register_PastTheDeviceLimit_Is429()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -221,8 +292,12 @@ public sealed class PushRelayEndpointTests : IDisposable
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
 
-    private WebApplicationFactory<RelayProgram> CreateFactory(HttpMessageHandler handler, int maxDevices = 25) =>
+    private WebApplicationFactory<RelayProgram> CreateFactory(HttpMessageHandler handler, int maxDevices = 25, string[]? blockedLicenseIds = null) =>
         new WebApplicationFactory<RelayProgram>().WithWebHostBuilder(builder => builder
+            // Last, so it outranks the committed appsettings.json; also the provider the reload
+            // test edits.
+            .ConfigureAppConfiguration(config => config.AddInMemoryCollection(
+                (blockedLicenseIds ?? []).Select((id, index) => new KeyValuePair<string, string?>($"Relay:BlockedLicenseIds:{index}", id))))
             .UseSetting("Relay:DataDirectory", _dataDirectory)
             .UseSetting("Relay:LicensePublicKeyPem", _publicKeyPem)
             .UseSetting("Relay:MaxDevicesPerLicense", maxDevices.ToString())
@@ -236,8 +311,13 @@ public sealed class PushRelayEndpointTests : IDisposable
             .ConfigureTestServices(services =>
                 services.AddSingleton<IHttpClientFactory>(new SingleClientFactory(handler))));
 
-    private string Issue(string customer) =>
-        LicenseSigner.Sign(new LicenseInfo(customer, "c@example.com", "SentinelCore", Guid.NewGuid(), DateTimeOffset.UtcNow), _signingKey);
+    private string Issue(string customer) => IssueWithId(customer).License;
+
+    private (Guid Id, string License) IssueWithId(string customer)
+    {
+        var id = Guid.NewGuid();
+        return (id, LicenseSigner.Sign(new LicenseInfo(customer, "c@example.com", "SentinelCore", id, DateTimeOffset.UtcNow), _signingKey));
+    }
 
     private static object RegisterBody(string token, string variant = "ios", bool sandbox = false) =>
         new { platform = "apple", token, appVariant = variant, apnsSandbox = sandbox };

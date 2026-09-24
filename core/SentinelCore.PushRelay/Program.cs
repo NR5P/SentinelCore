@@ -59,6 +59,18 @@ app.Logger.LogInformation(
     app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<RelayOptions>>().Value.Apple.Enabled ? "on" : "off",
     app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<RelayOptions>>().Value.Firebase.Enabled ? "on" : "off");
 
+// Said at startup and again whenever appsettings.json is edited, so blocking a license shows up in
+// the journal as having taken - and a mistyped id says so rather than silently blocking nobody.
+var relayOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<RelayOptions>>();
+void LogBlockedLicenses(RelayOptions options)
+{
+    app.Logger.LogInformation("{Count} license(s) blocked", options.BlockedLicenseIds.Count - options.UnreadableBlockedLicenseIds.Count());
+    foreach (var entry in options.UnreadableBlockedLicenseIds)
+        app.Logger.LogWarning("Relay:BlockedLicenseIds entry '{Entry}' is not a license id and is ignored", entry);
+}
+LogBlockedLicenses(relayOptions.CurrentValue);
+relayOptions.OnChange((options, _) => LogBlockedLicenses(options));
+
 app.Run();
 
 // Lets the test project reference this host through WebApplicationFactory, the same way the

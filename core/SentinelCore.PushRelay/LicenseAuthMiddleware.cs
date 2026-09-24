@@ -8,13 +8,17 @@ namespace SentinelCore.PushRelay;
 // Every /v1 request carries the caller's license file - the same .lic the dashboard installs -
 // base64-encoded in one header. Verified here with the public key, so a request that reaches an
 // endpoint is already known to come from a real, unforged license; the LicenseId is then what
-// keeps one install's devices apart from another's.
-public sealed class LicenseAuthMiddleware(RequestDelegate next, IOptions<RelayOptions> options)
+// keeps one install's devices apart from another's. A genuine license can still be switched off
+// with Relay:BlockedLicenseIds.
+public sealed class LicenseAuthMiddleware(RequestDelegate next, IOptionsMonitor<RelayOptions> options)
 {
     public const string HeaderName = "X-Sentinel-License";
     public const string ItemKey = "SentinelCore.License";
 
-    public async Task InvokeAsync(HttpContext context)
+    public const string BlockedMessage =
+        "This Sentinel Core license can no longer use the push notification service. Contact the seller if you think this is a mistake.";
+
+    public async Task InvokeAsync(HttpContext context, RelayDeviceStore devices, ILogger<LicenseAuthMiddleware> logger)
     {
         if (!context.Request.Path.StartsWithSegments("/v1"))
         {
@@ -22,7 +26,8 @@ public sealed class LicenseAuthMiddleware(RequestDelegate next, IOptions<RelayOp
             return;
         }
 
-        var license = Authenticate(context.Request.Headers[HeaderName].ToString(), options.Value.LicensePublicKeyPem);
+        var current = options.CurrentValue;
+        var license = Authenticate(context.Request.Headers[HeaderName].ToString(), current.LicensePublicKeyPem);
         if (license is null)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -30,6 +35,21 @@ public sealed class LicenseAuthMiddleware(RequestDelegate next, IOptions<RelayOp
             {
                 error = "A valid Sentinel Core license is required. Install one in the dashboard under Settings → LICENSE."
             });
+            return;
+        }
+
+        if (current.IsBlocked(license.LicenseId))
+        {
+            // Deleted on every refused call, not once: it is one indexed DELETE, and it means a
+            // registration that raced the config change can't survive it. 403 rather than 401 or
+            // 404 - Core only re-registers after a 404, so this can't start a retry loop.
+            var removed = await devices.RemoveLicenseAsync(license.LicenseId, context.RequestAborted);
+            logger.LogInformation(
+                "Refused blocked license {Customer} ({LicenseId}) on {Path}{Removed}",
+                license.CustomerName, license.LicenseId, context.Request.Path,
+                removed > 0 ? $"; removed its {removed} registered device(s)" : "");
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { error = BlockedMessage });
             return;
         }
 

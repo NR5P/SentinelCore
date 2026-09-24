@@ -29,7 +29,7 @@
         <Image Source="avares://LicenseGenerator.Gui/Assets/AppIcon.png" Width="44" Height="44" />
         <StackPanel VerticalAlignment="Center">
           <TextBlock Text="SentinelCore Licenses" FontSize="19" FontWeight="Bold" />
-          <TextBlock Text="Sign a license for a customer who has paid." Opacity="0.7" FontSize="12" />
+          <TextBlock Text="Issue, check and block Sentinel Core licenses." Opacity="0.7" FontSize="12" />
         </StackPanel>
       </StackPanel>
     </Border>
@@ -108,6 +108,74 @@
             <Button Name="VerifyBrowseButton" AutomationProperties.Name="Choose a license to verify" Content="Choose a .lic file…" HorizontalAlignment="Left" />
             <Border Name="VerifyResultBorder" CornerRadius="6" Padding="14" IsVisible="False">
               <SelectableTextBlock Name="VerifyResultText" AutomationProperties.Name="Verification result" TextWrapping="Wrap" FontFamily="monospace" />
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- BLOCKED -->
+      <TabItem Header="Blocked licenses">
+        <ScrollViewer>
+          <StackPanel Spacing="16" Margin="8,14,8,8">
+            <TextBlock TextWrapping="Wrap" Opacity="0.75"
+                       Text="Cut a license off from the push notification service - for a refund, a chargeback, or a license file that's been shared around. Its phones stop getting alerts right away and it can't register new ones. It's reversible, and it only affects push: the license keeps working on the customer's own server." />
+
+            <Border Classes="card">
+              <StackPanel Spacing="12">
+                <TextBlock Classes="label" Text="Relay server" />
+                <StackPanel>
+                  <TextBlock FontSize="12" Text="Server (user@host, or a Host from ~/.ssh/config)" Margin="0,0,0,4" />
+                  <TextBox Name="RelayTargetBox" AutomationProperties.Name="Relay server" Watermark="user@server" />
+                </StackPanel>
+                <StackPanel>
+                  <TextBlock FontSize="12" Text="Relay settings file on that server" Margin="0,0,0,4" />
+                  <TextBox Name="RelayPathBox" AutomationProperties.Name="Relay settings file path" />
+                </StackPanel>
+                <StackPanel>
+                  <TextBlock FontSize="12" Text="Relay service name (systemd)" Margin="0,0,0,4" />
+                  <TextBox Name="RelayServiceBox" AutomationProperties.Name="Relay service name" />
+                </StackPanel>
+                <TextBlock Classes="hint"
+                           Text="Uses this Mac's own ssh and keys - nothing is stored here but these three fields. For a different port, key or jump host, add a Host entry to ~/.ssh/config and put its name above. Leave the service name empty if the relay doesn't run under systemd; changes then save but aren't confirmed." />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Name="RelayConnectButton" AutomationProperties.Name="Test connection and load the blocked list" Content="Connect" />
+                  <Button Name="RelayDefaultsButton" AutomationProperties.Name="Reset relay settings to defaults" Content="Reset to defaults" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Name="BlockStatusBorder" CornerRadius="6" Padding="12" IsVisible="False">
+              <SelectableTextBlock Name="BlockStatusText" AutomationProperties.Name="Blocked list status" TextWrapping="Wrap" />
+            </Border>
+
+            <StackPanel Spacing="6">
+              <TextBlock Classes="label" Text="Blocked right now" />
+              <ListBox Name="BlockedList" AutomationProperties.Name="Blocked licenses" MinHeight="90" MaxHeight="220" />
+              <Button Name="UnblockButton" AutomationProperties.Name="Unblock the selected license" Content="Unblock selected" HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <Border Classes="card">
+              <StackPanel Spacing="12">
+                <TextBlock Classes="label" Text="Block a license" />
+                <StackPanel>
+                  <TextBlock FontSize="12" Text="From your issued licenses" Margin="0,0,0,4" />
+                  <Grid ColumnDefinitions="*,Auto">
+                    <ComboBox Name="IssuedCombo" AutomationProperties.Name="Issued licenses" Grid.Column="0" HorizontalAlignment="Stretch"
+                              PlaceholderText="Choose a customer" />
+                    <Button Name="BlockIssuedButton" AutomationProperties.Name="Block the chosen customer's license" Grid.Column="1" Content="Block" Margin="8,0,0,0" />
+                  </Grid>
+                </StackPanel>
+                <StackPanel>
+                  <TextBlock FontSize="12" Text="By license id" Margin="0,0,0,4" />
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBox Name="BlockIdBox" AutomationProperties.Name="License id to block" Grid.Column="0"
+                             Watermark="3f2a1c9e-0b7d-4e2a-9c51-6d8f0e4b2a17" />
+                    <Button Name="BlockIdButton" AutomationProperties.Name="Block this license id" Grid.Column="1" Content="Block" Margin="8,0,0,0" />
+                  </Grid>
+                </StackPanel>
+                <Button Name="BlockFileButton" AutomationProperties.Name="Block the license in a .lic file" Content="Block from a .lic file…" HorizontalAlignment="Left" />
+                <TextBlock Name="LedgerHint" Classes="hint" />
+              </StackPanel>
             </Border>
           </StackPanel>
         </ScrollViewer>

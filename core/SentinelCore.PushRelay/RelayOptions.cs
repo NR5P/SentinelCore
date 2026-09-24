@@ -34,6 +34,23 @@ public sealed class RelayOptions
     [Range(1, 3650)]
     public int StaleTokenTakeoverDays { get; init; } = 30;
 
+    // Licenses cut off from the relay - leaked, shared around, or refunded/charged back. Licenses
+    // themselves are perpetual and can't be revoked (nothing on a customer's install phones home
+    // to check), so this is the one place a license can be switched off: every /v1 call from it
+    // gets a 403, and its registrations are deleted so its devices stop receiving pushes and
+    // their tokens are free for whoever really owns the phone. The id is the one the journal
+    // prints next to the customer's name, in either GUID format. Re-read on every request - the
+    // host reloads appsettings.json when it changes - so adding an id needs no restart. Strings
+    // rather than Guids on purpose: a typo'd entry is ignored with a warning (see Program.cs)
+    // instead of failing the binding and taking the whole relay down.
+    public List<string> BlockedLicenseIds { get; init; } = [];
+
+    public bool IsBlocked(Guid licenseId) =>
+        BlockedLicenseIds.Any(entry => Guid.TryParse(entry, out var blocked) && blocked == licenseId);
+
+    public IEnumerable<string> UnreadableBlockedLicenseIds =>
+        BlockedLicenseIds.Where(entry => !Guid.TryParse(entry, out _));
+
     // The license signing key's public half. Defaults to the one compiled into every Core
     // install; overridable only so the tests can sign with a throwaway key. Never set this in a
     // real deployment.

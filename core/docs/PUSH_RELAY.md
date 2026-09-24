@@ -124,6 +124,25 @@ always wins. To exercise the relay end to end, temporarily turn one off:
   `PushesPerLicensePer10Minutes` (200), `StaleTokenTakeoverDays` (30 - after this long without
   a refresh, a token may be claimed by a different license, which is how a phone that moved to
   another household stops being stuck).
+- **Cutting off a license** (leaked, shared around, refunded or charged back): add its id to
+  `Relay:BlockedLicenseIds` in the working copy of `appsettings.json` and save. No restart or
+  deploy - the relay re-reads the file, and the journal says `N license(s) blocked` when it has.
+  The id is the one printed in the journal next to the customer's name (`Jane Doe (3f2a…)`), and
+  in the `.lic` file itself; either GUID format works:
+
+  ```json
+  "Relay": {
+    "BlockedLicenseIds": [ "3f2a1c9e-0b7d-4e2a-9c51-6d8f0e4b2a17" ]
+  }
+  ```
+
+  From then on every call from that license gets `403` with *"This Sentinel Core license can no
+  longer use the push notification service..."* (which the customer's dashboard log shows), its
+  registered devices are deleted on its next call, and it can't register new ones. Core does not
+  retry on a 403, so a blocked install stays quiet. It is push only: the license still clears the
+  UNLICENSED watermark on that install, since licenses are verified offline and never phone home.
+  Removing the id undoes it - the install's phones re-register on their next launch or within
+  six hours. An entry that isn't a GUID is ignored with a warning in the journal.
 - Rotating the APNs key or the Firebase account: replace the file, update the path if it changed,
   `./scripts/deploy.sh relay`. Customers notice nothing.
 
@@ -148,6 +167,7 @@ Nothing about a customer's install knows where the relay physically is - only th
   under that same license - the holder's own devices - and nothing else. `StaleTokenTakeoverDays`
   is the one deliberate relaxation of that, for tokens nobody has refreshed in a month.
 - Rate limits are per license, not per IP, because every request arrives from the tunnel's
-  loopback hop. An abusive license shows up by name in the journal; revoking it is a
-  `DELETE FROM Devices WHERE LicenseId = ...` plus a word with the customer, since licenses
-  themselves are perpetual and unrevocable by design.
+  loopback hop. An abusive license shows up by name in the journal; cut it off with
+  `Relay:BlockedLicenseIds` (see *Day to day*). Deleting its rows from `relay-devices.db` is not
+  enough on its own - Core re-registers on the next push and every six hours. The license file
+  itself stays valid everywhere else, since licenses are perpetual and verified offline.
