@@ -23,7 +23,7 @@ public sealed class RestartEndpointTests : IDisposable
         _dataDirectory = Path.Combine(Path.GetTempPath(), $"restart-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataDirectory);
         _settingsPath = Path.Combine(_dataDirectory, "appsettings.json");
-        File.WriteAllText(_settingsPath, "{}");
+        File.WriteAllText(_settingsPath, WebHostTestSettings.LoginOffSettings);
     }
 
     public void Dispose()
@@ -83,7 +83,7 @@ public sealed class RestartEndpointTests : IDisposable
         // A configured API key gets the request past the 503 guard; the main app itself isn't
         // running in this test host, so the forward must come back 502, not 202.
         File.WriteAllText(_settingsPath, """
-            { "Bridge": { "ApiKey": "a-long-enough-stored-api-key" } }
+            { "Auth": { "Enabled": false }, "Bridge": { "ApiKey": "a-long-enough-stored-api-key" } }
             """);
 
         using var factory = CreateFactory();

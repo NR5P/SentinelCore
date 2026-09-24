@@ -781,7 +781,7 @@ public sealed class BackupCoverageTests : IDisposable
     private WebApplicationFactory<WebProgram> CreateFactory(string dataDirectory, bool writeEmptySettings = true)
     {
         var settingsPath = Path.Combine(dataDirectory, "appsettings.json");
-        if (writeEmptySettings) File.WriteAllText(settingsPath, "{}");
+        if (writeEmptySettings) File.WriteAllText(settingsPath, WebHostTestSettings.LoginOffSettings);
 
         return new WebApplicationFactory<WebProgram>()
             .WithWebHostBuilder(builder => builder

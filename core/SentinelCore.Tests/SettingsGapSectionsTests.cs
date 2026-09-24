@@ -25,7 +25,7 @@ public sealed class SettingsGapSectionsTests : IDisposable
         _dataDirectory = Path.Combine(Path.GetTempPath(), $"settings-gaps-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataDirectory);
         _settingsPath = Path.Combine(_dataDirectory, "appsettings.json");
-        File.WriteAllText(_settingsPath, "{}");
+        File.WriteAllText(_settingsPath, WebHostTestSettings.LoginOffSettings);
     }
 
     public void Dispose()
@@ -167,7 +167,7 @@ public sealed class SettingsGapSectionsTests : IDisposable
         // A file with a hand-added category, exactly what someone chasing one component's logs
         // would have. The save below must not clobber it.
         File.WriteAllText(_settingsPath, """
-            {
+            { "Auth": { "Enabled": false },
               "Logging": {
                 "LogLevel": {
                   "Default": "Information",

@@ -454,9 +454,17 @@ else if (internetExposedSkipReason is not null)
 app.UseMiddleware<ExposureWarningMiddleware>();
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// no-cache means "keep it, but ask first" - with the ETag that's a 304 and a few bytes per file.
+// Without any Cache-Control a browser guesses a freshness window from Last-Modified and keeps
+// running the previous version's scripts after an update, against an API that has moved on:
+// seen with the first-admin screen, where a stale auth.js showed a sign-in box with no account to
+// sign in to.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context => context.Context.Response.Headers.CacheControl = "no-cache"
+});
 // UseAuthentication populates context.User from the session cookie (if any). AuthGateMiddleware
-// then overrides context.User with a synthetic Admin when Auth:Enabled is false, so
+// then overrides context.User with a synthetic Admin when Auth:Enabled is explicitly false, so
 // UseAuthorization's per-endpoint RequireAuthorization checks always pass in that state.
 app.UseAuthentication();
 app.UseMiddleware<AuthGateMiddleware>();
@@ -517,19 +525,19 @@ app.MapGet("/api/health", () => Results.Ok(new
 // quiet until something genuinely reaches this host from off-LAN.
 app.MapGet("/api/exposure/status", async (ExposureTracker tracker, AppSettingsFile settings, CancellationToken ct) =>
 {
-    var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", ct);
+    var loginEnabled = await AuthSettingsDto.IsLoginRequiredAsync(settings, ct);
     return Results.Ok(new
     {
         externalRequestSeen = tracker.HasSeenExternalRequest,
         lastExternalAddress = tracker.LastExternalAddress,
         lastExternalAt = tracker.LastExternalAt,
-        loginEnabled = auth is { Enabled: true }
+        loginEnabled
     });
     // The old blanket AuthGateMiddleware gated everything under /api bar three named paths, so
     // this was covered without saying so. Under the per-endpoint model it has to opt in, or it
     // would hand an unauthenticated caller whether a login exists and the last off-LAN address
     // that reached this host. Harmless when the login is off - the synthetic Admin principal
-    // satisfies it - so the exposure banner keeps working in the shipped default.
+    // satisfies it - so the exposure banner keeps working for an install that turned it off.
 }).RequireAuthorization();
 
 app.MapGet("/api/events", async (

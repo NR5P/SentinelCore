@@ -33,7 +33,7 @@ public sealed class CameraDeletionCascadeTests : IDisposable
         _dataDirectory = Path.Combine(Path.GetTempPath(), $"camera-cascade-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataDirectory);
         _settingsPath = Path.Combine(_dataDirectory, "appsettings.json");
-        File.WriteAllText(_settingsPath, "{}");
+        File.WriteAllText(_settingsPath, WebHostTestSettings.LoginOffSettings);
     }
 
     public void Dispose()

@@ -263,7 +263,7 @@ public sealed class EventImageThumbnailTests : IDisposable
         var dataDirectory = Path.Combine(_root, "app-data");
         Directory.CreateDirectory(dataDirectory);
         var settingsPath = Path.Combine(dataDirectory, "appsettings.json");
-        await File.WriteAllTextAsync(settingsPath, "{}", ct);
+        await File.WriteAllTextAsync(settingsPath, WebHostTestSettings.LoginOffSettings, ct);
 
         using var factory = new WebApplicationFactory<WebProgram>()
             .WithWebHostBuilder(builder => builder

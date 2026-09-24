@@ -286,7 +286,7 @@ public sealed class HostRebootProxyTests : IDisposable
         Directory.CreateDirectory(_dataDirectory);
         _settingsPath = Path.Combine(_dataDirectory, "appsettings.json");
         File.WriteAllText(_settingsPath, """
-            { "Bridge": { "ApiKey": "a-long-enough-stored-api-key" } }
+            { "Bridge": { "ApiKey": "a-long-enough-stored-api-key" }, "Auth": { "Enabled": false } }
             """);
     }
 

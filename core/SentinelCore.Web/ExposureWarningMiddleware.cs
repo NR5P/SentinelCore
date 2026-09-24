@@ -30,8 +30,7 @@ public sealed class ExposureWarningMiddleware(
 
             if (isNew)
             {
-                var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", context.RequestAborted);
-                if (auth is { Enabled: true })
+                if (await AuthSettingsDto.IsLoginRequiredAsync(settings, context.RequestAborted))
                 {
                     logger.LogWarning(
                         "Request from {Address}, which is outside your local network. The dashboard login is on, " +

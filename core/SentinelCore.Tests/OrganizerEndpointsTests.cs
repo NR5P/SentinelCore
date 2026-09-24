@@ -25,7 +25,7 @@ public sealed class OrganizerEndpointsTests : IDisposable
         _dataDirectory = Path.Combine(Path.GetTempPath(), $"organizer-web-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataDirectory);
         _settingsPath = Path.Combine(_dataDirectory, "appsettings.json");
-        File.WriteAllText(_settingsPath, "{}");
+        File.WriteAllText(_settingsPath, WebHostTestSettings.LoginOffSettings);
     }
 
     public void Dispose()
@@ -250,7 +250,7 @@ public sealed class OrganizerEndpointsTests : IDisposable
         var otherDirectory = Path.Combine(Path.GetTempPath(), $"organizer-web-{Guid.NewGuid():N}");
         Directory.CreateDirectory(otherDirectory);
         var otherSettings = Path.Combine(otherDirectory, "appsettings.json");
-        await File.WriteAllTextAsync(otherSettings, "{}", Ct);
+        await File.WriteAllTextAsync(otherSettings, WebHostTestSettings.LoginOffSettings, Ct);
         try
         {
             using var otherFactory = new WebApplicationFactory<WebProgram>()

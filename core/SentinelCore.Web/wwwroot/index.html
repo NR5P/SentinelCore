@@ -645,10 +645,10 @@
   <div id="login-gate" class="lightbox hidden">
     <div class="zone-editor-panel wizard-panel">
       <div class="zone-editor-header">
-        <span>SIGN IN</span>
+        <span id="login-title">SIGN IN</span>
       </div>
       <div class="wizard-body">
-        <p>This dashboard requires a login.</p>
+        <p id="login-intro">This dashboard requires a login.</p>
         <div class="field-row field-row-wide">
           <label class="field-label">Username</label>
           <input type="text" class="field-input" id="login-username" autocomplete="username" />
@@ -656,6 +656,10 @@
         <div class="field-row field-row-wide">
           <label class="field-label">Password</label>
           <input type="password" class="field-input" id="login-password" autocomplete="current-password" />
+        </div>
+        <div class="field-row field-row-wide hidden" id="login-confirm-row">
+          <label class="field-label">Confirm Password</label>
+          <input type="password" class="field-input" id="login-confirm" autocomplete="new-password" />
         </div>
       </div>
       <div class="zone-editor-footer">

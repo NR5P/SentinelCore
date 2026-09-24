@@ -663,7 +663,7 @@ public sealed class SettingsSchemaEndpointTests : IDisposable
         _dataDirectory = Path.Combine(Path.GetTempPath(), $"settings-schema-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataDirectory);
         _settingsPath = Path.Combine(_dataDirectory, "appsettings.json");
-        File.WriteAllText(_settingsPath, "{}");
+        File.WriteAllText(_settingsPath, WebHostTestSettings.LoginOffSettings);
     }
 
     public void Dispose()

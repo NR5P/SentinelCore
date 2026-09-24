@@ -65,9 +65,10 @@ turn that on for a given camera's trigger zone. See [section 6](#6-motion-zones-
 
 ## 2. Opening the dashboard
 
-Point a browser at `http://<your-server's-LAN-IP>:3320`. There's no login by default — it's
-designed for LAN-only use, so don't expose port 3320 (or 5080) to the internet unless you've
-turned on the login (see below) and put it behind HTTPS yourself.
+Point a browser at `http://<your-server's-LAN-IP>:3320`. The first visit asks you to create the
+admin account (see below); after that, every visit starts with a sign-in. It's designed for
+LAN-only use, so don't expose port 3320 (or 5080) to the internet yourself - use Internet
+Exposed Mode (see DEPLOYMENT.md) if you want to reach it from outside.
 
 **About the "Not Secure" label.** Browsers show this because the dashboard is served over plain
 HTTP, which is fine on a home network you trust — nothing is broken. If it bothers you, or if
@@ -82,18 +83,28 @@ Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") 
 whether the dashboard can currently reach its own backend, and eight tabs: **feed**,
 **timeline**, **live**, **cameras**, **triggers**, **automations**, **docs**, **settings**.
 
-The first time you open the dashboard (or after clicking **Re-Run Setup Wizard** in
-Settings → Bridge), a short setup wizard walks through the essentials instead: an API key for
-Blue Iris (generated for you automatically), which AI backend analyzes snapshots, adding at
-least one camera, optional notifications, and whether to require a login. Every step past the
-welcome screen can be skipped, and everything it touches can also be changed later in SETTINGS
-- nothing about it is one-way or final.
+The very first time you open the dashboard, it asks you to **create the admin account** - a
+username and a password of at least 8 characters. Until that account exists the server does
+nothing else: no cameras, no settings, no events, and the apps can't sign in (they show a
+message pointing back here). This has to be done from a browser on the same network as the
+server; it can't be done from outside your home. Keep the password somewhere safe - it's the
+one that manages the whole server, and it's what you'll type into the phone, Mac, TV and
+Windows apps.
 
-**Requiring a login.** Off by default - if this dashboard never leaves your own network, there's
-nothing to set up. If it might ever be reachable elsewhere, turn it on either during setup or
-later in SETTINGS → LOGIN, with a username and password. Once on, opening the dashboard shows a
-sign-in screen instead of your data. Signing out, changing the username/password, or turning it
-back off again are all in SETTINGS → LOGIN too. There's a short lockout after repeated wrong
+Once you're signed in, a short setup wizard walks through the essentials (it also comes back
+after clicking **Re-Run Setup Wizard** in Settings → Bridge): an API key for Blue Iris
+(generated for you automatically), which AI backend analyzes snapshots, adding at least one
+camera, and optional notifications. Every step past the welcome screen can be skipped, and
+everything it touches can also be changed later in SETTINGS - nothing about it is one-way or
+final.
+
+**The login.** Required from the start, so nobody else on your network - and no web page someone
+there happens to open - can watch your cameras or change your settings. Add accounts for other
+people in the household under the **accounts** tab: an *Admin* can change everything, a
+*Viewer* can watch cameras and see events but not change settings. Signing out and changing
+your username/password are in SETTINGS → LOGIN. You *can* turn the login off there as well,
+which opens the dashboard to anyone who can reach it - only worth doing on a network where you
+trust every device and every person, and never on a server reachable from the internet. There's a short lockout after repeated wrong
 attempts from the same device. Signing in issues a session that's remembered for 30 days, but
 note that it lives only in the server's memory - restarting the service (which happens on every
 update) signs everyone out.

@@ -100,6 +100,9 @@ with open(main_path) as f:
 
 main_settings.setdefault("Bridge", {})["ApiKey"] = ""
 main_settings["Setup"] = {"Completed": False}
+# A stranger's install starts locked until its owner creates the first admin account (the
+# dashboard's first screen) - never with this maintainer's own login choice.
+main_settings["Auth"] = {"Enabled": True}
 
 # Every alert-channel section that can hold a live credential or this maintainer's own
 # personal/LAN details (a Blue Iris URL, a Telegram chat ID, ...) - turned off and blanked so a

@@ -8,6 +8,24 @@ window.GateWatchAuth = (function () {
   const accountsTab = document.getElementById("tab-accounts");
   const settingsTab = document.getElementById("tab-settings");
   const devicesTab = document.getElementById("tab-devices");
+  const titleEl = document.getElementById("login-title");
+  const introEl = document.getElementById("login-intro");
+  const confirmRow = document.getElementById("login-confirm-row");
+  const confirmInput = document.getElementById("login-confirm");
+
+  // A fresh install has no accounts, and the server refuses everything until the first admin
+  // exists - so the same overlay doubles as "create your admin account" (see AuthEndpoints'
+  // /api/auth/enable).
+  let creatingFirstAdmin = false;
+
+  function useFirstAdminMode() {
+    creatingFirstAdmin = true;
+    titleEl.textContent = "CREATE ADMIN ACCOUNT";
+    introEl.textContent = "Welcome to Sentinel Core. Choose the username and password for this server's admin account - you'll use them to sign in here and in the apps.";
+    confirmRow.classList.remove("hidden");
+    passwordInput.autocomplete = "new-password";
+    submitBtn.textContent = "create account";
+  }
 
   function showErrors(messages) {
     errorsEl.innerHTML = "";
@@ -20,16 +38,21 @@ window.GateWatchAuth = (function () {
 
   async function submit() {
     showErrors([]);
+    if (creatingFirstAdmin && passwordInput.value !== confirmInput.value) {
+      showErrors(["Passwords do not match."]);
+      return;
+    }
     submitBtn.disabled = true;
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await fetch(creatingFirstAdmin ? "/api/auth/enable" : "/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: usernameInput.value.trim(), password: passwordInput.value })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        showErrors([response.status === 429 ? "Too many attempts - wait a few minutes and try again." : (payload.error || "Sign-in failed.")]);
+        if (response.status === 429) showErrors(["Too many attempts - wait a few minutes and try again."]);
+        else showErrors(payload.errors || [payload.error || (creatingFirstAdmin ? "Could not create the account." : "Sign-in failed.")]);
         return;
       }
       // Simplest way to resume normal init with a fresh, authenticated set of requests -
@@ -43,7 +66,11 @@ window.GateWatchAuth = (function () {
   }
 
   submitBtn.addEventListener("click", submit);
-  passwordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  passwordInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    if (creatingFirstAdmin) confirmInput.focus(); else submit();
+  });
+  confirmInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
   usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") passwordInput.focus(); });
 
   logoutBtn.addEventListener("click", async () => {
@@ -80,6 +107,7 @@ window.GateWatchAuth = (function () {
       if (payload.authenticated || !payload.enabled) await checkDeviceHub();
       if (payload.authenticated) return;
 
+      if (payload.enabled && !payload.configured) useFirstAdminMode();
       overlay.classList.remove("hidden");
       usernameInput.focus();
     } catch {

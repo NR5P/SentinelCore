@@ -23,6 +23,12 @@ namespace SentinelCore.Tests;
 // the file for real.
 internal static class WebHostTestSettings
 {
+    // The main appsettings.json of an install whose admin turned the dashboard login off - every
+    // request is a synthetic Admin. A missing Auth section means login required (and, with no
+    // accounts yet, a server that does nothing but offer to create the first admin), so a test
+    // measuring an endpoint's own behavior rather than the login has to opt out explicitly.
+    public const string LoginOffSettings = """{ "Auth": { "Enabled": false } }""";
+
     public static IWebHostBuilder UseTestSettings(
         this IWebHostBuilder builder, string mainAppSettingsPath, string dataDirectory) =>
         builder

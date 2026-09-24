@@ -3,6 +3,7 @@ extern alias WebHost;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -46,18 +47,110 @@ public sealed class WebAuthorizationTests : IDisposable
             .UseSetting("Bridge:DataDirectory", _dataDirectory));
 
     [Fact]
-    public async Task AuthDisabled_AnEndpointThatWouldOtherwiseRequireAdmin_IsFullyOpen()
+    public async Task AuthTurnedOff_AnEndpointThatWouldOtherwiseRequireAdmin_IsFullyOpen()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await File.WriteAllTextAsync(_settingsPath, WebHostTestSettings.LoginOffSettings, ct);
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        // /api/settings is Admin-only once login is required. An explicit Auth:Enabled=false -
+        // what turning the login off in SETTINGS writes - is the one way to open it to everyone.
+        using var response = await client.GetAsync("/api/settings", ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // A fresh install ships with no Auth section at all. That has to mean "locked", or anyone on
+    // the network - or any web page someone there opens - administers the server until its owner
+    // gets round to setting a password.
+    [Fact]
+    public async Task FreshInstall_RequiresLogin_AndOffersOnlyTheFirstAdminAccount()
     {
         var ct = TestContext.Current.CancellationToken;
         using var factory = CreateFactory();
         using var client = factory.CreateClient();
 
-        // /api/settings is Admin-only once login is required, but Auth:Enabled defaults to
-        // false (the shipped default) - the whole point of that default is that nobody is
-        // ever locked out of a fresh install before they've set anything up.
-        using var response = await client.GetAsync("/api/settings", ct);
+        using (var settings = await client.GetAsync("/api/settings", ct))
+            Assert.Equal(HttpStatusCode.Unauthorized, settings.StatusCode);
+        using (var events = await client.GetAsync("/api/events", ct))
+            Assert.Equal(HttpStatusCode.Unauthorized, events.StatusCode);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/auth/status", ct);
+        Assert.True(status.GetProperty("enabled").GetBoolean());
+        Assert.False(status.GetProperty("configured").GetBoolean());
+        Assert.False(status.GetProperty("authenticated").GetBoolean());
+    }
+
+    // The apps can't create the first account, so signing in to an empty server has to say where
+    // to go rather than "wrong password".
+    [Fact]
+    public async Task FreshInstall_SigningIn_SaysToCreateTheAdminAccountInTheDashboard()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/api/auth/login", new { Username = "anyone", Password = "whatever-it-is" }, ct);
+
+        // Not 401: every client swaps a 401 for its own "sign in" text and would hide this one.
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var payload = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+        Assert.Equal(SentinelCore.Web.AuthEndpoints.NoAdminYetMessage, payload.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task FreshInstall_CreatingTheFirstAdmin_SignsThemIn_AndClosesTheDoorBehindThem()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var owner = factory.CreateClient();
+
+        using (var created = await owner.PostAsJsonAsync("/api/auth/enable", new { Username = "owner", Password = "correct horse battery" }, ct))
+            Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        using (var settings = await owner.GetAsync("/api/settings", ct))
+            Assert.Equal(HttpStatusCode.OK, settings.StatusCode);
+
+        // A second anonymous caller can no longer mint an admin for themselves.
+        using var stranger = factory.CreateClient();
+        using (var second = await stranger.PostAsJsonAsync("/api/auth/enable", new { Username = "intruder", Password = "correct horse battery" }, ct))
+            Assert.Equal(HttpStatusCode.Unauthorized, second.StatusCode);
+        using (var intruderLogin = await stranger.PostAsJsonAsync("/api/auth/login", new { Username = "intruder", Password = "correct horse battery" }, ct))
+            Assert.Equal(HttpStatusCode.Unauthorized, intruderLogin.StatusCode);
+
+        using var scope = factory.Services.CreateScope();
+        var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
+        Assert.NotNull(await accounts.GetByUsernameAsync("owner", ct));
+        Assert.Null(await accounts.GetByUsernameAsync("intruder", ct));
+    }
+
+    [Fact]
+    public async Task FreshInstall_TheFirstAdminCannotBeCreatedFromOutsideTheLocalNetwork()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory().WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.AddSingleton<IStartupFilter>(new RemoteAddressStartupFilter(IPAddress.Parse("203.0.113.9")))));
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/api/auth/enable", new { Username = "owner", Password = "correct horse battery" }, ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var scope = factory.Services.CreateScope();
+        Assert.False(await scope.ServiceProvider.GetRequiredService<IAccountStore>().AnyAccountsExistAsync(ct));
+    }
+
+    // TestServer leaves RemoteIpAddress unset, which counts as local; this pins it to a public one.
+    private sealed class RemoteAddressStartupFilter(IPAddress address) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use((context, nextMiddleware) =>
+            {
+                context.Connection.RemoteIpAddress = address;
+                return nextMiddleware(context);
+            });
+            next(app);
+        };
     }
 
     [Fact]
@@ -85,10 +178,11 @@ public sealed class WebAuthorizationTests : IDisposable
     public async Task WebRtcSignaling_IsGatedByLoginExactlyLikeTheStreamItReplaces()
     {
         var ct = TestContext.Current.CancellationToken;
+        await File.WriteAllTextAsync(_settingsPath, WebHostTestSettings.LoginOffSettings, ct);
         using var factory = CreateFactory();
 
-        // Shipped default (no login configured): open, like every other camera endpoint. 404 is
-        // the proof authorization let the request through - the camera genuinely doesn't exist.
+        // Login turned off: open, like every other camera endpoint. 404 is the proof
+        // authorization let the request through - the camera genuinely doesn't exist.
         using (var client = factory.CreateClient())
         {
             using var open = await client.PostAsync($"/api/cameras/{Guid.NewGuid()}/webrtc", new StringContent("v=0"), ct);

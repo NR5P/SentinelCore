@@ -25,7 +25,7 @@ public sealed class SettingsSecretsTests : IDisposable
         _dataDirectory = Path.Combine(Path.GetTempPath(), $"settings-secrets-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataDirectory);
         _settingsPath = Path.Combine(_dataDirectory, "appsettings.json");
-        File.WriteAllText(_settingsPath, "{}");
+        File.WriteAllText(_settingsPath, WebHostTestSettings.LoginOffSettings);
     }
 
     public void Dispose()
@@ -44,7 +44,7 @@ public sealed class SettingsSecretsTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         File.WriteAllText(_settingsPath, """
-            {
+            { "Auth": { "Enabled": false },
               "Telegram": { "Enabled": true, "BotToken": "1234567:real-bot-token", "ChatId": "9876" },
               "Email": { "Enabled": false, "AppPassword": "" }
             }
@@ -75,7 +75,7 @@ public sealed class SettingsSecretsTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         File.WriteAllText(_settingsPath, """
-            { "Telegram": { "Enabled": true, "BotToken": "1234567:real-bot-token", "ChatId": "9876" } }
+            { "Auth": { "Enabled": false }, "Telegram": { "Enabled": true, "BotToken": "1234567:real-bot-token", "ChatId": "9876" } }
             """);
 
         using var factory = CreateFactory();
@@ -107,7 +107,7 @@ public sealed class SettingsSecretsTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         File.WriteAllText(_settingsPath, """
-            { "Telegram": { "Enabled": true, "BotToken": "1234567:old-token", "ChatId": "9876" } }
+            { "Auth": { "Enabled": false }, "Telegram": { "Enabled": true, "BotToken": "1234567:old-token", "ChatId": "9876" } }
             """);
 
         using var factory = CreateFactory();
@@ -139,7 +139,7 @@ public sealed class SettingsSecretsTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         File.WriteAllText(_settingsPath, """
-            { "Bridge": { "ApiKey": "a-long-enough-stored-api-key", "MaximumImageBytes": 10485760, "RetentionDays": 30, "SaveImages": true, "AllowedImageContentTypes": ["image/jpeg"] } }
+            { "Auth": { "Enabled": false }, "Bridge": { "ApiKey": "a-long-enough-stored-api-key", "MaximumImageBytes": 10485760, "RetentionDays": 30, "SaveImages": true, "AllowedImageContentTypes": ["image/jpeg"] } }
             """);
 
         using var factory = CreateFactory();
@@ -171,7 +171,7 @@ public sealed class SettingsSecretsTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         File.WriteAllText(_settingsPath, """
-            { "Mqtt": { "Enabled": true, "RunEmbeddedBroker": true, "EmbeddedBrokerPort": 1883, "BrokerHost": "127.0.0.1", "BrokerPort": 1883, "Username": "sentinel", "Password": "real-broker-password", "TopicPrefix": "sentinelcore", "HomeAssistantDiscoveryPrefix": "homeassistant" } }
+            { "Auth": { "Enabled": false }, "Mqtt": { "Enabled": true, "RunEmbeddedBroker": true, "EmbeddedBrokerPort": 1883, "BrokerHost": "127.0.0.1", "BrokerPort": 1883, "Username": "sentinel", "Password": "real-broker-password", "TopicPrefix": "sentinelcore", "HomeAssistantDiscoveryPrefix": "homeassistant" } }
             """);
 
         var settings = new AppSettingsFile(_settingsPath);

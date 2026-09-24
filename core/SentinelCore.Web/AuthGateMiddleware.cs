@@ -2,8 +2,8 @@ namespace SentinelCore.Web;
 
 // Runs after UseAuthentication() has populated context.User from any valid session cookie, and
 // before UseAuthorization() evaluates each endpoint's RequireAuthorization policy. Its only job
-// now: when the dashboard login is turned off entirely (Auth:Enabled=false, the shipped
-// default), override context.User with a synthetic Admin principal so every
+// now: when an admin has turned the dashboard login off entirely (an explicit Auth:Enabled=false;
+// a missing value means required - see AuthSettingsDto), override context.User with a synthetic Admin principal so every
 // RequireAuthorization check - including AdminOnly ones - passes for everyone, preserving
 // "disabled = fully open" exactly as before the multi-account refactor. Re-reads Auth:Enabled
 // fresh via AppSettingsFile on every request (same "no caching" approach LicenseEndpoints
@@ -24,8 +24,7 @@ public sealed class AuthGateMiddleware(RequestDelegate next, AppSettingsFile set
         }
 
         var isExposedRequest = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port;
-        var auth = await settings.GetSectionAsync<AuthSettingsDto>("Auth", context.RequestAborted);
-        if (!isExposedRequest && auth is not { Enabled: true })
+        if (!isExposedRequest && !await AuthSettingsDto.IsLoginRequiredAsync(settings, context.RequestAborted))
             context.User = AccountPrincipal.CreateSyntheticAdmin();
 
         await next(context);

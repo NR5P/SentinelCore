@@ -35,7 +35,7 @@ public sealed class PushStatusEndpointTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         File.WriteAllText(_settingsPath, """
-            { "PushNotifications": { "Enabled": true,
+            { "Auth": { "Enabled": false }, "PushNotifications": { "Enabled": true,
                 "Apple": { "Enabled": false }, "Firebase": { "Enabled": false },
                 "Relay": { "Enabled": true, "Url": "https://push.example.test" } } }
             """);
@@ -57,7 +57,7 @@ public sealed class PushStatusEndpointTests : IDisposable
     {
         var ct = TestContext.Current.CancellationToken;
         File.WriteAllText(_settingsPath, """
-            { "PushNotifications": { "Enabled": true,
+            { "Auth": { "Enabled": false }, "PushNotifications": { "Enabled": true,
                 "Apple": { "Enabled": false }, "Firebase": { "Enabled": false },
                 "Relay": { "Enabled": false } } }
             """);

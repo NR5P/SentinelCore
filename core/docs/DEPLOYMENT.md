@@ -181,8 +181,17 @@ The client apps have their own build and test procedures; see
 
 ## 6. First-time configuration
 
-The dashboard's own setup wizard (opens automatically on first visit once both services are
-running - see [USER_GUIDE.md § Opening the dashboard](USER_GUIDE.md#2-opening-the-dashboard))
+The first visit to the dashboard asks for the **admin account** (username + password). The login
+is required from first boot: until that account exists every API call except creating it gets
+`401`, the apps' sign-in shows "This server has no accounts yet...", and the account can only be
+created from a local-network address, never through the Internet Exposed port. (A reverse proxy
+or tunnel pointed at 3320 on the same machine arrives from `127.0.0.1` and so counts as local -
+one more reason to create the account before setting any of that up.) Do this straight after
+installing - until it's done, anyone on the LAN who opens the dashboard first gets to choose the
+admin password.
+
+After that, the dashboard's own setup wizard (opens automatically once you're signed in - see
+[USER_GUIDE.md § Opening the dashboard](USER_GUIDE.md#2-opening-the-dashboard))
 covers the essentials below - API key, vision backend, a camera, notifications - without
 hand-editing `appsettings.json`. The walkthrough here is the manual/advanced path, for anything
 the wizard doesn't cover or if you'd rather edit the file directly.
@@ -214,10 +223,13 @@ the wizard doesn't cover or if you'd rather edit the file directly.
    small notice but every feature keeps working regardless - this is visibility, not a
    functional lock. See `LicenseGenerator/README.md` if you're the one issuing licenses rather
    than installing a purchased copy.
-7. Optionally require a login for the dashboard under `Auth` (`Enabled`/`Username`/
-   `PasswordHash`) - off by default, matching every install before this feature existed. The
-   setup wizard and Settings → LOGIN are the supported way to turn this on (they handle
-   hashing); there's no supported way to set `PasswordHash` by hand.
+7. The dashboard login lives under `Auth:Enabled` and is **on** unless that is explicitly
+   `false` - a missing section or value means required. Accounts themselves are not in this
+   file (they're in the dashboard's `data/accounts.db`); create the first one on the dashboard's first screen and
+   the rest under the accounts tab. `Auth:Enabled: false` - what Settings → LOGIN → turn off
+   writes - makes every request an admin; only set it on a network where that's acceptable.
+   Upgrading an older install whose file already says `"Enabled": false` keeps it open;
+   change it to `true` (or delete the line) to get the new behaviour.
 
 Do not expose port 5080 to the internet. The API key is LAN authentication, not a substitute
 for TLS on an untrusted network. The same applies to port 3320/the dashboard login - it's a
@@ -1000,8 +1012,10 @@ ingress:
 
 > **Point the tunnel at this port, not 3320.** The forced-login behaviour is tied to the port
 > the request arrives on. A tunnel pointed at the ordinary dashboard port (3320) reaches a
-> listener that still trusts the local network, so with `Auth:Enabled` off — the shipped
-> default — the entire API would be reachable from the internet with no login at all. The same
+> listener that still trusts the local network, so if the login has ever been turned off
+> (`Auth:Enabled: false`) the entire API would be reachable from the internet with no login at
+> all - and on an install whose admin account hasn't been created yet, a stranger could create
+> it. The same
 > applies to the "Remote address" field in the iOS, Android, and Apple TV apps: it should be the
 > hostname of a tunnel that terminates on the Internet Exposed port.
 
@@ -1149,7 +1163,8 @@ same as `install-linux.sh`/`install-macos.sh`/`install-windows.ps1` do for a sou
 Before zipping, the script also replaces the repo's own `appsettings.json` files with a clean,
 secret-free copy for each bundle: `Bridge:ApiKey` blanked (the app generates and persists a
 fresh one on first boot - see `AutoApiKeyProvisioner` - so this isn't a manual step either),
-`Setup:Completed` set to false so the setup wizard runs, and every alert channel (Email,
+`Setup:Completed` set to false so the setup wizard runs, `Auth:Enabled` set to true so the
+install starts locked until its owner creates the admin account, and every alert channel (Email,
 Telegram, Discord, Webhook, MQTT, Blue Iris, Cloud Vision) reset to `Enabled: false` with its
 credentials cleared. Otherwise a release built from a machine with a live, configured install
 would ship that maintainer's own API keys and personal settings to everyone who downloaded it.
@@ -1184,8 +1199,9 @@ are never staged.
      otherwise refuses to run anything downloaded by a browser without it)
    - Windows: right-click `install.ps1` → Run with PowerShell, from an elevated (Administrator)
      prompt
-3. Open the dashboard at the address the installer prints when it finishes, and go through the
-   setup wizard (API key, vision backend, cameras, notifications).
+3. Open the dashboard at the address the installer prints when it finishes, create the admin
+   account it asks for, and go through the setup wizard (API key, vision backend, cameras,
+   notifications).
 
 This installs the same three services (bridge, dashboard, optional HomeKit sidecar) under the
 same service manager as sections 8/8b/8c — systemd, Windows Services, or launchd — just pointed
@@ -1276,7 +1292,8 @@ A fresh install passing proves nothing about an upgrade - the two paths barely o
 shipping a new release .zip, run this end to end at least once:
 
 1. Install the **previous** release from its .zip.
-2. Go through the setup wizard for real: set an API key, add a camera, enable one alert channel
+2. Create the admin account, then go through the setup wizard for real: set an API key, add a
+   camera, enable one alert channel
    with a credential in it, and trust the server's certificate on a phone.
 3. Let some events land so `SentinelCore/data/events.db` and `data/images/` are non-empty.
 4. Unpack the **new** .zip over that directory and re-run its install script.
