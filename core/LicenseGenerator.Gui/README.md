@@ -52,7 +52,7 @@ by hand against the key itself:
 openssl pkey -in private.pem -pubout -outform DER | shasum -a 256
 ```
 
-## The other two tabs
+## The other tabs
 
 **Verify** checks any `.lic` against the same public key the customer's server uses - useful
 before emailing one, or to work out why one a customer sent back isn't being accepted.
@@ -62,11 +62,58 @@ has a signing key; generating another doesn't add one, it replaces it, and every
 issued stops verifying the moment the new public key ships. It refuses to overwrite an existing
 `private.pem`, and writes new ones `0600`.
 
+## Blocked licenses
+
+Cuts a license off from the push relay - for a refund, a chargeback, or a `.lic` that's been
+shared around - and undoes it. It edits `Relay:BlockedLicenseIds` in the relay's own
+`appsettings.json` over SSH; the relay notices the file change by itself, so there's no restart
+or deploy. What blocking does to a customer is described in
+[docs/PUSH_RELAY.md](../docs/PUSH_RELAY.md) under *Cutting off a license*: their phones stop
+getting pushes, nothing else about their install changes.
+
+1. **Relay server** - three settings, remembered:
+   - *Server*: `user@host`, or the name of a `Host` entry in `~/.ssh/config`. Use the latter for
+     anything more than a hostname - a different port, key file or jump host.
+   - *Relay settings file*: where the relay's `appsettings.json` is on that server. `~/` works.
+   - *Relay service name*: its systemd unit, used only to confirm a change (and to say on
+     *Connect* whether it's running). Leave it empty if the relay runs some other way; changes
+     then save but aren't confirmed.
+
+   The defaults are today's setup (`user@server`, the repo checkout on the media box,
+   `sentinelcore-push-relay`). **If the relay moves to another host**, change these three fields
+   and press *Connect* - nothing to rebuild. *Reset to defaults* puts them back.
+2. **Connect** reads the current list and checks the relay is running. It changes nothing.
+3. **Block** a license three ways: pick a customer from your license records, paste a license id,
+   or open their `.lic` file. **Unblock selected** takes one off again.
+
+After each change the app watches the relay's journal for its `N license(s) blocked` line and
+says whether the relay confirmed it. If it doesn't, the most likely reason is a relay built before
+blocking existed - it saves the list and ignores it until `./scripts/deploy.sh relay` is run.
+
+It uses this Mac's own `ssh` in batch mode, so the key has to work without a password prompt:
+`ssh user@server` in Terminal should log straight in. Nothing but the three fields above is
+stored. Each change re-reads the file first and replaces it in one step (written beside it, then
+renamed over it), so it never overwrites an edit made on the server in the meantime and the relay
+never reads a half-written file.
+
+## License records
+
+Every license issued here is added to a local list - customer, email, license id, issue date and
+where the file was saved - so a refund months later doesn't mean hunting through sent mail for the
+`.lic`. Licenses issued before this list existed get added by opening them in **Verify**. The
+Blocked licenses tab uses the list to show names next to ids.
+
+It lives in `~/Library/Application Support/SentinelCore/issued-licenses.json` (macOS) or
+`~/.config/SentinelCore/issued-licenses.json` (Linux). **Back it up alongside the signing key.**
+If it ever fails to read, the app says so and stops adding to it rather than replacing it with an
+empty list.
+
 ## Where settings live
 
-The chosen key path, output folder and product name are remembered in
+The chosen key path, output folder, product name and relay connection are remembered in
 `~/Library/Application Support/SentinelCore/license-generator-gui.json` on macOS, and
-`~/.config/SentinelCore/license-generator-gui.json` on Linux. Paths only - no key material.
+`~/.config/SentinelCore/license-generator-gui.json` on Linux. Paths and host names only - no key
+material.
 
 ## Notes for anyone editing this
 

@@ -124,7 +124,9 @@ always wins. To exercise the relay end to end, temporarily turn one off:
   `PushesPerLicensePer10Minutes` (200), `StaleTokenTakeoverDays` (30 - after this long without
   a refresh, a token may be claimed by a different license, which is how a phone that moved to
   another household stops being stuck).
-- **Cutting off a license** (leaked, shared around, refunded or charged back): add its id to
+- **Cutting off a license** (leaked, shared around, refunded or charged back): the easy way is
+  the **Blocked licenses** tab of the license app (`LicenseGenerator.Gui`), which does all of the
+  below over SSH, shows names next to ids, and confirms the relay picked it up. By hand: add its id to
   `Relay:BlockedLicenseIds` in the working copy of `appsettings.json` and save. No restart or
   deploy - the relay re-reads the file, and the journal says `N license(s) blocked` when it has.
   The id is the one printed in the journal next to the customer's name (`Jane Doe (3f2a…)`), and
@@ -158,6 +160,9 @@ Nothing about a customer's install knows where the relay physically is - only th
    certificate. Keep the process itself on loopback.
 3. Repoint `push.nr5p.com` (the tunnel's public hostname, or DNS) at the new host.
 4. Stop and disable the unit on the old host.
+5. In the license app's **Blocked licenses** tab, point *Server*, *Relay settings file* and
+   *Relay service name* at the new host and press *Connect*. Copy `BlockedLicenseIds` across with
+   `appsettings.json` in step 1, or the move quietly unblocks everyone.
 
 ## Threat model, briefly
 
