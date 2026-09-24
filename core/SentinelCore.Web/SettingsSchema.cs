@@ -1093,6 +1093,40 @@ public static class SettingsSchema
                 Check("enabled", "Enabled", "Allow this machine to be rebooted from the apps. You'll still be asked to confirm every time, and the reboot screen will tell you if the operating system hasn't been set up to permit it yet."),
                 Number("delaySeconds", "Undo window (s)", "How long to wait before actually rebooting, so a mis-tap can be called back. The reboot screen counts down and offers Cancel for this long. Set to 0 to reboot immediately.", 0, 3600)
             ]
+        },
+        new()
+        {
+            Key = "autoExport",
+            Title = "NIGHTLY AUTO EXPORT",
+            Group = SettingsGroups.Maintenance,
+            Endpoint = "/api/settings/auto-export",
+            Basic = true,
+            DtoType = typeof(AutoExportSettingsDto),
+            Description = "Saves a complete backup every night, so if this machine dies nothing has to be set up again. Each file has every setting, camera, trigger zone, recording schedule, gate check, user account, Device Hub device, automation rule and schedule, and all Organizer notes, events, reminders and boards with their attachments. It also has known-face photos, the licence, and this server's HTTPS certificate authority and HomeKit pairing. Send it to another computer - a network share or SFTP - so it survives losing this one. Restore it under Settings -> Backup. The file holds every password and key this install has, so set a passphrase if it's leaving this machine. Event history and recorded video aren't included.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Export a full backup every night at the time below. The first one runs at the next scheduled time - use 'export now' to make one straight away and check it works."),
+                Number("hour", "Hour (0-23)", "Hour to run, in 24-hour time, in the Schedules time zone (the server's own if that's blank). Pick a quiet time; if the server is off then, the export runs as soon as it's back.", 0, 23),
+                Number("minute", "Minute", "Minute past the hour to run.", 0, 59),
+                Select("destination", "Destination", "Where each night's file goes. Folder covers this machine, a mounted network drive (e.g. /mnt/nas/backups) and, on Windows, a \\\\server\\share path. SFTP sends it to another computer over SSH - a Mac with Remote Login on, a Linux box or most NAS units - with nothing to mount.",
+                    ("folder", "Folder / network share"),
+                    ("sftp", "Another computer (SFTP)")),
+                Text("folderPath", "Folder", "Full path of the folder to write to, when Destination is Folder. Created if it doesn't exist. For another computer, point this at a mounted share - a folder on this machine's own disk won't survive this machine failing."),
+                Text("sftpHost", "SFTP Server", "Address of the computer to send to, when Destination is SFTP - an IP address or host name."),
+                Number("sftpPort", "SFTP Port", "SSH port on that computer. 22 unless you've changed it.", 1, 65535),
+                Text("sftpUsername", "SFTP Username", "Account to sign in to that computer as."),
+                Password("sftpPassword", "SFTP Password", "Password for that account."),
+                Text("sftpFolder", "SFTP Folder", "Folder on that computer to put the files in, e.g. Backups/SentinelCore. Relative paths start from the account's home folder. Created if it doesn't exist."),
+                Text("sftpHostKeyFingerprint", "SFTP Host Key Fingerprint", "Optional but recommended: the server's SHA256 key fingerprint. When set, the upload is refused if a different machine answers at that address. Leave blank for the first run - the fingerprint seen is shown in the result of 'export now', ready to paste here."),
+                Number("keepCount", "Keep This Many", "How many nightly files to keep at the destination. Older ones this feature made are deleted after each successful export; nothing else in the folder is ever touched.", 1, 365),
+                Password("passphrase", "Encryption Passphrase", "Optional. Encrypts every file with this passphrase (AES-256). You need it to restore, and a lost passphrase can't be recovered - keep it somewhere other than this machine. Leave blank for an unencrypted .zip.")
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "runAutoExportNow",
+                "export now",
+                "Run the export once, right now, to the destination as saved - save first. It shows how it went; the dashboard's Backup section shows how the last nightly run went, and a failed night is sent to you on every alert channel you've set up. It works even while Enabled is off, so you can check the destination before turning it on.",
+                "/api/backup/auto/run",
+                "POST")
         }
     ];
 

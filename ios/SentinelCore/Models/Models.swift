@@ -729,6 +729,16 @@ struct BackupRestoreResult: Decodable {
     var triggerZonesRestored: Int?
     var gateChecksRestored: Int?
     var accountsRestored: Int?
+    var recordingSchedulesRestored: Int?
+    var devicesRestored: Int?
+    var automationRulesRestored: Int?
+    var schedulesRestored: Int?
+    var organizerItemsRestored: Int?
+    var attachmentsRestored: Int?
+    var knownFacePhotosRestored: Int?
+    // Things to act on that the counts can't say - "restart the dashboard", "the main app wasn't
+    // running so devices weren't restored".
+    var notes: [String]?
 
     // The non-empty parts, phrased for a sentence: "3 cameras, 1 trigger zone".
     var summary: String {
@@ -736,14 +746,26 @@ struct BackupRestoreResult: Decodable {
             (camerasRestored, "camera"),
             (cameraGroupsRestored, "camera group"),
             (triggerZonesRestored, "trigger zone"),
+            (recordingSchedulesRestored, "recording schedule"),
             (gateChecksRestored, "gate check"),
-            (accountsRestored, "account")
+            (accountsRestored, "account"),
+            (devicesRestored, "device"),
+            (automationRulesRestored, "automation rule"),
+            (schedulesRestored, "schedule"),
+            (organizerItemsRestored, "Organizer item"),
+            (attachmentsRestored, "attachment"),
+            (knownFacePhotosRestored, "face photo")
         ]
         let described = parts.compactMap { count, noun -> String? in
             guard let count, count > 0 else { return nil }
             return "\(count) \(noun)\(count == 1 ? "" : "s")"
         }
         return described.isEmpty ? "settings" : described.joined(separator: ", ")
+    }
+
+    // The whole outcome as one message: what came back, then anything still to do.
+    var message: String {
+        (["Restored \(summary)."] + (notes ?? [])).joined(separator: " ")
     }
 }
 

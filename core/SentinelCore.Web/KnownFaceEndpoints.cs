@@ -197,7 +197,7 @@ public static class KnownFaceEndpoints
         if (File.Exists(absolutePath)) File.Delete(absolutePath);
     }
 
-    private static string ResolveDataRoot(BridgeOptions bridgeOptions, IHostEnvironment environment) =>
+    internal static string ResolveDataRoot(BridgeOptions bridgeOptions, IHostEnvironment environment) =>
         Path.IsPathRooted(bridgeOptions.DataDirectory)
             ? bridgeOptions.DataDirectory
             : Path.Combine(environment.ContentRootPath, bridgeOptions.DataDirectory);

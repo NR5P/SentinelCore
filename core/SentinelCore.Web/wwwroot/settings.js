@@ -1417,7 +1417,7 @@ window.GateWatchSettings = (function () {
     const header = document.createElement("div");
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">BACKUP</span><span class="settings-section-caret">&#9656;</span>`;
-    header.dataset.tip = "Export everything configurable here - settings, cameras, camera groups, trigger zones, gate checks, user accounts, known vehicles, prompt profiles - as one file, or restore from a previous export.";
+    header.dataset.tip = "Download a complete backup - every setting, camera, schedule, account, Device Hub device and Organizer item with its attachments - or restore from one. For a copy every night, see NIGHTLY AUTO EXPORT.";
     header.addEventListener("click", () => {
       section.classList.toggle("open");
       window.GateWatchTooltips.schedule();
@@ -1425,11 +1425,11 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
-    body.appendChild(buildSectionIntro("Saves everything configurable here - settings, cameras, camera groups, trigger zones, gate checks, user accounts, known vehicles, prompt profiles - into one file you can restore later or move to another machine. Worth doing before any big change, and after you first get things working the way you like."));
+    body.appendChild(buildSectionIntro("Saves everything you'd otherwise have to set up again into one file. That's settings, cameras, camera groups, trigger zones, recording schedules, gate checks, user accounts, Device Hub devices, automation rules and schedules. It's also all Organizer notes, events, reminders and boards with their attachments, known faces with their photos, the licence, and this server's HTTPS certificate authority and HomeKit pairing. Restore it here, on this machine or a replacement. To have this done for you every night, and sent to another computer, turn on NIGHTLY AUTO EXPORT."));
 
     const warning = document.createElement("div");
     warning.className = "settings-hint";
-    warning.textContent = "Includes secrets (passwords, API keys, tokens) and every user account's stored password for a complete restore - anyone with this file can sign in to a restored copy as any of your users, so store it like a password. Restoring overlays onto your current setup; it never deletes a camera or setting the backup doesn't mention.";
+    warning.textContent = "Includes secrets (passwords, API keys, tokens) and every user account's stored password for a complete restore - anyone with this file can sign in to a restored copy as any of your users, so store it like a password, or give it a passphrase below. Restoring overlays onto your current setup; it never deletes a camera or setting the backup doesn't mention.";
     body.appendChild(warning);
 
     // The two things about restoring accounts that are surprising in the moment rather than in
@@ -1437,16 +1437,40 @@ window.GateWatchSettings = (function () {
     // which is what stops a backup with a forgotten admin password locking you out mid-restore.
     const accountsNote = document.createElement("div");
     accountsNote.className = "settings-hint";
-    accountsNote.textContent = "Restoring brings back user accounts and signs those people out, so they'll log in again with the password from the backup. Your own account is left exactly as it is. Event history and captured images aren't included.";
+    accountsNote.textContent = "Restoring brings back user accounts and signs those people out, so they'll log in again with the password from the backup. Your own account is left exactly as it is. Event history, captured images and recorded video aren't included.";
     body.appendChild(accountsNote);
+
+    // How the last nightly export went - the one place the result of a run nobody watched shows up.
+    const autoStatus = document.createElement("div");
+    autoStatus.className = "settings-hint";
+    autoStatus.hidden = true;
+    body.appendChild(autoStatus);
+    loadAutoExportStatus(autoStatus);
+
+    const passphraseRow = document.createElement("div");
+    passphraseRow.className = "field-row field-row-wide";
+    passphraseRow.dataset.tip = "Optional. Encrypts the full backup you download, and is what you enter to restore an encrypted one. At least 8 characters. There's no way to recover a file whose passphrase is lost.";
+    const passphraseLabel = document.createElement("label");
+    passphraseLabel.className = "field-label";
+    passphraseLabel.textContent = "Passphrase (optional)";
+    const passphraseInput = document.createElement("input");
+    passphraseInput.type = "password";
+    passphraseInput.className = "field-input";
+    passphraseInput.autocomplete = "new-password";
+    passphraseRow.append(passphraseLabel, passphraseInput);
+    body.appendChild(passphraseRow);
 
     const exportRow = document.createElement("div");
     exportRow.className = "profiles-toolbar";
+    const bundleBtn = document.createElement("button");
+    bundleBtn.className = "btn";
+    bundleBtn.textContent = "download full backup";
+    bundleBtn.dataset.tip = "Everything, including Organizer attachments, known-face photos, the licence and this server's certificates, as one .zip - or an encrypted .scbackup if you've entered a passphrase above.";
     const exportBtn = document.createElement("button");
     exportBtn.className = "btn";
-    exportBtn.textContent = "export backup";
-    exportBtn.dataset.tip = "Download everything configurable here as one JSON file.";
-    exportRow.appendChild(exportBtn);
+    exportBtn.textContent = "export settings only (.json)";
+    exportBtn.dataset.tip = "The configuration and Organizer items as a JSON file, without the attached files or certificates - the same file the phone and Mac apps save. Never encrypted.";
+    exportRow.append(bundleBtn, exportBtn);
     body.appendChild(exportRow);
 
     const importRow = document.createElement("div");
@@ -1456,14 +1480,43 @@ window.GateWatchSettings = (function () {
     importLabel.textContent = "Restore from backup";
     const fileInput = document.createElement("input");
     fileInput.type = "file";
-    fileInput.accept = ".json";
+    fileInput.accept = ".json,.zip,.scbackup";
     fileInput.id = "backup-file-input";
     importRow.append(importLabel, fileInput);
     body.appendChild(importRow);
 
+    // Off by default: on a server that's working, replacing its certificate authority means every
+    // device has to trust it again. On a replacement for a lost server it's what saves that.
+    const identityRow = document.createElement("div");
+    identityRow.className = "field-row field-checkbox-row";
+    identityRow.dataset.tip = "Tick this when restoring onto a new machine that replaces a lost one. It brings back the old server's HTTPS certificate authority, so phones and browsers that trusted it trust this one, and its HomeKit pairing, so the Home app finds the bridge it already knows. Both need a restart afterwards. Leave it off when rolling back on a server that's working - replacing its certificates would make every device trust it again from scratch.";
+    const identitySwitch = document.createElement("label");
+    identitySwitch.className = "switch";
+    const identityInput = document.createElement("input");
+    identityInput.type = "checkbox";
+    const identityTrack = document.createElement("span");
+    identityTrack.className = "switch-track";
+    identitySwitch.append(identityInput, identityTrack);
+    const identityText = document.createElement("span");
+    identityText.className = "field-label";
+    identityText.textContent = "This is a replacement server (restore its certificates and HomeKit pairing)";
+    identityRow.append(identitySwitch, identityText);
+    body.appendChild(identityRow);
+
     const errors = document.createElement("ul");
     errors.className = "field-errors";
     body.appendChild(errors);
+
+    function saveBlob(blob, name) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
 
     exportBtn.addEventListener("click", async () => {
       exportBtn.disabled = true;
@@ -1474,20 +1527,47 @@ window.GateWatchSettings = (function () {
           return;
         }
         const data = await response.json();
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `sentinelcore-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-        showToast("Backup downloaded", true);
+        saveBlob(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+          `sentinelcore-backup-${new Date().toISOString().slice(0, 10)}.json`);
+        showToast(data.warnings && data.warnings.length ? `Downloaded, but: ${data.warnings.join(" ")}` : "Backup downloaded", !(data.warnings && data.warnings.length));
       } catch {
         showToast("Export failed", false);
       } finally {
         exportBtn.disabled = false;
+      }
+    });
+
+    bundleBtn.addEventListener("click", async () => {
+      errors.innerHTML = "";
+      const passphrase = passphraseInput.value;
+      if (passphrase && passphrase.length < 8) {
+        showFieldErrors(errors, ["Use a passphrase of at least 8 characters, or leave it blank."]);
+        return;
+      }
+      bundleBtn.disabled = true;
+      const original = bundleBtn.textContent;
+      bundleBtn.textContent = "building…";
+      try {
+        const response = await fetch("/api/backup/bundle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase: passphrase || null })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          showFieldErrors(errors, [payload.error || "Could not build the backup."]);
+          showToast("Backup failed", false);
+          return;
+        }
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const match = /filename="?([^";]+)"?/.exec(disposition);
+        saveBlob(await response.blob(), match ? match[1] : `sentinelcore-backup.${passphrase ? "scbackup" : "zip"}`);
+        showToast("Full backup downloaded", true);
+      } catch {
+        showToast("Backup failed", false);
+      } finally {
+        bundleBtn.disabled = false;
+        bundleBtn.textContent = original;
       }
     });
 
@@ -1496,14 +1576,15 @@ window.GateWatchSettings = (function () {
       if (!file) return;
       errors.innerHTML = "";
       try {
-        const contents = await file.text();
-        const response = await fetch("/api/backup/import", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: contents
-        });
+        // Sent as raw bytes - the server works out from the contents whether it's JSON, a zip or
+        // an encrypted bundle. The passphrase goes in a header, never the URL.
+        const headers = { "Content-Type": "application/octet-stream" };
+        if (passphraseInput.value) headers["X-Backup-Passphrase"] = passphraseInput.value;
+        const query = identityInput.checked ? "?machineIdentity=true" : "";
+        const response = await fetch(`/api/backup/import${query}`, { method: "POST", headers, body: file });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
+          if (payload.passphraseRequired) passphraseInput.focus();
           showFieldErrors(errors, payload.errors || ["Could not restore that file."]);
           showToast("Restore failed", false);
           return;
@@ -1514,12 +1595,27 @@ window.GateWatchSettings = (function () {
           [payload.camerasRestored, "camera"],
           [payload.cameraGroupsRestored, "camera group"],
           [payload.triggerZonesRestored, "trigger zone"],
+          [payload.recordingSchedulesRestored, "recording schedule"],
           [payload.gateChecksRestored, "gate check"],
-          [payload.accountsRestored, "account"]
+          [payload.accountsRestored, "account"],
+          [payload.devicesRestored, "device"],
+          [payload.automationRulesRestored, "automation rule"],
+          [payload.schedulesRestored, "schedule"],
+          [payload.organizerItemsRestored, "Organizer item"],
+          [payload.attachmentsRestored, "attachment"],
+          [payload.knownFacePhotosRestored, "face photo"]
         ]
           .filter(([count]) => count > 0)
           .map(([count, noun]) => `${count} ${noun}${count === 1 ? "" : "s"}`);
-        showToast(restored.length ? `Restored ${restored.join(", ")}` : "Restored settings", true);
+        const summary = restored.length ? `Restored ${restored.join(", ")}` : "Restored settings";
+        // Notes are things to act on (restart this, that part was skipped) - they stay on screen
+        // rather than vanishing with a toast and a reload.
+        if (payload.notes && payload.notes.length) {
+          showFieldErrors(errors, [summary + ".", ...payload.notes]);
+          showToast(summary, true);
+          return;
+        }
+        showToast(summary, true);
         window.location.reload();
       } catch {
         showFieldErrors(errors, ["Network error while restoring."]);
@@ -1530,6 +1626,28 @@ window.GateWatchSettings = (function () {
 
     section.append(header, body);
     return section;
+  }
+
+  async function loadAutoExportStatus(el) {
+    try {
+      const response = await fetch("/api/backup/auto/status");
+      if (!response.ok) return;
+      const status = await response.json();
+      if (!status.enabled && !status.lastAttemptUtc) return;
+      const when = (iso) => new Date(iso).toLocaleString();
+      const parts = [];
+      if (status.lastAttemptUtc) {
+        const label = { ok: "succeeded", incomplete: "was saved but incomplete", failed: "failed" }[status.lastResult] || status.lastResult;
+        parts.push(`Last ${status.lastTrigger === "manual" ? "manual" : "nightly"} export (${when(status.lastAttemptUtc)}) ${label}: ${status.lastMessage}`);
+        if (status.lastWarnings && status.lastWarnings.length) parts.push(status.lastWarnings.join(" "));
+      }
+      if (status.enabled && status.nextRunUtc) parts.push(`Next nightly export: ${when(status.nextRunUtc)}.`);
+      else if (!status.enabled) parts.push("Nightly auto export is off.");
+      el.textContent = parts.join(" ");
+      el.hidden = false;
+    } catch {
+      // The status line is a nicety; the section works without it.
+    }
   }
 
   // Custom rather than a generic SECTIONS entry because the useful half of this section isn't

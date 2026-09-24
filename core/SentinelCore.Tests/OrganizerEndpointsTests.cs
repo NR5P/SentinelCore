@@ -242,7 +242,7 @@ public sealed class OrganizerEndpointsTests : IDisposable
         await SyncAsync(client, new { cursor = 0, changes = new[] { Change("r", "reminder", new() { ["spaceId"] = "family", ["title"] = "Trash day" }) } });
 
         var backup = await client.GetFromJsonAsync<JsonElement>("/api/backup/export", Ct);
-        Assert.Equal(3, backup.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(BackupService.CurrentSchemaVersion, backup.GetProperty("schemaVersion").GetInt32());
         var items = backup.GetProperty("organizer").GetProperty("items");
         Assert.Equal("Trash day", Assert.Single(items.EnumerateArray()).GetProperty("fields").GetProperty("title").GetString());
 

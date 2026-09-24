@@ -52,7 +52,8 @@ public sealed record SettingsSnapshot(
     // Appended last, with a default, so a backup file written before this property existed still
     // deserializes - the same rule the properties above it follow.
     ScheduledRecordingSettingsDto? ScheduledRecording = null,
-    OrganizerSettingsDto? Organizer = null);
+    OrganizerSettingsDto? Organizer = null,
+    AutoExportSettingsDto? AutoExport = null);
 
 public static class SettingsEndpoints
 {
@@ -171,6 +172,16 @@ public static class SettingsEndpoints
 
         settings.MapPut("/organizer", async (OrganizerSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, OrganizerSettingsDto.SectionName, ct));
+
+        settings.MapPut("/auto-export", async (AutoExportSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            dto.Destination = dto.Destination?.Trim().ToLowerInvariant() ?? AutoExportSettingsDto.DestinationFolder;
+            dto.FolderPath = dto.FolderPath?.Trim() ?? string.Empty;
+            dto.SftpHost = dto.SftpHost?.Trim() ?? string.Empty;
+            dto.SftpFolder = dto.SftpFolder?.Trim() ?? string.Empty;
+            dto.SftpHostKeyFingerprint = dto.SftpHostKeyFingerprint?.Trim() ?? string.Empty;
+            return await SaveSectionAsync(dto, appSettings, AutoExportSettingsDto.SectionName, ct);
+        });
 
         settings.MapPut("/package-theft-watch", async (PackageTheftWatchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "PackageTheftWatch", ct));
@@ -430,28 +441,36 @@ public static class SettingsEndpoints
             IAccountStore accounts,
             CancellationToken ct) =>
         {
-            var errors = ValidateDataAnnotations(dto);
-            if (dto.Enabled)
-            {
-                var httpsSettings = HttpsSettings.FromConfiguration(configuration);
-                if (!httpsSettings.CanEnable(out var httpsReason))
-                {
-                    errors.Add(httpsReason
-                        ?? "Internet Exposed Mode requires a local HTTPS certificate to be configured first - see docs/DEPLOYMENT.md.");
-                }
-                else if (dto.Port == httpsSettings.Port)
-                {
-                    errors.Add($"Internet Exposed port {dto.Port} must be different from the HTTPS port.");
-                }
-
-                if (!await accounts.AnyAccountsExistAsync(ct))
-                    errors.Add("Create an admin account before enabling Internet Exposed Mode - otherwise the port would require login with no way to sign in.");
-            }
+            var errors = await ValidateInternetExposedAsync(dto, configuration, accounts, ct);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
 
             await webSettings.MergeSectionAsync("InternetExposed", dto, ct);
             return Results.Ok(new { saved = true, restartRequired = true });
         });
+    }
+
+    // Shared with restore (BackupService), which applies a backup's Internet Exposed Mode only when
+    // this machine could actually run it - the rules depend on this machine's HTTPS certificate.
+    internal static async Task<List<string>> ValidateInternetExposedAsync(
+        InternetExposedSettingsDto dto, IConfiguration configuration, IAccountStore accounts, CancellationToken ct)
+    {
+        var errors = ValidateDataAnnotations(dto);
+        if (!dto.Enabled) return errors;
+
+        var httpsSettings = HttpsSettings.FromConfiguration(configuration);
+        if (!httpsSettings.CanEnable(out var httpsReason))
+        {
+            errors.Add(httpsReason
+                ?? "Internet Exposed Mode requires a local HTTPS certificate to be configured first - see docs/DEPLOYMENT.md.");
+        }
+        else if (dto.Port == httpsSettings.Port)
+        {
+            errors.Add($"Internet Exposed port {dto.Port} must be different from the HTTPS port.");
+        }
+
+        if (!await accounts.AnyAccountsExistAsync(ct))
+            errors.Add("Create an admin account before enabling Internet Exposed Mode - otherwise the port would require login with no way to sign in.");
+        return errors;
     }
 
     public static async Task<SettingsSnapshot> BuildSnapshotAsync(AppSettingsFile settings, CancellationToken cancellationToken) => new(
@@ -513,7 +532,8 @@ public static class SettingsEndpoints
             ?? new RepeatAlertsSettingsDto(),
         await settings.GetSectionAsync<ScheduledRecordingSettingsDto>(
             ScheduledRecordingOptions.SectionName, cancellationToken),
-        await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken));
+        await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken),
+        await settings.GetSectionAsync<AutoExportSettingsDto>(AutoExportSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -559,6 +579,7 @@ public static class SettingsEndpoints
         TriggerRewind = snapshot.TriggerRewind ?? new(),
         ScheduledRecording = snapshot.ScheduledRecording ?? new(),
         Organizer = snapshot.Organizer ?? new(),
+        AutoExport = snapshot.AutoExport ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -638,6 +659,7 @@ public static class SettingsEndpoints
         if (snapshot.NuisanceAdvisor is not null) await settings.MergeSectionAsync("NuisanceAdvisor", snapshot.NuisanceAdvisor, cancellationToken);
         if (snapshot.ScheduledRecording is not null) await settings.MergeSectionAsync(ScheduledRecordingOptions.SectionName, snapshot.ScheduledRecording, cancellationToken);
         if (snapshot.Organizer is not null) await settings.MergeSectionAsync(OrganizerSettingsDto.SectionName, snapshot.Organizer, cancellationToken);
+        if (snapshot.AutoExport is not null) await MergeUnmaskedAsync(snapshot.AutoExport, AutoExportSettingsDto.SectionName, settings, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

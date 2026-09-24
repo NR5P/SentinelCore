@@ -291,7 +291,7 @@ public static class DeviceHubEndpoints
             .Select(pair => (object)new { key = pair.Key, value = pair.Value })
             .ToArray();
 
-    private static HubDevice ToDevice(HubDeviceDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
+    internal static HubDevice ToDevice(HubDeviceDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
         id,
         dto.Name.Trim(),
         dto.Kind.Trim().ToLowerInvariant(),

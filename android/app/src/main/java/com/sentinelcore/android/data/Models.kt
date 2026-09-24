@@ -961,3 +961,7 @@ data class ScheduleInput(
 )
 
 data class ScheduleRunResult(val fired: Boolean, val detail: String)
+
+// What a backup restore put back: the non-zero counts by noun, plus anything the server says is
+// still to do ("restart the dashboard") that a count can't express.
+data class BackupRestoreSummary(val counts: List<Pair<Int, String>>, val notes: List<String>)

@@ -1149,7 +1149,7 @@ without having switched to advanced still finds it.
 shows only the settings most people actually change: Alert Intake & History, Email, Daily
 Summary, Telegram Alerts, Discord Alerts, Push Notifications, Server Outage Alerts, Internet Outage
 Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
-Insect Advisor, Login Alerts, Bug Reports, System Health, Apple HomeKit, Backup, Login and
+Insect Advisor, Login Alerts, Bug Reports, System Health, Apple HomeKit, Nightly Auto Export, Backup, Login and
 License. **Advanced** adds everything else: the AI tuning knobs, image processing,
 self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces, multi-frame analysis,
 and prompt profiles.
@@ -1307,15 +1307,30 @@ The full list below covers both modes:
   from Home. Shows the pairing QR code here. Its own section below. See
   [section 14](#14-apple-homekit).
 - **Webhook** — POSTs each analyzed event to another system (home automation, logging, etc.).
-- **Backup** — exports everything on this list, plus cameras, camera groups, trigger zones, gate
-  checks, user accounts and each person's live grid arrangement, as one JSON file, and restores
-  from a previous export. It contains your secrets *and* every account's stored password, so
-  anyone holding the file can sign in to a restored copy as any of your users — keep it somewhere
-  you'd keep a password. Restoring overlays onto your current setup: it never deletes a camera or
-  setting the file doesn't mention, other people are signed out and log back in with the password
-  from the backup, and **your own account is left untouched** so a backup whose admin password
-  nobody remembers can't lock you out mid-restore. **Not included:** event history and captured
-  images. Backups from older versions still restore; they simply bring the sections they have.
+- **Backup** — downloads everything you'd otherwise have to set up again as one file, and
+  restores from one. **download full backup** gives a `.zip` (or an encrypted `.scbackup` if you
+  enter a passphrase) with every setting; cameras, camera groups, trigger zones, recording
+  schedules and gate checks; user accounts and each person's live grid arrangement; Device Hub
+  devices, automation rules and schedules; every Organizer note, event, reminder and board with
+  its attached files; known faces with their photos; the licence; and this server's HTTPS
+  certificate authority and HomeKit pairing. **export settings only (.json)** is the older,
+  smaller file without the attachments, photos and certificates — the same one the phone, Mac and
+  Windows apps save. It contains your secrets *and* every account's stored password, so anyone
+  holding the file can sign in to a restored copy as any of your users — keep it somewhere you'd
+  keep a password, or give it a passphrase. Restoring accepts any of the three file types and
+  overlays onto your current setup: it never deletes a camera or setting the file doesn't
+  mention, other people are signed out and log back in with the password from the backup, and
+  **your own account is left untouched** so a backup whose admin password nobody remembers can't
+  lock you out mid-restore. Tick **This is a replacement server** only when restoring onto a new
+  machine that replaces a lost one — that also brings back the certificate authority (so your
+  devices trust the new machine) and the HomeKit pairing; restart the dashboard and HomeKit
+  service afterwards. **Not included:** event history, captured images and recorded video.
+  Backups from older versions still restore; they simply bring the sections they have.
+- **Nightly Auto Export** — does the above for you every night: writes the full backup to a
+  folder (this machine, a mounted network share, or a Windows `\\server\share`) or over SFTP to
+  another computer, keeps the last *N*, and tells you on your alert channels if a night fails.
+  Set a passphrase if the file is leaving this machine. Press **export now** after saving to test
+  it. See DEPLOYMENT.md, *Nightly Auto Export*.
 - **Login** — an optional username/password gate for this dashboard, off by default. See
   [section 2](#2-opening-the-dashboard).
 - **Login Alerts** — tells you when someone fails to sign in to the dashboard, which is the one

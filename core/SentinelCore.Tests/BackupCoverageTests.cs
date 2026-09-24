@@ -49,38 +49,94 @@ public sealed class BackupCoverageTests : IDisposable
         return path;
     }
 
-    // The guard against the drift this file exists for: every configuration store the app
-    // persists is either in the backup document or on the deliberately-excluded list. A new
-    // store shows up here as a failure naming it, rather than as a surprise during a restore.
+    // The guard against the drift this file exists for: every table any SentinelCore service
+    // creates is either carried by the backup or on the deliberately-excluded list with its
+    // reason. It reads the tables out of the source rather than a list kept here, because a
+    // list kept here is exactly how RecordingSchedules and the main app's Devices, AutomationRules
+    // and Schedules tables all went unbacked-up: nobody added them to it. A new table now fails
+    // this test by name until someone decides which side it belongs on.
     [Fact]
-    public void EveryConfigurationStore_IsEitherBackedUp_OrDeliberatelyExcluded()
+    public void EveryTableAnyServiceCreates_IsEitherBackedUp_OrDeliberatelyExcluded()
     {
-        var backedUp = new[] { "Cameras", "CameraGroups", "TriggerZones", "GateChecks", "Accounts", "LiveOrder", "Organizer" };
+        // Table -> where it lives in BackupDocument ("Section" or "Section.Property").
+        var backedUp = new Dictionary<string, string>
+        {
+            ["Cameras"] = "Cameras",
+            ["CameraGroups"] = "CameraGroups",
+            ["TriggerConfigs"] = "TriggerZones",
+            ["GateChecks"] = "GateChecks",
+            ["Accounts"] = "Accounts",
+            ["LiveOrders"] = "LiveOrder",
+            ["RecordingSchedules"] = "RecordingSchedules",
+            ["Spaces"] = "Organizer.Spaces",
+            ["Items"] = "Organizer.Items",
+            ["FeedTokens"] = "Organizer.FeedTokens",
+            ["Meta"] = "Organizer.Preferences",
+            ["Devices"] = "Hub.Devices",
+            ["AutomationRules"] = "Hub.AutomationRules",
+            ["Schedules"] = "Hub.Schedules",
+        };
 
-        // Excluded on purpose, each for a reason recorded next to it in BackupEndpoints:
-        //   Sessions       - a live login; restoring one onto another machine would hand it over
-        //   TriggerEvents  - event history, not configuration
-        //   ReviewedEvents - which events someone has already looked at; likewise history
-        var deliberatelyExcluded = new[] { "Sessions", "TriggerEvents", "ReviewedEvents" };
+        // Excluded on purpose, each for a reason recorded in BackupEndpoints:
+        var deliberatelyExcluded = new Dictionary<string, string>
+        {
+            ["Sessions"] = "a live login; restoring one onto another machine would hand it over",
+            ["TriggerEvents"] = "event history, not configuration",
+            ["ReviewedEvents"] = "which events someone has looked at; history",
+            ["AlertEvents"] = "event history",
+            ["Recordings"] = "the list of recorded videos; history, and the videos aren't in the backup",
+            ["ScheduleRuns"] = "a schedule's run log; history",
+            ["NuisanceAdvisories"] = "suggestions worked out from recent events; regenerated",
+            ["PackageWatches"] = "open package watches; runtime state measured in hours",
+            ["PushDevices"] = "each app re-registers every time it connects",
+            ["Removals"] = "the organizer's sync log; a restored server tells devices to resync instead",
+        };
 
-        var documentSections = typeof(BackupDocument)
-            .GetProperties()
-            .Select(p => p.Name)
-            .ToHashSet();
+        var root = RepositoryCoreDirectory();
+        var tables = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var project in new[] { "SentinelCore", "SentinelCore.Web" })
+        foreach (var file in Directory.EnumerateFiles(Path.Combine(root, project), "*.cs", SearchOption.AllDirectories))
+        {
+            if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") ||
+                file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")) continue;
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                File.ReadAllText(file), @"CREATE TABLE IF NOT EXISTS (\w+)"))
+                tables.Add(match.Groups[1].Value);
+        }
 
-        foreach (var store in backedUp)
+        Assert.Contains("Cameras", tables);
+        foreach (var table in tables)
         {
             Assert.True(
-                documentSections.Contains(store),
-                $"{store} is configuration but BackupDocument has no section for it - a restore would silently lose it.");
+                backedUp.ContainsKey(table) || deliberatelyExcluded.ContainsKey(table),
+                $"Table {table} is new: nothing says whether it's in the backup. If it holds configuration, add it " +
+                "to BackupDocument/BackupService and to the backed-up list here; if it's history or runtime state, " +
+                "add it to the excluded list with the reason.");
         }
 
-        foreach (var store in deliberatelyExcluded)
+        foreach (var (table, location) in backedUp)
         {
-            Assert.False(
-                documentSections.Contains(store),
-                $"{store} is on the deliberately-excluded list but appears in BackupDocument - update one or the other.");
+            var parts = location.Split('.');
+            var property = typeof(BackupDocument).GetProperty(parts[0]);
+            Assert.True(property is not null, $"{table} is listed as backed up in BackupDocument.{parts[0]}, which doesn't exist.");
+            if (parts.Length == 2)
+            {
+                var inner = Nullable.GetUnderlyingType(property!.PropertyType) ?? property.PropertyType;
+                Assert.True(inner.GetProperty(parts[1]) is not null,
+                    $"{table} is listed as backed up in {location}, but {inner.Name} has no {parts[1]}.");
+            }
         }
+
+        foreach (var table in deliberatelyExcluded.Keys)
+            Assert.False(typeof(BackupDocument).GetProperty(table) is not null,
+                $"{table} is on the deliberately-excluded list but appears in BackupDocument - update one or the other.");
+    }
+
+    private static string RepositoryCoreDirectory()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+            if (File.Exists(Path.Combine(directory.FullName, "SentinelCore.slnx"))) return directory.FullName;
+        throw new InvalidOperationException("Couldn't find core/SentinelCore.slnx above the test output directory.");
     }
 
     // Restoring a camera group has to keep its Id, or a second import of the same file makes a
@@ -784,9 +840,6 @@ public sealed class BackupCoverageTests : IDisposable
         if (writeEmptySettings) File.WriteAllText(settingsPath, WebHostTestSettings.LoginOffSettings);
 
         return new WebApplicationFactory<WebProgram>()
-            .WithWebHostBuilder(builder => builder
-                .UseSetting("MainAppSettingsPath", settingsPath)
-                .UseSetting("CamerasDataDirectory", dataDirectory)
-                .UseSetting("Bridge:DataDirectory", dataDirectory));
+            .WithWebHostBuilder(builder => builder.UseTestSettings(settingsPath, dataDirectory));
     }
 }

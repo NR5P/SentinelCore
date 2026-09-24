@@ -1270,26 +1270,80 @@ cp backups/<timestamp>/SentinelCore.appsettings.json SentinelCore/appsettings.js
 ```
 
 Your cameras, events and images are never modified by any of this, so a rollback doesn't lose
-them. For a portable copy of the configuration in one file - settings, cameras, camera groups,
-trigger zones, gate checks, user accounts and each person's live grid arrangement - use
-**Settings → Backup** in the dashboard before upgrading.
+them. For a portable copy of everything you'd otherwise have to set up again, use
+**Settings → Backup → download full backup** in the dashboard before upgrading - or better, turn
+on **Settings → Nightly Auto Export** and never think about it again (below).
 
-Because it carries accounts, that file includes every stored password hash. **Anyone holding it
-can stand up a copy of this install and sign in as any of your users.** Treat it as a credential,
-not a config file: it does not belong in a shared drive, a chat message, or a git repository.
+The full backup is one `.zip` (or, with a passphrase, an encrypted `.scbackup`) holding:
 
-That export is the only thing that survives losing the machine entirely, so it is worth knowing
-exactly what it does **not** carry, because none of it is recoverable from the file alone:
+- every setting, including Nightly Auto Export's own, so a restored install keeps exporting;
+- cameras, camera groups, trigger zones, recording schedules and gate checks;
+- user accounts and each person's live grid arrangement;
+- the main service's Device Hub devices, automation rules and schedules;
+- every Organizer note, event, reminder, board, card and comment, **with the attached files**,
+  plus each person's calendar-feed link and Organizer preferences;
+- known faces **with their reference photos**, and the licence file;
+- this server's HTTPS certificate authority (`certs/ca.crt` + `ca.key`) and HomeKit pairing,
+  which are only put back when you tick *This is a replacement server* while restoring.
 
-| Not in the export | What that means after a machine loss |
+The plain **export settings only (.json)** button - and the phone, Mac and Windows apps' backup
+screens - still produce the older single JSON file: the same configuration, without the attached
+files, photos, licence or certificates.
+
+Because it carries accounts, a backup includes every stored password hash, and every API key and
+bot token the install has. **Anyone holding it can stand up a copy of this install and sign in as
+any of your users.** Treat it as a credential, not a config file: set a passphrase if it leaves
+this machine, and keep it out of shared drives, chat messages and git repositories.
+
+What is still **not** in any backup, deliberately:
+
+| Not in the backup | Why, and what it means after a machine loss |
 |---|---|
-| Events, captured images, review marks | History, not configuration, and far too large for a settings file. Back up `SentinelCore/data/` separately if you want to keep it. |
-| HTTPS certificate authority (`certs/`) | Every phone, Mac and Apple TV trusts this specific CA (§ 14a). Losing it means re-trusting the new one on every device. Copy `certs/` somewhere safe. |
-| HomeKit pairings | Re-pair from the QR code in Settings → Apple HomeKit. |
-| Login sessions | Everyone signs in again. Deliberate - a restored session would be a live login handed to another machine. |
+| Events, captured images, recorded video, review marks | History, not configuration, and far too large. Back up `SentinelCore/data/` separately if you want to keep it. |
+| Login sessions | Everyone signs in again. A restored session would be a live login handed to another machine. |
+| Push registrations | Each phone re-registers the next time the app connects. |
+| A schedule's next-due time, a gate's last seen state | Worked out afresh on the restored install, so nothing fires for things that "should" have happened while it was down. |
+| An HTTPS certificate you configured by hand (a real domain certificate) | Only the certificate authority this server generated for itself is backed up. Keep your own certificate files wherever you got them. |
 
-So a genuine off-machine backup is that JSON export **plus** `certs/`, and `SentinelCore/data/` if
-you want the event history too. The export alone gets you a working install, not an identical one.
+**Restoring onto a replacement machine:** install as normal, create the admin account, then
+**Settings → Backup → Restore from backup**, pick the file, enter its passphrase if it has one,
+and tick **This is a replacement server**. Keep the main SentinelCore service running during the
+restore - the devices, rules and schedules are written through it, and a restore that includes
+them is refused, with nothing changed, if it can't be reached. Afterwards restart the dashboard
+(`sudo systemctl restart sentinelcore-web`) so it serves a certificate from the restored
+authority, and the HomeKit service (`sudo systemctl restart sentinelcore-homekit`) so the Home
+app finds the bridge it already knows. Devices that trusted the old server then trust this one
+with no re-setup.
+
+### Nightly Auto Export
+
+**Settings → Nightly Auto Export** writes the full backup every night at the time you pick (in
+the Schedules time zone), keeps the last *N*, and deletes older ones it made - nothing else in
+the folder is ever touched. Each file is written privately first, read back end to end to prove it
+decrypts and unzips, and only then copied to the destination under a temporary name and renamed
+into place, so the destination only ever holds complete files. A night that fails is retried
+hourly, up to six times. If the machine was off at the scheduled time, it runs as soon as it's
+back. A failed or incomplete night is sent to you on every alert channel you have set up (email,
+Telegram, push), at most once a day. The dashboard's Backup section shows how the last run went.
+
+Destinations:
+
+- **Folder** - a full path on this machine, a mounted network share (e.g. an NFS or SMB mount
+  at `/mnt/nas/backups`), or on Windows a `\\server\share\folder` path. A folder on this
+  machine's own disk is better than nothing, but it doesn't survive losing the disk.
+- **SFTP** - another computer over SSH, with nothing to mount: a Mac with *Remote Login* on
+  (System Settings → General → Sharing), a Linux box, or most NAS units. Username and password
+  authentication. Leave **Host Key Fingerprint** blank for the first run; the fingerprint seen is
+  shown in the result of **export now**, and pasting it into the field makes later uploads refuse
+  any other machine answering at that address. To check it against the target itself, run
+  `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` there.
+
+Press **export now** after saving to test the destination straight away; it works even with
+the feature switched off.
+
+A passphrase encrypts each file with AES-256-GCM (key from PBKDF2-SHA256, 600,000 iterations).
+**There is no way to open a file whose passphrase is lost** - keep it somewhere other than this
+machine.
 
 **Restoring accounts onto a machine you are signed in to** leaves your own account exactly as it
 is - matched by account id *or* username, so it holds whether you are re-importing onto the same

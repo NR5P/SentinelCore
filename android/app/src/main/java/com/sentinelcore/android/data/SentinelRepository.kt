@@ -187,19 +187,29 @@ class SentinelRepository(
     }
 
     // The counts of what was actually restored, by noun. Absent sections are left out rather than
-    // reported as zero - a backup taken before camera groups existed hasn't lost any.
-    suspend fun importBackup(contents: String): List<Pair<Int, String>> = withContext(Dispatchers.IO) {
+    // reported as zero - a backup taken before camera groups existed hasn't lost any. Notes are the
+    // things still to do that a count can't say ("restart the dashboard").
+    suspend fun importBackup(contents: String): BackupRestoreSummary = withContext(Dispatchers.IO) {
         val json = JSONObject(request("/api/backup/import", method = "POST", body = contents))
-        listOf(
+        val counts = listOf(
             "camerasRestored" to "camera",
             "cameraGroupsRestored" to "camera group",
             "triggerZonesRestored" to "trigger zone",
+            "recordingSchedulesRestored" to "recording schedule",
             "gateChecksRestored" to "gate check",
             "accountsRestored" to "account",
+            "devicesRestored" to "device",
+            "automationRulesRestored" to "automation rule",
+            "schedulesRestored" to "schedule",
+            "organizerItemsRestored" to "Organizer item",
+            "attachmentsRestored" to "attachment",
+            "knownFacePhotosRestored" to "face photo",
         ).mapNotNull { (key, noun) ->
             val count = json.optInt(key)
             if (count > 0) count to noun else null
         }
+        val notesJson = json.optJSONArray("notes") ?: JSONArray()
+        BackupRestoreSummary(counts, List(notesJson.length()) { notesJson.optString(it) })
     }
 
     suspend fun homeKitStatus(): HomeKitStatus = withContext(Dispatchers.IO) {

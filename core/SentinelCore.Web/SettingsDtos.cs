@@ -646,3 +646,90 @@ public sealed class OrganizerSettingsDto
     [Range(1, 2048)]
     public int MaxAttachmentMegabytes { get; set; } = 50;
 }
+
+// Nightly automatic export of the full backup (see AutoExportWorker) to a folder - on this
+// machine, a mounted network share, or a Windows \\server\share path - or over SFTP to another
+// computer. Lives in the main app's appsettings.json with every other section, so it is itself
+// part of the backup it writes: a restored install goes on exporting to the same place.
+public sealed class AutoExportSettingsDto : IValidatableObject
+{
+    public const string SectionName = "AutoExport";
+    public const string DestinationFolder = "folder";
+    public const string DestinationSftp = "sftp";
+
+    public bool Enabled { get; set; }
+
+    // Local time in the Schedules time zone (the server's own if that is blank), the same clock
+    // every other schedule on this install runs by.
+    [Range(0, 23)]
+    public int Hour { get; set; } = 3;
+
+    [Range(0, 59)]
+    public int Minute { get; set; }
+
+    public string Destination { get; set; } = DestinationFolder;
+
+    public string FolderPath { get; set; } = string.Empty;
+
+    public string SftpHost { get; set; } = string.Empty;
+
+    [Range(1, 65535)]
+    public int SftpPort { get; set; } = 22;
+
+    public string SftpUsername { get; set; } = string.Empty;
+
+    public string SftpPassword { get; set; } = string.Empty;
+
+    public string SftpFolder { get; set; } = string.Empty;
+
+    // Optional. When set, the upload refuses a server whose host key doesn't match - the
+    // protection against something else answering at that address and collecting every secret
+    // this install has. When blank the key is accepted and its fingerprint shown in the export
+    // status, ready to be pasted in here.
+    public string SftpHostKeyFingerprint { get; set; } = string.Empty;
+
+    // How many nightly files to keep at the destination; older ones this feature wrote are
+    // deleted after each successful export. Nothing else in the folder is ever touched.
+    [Range(1, 365)]
+    public int KeepCount { get; set; } = 14;
+
+    // Optional. Encrypts each file (AES-256-GCM, key from PBKDF2) - see BackupBundle. Needed
+    // again to restore, and there is no way to recover a file whose passphrase is lost.
+    public string Passphrase { get; set; } = string.Empty;
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (!Enabled) yield break;
+
+        if (Destination == DestinationFolder)
+        {
+            // Rooted rather than relative: a relative path would land somewhere under the
+            // service's working directory, which is exactly the machine this is meant to survive.
+            if (string.IsNullOrWhiteSpace(FolderPath))
+                yield return new ValidationResult("Choose a folder to export to.", [nameof(FolderPath)]);
+            else if (!Path.IsPathRooted(FolderPath.Trim()))
+                yield return new ValidationResult(
+                    "The export folder must be a full path, e.g. /mnt/backups/sentinelcore or \\\\nas\\backups.", [nameof(FolderPath)]);
+        }
+        else if (Destination == DestinationSftp)
+        {
+            if (string.IsNullOrWhiteSpace(SftpHost))
+                yield return new ValidationResult("Enter the SFTP server's address.", [nameof(SftpHost)]);
+            if (string.IsNullOrWhiteSpace(SftpUsername))
+                yield return new ValidationResult("Enter the SFTP username.", [nameof(SftpUsername)]);
+            if (string.IsNullOrEmpty(SftpPassword))
+                yield return new ValidationResult("Enter the SFTP password.", [nameof(SftpPassword)]);
+            if (!string.IsNullOrWhiteSpace(SftpHostKeyFingerprint) && !AutoExportSftp.IsFingerprint(SftpHostKeyFingerprint))
+                yield return new ValidationResult(
+                    "The host key fingerprint should look like SHA256:... as shown by ssh-keygen -lf or in the export status.",
+                    [nameof(SftpHostKeyFingerprint)]);
+        }
+        else
+        {
+            yield return new ValidationResult("Destination must be a folder or SFTP.", [nameof(Destination)]);
+        }
+
+        if (!string.IsNullOrEmpty(Passphrase) && Passphrase.Length < 8)
+            yield return new ValidationResult("Use a passphrase of at least 8 characters, or leave it blank.", [nameof(Passphrase)]);
+    }
+}

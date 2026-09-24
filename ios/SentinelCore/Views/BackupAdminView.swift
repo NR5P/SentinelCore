@@ -126,7 +126,7 @@ struct BackupAdminView: View {
         defer { isRestoring = false }
         do {
             let result = try await model.client.importBackup(contents)
-            statusMessage = "Restored \(result.summary)."
+            statusMessage = result.message
             // The restore changed cameras, accounts and settings underneath the running app.
             try? await model.refreshAll()
         } catch {

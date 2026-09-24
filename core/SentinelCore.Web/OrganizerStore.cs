@@ -89,7 +89,16 @@ public sealed record OrganizerPullResult(
     IReadOnlyList<OrganizerItem> Items,
     IReadOnlyList<string> Removed);
 
-public sealed record OrganizerBackup(IReadOnlyList<OrganizerSpace> Spaces, IReadOnlyList<OrganizerItem> Items);
+// FeedTokens and Preferences were added in backup schema 4, defaulted so an older file still reads.
+// A feed token is the secret in a calendar subscription URL someone has pasted into another app;
+// losing it breaks that subscription silently, with nothing on either side saying why.
+public sealed record OrganizerBackup(
+    IReadOnlyList<OrganizerSpace> Spaces,
+    IReadOnlyList<OrganizerItem> Items,
+    IReadOnlyList<OrganizerFeedToken>? FeedTokens = null,
+    IReadOnlyDictionary<string, string>? Preferences = null);
+
+public sealed record OrganizerFeedToken(string Token, string UserKey, DateTimeOffset CreatedAt);
 
 public static class OrganizerKinds
 {
@@ -996,7 +1005,28 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
                 using var reader = command.ExecuteReader();
                 while (reader.Read()) spaces.Add(ReadSpace(reader));
             }
-            return new OrganizerBackup(spaces, LoadItems("1 = 1 ORDER BY Seq"));
+            var feedTokens = new List<OrganizerFeedToken>();
+            using (var command = _connection.CreateCommand())
+            {
+                command.CommandText = "SELECT Token, UserKey, CreatedAt FROM FeedTokens;";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                    feedTokens.Add(new OrganizerFeedToken(
+                        reader.GetString(0), reader.GetString(1),
+                        DateTimeOffset.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture)));
+            }
+
+            var preferences = new Dictionary<string, string>(StringComparer.Ordinal);
+            using (var command = _connection.CreateCommand())
+            {
+                command.CommandText = "SELECT Key, Value FROM Meta WHERE Key LIKE 'prefs:%';";
+                using var reader = command.ExecuteReader();
+                while (reader.Read()) preferences[reader.GetString(0)["prefs:".Length..]] = reader.GetString(1);
+            }
+
+            // serverId and seq stay behind on purpose: a different serverId is how a device
+            // notices it is talking to a rebuilt server and re-sends what it has.
+            return new OrganizerBackup(spaces, LoadItems("1 = 1 ORDER BY Seq"), feedTokens, preferences);
         }
         finally
         {
@@ -1052,6 +1082,24 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
                 item.UpdatedAt = now;
                 SaveItem(item);
                 restored++;
+            }
+
+            // Both only where this install has nothing of its own yet. A person who already has a
+            // feed token here has handed that URL out, and their preferences here are at least
+            // as new as the backup's - a device re-sends them on every change.
+            foreach (var feedToken in backup.FeedTokens ?? [])
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = "INSERT OR IGNORE INTO FeedTokens (Token, UserKey, CreatedAt) VALUES ($token, $user, $created);";
+                command.Parameters.AddWithValue("$token", feedToken.Token);
+                command.Parameters.AddWithValue("$user", feedToken.UserKey);
+                command.Parameters.AddWithValue("$created", feedToken.CreatedAt.ToString("O"));
+                command.ExecuteNonQuery();
+            }
+
+            foreach (var (user, json) in backup.Preferences ?? new Dictionary<string, string>())
+            {
+                if (ReadMeta("prefs:" + user) is null) WriteMeta("prefs:" + user, json);
             }
 
             PersistSeq();

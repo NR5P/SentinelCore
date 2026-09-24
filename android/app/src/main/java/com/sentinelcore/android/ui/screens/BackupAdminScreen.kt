@@ -183,13 +183,14 @@ fun BackupAdminScreen(
                         errorMessage = null
                         try {
                             val restored = model.importBackup(contents)
-                            statusMessage = if (restored.isEmpty()) {
+                            val summary = if (restored.counts.isEmpty()) {
                                 "Restored settings."
                             } else {
-                                "Restored " + restored.joinToString(", ") { (count, noun) ->
+                                "Restored " + restored.counts.joinToString(", ") { (count, noun) ->
                                     "$count $noun${if (count == 1) "" else "s"}"
                                 } + "."
                             }
+                            statusMessage = (listOf(summary) + restored.notes).joinToString(" ")
                         } catch (error: Exception) {
                             errorMessage = error.message ?: "Restore failed."
                         } finally {

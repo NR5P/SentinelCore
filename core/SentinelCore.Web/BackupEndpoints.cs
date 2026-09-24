@@ -15,14 +15,26 @@ namespace SentinelCore.Web;
 // hand, which is exactly how camera groups and gate checks came to be missing from it for a
 // while - if you add a store, add it here and to BackupRoundTripTests.
 //
+// Since schema 4 it also carries the main app's Device Hub devices, automation rules and
+// schedules (fetched from it over HTTP - see MainAppHubBackupClient), recording schedules,
+// Internet Exposed Mode, and the organizer's calendar-feed tokens and preferences.
+//
+// The files configuration only points at - organizer attachment bytes, known-face photos, the
+// licence, the HTTPS certificate authority and the HomeKit pairing - travel alongside this
+// document in the full backup bundle (BackupBundle), which is what the nightly auto export
+// writes. The plain JSON export stays as it was for the apps, which save and restore it as-is;
+// after a JSON-only restore the server lists the attachments it's missing so the devices
+// upload them again - see OrganizerStore.
+//
 // Still NOT included, deliberately:
-//   - Events, captured images, and the "reviewed" marks on them: history, not configuration, and
-//     large. An install restored from this file is your setup, not your past.
+//   - Events, captured images, recordings, and the "reviewed" marks on them: history, not
+//     configuration, and large. An install restored from this file is your setup, not your past.
 //   - Login sessions: restoring one onto another machine would be handing over a live login.
-//   - Organizer attachments (the pictures and files themselves). Their descriptions are here,
-//     but the bytes would make this file as large as everyone's photo collection. Every device
-//     that syncs keeps its own copy, and after a restore the server lists the ones it's missing
-//     so the devices upload them again - see OrganizerStore.
+//   - Push device registrations: every app re-registers each time it connects, and a token
+//     restored onto a different server is one that server may never have been told about.
+//   - Runtime memory (a schedule's next-due time, a gate's last seen state, open package
+//     watches): a restored install works these out afresh rather than inheriting another
+//     machine's idea of what just happened.
 //
 // This intentionally includes secrets (SMTP password, bot tokens, API keys) and, since accounts
 // are here, password hashes - for a genuinely one-file restore. The exported file is as sensitive
@@ -41,14 +53,18 @@ public sealed record BackupDocument(
     IReadOnlyList<LiveOrderEntry>? LiveOrder = null,
     // Added in schema 3: every Organizer space and item, clocks included, so a restore merges
     // by the same newest-edit-wins rule as a device sync and can't roll anything back.
-    OrganizerBackup? Organizer = null);
+    OrganizerBackup? Organizer = null,
+    // Added in schema 4.
+    IReadOnlyList<RecordingSchedule>? RecordingSchedules = null,
+    HubBackup? Hub = null,
+    InternetExposedSettingsDto? InternetExposed = null,
+    // What couldn't be included when this file was written, in words - e.g. the main app wasn't
+    // running. Informational; restore ignores it.
+    IReadOnlyList<string>? Warnings = null);
 
 public static class BackupEndpoints
 {
-    // 2 added CameraGroups and GateChecks; 3 added Organizer. Bumping this does not invalidate older exports - see
-    // Validate, which accepts anything up to this number.
-    private const int CurrentSchemaVersion = 3;
-    private static readonly JsonSerializerOptions ImportOptions = new(JsonSerializerDefaults.Web);
+    private static readonly System.Text.Json.JsonSerializerOptions ImportOptions = new(System.Text.Json.JsonSerializerDefaults.Web);
 
     public static void MapBackupEndpoints(this WebApplication app)
     {
@@ -62,321 +78,124 @@ public static class BackupEndpoints
         //
         // Live grid order rides along because it is keyed by account id and is meaningless
         // without them.
-        backup.MapGet("/export", async (
-            AppSettingsFile settings, ICameraStore cameras, ICameraGroupStore cameraGroups,
-            ITriggerConfigStore triggerConfigs, IGateCheckStore gateChecks,
-            IAccountStore accounts, ILiveOrderStore liveOrder, IOrganizerStore organizer, CancellationToken ct) =>
-        {
-            var document = new BackupDocument(
-                CurrentSchemaVersion,
-                DateTimeOffset.UtcNow,
-                await SettingsEndpoints.BuildSnapshotAsync(settings, ct),
-                await cameras.GetAllAsync(ct),
-                await triggerConfigs.GetAllAsync(ct),
-                await cameraGroups.GetAllAsync(ct),
-                [.. (await gateChecks.GetAllAsync(ct)).Select(WithoutTransitionMemory)],
-                await accounts.GetAllAsync(ct),
-                await liveOrder.GetAllAsync(ct),
-                await organizer.ExportAsync(ct));
+        backup.MapGet("/export", async (BackupService service, CancellationToken ct) =>
+            Results.Ok(await service.BuildDocumentAsync(ct)));
 
-            return Results.Ok(document);
-        });
-
-        // Settings first, then cameras, then everything that points at a camera by Id - trigger
-        // zones, camera groups and gate checks all do, so the cameras have to exist first.
-        // Cameras and groups are restored via RestoreAsync, which (unlike AddAsync) keeps the
-        // original Id instead of minting a new one, so those references still resolve, and so
-        // importing the same file twice updates what it created rather than duplicating it.
-        // Nothing in the current setup that isn't mentioned in the backup is touched or removed -
-        // restore overlays, it never wipes.
-        backup.MapPost("/import", async (
-            HttpRequest request, HttpContext http, AppSettingsFile settings, ICameraStore cameras,
-            ICameraGroupStore cameraGroups, ITriggerConfigStore triggerConfigs,
-            IGateCheckStore gateChecks, IAccountStore accounts, ILiveOrderStore liveOrder,
-            IOrganizerStore organizer, CancellationToken ct) =>
+        // The full bundle - the document plus attachments, photos, licence and certificates - as
+        // a download. Assembled in the work directory first so a failure halfway is an error
+        // response rather than a truncated file the browser saves as though it were fine.
+        backup.MapPost("/bundle", async (
+            BundleRequest? body, BackupService service, BackupWorkDirectory work, CancellationToken ct) =>
         {
-            BackupDocument? document;
+            var passphrase = body?.Passphrase;
+            if (!string.IsNullOrEmpty(passphrase) && passphrase.Length < 8)
+                return Results.BadRequest(new { error = "Use a passphrase of at least 8 characters, or leave it blank." });
+
+            var path = work.NewTemporaryFile();
             try
             {
-                document = await JsonSerializer.DeserializeAsync<BackupDocument>(request.Body, ImportOptions, ct);
+                BackupService.BundleSummary summary;
+                await using (var output = File.Create(path))
+                    summary = await service.WriteBundleAsync(output, passphrase, ct);
+
+                var stamp = DateTimeOffset.Now.ToString("yyyy-MM-dd-HHmm");
+                var name = $"{AutoExportRunner.FilePrefix}{stamp}{(string.IsNullOrEmpty(passphrase) ? AutoExportRunner.ZipExtension : AutoExportRunner.EncryptedExtension)}";
+                if (summary.Warnings.Count > 0)
+                    app.Logger.LogWarning("Backup bundle written with warnings: {Warnings}", string.Join(" ", summary.Warnings));
+
+                // DeleteOnClose: the file goes away when the response has been sent, or when the
+                // client disconnects partway.
+                var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 1 << 16, FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+                return Results.File(stream, "application/octet-stream", name);
             }
-            catch (JsonException)
+            catch
             {
-                return Results.BadRequest(new { errors = new[] { "That file doesn't look like a Sentinel Core backup - it isn't valid JSON." } });
+                File.Delete(path);
+                throw;
             }
-
-            var errors = Validate(document);
-            if (errors.Count > 0) return Results.BadRequest(new { errors });
-
-            if (document!.Settings is not null)
-                await SettingsEndpoints.ApplySnapshotAsync(document.Settings, settings, ct);
-
-            var camerasRestored = 0;
-            foreach (var camera in document.Cameras ?? [])
-            {
-                await cameras.RestoreAsync(camera, ct);
-                camerasRestored++;
-            }
-
-            var cameraGroupsRestored = 0;
-            foreach (var group in document.CameraGroups ?? [])
-            {
-                await cameraGroups.RestoreAsync(group, ct);
-                cameraGroupsRestored++;
-            }
-
-            var triggerZonesRestored = 0;
-            foreach (var zone in document.TriggerZones ?? [])
-            {
-                await triggerConfigs.SaveAsync(zone, ct);
-                triggerZonesRestored++;
-            }
-
-            // SaveAsync's upsert deliberately leaves the four transition-memory columns alone on
-            // conflict, so importing onto a running install can't make a gate that is currently
-            // open look like a fresh transition and re-notify. On a camera this install has never
-            // seen, the neutral values the export wrote are what land.
-            var gateChecksRestored = 0;
-            foreach (var check in document.GateChecks ?? [])
-            {
-                await gateChecks.SaveAsync(WithoutTransitionMemory(check), ct);
-                gateChecksRestored++;
-            }
-
-            // The account performing this restore is skipped, always. Everything else here
-            // overlays; accounts are the one thing that can lock the person out of the install
-            // they are in the middle of restoring - a backup whose admin password nobody
-            // remembers any more would otherwise replace the working login with it, and there is
-            // no way back from that through the dashboard. Skipping by both id and username
-            // covers the two ways "the same person" can appear: a re-import onto this machine
-            // (same id) and a restore onto a fresh one where setup minted a new id for the same
-            // name. Whoever is signed in keeps their password; every other account comes back.
-            var currentAccountId = http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            var currentUsername = http.User.Identity?.Name;
-
-            var accountsRestored = 0;
-            var accountsSkipped = 0;
-            foreach (var account in document.Accounts ?? [])
-            {
-                var isCurrent =
-                    string.Equals(account.Id.ToString("N"), currentAccountId, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(account.Username, currentUsername, StringComparison.OrdinalIgnoreCase);
-
-                if (isCurrent)
-                {
-                    accountsSkipped++;
-                    continue;
-                }
-
-                await accounts.RestoreAsync(account, ct);
-                accountsRestored++;
-            }
-
-            // After the accounts, since every owner key names one - restoring an arrangement for
-            // an account that isn't there yet would just be a row nothing ever reads.
-            var liveOrderRestored = 0;
-            foreach (var entry in document.LiveOrder ?? [])
-            {
-                await liveOrder.SaveAsync(entry.OwnerKey, entry.CameraIds, ct);
-                liveOrderRestored++;
-            }
-
-            var organizerItemsRestored = document.Organizer is { } organizerBackup
-                ? await organizer.ImportAsync(organizerBackup, ct)
-                : 0;
-
-            return Results.Ok(new
-            {
-                success = true,
-                camerasRestored,
-                triggerZonesRestored,
-                cameraGroupsRestored,
-                gateChecksRestored,
-                accountsRestored,
-                accountsSkipped,
-                liveOrderRestored,
-                organizerItemsRestored
-            });
         });
-    }
 
-    // A gate check's LastKnownState/LastStateChangedAt/LastNotifiedAt/LastKnownBlocked are memory
-    // of what this install last saw, not configuration - see GateCheckConfig. Carrying them into a
-    // backup would export "when your gate was last open" along with the settings, and restoring
-    // them onto a different machine would seed it with a transition that never happened there.
-    private static GateCheckConfig WithoutTransitionMemory(GateCheckConfig config) =>
-        config with
+        // Accepts any of the three shapes a backup comes in - the JSON export, the zip bundle, or
+        // an encrypted bundle (passphrase in the X-Backup-Passphrase header, never the URL) - told
+        // apart by their first bytes rather than the file name or content type, so a renamed
+        // file still restores. Spooled to disk first: a bundle can be far larger than memory.
+        backup.MapPost("/import", async (
+            HttpRequest request, HttpContext http, BackupService service, BackupWorkDirectory work,
+            bool? machineIdentity, CancellationToken ct) =>
         {
-            LastKnownState = "unknown",
-            LastStateChangedAt = null,
-            LastNotifiedAt = null,
-            LastKnownBlocked = false
-        };
-
-    private static List<string> Validate(BackupDocument? document)
-    {
-        var errors = new List<string>();
-        if (document is null)
-        {
-            errors.Add("That file doesn't look like a Sentinel Core backup.");
-            return errors;
-        }
-
-        // Older files are fine and must stay fine: the whole point of an exported backup is that
-        // it is still there when you need it, which may be several versions later. Every section
-        // is optional, so a file from an earlier schema simply restores the sections it has. Only
-        // a file from a NEWER version is refused - that one may contain configuration this install
-        // would silently drop, and quietly restoring nine tenths of a backup is worse than saying
-        // so. This used to be an equality check, which rejected old exports the day the schema
-        // moved.
-        if (document.SchemaVersion < 1 || document.SchemaVersion > CurrentSchemaVersion)
-            errors.Add(
-                $"Unsupported backup version {document.SchemaVersion} (this install supports up to {CurrentSchemaVersion}). " +
-                "A backup from a newer version of Sentinel Core can't be restored here - update this install first.");
-
-        if (document.Settings?.PromptProfiles is { } profiles && !profiles.ContainsKey("default"))
-            errors.Add("Backup's prompt profiles are missing a 'default' profile.");
-
-        // Restore writes cameras, trigger zones and gate checks straight into their stores, so
-        // until now it was the one way into this install that answered to none of the rules the
-        // endpoints enforce. The same trigger zone that PUT /api/cameras/{id}/trigger-config
-        // refuses with six separate errors - an object size of zero, a negative cooldown, a
-        // polygon outside the frame, a night window running from hour 99 to hour -3 - imported
-        // silently and left a camera that either never fires or never stops.
-        //
-        // None of that announces itself. A trigger zone with an impossible object size does not
-        // log anything; it just quietly stops being a camera that watches. The stream URL is the
-        // same story from the other direction: the endpoint allows rtsp/http/https and nothing
-        // else, and ffmpeg is handed whatever is stored, so a file:// address restored from a
-        // backup is a restriction that existed everywhere except here.
-        //
-        // Held to the endpoints' own validators rather than a second copy of the rules, because a
-        // second copy is how the two drift apart - which is the whole shape of this bug.
-        // The settings half of the same gap: ApplySnapshotAsync merges each section into
-        // appsettings.json without the check that section's own PUT performs.
-        if (document.Settings is { } settings)
-        foreach (var problem in SettingsEndpoints.ValidateSnapshot(settings))
-            errors.Add($"Settings - {problem}");
-
-        foreach (var camera in document.Cameras ?? [])
-        foreach (var problem in CameraEndpoints.Validate(ToInput(camera)))
-            errors.Add($"Camera \"{camera.Name}\": {problem}");
-
-        foreach (var zone in document.TriggerZones ?? [])
-        foreach (var problem in TriggerEndpoints.Validate(
-            ToDto(zone), zone.NightWindowEnabled, zone.NightStartHour, zone.NightEndHour))
-            errors.Add($"Trigger zone for camera {zone.CameraId}: {problem}");
-
-        foreach (var check in document.GateChecks ?? [])
-        foreach (var problem in GateCheckEndpoints.Validate(ToInput(check)))
-            errors.Add($"Gate check for camera {check.CameraId}: {problem}");
-
-        // Judged against the cameras and groups the file itself carries, not the ones already
-        // here: a restore onto a rebuilt machine writes all three in one pass, so the cameras a
-        // group names are usually arriving in the same document rather than existing yet.
-        //
-        // The one-group-per-camera rule matters more than it looks. GetGroupForCameraAsync
-        // resolves a camera's group with FirstOrDefault, so two groups claiming the same camera
-        // means whichever row comes back first wins - and the other group's companion cameras
-        // quietly never record. That is the ambiguity the endpoint's check exists to prevent, and
-        // restore was the way around it.
-        var knownCameraIds = (document.Cameras ?? []).Select(c => c.Id).ToHashSet();
-        var groups = document.CameraGroups ?? [];
-        foreach (var group in groups)
-        foreach (var problem in CameraGroupEndpoints.Validate(
-            ToInput(group), group.Id, knownCameraIds, [.. groups.Where(other => other.Id != group.Id)]))
-            errors.Add($"Camera group \"{group.Name}\": {problem}");
-
-        // Accounts and live-order rows are small enough to check inline; neither has an endpoint
-        // whose validator could be borrowed. An account with no username cannot be signed in to
-        // and cannot be told apart in the accounts list, and a role outside the enum renders as a
-        // bare number and matches no authorization policy - it is neither an admin nor a viewer.
-        foreach (var account in document.Accounts ?? [])
-        {
-            if (string.IsNullOrWhiteSpace(account.Username))
-                errors.Add($"Account {account.Id}: username is required.");
-            if (!Enum.IsDefined(account.Role))
-                errors.Add($"Account \"{account.Username}\": role {(int)account.Role} is neither Admin nor Viewer.");
-        }
-
-        // OwnerKey is the primary key of the row this becomes. It is declared non-nullable, which
-        // means nothing to the deserializer, so a file missing the field reached SQLite as a null
-        // parameter and threw there - a 500 with a stack trace, raised after the cameras, groups
-        // and accounts above had already been written and could not be taken back.
-        foreach (var entry in document.LiveOrder ?? [])
-        {
-            if (string.IsNullOrWhiteSpace(entry.OwnerKey))
-                errors.Add("Live grid order: an entry has no owner key.");
-        }
-
-        return errors;
-    }
-
-    // Nothing is written when any of it fails: the file is rejected whole, with every problem
-    // named. That is the same call the schema-version check above already makes, and for the same
-    // reason - restoring most of a backup and saying nothing about the rest is worse than
-    // refusing it, because the part that went missing is the part nobody will think to check.
-    private static CameraInputDto ToInput(Camera camera) => new()
-    {
-        Name = camera.Name,
-        StreamUrl = camera.StreamUrl,
-        Username = camera.Username,
-        Password = camera.Password,
-        IncludeAudio = camera.IncludeAudio,
-        PtzEnabled = camera.PtzEnabled,
-        OnvifPtzServiceUrl = camera.OnvifPtzServiceUrl,
-        OnvifProfileToken = camera.OnvifProfileToken,
-        IsBrowserPublished = camera.IsBrowserPublished
-    };
-
-    private static CameraGroupInputDto ToInput(CameraGroup group) => new()
-    {
-        Name = group.Name,
-        CameraIds = [.. group.CameraIds],
-        CorrelationWindowSeconds = group.CorrelationWindowSeconds,
-        RecordCompanionClips = group.RecordCompanionClips,
-        AnalyzeCompanionCaptures = group.AnalyzeCompanionCaptures
-    };
-
-    private static GateCheckInputDto ToInput(GateCheckConfig check) => new()
-    {
-        Enabled = check.Enabled,
-        CheckLabel = check.CheckLabel,
-        CheckBlocked = check.CheckBlocked,
-        IntervalMinutes = check.IntervalMinutes,
-        RemindIfStillOpenAfterHours = check.RemindIfStillOpenAfterHours
-    };
-
-    private static TriggerConfigDto ToDto(TriggerConfig config) => new()
-    {
-        Enabled = config.Enabled,
-        ZonePolygon = [.. config.ZonePolygon],
-        MinTriggerArea = config.MinTriggerArea,
-        Zones = config.Zones is null
-            ? null
-            : [.. config.Zones.Select(z => new TriggerZoneDto
+            var spooled = work.NewTemporaryFile();
+            string? decrypted = null;
+            try
             {
-                Name = z.Name,
-                Polygon = [.. z.Polygon],
-                MinTriggerArea = z.MinTriggerArea
-            })],
-        CooldownSeconds = config.CooldownSeconds,
-        MaxTriggersPerMinute = config.MaxTriggersPerMinute,
-        ShadowSensitivity = config.ShadowSensitivity,
-        RecordClips = config.RecordClips,
-        ClipPreSeconds = config.ClipPreSeconds,
-        ClipPostSeconds = config.ClipPostSeconds,
-        SendToAlerts = config.SendToAlerts,
-        AlertProfile = config.AlertProfile,
-        SensorDeviceId = config.SensorDeviceId,
-        SensorTriggerOn = config.SensorTriggerOn,
-        SensorCooldownSeconds = config.SensorCooldownSeconds,
-        SensorMeasurement = config.SensorMeasurement,
-        SensorThreshold = config.SensorThreshold,
-        NightWindowEnabled = config.NightWindowEnabled,
-        NightStartHour = config.NightStartHour,
-        NightEndHour = config.NightEndHour,
-        BypassFastLocal = config.BypassFastLocal,
-        KeepOnlyAlertable = config.KeepOnlyAlertable
-    };
+                await using (var output = File.Create(spooled))
+                    await request.Body.CopyToAsync(output, ct);
+
+                var head = new byte[16];
+                int headLength;
+                await using (var probe = File.OpenRead(spooled))
+                    headLength = await probe.ReadAsync(head, ct);
+
+                var format = BackupBundle.Detect(head.AsSpan(0, headLength));
+                var zipPath = spooled;
+                switch (format)
+                {
+                    case BackupBundle.Format.Json:
+                    {
+                        BackupDocument? document;
+                        try
+                        {
+                            await using var input = File.OpenRead(spooled);
+                            document = await System.Text.Json.JsonSerializer.DeserializeAsync<BackupDocument>(input, ImportOptions, ct);
+                        }
+                        catch (System.Text.Json.JsonException)
+                        {
+                            return Results.BadRequest(new { errors = new[] { "That file doesn't look like a Sentinel Core backup - it isn't valid JSON." } });
+                        }
+                        return ToResult(await service.RestoreAsync(document, null, false, http.User, ct));
+                    }
+
+                    case BackupBundle.Format.Encrypted:
+                    {
+                        var passphrase = request.Headers["X-Backup-Passphrase"].ToString();
+                        if (string.IsNullOrEmpty(passphrase))
+                            return Results.BadRequest(new { errors = new[] { "That backup is encrypted - enter its passphrase to restore it." }, passphraseRequired = true });
+                        decrypted = work.NewTemporaryFile();
+                        await using (var input = File.OpenRead(spooled))
+                        await using (var output = File.Create(decrypted))
+                            await BackupBundle.DecryptAsync(input, output, passphrase, ct);
+                        zipPath = decrypted;
+                        goto case BackupBundle.Format.Zip;
+                    }
+
+                    case BackupBundle.Format.Zip:
+                    {
+                        await using var zipStream = File.OpenRead(zipPath);
+                        var (document, archive) = await BackupBundle.OpenZipAsync(zipStream, ct);
+                        using (archive)
+                            return ToResult(await service.RestoreAsync(document, archive, machineIdentity ?? false, http.User, ct));
+                    }
+
+                    default:
+                        return Results.BadRequest(new { errors = new[] { "That file isn't a Sentinel Core backup - expected a .json, .zip or .scbackup file." } });
+                }
+            }
+            catch (BackupBundleException ex)
+            {
+                return Results.BadRequest(new { errors = new[] { ex.Message } });
+            }
+            finally
+            {
+                File.Delete(spooled);
+                if (decrypted is not null) File.Delete(decrypted);
+            }
+        })
+        // A full bundle with a household's attachments is well past Kestrel's 30 MB default. Admin
+        // only, and spooled straight to disk, so lifting the cap costs nothing but disk.
+        .WithMetadata(new Microsoft.AspNetCore.Mvc.DisableRequestSizeLimitAttribute());
+    }
+
+    public sealed record BundleRequest(string? Passphrase);
+
+    private static IResult ToResult(BackupService.RestoreResult result) =>
+        result.Errors is { Count: > 0 } errors ? Results.BadRequest(new { errors }) : Results.Ok(result.Counts);
 }

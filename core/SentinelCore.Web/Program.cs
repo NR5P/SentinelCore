@@ -217,6 +217,18 @@ builder.Services.AddSingleton(new OrganizerBlobStore(camerasRoot));
 builder.Services.AddSingleton(sp => new OrganizerPushNudger(
     sp.GetRequiredService<AppSettingsFile>(), sp.GetRequiredService<PushNotificationDispatcher>(), sp.GetRequiredService<ILogger<OrganizerPushNudger>>()));
 builder.Services.AddHostedService<OrganizerBlobSweepWorker>();
+
+// Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
+// the data directory rather than /tmp - a bundle with everyone's attachments can be gigabytes.
+var backupWorkDirectory = new BackupWorkDirectory(Path.Combine(camerasRoot, "backup-work"));
+backupWorkDirectory.Sweep();
+builder.Services.AddSingleton(backupWorkDirectory);
+builder.Services.AddHttpClient(nameof(MainAppHubBackupClient), client => client.Timeout = TimeSpan.FromSeconds(30));
+builder.Services.AddSingleton<MainAppHubBackupClient>();
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton(new AutoExportStateFile(Path.Combine(camerasRoot, "auto-export-state.json")));
+builder.Services.AddSingleton<AutoExportRunner>();
+builder.Services.AddHostedService<AutoExportWorker>();
 // WebRTC live view via a go2rtc sidecar - see Go2RtcManager. Generous timeout: the SDP exchange
 // includes go2rtc gathering its ICE candidates, and the first request may also be paying the
 // sidecar's startup wait.
@@ -493,6 +505,7 @@ app.MapLicenseEndpoints();
 app.MapAuthEndpoints();
 app.MapAccountEndpoints();
 app.MapBackupEndpoints();
+app.MapAutoExportEndpoints();
 app.MapChatEndpoints();
 app.MapQueueEndpoints();
 app.MapSystemStatusEndpoints();

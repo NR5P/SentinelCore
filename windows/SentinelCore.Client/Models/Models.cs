@@ -625,6 +625,21 @@ public sealed class BackupRestoreResult
     public int? TriggerZonesRestored { get; init; }
     public int? GateChecksRestored { get; init; }
     public int? AccountsRestored { get; init; }
+    public int? RecordingSchedulesRestored { get; init; }
+    public int? DevicesRestored { get; init; }
+    public int? AutomationRulesRestored { get; init; }
+    public int? SchedulesRestored { get; init; }
+    public int? OrganizerItemsRestored { get; init; }
+    public int? AttachmentsRestored { get; init; }
+    public int? KnownFacePhotosRestored { get; init; }
+
+    // Things to act on that the counts can't say - "restart the dashboard", "the main app wasn't
+    // running so devices weren't restored".
+    public List<string>? Notes { get; init; }
+
+    // The whole outcome as one message: what came back, then anything still to do.
+    [JsonIgnore]
+    public string Message => string.Join(" ", new[] { $"Restored {Summary}." }.Concat(Notes ?? []));
 
     // The non-empty parts, phrased for a sentence: "3 cameras, 1 trigger zone".
     [JsonIgnore]
@@ -637,8 +652,15 @@ public sealed class BackupRestoreResult
                 (CamerasRestored, "camera"),
                 (CameraGroupsRestored, "camera group"),
                 (TriggerZonesRestored, "trigger zone"),
+                (RecordingSchedulesRestored, "recording schedule"),
                 (GateChecksRestored, "gate check"),
                 (AccountsRestored, "account"),
+                (DevicesRestored, "device"),
+                (AutomationRulesRestored, "automation rule"),
+                (SchedulesRestored, "schedule"),
+                (OrganizerItemsRestored, "Organizer item"),
+                (AttachmentsRestored, "attachment"),
+                (KnownFacePhotosRestored, "face photo"),
             };
             var described = parts
                 .Where(part => part.Count is > 0)

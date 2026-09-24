@@ -759,6 +759,7 @@ app.MapPost("/api/queue/clear", async (IAlertQueue queue, IEventStore eventStore
 app.MapAutomationRuleEndpoints();
 app.MapScheduleEndpoints();
 app.MapDeviceHubEndpoints();
+app.MapHubBackupEndpoints();
 app.MapNotificationTestEndpoints();
 app.MapCloudVisionTestEndpoints();
 

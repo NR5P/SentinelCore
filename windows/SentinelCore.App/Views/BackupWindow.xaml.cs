@@ -68,7 +68,7 @@ public partial class BackupWindow : Window
         {
             var bytes = await File.ReadAllBytesAsync(dialog.FileName);
             var result = await _model.Client.ImportBackupAsync(bytes);
-            Message($"Restored {result.Summary}. Reconnecting…");
+            Message($"{result.Message} Reconnecting…");
             await _model.ConnectAsync(resetNetworkSession: true);
         }
         catch (Exception error)

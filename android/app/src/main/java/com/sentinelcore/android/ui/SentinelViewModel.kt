@@ -32,6 +32,7 @@ import com.sentinelcore.android.data.DeviceScanStartResult
 import com.sentinelcore.android.data.DiagnosticEntry
 import com.sentinelcore.android.data.DiagnosticLevel
 import com.sentinelcore.android.data.HomeKitSettings
+import com.sentinelcore.android.data.BackupRestoreSummary
 import com.sentinelcore.android.data.HomeKitStatus
 import com.sentinelcore.android.data.HubDevice
 import com.sentinelcore.android.data.HubDeviceInput
@@ -797,7 +798,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     // Refreshes afterwards: a restore changes cameras, accounts and settings underneath the
     // running app, so what's on screen is stale the moment it succeeds.
-    suspend fun importBackup(contents: String): List<Pair<Int, String>> {
+    suspend fun importBackup(contents: String): BackupRestoreSummary {
         val restored = repository.importBackup(contents)
         refreshAll()
         return restored

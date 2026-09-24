@@ -20,6 +20,9 @@
          the mobile apps can find it on the LAN instead of the user typing an IP address. -->
     <PackageReference Include="Makaretu.Dns.Multicast.New" Version="0.38.0" />
     <PackageReference Include="QuestPDF" Version="2026.7.2" />
+    <!-- SFTP delivery for the nightly auto export (AutoExport.cs), so a backup can reach another
+         computer without that computer's share being mounted here first. -->
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
   </ItemGroup>
   <!-- The SDK's default item globs otherwise sweep up whatever's sitting in the runtime data/
        folder next to this project (events.db, images, cameras.db, ...) as Content purely
@@ -40,10 +43,8 @@
        here and keep only this project's own appsettings.json. -->
   <Target Name="RemoveSentinelCoreAppSettingsFromPublishOutput" AfterTargets="ComputeFilesToPublish" BeforeTargets="_HandleFileConflictsForPublish">
     <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
-        Condition="'%(ResolvedFileToPublish.RelativePath)' == 'appsettings.json' and '%(ResolvedFileToPublish.FullPath)' != '$(MSBuildProjectDirectory)\appsettings.json' and '%(ResolvedFileToPublish.FullPath)' != '$(MSBuildProjectDirectory)/appsettings.json'" />
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
-        Condition="'%(ResolvedFileToPublish.RelativePath)' == 'appsettings.Development.json'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(ResolvedFileToPublish.RelativePath)' == 'appsettings.json' and '%(ResolvedFileToPublish.FullPath)' != '$(MSBuildProjectDirectory)\appsettings.json' and '%(ResolvedFileToPublish.FullPath)' != '$(MSBuildProjectDirectory)/appsettings.json'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(ResolvedFileToPublish.RelativePath)' == 'appsettings.Development.json'" />
     </ItemGroup>
   </Target>
 </Project>

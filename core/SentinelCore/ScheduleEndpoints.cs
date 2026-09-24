@@ -257,7 +257,7 @@ public static class ScheduleEndpoints
     private static string Capitalise(string value) =>
         value.Length == 0 ? value : char.ToUpperInvariant(value[0]) + value[1..];
 
-    private static Schedule ToSchedule(ScheduleDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
+    internal static Schedule ToSchedule(ScheduleDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
         id,
         dto.Name.Trim(),
         dto.Enabled,
@@ -302,7 +302,7 @@ public static class ScheduleEndpoints
     // Everything that would otherwise become a schedule that quietly never fires. A schedule
     // that looks saved and does nothing is the worst outcome here, so each case is refused with
     // a message saying what to do about it.
-    private static List<string> Validate(ScheduleDto dto, ScheduleContext context)
+    internal static List<string> Validate(ScheduleDto dto, ScheduleContext context, bool forRestore = false)
     {
         var errors = new List<string>();
 
@@ -341,14 +341,20 @@ public static class ScheduleEndpoints
                 break;
 
             case Schedule.KindOnce:
+                // A restored one-off that has already run is still a schedule the user made - it
+                // comes back as it was and simply never fires again, rather than failing the file.
                 if (dto.RunAtUtc is null)
                     errors.Add("Pick the date and time to run at.");
-                else if (dto.RunAtUtc <= DateTimeOffset.UtcNow)
+                else if (dto.RunAtUtc <= DateTimeOffset.UtcNow && !forRestore)
                     errors.Add("That date and time has already passed.");
                 break;
 
             case Schedule.KindSolar:
-                if (context.Location is null)
+                // Not on restore: the location arrives in the same backup, in the settings half,
+                // which is written moments before this and may not have been re-read yet. Should
+                // it really be missing, the worker logs the schedule as unschedulable and keeps
+                // it, which is the same thing that happens when a location is cleared later.
+                if (context.Location is null && !forRestore)
                     errors.Add("Set your location in Settings first - sunrise and sunset can't be worked out without it.");
 
                 if (dto.SolarElevationDegrees is < SolarCalculator.MinimumElevationDegrees or > SolarCalculator.MaximumElevationDegrees)

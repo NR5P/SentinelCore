@@ -78,7 +78,7 @@ public static class AutomationRuleEndpoints
         });
     }
 
-    private static AutomationRule ToRule(AutomationRuleDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
+    internal static AutomationRule ToRule(AutomationRuleDto dto, Guid id, DateTimeOffset createdAt, DateTimeOffset updatedAt) => new(
         id,
         dto.Name.Trim(),
         dto.Enabled,
@@ -99,7 +99,7 @@ public static class AutomationRuleEndpoints
         createdAt,
         updatedAt);
 
-    private static List<string> Validate(AutomationRuleDto dto)
+    internal static List<string> Validate(AutomationRuleDto dto)
     {
         var errors = new List<string>();
         if (string.IsNullOrWhiteSpace(dto.Name)) errors.Add("Name is required.");
