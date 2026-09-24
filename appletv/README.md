@@ -19,6 +19,26 @@ high-confidence event comes in.
 The Apple TV and Sentinel Core server must be on the same local network (or reachable via the
 optional remote address in Settings).
 
+## Build, test and release
+
+Full detail: [`docs/BUILDING.md`](../docs/BUILDING.md) §4.
+
+```bash
+# compile check (the three signing overrides are required; without them the build fails on a
+# certificate mismatch that has nothing to do with the code)
+xcodebuild -project appletv/SentinelCoreTV.xcodeproj -scheme SentinelCoreTV -configuration Debug \
+  -destination 'generic/platform=tvOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+
+appletv/scripts/release.sh      # archive + upload to TestFlight, once the tvOS App Store Connect record exists
+```
+
+The Organizer engine comes from `../ios/OrganizerKit` (linked by relative path). Any change there
+must still build here, and its tests run with `swift test --package-path ios/OrganizerKit`.
+
+Until the tvOS app is on TestFlight, the Apple TV runs a locally installed Release build, which
+registers a *sandbox* push token. A server on production APNs therefore can't push to it, and the
+server deliberately never sends it the silent Organizer pushes.
+
 ## Current foundation
 
 - Live camera grid with muted auto-preview tiles, full-screen playback on select
@@ -26,6 +46,8 @@ optional remote address in Settings).
 - AI-verified alert feed (`/api/events`) with a notified-only filter and a live-updating poll
 - Motion trigger history with snapshot/clip playback
 - Full-screen "AI Verified Alert" takeover, auto-starting the live feed for the alerted camera
+- The Organizer, mostly for viewing: calendar, reminders (which can be checked off), notes and
+  boards, synced with the other apps through the shared `OrganizerKit` engine
 - Optional dashboard username/password login, persisted across restarts (see below)
 - Server connection settings, push registration, and a connection log
 

@@ -37,3 +37,9 @@ android/app/*.keystore
 
 # Google Play Developer API service-account key (lives outside the repo, but belt and braces).
 **/play-publisher*.json
+
+# Release output: TestFlight archives (ios/scripts/release.sh, appletv/scripts/release.sh) and
+# the self-contained Windows build (windows/publish.ps1). Rebuilt from source every time.
+ios/build/
+appletv/build/
+windows/publish/

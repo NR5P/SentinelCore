@@ -6,6 +6,19 @@ uses later. This is the checklist from the current repo state to a build on a te
 
 Legend: **[you]** needs your accounts or a password · **[script]** one command in this repo.
 
+The procedure for each release (bump, archive, upload, deploy) and the pitfalls hit so far are
+in [`BUILDING.md`](BUILDING.md) §6. This file is the one-time setup behind it.
+
+## Where things stand (2026-09-23)
+
+| | Status |
+| --- | --- |
+| iOS + macOS | App Store Connect record "Sentinel Core" (id 6814252066). Internal TestFlight is live; latest upload is build 7. The daily-use iPhone and Mac run TestFlight builds. |
+| tvOS | No App Store Connect record yet; the Apple TV runs a locally installed build. |
+| Android | Play Console app "Sentinel Core" (package `com.sentinelcore.android`), internal testing track active with tester list "testersSentinelCore". Uploads are manual (no service account yet). Store listing not filled in, so Play shows it as unreviewed. |
+| Server push | Direct APNs on production (`Apple.UseSandbox: false`) plus Firebase; the relay for customer installs. |
+| Privacy policy | Live at https://nr5p.com/privacy. |
+
 ## 0. What's already done in the repo (2026-09-20)
 
 - Privacy manifests (`PrivacyInfo.xcprivacy`) in the iOS/Mac and tvOS targets.
@@ -48,13 +61,31 @@ ios/scripts/release.sh         # archives + uploads iOS and macOS (pass "ios" or
 appletv/scripts/release.sh     # archives + uploads tvOS
 ```
 
-Each upload appears in App Store Connect → the app → TestFlight within ~10 minutes.
+Each upload appears in App Store Connect → the app → TestFlight within ~10 minutes, and a
+"Sentinel Core 0.1.0 (N) for iOS is now available to test" email follows.
 
-**Your own devices after this:** a TestFlight build registers *production* APNs tokens. Your
-Core is on direct Apple with `Apple.UseSandbox: true`, so flip that to `false` (Settings → PUSH
-NOTIFICATIONS → *Apple: Use Sandbox* off) once your phone runs the TestFlight build, or direct
-pushes to it silently fail. Customers are unaffected: their `Relay.ApnsSandbox` default is
-already `false`.
+**An upload that "succeeded" can still be rejected in processing.** The build then never
+appears in TestFlight, and the reason arrives only as an email to the developer account
+(you@example.com, which Outlook files under **Other**): "Action needed: The uploaded build for
+Sentinel Core has one or more issues", with an ITMS code. The one that has happened:
+
+- **ITMS-90626 Invalid Siri Support**: an App Intent's text contained the word "Siri". This hit
+  iOS builds 5 and 6; the Mac builds went through, which made it look like an iOS-only glitch.
+
+Also keep every extension's build number equal to the app's, which Apple requires.
+`scripts/bump-build.sh` does this; a newly added extension target needs its number brought in
+line once. (It was caught before an upload here, so what Apple's rejection says is unconfirmed.)
+
+New extension targets (the widgets, the share extension) need no manual setup in the developer
+portal. The first `release.sh` after adding one registers its App ID and profile through
+`-allowProvisioningUpdates`.
+
+**Your own devices after this:** a TestFlight build registers *production* APNs tokens, so a
+server pushing directly to Apple needs `Apple.UseSandbox: false` (Settings → PUSH
+NOTIFICATIONS → *Apple: Use Sandbox* off). Yours has been set that way since 2026-09-22.
+Customers are unaffected: their `Relay.ApnsSandbox` default is already `false`. The flip side:
+a locally built app always registers a *sandbox* token, so installing one on a device that
+normally runs TestFlight breaks its push until TestFlight's build goes back on.
 
 ## 4. Apple: testers **[you]**
 
@@ -100,6 +131,9 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
    where the `.aab` is for a manual upload.
 4. **Internal testing [you]:** Play Console → Testing → Internal testing → Create new release →
    upload the `.aab` → Testers tab → create a list of Gmail addresses → save → **Start rollout**.
+   For this app the page is
+   https://play.google.com/console/u/0/developers/6252521596077819619/app/4974287699313226200/tracks/internal-testing.
+   Each later manual release is: Create new release → drop the `.aab` → Next → Save and publish.
    Copy the opt-in link and send it to testers; they tap it once, install from Play, and update
    automatically after that. Live within minutes, no review. Up to 100 testers.
 

@@ -169,8 +169,15 @@ dotnet build -c Release
 dotnet test
 ```
 
-This is fast (well under a second of actual test time) and worth running before every deploy
-— it's the one thing standing between a bad change and the live alert pipeline.
+About 1,360 tests, roughly two minutes. Worth running before every deploy: it's the one thing
+standing between a bad change and the live alert pipeline.
+
+Occasionally the test host aborts partway ("Test process crashed with exit code 133/134") with no
+real failures. That's the host, not the code; run it again. Only treat it as real if it happens
+three times running on the same tree.
+
+The client apps have their own build and test procedures; see
+[`docs/BUILDING.md`](../../docs/BUILDING.md) at the repository root.
 
 ## 6. First-time configuration
 
@@ -555,14 +562,19 @@ either platform.
 `scripts/deploy.sh` automates build → test → restart for whichever service(s) changed:
 
 ```bash
-./scripts/deploy.sh          # build + restart all services
+./scripts/deploy.sh          # build + restart everything installed
 ./scripts/deploy.sh main     # build + restart only sentinelcore
 ./scripts/deploy.sh web      # build + restart only sentinelcore-web
 ./scripts/deploy.sh homekit  # restart only the HomeKit sidecar (Node, nothing to build)
+./scripts/deploy.sh relay    # build + restart only sentinelcore-push-relay (the vendor's push host)
 ```
 
-The HomeKit sidecar is skipped automatically if its unit isn't installed, so `./deploy.sh` works
-unchanged whether or not you're using HomeKit.
+With no argument it restarts `sentinelcore` and `sentinelcore-web`, and the HomeKit sidecar and
+push relay too wherever their units are installed. Services that aren't installed are skipped,
+so `./deploy.sh` works unchanged whether or not you use HomeKit or run the relay.
+
+Its closing health check runs a couple of seconds after the restart and can report the dashboard
+as unreachable while it's still starting; check again a few seconds later before worrying.
 
 It runs (in order): a check that it will be able to restart the services at all, `dotnet
 build-server shutdown` (safety, see section 4), `dotnet build -c Release`, `dotnet test` (set

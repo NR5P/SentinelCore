@@ -1,40 +1,98 @@
-# Sentinel Core for Apple Platforms
+# Sentinel Core for iPhone, iPad and Mac
 
-Native SwiftUI client for iPhone, iPad, and macOS.
+Native SwiftUI client for iPhone, iPad (iOS 17+) and Mac (macOS 14+), one codebase. It talks to
+`SentinelCore.Web`'s JSON API and never connects to cameras or the engine on port 5080 directly.
+
+**Building, testing and releasing:** [`docs/BUILDING.md`](../docs/BUILDING.md) §3 and §6.2.
+This README covers what's here and how it fits together.
 
 ## Open and run
 
-1. Open `SentinelCore.xcodeproj` in Xcode.
-2. Select the `SentinelCore` scheme.
-3. Choose an iPhone, iPad, or Mac destination.
-4. Run the app and enter the dashboard address, for example:
-   `http://192.168.1.50:3320`
+1. Open `SentinelCore.xcodeproj` in Xcode and pick the `SentinelCore` scheme.
+2. Choose an iPhone, iPad, simulator or "My Mac" destination and run.
+3. The setup screen lists servers it finds on the network (Bonjour, `_sentinelcore._tcp`); pick
+   one or type the address, for example `http://192.168.1.50:3320`.
 
-The device and Sentinel Core server must currently be on the same local network.
+Or from a terminal:
+`xcodebuild -project ios/SentinelCore.xcodeproj -scheme SentinelCore -destination 'platform=macOS' build`.
 
-> **Open issue, 2026-08-05:** Live view stutters on iPhone over Wi-Fi — a frozen frame that jumps
-> every few seconds — while the same cameras play correctly in the web dashboard. The server side has
-> been verified healthy at frame level, so start by checking whether the installed build predates the
-> `LiveStreamPlayer` stall fixes of 30 July. Full findings and a suggested order of attack:
-> [`core/docs/IOS_LIVE_VIEW_HANDOFF.md`](../core/docs/IOS_LIVE_VIEW_HANDOFF.md).
+The iPhone and Mac in daily use run **TestFlight** builds. A local build registers a sandbox
+push token that the production server rejects, so installing one on those devices breaks
+their push until the TestFlight build is reinstalled. BUILDING.md §3 has more.
 
-## Current foundation
+## What's in the project
 
-- Native event feed with pull-to-refresh, search, notification filter, and automatic refresh
-- Event detail with full-resolution alert snapshot
-- Day-indexed Blue Iris trigger clips with AI event markers, pre/post-event frame scrubbing,
-  automatic unsaved-gap skipping, object/severity filters, and shared reviewed/unreviewed state
-- Trigger history with snapshot and recorded-clip playback
-- Live camera list and native HLS playback
-- Use this iPhone, iPad or Mac as one of the dashboard's cameras: its camera is pushed to the server over WebRTC (the `WebRTC` Swift package, the same path as the web dashboard's publish page), with the device kept awake by the app and streaming resumed after a relaunch
-- APNs event alerts with foreground presentation, test delivery, and event deep links
-- Optional dashboard username/password login
-- Server connection settings and health status
-- Shared SwiftUI codebase for iOS, iPadOS, and macOS
+| Folder / target | What it is |
+| --- | --- |
+| `SentinelCore/` (target `SentinelCore`) | The app, for iOS and macOS. Subfolders: `App` (model, lifecycle, push, background refresh), `Views`, `Live` (video players), `Organizer`, `Publish` (this device as a camera), `Networking`, `Models`, `Design`. |
+| `SentinelCoreWidgets/` (iOS only) | Calendar, Reminders and Notes widgets. They read a snapshot the app writes to the App Group, and ticking a reminder off on a widget leaves an action for the app to apply. |
+| `SentinelCoreShare/` (iOS only) | The share extension: "Sentinel Core" in the share sheet saves text or a link as an Organizer note. |
+| `OrganizerKit/` (Swift package) | The Organizer's on-device store and sync engine, calendar maths, voice-phrase parsing, the Apple Reminders mapping, and the widget snapshot. Shared with the Apple TV app and tested with `swift test`. |
+| `scripts/release.sh` | Archive and upload to TestFlight (iOS, macOS or both). |
+| `Info.plist`, `SentinelCoreWidgets-Info.plist`, `SentinelCoreShare-Info.plist` | One per target. The app's plist is shared by iOS and macOS; keys only one platform reads, such as `NSServices` (Mac), are ignored by the other. |
 
-The app talks to the existing `SentinelCore.Web` JSON API. It does not connect
-directly to cameras or the main bridge on port 5080.
+Folders are synchronized groups: new files join their target without editing the project.
+Entitlements: `SentinelCore-iOS.entitlements` (push, App Group) and `SentinelCore.entitlements`
+(macOS sandbox: network, camera, microphone, user-selected files, Calendars/Reminders, push).
 
-Real push delivery requires an Apple Developer signing identity, an APNs key, and
-Core provider configuration. See
-[`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md).
+## Features
+
+**Security cameras**
+- Events: the server's merged motion + AI list, with search, notified-only and show-hidden
+  filters, and an event detail with the full-resolution snapshot and clip.
+- Recording timeline: a day of one camera, with AI event marks, frame scrubbing, filters and a
+  reviewed flag shared across clients.
+- Live: tiles and full-screen playback. Transport is MSE over WebSocket first (a quarter to half
+  a second behind), with HLS as the fallback. PTZ controls, and a record button that files a
+  trigger.
+- This iPhone, iPad or Mac as one of the dashboard's cameras (WebRTC, H.264), kept awake while
+  streaming and resumed after a relaunch.
+- Push alerts through APNs, with foreground presentation and deep links to the event.
+
+**Organizer:** calendar, reminders, notes and boards, shared with the dashboard and the other
+apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md).
+- Personal, Family and custom group spaces; items carry pictures, files and links. Boards have
+  columns, cards, card comments, and cards can be dragged between columns and boards. Optional
+  holiday calendars, and a private `.ics` subscribe link.
+- A copy is kept on the device. A phone keeps a light copy by default and a Mac keeps
+  everything; both work offline. Reminder and event alerts are local notifications from that
+  copy, so they fire with no signal.
+- Kept current in the background by the server's silent push and by background refresh, which
+  also keep the widgets up to date.
+
+**Getting things into the Organizer without opening the app**
+- **Siri and Shortcuts** (`Organizer/OrganizerIntents.swift`): "Add a reminder in Sentinel Core",
+  "Take a note in Sentinel Core", "Add an event in Sentinel Core", "What's due in Sentinel Core".
+  They also appear in Shortcuts, Spotlight and on the Action button. Spoken dates are parsed by
+  `OrganizerKit/VoicePhrase.swift` ("call mom tomorrow at 5"). Apple doesn't let an app take over
+  plain "remind me to…", so every phrase names the app.
+- **Apple Reminders inbox** (Settings → Apple Reminders, per device): reminders added to a chosen
+  Reminders list move into an Organizer space (Personal by default) and out of Apple Reminders.
+  With that list set as the Reminders default, plain "Hey Siri, remind me…" ends up here too.
+  Reminders that alert by location, or repeat in a way the Organizer can't express, stay in
+  Apple Reminders.
+- **Share to Sentinel Core:** the share sheet on iPhone/iPad; on the Mac, select text or a link
+  and use Services → New Sentinel Core Note.
+- None of these puts anything in Family by default. They wait until the device has synced and
+  knows the person's own space.
+
+**Other**
+- Device Hub: lights, gates, locks and sensors over MQTT.
+- Admin screens: cameras and trigger zones, accounts, known faces and vehicles, schedules,
+  prompt profiles, HomeKit, backup, licence, and the full server settings tree.
+- Optional dashboard login; a remote fallback address; automatic plain-HTTP fallback when the
+  device doesn't trust the server's own certificate authority (said so in Settings).
+- Customizable tab bar on iPhone, with a More tab for the rest.
+
+## Things to know before changing code here
+
+- **Siri shortcut text may not contain the word "Siri".** App Store Connect rejects the iPhone
+  build (ITMS-90626) after a successful-looking upload. See BUILDING.md §3.
+- **Extensions' build numbers must match the app's.** `scripts/bump-build.sh` keeps them in step.
+- **Swift 6 strict concurrency is on.** A `@MainActor` closure handed to a framework that calls it
+  on another queue traps at runtime, as EventKit's did (BUILDING.md §3).
+- **The Mac, first launch after installing a new build:** the first local-network request fails
+  once; launch the app twice.
+- Push setup (APNs key, bundle ids, sandbox vs production):
+  [`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md).
+- Live-view history and the transport ladder: [`core/docs/IOS_LIVE_VIEW_HANDOFF.md`](../core/docs/IOS_LIVE_VIEW_HANDOFF.md).
