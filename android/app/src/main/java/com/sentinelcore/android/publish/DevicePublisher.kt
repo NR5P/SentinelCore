@@ -120,7 +120,13 @@ object DevicePublisher {
     // been torn down (a slow SDP exchange, a late retry) can tell it is stale and do nothing.
     private var generation = 0
 
-    private const val PREFS = "sentinel_core"
+    // Its own file, not the app's main "sentinel_core" one, because backup and device transfer
+    // copy whole files and this one must not travel: restored onto a new phone, the intent below
+    // made that phone start streaming into the old phone's camera slot after its first sign-in,
+    // before it had ever been given camera permission. Excluded in data_extraction_rules.xml and
+    // backup_rules.xml.
+    private const val PREFS = "sentinel_core_publisher"
+    private const val LEGACY_PREFS = "sentinel_core"
     private const val INTENT_ID = "publisher.target.id"
     private const val INTENT_NAME = "publisher.target.name"
     private const val INTENT_DEVICE = "publisher.device"
@@ -139,6 +145,22 @@ object DevicePublisher {
         appContext = context.applicationContext
         this.repository = repository
         this.logger = logger
+        moveLegacyPreferences()
+    }
+
+    // Builds before the move kept these keys in the main preferences file.
+    private fun moveLegacyPreferences() {
+        val keys = listOf(INTENT_ID, INTENT_NAME, INTENT_DEVICE, INTENT_MIC, LAST_TARGET)
+        val legacy = appContext.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        if (keys.none(legacy::contains)) return
+        val moved = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        legacy.getString(INTENT_ID, null)?.let { moved.putString(INTENT_ID, it) }
+        legacy.getString(INTENT_NAME, null)?.let { moved.putString(INTENT_NAME, it) }
+        legacy.getString(INTENT_DEVICE, null)?.let { moved.putString(INTENT_DEVICE, it) }
+        if (legacy.contains(INTENT_MIC)) moved.putBoolean(INTENT_MIC, legacy.getBoolean(INTENT_MIC, false))
+        legacy.getString(LAST_TARGET, null)?.let { moved.putString(LAST_TARGET, it) }
+        moved.apply()
+        legacy.edit().apply { keys.forEach(::remove) }.apply()
     }
 
     val isAttached: Boolean get() = repository != null
@@ -206,6 +228,19 @@ object DevicePublisher {
         closePeer()
         val mine = ++generation
 
+        // Checked before the service exists, not left to ensureCapture: a camera-type foreground
+        // service without the camera permission is refused by Android 14+ with an exception that
+        // takes the whole app down - and because the remembered intent survived the crash, it did
+        // so again on every launch. A permission the person has taken away is also a decision
+        // only they can undo, so the intent goes too, rather than retrying on every reconnect.
+        missingPermissionMessage(includeMic)?.let { message ->
+            forgetIntent()
+            _state.update {
+                it.copy(target = null, phase = if (captureRunning) Phase.PREVIEWING else Phase.IDLE, status = "", error = message)
+            }
+            return
+        }
+
         _state.update {
             it.copy(target = target, includeMic = includeMic, error = null, phase = Phase.STARTING, status = "requesting camera…")
         }
@@ -219,10 +254,13 @@ object DevicePublisher {
             if (includeMic) ensureMicrophone() else audioTrack = null
         } catch (error: Exception) {
             if (mine != generation) return
+            // No stopService here. A service started with startForegroundService that is stopped
+            // before it reaches startForeground crashes the app, and this failure can easily come
+            // first. Clearing the target is enough: the service calls startForeground, sees
+            // nothing is publishing, and stops itself.
             _state.update {
                 it.copy(target = null, phase = if (captureRunning) Phase.PREVIEWING else Phase.IDLE, status = "", error = error.message ?: "Couldn't open the camera.")
             }
-            DevicePublisherService.stop(appContext)
             return
         }
         if (mine != generation) return
@@ -236,9 +274,14 @@ object DevicePublisher {
     val lastTargetId: String?
         get() = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(LAST_TARGET, null)
 
-    // Ends streaming. A deliberate stop forgets the remembered intent - that is the one way the
-    // app stops trying to be a camera on its next launch. The preview stays up so the screen
-    // still shows the camera, and endPreview releases it when the screen goes.
+    // Ends streaming. A deliberate stop forgets the remembered intent, so the app stops trying to
+    // be a camera on its next launch (the only other thing that does is a missing permission - see
+    // startNow). The preview stays up so the screen still shows the camera, and endPreview
+    // releases it when the screen goes.
+    //
+    // The service isn't stopped from here: it stops itself once nothing is publishing (see
+    // DevicePublisherService), and stopping it directly could land before its startForeground -
+    // a Stop tapped in the first moment of a start - which Android punishes by crashing the app.
     fun stop() {
         generation++
         forgetIntent()
@@ -256,7 +299,14 @@ object DevicePublisher {
                 status = if (captureRunning) "stopped - previewing only, nothing is being sent" else "",
             )
         }
-        DevicePublisherService.stop(appContext)
+    }
+
+    // Android wouldn't let DevicePublisherService go into the foreground - see its onStartCommand.
+    fun serviceRefused() {
+        stop()
+        _state.update {
+            it.copy(error = "Android didn't allow Sentinel Core to keep the camera running. Check its camera permission under Settings → Apps → Sentinel Core → Permissions, then try again.")
+        }
     }
 
     private suspend fun connect(mine: Int) {
@@ -432,10 +482,22 @@ object DevicePublisher {
         return created
     }
 
+    private fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(appContext, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun missingPermissionMessage(includeMic: Boolean): String? = when {
+        !granted(Manifest.permission.CAMERA) -> CAMERA_DENIED
+        includeMic && !granted(Manifest.permission.RECORD_AUDIO) -> MICROPHONE_DENIED
+        else -> null
+    }
+
+    private const val CAMERA_DENIED =
+        "Sentinel Core isn't allowed to use the camera. Allow it under Settings → Apps → Sentinel Core → Permissions, then try again."
+    private const val MICROPHONE_DENIED =
+        "Sentinel Core isn't allowed to use the microphone. Allow it under Settings → Apps → Sentinel Core → Permissions, or turn the microphone off here."
+
     private suspend fun ensureCapture(requested: String) {
-        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            throw IOException("Sentinel Core isn't allowed to use the camera. Allow it under Settings → Apps → Sentinel Core → Permissions, then try again.")
-        }
+        if (!granted(Manifest.permission.CAMERA)) throw IOException(CAMERA_DENIED)
         val factory = ensureFactory()
         refreshDevices()
         val devices = _state.value.devices
@@ -476,9 +538,7 @@ object DevicePublisher {
 
     private fun ensureMicrophone() {
         if (audioTrack != null) return
-        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            throw IOException("Sentinel Core isn't allowed to use the microphone. Allow it under Settings → Apps → Sentinel Core → Permissions, or turn the microphone off here.")
-        }
+        if (!granted(Manifest.permission.RECORD_AUDIO)) throw IOException(MICROPHONE_DENIED)
         val factory = ensureFactory()
         // WebRTC's audio processing is tuned for a call, and a camera is not a call: nothing plays
         // out of this phone, so the echo canceller has nothing to cancel and instead eats any sound

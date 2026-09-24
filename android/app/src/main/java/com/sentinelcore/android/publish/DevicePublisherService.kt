@@ -60,7 +60,18 @@ class DevicePublisherService : Service() {
             // without the permission is refused outright rather than started without audio.
             if (state.includeMic && micGranted) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         }
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(state), type)
+        // DevicePublisher checks the camera permission before starting this, but it can still be
+        // revoked in between, and Android 14+ answers a camera-type start without it with a
+        // SecurityException; a start from the background is refused too. Either would otherwise
+        // crash the app - better to end the stream and say why.
+        try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(state), type)
+        } catch (error: RuntimeException) {
+            if (error !is SecurityException && error !is IllegalStateException) throw error
+            DevicePublisher.serviceRefused()
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         if (wakeLock == null) {
             val power = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -129,10 +140,6 @@ class DevicePublisherService : Service() {
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, DevicePublisherService::class.java))
-        }
-
-        fun stop(context: Context) {
-            context.stopService(Intent(context, DevicePublisherService::class.java))
         }
 
         private fun ensureChannel(context: Context) {

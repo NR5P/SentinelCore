@@ -2,4 +2,5 @@
 <!-- Android 11 and below equivalent of data_extraction_rules.xml. -->
 <full-backup-content>
     <exclude domain="sharedpref" path="sentinel_core_sessions.xml" />
+    <exclude domain="sharedpref" path="sentinel_core_publisher.xml" />
 </full-backup-content>

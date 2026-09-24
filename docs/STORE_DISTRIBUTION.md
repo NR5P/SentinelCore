@@ -26,7 +26,7 @@ in [`BUILDING.md`](BUILDING.md) §6. This file is the one-time setup behind it.
   `LSApplicationCategoryType` for the Mac App Store.
 - Android: `targetSdk`/`compileSdk` 36 (Play's requirement for new apps from Aug 2026), AGP
   8.9.3 / Gradle 8.11.1, release signing wired to `android/keystore.properties`, backup rules
-  excluding the login session, the setup-screen placeholder no longer shows a real server.
+  excluding the login session and the phone-as-a-camera state, the setup-screen placeholder no longer shows a real server.
 - Release scripts: `ios/scripts/release.sh`, `appletv/scripts/release.sh`, `android/release.sh`,
   and `scripts/bump-build.sh`.
 

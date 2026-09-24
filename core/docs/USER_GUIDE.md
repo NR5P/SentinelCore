@@ -582,6 +582,10 @@ what the app is handling for you and what it can't:
 - **Android:** the app runs a foreground service, so **the screen can be turned off** and the
   camera keeps going. Plug it in, set battery use to *Unrestricted* (the screen has a button for
   it), and don't swipe the app away from recents. The notification has a *Stop streaming* button.
+  If the app is closed or the phone restarts, it resumes streaming the next time it's opened -
+  unless the camera (or, with sound on, microphone) permission has been taken away, in which case
+  it says so and stays stopped until you allow it and press *Start Streaming* again. A new phone
+  restored from a backup of an old one does not pick up the old phone's camera; set it up fresh.
 - **Mac:** the app holds the Mac out of idle sleep; the display may go dark and that is fine.
   Keep the lid open and set *Prevent automatic sleeping on power adapter when the display is off*.
   Hiding the app is fine; quitting it stops the stream (and it resumes on the next launch).
