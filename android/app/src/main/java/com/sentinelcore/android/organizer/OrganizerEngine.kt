@@ -460,7 +460,11 @@ class OrganizerEngine(
 
     // ---- connection ------------------------------------------------------------------------
 
-    val isConnected: Boolean get() = transport != null
+    // A real connection - not syncOnce borrowing a transport for one pass. The app connects
+    // whenever this is false; counting a borrowed one let a background sync that happened to be
+    // running when the app came forward stop the app connecting, and then hang up on finishing,
+    // leaving the app in front with nothing syncing.
+    val isConnected: Boolean get() = transport != null && !borrowedTransport
 
     fun connect(transport: OrganizerTransport) {
         this.transport = transport

@@ -276,7 +276,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     // A reminder or note said to the phone (organizer/VoiceCapture). Saved to this phone's copy
     // at once, alert and all; the engine sends it as soon as it's connected. Returns what to tell
     // the person, and whether it was added.
-    fun addFromVoice(kind: String, text: String): Pair<Boolean, String> {
+    fun addFromVoice(kind: String, text: String, subject: String? = null, shared: Boolean = false): Pair<Boolean, String> {
         // Refused only when the server has said it's off, now or the last time it was asked. Not
         // knowing - a first launch with no signal - keeps the item to send when it can.
         val enabled = organizer.status.value?.enabled ?: OrganizerDevice.knownEnabled(getApplication<Application>())
@@ -288,7 +288,10 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         if (organizer.spaces.value.isEmpty()) {
             return false to "Sentinel Core hasn't synced your Organizer yet. Try again once it has connected to your server."
         }
-        return if (kind == OrganizerKinds.NOTE) {
+        return if (shared) {
+            organizer.create(OrganizerKinds.NOTE, VoiceCapture.sharedNote(text, subject))
+            true to "Saved to your notes."
+        } else if (kind == OrganizerKinds.NOTE) {
             organizer.create(OrganizerKinds.NOTE, VoiceCapture.note(text))
             true to "Saved your note."
         } else {

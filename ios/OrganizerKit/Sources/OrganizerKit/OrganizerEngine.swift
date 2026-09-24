@@ -482,7 +482,11 @@ public final class OrganizerEngine {
         transport = nil
     }
 
-    public var isConnected: Bool { transport != nil }
+    // A real connection - not syncOnce borrowing a transport for one pass. The app connects
+    // whenever this is false; counting a borrowed one let a background sync that happened to be
+    // running when the app came forward stop the app connecting, and then hang up on finishing,
+    // leaving the app in front with nothing syncing.
+    public var isConnected: Bool { transport != nil && !borrowedTransport }
 
     // One sync and nothing after it - no long poll - for an app woken in the background (a
     // silent push, a background refresh). Already connected, it just syncs. Returns whether the

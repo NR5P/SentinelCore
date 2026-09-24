@@ -170,6 +170,7 @@ final class SentinelApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         PushNotificationCoordinator.shared.configure()
         PushNotificationCoordinator.shared.registerWithAPNs()
+        SharedNotesPickup.registerServices()
     }
 
     func application(

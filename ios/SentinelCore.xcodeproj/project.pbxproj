@@ -12,6 +12,8 @@
 		A00000000000000000000032 /* OrganizerKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000031 /* OrganizerKit */; };
 		B00000000000000000000001 /* SentinelCoreWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* SentinelCoreWidgets.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B00000000000000000000003 /* OrganizerKit in Frameworks */ = {isa = PBXBuildFile; productRef = B00000000000000000000004 /* OrganizerKit */; };
+		C00000000000000000000001 /* SentinelCoreShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C00000000000000000000002 /* SentinelCoreShare.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C00000000000000000000003 /* OrganizerKit in Frameworks */ = {isa = PBXBuildFile; productRef = C00000000000000000000004 /* OrganizerKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -21,6 +23,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = B00000000000000000000010;
 			remoteInfo = SentinelCoreWidgets;
+		};
+		C00000000000000000000007 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A0000000000000000000000A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C00000000000000000000010;
+			remoteInfo = SentinelCoreShare;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -32,6 +41,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				B00000000000000000000001 /* SentinelCoreWidgets.appex in Embed Foundation Extensions */,
+				C00000000000000000000001 /* SentinelCoreShare.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -42,6 +52,7 @@
 		A00000000000000000000001 /* SentinelCore.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SentinelCore.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000010 /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
 		B00000000000000000000002 /* SentinelCoreWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SentinelCoreWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C00000000000000000000002 /* SentinelCoreShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SentinelCoreShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -53,6 +64,11 @@
 		B00000000000000000000005 /* SentinelCoreWidgets */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = SentinelCoreWidgets;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000005 /* SentinelCoreShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SentinelCoreShare;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -76,6 +92,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C00000000000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000000000000000000003 /* OrganizerKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -84,6 +108,7 @@
 			children = (
 				A00000000000000000000002 /* SentinelCore */,
 				B00000000000000000000005 /* SentinelCoreWidgets */,
+				C00000000000000000000005 /* SentinelCoreShare */,
 				A00000000000000000000011 /* Frameworks */,
 				A00000000000000000000005 /* Products */,
 			);
@@ -102,6 +127,7 @@
 			children = (
 				A00000000000000000000001 /* SentinelCore.app */,
 				B00000000000000000000002 /* SentinelCoreWidgets.appex */,
+				C00000000000000000000002 /* SentinelCoreShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -122,6 +148,7 @@
 			);
 			dependencies = (
 				B00000000000000000000008 /* PBXTargetDependency */,
+				C00000000000000000000008 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A00000000000000000000002 /* SentinelCore */,
@@ -158,6 +185,29 @@
 			productReference = B00000000000000000000002 /* SentinelCoreWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		C00000000000000000000010 /* SentinelCoreShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00000000000000000000013 /* Build configuration list for PBXNativeTarget "SentinelCoreShare" */;
+			buildPhases = (
+				C0000000000000000000000A /* Sources */,
+				C00000000000000000000009 /* Frameworks */,
+				C0000000000000000000000B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				C00000000000000000000005 /* SentinelCoreShare */,
+			);
+			name = SentinelCoreShare;
+			packageProductDependencies = (
+				C00000000000000000000004 /* OrganizerKit */,
+			);
+			productName = SentinelCoreShare;
+			productReference = C00000000000000000000002 /* SentinelCoreShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -172,6 +222,9 @@
 						CreatedOnToolsVersion = 26.6;
 					};
 					B00000000000000000000010 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					C00000000000000000000010 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -196,6 +249,7 @@
 			targets = (
 				A00000000000000000000006 /* SentinelCore */,
 				B00000000000000000000010 /* SentinelCoreWidgets */,
+				C00000000000000000000010 /* SentinelCoreShare */,
 			);
 		};
 /* End PBXProject section */
@@ -209,6 +263,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		B0000000000000000000000B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0000000000000000000000B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -232,6 +293,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C0000000000000000000000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -240,6 +308,12 @@
 			platformFilter = ios;
 			target = B00000000000000000000010 /* SentinelCoreWidgets */;
 			targetProxy = B00000000000000000000007 /* PBXContainerItemProxy */;
+		};
+		C00000000000000000000008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = C00000000000000000000010 /* SentinelCoreShare */;
+			targetProxy = C00000000000000000000007 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -403,6 +477,56 @@
 			};
 			name = Release;
 		};
+		C00000000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SentinelCoreShare/SentinelCoreShare.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = G4GK5372G8;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SentinelCoreShare-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sentinelcore.client.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C00000000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SentinelCoreShare/SentinelCoreShare.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = G4GK5372G8;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SentinelCoreShare-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sentinelcore.client.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -429,6 +553,15 @@
 			buildConfigurations = (
 				B00000000000000000000011 /* Debug */,
 				B00000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00000000000000000000013 /* Build configuration list for PBXNativeTarget "SentinelCoreShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00000000000000000000011 /* Debug */,
+				C00000000000000000000012 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -464,6 +597,10 @@
 			productName = OrganizerKit;
 		};
 		B00000000000000000000004 /* OrganizerKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OrganizerKit;
+		};
+		C00000000000000000000004 /* OrganizerKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = OrganizerKit;
 		};

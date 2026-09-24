@@ -116,6 +116,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- "Sentinel Core" in other apps' Share menus: text or a link becomes an Organizer
+                 note in the person's own space - see organizer/VoiceCapture.sharedNote. -->
+            <intent-filter android:label="@string/share_note_label">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
             <!-- Voice reminder / voice note on the icon's long-press menu, and the Google
                  Assistant App Action - see res/xml/shortcuts.xml. -->
             <meta-data

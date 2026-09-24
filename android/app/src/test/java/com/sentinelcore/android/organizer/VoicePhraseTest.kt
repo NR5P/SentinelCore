@@ -37,6 +37,28 @@ class VoicePhraseTest {
         }
     }
 
+    // The same cases as OrganizerKit's SharedNotesTests.
+    @Test
+    fun sharedNotes() {
+        val page = VoiceCapture.sharedNote("https://example.com/recipe", "Best chili")
+        assertEquals("Best chili", page["title"])
+        assertEquals("https://example.com/recipe", page["body"])
+        assertEquals(listOf(mapOf("url" to "https://example.com/recipe", "title" to "Best chili")), page["links"])
+
+        val bare = VoiceCapture.sharedNote("https://www.example.com/a", null)
+        assertEquals("example.com", bare["title"])
+
+        val text = VoiceCapture.sharedNote("  Garage code changes Friday  ", null)
+        assertEquals("Garage code changes Friday", text["title"])
+        assertEquals("", text["body"])
+        assertEquals(null, text["links"])
+
+        val long = "The plumber said the water heater needs a new anode rod and the pressure valve should be checked next spring"
+        val longNote = VoiceCapture.sharedNote(long, null)
+        assertEquals("The plumber said the water heater needs a new…", longNote["title"])
+        assertEquals(long, longNote["body"])
+    }
+
     @Test
     fun dateOnlyPhrasesAreAllDay() {
         val phrase = VoicePhrase.parse("dentist Friday")

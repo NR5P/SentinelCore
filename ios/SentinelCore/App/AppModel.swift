@@ -162,6 +162,10 @@ final class AppModel: ObservableObject {
             organizer,
             organizerIsOn: { [unowned self] in (organizer.status?.enabled ?? organizerEnabledIfKnown) == true },
             log: { [unowned self] message in log(message) })
+        SharedNotesPickup.attach(
+            organizer,
+            organizerIsOn: { [unowned self] in (organizer.status?.enabled ?? organizerEnabledIfKnown) == true },
+            log: { [unowned self] message in log(message) })
     }
 
     // The engine follows the connection: running while the app is online and in the foreground,
@@ -182,8 +186,10 @@ final class AppModel: ObservableObject {
     // re-picks between the local and remote address once, as connect() would.
     func refreshOrganizerInBackground() async {
         guard isConfigured, organizerLastKnownEnabled else { return }
-        // Anything waiting in Apple Reminders first, so it goes up in this same sync.
+        // Anything waiting in Apple Reminders or shared from another app first, so it goes up in
+        // this same sync.
         await RemindersInbox.shared.bringIn()
+        SharedNotesPickup.pickUp()
         if activeServerURL.isEmpty { await resolveActiveServerURL() }
         let tried = activeServerURL
         var online = await organizer.syncOnce(AppOrganizerTransport(client: client))
@@ -213,7 +219,10 @@ final class AppModel: ObservableObject {
         if active, organizer.isConnected {
             Task { await organizer.sync() }
         }
-        if active { Task { await RemindersInbox.shared.bringIn() } }
+        if active {
+            Task { await RemindersInbox.shared.bringIn() }
+            SharedNotesPickup.pickUp()
+        }
         updateOrganizerConnection()
     }
 

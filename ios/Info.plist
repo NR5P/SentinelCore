@@ -67,6 +67,27 @@
 	<string>Sentinel Core uses the camera to stream this device as one of your security cameras, and to take a reference photo when enrolling a known person for face recognition.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Sentinel Core uses the microphone only if you choose to include sound while streaming this device as a security camera.</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>New Sentinel Core Note</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>newSentinelCoreNote</string>
+			<key>NSPortName</key>
+			<string>SentinelCore</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.utf8-plain-text</string>
+				<string>public.url</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Sentinel Core brings reminders from the Apple Reminders list you choose into your Organizer, then removes them from that list. It only does this if you turn it on in Settings.</string>
 	<key>NSRemindersUsageDescription</key>

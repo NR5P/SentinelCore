@@ -19,13 +19,20 @@ object VoiceCapture {
     const val ACTION_NOTE = "com.sentinelcore.android.VOICE_NOTE"
     const val EXTRA_TEXT = "text"
 
-    // `text` null means nothing has been said yet: listen first.
-    data class Request(val kind: String, val text: String?)
+    // `text` null means nothing has been said yet: listen first. `shared` is text or a link from
+    // another app's Share menu, with that app's title for it as `subject`.
+    data class Request(val kind: String, val text: String?, val subject: String? = null, val shared: Boolean = false)
 
     // Set by MainActivity, taken by the app shell (SentinelApp), which listens and then adds.
     val pending = MutableStateFlow<Request?>(null)
 
     fun fromIntent(intent: Intent?): Request? {
+        // Sentinel Core in another app's Share menu (see AndroidManifest.xml).
+        if (intent?.action == Intent.ACTION_SEND && intent.type?.startsWith("text/") == true) {
+            if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: return null
+            return Request(OrganizerKinds.NOTE, text, intent.getStringExtra(Intent.EXTRA_SUBJECT), shared = true)
+        }
         val kind = when (intent?.action) {
             ACTION_REMINDER -> OrganizerKinds.REMINDER
             ACTION_NOTE -> OrganizerKinds.NOTE
@@ -58,6 +65,30 @@ object VoiceCapture {
         val spoken = text.trim().replaceFirstChar { it.uppercaseChar() }
         val title = noteTitle(spoken)
         return mapOf("title" to title, "body" to if (title == spoken) "" else spoken)
+    }
+
+    // A note from another app's Share menu - the same rules as SharedNote in OrganizerKit. A
+    // browser shares a page as its bare address, with the page's title as the subject.
+    fun sharedNote(text: String, subject: String?): Map<String, Any?> {
+        val trimmed = text.trim()
+        val isLink = Regex("""^https?://\S+$""", RegexOption.IGNORE_CASE).matches(trimmed)
+        val body = if (isLink) "" else trimmed
+        val link = if (isLink) trimmed else ""
+        val given = subject?.trim().orEmpty()
+        val title = when {
+            given.isNotEmpty() -> given
+            body.isNotEmpty() -> noteTitle(body)
+            else -> runCatching { java.net.URI(link).host }.getOrNull()?.removePrefix("www.") ?: link
+        }
+        val lines = buildList {
+            if (body.isNotEmpty() && body != title) add(body)
+            if (link.isNotEmpty()) add(link)
+        }
+        return buildMap {
+            put("title", title)
+            put("body", lines.joinToString("\n\n"))
+            if (link.isNotEmpty()) put("links", listOf(buildMap { put("url", link); if (given.isNotEmpty()) put("title", given) }))
+        }
     }
 
     fun noteTitle(text: String): String {

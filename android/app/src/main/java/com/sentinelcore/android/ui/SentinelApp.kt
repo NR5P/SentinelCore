@@ -108,6 +108,8 @@ import com.sentinelcore.android.ui.theme.SentinelGreen
 import com.sentinelcore.android.ui.theme.SentinelPanel
 import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun SentinelApp(model: SentinelViewModel) {
@@ -255,8 +257,8 @@ private fun AppShell(
     val voiceContext = LocalContext.current
     val voiceRequest by VoiceCapture.pending.collectAsStateWithLifecycle()
     var listeningFor by rememberSaveable { mutableStateOf<String?>(null) }
-    val addSpoken: (String, String) -> Unit = { kind, text ->
-        val (added, message) = model.addFromVoice(kind, text)
+    val addSpoken: (String, String, VoiceCapture.Request?) -> Unit = { kind, text, request ->
+        val (added, message) = model.addFromVoice(kind, text, request?.subject, request?.shared == true)
         Toast.makeText(voiceContext, message, Toast.LENGTH_LONG).show()
         if (added && state.organizerEnabled) {
             OrganizerNavigation.pane.value = if (kind == OrganizerKinds.NOTE) "notes" else "reminders"
@@ -267,14 +269,17 @@ private fun AppShell(
         val kind = listeningFor
         listeningFor = null
         val words = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (result.resultCode == Activity.RESULT_OK && kind != null && !words.isNullOrBlank()) addSpoken(kind, words)
+        if (result.resultCode == Activity.RESULT_OK && kind != null && !words.isNullOrBlank()) addSpoken(kind, words, null)
     }
     LaunchedEffect(voiceRequest) {
         val request = voiceRequest ?: return@LaunchedEffect
         VoiceCapture.pending.value = null
         val text = request.text
         if (text != null) {
-            addSpoken(request.kind, text)
+            // Opened cold by a share or the Assistant: give the first sync a moment to say which
+            // spaces there are, rather than turning it away.
+            withTimeoutOrNull(10_000) { model.organizer.spaces.first { it.isNotEmpty() } }
+            addSpoken(request.kind, text, request)
             return@LaunchedEffect
         }
         listeningFor = request.kind

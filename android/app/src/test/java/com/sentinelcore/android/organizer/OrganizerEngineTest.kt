@@ -98,6 +98,24 @@ class OrganizerEngineTest {
         assertEquals(setOf("title", "body", "spaceId"), sent.getJSONObject(0).getJSONObject("clocks").keySet())
     }
 
+    // The app coming forward while a background pass (syncOnce) is running must still end up
+    // connected. It used to see the borrowed transport, skip its own connect, and then be left with
+    // nothing when the pass hung up - so nothing it added synced until the connection next changed.
+    @Test
+    fun `the app still connects while a background pass is running`() = runBlocking {
+        val engine = engine(InMemoryOrganizerStore(directory()))
+        val transport = onlyStatus { _, _, _ -> ScriptedTransport.reply() }
+        transport.syncDelayMillis = 400
+        val background = async(Dispatchers.IO) { engine.syncOnce(transport) }
+        delay(100)
+        assertFalse("a borrowed transport isn't the app's connection", engine.isConnected)
+        engine.connect(transport)
+        assertTrue(engine.isConnected)
+        background.await()
+        assertTrue("the background pass finishing must not hang up the app's connection", engine.isConnected)
+        engine.disconnect()
+    }
+
     @Test
     fun `a failed sync keeps everything queued`() = runBlocking {
         val engine = engine(InMemoryOrganizerStore(directory()))

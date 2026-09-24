@@ -55,7 +55,7 @@ struct AddNoteIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let model = try await VoiceOrganizer.ready()
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = VoiceOrganizer.noteTitle(spoken)
+        let title = NoteText.title(for: spoken)
         model.organizer.create(.note, fields: ["title": .string(title), "body": .string(title == spoken ? "" : spoken)])
         let sent = await VoiceOrganizer.send(model)
         return .result(dialog: "\(VoiceOrganizer.confirmation("Saved your note.", sent: sent))")
@@ -272,16 +272,6 @@ enum VoiceOrganizer {
             day = date.formatted(.dateTime.month(.wide).day())
         }
         return hasTime ? "\(day) at \(date.formatted(date: .omitted, time: .shortened))" : day
-    }
-
-    // A short note is its own title. A longer one is titled with its opening words, and the whole
-    // of it goes in the body.
-    static func noteTitle(_ text: String) -> String {
-        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
-        guard firstLine.count > 60 else { return firstLine }
-        let clipped = firstLine.prefix(50)
-        let cut = clipped.lastIndex(of: " ").map { clipped[..<$0] } ?? clipped
-        return cut.trimmingCharacters(in: CharacterSet(charactersIn: " ,.;:-")) + "\u{2026}"
     }
 
     // Runs `operation` and waits at most `seconds` for it. What's still running when time is up

@@ -17,4 +17,6 @@
     <string name="shortcut_voice_reminder_long">Say a reminder</string>
     <string name="shortcut_voice_note_short">Voice note</string>
     <string name="shortcut_voice_note_long">Say a note</string>
+    <!-- The app's name in other apps' Share menus. -->
+    <string name="share_note_label">Sentinel Core note</string>
 </resources>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- What's shared is left in the container the app and its widgets already share
+         (SharedNoteInbox), for the app to turn into a note. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.sentinelcore.client</string>
+    </array>
+</dict>
+</plist>
