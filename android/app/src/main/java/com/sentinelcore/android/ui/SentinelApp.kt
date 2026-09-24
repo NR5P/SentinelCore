@@ -1,6 +1,13 @@
 package com.sentinelcore.android.ui
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.net.Uri
+import android.speech.RecognizerIntent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -45,7 +52,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sentinelcore.android.data.ConnectionState
+import com.sentinelcore.android.organizer.OrganizerKinds
 import com.sentinelcore.android.organizer.OrganizerNavigation
+import com.sentinelcore.android.organizer.VoiceCapture
 import com.sentinelcore.android.ui.organizer.CardEditorScreen
 import com.sentinelcore.android.ui.organizer.EventEditorScreen
 import com.sentinelcore.android.ui.organizer.NoteEditorScreen
@@ -236,6 +245,49 @@ private fun AppShell(
         if (openOrganizer && state.organizerEnabled) {
             OrganizerNavigation.open.value = false
             navController.navigate(AppSection.ORGANIZER.route) { launchSingleTop = true }
+        }
+    }
+
+    // A voice reminder or note - see organizer/VoiceCapture. The launcher shortcuts arrive with
+    // nothing said yet, so the phone's speech recognizer listens first; the Assistant's App Action
+    // arrives with the words. Either way it's added and the Organizer shown, so it is obvious
+    // where it went.
+    val voiceContext = LocalContext.current
+    val voiceRequest by VoiceCapture.pending.collectAsStateWithLifecycle()
+    var listeningFor by rememberSaveable { mutableStateOf<String?>(null) }
+    val addSpoken: (String, String) -> Unit = { kind, text ->
+        val (added, message) = model.addFromVoice(kind, text)
+        Toast.makeText(voiceContext, message, Toast.LENGTH_LONG).show()
+        if (added && state.organizerEnabled) {
+            OrganizerNavigation.pane.value = if (kind == OrganizerKinds.NOTE) "notes" else "reminders"
+            navController.navigate(AppSection.ORGANIZER.route) { launchSingleTop = true }
+        }
+    }
+    val listen = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val kind = listeningFor
+        listeningFor = null
+        val words = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (result.resultCode == Activity.RESULT_OK && kind != null && !words.isNullOrBlank()) addSpoken(kind, words)
+    }
+    LaunchedEffect(voiceRequest) {
+        val request = voiceRequest ?: return@LaunchedEffect
+        VoiceCapture.pending.value = null
+        val text = request.text
+        if (text != null) {
+            addSpoken(request.kind, text)
+            return@LaunchedEffect
+        }
+        listeningFor = request.kind
+        val prompt = if (request.kind == OrganizerKinds.NOTE) "What should the note say?" else "What's the reminder?"
+        try {
+            listen.launch(
+                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    .putExtra(RecognizerIntent.EXTRA_PROMPT, prompt),
+            )
+        } catch (_: ActivityNotFoundException) {
+            listeningFor = null
+            Toast.makeText(voiceContext, "This phone has no speech recognition app.", Toast.LENGTH_LONG).show()
         }
     }
 

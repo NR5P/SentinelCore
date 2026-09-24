@@ -116,6 +116,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Voice reminder / voice note on the icon's long-press menu, and the Google
+                 Assistant App Action - see res/xml/shortcuts.xml. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <!-- Lets ActivityResultContracts.TakePicture() write a captured photo to a content Uri

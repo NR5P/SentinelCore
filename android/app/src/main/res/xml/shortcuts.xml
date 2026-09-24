@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Voice into the Organizer (organizer/VoiceCapture).
+
+     The two shortcuts show up when the app icon is long-pressed, and can be dragged onto the home
+     screen: tap one and speak. They work whatever assistant the phone has.
+
+     The capability is a Google Assistant App Action: "Hey Google, save call mom tomorrow at 5 to
+     Sentinel Core" hands the app the words as `name`. Gemini doesn't run App Actions yet, so on a
+     phone that has switched to Gemini only the shortcuts apply.
+
+     targetPackage can't use ${applicationId} here - resource files don't get manifest
+     placeholders - so it's the literal id from app/build.gradle.kts. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <capability android:name="actions.intent.CREATE_THING">
+        <intent
+            android:action="com.sentinelcore.android.VOICE_REMINDER"
+            android:targetClass="com.sentinelcore.android.MainActivity"
+            android:targetPackage="com.sentinelcore.android">
+            <parameter
+                android:name="thing.name"
+                android:key="text" />
+        </intent>
+    </capability>
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_voice_reminder"
+        android:shortcutId="voice_reminder"
+        android:shortcutLongLabel="@string/shortcut_voice_reminder_long"
+        android:shortcutShortLabel="@string/shortcut_voice_reminder_short">
+        <intent
+            android:action="com.sentinelcore.android.VOICE_REMINDER"
+            android:targetClass="com.sentinelcore.android.MainActivity"
+            android:targetPackage="com.sentinelcore.android" />
+    </shortcut>
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_voice_note"
+        android:shortcutId="voice_note"
+        android:shortcutLongLabel="@string/shortcut_voice_note_long"
+        android:shortcutShortLabel="@string/shortcut_voice_note_short">
+        <intent
+            android:action="com.sentinelcore.android.VOICE_NOTE"
+            android:targetClass="com.sentinelcore.android.MainActivity"
+            android:targetPackage="com.sentinelcore.android" />
+    </shortcut>
+</shortcuts>

@@ -99,6 +99,8 @@ final class AppModel: ObservableObject {
             #endif
         }
     }
+    // The same, but nil when the server has never answered on this device.
+    var organizerEnabledIfKnown: Bool? { UserDefaults.standard.object(forKey: "organizerEnabled") as? Bool }
     private var organizerActive = true
     #if os(iOS)
     // Keeps the Home Screen widgets' copy current - see OrganizerWidgets.swift.

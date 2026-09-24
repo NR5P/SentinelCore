@@ -15,6 +15,7 @@ import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.organizer.OrganizerAlarms
 import com.sentinelcore.android.organizer.OrganizerNavigation
 import com.sentinelcore.android.widgets.OrganizerWidgets
+import com.sentinelcore.android.organizer.VoiceCapture
 import com.sentinelcore.android.push.PushNavigation
 import com.sentinelcore.android.push.SentinelFirebaseMessagingService
 
@@ -31,6 +32,9 @@ class MainActivity : ComponentActivity() {
         )
         SentinelFirebaseMessagingService.ensureChannel(this)
         handlePushIntent(intent)
+        // Only on a fresh start: a rotation recreates the activity with the same intent, and a
+        // voice reminder must not be added twice.
+        if (savedInstanceState == null) handleVoiceIntent(intent)
         setContent {
             SentinelTheme {
                 val model: SentinelViewModel = viewModel()
@@ -43,6 +47,12 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handlePushIntent(intent)
+        handleVoiceIntent(intent)
+    }
+
+    // "Voice reminder", "Voice note" or the Assistant - see organizer/VoiceCapture.
+    private fun handleVoiceIntent(intent: Intent?) {
+        VoiceCapture.fromIntent(intent)?.let { VoiceCapture.pending.value = it }
     }
 
     private fun handlePushIntent(intent: Intent?) {

@@ -12,4 +12,9 @@
     <string name="widget_reminders_description">Your open Organizer reminders - tick one to check it off</string>
     <string name="widget_notes_label">Notes</string>
     <string name="widget_notes_description">Your pinned and latest Organizer notes</string>
+    <!-- Launcher shortcuts, res/xml/shortcuts.xml. Short labels must fit under an icon. -->
+    <string name="shortcut_voice_reminder_short">Voice reminder</string>
+    <string name="shortcut_voice_reminder_long">Say a reminder</string>
+    <string name="shortcut_voice_note_short">Voice note</string>
+    <string name="shortcut_voice_note_long">Say a note</string>
 </resources>

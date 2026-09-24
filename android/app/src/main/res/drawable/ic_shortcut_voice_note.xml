@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher-shortcut icon for "Voice note": a microphone over text lines, on the launcher
+     icon's own dark background. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#05080A"
+        android:pathData="M24,0A24,24 0,1 1,24 48A24,24 0,1 1,24 0Z" />
+    <group
+        android:translateX="12"
+        android:translateY="10">
+        <path
+            android:fillColor="#38FF9C"
+            android:pathData="M12,14C13.66,14 15,12.66 15,11V5C15,3.34 13.66,2 12,2C10.34,2 9,3.34 9,5V11C9,12.66 10.34,14 12,14ZM17.3,11C17.3,14 14.76,16.1 12,16.1C9.24,16.1 6.7,14 6.7,11H5C5,14.41 7.72,17.23 11,17.72V21H13V17.72C16.28,17.24 19,14.42 19,11H17.3Z" />
+    </group>
+    <path
+        android:strokeColor="#38FF9C"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M30,34H39M30,38.5H36" />
+</vector>

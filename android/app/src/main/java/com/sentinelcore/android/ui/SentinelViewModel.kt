@@ -12,6 +12,8 @@ import com.sentinelcore.android.organizer.AppOrganizerTransport
 import com.sentinelcore.android.organizer.OrganizerAlarms
 import com.sentinelcore.android.organizer.OrganizerDevice
 import com.sentinelcore.android.organizer.OrganizerRuntime
+import com.sentinelcore.android.organizer.OrganizerKinds
+import com.sentinelcore.android.organizer.VoiceCapture
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
 import com.sentinelcore.android.data.Account
@@ -268,6 +270,26 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             if (!organizer.isConnected) organizer.connect(AppOrganizerTransport(repository))
         } else if (organizer.isConnected) {
             organizer.disconnect()
+        }
+    }
+
+    // A reminder or note said to the phone (organizer/VoiceCapture). Saved to this phone's copy
+    // at once, alert and all; the engine sends it as soon as it's connected. Returns what to tell
+    // the person, and whether it was added.
+    fun addFromVoice(kind: String, text: String): Pair<Boolean, String> {
+        // Refused only when the server has said it's off, now or the last time it was asked. Not
+        // knowing - a first launch with no signal - keeps the item to send when it can.
+        val enabled = organizer.status.value?.enabled ?: OrganizerDevice.knownEnabled(getApplication<Application>())
+        if (enabled == false) {
+            return false to "The Organizer is turned off. It's in the dashboard's Settings, under Organizer."
+        }
+        return if (kind == OrganizerKinds.NOTE) {
+            organizer.create(OrganizerKinds.NOTE, VoiceCapture.note(text))
+            true to "Saved your note."
+        } else {
+            val (fields, said) = VoiceCapture.reminder(text)
+            organizer.create(OrganizerKinds.REMINDER, fields)
+            true to said
         }
     }
 

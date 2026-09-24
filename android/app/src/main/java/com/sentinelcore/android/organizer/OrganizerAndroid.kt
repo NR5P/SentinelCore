@@ -65,6 +65,12 @@ object OrganizerDevice {
     fun lastKnownEnabled(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("organizer_enabled", false)
 
+    // The same, but null when the server has never answered on this phone.
+    fun knownEnabled(context: Context): Boolean? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return if (prefs.contains("organizer_enabled")) prefs.getBoolean("organizer_enabled", false) else null
+    }
+
     fun saveLastKnownEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("organizer_enabled", enabled).apply()
     }
