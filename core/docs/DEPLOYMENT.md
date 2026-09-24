@@ -922,6 +922,18 @@ device hasn't trusted the authority yet, the app automatically retries on the pl
 above and says so in its Settings screen — so it works out of the box, and switches to HTTPS by
 itself once you trust `ca.crt` on that device.
 
+The fallback only ever goes to *this* server. The first time it works, the app downloads and
+remembers the server's certificate authority (that's normally at home, during setup); after that
+it only drops to plain HTTP for a server that completes a TLS handshake with a certificate that
+authority signed. Anything else answering at the same address — on someone else's Wi-Fi, where
+`192.168.1.50` can be any device — is refused before a single request is sent, so it never gets the
+session cookie or the saved password, and the app says *"Something at this address isn't your
+Sentinel Core server"*. The saved password is also never sent automatically over the fallback
+until the authority is remembered; the app shows its sign-in screen instead. The server
+reissuing its own certificate after an IP change is fine (the authority stays the same); a
+**reinstalled** server has a new authority, so re-save its address in the app's Settings once to
+make the app forget the old one.
+
 Open the firewall for the HTTPS port the same way as the others:
 
 ```bash

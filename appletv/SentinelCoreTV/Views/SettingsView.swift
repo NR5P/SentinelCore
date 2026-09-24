@@ -20,6 +20,8 @@ struct SettingsView: View {
                 }
                 Button("Save and Reconnect") {
                     Task {
+                        // The way past a server whose certificate authority changed - see ServerIdentity.
+                        ServerIdentity.forget(normalized(address))
                         model.serverURL = normalized(address)
                         await model.connect(resetNetworkSession: true)
                     }

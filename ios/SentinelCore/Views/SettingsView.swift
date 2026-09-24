@@ -70,6 +70,9 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                 Button("Save and Reconnect") {
                     Task {
+                        // Saving the address is the way past a server whose certificate authority
+                        // changed (a reinstall) - see ServerIdentity.
+                        ServerIdentity.forget(normalized(address))
                         model.serverURL = normalized(address)
                         model.remoteServerURL = remoteAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? ""

@@ -74,6 +74,7 @@ struct ServerSetupView: View {
     }
 
     private func connect() {
+        ServerIdentity.forget(normalized(address))
         model.serverURL = normalized(address)
     }
 

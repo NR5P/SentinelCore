@@ -40,6 +40,8 @@ final class AppModel: ObservableObject {
     // device doesn't trust the server's self-generated certificate - see connect(). Surfaced in
     // SettingsView so the downgrade is never silent.
     @Published private(set) var usingHttpFallback = false
+    // Whether the server behind the current fallback proved its identity - see ServerIdentity.
+    private var httpFallbackVerified = false
     // Whether the server this app is talking to is older than it expects. Advisory: nothing in the
     // app behaves differently, it just says so - see ServerCompatibility.
     @Published private(set) var serverCompatibility: ServerCompatibility = .unknown
@@ -199,8 +201,12 @@ final class AppModel: ObservableObject {
                 online = await organizer.syncOnce(AppOrganizerTransport(client: client))
             }
         }
-        // An untrusted HTTPS certificate on the local address: the plain-HTTP port, as connect() does.
+        // An untrusted HTTPS certificate on the local address: the plain-HTTP port, as connect()
+        // does - but only to a server that has already proved it's this one. Nobody is watching a
+        // background refresh, so there's no first-use exception here: until a foreground connect
+        // has remembered the server's authority, this waits for the app to be opened.
         if !online, !isUsingRemote, let fallback = Self.httpFallbackAddress(for: activeServerURL),
+           case .verified = await ServerIdentity.check(activeServerURL),
            await client.probeReachable(fallback) {
             activeServerURL = fallback
             online = await organizer.syncOnce(AppOrganizerTransport(client: client))
@@ -264,6 +270,7 @@ final class AppModel: ObservableObject {
         // first HTTP request. The browser stays alive for the app's lifetime.
         try? await Task.sleep(for: .milliseconds(500))
         usingHttpFallback = false
+        httpFallbackVerified = false
         await resolveActiveServerURL()
         do {
             try await establishSession()
@@ -279,17 +286,40 @@ final class AppModel: ObservableObject {
             // app uses nothing else), so fall back to it rather than stranding the user. Local
             // address only: a remote address crosses the open Internet, where quietly dropping
             // encryption is not an acceptable trade.
-            if !isUsingRemote, Self.isCertificateTrustFailure(error),
+            //
+            // Only for an actual certificate verdict, and only to a server that proves it is this
+            // one (see ServerIdentity) - checked before any plain-HTTP request, because even the
+            // reachability probe below carries the session cookie.
+            if !isUsingRemote, Self.isUntrustedCertificate(error),
                let fallback = Self.httpFallbackAddress(for: activeServerURL) {
+                let httpsAddress = activeServerURL
+                let identity = await ServerIdentity.check(httpsAddress)
+                switch identity {
+                case .mismatch:
+                    log("The server at \(httpsAddress) presented a certificate its own authority didn't sign - not falling back to plain HTTP", level: .error)
+                    failConnection(message: Self.impostorMessage)
+                    return
+                case .unavailable:
+                    log("Couldn't check the certificate at \(httpsAddress) before falling back to plain HTTP", level: .notice)
+                    failConnection(with: error)
+                    return
+                case .verified, .unknown:
+                    break
+                }
                 log("This device does not trust the server's HTTPS certificate; trying the plain-HTTP port at \(fallback)", level: .notice)
                 if await client.probeReachable(fallback) {
                     activeServerURL = fallback
                     usingHttpFallback = true
+                    httpFallbackVerified = { if case .verified = identity { true } else { false } }()
                     do {
                         try await establishSession()
+                        if case .unknown(let leaf) = identity {
+                            await rememberServerIdentity(signing: leaf, httpsAddress: httpsAddress, httpAddress: fallback)
+                        }
                         log("Connected over plain HTTP. For an encrypted connection instead, trust the server's certificate authority (ca.crt) on this device - see DEPLOYMENT.md section 14a.", level: .notice)
                     } catch {
                         usingHttpFallback = false
+                        httpFallbackVerified = false
                         if Self.isCancellation(error) {
                             log("Connection task cancelled by the app lifecycle", level: .notice)
                             return
@@ -309,7 +339,14 @@ final class AppModel: ObservableObject {
     // time against the plain-HTTP address.
     private func establishSession() async throws {
         authStatus = try await client.authStatus()
-        if requiresLogin, let credential = CredentialStore.load(for: serverURL) {
+        // Never replay the Keychain password over the plain-HTTP fallback to a server that hasn't
+        // proved who it is - it would go, in the clear, to whatever answered. The first fallback
+        // (before the server's authority is remembered) shows the sign-in screen instead.
+        let mayReplayLogin = !usingHttpFallback || httpFallbackVerified
+        if requiresLogin, !mayReplayLogin {
+            log("Not sending the saved login over an unverified plain-HTTP connection; sign in to continue", level: .notice)
+        }
+        if requiresLogin, mayReplayLogin, let credential = CredentialStore.load(for: serverURL) {
             log("The saved server session expired; renewing it with the Keychain login", level: .notice)
             do {
                 try await client.login(username: credential.username, password: credential.password)
@@ -359,6 +396,29 @@ final class AppModel: ObservableObject {
         log("Connection failed against \(activeServerURL): \(Self.describe(error))", level: .error)
     }
 
+    private func failConnection(message: String) {
+        connectionState = .offline
+        lastError = message
+    }
+
+    static let impostorMessage =
+        "Something at this address isn't your Sentinel Core server - its certificate wasn't issued by your server. Nothing was sent to it. " +
+        "If you're away from home, that's expected: use the remote address. If you reinstalled the server, save its address again in Settings."
+
+    // Trust on first use - see ServerIdentity. Best effort: failing to remember just means the
+    // next fallback is treated as a first one again.
+    private func rememberServerIdentity(signing leaf: SecCertificate, httpsAddress: String, httpAddress: String) async {
+        guard let authority = await ServerIdentity.fetchAuthority(from: httpAddress) else {
+            log("Couldn't download the server's certificate authority to remember it", level: .notice)
+            return
+        }
+        if ServerIdentity.remember(authority: authority, signing: leaf, for: httpsAddress) {
+            log("Remembered this server's certificate authority; plain-HTTP fallback now only goes to this server")
+        } else {
+            log("The certificate authority the server offered didn't sign its HTTPS certificate - not remembering it", level: .notice)
+        }
+    }
+
     // URLError's wording is written for apps that talk to the public internet, so for the two
     // failures this app actually hits on a LAN it names the wrong problem. A distrusted
     // self-signed certificate ("...may be pretending to be...") reads as an active attack and
@@ -400,6 +460,20 @@ final class AppModel: ObservableObject {
         switch code {
         case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
              .serverCertificateHasBadDate, .serverCertificateNotYetValid, .secureConnectionFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    // What may start the plain-HTTP fallback: the server's certificate was judged and not trusted.
+    // Narrower than isCertificateTrustFailure on purpose - that also counts a bare handshake
+    // failure (-1200), which anything can produce without presenting a certificate at all.
+    static func isUntrustedCertificate(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        switch code {
+        case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateHasBadDate, .serverCertificateNotYetValid:
             return true
         default:
             return false

@@ -188,13 +188,38 @@ final class AppModel: ObservableObject {
             // out of the box - so an https:// address (the default that server discovery
             // advertises) would simply never connect on a fresh install. The server keeps its
             // plain-HTTP listener open precisely for app clients in this position, so fall back
-            // to it rather than stranding the user. Mirrors the iOS/macOS app.
-            if Self.isCertificateTrustFailure(error),
+            // to it rather than stranding the user. Mirrors the iOS/macOS app, including only
+            // falling back to a server that proves it is this one (see ServerIdentity) - the
+            // plain-HTTP requests carry the session cookie.
+            if Self.isUntrustedCertificate(error),
                let fallback = Self.httpFallbackAddress(for: activeServerURL) {
+                let httpsAddress = activeServerURL
+                let identity = await ServerIdentity.check(httpsAddress)
+                switch identity {
+                case .mismatch:
+                    log("The server at \(httpsAddress) presented a certificate its own authority didn't sign - not falling back to plain HTTP", level: .error)
+                    connectionState = .offline
+                    lastError = "Something at this address isn't your Sentinel Core server - its certificate wasn't issued by your server. Nothing was sent to it. If you reinstalled the server, save its address again in Settings."
+                    return
+                case .unavailable:
+                    log("Couldn't check the certificate at \(httpsAddress) before falling back to plain HTTP", level: .notice)
+                    failConnection(with: error)
+                    return
+                case .verified, .unknown:
+                    break
+                }
                 log("This device does not trust the server's HTTPS certificate; trying the plain-HTTP port at \(fallback)", level: .notice)
                 activeServerURL = fallback
                 do {
                     try await establishSession()
+                    if case .unknown(let leaf) = identity {
+                        if let authority = await ServerIdentity.fetchAuthority(from: fallback),
+                           ServerIdentity.remember(authority: authority, signing: leaf, for: httpsAddress) {
+                            log("Remembered this server's certificate authority; plain-HTTP fallback now only goes to this server")
+                        } else {
+                            log("Couldn't remember the server's certificate authority; the next fallback is treated as a first one", level: .notice)
+                        }
+                    }
                     log("Connected over plain HTTP. For an encrypted connection instead, trust the server's certificate authority (ca.crt) on this device.", level: .notice)
                     return
                 } catch {
@@ -294,6 +319,20 @@ final class AppModel: ObservableObject {
 
     // https://host[:port] -> http://host:3320, the dashboard's shipped plain-HTTP port. A custom
     // HTTP port can't be derived from the HTTPS address, so the default is the only sensible guess.
+    // What may start the plain-HTTP fallback: the certificate was judged and not trusted. Narrower
+    // than isCertificateTrustFailure, which also counts a bare handshake failure (-1200) that
+    // anything can produce without presenting a certificate. Mirrors the iOS/macOS app.
+    static func isUntrustedCertificate(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        switch code {
+        case .serverCertificateUntrusted, .serverCertificateHasUnknownRoot,
+             .serverCertificateHasBadDate, .serverCertificateNotYetValid:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func httpFallbackAddress(for address: String) -> String? {
         guard var components = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
               components.scheme == "https" else {
