@@ -21,6 +21,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 6. [Motion zones on your own cameras](#6-motion-zones-on-your-own-cameras)
 6a. [The AUTOMATIONS tab — custom MQTT & webhook rules](#6a-the-automations-tab--custom-mqtt--webhook-rules)
 6ab. [Schedules — doing something at a time, at sunset, or when it gets dark](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark)
+6ac. [Board automations — cards that add and move themselves](#6ac-board-automations--cards-that-add-and-move-themselves)
 6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
 6c. [One arrival, not four alerts — repeat triggers from one camera](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera)
 7. [The SETTINGS tab](#7-the-settings-tab)
@@ -1051,6 +1052,84 @@ schedule quietly doing nothing.
 **Run now** does the action immediately, ignoring the timing — the way to test a new schedule, and
 the way to shut the coop early on a particular evening. It really does switch the device.
 
+## 6ac. Board automations — cards that add and move themselves
+
+Organizer boards can look after themselves. "Put *pick up eggs* in New items every morning at 7",
+"when a card is moved into Done, tick it off", "every Monday, clear out the finished cards". You
+build these by dragging blocks around; there's no code involved.
+
+Open a board under **ORGANIZER → boards** and press **⚡ automations**. Either press **+ build a
+rule**, or start from one of the recipes (Daily to-do, Weekly chore, Done means done, Tidy up
+weekly, Due tomorrow, Urgent to the top) and change it to suit.
+
+A rule is made of three parts. Drag a block from the left into the matching part of the rule, or
+just click the block to add it. On a phone, tap it.
+
+| Part | What goes there | Examples |
+|---|---|---|
+| **WHEN** (amber) | One block: what starts the rule | on a schedule · a card is added · a card is moved into a list · a card is marked done · a checklist is finished · a label is added · a card is due (or 15 minutes, an hour, a day… before) |
+| **ONLY IF** (cyan, optional) | Checks that must all be true | the title contains… · has / doesn't have a label · is in a list · only on certain days |
+| **THEN** (green) | The steps, done in order. Drag them by the ⋮⋮ handle to reorder. | create a card · move the card · add or remove a label · set the due date · mark done · add checklist items · untick the checklist · comment · assign · delete · move every card in a list · clear out a list · **send a notification** · **send an email** |
+
+Fill in the blanks in each block. Under the rule, **In plain words** reads the rule back as a
+sentence, so you can check it says what you mean. A scheduled rule shows its next three run times
+underneath the WHEN block.
+
+A few details:
+
+- **A schedule has no card of its own.** Steps like "add a label" work on *the card*: the one that
+  set the rule off, or the one a "create a card" step above them just made. The editor marks any
+  step that would have nothing to act on.
+- **Tick "skip if an unfinished card with this title is already there"** on a daily card, so
+  yesterday's *pick up eggs* doesn't get a twin when nobody got to it.
+- **Words that fill themselves in.** Drag `{date}`, `{weekday}`, `{month}`, `{card}`, `{due}` or
+  `{board}` into a card title, comment or message. For example, *Groceries for {weekday}* becomes
+  *Groceries for Thursday*, and *{card} is due {due}* becomes *Dentist is due Sep 25 at 10:00 AM*.
+- **Schedules use the time zone of the browser you built them in**, and stay at 7:00 through
+  daylight-saving changes.
+
+Rules run on the server, not on anyone's phone, so the 7am card appears on every device with all
+of them switched off. What a rule does is an ordinary edit, made as the person who last saved the
+rule. It syncs like any other change, and it can only touch boards that person can see.
+
+A rule never sets off another rule, or itself. That rules out two rules bouncing a card back and
+forth forever. Changes that reach the server more than 12 hours after they were made don't set
+rules off either: for example a phone that was offline for a day, or a rebuilt server being
+refilled from a device.
+
+If the server was off when a schedule was due, it runs as soon as the server is back, provided
+that's within 6 hours. After that the run is skipped and the history says why.
+
+### Notifications and email
+
+**Send a notification** pushes a message to phones: everyone's, or only the people you tick. It
+uses the same push setup as camera alerts (**Settings → Push**). Tapping it opens the Organizer
+in the app. To reach one person, the server has to know which phones are theirs. Each app tells
+it when it's opened while signed in, so a person whose phone hasn't opened the app since this
+feature arrived isn't reachable until it has. The rule's history says so when that happens.
+With login off everybody is the same person, so a notification can only go to everyone.
+
+**Send an email** goes to people you tick and to any other addresses you type, up to 20 in all.
+Each person gets their own copy, so nobody sees who else it went to. It uses the mail server
+under **Settings → Email** (the camera-alert email switch doesn't need to be on). Each person's
+address is on their account: admins set it under **Accounts**, and anyone can set their own
+under **My account**. People with no address show as "(no email)" and can't be ticked. Every
+email ends with a line saying which rule sent it and how to turn it off.
+
+If push or email isn't set up, the block says so in the editor, and runs record why nothing
+was sent. The rule's other steps still happen. A rule can send at most 20 notifications and
+emails an hour, so a rule that fires on every new card can't flood anyone when fifty cards are
+pasted in at once.
+
+**When a card is due** fires once for each card: at its due time, or the chosen time before it.
+A card with a date but no time counts as due at 9:00 AM that day. Finished cards are left alone,
+and moving a card's due date lets it fire again for the new date. Pair it with a notification
+for "remind me an hour before", or with *move the card* to pull due cards to the top.
+
+Each rule has an on/off switch, **run now** (scheduled rules only; it really does make the card),
+and **history**, which shows the last 30 runs and what each one did ("Made "pick up eggs" in "New
+items"", or why it couldn't). Rules are included in the server backup under **Settings**.
+
 ## 6b. Multi-frame analysis — reducing false positives from a single frame
 
 A single still image is sometimes ambiguous — a shadow, a headlight sweep, a reflection, or an
@@ -1999,6 +2078,8 @@ persistent issue doesn't flood the inbox.
 - `SentinelCore/data/events.db` — SQLite history of every Blue Iris alert
 - `SentinelCore.Web/data/cameras.db` — your added cameras
 - `SentinelCore.Web/data/triggers.db` — trigger zone configs and trigger events
+- `SentinelCore.Web/data/organizer.db` — the Organizer's notes, events, reminders and boards, and
+  `organizer-automations.db` beside it for [board automations](#6ac-board-automations--cards-that-add-and-move-themselves)
 - Recorded clips live alongside the trigger event data
 - `homekit-bridge/persist/` — HomeKit pairing keys and this bridge's identity, if you're using
   HomeKit. Deleting it unpairs every iPhone and forces re-pairing with a new code, so it's

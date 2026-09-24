@@ -36,6 +36,14 @@ window.GateWatchAccounts = (function () {
       const statusResponse = await fetch("/api/auth/status");
       const status = await statusResponse.json();
       me = { username: status.username, role: status.role };
+      if (status.username) {
+        const selfResponse = await fetch("/api/accounts/me");
+        if (selfResponse.ok) {
+          const self = await selfResponse.json();
+          me.id = self.id;
+          me.email = self.email;
+        }
+      }
     } catch (err) {
       console.error("Failed to load auth status", err);
       me = null;
@@ -88,6 +96,30 @@ window.GateWatchAccounts = (function () {
       info.className = "field-row field-row-wide";
       info.innerHTML = `<label class="field-label">Signed in as</label><div>${escapeHtml(me.username)} (${escapeHtml(me.role ?? "Admin")})</div>`;
       fields.appendChild(info);
+    }
+
+    // Where board automations email you (Organizer -> a board -> automations). Only there, and
+    // only when a rule names you.
+    if (me?.id) {
+      const emailRow = buildTextInput("my-email", "Email for board automations (optional)");
+      const emailInput = emailRow.querySelector("input");
+      emailInput.type = "email";
+      emailInput.value = me.email || "";
+      const emailSave = document.createElement("button");
+      emailSave.className = "btn btn-small";
+      emailSave.textContent = "save email";
+      emailSave.style.alignSelf = "flex-start";
+      emailSave.style.marginTop = "6px";
+      const emailErrors = document.createElement("ul");
+      emailErrors.className = "field-errors";
+      emailRow.append(emailSave, emailErrors);
+      emailSave.addEventListener("click", async () => {
+        emailErrors.innerHTML = "";
+        const message = await saveEmail("/api/accounts/me/email", emailInput.value.trim());
+        if (message) showErrors(emailErrors, [message]);
+        else { me.email = emailInput.value.trim() || null; showToast("Email saved.", true); }
+      });
+      fields.appendChild(emailRow);
     }
 
     const currentPassword = buildPasswordInput("my-current-password", "Current password");
@@ -199,6 +231,7 @@ window.GateWatchAccounts = (function () {
     fields.appendChild(buildTextInput("new-account-username", "Username"));
     fields.appendChild(buildPasswordInput("new-account-password", "Password (min. 8 characters)"));
     fields.appendChild(buildTextInput("new-account-display-name", "Display name (optional)"));
+    fields.appendChild(buildTextInput("new-account-email", "Email (optional - for board automations)"));
     fields.appendChild(buildRoleSelect("new-account-role"));
     wrap.appendChild(fields);
 
@@ -226,6 +259,7 @@ window.GateWatchAccounts = (function () {
         username: wrap.querySelector("#new-account-username").value.trim(),
         password: wrap.querySelector("#new-account-password").value,
         displayName: wrap.querySelector("#new-account-display-name").value.trim() || null,
+        email: wrap.querySelector("#new-account-email").value.trim() || null,
         role: wrap.querySelector("#new-account-role").value
       };
       try {
@@ -258,7 +292,7 @@ window.GateWatchAccounts = (function () {
     info.className = "camera-card-info";
     info.innerHTML = `
       <span class="camera-card-name">${escapeHtml(account.username)}${account.displayName ? ` (${escapeHtml(account.displayName)})` : ""}</span>
-      <span class="camera-card-meta">${escapeHtml(account.role)}</span>
+      <span class="camera-card-meta">${escapeHtml(account.role)}${account.email ? ` · ${escapeHtml(account.email)}` : " · no email"}</span>
     `;
 
     const errors = document.createElement("ul");
@@ -315,6 +349,19 @@ window.GateWatchAccounts = (function () {
       }
     });
 
+    const emailBtn = document.createElement("button");
+    emailBtn.className = "btn";
+    emailBtn.textContent = account.email ? "change email" : "add email";
+    emailBtn.addEventListener("click", async () => {
+      errors.innerHTML = "";
+      const email = prompt(`Email for "${account.username}" (used by board automations; leave empty to remove):`, account.email || "");
+      if (email === null) return;
+      const message = await saveEmail(`/api/accounts/${account.id}/email`, email.trim());
+      if (message) { showErrors(errors, [message]); return; }
+      await load();
+      renderList();
+    });
+
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btn";
     deleteBtn.textContent = "delete";
@@ -335,9 +382,25 @@ window.GateWatchAccounts = (function () {
       }
     });
 
-    actions.append(roleBtn, resetBtn, deleteBtn);
+    actions.append(roleBtn, resetBtn, emailBtn, deleteBtn);
     card.append(info, actions, errors);
     return card;
+  }
+
+  // Null when saved, otherwise the sentence to show.
+  async function saveEmail(url, email) {
+    try {
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email || null })
+      });
+      if (response.ok) return null;
+      const payload = await response.json().catch(() => ({}));
+      return (payload.errors || ["Could not save the email."]).join(" ");
+    } catch {
+      return "Network error while saving the email.";
+    }
   }
 
   // ---------------- Shared field builders ----------------

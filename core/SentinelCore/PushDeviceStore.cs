@@ -10,7 +10,10 @@ public sealed record PushDevice(
     string? DeviceName,
     string AppVariant,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    // The account signed in when the app registered, lower-case, or null with login off. It is
+    // what lets a board automation notify one person's phones rather than everybody's.
+    string? Username = null);
 
 public interface IPushDeviceStore
 {
@@ -22,7 +25,8 @@ public interface IPushDeviceStore
         string token,
         string? deviceName,
         CancellationToken cancellationToken,
-        string appVariant = "ios");
+        string appVariant = "ios",
+        string? username = null);
 
     Task<IReadOnlyList<PushDevice>> GetAllAsync(CancellationToken cancellationToken);
     Task<int> CountAsync(CancellationToken cancellationToken);
@@ -68,6 +72,10 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         using var addColumn = connection.CreateCommand();
         addColumn.CommandText = "ALTER TABLE PushDevices ADD COLUMN AppVariant TEXT NOT NULL DEFAULT 'ios';";
         try { addColumn.ExecuteNonQuery(); } catch (SqliteException) { /* column already exists */ }
+        // And before devices knew whose they were. Old rows stay null until the app next registers.
+        using var addUsername = connection.CreateCommand();
+        addUsername.CommandText = "ALTER TABLE PushDevices ADD COLUMN Username TEXT;";
+        try { addUsername.ExecuteNonQuery(); } catch (SqliteException) { /* column already exists */ }
     }
 
     public async Task<PushDevice> UpsertAsync(
@@ -75,7 +83,8 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         string token,
         string? deviceName,
         CancellationToken cancellationToken,
-        string appVariant = "ios")
+        string appVariant = "ios",
+        string? username = null)
     {
         var normalizedPlatform = PushPlatforms.Normalize(platform);
         var normalizedToken = token.Trim();
@@ -87,12 +96,13 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         await using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                INSERT INTO PushDevices (Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt)
-                VALUES ($id, $platform, $token, $deviceName, $appVariant, $createdAt, $updatedAt)
+                INSERT INTO PushDevices (Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt, Username)
+                VALUES ($id, $platform, $token, $deviceName, $appVariant, $createdAt, $updatedAt, $username)
                 ON CONFLICT(Platform, Token) DO UPDATE SET
                     DeviceName = excluded.DeviceName,
                     AppVariant = excluded.AppVariant,
-                    UpdatedAt = excluded.UpdatedAt;
+                    UpdatedAt = excluded.UpdatedAt,
+                    Username = excluded.Username;
                 """;
             command.Parameters.AddWithValue("$id", id.ToString("N"));
             command.Parameters.AddWithValue("$platform", normalizedPlatform);
@@ -101,12 +111,14 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
             command.Parameters.AddWithValue("$appVariant", normalizedVariant);
             command.Parameters.AddWithValue("$createdAt", now.ToString("O"));
             command.Parameters.AddWithValue("$updatedAt", now.ToString("O"));
+            command.Parameters.AddWithValue("$username",
+                string.IsNullOrWhiteSpace(username) ? DBNull.Value : username.Trim().ToLowerInvariant());
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
         await using var select = connection.CreateCommand();
         select.CommandText = """
-            SELECT Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt
+            SELECT Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt, Username
             FROM PushDevices
             WHERE Platform = $platform AND Token = $token;
             """;
@@ -123,7 +135,7 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt
+            SELECT Id, Platform, Token, DeviceName, AppVariant, CreatedAt, UpdatedAt, Username
             FROM PushDevices
             ORDER BY UpdatedAt DESC;
             """;
@@ -180,5 +192,6 @@ public sealed class SqlitePushDeviceStore : IPushDeviceStore
         reader.IsDBNull(3) ? null : reader.GetString(3),
         reader.GetString(4),
         DateTimeOffset.Parse(reader.GetString(5)),
-        DateTimeOffset.Parse(reader.GetString(6)));
+        DateTimeOffset.Parse(reader.GetString(6)),
+        reader.IsDBNull(7) ? null : reader.GetString(7));
 }

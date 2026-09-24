@@ -148,7 +148,13 @@ public static class OrganizerEndpoints
             return Results.Ok(new
             {
                 people = all.OrderBy(account => account.Username, StringComparer.OrdinalIgnoreCase)
-                    .Select(account => new { username = account.Username.ToLowerInvariant(), displayName = account.DisplayName })
+                    .Select(account => new
+                    {
+                        username = account.Username.ToLowerInvariant(),
+                        displayName = account.DisplayName,
+                        // Whether a board automation can email them - not the address itself.
+                        hasEmail = !string.IsNullOrWhiteSpace(account.Email),
+                    })
             });
         });
 
@@ -278,6 +284,8 @@ public static class OrganizerEndpoints
                 : [];
             return Results.Text(OrganizerCalendarFeed.Build(events, spaces, holidays), "text/calendar; charset=utf-8");
         }).AllowAnonymous();
+
+        enabled.MapOrganizerAutomationEndpoints();
     }
 
     private static string FeedPath(string token) => $"/api/organizer/feed/{token}.ics";

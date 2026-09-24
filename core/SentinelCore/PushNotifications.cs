@@ -72,11 +72,13 @@ public sealed class PushNotificationDispatcher(
     public async Task<PushDeliveryReport> SendAsync(
         PushNotificationOptions options,
         PushMessage message,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<PushDevice, bool>? recipients = null)
     {
         if (!options.Enabled) return new PushDeliveryReport(0, 0, 0, 0);
 
-        var registered = await devices.GetAllAsync(cancellationToken);
+        // Everyone unless the caller picks - a board automation notifying only some people.
+        var registered = (await devices.GetAllAsync(cancellationToken)).Where(recipients ?? (_ => true)).ToList();
         var attempted = 0;
         var delivered = 0;
         var failed = 0;

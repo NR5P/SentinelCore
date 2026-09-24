@@ -404,6 +404,186 @@ public sealed class PushDispatcherTests
         }
     }
 
+    // ---- Board automations: to chosen people, opening the card ---------------------------------
+
+    [Fact]
+    public async Task SendAsync_WithRecipients_OnlyThosePeoplesPhones()
+    {
+        using var key = NewSigningKey(out var keyPath);
+        var store = new FakePushDeviceStore(
+            NewDevice("apple", "terry-phone", "Terry's iPhone") with { Username = "terry" },
+            NewDevice("apple", "terry-ipad", "Terry's iPad") with { Username = "terry" },
+            NewDevice("apple", "nathan-phone", "Nathan's iPhone") with { Username = "nathan" },
+            NewDevice("apple", "nobodys-phone", "Registered with login off"));
+        var handler = new ApnsCapture();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        var report = await dispatcher.SendAsync(NewOptions(keyPath), PushMessage.Test(), CancellationToken.None,
+            device => device.Username == "terry");
+
+        Assert.Equal(2, report.Delivered);
+        Assert.Equal(["/3/device/terry-phone", "/3/device/terry-ipad"], handler.Paths.Order().Reverse());
+        File.Delete(keyPath);
+    }
+
+    [Fact]
+    public async Task AnOrganizerPushToApple_CarriesTheItemTheAppOpens()
+    {
+        using var key = NewSigningKey(out var keyPath);
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new ApnsCapture();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        await dispatcher.SendAsync(NewOptions(keyPath),
+            new PushMessage("Home", "Dentist is due", null, null, PushMessage.OrganizerType, OrganizerItemId: "card-1"), CancellationToken.None);
+
+        Assert.Equal("alert", handler.PushType);
+        var root = JsonDocument.Parse(handler.Body!).RootElement;
+        // The key the iOS/macOS app already reads to open the Organizer (see PushNotificationCoordinator).
+        Assert.Equal("card-1", root.GetProperty("organizerItemId").GetString());
+        Assert.Equal("organizer", root.GetProperty("eventType").GetString());
+        var aps = root.GetProperty("aps");
+        Assert.Equal("Dentist is due", aps.GetProperty("alert").GetProperty("body").GetString());
+        Assert.Equal("organizer", aps.GetProperty("thread-id").GetString());
+        File.Delete(keyPath);
+    }
+
+    [Fact]
+    public async Task ACameraPushToApple_IsUnchanged_AndHasNoOrganizerItem()
+    {
+        using var key = NewSigningKey(out var keyPath);
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone-token", "iPhone"));
+        var handler = new ApnsCapture();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        await dispatcher.SendAsync(NewOptions(keyPath), new PushMessage("Gate", "Person", "evt-1", "Gate", "person"), CancellationToken.None);
+
+        var root = JsonDocument.Parse(handler.Body!).RootElement;
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("organizerItemId").ValueKind);
+        Assert.Equal("Gate", root.GetProperty("aps").GetProperty("thread-id").GetString());
+        File.Delete(keyPath);
+    }
+
+    [Fact]
+    public async Task AnOrganizerPushToAndroid_CarriesTheItemAndPane_AndDoesNotReplaceOtherNotifications()
+    {
+        using var key = NewServiceAccountKey(out var accountPath);
+        var store = new FakePushDeviceStore(NewDevice("android", "installation-id", "Pixel 8"));
+        var handler = new FirebaseHandler();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        await dispatcher.SendAsync(NewFirebaseOptions(accountPath),
+            new PushMessage("Home", "Bins out", null, null, PushMessage.OrganizerType, OrganizerItemId: "card-9"), CancellationToken.None);
+
+        var message = JsonDocument.Parse(handler.SendBody!).RootElement.GetProperty("message");
+        var data = message.GetProperty("data");
+        // The extras the Android app's MainActivity already reads to open the Organizer.
+        Assert.Equal("card-9", data.GetProperty("organizerItemId").GetString());
+        Assert.Equal("boards", data.GetProperty("organizerPane").GetString());
+        Assert.Equal("organizer", data.GetProperty("eventType").GetString());
+        Assert.Equal("Bins out", message.GetProperty("notification").GetProperty("body").GetString());
+        // Not "sentinel-test", which every other camera-less notification shares and would replace.
+        Assert.Equal("organizer-card-9", message.GetProperty("android").GetProperty("notification").GetProperty("tag").GetString());
+        File.Delete(accountPath);
+    }
+
+    [Fact]
+    public async Task ACameraPushToAndroid_HasNoOrganizerExtras()
+    {
+        using var key = NewServiceAccountKey(out var accountPath);
+        var store = new FakePushDeviceStore(NewDevice("android", "installation-id", "Pixel 8"));
+        var handler = new FirebaseHandler();
+        var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
+
+        await dispatcher.SendAsync(NewFirebaseOptions(accountPath), new PushMessage("Gate", "Person", "evt-1", "Gate", "person"), CancellationToken.None);
+
+        var data = JsonDocument.Parse(handler.SendBody!).RootElement.GetProperty("message").GetProperty("data");
+        Assert.False(data.TryGetProperty("organizerItemId", out _));
+        Assert.False(data.TryGetProperty("organizerPane", out _));
+        File.Delete(accountPath);
+    }
+
+    // The automation notifier on top of the real dispatcher: who it reaches, and what it says back.
+    private static async Task<(SentinelCore.Web.OrganizerAutomationNotifier Notifier, string Directory)> NewNotifierAsync(
+        PushNotificationDispatcher dispatcher, PushNotificationOptions options)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"notifier-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var settingsPath = Path.Combine(directory, "appsettings.json");
+        await File.WriteAllTextAsync(settingsPath, JsonSerializer.Serialize(new { PushNotifications = options }));
+        var settings = new SentinelCore.Web.AppSettingsFile(settingsPath);
+        var accounts = new SentinelCore.Web.SqliteAccountStore(directory);
+        return (new SentinelCore.Web.OrganizerAutomationNotifier(settings, dispatcher, accounts,
+            NullLogger<SentinelCore.Web.OrganizerAutomationNotifier>.Instance), directory);
+    }
+
+    [Fact]
+    public async Task Notifier_ReachesOnlyTheNamedPeople_AndSaysHowMany()
+    {
+        Assert.Equal("PushNotifications", PushNotificationOptions.SectionName);
+        using var key = NewSigningKey(out var keyPath);
+        var store = new FakePushDeviceStore(
+            NewDevice("apple", "terry-phone", "Terry's iPhone") with { Username = "terry" },
+            NewDevice("apple", "nathan-phone", "Nathan's iPhone") with { Username = "nathan" });
+        var handler = new ApnsCapture();
+        var (notifier, directory) = await NewNotifierAsync(NewDispatcher(store, handler, new CapturingLogger()), NewOptions(keyPath));
+        try
+        {
+            var result = await notifier.PushAsync(["Terry"], "Home", "Eggs", "card-1", CancellationToken.None);
+
+            Assert.True(result.Ok, result.Message);
+            Assert.Equal("Notified terry (1 phone).", result.Message);
+            Assert.Equal(["/3/device/terry-phone"], handler.Paths);
+        }
+        finally
+        {
+            File.Delete(keyPath);
+            TempDirectories.Delete(directory);
+        }
+    }
+
+    [Fact]
+    public async Task Notifier_ForSomeoneWithNoLinkedPhone_SaysWhatToDo()
+    {
+        using var key = NewSigningKey(out var keyPath);
+        var store = new FakePushDeviceStore(NewDevice("apple", "old-phone", "Registered before phones had owners"));
+        var handler = new ApnsCapture();
+        var (notifier, directory) = await NewNotifierAsync(NewDispatcher(store, handler, new CapturingLogger()), NewOptions(keyPath));
+        try
+        {
+            var result = await notifier.PushAsync(["terry"], "Home", "Eggs", null, CancellationToken.None);
+
+            Assert.False(result.Ok);
+            Assert.Contains("open the app once while signed in", result.Message);
+            Assert.Empty(handler.Paths);
+        }
+        finally
+        {
+            File.Delete(keyPath);
+            TempDirectories.Delete(directory);
+        }
+    }
+
+    [Fact]
+    public async Task Notifier_WithPushTurnedOff_SendsNothing_AndSaysWhere()
+    {
+        var store = new FakePushDeviceStore(NewDevice("apple", "phone", "iPhone") with { Username = "terry" });
+        var handler = new ApnsCapture();
+        var (notifier, directory) = await NewNotifierAsync(NewDispatcher(store, handler, new CapturingLogger()), new PushNotificationOptions { Enabled = false });
+        try
+        {
+            var result = await notifier.PushAsync(null, "Home", "Eggs", null, CancellationToken.None);
+            Assert.False(result.Ok);
+            Assert.Contains("Settings → Push", result.Message);
+            Assert.Empty(handler.Paths);
+            Assert.False((await notifier.ChannelsAsync(CancellationToken.None)).PushReady);
+        }
+        finally
+        {
+            TempDirectories.Delete(directory);
+        }
+    }
+
     private static PushNotificationDispatcher NewDispatcher(
         IPushDeviceStore store, HttpMessageHandler handler, ILogger<PushNotificationDispatcher> logger,
         IRelayLicenseSource? license = null)
@@ -550,7 +730,7 @@ public sealed class PushDispatcherTests
 
         public Task<PushDevice> UpsertAsync(
             string platform, string token, string? deviceName,
-            CancellationToken cancellationToken, string appVariant = "ios") =>
+            CancellationToken cancellationToken, string appVariant = "ios", string? username = null) =>
             throw new NotSupportedException();
     }
 

@@ -175,6 +175,14 @@ People can add holiday calendars to the calendar: US federal holidays, US observ
   - It then fetches `/holidays` again if the sets or the year range differ from what's cached.
 - **The subscription feed.** The `.ics` feed includes the chosen holidays, last year through two years ahead.
 
+## Board automations
+
+Rules that change boards on their own ("every morning at 7, create *pick up eggs* in New items"; "when a card is moved into Done, mark it done") run **on the server**, in `SentinelCore.Web/OrganizerAutomationEngine.cs`. They are built in the web dashboard, stored in `organizer-automations.db` (and the server backup), and are **not items**: they never sync, and clients need nothing new to support them.
+
+What a rule does reaches devices as ordinary changes from `ApplyChangesAsync`, made as the person who last saved the rule. Their clocks end in `-automation` (for example `1790000000000-0000-automation`), and the server sends the usual silent push. Clients must not special-case that device id. It exists so the engine can tell its own changes from people's.
+
+Endpoints, under `/api/organizer`: `GET /automations?boardId=`, `POST /automations`, `PUT` and `DELETE /automations/{id}`, `POST /automations/{id}/run` (scheduled rules only), `GET /automations/{id}/runs`, and `POST /automations/preview` (body: a schedule; answers the next three run times).
+
 ## Alerts
 
 Event and reminder alerts are scheduled by each device as **local notifications** from its own copy. They fire with no signal and with the server down. Rescheduling after every sync is the simplest correct approach, because the platforms cap how many pending notifications an app may have. Schedule the nearest few dozen.

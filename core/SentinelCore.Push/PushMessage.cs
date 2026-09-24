@@ -13,8 +13,14 @@ public sealed record PushMessage(
     string? EventId,
     string? Camera,
     string? EventType,
-    bool Silent = false)
+    bool Silent = false,
+    // An Organizer item to open when the notification is tapped (a board automation's card).
+    // The apps already open the Organizer for "organizerItemId", which their own reminder alerts
+    // carry; older relays ignore the property.
+    string? OrganizerItemId = null)
 {
+    public const string OrganizerType = "organizer";
+
     public const string OrganizerChangedType = "organizer-changed";
 
     // Something in the Organizer changed: devices sync in the background so their Home Screen

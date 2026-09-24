@@ -63,11 +63,12 @@ public sealed class ApnsSender(
                             ["alert"] = new { title = message.Title, body = message.Body },
                             ["sound"] = "default",
                             ["category"] = "SECURITY_EVENT",
-                            ["thread-id"] = message.Camera ?? "sentinel-core"
+                            ["thread-id"] = message.Camera ?? (message.OrganizerItemId is null ? "sentinel-core" : "organizer")
                         },
                         eventId = message.EventId,
                         camera = message.Camera,
-                        eventType = message.EventType
+                        eventType = message.EventType,
+                        organizerItemId = message.OrganizerItemId
                     }),
                 Encoding.UTF8,
                 "application/json")

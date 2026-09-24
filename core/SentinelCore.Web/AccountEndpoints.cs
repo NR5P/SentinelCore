@@ -1,3 +1,4 @@
+using SentinelCore;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -25,6 +26,8 @@ public static class AccountEndpoints
             var errors = AuthEndpoints.ValidateCredentials(request.Username, request.Password);
             if (!TryParseRole(request.Role, out var role))
                 errors.Add("Role must be 'Admin' or 'Viewer'.");
+            if (ValidateEmail(request.Email) is { } emailError)
+                errors.Add(emailError);
             if (errors.Count > 0)
                 return Results.BadRequest(new { errors });
 
@@ -33,7 +36,22 @@ public static class AccountEndpoints
 
             var account = await accounts.CreateAsync(
                 request.Username.Trim(), PasswordHasher.Hash(request.Password), role, NormalizeDisplayName(request.DisplayName), ct);
+            if (!string.IsNullOrWhiteSpace(request.Email))
+            {
+                await accounts.UpdateEmailAsync(account.Id, request.Email, ct);
+                account = account with { Email = request.Email.Trim() };
+            }
             return Results.Ok(ToDto(account));
+        });
+
+        // An admin setting anyone's email - where board automations send to them.
+        admin.MapPut("/{id:guid}/email", async (Guid id, UpdateEmailRequest request, IAccountStore accounts, CancellationToken ct) =>
+        {
+            if (ValidateEmail(request.Email) is { } error)
+                return Results.BadRequest(new { errors = new[] { error } });
+            return await accounts.UpdateEmailAsync(id, request.Email, ct)
+                ? Results.Ok(new { success = true })
+                : Results.BadRequest(new { errors = new[] { "That account was not found." } });
         });
 
         admin.MapPut("/{id:guid}/role", async (Guid id, UpdateRoleRequest request, IAccountStore accounts, CancellationToken ct) =>
@@ -74,12 +92,30 @@ public static class AccountEndpoints
         });
 
         // Self-service - any signed-in account, not just admins.
-        app.MapGet("/api/accounts/me", (HttpContext context) => Results.Ok(new
+        app.MapGet("/api/accounts/me", async (HttpContext context, IAccountStore accounts, CancellationToken ct) =>
         {
-            id = TryGetSelfId(context, out var id) ? id.ToString() : null,
-            username = context.User.Identity?.Name,
-            role = context.User.FindFirstValue(ClaimTypes.Role)
-        })).RequireAuthorization();
+            var hasId = TryGetSelfId(context, out var id);
+            var account = hasId ? await accounts.GetByIdAsync(id, ct) : null;
+            return Results.Ok(new
+            {
+                id = hasId ? id.ToString() : null,
+                username = context.User.Identity?.Name,
+                role = context.User.FindFirstValue(ClaimTypes.Role),
+                email = account?.Email
+            });
+        }).RequireAuthorization();
+
+        // Anyone may set their own email, so they can be sent board automation emails without
+        // asking an admin.
+        app.MapPut("/api/accounts/me/email", async (HttpContext context, UpdateEmailRequest request, IAccountStore accounts, CancellationToken ct) =>
+        {
+            if (!TryGetSelfId(context, out var selfId))
+                return Results.BadRequest(new { errors = new[] { "No account is associated with this session." } });
+            if (ValidateEmail(request.Email) is { } error)
+                return Results.BadRequest(new { errors = new[] { error } });
+            await accounts.UpdateEmailAsync(selfId, request.Email, ct);
+            return Results.Ok(new { success = true });
+        }).RequireAuthorization();
 
         app.MapPost("/api/accounts/change-password", async (HttpContext context, ChangePasswordRequest request, IAccountStore accounts, CancellationToken ct) =>
         {
@@ -139,6 +175,11 @@ public static class AccountEndpoints
         return errors;
     }
 
+    private static string? ValidateEmail(string? email) =>
+        string.IsNullOrWhiteSpace(email) || (email.Trim().Length <= 254 && SmtpMailer.LooksLikeEmailAddress(email.Trim()))
+            ? null
+            : "That doesn't look like an email address.";
+
     private static string? NormalizeDisplayName(string? displayName) =>
         string.IsNullOrWhiteSpace(displayName) ? null : displayName.Trim();
 
@@ -148,7 +189,8 @@ public static class AccountEndpoints
         username = account.Username,
         displayName = account.DisplayName,
         role = account.Role.ToString(),
-        createdAt = account.CreatedAt
+        createdAt = account.CreatedAt,
+        email = account.Email
     };
 }
 
@@ -158,6 +200,12 @@ public sealed class CreateAccountRequest
     public string Password { get; set; } = "";
     public string Role { get; set; } = "";
     public string? DisplayName { get; set; }
+    public string? Email { get; set; }
+}
+
+public sealed class UpdateEmailRequest
+{
+    public string? Email { get; set; }
 }
 
 public sealed class UpdateRoleRequest

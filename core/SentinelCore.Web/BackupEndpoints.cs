@@ -58,6 +58,9 @@ public sealed record BackupDocument(
     IReadOnlyList<RecordingSchedule>? RecordingSchedules = null,
     HubBackup? Hub = null,
     InternetExposedSettingsDto? InternetExposed = null,
+    // Added in schema 5: board automations (scheduled cards and card rules). They live in their
+    // own file on the server and no device holds a copy, so this is their only way back.
+    IReadOnlyList<OrganizerAutomation>? OrganizerAutomations = null,
     // What couldn't be included when this file was written, in words - e.g. the main app wasn't
     // running. Informational; restore ignores it.
     IReadOnlyList<string>? Warnings = null);

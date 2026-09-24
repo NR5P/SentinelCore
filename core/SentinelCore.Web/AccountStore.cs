@@ -17,7 +17,9 @@ public sealed record Account(
     string PasswordHash,
     AccountRole Role,
     string? DisplayName,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    // Where board automations email this person. Optional; nothing else sends to it.
+    string? Email = null);
 
 // Shared claim shape between sign-in (AuthEndpoints), session re-derivation (RetrieveAsync
 // below), and the "login not required" bootstrap (AuthGateMiddleware) - one place defines what
@@ -59,6 +61,8 @@ public interface IAccountStore
     // that case, since it's an expected, recoverable outcome the endpoint turns into a 400.
     Task<bool> UpdateRoleAsync(Guid id, AccountRole role, CancellationToken cancellationToken);
     Task<bool> UpdatePasswordAsync(Guid id, string passwordHash, CancellationToken cancellationToken);
+    // Null clears it. False when there's no such account.
+    Task<bool> UpdateEmailAsync(Guid id, string? email, CancellationToken cancellationToken);
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken);
 
     // Config restore only - unlike CreateAsync this keeps the account's own Id, so a re-import
@@ -125,6 +129,28 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
             );
             """;
         command.ExecuteNonQuery();
+
+        // Added for board automations; existing databases get the column on first start.
+        using var addEmail = _connection.CreateCommand();
+        addEmail.CommandText = "ALTER TABLE Accounts ADD COLUMN Email TEXT;";
+        try { addEmail.ExecuteNonQuery(); } catch (SqliteException) { /* column already exists */ }
+    }
+
+    public async Task<bool> UpdateEmailAsync(Guid id, string? email, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE Accounts SET Email = $email WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            command.Parameters.AddWithValue("$email", string.IsNullOrWhiteSpace(email) ? DBNull.Value : email.Trim());
+            return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        }
+        finally
+        {
+            _lock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<Account>> GetAllAsync(CancellationToken cancellationToken)
@@ -133,7 +159,7 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, Username, PasswordHash, Role, DisplayName, CreatedAt FROM Accounts ORDER BY Username COLLATE NOCASE ASC;";
+            command.CommandText = "SELECT Id, Username, PasswordHash, Role, DisplayName, CreatedAt, Email FROM Accounts ORDER BY Username COLLATE NOCASE ASC;";
 
             var results = new List<Account>();
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -154,7 +180,7 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
         try
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT Id, Username, PasswordHash, Role, DisplayName, CreatedAt FROM Accounts WHERE Username = $username COLLATE NOCASE;";
+            command.CommandText = "SELECT Id, Username, PasswordHash, Role, DisplayName, CreatedAt, Email FROM Accounts WHERE Username = $username COLLATE NOCASE;";
             command.Parameters.AddWithValue("$username", username);
 
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -181,15 +207,15 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
 
     public async Task<Account> CreateAsync(string username, string passwordHash, AccountRole role, string? displayName, CancellationToken cancellationToken)
     {
-        var account = new Account(Guid.NewGuid(), username, passwordHash, role, displayName, DateTimeOffset.UtcNow);
+        var account = new Account(Guid.NewGuid(), username, passwordHash, role, displayName, DateTimeOffset.UtcNow, null);
 
         await _lock.WaitAsync(cancellationToken);
         try
         {
             using var command = _connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO Accounts (Id, Username, PasswordHash, Role, DisplayName, CreatedAt)
-                VALUES ($id, $username, $passwordHash, $role, $displayName, $createdAt);
+                INSERT INTO Accounts (Id, Username, PasswordHash, Role, DisplayName, CreatedAt, Email)
+                VALUES ($id, $username, $passwordHash, $role, $displayName, $createdAt, $email);
                 """;
             AddParameters(command, account);
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -236,13 +262,14 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
             {
                 upsert.Transaction = transaction;
                 upsert.CommandText = """
-                    INSERT INTO Accounts (Id, Username, PasswordHash, Role, DisplayName, CreatedAt)
-                    VALUES ($id, $username, $passwordHash, $role, $displayName, $createdAt)
+                    INSERT INTO Accounts (Id, Username, PasswordHash, Role, DisplayName, CreatedAt, Email)
+                    VALUES ($id, $username, $passwordHash, $role, $displayName, $createdAt, $email)
                     ON CONFLICT(Id) DO UPDATE SET
                         Username = excluded.Username,
                         PasswordHash = excluded.PasswordHash,
                         Role = excluded.Role,
-                        DisplayName = excluded.DisplayName;
+                        DisplayName = excluded.DisplayName,
+                        Email = excluded.Email;
                     """;
                 AddParameters(upsert, account);
                 await upsert.ExecuteNonQueryAsync(cancellationToken);
@@ -497,7 +524,7 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
     private async Task<Account?> GetByIdNoLockAsync(Guid id, CancellationToken cancellationToken)
     {
         using var command = _connection.CreateCommand();
-        command.CommandText = "SELECT Id, Username, PasswordHash, Role, DisplayName, CreatedAt FROM Accounts WHERE Id = $id;";
+        command.CommandText = "SELECT Id, Username, PasswordHash, Role, DisplayName, CreatedAt, Email FROM Accounts WHERE Id = $id;";
         command.Parameters.AddWithValue("$id", id.ToString("N"));
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -521,6 +548,7 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
         command.Parameters.AddWithValue("$role", account.Role.ToString());
         command.Parameters.AddWithValue("$displayName", (object?)account.DisplayName ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdAt", account.CreatedAt.UtcDateTime.ToString("O"));
+        command.Parameters.AddWithValue("$email", (object?)account.Email ?? DBNull.Value);
     }
 
     private static Account ReadAccount(SqliteDataReader reader) => new(
@@ -529,7 +557,8 @@ public sealed class SqliteAccountStore : IAccountStore, ITicketStore, IDisposabl
         reader.GetString(2),
         Enum.Parse<AccountRole>(reader.GetString(3)),
         reader.IsDBNull(4) ? null : reader.GetString(4),
-        DateTimeOffset.Parse(reader.GetString(5)));
+        DateTimeOffset.Parse(reader.GetString(5)),
+        reader.IsDBNull(6) ? null : reader.GetString(6));
 
     public void Dispose()
     {

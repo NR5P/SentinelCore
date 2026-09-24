@@ -60,12 +60,7 @@ public sealed class FcmSender(
                         // registration token - hence fid rather than token.
                         fid = deviceToken,
                         notification = new { title = message.Title, body = message.Body },
-                        data = new Dictionary<string, string>
-                        {
-                            ["eventId"] = message.EventId ?? string.Empty,
-                            ["camera"] = message.Camera ?? string.Empty,
-                            ["eventType"] = message.EventType ?? string.Empty
-                        },
+                        data = AlertData(message),
                         android = new
                         {
                             priority = "high",
@@ -73,7 +68,9 @@ public sealed class FcmSender(
                             {
                                 channel_id = "security_alerts",
                                 sound = "default",
-                                tag = message.EventId ?? "sentinel-test"
+                                // Each card's notification replaces that card's last one, not
+                                // every other notification that has no camera event behind it.
+                                tag = message.EventId ?? (message.OrganizerItemId is { } item ? $"organizer-{item}" : "sentinel-test")
                             }
                         }
                     }
@@ -95,6 +92,25 @@ public sealed class FcmSender(
         return responseBody.Contains("UNREGISTERED", StringComparison.OrdinalIgnoreCase)
             ? PushAttempt.Unregistered
             : PushAttempt.Failed;
+    }
+
+    // What a tapped alert hands the app. An Organizer notification also names the item and the
+    // Boards pane, which is what the Android app's own reminder alerts and widgets already use to
+    // open the Organizer when it's launched from the notification tray.
+    private static Dictionary<string, string> AlertData(PushMessage message)
+    {
+        var data = new Dictionary<string, string>
+        {
+            ["eventId"] = message.EventId ?? string.Empty,
+            ["camera"] = message.Camera ?? string.Empty,
+            ["eventType"] = message.EventType ?? string.Empty
+        };
+        if (message.OrganizerItemId is { } item)
+        {
+            data["organizerItemId"] = item;
+            data["organizerPane"] = "boards";
+        }
+        return data;
     }
 
     private async Task<string> GetAccessTokenAsync(FirebasePushOptions options, CancellationToken cancellationToken)

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using SentinelCore;
@@ -229,6 +230,16 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton(new AutoExportStateFile(Path.Combine(camerasRoot, "auto-export-state.json")));
 builder.Services.AddSingleton<AutoExportRunner>();
 builder.Services.AddHostedService<AutoExportWorker>();
+// Board automations: scheduled cards and "when a card moves to Done..." rules, run here so they
+// happen with every device asleep - see OrganizerAutomationEngine.
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IOrganizerAutomationStore>(new SqliteOrganizerAutomationStore(camerasRoot));
+builder.Services.AddSingleton<IOrganizerAutomationNotifier, OrganizerAutomationNotifier>();
+builder.Services.AddSingleton(sp => new OrganizerAutomationEngine(
+    sp.GetRequiredService<IOrganizerStore>(), sp.GetRequiredService<IOrganizerAutomationStore>(),
+    sp.GetRequiredService<IOrganizerAutomationNotifier>(), sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<OrganizerPushNudger>().Changed, sp.GetRequiredService<ILogger<OrganizerAutomationEngine>>()));
+builder.Services.AddHostedService<OrganizerAutomationWorker>();
 // WebRTC live view via a go2rtc sidecar - see Go2RtcManager. Generous timeout: the SDP exchange
 // includes go2rtc gathering its ICE candidates, and the first request may also be paying the
 // sidecar's startup wait.

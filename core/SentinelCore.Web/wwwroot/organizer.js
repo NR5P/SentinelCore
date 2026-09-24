@@ -1260,6 +1260,7 @@ window.SentinelOrganizer = (function () {
         <div class="org-board-head">
           <span class="org-board-title" style="border-color:${escapeHtml(board.fields.color || spaceColor(board.spaceId))}">${escapeHtml(board.fields.title || "board")}</span>
           <select class="field-input org-note-space" id="board-space">${spaceOptions(board.spaceId)}</select>
+          <button class="btn btn-small" id="board-automations" title="rules that add and move cards for you - like a card every morning at 7">&#9889; automations</button>
           <button class="btn btn-small" id="board-rename">rename</button>
           <button class="btn btn-small org-danger" id="board-delete">delete board</button>
         </div>
@@ -1293,6 +1294,7 @@ window.SentinelOrganizer = (function () {
     if (!board) return;
 
     el("board-space").addEventListener("change", () => S.update(board.id, { spaceId: el("board-space").value }));
+    el("board-automations").addEventListener("click", () => window.SentinelBoardAutomations.open(board));
     el("board-rename").addEventListener("click", () => {
       const title = prompt("Board name", board.fields.title || "");
       if (title) S.update(board.id, { title });

@@ -38,6 +38,7 @@ public static class PushEndpoints
 
         app.MapPost("/api/push/devices", async (
             RegisterPushDeviceRequest request,
+            HttpContext context,
             IPushDeviceStore devices,
             AppSettingsFile settings,
             PushRelayClient relay,
@@ -52,7 +53,10 @@ public static class PushEndpoints
                 request.Token,
                 request.DeviceName?.Trim(),
                 ct,
-                appVariant: string.IsNullOrWhiteSpace(request.AppVariant) ? "ios" : request.AppVariant);
+                appVariant: string.IsNullOrWhiteSpace(request.AppVariant) ? "ios" : request.AppVariant,
+                // Whose phone this is, so a board automation can notify just them. Every app
+                // registers again on launch, so existing phones pick this up with no update.
+                username: OrganizerEndpoints.UserOf(context).Username);
 
             // The local row is the registration; the relay copy is a convenience so the first
             // push after enrolling doesn't have to take PushRelayClient's register-and-retry

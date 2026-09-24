@@ -221,6 +221,14 @@ Both Core processes share this database. **Disable on this device** unregisters 
 installation from Core; the operating-system permission can still be changed
 separately in the device's Settings app.
 
+## Whose phone is whose
+
+When an app registers (`POST /api/push/devices`), the server records the account that is signed in on it, in the `Username` column of `push-devices.db`. With login off it's empty. Camera alerts ignore it and still go to every phone. It lets a [board automation](USER_GUIDE.md#6ac-board-automations--cards-that-add-and-move-themselves) notify only chosen people.
+
+The apps register again every time they launch, so a phone that was registered before this change gets linked to its person the next time the app is opened while signed in. Until then, a rule that notifies that person reports "No phone belonging to … is signed up for notifications yet".
+
+A board automation's push has `eventType: "organizer"` and an `organizerItemId` (the card, or the board when there's no card). On Android the data also carries `organizerPane: "boards"`, and the notification tag is `organizer-<id>`, so it doesn't replace other notifications. The iOS/macOS and Android apps already open the Organizer when a notification carrying `organizerItemId` is tapped. On Android this works when the app wasn't in the foreground as the push arrived; if it was, the app draws the notification itself and tapping it just opens the app. They open the Organizer on its usual first screen; opening that exact card would need an app update. A relay older than this change drops `organizerItemId`, and the notification then just opens the app.
+
 ## Diagnostics
 
 While signed in, `GET /api/push/status` reports whether providers are configured and

@@ -204,6 +204,10 @@ public interface IOrganizerStore
     Task<IReadOnlyList<OrganizerItem>> GetItemsAsync(
         OrganizerUser user, string? kind, string? spaceId, CancellationToken cancellationToken);
 
+    // Every item in every space (tombstones included) changed after `cursor`, oldest first. For
+    // the server's own board automations, which watch the whole Organizer - never for a client.
+    Task<OrganizerPullResult> PullEverythingAsync(long cursor, int limit, CancellationToken cancellationToken);
+
     Task<int> CountVisibleAsync(OrganizerUser user, CancellationToken cancellationToken);
 
     Task<OrganizerSpace> CreateGroupAsync(OrganizerUser user, string name, IReadOnlyList<string> members, string? color, CancellationToken cancellationToken);
@@ -801,6 +805,23 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
                 parameters = [.. parameters, ("$kind", kind)];
             }
             return LoadItems(where + " ORDER BY Seq", parameters);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<OrganizerPullResult> PullEverythingAsync(long cursor, int limit, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            if (cursor > _seq) cursor = 0;
+            var page = LoadItems("Seq > $cursor ORDER BY Seq LIMIT $limit", ("$cursor", cursor), ("$limit", limit + 1));
+            var hasMore = page.Count > limit;
+            if (hasMore) page.RemoveAt(page.Count - 1);
+            return new OrganizerPullResult(hasMore ? page[^1].Seq : _seq, hasMore, page, []);
         }
         finally
         {

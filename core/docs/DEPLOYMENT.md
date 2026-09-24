@@ -1281,7 +1281,7 @@ The full backup is one `.zip` (or, with a passphrase, an encrypted `.scbackup`) 
 - user accounts and each person's live grid arrangement;
 - the main service's Device Hub devices, automation rules and schedules;
 - every Organizer note, event, reminder, board, card and comment, **with the attached files**,
-  plus each person's calendar-feed link and Organizer preferences;
+  plus each person's calendar-feed link and Organizer preferences, and every board automation;
 - known faces **with their reference photos**, and the licence file;
 - this server's HTTPS certificate authority (`certs/ca.crt` + `ca.key`) and HomeKit pairing,
   which are only put back when you tick *This is a replacement server* while restoring.

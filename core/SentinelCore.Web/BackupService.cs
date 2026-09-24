@@ -45,6 +45,8 @@ public sealed class BackupService(
     IOrganizerStore organizer,
     OrganizerBlobStore blobs,
     IRecordingScheduleStore recordingSchedules,
+    IOrganizerAutomationStore organizerAutomations,
+    OrganizerAutomationEngine organizerAutomationEngine,
     MainAppHubBackupClient hub,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
@@ -54,9 +56,9 @@ public sealed class BackupService(
 {
     // 2 added CameraGroups and GateChecks; 3 added Organizer; 4 added RecordingSchedules, Hub,
     // InternetExposed, Warnings, the organizer's feed tokens and preferences, and the settings
-    // AutoExport section. Bumping this does not invalidate older exports - see Validate, which
-    // accepts anything up to this number.
-    public const int CurrentSchemaVersion = 4;
+    // AutoExport section; 5 added OrganizerAutomations. Bumping this does not invalidate older
+    // exports - see Validate, which accepts anything up to this number.
+    public const int CurrentSchemaVersion = 5;
 
     public sealed record BundleSummary(int FileCount, IReadOnlyList<string> Warnings);
 
@@ -82,6 +84,7 @@ public sealed class BackupService(
             [.. (await recordingSchedules.GetAllAsync(ct)).Select(WithoutRunMemory)],
             hubExport.Value,
             await webSettings.GetSectionAsync<InternetExposedSettingsDto>("InternetExposed", ct),
+            await organizerAutomations.GetAllAsync(ct),
             warnings.Count > 0 ? warnings : null);
     }
 
@@ -372,6 +375,16 @@ public sealed class BackupService(
             ? await organizer.ImportAsync(organizerBackup, ct)
             : 0;
 
+        // After the boards they belong to. Same id, so importing twice replaces rather than
+        // duplicates; saved through the engine so each one's next run is worked out afresh here.
+        var organizerAutomationsRestored = 0;
+        foreach (var rule in document.OrganizerAutomations ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(rule.Id)) continue;
+            await organizerAutomationEngine.SaveAsync(rule, ct);
+            organizerAutomationsRestored++;
+        }
+
         // Written last among the stores because it's the one part that can still fail after
         // validation passed (the main app stopping mid-restore). Everything above has landed by
         // then, so it's reported as a note on a restore that otherwise worked, not as a failure
@@ -422,6 +435,7 @@ public sealed class BackupService(
             accountsSkipped,
             liveOrderRestored,
             organizerItemsRestored,
+            organizerAutomationsRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,
             automationRulesRestored = hubCounts?.RulesRestored ?? 0,
             schedulesRestored = hubCounts?.SchedulesRestored ?? 0,

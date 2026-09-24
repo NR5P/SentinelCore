@@ -75,6 +75,7 @@ public sealed class BackupCoverageTests : IDisposable
             ["Devices"] = "Hub.Devices",
             ["AutomationRules"] = "Hub.AutomationRules",
             ["Schedules"] = "Hub.Schedules",
+            ["Automations"] = "OrganizerAutomations",
         };
 
         // Excluded on purpose, each for a reason recorded in BackupEndpoints:
@@ -90,6 +91,8 @@ public sealed class BackupCoverageTests : IDisposable
             ["PackageWatches"] = "open package watches; runtime state measured in hours",
             ["PushDevices"] = "each app re-registers every time it connects",
             ["Removals"] = "the organizer's sync log; a restored server tells devices to resync instead",
+            ["Runs"] = "a board automation's run log; history",
+            ["DueFired"] = "which due cards a board automation has already fired for; runtime memory",
         };
 
         var root = RepositoryCoreDirectory();
