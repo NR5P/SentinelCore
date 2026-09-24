@@ -65,7 +65,8 @@ struct AddNoteIntent: AppIntent {
 struct AddEventIntent: AppIntent {
     static let title: LocalizedStringResource = "Add Calendar Event"
     static let description = IntentDescription(
-        "Adds an event to the Sentinel Core calendar, like \"dentist Friday at 3\". Siri asks when if you don't say.")
+        // App Store Connect rejects an intent whose description mentions Siri (ITMS-90626).
+        "Adds an event to the Sentinel Core calendar, like \"dentist Friday at 3\". You're asked when if you don't say.")
     static let openAppWhenRun = false
 
     @Parameter(title: "Event", requestValueDialog: "What's the event?")
