@@ -1853,6 +1853,21 @@ offline.
 for the rest of the household. Adding, editing, deleting, and running a discovery scan are
 **admin-only**, because those point a device at an arbitrary MQTT topic.
 
+**Wall display.** Click **wall display** in the tab's toolbar for a version of the hub made for a
+tablet mounted on a wall. The dashboard's top bar and the add, discover, edit and delete controls
+go away, a clock takes their place, and each device becomes a big tile, grouped by room. The whole
+tile of a light or plug is its switch — tap it. Dimmable lights get a wide slider, and gates,
+locks and doorbells get large open/stop/close, lock/unlock or press buttons. Sensors show their
+readings large. The screen is kept awake while the wall display is up, where the browser allows
+it, and **full screen** hides the browser itself on a desktop or Android tablet; an iPad has no
+such button, so add the page to the home screen instead, which is already full screen. The choice
+is remembered on that device, so a reload comes straight back to the wall display; bookmark
+`/#wall` (or add that address to the home screen) and it opens there directly. **exit** in the
+top-right corner, or the Escape key, returns to the normal grid, which is still where devices are
+added, edited, arranged and deleted. The iPad and Android apps have the same thing: the **Wall
+Display** button in their Device Hub opens it full screen, hiding the tab bar, and the app
+reopens straight onto it next launch until you tap **Exit**.
+
 **Apple TV is control-only.** Devices are added and configured from the dashboard, iPhone, Mac,
 or Android; the Apple TV app shows them as cards you click to switch, and adjusts brightness
 with left/right on the remote. Typing an MQTT topic with the Siri remote isn't worth it.

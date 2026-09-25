@@ -343,6 +343,22 @@
           <span id="device-connection" class="event-count" data-tip-below data-tip-right data-tip="Whether this app is currently connected to your MQTT broker. Commands can't reach anything while this says disconnected."></span>
           <button id="discover-devices-btn" class="btn" data-tip-below data-tip-right data-tip="Listen to the MQTT broker for devices that announce themselves, and for topics that look like a switch. Anything found is offered as a suggestion - nothing is added until you pick it.">discover</button>
           <button id="add-device-btn" class="btn" data-tip-below data-tip-right data-tip="Add a device by hand, by entering the MQTT topics it listens and reports on.">+ add device</button>
+          <button id="device-wall-btn" class="btn" data-tip-below data-tip-right data-tip="Switch to the wall display: big tap-to-switch tiles grouped by room, with the rest of the dashboard hidden. Made for a tablet mounted on a wall. Remembered on this device; tap exit to come back.">wall display</button>
+        </div>
+      </div>
+
+      <!-- The wall display's own strip, shown in place of the toolbar above while that mode is on.
+           Big clock on the left because a tablet on a wall is a clock most of the day; the way out
+           on the right, small, so a stray tap on a tile can't land on it. -->
+      <div id="device-wall-bar" class="device-wall-bar hidden">
+        <div class="device-wall-time">
+          <span id="device-wall-clock" class="device-wall-clock"></span>
+          <span id="device-wall-date" class="device-wall-date"></span>
+        </div>
+        <div class="device-wall-bar-actions">
+          <span id="device-wall-connection" class="device-wall-connection"></span>
+          <button id="device-wall-fullscreen-btn" class="btn hidden" aria-label="Toggle full screen">full screen</button>
+          <button id="device-wall-exit-btn" class="btn" aria-label="Leave the wall display">exit</button>
         </div>
       </div>
 

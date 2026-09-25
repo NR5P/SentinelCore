@@ -9,6 +9,11 @@ struct RootView: View {
     @State private var morePath: [AppSection] = []
     @AppStorage(TabBarLayout.storageKey) private var tabBarSections = ""
     @State private var editingTabBar = false
+    // An iPad on a wall that was left in the Device Hub's wall display wants the app to open
+    // straight back onto it, not onto Events. Once per launch, and only once the server has said
+    // the hub is on - before that the section doesn't exist to select.
+    @AppStorage(DeviceWall.storageKey) private var wallDisplayRemembered = false
+    @State private var openedWallDisplay = false
 
     // Whether the server has the Organizer on - its own answer when it has given one this
     // launch, otherwise what it said last time, so the section is there offline too.
@@ -50,6 +55,14 @@ struct RootView: View {
         }
         .onChange(of: model.selectedEvent?.id) { _, eventId in
             if eventId != nil { selection = .events }
+        }
+        .onChange(of: model.deviceHubEnabled) { _, enabled in
+            #if os(iOS)
+            if enabled && wallDisplayRemembered && !openedWallDisplay {
+                openedWallDisplay = true
+                selection = .devices
+            }
+            #endif
         }
         .background { DeviceCameraPresenter() }
         .environment(model.organizer)
