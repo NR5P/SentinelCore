@@ -3456,6 +3456,23 @@ body.hub-wall main {
   flex: 1 1 260px;
 }
 
+.org-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.org-voice.org-voice-on {
+  color: var(--red, #ff5a5a);
+  border-color: var(--red, #ff5a5a);
+  animation: org-voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes org-voice-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 .org-time {
   max-width: 120px;
 }

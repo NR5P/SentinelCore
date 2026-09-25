@@ -24,7 +24,7 @@ Shared contracts that more than one part implements:
 
 - [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md) is the Organizer's sync protocol,
   implemented by the server, the dashboard and all four apps.
-- [`core/docs/voice-phrase-cases.json`](../core/docs/voice-phrase-cases.json) holds the spoken-reminder examples
+- [`core/docs/voice-phrase-cases.json`](../core/docs/voice-phrase-cases.json) holds the spoken-reminder examples (read by the iPhone, Android and dashboard tests)
   ("call mom tomorrow at 5") that the Apple and Android phrase parsers are both tested against.
 - [`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md) covers the push providers
   (APNs, FCM, relay).
@@ -197,6 +197,33 @@ The app's Siri phrases are in `ios/SentinelCore/Organizer/OrganizerIntents.swift
 - Siri can't be driven from a script. To exercise an intent's `perform()` in the simulator, use a
   temporary launch-argument hook in `SentinelCoreApp.init` that constructs the intent and calls
   `perform()`, and remove it before committing.
+
+### The microphone button on the Reminders list
+
+`ios/SentinelCore/Organizer/OrganizerVoice.swift` listens with the system recognizer
+(`SFSpeechRecognizer`) and runs the words through the same `VoicePhrase` rules as the Siri
+intent - no model, no server, so it is instant and works offline. Two things to know:
+
+- **The iOS Simulator can't run the recognizer.** `recognitionTask` fails at once with "Failed
+  to initialize recognizer", which the sheet shows under "Didn't catch that". Only the
+  permission prompts and that error path can be checked in the simulator; recognition itself
+  needs a real iPhone or the Mac app.
+- The recognizer's completions arrive on system queues. Written inside `@MainActor` code they
+  are taken as main-actor closures and trap (`dispatch_assert_queue`) - the same Swift 6 trap as
+  EventKit's `fetchReminders`. Mark each `@Sendable` and hand only plain values to the actor.
+
+The dashboard has the same button (`organizer.js`, `listenForReminder`) on the browser's own
+recognizer (Chrome, Edge, Safari; Firefox has none, and browsers allow the microphone only on
+https or localhost, so the button hides itself where it can't work). Its copy of the rules is
+`wwwroot/voice-phrase.js`, checked against the same shared cases with:
+
+```bash
+node --test core/SentinelCore.Web/scripts/voice-phrase.test.js
+```
+
+The Browser pane in the Claude desktop app blocks microphone capture; to exercise the fill-in
+path there, replace `window.SpeechRecognition` with a stub whose `start()` fires `onresult` and
+`onend`, then click the button.
 
 ---
 
