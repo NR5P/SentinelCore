@@ -78,6 +78,9 @@ import com.sentinelcore.android.ui.screens.CameraEditScreen
 import com.sentinelcore.android.ui.screens.CameraZoneEditorScreen
 import com.sentinelcore.android.ui.screens.DetailHeader
 import com.sentinelcore.android.ui.screens.DeviceCameraScreen
+import com.sentinelcore.android.ui.screens.DEVICE_WALL_ROUTE
+import com.sentinelcore.android.ui.screens.DeviceWallPreference
+import com.sentinelcore.android.ui.screens.DeviceWallScreen
 import com.sentinelcore.android.ui.screens.DeviceDiscoveryScreen
 import com.sentinelcore.android.ui.screens.DeviceEditScreen
 import com.sentinelcore.android.ui.screens.DeviceHubScreen
@@ -216,6 +219,9 @@ private fun AppShell(
     val selectedSection = AppSection.entries.firstOrNull { section ->
         currentRoute == section.route || currentRoute?.startsWith("${section.route}/") == true
     } ?: AppSection.EVENTS
+    // The Device Hub's wall display is the one screen that takes the whole tablet: no bar, no
+    // rail, nothing to tap by accident. Its own Exit (or the back gesture) is the way out.
+    val chromeHidden = currentRoute == DEVICE_WALL_ROUTE
 
     // Navigates straight to the pushed event without waiting for state.events to already contain
     // it - the detail route itself shows a brief loading state if the list hasn't caught up yet,
@@ -307,6 +313,17 @@ private fun AppShell(
 
     val context = LocalContext.current
     val tabBarPreferences = remember { TabBarPreferences(context.applicationContext) }
+
+    // A tablet on a wall that was left in the wall display comes back to it on launch rather
+    // than to Events. Once per run, and only once the server has said the hub is on - before that
+    // there's no Device Hub to show. Leaving the wall display clears the preference.
+    var openedWallDisplay by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.deviceHubEnabled) {
+        if (state.deviceHubEnabled && !openedWallDisplay && DeviceWallPreference.isOn(context)) {
+            openedWallDisplay = true
+            navController.navigate(DEVICE_WALL_ROUTE) { launchSingleTop = true }
+        }
+    }
     val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled)
     val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
 
@@ -314,11 +331,13 @@ private fun AppShell(
         val useRail = maxWidth >= 840.dp
         if (useRail) {
             Row(Modifier.fillMaxSize()) {
-                SentinelNavigationRail(
-                    selected = selectedSection,
-                    state = state,
-                    onSelected = onSelectSection,
-                )
+                if (!chromeHidden) {
+                    SentinelNavigationRail(
+                        selected = selectedSection,
+                        state = state,
+                        onSelected = onSelectSection,
+                    )
+                }
                 SentinelNavHost(
                     navController = navController,
                     state = state,
@@ -335,7 +354,7 @@ private fun AppShell(
             Scaffold(
                 containerColor = SentinelBackground,
                 bottomBar = {
-                    NavigationBar(containerColor = SentinelPanel) {
+                    if (!chromeHidden) NavigationBar(containerColor = SentinelPanel) {
                         layout.bar.forEach { item ->
                             NavigationBarItem(
                                 selected = selectedSection == item,
@@ -458,12 +477,33 @@ private fun SentinelNavHost(
         }
 
         composable(AppSection.DEVICES.route) {
+            val context = LocalContext.current
             DeviceHubScreen(
                 state = state,
                 model = model,
                 onAddDevice = { navController.navigate("devices/new") },
                 onEditDevice = { navController.navigate("devices/${it.id}") },
                 onDiscover = { navController.navigate("devices/discover") },
+                onWallDisplay = {
+                    DeviceWallPreference.set(context, true)
+                    navController.navigate(DEVICE_WALL_ROUTE) { launchSingleTop = true }
+                },
+            )
+        }
+        composable(DEVICE_WALL_ROUTE) {
+            val context = LocalContext.current
+            DeviceWallScreen(
+                state = state,
+                model = model,
+                onExit = {
+                    DeviceWallPreference.set(context, false)
+                    // Back to the hub itself, whether the wall display was opened from it or
+                    // straight from launch.
+                    navController.navigate(AppSection.DEVICES.route) {
+                        popUpTo(DEVICE_WALL_ROUTE) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
             )
         }
         composable("devices/new") {

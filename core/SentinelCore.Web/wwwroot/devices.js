@@ -13,6 +13,104 @@ window.GateWatchDevices = (function () {
   let editingId = null;
   let pollTimer = null;
   let discoveryTimer = null;
+  let loaded = false;
+  let brokerConnected = null;
+
+  // ---------------- Display mode ----------------
+  // "grid" is the tile grid with edit, delete, and drag-to-arrange; "wall" is the big-tile,
+  // tap-to-switch display for a tablet mounted on a wall. Remembered per browser, like the
+  // Settings advanced switch, rather than per account: it's the tablet on the wall that wants
+  // it, not the person, and the same account on a laptop wants the grid.
+  const DISPLAY_KEY = "gatewatch.devices.display";
+  let display = readDisplay();
+  let clockTimer = null;
+  let wakeLock = null;
+
+  function readDisplay() {
+    try {
+      return localStorage.getItem(DISPLAY_KEY) === "wall" ? "wall" : "grid";
+    } catch {
+      // Private browsing and some locked-down setups throw on access. The grid is the safe default.
+      return "grid";
+    }
+  }
+
+  function isWall() {
+    return display === "wall";
+  }
+
+  function setDisplay(mode) {
+    display = mode === "wall" ? "wall" : "grid";
+    try {
+      localStorage.setItem(DISPLAY_KEY, display);
+    } catch {
+      // Preference just won't persist; the switch still works for this visit.
+    }
+    applyDisplay();
+    if (loaded) renderList();
+  }
+
+  // Swaps the chrome to match the mode: the wall display hides the dashboard's top bar and the
+  // hub's own toolbar (add, discover, and the way to other tabs all go with it) and shows the
+  // clock strip instead. Runs on every load so a reload lands straight in the remembered mode.
+  function applyDisplay() {
+    const wall = isWall();
+    document.body.classList.toggle("hub-wall", wall);
+    document.querySelector("#view-devices .toolbar").classList.toggle("hidden", wall);
+    document.getElementById("device-wall-bar").classList.toggle("hidden", !wall);
+
+    if (wall) {
+      closeForm();
+      closeDiscovery();
+      startClock();
+      requestWakeLock();
+    } else {
+      stopClock();
+      releaseWakeLock();
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    }
+    renderConnection();
+  }
+
+  function renderClock() {
+    const now = new Date();
+    document.getElementById("device-wall-clock").textContent =
+      now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    document.getElementById("device-wall-date").textContent =
+      now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  }
+
+  function startClock() {
+    stopClock();
+    renderClock();
+    clockTimer = setInterval(renderClock, 10_000);
+  }
+
+  function stopClock() {
+    if (clockTimer) clearInterval(clockTimer);
+    clockTimer = null;
+  }
+
+  // Keeps the screen on while the wall display is up - a tablet that sleeps after two minutes is
+  // a black rectangle on the wall. Best effort: not every browser has the API, and every browser
+  // drops the lock the moment the tab is hidden, so it is asked for again when the tab returns.
+  async function requestWakeLock() {
+    if (!navigator.wakeLock || !isWall() || document.visibilityState !== "visible") return;
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+    } catch {
+      wakeLock = null;
+    }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && document.body.classList.contains("hub-wall")) requestWakeLock();
+  });
 
   function escapeHtml(value) {
     // Deliberately a string replace rather than the textContent/innerHTML trick this used to be.
@@ -37,6 +135,7 @@ window.GateWatchDevices = (function () {
 
   async function load() {
     const root = document.getElementById("devices-root");
+    applyDisplay();
     try {
       if (!metadataLoaded) {
         const metaResponse = await fetch("/api/devices/metadata");
@@ -47,6 +146,7 @@ window.GateWatchDevices = (function () {
       const response = await fetch("/api/devices");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       devices = await response.json();
+      loaded = true;
       renderList();
       // Straight away, not on the first timer tick - otherwise the broker-connection label sits
       // blank for five seconds every time the tab is opened.
@@ -74,6 +174,11 @@ window.GateWatchDevices = (function () {
     stopPolling();
     if (discoveryTimer) clearInterval(discoveryTimer);
     discoveryTimer = null;
+    // Leaving the tab (a /#events link, say) brings the top bar back even in wall mode; the
+    // next visit to this tab hides it again.
+    document.body.classList.remove("hub-wall");
+    stopClock();
+    releaseWakeLock();
   }
 
   async function refreshState() {
@@ -82,9 +187,8 @@ window.GateWatchDevices = (function () {
       if (!response.ok) return;
       const payload = await response.json();
 
-      const connectionEl = document.getElementById("device-connection");
-      connectionEl.textContent = payload.connected ? "broker connected" : "broker disconnected";
-      connectionEl.classList.toggle("camera-test-status-error", !payload.connected);
+      brokerConnected = payload.connected;
+      renderConnection();
 
       for (const state of payload.devices) {
         const device = devices.find(d => d.id === state.id);
@@ -102,16 +206,62 @@ window.GateWatchDevices = (function () {
 
   // ---------------- Rendering ----------------
 
+  function renderConnection() {
+    const text = brokerConnected == null ? "" : brokerConnected ? "broker connected" : "broker disconnected";
+    for (const id of ["device-connection", "device-wall-connection"]) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.classList.toggle("camera-test-status-error", brokerConnected === false);
+    }
+  }
+
   function renderList() {
     const root = document.getElementById("devices-root");
     root.innerHTML = "";
 
     if (devices.length === 0) {
-      root.innerHTML = `<div class="empty-state">no devices yet - use discover to find what's already on your broker, or add one by hand</div>`;
+      root.innerHTML = isWall()
+        ? `<div class="empty-state">no devices yet - tap exit, then use discover or add device</div>`
+        : `<div class="empty-state">no devices yet - use discover to find what's already on your broker, or add one by hand</div>`;
+      return;
+    }
+
+    if (isWall()) {
+      renderWall(root);
       return;
     }
 
     for (const device of devices) root.appendChild(buildTile(device));
+  }
+
+  // The wall display groups by room, the way the phone apps do, so a house with a dozen devices
+  // reads as rooms rather than a wall of tiles. Rooms come in the order the grid has them (the
+  // arrangement someone dragged into place carries over), with the unnamed ones last.
+  function renderWall(root) {
+    const rooms = [];
+    for (const device of devices) {
+      const room = (device.room || "").trim();
+      if (!rooms.includes(room)) rooms.push(room);
+    }
+    if (rooms.includes("")) rooms.push(rooms.splice(rooms.indexOf(""), 1)[0]);
+
+    for (const room of rooms) {
+      const section = document.createElement("section");
+      section.className = "device-wall-room";
+
+      const title = document.createElement("h2");
+      title.className = "device-wall-room-title";
+      title.textContent = room || "other";
+
+      const grid = document.createElement("div");
+      grid.className = "device-wall-grid";
+      for (const device of devices) {
+        if ((device.room || "").trim() === room) grid.appendChild(buildWallTile(device));
+      }
+
+      section.append(title, grid);
+      root.appendChild(section);
+    }
   }
 
   function kindIcon(kind) {
@@ -307,9 +457,110 @@ window.GateWatchDevices = (function () {
     return tile;
   }
 
+  // One wall tile. Same ids as the grid tile for status, measurements, and brightness, so
+  // applyTileState and the five-second poll drive both without knowing which is on screen. No
+  // edit, delete, or drag: those stay in the grid, where an admin is sitting at a keyboard.
+  function buildWallTile(device) {
+    const tile = document.createElement("div");
+    tile.className = "device-tile device-wall-tile";
+    tile.id = `device-tile-${device.id}`;
+
+    const top = document.createElement("div");
+    top.className = "device-wall-tile-top";
+    const icon = document.createElement("span");
+    icon.className = "device-tile-icon";
+    icon.textContent = kindIcon(device.kind);
+    const status = document.createElement("div");
+    status.className = "device-tile-status";
+    status.id = `device-status-${device.id}`;
+    top.append(icon, status);
+
+    const name = document.createElement("div");
+    name.className = "device-tile-name";
+    name.textContent = device.name;
+
+    const measurements = document.createElement("div");
+    measurements.className = "device-measurements";
+    measurements.id = `device-measurements-${device.id}`;
+
+    const controls = document.createElement("div");
+    controls.className = "device-wall-controls";
+
+    const bigButton = (label, body) => {
+      const btn = document.createElement("button");
+      btn.className = "btn device-wall-btn";
+      btn.textContent = label;
+      btn.disabled = !device.enabled;
+      btn.addEventListener("click", event => {
+        event.stopPropagation();
+        sendCommand(device, body);
+      });
+      return btn;
+    };
+
+    if (device.commandable && isMomentary(device)) {
+      controls.appendChild(bigButton("press", { action: "press" }));
+    } else if (device.commandable && isCoverLike(device)) {
+      const actions = hasStop(device) ? ["open", "stop", "close"] : ["open", "close"];
+      for (const action of actions) controls.appendChild(bigButton(action, { action }));
+    } else if (device.commandable && device.kind === "lock") {
+      for (const action of ["unlock", "lock"]) controls.appendChild(bigButton(action, { action }));
+    } else if (device.commandable) {
+      // The whole tile is the switch. A finger on a wall tablet wants a target the size of a
+      // light switch, not a 38px toggle in a corner. "toggle" is resolved server-side against the
+      // state the hub holds, so two quick taps on a tile the poll hasn't caught up with can't both
+      // send "on".
+      tile.classList.add("device-wall-tile-tap");
+      tile.setAttribute("role", "button");
+      tile.tabIndex = 0;
+      tile.setAttribute("aria-label", `${device.name} power`);
+      tile.addEventListener("click", () => {
+        if (device.enabled) sendCommand(device, { action: "toggle" });
+      });
+      tile.addEventListener("keydown", event => {
+        // Only keys aimed at the tile itself - the brightness slider inside it has its own.
+        if (event.target !== tile) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          tile.click();
+        }
+      });
+
+      if (device.supportsBrightness) {
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.className = "device-brightness device-wall-brightness";
+        slider.id = `device-brightness-${device.id}`;
+        slider.min = 0;
+        slider.max = 100;
+        slider.step = 1;
+        slider.value = device.brightness ?? 100;
+        slider.disabled = !device.enabled;
+        slider.setAttribute("aria-label", `${device.name} brightness`);
+        // On 'change', not 'input', for the same reason as the grid: one drag, one MQTT publish.
+        slider.addEventListener("change", () => sendCommand(device, { brightness: Number(slider.value) }));
+        // A drag on the slider must not also flip the tile it sits in. Keys are left alone: the
+        // tile's own handler ignores them, and Escape still has to reach the document to exit.
+        for (const type of ["click", "pointerdown", "touchstart"]) {
+          slider.addEventListener(type, event => event.stopPropagation());
+        }
+        controls.appendChild(slider);
+      }
+    }
+    // A sensor gets no control at all: its readings are the whole tile.
+
+    tile.append(top, name, measurements, controls);
+    applyTileState(device, tile);
+    return tile;
+  }
+
   function applyTileState(device, tileEl) {
     const tile = tileEl || document.getElementById(`device-tile-${device.id}`);
     if (!tile) return;
+
+    if (tile.classList.contains("device-wall-tile-tap")) {
+      tile.setAttribute("aria-pressed", device.power === "on" ? "true" : "false");
+    }
 
     const readings = device.measurements || [];
 
@@ -394,6 +645,8 @@ window.GateWatchDevices = (function () {
   async function sendCommand(device, body) {
     const status = document.getElementById(`device-status-${device.id}`);
     if (status) status.textContent = "sending…";
+    const tile = document.getElementById(`device-tile-${device.id}`);
+    if (tile) tile.classList.add("device-tile-busy");
 
     try {
       const response = await fetch(`/api/devices/${device.id}/command`, {
@@ -429,6 +682,8 @@ window.GateWatchDevices = (function () {
     } catch {
       if (status) status.textContent = "network error";
       applyTileState(device);
+    } finally {
+      if (tile) tile.classList.remove("device-tile-busy");
     }
   }
 
@@ -800,15 +1055,40 @@ window.GateWatchDevices = (function () {
     }
   }
 
+  function closeDiscovery() {
+    if (discoveryTimer) clearInterval(discoveryTimer);
+    discoveryTimer = null;
+    document.getElementById("device-discovery-wrap").classList.add("hidden");
+  }
+
   document.getElementById("add-device-btn").addEventListener("click", () => openForm(null));
   document.getElementById("device-cancel-btn").addEventListener("click", closeForm);
   document.getElementById("device-save-btn").addEventListener("click", saveDevice);
   document.getElementById("discover-devices-btn").addEventListener("click", startDiscovery);
-  document.getElementById("device-discovery-close-btn").addEventListener("click", () => {
-    if (discoveryTimer) clearInterval(discoveryTimer);
-    discoveryTimer = null;
-    document.getElementById("device-discovery-wrap").classList.add("hidden");
+  document.getElementById("device-discovery-close-btn").addEventListener("click", closeDiscovery);
+
+  // ---------------- Wall display ----------------
+
+  document.getElementById("device-wall-btn").addEventListener("click", () => setDisplay("wall"));
+  document.getElementById("device-wall-exit-btn").addEventListener("click", () => setDisplay("grid"));
+  // A keyboard's way out, for the laptop someone tried the wall display on.
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && document.body.classList.contains("hub-wall")) setDisplay("grid");
   });
 
-  return { load, renderList, stop };
+  // Full screen is offered where the browser has the API. iPads and phones don't, and run this
+  // as a home-screen web app instead, which is already full screen.
+  const fullscreenBtn = document.getElementById("device-wall-fullscreen-btn");
+  if (document.documentElement.requestFullscreen) {
+    fullscreenBtn.classList.remove("hidden");
+    fullscreenBtn.addEventListener("click", () => {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else document.documentElement.requestFullscreen().catch(() => {});
+    });
+    document.addEventListener("fullscreenchange", () => {
+      fullscreenBtn.textContent = document.fullscreenElement ? "exit full screen" : "full screen";
+    });
+  }
+
+  return { load, renderList, stop, setDisplay };
 })();

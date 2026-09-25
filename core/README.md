@@ -336,7 +336,7 @@ Off by default. When `DeviceHub:Enabled` is on (and `Mqtt:Enabled` with it), a *
 
 Devices are stored in `devices.db` as raw topics and payloads rather than per-vendor integrations, so anything that speaks MQTT is describable. `DeviceTopics` holds all the payload building and parsing, deliberately connection-free so every vendor quirk is testable without a broker.
 
-Any signed-in account can switch a device; adding, editing, deleting, and discovery are admin-only. See `docs/USER_GUIDE.md` section 13a.
+Any signed-in account can switch a device; adding, editing, deleting, and discovery are admin-only. The dashboard's tab also has a **wall display** - big tap-to-switch tiles grouped by room, with the rest of the dashboard hidden - for a tablet mounted on a wall; `/#wall` opens it directly, and the choice is remembered per browser in `localStorage` (`devices.js`). See `docs/USER_GUIDE.md` section 13a.
 
 ## The additional action
 

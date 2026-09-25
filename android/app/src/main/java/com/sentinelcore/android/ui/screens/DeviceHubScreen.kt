@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fence
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Lock
@@ -75,6 +76,8 @@ fun DeviceHubScreen(
     onAddDevice: () -> Unit,
     onEditDevice: (HubDevice) -> Unit,
     onDiscover: () -> Unit,
+    // The wall display (DeviceWallScreen): big tap-to-switch tiles for a tablet on a wall.
+    onWallDisplay: () -> Unit,
 ) {
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -107,6 +110,12 @@ fun DeviceHubScreen(
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("Device Hub", state, onRefresh = { scope.launch { load() } }) {
+            // For everyone, not just admins - switching devices is the whole point of it.
+            if (state.devices.isNotEmpty()) {
+                IconButton(onClick = onWallDisplay) {
+                    Icon(Icons.Default.Fullscreen, contentDescription = "Wall display")
+                }
+            }
             if (isAdmin) {
                 IconButton(onClick = onDiscover) {
                     Icon(Icons.Default.Wifi, contentDescription = "Discover devices")
@@ -395,7 +404,7 @@ private fun DeviceCard(
     }
 }
 
-private fun HubDevice.kindIcon(): ImageVector = when (kind) {
+internal fun HubDevice.kindIcon(): ImageVector = when (kind) {
     "light" -> Icons.Default.Lightbulb
     "switch", "outlet" -> Icons.Default.Power
     "fan" -> Icons.Default.WindPower
@@ -406,7 +415,7 @@ private fun HubDevice.kindIcon(): ImageVector = when (kind) {
     else -> Icons.Default.Sensors
 }
 
-private fun HubDevice.statusText(): String = when {
+internal fun HubDevice.statusText(): String = when {
     !enabled -> "Disabled"
     !available -> "Unavailable"
     isReporting -> "Reporting"
@@ -424,7 +433,7 @@ private fun HubDevice.statusText(): String = when {
 }
 
 @Composable
-private fun HubDevice.statusColor() = when {
+internal fun HubDevice.statusColor() = when {
     !enabled || !available -> SentinelAmber
     isOn -> SentinelGreen
     else -> SentinelTextDim

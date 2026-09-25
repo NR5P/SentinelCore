@@ -20,6 +20,10 @@ struct DeviceHubView: View {
     // Set by the Mac's row delete button. A click is far easier to hit by accident than a swipe,
     // so that path confirms first; the iPhone's swipe action deletes outright as it always has.
     @State private var deviceToDelete: HubDevice?
+    // The wall display: big tap-to-switch tiles for an iPad mounted on a wall, presented over
+    // this view. Remembered on this device so the app comes back to it - RootView opens the
+    // Device Hub on launch while it's set - and cleared by the wall display's own Exit.
+    @AppStorage(DeviceWall.storageKey) private var wallDisplay = false
 
     private static let statePollInterval = Duration.seconds(5)
 
@@ -38,6 +42,17 @@ struct DeviceHubView: View {
             if model.isAdmin && !model.devices.isEmpty {
                 ToolbarItem(placement: .topBarLeading) {
                     EditButton()
+                }
+            }
+            // For everyone, not just admins - switching devices is the whole point of it. Not on
+            // the Mac: there is no full-screen cover there, and no Mac hangs on a wall.
+            if !model.devices.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        wallDisplay = true
+                    } label: {
+                        Label("Wall Display", systemImage: "rectangle.inset.filled.on.rectangle")
+                    }
                 }
             }
             #endif
@@ -61,6 +76,19 @@ struct DeviceHubView: View {
             }
         }
         .refreshable { await reload() }
+        #if os(iOS)
+        // The commands are this view's own, so the wall display needs no networking; the state
+        // poll below keeps running underneath the cover and feeds the tiles through model.devices.
+        .fullScreenCover(isPresented: $wallDisplay) {
+            DeviceWallView(
+                isBusy: { pendingCommandIds.contains($0.id) },
+                errorMessage: errorMessage,
+                onToggle: { device in Task { await toggle(device) } },
+                onAction: { device, action in Task { await send(device, action: action) } },
+                onBrightness: { device, percent in Task { await setBrightness(device, percent: percent) } }
+            )
+        }
+        #endif
         .sheet(isPresented: $showingAddSheet) {
             NavigationStack {
                 DeviceEditView(device: nil) { Task { await reload() } }
@@ -330,9 +358,9 @@ private struct DeviceRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(device.name)
-                    Text(statusText)
+                    Text(device.statusLabel)
                         .font(.caption)
-                        .foregroundStyle(statusColor)
+                        .foregroundStyle(device.statusTint)
                 }
 
                 Spacer()
@@ -457,29 +485,33 @@ private struct DeviceRow: View {
         }
     }
 
-    private var statusText: String {
-        if !device.enabled { return "Disabled" }
-        if !device.available { return "Unavailable" }
-        if device.isReporting { return "Reporting" }
-        if !device.commandable { return "Sensor" }
+}
+
+// The one-line answer to "what is this device doing", shared by the list row and the wall tile.
+extension HubDevice {
+    var statusLabel: String {
+        if !enabled { return "Disabled" }
+        if !available { return "Unavailable" }
+        if isReporting { return "Reporting" }
+        if !commandable { return "Sensor" }
         // A pulse device has no on/off to report - reachable is the whole story.
-        if device.isMomentary { return "Ready" }
-        switch device.power {
+        if isMomentary { return "Ready" }
+        switch power {
         case "on":
-            if device.isCoverLike { return "Open" }
-            if device.isLock { return "Locked" }
-            return device.supportsBrightness && device.brightness != nil ? "On · \(device.brightness!)%" : "On"
+            if isCoverLike { return "Open" }
+            if isLock { return "Locked" }
+            return supportsBrightness && brightness != nil ? "On · \(brightness!)%" : "On"
         case "off":
-            if device.isCoverLike { return "Closed" }
-            if device.isLock { return "Unlocked" }
+            if isCoverLike { return "Closed" }
+            if isLock { return "Unlocked" }
             return "Off"
         default: return "State unknown"
         }
     }
 
-    private var statusColor: Color {
-        if !device.enabled || !device.available { return SentinelTheme.amber }
-        return device.isOn ? SentinelTheme.green : .secondary
+    var statusTint: Color {
+        if !enabled || !available { return SentinelTheme.amber }
+        return isOn ? SentinelTheme.green : .secondary
     }
 }
 

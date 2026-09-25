@@ -586,8 +586,20 @@ for (const tab of tabs) {
 //
 // Deferred to DOMContentLoaded rather than run here: the click handler above reaches for
 // window.GateWatchCameras, and cameras.js is loaded after this file.
-window.addEventListener("DOMContentLoaded", () => {
-  const wanted = location.hash.replace(/^#/, "");
+//
+// /#wall is the Device Hub's wall display: a tablet mounted on a wall gets bookmarked (or added
+// to its home screen) with this so a reload comes straight back to the big tiles, and the
+// preference is set before the tab opens so the normal grid never flashes first. Also answered
+// on hashchange, so typing it into a dashboard that's already open works the same way.
+function landOnHash() {
+  let wanted = location.hash.replace(/^#/, "");
+  if (wanted === "wall") {
+    window.GateWatchDevices.setDisplay("wall");
+    wanted = "devices";
+  }
   const landing = wanted && Array.from(tabs).find((tab) => tab.dataset.view === wanted);
   if (landing) landing.click();
-});
+}
+
+window.addEventListener("DOMContentLoaded", landOnHash);
+window.addEventListener("hashchange", landOnHash);

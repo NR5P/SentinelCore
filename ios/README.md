@@ -77,7 +77,8 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
   knows the person's own space.
 
 **Other**
-- Device Hub: lights, gates, locks and sensors over MQTT.
+- Device Hub: lights, gates, locks and sensors over MQTT, with a full-screen wall display of big
+  tap-to-switch tiles for an iPad mounted on a wall (remembered, so the app reopens onto it).
 - Admin screens: cameras and trigger zones, accounts, known faces and vehicles, schedules,
   prompt profiles, HomeKit, backup, licence, and the full server settings tree.
 - Optional dashboard login; a remote fallback address; automatic plain-HTTP fallback when the
