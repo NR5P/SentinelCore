@@ -12,6 +12,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 3. [The EVENTS tab — everything the cameras caught](#3-the-events-tab--everything-the-cameras-caught)
 3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
 3b. [Semantic search — finding events by what the picture shows](#3b-semantic-search--finding-events-by-what-the-picture-shows)
+3c. [The WEATHER tab — forecast, radar and warnings](#3c-the-weather-tab--forecast-radar-and-warnings)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
@@ -81,8 +82,9 @@ ever see the dashboard warn that it was reached from *outside* your network, tak
 seriously — that's a different thing entirely, and means the port is more exposed than intended.
 
 Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") showing
-whether the dashboard can currently reach its own backend, and eight tabs: **feed**,
-**timeline**, **live**, **cameras**, **triggers**, **automations**, **docs**, **settings**.
+whether the dashboard can currently reach its own backend, and a row of tabs: **events**,
+**timeline**, **live**, **cameras**, **organizer**, **weather**, **automations**, **device hub**
+(only when the Device Hub is switched on), **docs**, **settings** and **accounts**.
 
 The very first time you open the dashboard, it asks you to **create the admin account** - a
 username and a password of at least 8 characters. Until that account exists the server does
@@ -299,6 +301,51 @@ from measured CLIP scores, where a correct image/caption match scored about 0.25
 one about 0.17–0.24 — a narrow band, so small changes here matter more than the range suggests.
 
 Only alerts analysed *after* you turn this on are encoded; older events stay text-searchable only.
+
+## 3c. The WEATHER tab — forecast, radar and warnings
+
+The weather where the server is: what it's doing now, the radar, the next two days hour by hour,
+and the seven-day forecast, with any watches, warnings and advisories in force across the top.
+Everything comes from the US National Weather Service (weather.gov), which is free and needs no
+account or key — so the tab covers the United States and its territories, and says so plainly if
+the location is somewhere else.
+
+**It needs your location.** Set it once under **Settings → LOCATION** (the same one schedules use
+to follow the sun): type a town and press Find, or enter the latitude and longitude yourself. Until
+then the tab offers to take you there. Nothing is fetched until somebody opens the tab, and nothing
+runs while it's closed. While it's open, the server asks weather.gov for the forecast every ten
+minutes and for a fresh radar frame every two, and keeps one copy so several open dashboards share
+it rather than each asking. The coordinates go to weather.gov to ask for the forecast — that is the
+only thing that leaves your network, and only while the tab is open.
+
+What's on it, top to bottom:
+
+- **Watches, warnings and advisories** for the location, worst first: red for severe and extreme,
+  amber for moderate, blue for the rest. Click one for the full text and what to do.
+- **NOW** — the nearest NWS observation station's latest report: temperature, what it feels like
+  when wind chill or heat index apply, humidity, dew point, wind and gusts, pressure, visibility,
+  and today's sunrise and sunset. The station is usually an airport a few miles away — its name is
+  under the panel — so a degree or two of difference from the porch is normal. If the nearest
+  station hasn't reported, the next one over is used.
+- **RADAR** — the loop of the last hour or so from the radar station nearest you, or the
+  whole-country picture with **national**; **still** shows the latest frame alone. Click the
+  picture to see it full size. It refreshes on its own every two minutes.
+- **The next 48 hours** — a strip you can scroll sideways: temperature, conditions and the chance
+  of rain for each hour, with a marker where each new day starts. Hover an hour for the wind and
+  humidity.
+- **The 7-day forecast** — a card per day with the high and low, conditions, chance of rain and
+  wind. Click a day for the NWS's written forecast for the day and the night.
+
+Times are shown in the location's own time zone, so it reads right even from a phone two zones
+away. If a station is down or weather.gov has a bad minute, the parts that did answer stay on
+screen with a note about the one that didn't, and the last good answer is kept — marked as such —
+rather than replaced with an error. Refresh in the corner asks again straight away.
+
+**Being told, not just shown.** The tab only shows what's in force while you're looking at it. To
+have a tornado watch or a flood warning sent to you as it's issued — by email, Telegram, or push to
+the apps — turn on **Settings → WEATHER ALERTS** and pick the kinds of weather and the level
+(warnings only, watches and warnings, or everything). See
+[section 7](#7-the-settings-tab) under *Weather Alerts*.
 
 ## 4. The LIVE tab — viewing your own cameras
 
@@ -1007,11 +1054,13 @@ Because this is worked out from the sun's real position, the clock time moves th
 well over an hour by itself. Nothing needs changing in spring or autumn.
 
 **This needs your location.** Set it once under **Settings → LOCATION**: type a town and press
-Find, or enter the latitude and longitude yourself. Only the two numbers are saved, and they are
-used for nothing but this calculation — it happens on your own machine, with nothing sent
-anywhere. (Pressing Find is the one exception: the place name you typed goes to OpenStreetMap's
-public lookup service to get the coordinates back. On a server with no internet access, that
-button reports it can't reach the service and you enter the numbers directly.)
+Find, or enter the latitude and longitude yourself. Only the two numbers are saved. This
+calculation happens on your own machine, with nothing sent anywhere; the other thing the location
+is used for is the [WEATHER tab](#3c-the-weather-tab--forecast-radar-and-warnings), which sends the
+coordinates to weather.gov for the forecast while that tab is open. (Pressing Find also goes out:
+the place name you typed goes to OpenStreetMap's public lookup service to get the coordinates
+back. On a server with no internet access, that button reports it can't reach the service and you
+enter the numbers directly.)
 
 At high latitudes some darkness levels genuinely never happen in midsummer — the sun never gets
 18° below the horizon in a Scottish June. A schedule set to one of those simply doesn't fire on
@@ -1227,7 +1276,7 @@ without having switched to advanced still finds it.
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
 shows only the settings most people actually change: Alert Intake & History, Email, Daily
 Summary, Telegram Alerts, Discord Alerts, Push Notifications, Server Outage Alerts, Internet Outage
-Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
+Alerts, Weather Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
 Insect Advisor, Login Alerts, Bug Reports, System Health, Apple HomeKit, Nightly Auto Export, Backup, Login and
 License. **Advanced** adds everything else: the AI tuning knobs, image processing,
 self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces, multi-frame analysis,
@@ -1293,6 +1342,20 @@ The full list below covers both modes:
   Iris on demand. (Called **Blue Iris Snapshot** in earlier versions.)
 - **Push Notifications** — native push alerts to the iPhone, Android, and Apple TV apps, with
   their own confidence gate. See [PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md).
+- **Weather Alerts** — **off by default.** When on, the server asks the US National Weather
+  Service every few minutes (five by default) for watches, warnings and advisories covering the
+  location set under LOCATION, and sends each new one to you the same way it sends a server-outage
+  notice: by email, Telegram, and push to the apps, whichever of those you have set up. Tick the
+  kinds you care about — tornado, severe thunderstorm, flood, winter weather, wind, heat and cold,
+  tropical, fire weather, and everything else — and choose how serious it has to be: **warnings
+  only** (it's happening or about to), **watches and warnings** (the default; conditions are right
+  for it), or **everything** including advisories and statements. Each alert is sent once. The
+  NWS reissues a warning every quarter hour or so while it tracks a storm; those follow-ups are
+  skipped unless you tick **Include Follow-Ups**. At most five are sent per check, worst first,
+  so switching it on during a bad night doesn't fire off twenty at once. **Send test alert**
+  delivers a clearly-marked sample tornado warning so you can see where a real one lands. Needs
+  a location inside the United States, and sends its coordinates to weather.gov on every check.
+  Quiet Hours don't apply — a tornado warning at 3am is exactly the one you want.
 - **Self-Monitoring** — watches the bridge's own health; see [section 16](#16-self-monitoring).
 - **Spider Web & Insect Advisor** — spots the overnight flood of triggers caused by a web or an
   insect drifting across the lens, and tells you which camera needs wiping rather than letting
@@ -1331,8 +1394,9 @@ The full list below covers both modes:
   [section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
   fits with the other rate-limiting layers.
 - **Location** — the latitude/longitude used to work out sunrise and sunset, so schedules and
-  anything else that runs "at dusk" know when that is here. See
-  [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark).
+  anything else that runs "at dusk" know when that is here, and for the WEATHER tab's forecast.
+  See [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark)
+  and [section 3c](#3c-the-weather-tab--forecast-radar-and-warnings).
 - **Schedules** — run something at a time of day, at sunset, or when it gets dark. Its own
   section below. See
   [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark).

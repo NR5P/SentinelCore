@@ -363,9 +363,10 @@ public sealed class InternetOutageSettingsDto
 
 public sealed class LocationSettingsDto
 {
-    // Only ever used to work out sunrise and sunset here, which is what lets a schedule fire
-    // "when it gets dark" instead of at a clock time that needs changing every few weeks. The
-    // calculation is local arithmetic - nothing is sent anywhere. See LocationOptions.
+    // Used to work out sunrise and sunset here (local arithmetic, which is what lets a schedule
+    // fire "when it gets dark" instead of at a clock time that needs changing every few weeks),
+    // and by the Weather tab, which sends the pair to the National Weather Service for the
+    // forecast while that tab is open. See LocationOptions.
     [Range(-90, 90)]
     public double Latitude { get; set; }
 
@@ -424,6 +425,34 @@ public sealed class LoginAlertSettingsDto
 
     [Range(1, 1440)]
     public int CooldownMinutes { get; set; } = 15;
+}
+
+// Mirrors WeatherAlertOptions in the main app. Off by default, and the kinds default to what
+// can hurt you - see the options class for why.
+public sealed class WeatherAlertsSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(1, 60)]
+    public int CheckIntervalMinutes { get; set; } = 5;
+
+    public string MinimumLevel { get; set; } = WeatherAlertOptions.LevelWatch;
+
+    public bool Tornado { get; set; } = true;
+    public bool SevereThunderstorm { get; set; } = true;
+    public bool Flood { get; set; } = true;
+    public bool Winter { get; set; } = true;
+    public bool Wind { get; set; } = true;
+    public bool Temperature { get; set; } = true;
+    public bool Tropical { get; set; } = true;
+    public bool Fire { get; set; }
+    public bool Other { get; set; }
+    public bool NotifyOnUpdates { get; set; }
+
+    // A method, not a property: SettingsSchemaTests treats every property as a field a client
+    // must be able to edit.
+    public bool HasAnyKind() =>
+        Tornado || SevereThunderstorm || Flood || Winter || Wind || Temperature || Tropical || Fire || Other;
 }
 
 // Mirrors NuisanceAdvisorOptions in the main app.

@@ -257,6 +257,7 @@ builder.Services.AddHostedService<Go2RtcWarmUpService>();
 // Watches browser-published (webcam device) cameras and tells the owner when one goes dark. A
 // singleton as well as a hosted service so the publish/status endpoint can read what it has seen.
 builder.Services.AddSingleton<OwnerNotifier>();
+builder.Services.AddSingleton<IOwnerNotifier>(sp => sp.GetRequiredService<OwnerNotifier>());
 builder.Services.AddSingleton<PublisherWatchdog>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PublisherWatchdog>());
 
@@ -342,6 +343,17 @@ builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout =
 // Short, because the overwhelmingly likely failure is a server with no route out at all, and
 // the Settings form should say so promptly rather than appearing to hang.
 builder.Services.AddHttpClient(nameof(LocationLookupEndpoints), client => client.Timeout = TimeSpan.FromSeconds(8));
+// The Weather tab: a handful of GETs to api.weather.gov, each answered in well under a second
+// when the service is up. Long enough for a slow minute there, short enough that a server with no
+// route out tells the tab so promptly rather than leaving it on "loading".
+builder.Services.AddHttpClient(nameof(WeatherService), client => client.Timeout = TimeSpan.FromSeconds(12));
+builder.Services.AddSingleton<WeatherService>();
+// WEATHER ALERTS: the same NWS client, polled by a worker that tells the owner about new watches
+// and warnings. What it has already sent lives beside the other web-host data, so a restart
+// doesn't repeat the warning that is still up.
+builder.Services.AddSingleton<IWeatherAlertSource>(sp => sp.GetRequiredService<WeatherService>());
+builder.Services.AddSingleton(new WeatherAlertState(Path.Combine(camerasRoot, "weather-alerts-seen.json")));
+builder.Services.AddHostedService<WeatherAlertWorker>();
 // Same reasoning, shorter: listing what Ollama has pulled is a local call to a process that is
 // either running and instant or not running at all, and the Model dropdown should fall back to a
 // plain text box quickly rather than making someone wait to find out.
@@ -524,6 +536,7 @@ app.MapLocalAddressEndpoints();
 app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
+app.MapWeatherEndpoints();
 app.MapOllamaModelEndpoints();
 app.MapCloudVisionModelEndpoints();
 app.MapNotificationTestProxyEndpoints();

@@ -763,13 +763,48 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "weatherAlerts",
+            Title = "WEATHER ALERTS",
+            Group = SettingsGroups.Alerts,
+            Endpoint = "/api/settings/weather-alerts",
+            Basic = true,
+            DtoType = typeof(WeatherAlertsSettingsDto),
+            Description = "Off by default. When on, the server checks the US National Weather Service every few minutes for watches, warnings and advisories covering the location set under LOCATION, and tells you about new ones the same way it tells you about a server outage: by email, Telegram and push to the apps, whichever of those are set up. Pick the kinds of weather you want to hear about and how serious it has to be. Each alert is sent once; the NWS reissues a warning every so often as it tracks a storm, and those follow-ups are skipped unless you ask for them. Needs a location inside the United States, and sends its coordinates to weather.gov on every check.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Check for new National Weather Service alerts for your location and send them to you."),
+                Select("minimumLevel", "Send Alerts At", "How serious an alert has to be before you hear about it. Warnings mean it is happening or about to; watches mean conditions are right for it; advisories and statements cover the rest.",
+                    (WeatherAlertOptions.LevelWarning, "Warnings only"),
+                    (WeatherAlertOptions.LevelWatch, "Watches and warnings"),
+                    (WeatherAlertOptions.LevelAdvisory, "Everything, including advisories")),
+                Check("tornado", "Tornado", "Tornado watches and warnings."),
+                Check("severeThunderstorm", "Severe Thunderstorm", "Severe thunderstorm watches and warnings."),
+                Check("flood", "Flood", "Flash flood, flood and coastal flood alerts."),
+                Check("winter", "Winter Weather", "Winter storm, blizzard, ice storm, snow and freezing rain alerts."),
+                Check("wind", "Wind", "High wind warnings, wind advisories and other wind alerts."),
+                Check("temperature", "Heat & Cold", "Extreme heat, heat advisories, extreme cold, wind chill, freeze and frost alerts."),
+                Check("tropical", "Tropical", "Hurricane, tropical storm and storm surge alerts."),
+                Check("fire", "Fire Weather", "Red flag warnings and fire weather watches."),
+                Check("other", "Everything Else", "Any alert not covered above: fog, air quality, marine, dust, and so on."),
+                Check("notifyOnUpdates", "Include Follow-Ups", "Also send the NWS's updates to an alert you were already told about. Off means one message per alert; on can mean several during a long storm."),
+                Number("checkIntervalMinutes", "Check Interval (min)", "How often to ask the NWS for new alerts. A tornado warning can arrive between checks, so shorter is better here - the request is tiny.", 1, 60, recommended: 5)
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "sendTestWeatherAlert",
+                "send test alert",
+                "Send a sample tornado warning through every channel that is set up - email, Telegram, push - so you can see what a real one will look like and where it arrives. Ignores Enabled and the choices above.",
+                "/api/settings/weather-alerts/test",
+                "POST")
+        },
+        new()
+        {
             Key = "location",
             Title = "LOCATION",
             Group = SettingsGroups.Automation,
             Endpoint = "/api/settings/location",
             Basic = true,
             DtoType = typeof(LocationSettingsDto),
-            Description = "Where this server is, used for one thing only: working out when the sun rises and sets here, so a schedule can fire at sunset or \"when it gets dark\" instead of at a fixed clock time that drifts out of step through the year. Nothing is sent anywhere - the calculation happens on this machine. You can type a town to fill the coordinates in, or enter them yourself; only the numbers are saved.",
+            Description = "Where this server is, used for two things: working out when the sun rises and sets here, so a schedule can fire at sunset or \"when it gets dark\" instead of at a fixed clock time that drifts out of step through the year; and the dashboard's WEATHER tab, which shows the US National Weather Service forecast and radar for these coordinates. The sunrise calculation happens on this machine. The coordinates leave it only while someone has the WEATHER tab open (they go to weather.gov to fetch the forecast) or when you press Find below. You can type a town to fill the coordinates in, or enter them yourself; only the numbers are saved.",
             Fields =
             [
                 Text("label", "Town or City", "A place name to look up, e.g. \"Louisville, KY\". Filling this in and pressing Find sets the two coordinates below. Only ever a convenience - entering the coordinates directly works just as well, and is the only option on a server with no internet access.",

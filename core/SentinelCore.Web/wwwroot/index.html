@@ -29,6 +29,7 @@
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones.">cameras</button>
       <button class="tab hidden" id="tab-organizer" data-view="organizer" data-tip-below data-tip="Notes, calendar, reminders and boards - shared with the SentinelCore apps on every device, and kept on each one so they work with no signal.">organizer</button>
+      <button class="tab" data-view="weather" data-tip-below data-tip-right data-tip="Current conditions, radar, and the hourly and seven-day forecast for the location in Settings, from the US National Weather Service.">weather</button>
       <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
       <button class="tab hidden" id="tab-devices" data-view="devices" data-tip-below data-tip-right data-tip="Switch lights, plugs, and other MQTT devices on and off. Only appears when the Device Hub is turned on in Settings.">device hub</button>
       <button class="tab" data-view="docs" data-tip-below data-tip-right data-tip="The full User Guide, Deployment guide, and Push Notifications setup - viewable as PDFs without leaving the dashboard.">docs</button>
@@ -276,6 +277,19 @@
       <div id="org-pane-reminders" class="tab-pane hidden"></div>
       <div id="org-pane-notes" class="tab-pane hidden"></div>
       <div id="org-pane-boards" class="tab-pane hidden"></div>
+    </section>
+
+    <section id="view-weather" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">WEATHER</div>
+        <div class="toolbar-actions">
+          <span id="weather-updated" class="event-count"></span>
+          <button id="weather-refresh-btn" class="btn" data-tip-below data-tip-right data-tip="Ask the National Weather Service again now. The tab refreshes itself every ten minutes while it's open, and the radar every two.">refresh</button>
+        </div>
+      </div>
+      <div id="weather-root">
+        <div class="empty-state">loading weather&hellip;</div>
+      </div>
     </section>
 
     <section id="view-automations" class="view hidden">
@@ -695,6 +709,7 @@
   <script src="devices.js"></script>
   <script src="timeline.js"></script>
   <script src="docs.js"></script>
+  <script src="weather.js"></script>
   <script src="organizer-sync.js"></script>
   <script src="organizer.js"></script>
   <script src="organizer-automations.js"></script>

@@ -1,7 +1,7 @@
 namespace SentinelCore;
 
-// Where the server is, for the sole purpose of working out when the sun rises and sets there.
-// Nothing else in the app uses it, and it is never sent anywhere - see LocationOptions.
+// Where the server is, for working out when the sun rises and sets there. The web host's Weather
+// tab reads the same pair to fetch a forecast - see LocationOptions for where it does and doesn't go.
 public sealed record GeoCoordinate(double Latitude, double Longitude)
 {
     public bool IsValid =>

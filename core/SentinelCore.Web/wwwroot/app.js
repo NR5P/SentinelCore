@@ -519,7 +519,8 @@ const views = {
   docs: document.getElementById("view-docs"),
   settings: document.getElementById("view-settings"),
   accounts: document.getElementById("view-accounts"),
-  organizer: document.getElementById("view-organizer")
+  organizer: document.getElementById("view-organizer"),
+  weather: document.getElementById("view-weather")
 };
 let settingsLoaded = false;
 let camerasLoaded = false;
@@ -537,6 +538,8 @@ for (const tab of tabs) {
     // Device state polls every few seconds while the tab is open - stop it the moment it isn't.
     if (currentView === "devices" && target !== "devices") window.GateWatchDevices.stop();
     if (currentView === "organizer" && target !== "organizer") window.SentinelOrganizer.hide();
+    // The weather asks weather.gov every ten minutes while it's open - and only while it's open.
+    if (currentView === "weather" && target !== "weather") window.SentinelWeather.hide();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -559,6 +562,7 @@ for (const tab of tabs) {
     if (target === "devices") window.GateWatchDevices.load();
     if (target === "docs") window.GateWatchDocs.load();
     if (target === "organizer") window.SentinelOrganizer.show();
+    if (target === "weather") window.SentinelWeather.show();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;
       window.GateWatchTimeline.load();

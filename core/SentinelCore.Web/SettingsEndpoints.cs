@@ -53,7 +53,8 @@ public sealed record SettingsSnapshot(
     // deserializes - the same rule the properties above it follow.
     ScheduledRecordingSettingsDto? ScheduledRecording = null,
     OrganizerSettingsDto? Organizer = null,
-    AutoExportSettingsDto? AutoExport = null);
+    AutoExportSettingsDto? AutoExport = null,
+    WeatherAlertsSettingsDto? WeatherAlerts = null);
 
 public static class SettingsEndpoints
 {
@@ -219,6 +220,20 @@ public static class SettingsEndpoints
 
         settings.MapPut("/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "QuietHours", ct));
+
+        settings.MapPut("/weather-alerts", async (WeatherAlertsSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            dto.MinimumLevel = dto.MinimumLevel?.Trim().ToLowerInvariant() ?? WeatherAlertOptions.LevelWatch;
+            return await SaveSectionAsync(dto, appSettings, WeatherAlertOptions.SectionName, ct, extra =>
+            {
+                if (dto.MinimumLevel is not (WeatherAlertOptions.LevelWarning or WeatherAlertOptions.LevelWatch or WeatherAlertOptions.LevelAdvisory))
+                    extra.Add("Send Alerts At must be warnings only, watches and warnings, or everything.");
+                // Switched on with every kind unticked would check the NWS every few minutes and
+                // never say anything, which reads as broken rather than as a choice.
+                if (dto.Enabled && !dto.HasAnyKind())
+                    extra.Add("Tick at least one kind of weather to be told about, or turn Weather Alerts off.");
+            });
+        });
 
         settings.MapPut("/location", async (LocationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "Location", ct, extra =>
@@ -533,7 +548,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<ScheduledRecordingSettingsDto>(
             ScheduledRecordingOptions.SectionName, cancellationToken),
         await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken),
-        await settings.GetSectionAsync<AutoExportSettingsDto>(AutoExportSettingsDto.SectionName, cancellationToken));
+        await settings.GetSectionAsync<AutoExportSettingsDto>(AutoExportSettingsDto.SectionName, cancellationToken),
+        await settings.GetSectionAsync<WeatherAlertsSettingsDto>(WeatherAlertOptions.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -580,6 +596,7 @@ public static class SettingsEndpoints
         ScheduledRecording = snapshot.ScheduledRecording ?? new(),
         Organizer = snapshot.Organizer ?? new(),
         AutoExport = snapshot.AutoExport ?? new(),
+        WeatherAlerts = snapshot.WeatherAlerts ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -660,6 +677,7 @@ public static class SettingsEndpoints
         if (snapshot.ScheduledRecording is not null) await settings.MergeSectionAsync(ScheduledRecordingOptions.SectionName, snapshot.ScheduledRecording, cancellationToken);
         if (snapshot.Organizer is not null) await settings.MergeSectionAsync(OrganizerSettingsDto.SectionName, snapshot.Organizer, cancellationToken);
         if (snapshot.AutoExport is not null) await MergeUnmaskedAsync(snapshot.AutoExport, AutoExportSettingsDto.SectionName, settings, cancellationToken);
+        if (snapshot.WeatherAlerts is not null) await settings.MergeSectionAsync(WeatherAlertOptions.SectionName, snapshot.WeatherAlerts, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a
