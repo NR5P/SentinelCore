@@ -11,6 +11,9 @@ struct OrganizerRemindersView: View {
     @State private var newTitle = ""
     @State private var editing: OrganizerItem?
     @State private var creating = false
+    @State private var listening = false
+    @State private var spokenDraft: VoiceDraft?
+    @State private var editingDraft: VoiceDraft?
     @State private var showCompleted = false
     @FocusState private var addFocused: Bool
 
@@ -23,6 +26,13 @@ struct OrganizerRemindersView: View {
                     TextField("New reminder", text: $newTitle)
                         .focused($addFocused)
                         .onSubmit(add)
+                    // Or say it: "add a reminder to walk the dog tomorrow at 1".
+                    Button { listening = true } label: {
+                        Image(systemName: "mic.fill").foregroundStyle(SentinelTheme.green)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Speak a reminder")
+                    .help("Speak a reminder")
                     Button("Details") { creating = true }
                         .buttonStyle(.borderless)
                         .font(.caption)
@@ -55,6 +65,22 @@ struct OrganizerRemindersView: View {
         }
         .sheet(isPresented: $creating) {
             NavigationStack { ReminderEditor(reminder: nil, parentId: nil) }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 480, minHeight: 600)
+                #endif
+        }
+        // "Edit" on the voice sheet hands the draft over here, and the editor opens once that sheet
+        // has gone - two sheets can't swap places in one go.
+        .sheet(isPresented: $listening, onDismiss: { editingDraft = spokenDraft; spokenDraft = nil }) {
+            VoiceReminderSheet(spaceId: spaceFilter) { spokenDraft = $0 }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 440, minHeight: 360)
+                #endif
+        }
+        .sheet(item: $editingDraft) { draft in
+            NavigationStack { ReminderEditor(reminder: nil, parentId: nil, draft: draft.phrase) }
                 .environment(engine)
                 #if os(macOS)
                 .frame(minWidth: 480, minHeight: 600)

@@ -248,6 +248,9 @@ struct ReminderEditor: View {
     @Environment(\.dismiss) private var dismiss
     let reminder: OrganizerItem?
     let parentId: String?
+    // A new reminder started by voice (VoiceReminderSheet): the words and date already worked out,
+    // for the person to check before saving.
+    var draft: VoicePhrase? = nil
 
     @State private var saved: OrganizerItem?
     @State private var title = ""
@@ -345,7 +348,17 @@ struct ReminderEditor: View {
         guard !loaded else { return }
         loaded = true
         spaceId = engine.defaultSpaceId
-        guard let reminder else { return }
+        guard let reminder else {
+            if let draft {
+                title = draft.title
+                if let date = draft.due {
+                    hasDue = true
+                    due = date
+                    hasTime = draft.hasTime
+                }
+            }
+            return
+        }
         saved = reminder
         title = reminder.title
         let allDay = reminder.bool("allDay")

@@ -887,6 +887,7 @@ window.SentinelOrganizer = (function () {
         <input type="date" class="field-input" id="rem-new-date" title="due date (optional)" />
         <input type="time" class="field-input org-time" id="rem-new-time" title="time (optional)" />
         <button class="btn" id="rem-new-add">add</button>
+        ${voiceAvailable() ? `<button class="btn org-voice" id="rem-new-voice" type="button" title="say a reminder, like &quot;walk the dog tomorrow at 1&quot;" aria-label="say a reminder">${MIC_ICON}</button>` : ""}
       </div>
       ${section("OVERDUE", groups.overdue, "org-rem-overdue")}
       ${section("TODAY", groups.today)}
@@ -912,6 +913,7 @@ window.SentinelOrganizer = (function () {
     };
     el("rem-new-add").addEventListener("click", add);
     el("rem-new-title").addEventListener("keydown", (event) => { if (event.key === "Enter") add(); });
+    if (el("rem-new-voice")) el("rem-new-voice").addEventListener("click", () => listenForReminder(el("rem-new-voice")));
     if (el("rem-toggle-done")) el("rem-toggle-done").addEventListener("click", () => { showCompleted = !showCompleted; renderReminders(); });
 
     for (const box of root.querySelectorAll("[data-complete]")) {
@@ -920,6 +922,69 @@ window.SentinelOrganizer = (function () {
     for (const row of root.querySelectorAll("[data-open-reminder]")) {
       row.addEventListener("click", () => openReminderEditor(S.get(row.dataset.openReminder)));
     }
+  }
+
+  // Saying a reminder instead of typing it. The browser's own recognizer listens (Chrome, Edge
+  // and Safari have one; Firefox doesn't, so the button isn't shown there), and voice-phrase.js
+  // turns the words into a title, date and time - which land in the quick-add fields for a look
+  // before Enter adds them. Browsers only allow the microphone on https or localhost, so on a
+  // plain http address the button stays hidden too.
+  const MIC_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4M8 21h8"/></svg>';
+  let listener = null;
+
+  function recognizerClass() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
+  function voiceAvailable() {
+    return !!(recognizerClass() && window.isSecureContext && window.SentinelVoicePhrase);
+  }
+
+  function listenForReminder(button) {
+    if (listener) { listener.stop(); return; }
+    const Recognizer = recognizerClass();
+    const title = el("rem-new-title");
+    const original = title.placeholder;
+    let heard = "";
+    const done = () => {
+      listener = null;
+      button.classList.remove("org-voice-on");
+      title.placeholder = original;
+    };
+    const rec = new Recognizer();
+    rec.lang = navigator.language || "en-US";
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.continuous = false;
+    rec.onresult = (event) => {
+      heard = Array.from(event.results).map((r) => r[0].transcript).join(" ").trim();
+      title.value = heard;
+    };
+    rec.onerror = (event) => {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        title.placeholder = "the browser isn't allowing the microphone - check the address bar";
+        setTimeout(() => { if (title.placeholder !== original) title.placeholder = original; }, 6000);
+        heard = "";
+      }
+    };
+    rec.onend = () => {
+      done();
+      if (!heard) return;
+      const phrase = window.SentinelVoicePhrase.parse(heard);
+      title.value = phrase.title;
+      el("rem-new-date").value = phrase.due ? ymd(phrase.due) : "";
+      el("rem-new-time").value = phrase.due && phrase.hasTime ? hm(phrase.due) : "";
+      title.focus();
+    };
+    try {
+      rec.start();
+    } catch {
+      return;
+    }
+    listener = rec;
+    button.classList.add("org-voice-on");
+    title.value = "";
+    title.placeholder = "listening…";
   }
 
   function reminderRow(r) {
