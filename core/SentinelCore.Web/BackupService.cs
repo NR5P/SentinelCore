@@ -47,6 +47,8 @@ public sealed class BackupService(
     IRecordingScheduleStore recordingSchedules,
     IOrganizerAutomationStore organizerAutomations,
     OrganizerAutomationEngine organizerAutomationEngine,
+    IAlarmStore alarmStore,
+    AlarmEngine alarmEngine,
     MainAppHubBackupClient hub,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
@@ -56,9 +58,9 @@ public sealed class BackupService(
 {
     // 2 added CameraGroups and GateChecks; 3 added Organizer; 4 added RecordingSchedules, Hub,
     // InternetExposed, Warnings, the organizer's feed tokens and preferences, and the settings
-    // AutoExport section; 5 added OrganizerAutomations. Bumping this does not invalidate older
-    // exports - see Validate, which accepts anything up to this number.
-    public const int CurrentSchemaVersion = 5;
+    // AutoExport section; 5 added OrganizerAutomations; 6 added Alarm. Bumping this does not
+    // invalidate older exports - see Validate, which accepts anything up to this number.
+    public const int CurrentSchemaVersion = 6;
 
     public sealed record BundleSummary(int FileCount, IReadOnlyList<string> Warnings);
 
@@ -85,6 +87,7 @@ public sealed class BackupService(
             hubExport.Value,
             await webSettings.GetSectionAsync<InternetExposedSettingsDto>("InternetExposed", ct),
             await organizerAutomations.GetAllAsync(ct),
+            new AlarmBackup(await alarmStore.GetSensorsAsync(ct), await alarmStore.GetConfigAsync(ct)),
             warnings.Count > 0 ? warnings : null);
     }
 
@@ -385,6 +388,22 @@ public sealed class BackupService(
             organizerAutomationsRestored++;
         }
 
+        // Straight into the store, then the engine is told to re-read: same ids, so a re-import
+        // replaces rather than duplicates. The alarm's armed/disarmed state is not in the file -
+        // a restored server comes up disarmed.
+        var alarmSensorsRestored = 0;
+        if (document.Alarm is { } alarmBackup)
+        {
+            foreach (var sensor in alarmBackup.Sensors ?? [])
+            {
+                if (sensor.Id == Guid.Empty || sensor.DeviceId == Guid.Empty) continue;
+                await alarmStore.SaveSensorAsync(sensor, ct);
+                alarmSensorsRestored++;
+            }
+            if (alarmBackup.Config is { } alarmConfig) await alarmStore.SaveConfigAsync(alarmConfig, ct);
+            alarmEngine.Invalidate();
+        }
+
         // Written last among the stores because it's the one part that can still fail after
         // validation passed (the main app stopping mid-restore). Everything above has landed by
         // then, so it's reported as a note on a restore that otherwise worked, not as a failure
@@ -436,6 +455,7 @@ public sealed class BackupService(
             liveOrderRestored,
             organizerItemsRestored,
             organizerAutomationsRestored,
+            alarmSensorsRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,
             automationRulesRestored = hubCounts?.RulesRestored ?? 0,
             schedulesRestored = hubCounts?.SchedulesRestored ?? 0,

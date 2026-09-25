@@ -338,6 +338,10 @@ Devices are stored in `devices.db` as raw topics and payloads rather than per-ve
 
 Any signed-in account can switch a device; adding, editing, deleting, and discovery are admin-only. The dashboard's tab also has a **wall display** - big tap-to-switch tiles grouped by room, with the rest of the dashboard hidden - for a tablet mounted on a wall; `/#wall` opens it directly, and the choice is remembered per browser in `localStorage` (`devices.js`). See `docs/USER_GUIDE.md` section 13a.
 
+## Alarm
+
+On by default (`Alarm:Enabled` in appsettings hides it). An **ALARM** tab on the dashboard and in every app turns Device Hub sensors into a home alarm: each sensor is given a zone (entry door, perimeter, interior motion, 24-hour) and the modes that watch it (home / night / away); arming runs an exit delay, an entry door starts an entry delay, and a trigger switches on siren devices through the Device Hub, pushes to every phone, and snapshots the chosen cameras through the AI pipeline. The state machine (`AlarmEngine`) and the sensor subscription (`AlarmWatcher`, a second read-only MQTT client like `SensorTriggerWatcher`) live in the Web host beside the cameras and push it uses; sensors, config and the PIN hash are in `alarm.db` and in the backup. Battery and link quality come from the measurements the sensors already report.
+
 ## The additional action
 
 The built-in generic-webhook action is separate from Telegram and Discord. Configure:

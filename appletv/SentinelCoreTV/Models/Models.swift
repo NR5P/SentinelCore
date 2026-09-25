@@ -551,3 +551,81 @@ extension JSONDecoder {
         return decoder
     }()
 }
+
+// MARK: - Alarm (control only - sensors are set up on the dashboard, iPhone, Mac or Android)
+
+struct AlarmStatus: Codable {
+    var enabled: Bool
+    var hubEnabled: Bool?
+    var mode: String?
+    var status: String?
+    var changedAt: Date?
+    var changedBy: String?
+    var exitUntil: Date?
+    var pendingUntil: Date?
+    var triggeredAt: Date?
+    var triggeredBy: String?
+    var sirenOn: Bool?
+    var pinSet: Bool?
+    var brokerConnected: Bool?
+    var ready: Bool?
+    var issues: [String]?
+    var sensors: [AlarmSensor]?
+    var now: Date?
+
+    var isTriggered: Bool { status == "triggered" }
+}
+
+struct AlarmSensor: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    var zone: String
+    var enabled: Bool
+    var state: String
+    var offline: Bool
+    var deviceMissing: Bool
+    var battery: Double?
+    var lowBattery: Bool
+    var bypassed: Bool
+    var watched: Bool
+    var lastChanged: Date?
+
+    var isOpen: Bool { state == "open" }
+
+    var stateLabel: String {
+        switch (zone, state) {
+        case ("interior", "open"): "Motion"
+        case ("interior", "closed"): "Clear"
+        case ("always", "open"): "Alert"
+        case ("always", "closed"): "OK"
+        case (_, "open"): "Open"
+        case (_, "closed"): "Closed"
+        default: "No reading"
+        }
+    }
+
+    var zoneLabel: String {
+        switch zone {
+        case "entry": "Entry door"
+        case "perimeter": "Perimeter"
+        case "interior": "Interior motion"
+        case "always": "24-hour"
+        default: zone.capitalized
+        }
+    }
+}
+
+struct AlarmCommandReply: Codable {
+    var ok: Bool
+    var note: String?
+}
+
+struct AlarmArmInput: Encodable {
+    var mode: String
+    var force: Bool
+    var pin: String?
+}
+
+struct AlarmDisarmInput: Encodable {
+    var pin: String?
+}

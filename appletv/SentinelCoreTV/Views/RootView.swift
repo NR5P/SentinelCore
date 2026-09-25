@@ -24,7 +24,7 @@ struct RootView: View {
                     LoginView()
                 } else {
                     TabView(selection: $selection) {
-                        ForEach(AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled)) { section in
+                        ForEach(AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: model.alarmEnabled)) { section in
                             NavigationStack {
                                 sectionView(section)
                                     .navigationDestination(item: $model.selectedEvent) { event in
@@ -74,6 +74,7 @@ struct RootView: View {
         case .live: LiveCamerasView(isActive: selection == .live)
         case .events: AlertFeedView()
         case .devices: DeviceHubView(isActive: selection == .devices)
+        case .alarm: AlarmView(isActive: selection == .alarm)
         case .organizer: OrganizerTVView()
         case .settings: SettingsView()
         }
@@ -84,12 +85,13 @@ struct RootView: View {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events tab over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case live, events, organizer, devices, settings
+    case live, events, alarm, organizer, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .live: "Live"
         case .events: "Events"
+        case .alarm: "Alarm"
         case .organizer: "Organizer"
         case .devices: "Device Hub"
         case .settings: "Settings"
@@ -99,16 +101,19 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .live: "video.fill"
         case .events: "shield.lefthalf.filled"
+        case .alarm: "lock.shield.fill"
         case .organizer: "calendar"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
     }
 
-    // The Device Hub is off by default and only appears once it's switched on server-side.
+    // The Device Hub, the Organizer and the Alarm can each be switched off server-side.
     // tvOS has no five-tab limit like the iPhone tab bar, so this is a plain filter.
-    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
-        allCases.filter { ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) }
+    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool, alarmEnabled: Bool = false) -> [AppSection] {
+        allCases.filter {
+            ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) && ($0 != .alarm || alarmEnabled)
+        }
     }
 }
 

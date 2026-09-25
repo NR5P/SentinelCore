@@ -37,6 +37,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 12. [Email](#12-email)
 13. [MQTT & Home Assistant](#13-mqtt--home-assistant)
 13a. [The DEVICE HUB tab — controlling lights & other MQTT devices](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices)
+13b. [The ALARM tab — a home alarm built from your sensors](#13b-the-alarm-tab--a-home-alarm-built-from-your-sensors)
 14. [Apple HomeKit](#14-apple-homekit)
 15. [Why didn't I get an alert? (rate limiting & suppression, explained)](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
 16. [Self-monitoring](#16-self-monitoring)
@@ -1948,6 +1949,88 @@ wrong, or the device is unplugged. If a tile says *state unknown*, nothing has e
 its State Topic: check the topic, or turn on **Optimistic** for a device that genuinely never
 reports. If the toolbar says *broker disconnected*, nothing can be controlled at all — check
 the MQTT section's broker settings first.
+
+## 13b. The ALARM tab — a home alarm built from your sensors
+
+The Device Hub already reads sensors: a door contact, a motion sensor, a water-leak sensor. The
+Alarm turns a set of them into a home alarm that is armed and disarmed as one - from the
+dashboard, the iPhone, the Mac, Android, Windows and the Apple TV - with an exit delay, an entry
+delay, a PIN, a siren, and the cameras taking a look the moment it goes off.
+
+On by default (**Settings → ALARM → Enabled** hides it everywhere). It needs **MQTT** and the
+**Device Hub** (sections 13 and 13a) turned on to hear its sensors; until they are, the tab shows
+an empty state saying so.
+
+**What you need.** Sensors that report over MQTT. The cheapest and best-supported are Zigbee
+ones - an Aqara or Sonoff door contact costs about $10-20 and runs a year or two on a coin cell -
+read through **Zigbee2MQTT**, a free program that runs next to Sentinel and republishes every
+Zigbee message on your broker. Its devices show up in the Device Hub's **discover** scan
+already named, with open/closed and battery readings. Z-Wave (via zwave-js), Shelly, ESPHome and
+a Konnected board reusing an old wired alarm's door contacts all work the same way, because
+the alarm only ever sees a Device Hub device.
+
+**Adding a sensor.** Add the device on the Device Hub tab first (discover finds Zigbee2MQTT
+ones by itself), then on the Alarm tab click **+ add sensor**, pick the device, and say what it
+guards:
+
+| Zone | What it means |
+|---|---|
+| **entry door** | The way in and out. Opening it while armed starts the **entry delay** instead of the siren, so whoever came in can disarm. |
+| **perimeter** | Windows and other doors. Instant when armed. |
+| **interior motion** | Motion inside. Instant, but by default only watched in **Away** - people at home walk around. |
+| **24-hour** | Water leak, smoke, tamper. Watched around the clock, armed or not. |
+
+Each sensor also says which modes watch it (Home, Night, Away). The defaults follow the zone;
+change them per sensor. **Reads the other way round** is for the odd sensor that reports ON
+for closed.
+
+**Modes.** *Disarmed*; *Home* (doors and windows watch, motion inside is ignored, arms at
+once); *Night* (the same sensors as Home, kept separate so a later schedule can move between
+them); *Away* (everything watches, after the **exit delay**). Arming refuses if something is
+open and tells you what - **arm anyway** skips those sensors until you disarm. A door still open
+when the exit delay ends is skipped the same way, with a notification, rather than setting the
+siren off behind you.
+
+**When it goes off.** The alarm marks itself *triggered* and, all at once: switches on every
+device listed under **Switch on when triggered** (a siren, a strobe, every lamp - any Device Hub
+device that can be switched; a plug with a lamp on it is a fine stand-in for testing), sends a
+push to everyone's phones, and takes a snapshot on the chosen cameras (or all of them) through
+the same AI pipeline as a motion trigger, so the alert on your phone says what was in the frame.
+The siren devices switch off after the **siren time** or when the alarm is disarmed, whichever
+is first; the alarm itself stays triggered until someone disarms it. **Panic** does all of this
+on demand, whatever mode the house is in. **Test** (admin) does it briefly - siren for five
+seconds, one notification, the cameras - without changing the mode.
+
+**PIN.** Set one under **settings** on the tab (4-8 digits). With a PIN set, disarming needs it
+- on the dashboard, in the apps, everywhere; arming never does unless you tick **ask for the PIN
+to arm as well**. Five wrong PINs in a row lock it out for five minutes and notify everyone.
+Without a PIN, anyone signed in can disarm - fine for a household where the login is the
+lock. An admin can reset a forgotten PIN; anyone else changing it needs the old one.
+
+**Batteries and health.** Every sensor tile shows its battery and Zigbee signal as the sensor
+last reported them, when it was last heard from and when it last opened. A sensor at or below
+**Low battery at** is flagged and everyone is told once; one silent for longer than **Offline
+after** (a day, by default - battery sensors check in at least hourly) is flagged offline the
+same way. The status card says **ready to arm** only when every sensor an Away arm would watch
+is closed, reporting, and online, and lists what is wrong otherwise.
+
+**Activity** (the button under the sensors, or the toolbar in the apps) is every arm, disarm,
+trigger, skipped sensor, wrong PIN, low battery and outage, newest first, with who did it.
+
+**On your phone.** The iPhone and Android apps have an **Alarm widget** for the Home Screen
+(and the iPhone's Lock Screen) showing armed/disarmed and what's open; tapping it opens the
+Alarm tab. It shows the last state the app saw, so it is as fresh as the last time the app was
+open or an alarm notification arrived. On iPhone, Mac and iPad you can also say **"Arm the
+Sentinel Core alarm"** or **"Is Sentinel Core armed"** to the assistant, or use them in
+Shortcuts and on the Action button. Disarming is never by voice - it needs the PIN.
+
+**Who can do what.** Anyone signed in can arm, disarm (with the PIN) and press panic - that is
+what the household does with an alarm. Adding sensors, the delays, sirens, cameras and the PIN
+are **admin-only**.
+
+**What it is not.** A monitored, certified alarm. Nothing here calls anyone; it tells your
+phones and rings whatever you wired up. Keep your real smoke and CO detectors as they are - a
+smoke sensor here is a second voice, not a replacement.
 
 ## 14. Apple HomeKit
 

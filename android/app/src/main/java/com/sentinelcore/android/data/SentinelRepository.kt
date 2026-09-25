@@ -130,6 +130,155 @@ class SentinelRepository(
         parseCamera(JSONObject(request("/api/cameras", method = "POST", body = input.toJson().toString())))
     }
 
+    // ---------------- Alarm ----------------
+
+    // Always answers, alarm on or off: `enabled` says whether the destination exists.
+    suspend fun alarmStatus(): AlarmStatus = withContext(Dispatchers.IO) {
+        parseAlarmStatus(JSONObject(request("/api/alarm/status")))
+    }
+
+    // A refused arm (something open, wrong PIN, nothing to watch) is a 4xx whose body's `error`
+    // becomes the SentinelApiException message - see openValidated.
+    suspend fun armAlarm(mode: String, force: Boolean, pin: String?): AlarmCommandReply = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("mode", mode)
+            put("force", force)
+            if (pin != null) put("pin", pin)
+        }
+        parseAlarmReply(JSONObject(request("/api/alarm/arm", method = "POST", body = body.toString())))
+    }
+
+    suspend fun disarmAlarm(pin: String?): AlarmCommandReply = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply { if (pin != null) put("pin", pin) }
+        parseAlarmReply(JSONObject(request("/api/alarm/disarm", method = "POST", body = body.toString())))
+    }
+
+    suspend fun alarmPanic(): AlarmCommandReply = withContext(Dispatchers.IO) {
+        parseAlarmReply(JSONObject(request("/api/alarm/panic", method = "POST", body = "{}")))
+    }
+
+    suspend fun alarmTest(): AlarmCommandReply = withContext(Dispatchers.IO) {
+        parseAlarmReply(JSONObject(request("/api/alarm/test", method = "POST", body = "{}")))
+    }
+
+    suspend fun alarmEvents(limit: Int = 200): List<AlarmEvent> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/alarm/events?limit=$limit"))
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                add(
+                    AlarmEvent(
+                        id = item.optLong("id"),
+                        at = parseInstant(item.getString("at")),
+                        kind = item.optString("kind"),
+                        message = item.optString("message"),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun createAlarmSensor(input: AlarmSensorInput): Unit = withContext(Dispatchers.IO) {
+        request("/api/alarm/sensors", method = "POST", body = input.toJson().toString())
+        Unit
+    }
+
+    suspend fun updateAlarmSensor(id: String, input: AlarmSensorInput): Unit = withContext(Dispatchers.IO) {
+        request("/api/alarm/sensors/${queryValue(id)}", method = "PUT", body = input.toJson().toString())
+        Unit
+    }
+
+    suspend fun deleteAlarmSensor(id: String): Unit = withContext(Dispatchers.IO) {
+        request("/api/alarm/sensors/${queryValue(id)}", method = "DELETE")
+        Unit
+    }
+
+    suspend fun saveAlarmConfig(config: AlarmConfig): AlarmConfig = withContext(Dispatchers.IO) {
+        parseAlarmConfig(JSONObject(request("/api/alarm/config", method = "PUT", body = config.toJson().toString())))
+    }
+
+    // Empty clears the PIN. An admin needs no current PIN; anyone else does.
+    suspend fun setAlarmPin(pin: String, currentPin: String?): Unit = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("pin", pin)
+            if (currentPin != null) put("currentPin", currentPin)
+        }
+        request("/api/alarm/pin", method = "PUT", body = body.toString())
+        Unit
+    }
+
+    private fun parseAlarmReply(json: JSONObject) =
+        AlarmCommandReply(ok = json.optBoolean("ok"), note = json.nullableString("note"))
+
+    private fun parseAlarmStatus(json: JSONObject): AlarmStatus {
+        val sensors = json.optJSONArray("sensors") ?: JSONArray()
+        val issues = json.optJSONArray("issues") ?: JSONArray()
+        return AlarmStatus(
+            enabled = json.optBoolean("enabled"),
+            hubEnabled = json.optBoolean("hubEnabled"),
+            canEdit = json.optBoolean("canEdit"),
+            mode = json.optString("mode", "disarmed"),
+            status = json.optString("status", "disarmed"),
+            changedAt = json.nullableString("changedAt")?.let(::parseInstant),
+            changedBy = json.nullableString("changedBy"),
+            exitUntil = json.nullableString("exitUntil")?.let(::parseInstant),
+            pendingUntil = json.nullableString("pendingUntil")?.let(::parseInstant),
+            triggeredAt = json.nullableString("triggeredAt")?.let(::parseInstant),
+            triggeredBy = json.nullableString("triggeredBy"),
+            sirenOn = json.optBoolean("sirenOn"),
+            pinSet = json.optBoolean("pinSet"),
+            brokerConnected = json.optBoolean("brokerConnected"),
+            ready = json.optBoolean("ready"),
+            issues = buildList { for (index in 0 until issues.length()) add(issues.getString(index)) },
+            sensors = buildList { for (index in 0 until sensors.length()) add(parseAlarmSensor(sensors.getJSONObject(index))) },
+            config = json.optJSONObject("config")?.let(::parseAlarmConfig),
+            now = json.nullableString("now")?.let(::parseInstant),
+        )
+    }
+
+    private fun parseAlarmSensor(item: JSONObject) = AlarmSensor(
+        id = item.getString("id"),
+        deviceId = item.optString("deviceId"),
+        name = item.optString("name"),
+        zone = item.optString("zone", "perimeter"),
+        armedHome = item.optBoolean("armedHome"),
+        armedNight = item.optBoolean("armedNight"),
+        armedAway = item.optBoolean("armedAway"),
+        inverted = item.optBoolean("inverted"),
+        enabled = item.optBoolean("enabled", true),
+        deviceName = item.nullableString("deviceName"),
+        room = item.nullableString("room"),
+        deviceMissing = item.optBoolean("deviceMissing"),
+        state = item.optString("state", "unknown"),
+        offline = item.optBoolean("offline"),
+        battery = if (item.isNull("battery")) null else item.optDouble("battery"),
+        lowBattery = item.optBoolean("lowBattery"),
+        linkQuality = if (item.isNull("linkQuality")) null else item.optDouble("linkQuality"),
+        lastSeen = item.nullableString("lastSeen")?.let(::parseInstant),
+        lastChanged = item.nullableString("lastChanged")?.let(::parseInstant),
+        bypassed = item.optBoolean("bypassed"),
+        watched = item.optBoolean("watched"),
+    )
+
+    private fun parseAlarmConfig(json: JSONObject): AlarmConfig {
+        fun ids(key: String): List<String> {
+            val array = json.optJSONArray(key) ?: JSONArray()
+            return buildList { for (index in 0 until array.length()) add(array.getString(index)) }
+        }
+        return AlarmConfig(
+            exitDelaySeconds = json.optInt("exitDelaySeconds", 60),
+            entryDelaySeconds = json.optInt("entryDelaySeconds", 30),
+            sirenSeconds = json.optInt("sirenSeconds", 300),
+            sirenDeviceIds = ids("sirenDeviceIds"),
+            cameraIds = ids("cameraIds"),
+            notifyPush = json.optBoolean("notifyPush", true),
+            notifyArmDisarm = json.optBoolean("notifyArmDisarm", true),
+            lowBatteryPercent = json.optInt("lowBatteryPercent", 20),
+            offlineAfterHours = json.optInt("offlineAfterHours", 24),
+            requirePinToArm = json.optBoolean("requirePinToArm"),
+        )
+    }
+
     // ---------------- Device Hub ----------------
 
     // Whether the DEVICE HUB destination should exist at all. Its own endpoint rather than read

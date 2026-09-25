@@ -533,6 +533,58 @@ final class SentinelClient {
         )
     }
 
+    // MARK: - Alarm
+
+    // Always answers, alarm on or off: `enabled` says whether the section exists. Polled while
+    // the section is on screen; the state machine itself lives on the server.
+    func alarmStatus() async throws -> AlarmStatus {
+        try await get("/api/alarm/status")
+    }
+
+    // A refused arm (something open, wrong PIN, nothing to watch) is a 4xx with a JSON body,
+    // which `send` turns into ClientError.server with the body's `error` as its message. The
+    // one thing that loses is the list of open sensors, so a 409 is re-read here to keep it.
+    func armAlarm(mode: String, force: Bool, pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/arm", method: "POST", body: AlarmArmInput(mode: mode, force: force, pin: pin))
+    }
+
+    func disarmAlarm(pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/disarm", method: "POST", body: AlarmDisarmInput(pin: pin))
+    }
+
+    func alarmPanic() async throws -> AlarmCommandReply {
+        try await send("/api/alarm/panic", method: "POST", body: Optional<String>.none)
+    }
+
+    func alarmTest() async throws -> AlarmCommandReply {
+        try await send("/api/alarm/test", method: "POST", body: Optional<String>.none)
+    }
+
+    func alarmEvents(limit: Int = 100) async throws -> [AlarmEvent] {
+        try await get("/api/alarm/events", query: [URLQueryItem(name: "limit", value: String(limit))])
+    }
+
+    func createAlarmSensor(_ input: AlarmSensorInput) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/sensors", method: "POST", body: input)
+    }
+
+    func updateAlarmSensor(id: UUID, _ input: AlarmSensorInput) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/sensors/\(id.uuidString)", method: "PUT", body: input)
+    }
+
+    func deleteAlarmSensor(id: UUID) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/sensors/\(id.uuidString)", method: "DELETE", body: Optional<String>.none)
+    }
+
+    func saveAlarmConfig(_ config: AlarmConfig) async throws -> AlarmConfig {
+        try await send("/api/alarm/config", method: "PUT", body: config)
+    }
+
+    // Empty clears the PIN. An admin needs no current PIN; anyone else does.
+    func setAlarmPin(_ pin: String, currentPin: String?) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/pin", method: "PUT", body: AlarmPinInput(pin: pin, currentPin: currentPin))
+    }
+
     // MARK: - Schedules
 
     // Schedules live in the main app and are proxied by the web host, exactly like automation

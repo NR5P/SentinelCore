@@ -66,6 +66,12 @@ final class AppModel: ObservableObject {
     // Whether the server has the Device Hub switched on. Drives whether the section exists at
     // all - see AppSection.visibleCases in RootView.
     @Published private(set) var deviceHubEnabled = false
+    // Whether the server has the Alarm switched on. Remembered like the Organizer's flag so the
+    // section is there on an offline launch, where a disarm that can't reach the server at least
+    // says so instead of the section vanishing.
+    @Published private(set) var alarmEnabled: Bool = UserDefaults.standard.bool(forKey: "alarmEnabled") {
+        didSet { UserDefaults.standard.set(alarmEnabled, forKey: "alarmEnabled") }
+    }
 
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
@@ -549,6 +555,15 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             deviceHubEnabled = false
+        }
+        // Same reasoning: an older server has no alarm, and that is not a failed connection.
+        do {
+            let alarm = try await client.alarmStatus()
+            alarmEnabled = alarm.enabled
+            AlarmWidgetBridge.write(alarm)
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            if case ClientError.server(status: 404, _) = error { alarmEnabled = false }
         }
         // Prime the Device Hub at app startup rather than waiting until its tab is first opened.
         // The server's state endpoint first makes sure its MQTT subscriptions are ready, so a

@@ -8,6 +8,8 @@
     <string name="device_camera_channel_description">Shown while this phone is streaming as one of your Sentinel Core cameras</string>
     <string name="widget_calendar_label">Calendar</string>
     <string name="widget_calendar_description">What\'s next on your Organizer calendar</string>
+    <string name="widget_alarm_label">Alarm</string>
+    <string name="widget_alarm_description">Whether the home alarm is armed, and what\'s open</string>
     <string name="widget_reminders_label">Reminders</string>
     <string name="widget_reminders_description">Your open Organizer reminders - tick one to check it off</string>
     <string name="widget_notes_label">Notes</string>

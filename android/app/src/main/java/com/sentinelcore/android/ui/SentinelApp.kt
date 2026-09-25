@@ -83,6 +83,10 @@ import com.sentinelcore.android.ui.screens.DeviceWallPreference
 import com.sentinelcore.android.ui.screens.DeviceWallScreen
 import com.sentinelcore.android.ui.screens.DeviceDiscoveryScreen
 import com.sentinelcore.android.ui.screens.DeviceEditScreen
+import com.sentinelcore.android.ui.screens.AlarmEventsScreen
+import com.sentinelcore.android.ui.screens.AlarmScreen
+import com.sentinelcore.android.ui.screens.AlarmSensorEditScreen
+import com.sentinelcore.android.ui.screens.AlarmSettingsScreen
 import com.sentinelcore.android.ui.screens.DeviceHubScreen
 import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.ActivityDetailScreen
@@ -247,6 +251,16 @@ private fun AppShell(
         }
     }
 
+    // An alarm push was tapped - see PushNotifications. The person wants the arm/disarm
+    // buttons, not the feed.
+    val openAlarm by AlarmNavigation.open.collectAsStateWithLifecycle()
+    LaunchedEffect(openAlarm, state.alarmEnabled) {
+        if (openAlarm && state.alarmEnabled) {
+            AlarmNavigation.open.value = false
+            navController.navigate(AppSection.ALARM.route) { launchSingleTop = true }
+        }
+    }
+
     // A reminder or event alert was tapped - see OrganizerAlarms.
     val openOrganizer by OrganizerNavigation.open.collectAsStateWithLifecycle()
     LaunchedEffect(openOrganizer, state.organizerEnabled) {
@@ -324,7 +338,7 @@ private fun AppShell(
             navController.navigate(DEVICE_WALL_ROUTE) { launchSingleTop = true }
         }
     }
-    val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled)
+    val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.alarmEnabled)
     val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -474,6 +488,34 @@ private fun SentinelNavHost(
             } else {
                 DetailLoading(onBack = { navController.popBackStack() })
             }
+        }
+
+        composable(AppSection.ALARM.route) {
+            AlarmScreen(
+                state = state,
+                model = model,
+                onAddSensor = { navController.navigate("alarm/sensors/new") },
+                onEditSensor = { navController.navigate("alarm/sensors/${it.id}") },
+                onSettings = { navController.navigate("alarm/settings") },
+                onEvents = { navController.navigate("alarm/events") },
+            )
+        }
+        composable("alarm/sensors/new") {
+            AlarmSensorEditScreen(model = model, state = state, sensorId = null, onBack = { navController.popBackStack() })
+        }
+        composable("alarm/sensors/{sensorId}") { entry ->
+            AlarmSensorEditScreen(
+                model = model,
+                state = state,
+                sensorId = entry.arguments?.getString("sensorId"),
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable("alarm/settings") {
+            AlarmSettingsScreen(model = model, state = state, onBack = { navController.popBackStack() })
+        }
+        composable("alarm/events") {
+            AlarmEventsScreen(model = model, onBack = { navController.popBackStack() })
         }
 
         composable(AppSection.DEVICES.route) {
@@ -870,7 +912,7 @@ private fun SentinelNavigationRail(
             }
         },
     ) {
-        AppSection.visible(state.deviceHubEnabled, state.organizerEnabled).forEach { item ->
+        AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.alarmEnabled).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { onSelected(item) },

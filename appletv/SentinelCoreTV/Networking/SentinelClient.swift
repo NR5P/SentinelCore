@@ -106,6 +106,20 @@ final class SentinelClient {
         try await send("/api/cameras", method: "POST", body: input)
     }
 
+    // MARK: - Alarm (control only - see the note on AlarmStatus)
+
+    func alarmStatus() async throws -> AlarmStatus {
+        try await get("/api/alarm/status")
+    }
+
+    func armAlarm(mode: String, force: Bool, pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/arm", method: "POST", body: AlarmArmInput(mode: mode, force: force, pin: pin))
+    }
+
+    func disarmAlarm(pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/disarm", method: "POST", body: AlarmDisarmInput(pin: pin))
+    }
+
     // MARK: - Device Hub (control only - see the note on HubDevice)
 
     func deviceHubEnabled() async throws -> DeviceHubEnabled {

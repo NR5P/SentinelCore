@@ -1094,3 +1094,191 @@ struct ScheduleRunResult: Codable {
     var detail: String?
     var error: String?
 }
+
+// MARK: - Alarm
+
+// The home alarm as /api/alarm/status reports it. Everything the tab shows comes from this one
+// call; the apps poll it while the section is on screen and count the delays down from the
+// deadlines it carries. Optional fields decode a server that has the alarm switched off, which
+// answers with just `enabled` and `hubEnabled`.
+struct AlarmStatus: Codable {
+    var enabled: Bool
+    var hubEnabled: Bool?
+    var canEdit: Bool?
+    var mode: String?
+    var status: String?
+    var changedAt: Date?
+    var changedBy: String?
+    var exitUntil: Date?
+    var pendingUntil: Date?
+    var triggeredAt: Date?
+    var triggeredBy: String?
+    var sirenOn: Bool?
+    var pinSet: Bool?
+    var brokerConnected: Bool?
+    var ready: Bool?
+    var issues: [String]?
+    var sensors: [AlarmSensor]?
+    var config: AlarmConfig?
+    var now: Date?
+    var modes: [String]?
+    var zones: [String]?
+
+    var isArmed: Bool { (status ?? "disarmed") != "disarmed" }
+    var isTriggered: Bool { status == "triggered" }
+}
+
+struct AlarmSensor: Codable, Identifiable, Hashable {
+    let id: UUID
+    var deviceId: UUID
+    var name: String
+    var zone: String
+    var armedHome: Bool
+    var armedNight: Bool
+    var armedAway: Bool
+    var inverted: Bool
+    var enabled: Bool
+    var sortOrder: Int
+    var deviceName: String?
+    var room: String?
+    var deviceMissing: Bool
+    // open | closed | unknown
+    var state: String
+    var available: Bool
+    var offline: Bool
+    var battery: Double?
+    var lowBattery: Bool
+    var linkQuality: Double?
+    var lastSeen: Date?
+    var lastChanged: Date?
+    var bypassed: Bool
+    var watched: Bool
+
+    var isOpen: Bool { state == "open" }
+
+    // What "open" means for this kind of sensor, for the tile.
+    var stateLabel: String {
+        switch (zone, state) {
+        case ("interior", "open"): "Motion"
+        case ("interior", "closed"): "Clear"
+        case ("always", "open"): "Alert"
+        case ("always", "closed"): "OK"
+        case (_, "open"): "Open"
+        case (_, "closed"): "Closed"
+        default: "No reading"
+        }
+    }
+
+    var zoneLabel: String { AlarmZone.label(for: zone) }
+}
+
+enum AlarmZone {
+    static let all = ["entry", "perimeter", "interior", "always"]
+
+    static func label(for zone: String) -> String {
+        switch zone {
+        case "entry": "Entry door"
+        case "perimeter": "Perimeter"
+        case "interior": "Interior motion"
+        case "always": "24-hour"
+        default: zone.capitalized
+        }
+    }
+
+    static func explanation(for zone: String) -> String {
+        switch zone {
+        case "entry": "The way in. Opening it while armed starts the entry delay so whoever came in can disarm."
+        case "perimeter": "Windows and other doors. Instant when armed."
+        case "interior": "Motion inside. Instant, and by default only watched in Away."
+        case "always": "Watched around the clock, armed or not: water leak, smoke, tamper."
+        default: ""
+        }
+    }
+}
+
+enum AlarmMode {
+    static func label(for mode: String) -> String {
+        switch mode {
+        case "home": "Home"
+        case "night": "Night"
+        case "away": "Away"
+        default: "Disarmed"
+        }
+    }
+}
+
+struct AlarmConfig: Codable, Hashable {
+    var exitDelaySeconds: Int
+    var entryDelaySeconds: Int
+    var sirenSeconds: Int
+    var sirenDeviceIds: [UUID]
+    var cameraIds: [UUID]
+    var notifyPush: Bool
+    var notifyArmDisarm: Bool
+    var lowBatteryPercent: Int
+    var offlineAfterHours: Int
+    var requirePinToArm: Bool
+}
+
+struct AlarmEvent: Codable, Identifiable, Hashable {
+    let id: Int64
+    var at: Date
+    var kind: String
+    var message: String
+    var actor: String?
+    var sensorId: UUID?
+}
+
+// What arm/disarm/panic/test answer. `ok` false comes with an HTTP error status, so on that path
+// the client reads it out of the ClientError's message instead - see SentinelClient.armAlarm.
+struct AlarmCommandReply: Codable {
+    var ok: Bool
+    var note: String?
+    var error: String?
+    var openSensors: [String]?
+}
+
+struct AlarmArmInput: Encodable {
+    var mode: String
+    var force: Bool
+    var pin: String?
+}
+
+struct AlarmDisarmInput: Encodable {
+    var pin: String?
+}
+
+struct AlarmSensorInput: Encodable {
+    var deviceId: UUID
+    var name: String
+    var zone: String
+    var armedHome: Bool
+    var armedNight: Bool
+    var armedAway: Bool
+    var inverted: Bool
+    var enabled: Bool
+
+    init(deviceId: UUID = UUID(), name: String = "", zone: String = "perimeter",
+         armedHome: Bool = true, armedNight: Bool = true, armedAway: Bool = true,
+         inverted: Bool = false, enabled: Bool = true) {
+        self.deviceId = deviceId
+        self.name = name
+        self.zone = zone
+        self.armedHome = armedHome
+        self.armedNight = armedNight
+        self.armedAway = armedAway
+        self.inverted = inverted
+        self.enabled = enabled
+    }
+
+    init(_ sensor: AlarmSensor) {
+        self.init(deviceId: sensor.deviceId, name: sensor.name, zone: sensor.zone,
+                  armedHome: sensor.armedHome, armedNight: sensor.armedNight, armedAway: sensor.armedAway,
+                  inverted: sensor.inverted, enabled: sensor.enabled)
+    }
+}
+
+struct AlarmPinInput: Encodable {
+    var pin: String
+    var currentPin: String?
+}

@@ -54,7 +54,8 @@ public sealed record SettingsSnapshot(
     ScheduledRecordingSettingsDto? ScheduledRecording = null,
     OrganizerSettingsDto? Organizer = null,
     AutoExportSettingsDto? AutoExport = null,
-    WeatherAlertsSettingsDto? WeatherAlerts = null);
+    WeatherAlertsSettingsDto? WeatherAlerts = null,
+    AlarmSettingsDto? Alarm = null);
 
 public static class SettingsEndpoints
 {
@@ -173,6 +174,9 @@ public static class SettingsEndpoints
 
         settings.MapPut("/organizer", async (OrganizerSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, OrganizerSettingsDto.SectionName, ct));
+
+        settings.MapPut("/alarm", async (AlarmSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, AlarmSettingsDto.SectionName, ct));
 
         settings.MapPut("/auto-export", async (AutoExportSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
         {
@@ -549,7 +553,8 @@ public static class SettingsEndpoints
             ScheduledRecordingOptions.SectionName, cancellationToken),
         await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken),
         await settings.GetSectionAsync<AutoExportSettingsDto>(AutoExportSettingsDto.SectionName, cancellationToken),
-        await settings.GetSectionAsync<WeatherAlertsSettingsDto>(WeatherAlertOptions.SectionName, cancellationToken));
+        await settings.GetSectionAsync<WeatherAlertsSettingsDto>(WeatherAlertOptions.SectionName, cancellationToken),
+        await settings.GetSectionAsync<AlarmSettingsDto>(AlarmSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -597,6 +602,7 @@ public static class SettingsEndpoints
         Organizer = snapshot.Organizer ?? new(),
         AutoExport = snapshot.AutoExport ?? new(),
         WeatherAlerts = snapshot.WeatherAlerts ?? new(),
+        Alarm = snapshot.Alarm ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -678,6 +684,7 @@ public static class SettingsEndpoints
         if (snapshot.Organizer is not null) await settings.MergeSectionAsync(OrganizerSettingsDto.SectionName, snapshot.Organizer, cancellationToken);
         if (snapshot.AutoExport is not null) await MergeUnmaskedAsync(snapshot.AutoExport, AutoExportSettingsDto.SectionName, settings, cancellationToken);
         if (snapshot.WeatherAlerts is not null) await settings.MergeSectionAsync(WeatherAlertOptions.SectionName, snapshot.WeatherAlerts, cancellationToken);
+        if (snapshot.Alarm is not null) await settings.MergeSectionAsync(AlarmSettingsDto.SectionName, snapshot.Alarm, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

@@ -34,7 +34,14 @@ import com.sentinelcore.android.data.DiagnosticLevel
 import com.sentinelcore.android.data.HomeKitSettings
 import com.sentinelcore.android.data.BackupRestoreSummary
 import com.sentinelcore.android.data.HomeKitStatus
+import com.sentinelcore.android.data.AlarmCommandReply
+import com.sentinelcore.android.data.AlarmConfig
+import com.sentinelcore.android.data.AlarmEvent
+import com.sentinelcore.android.data.AlarmSensor
+import com.sentinelcore.android.data.AlarmSensorInput
+import com.sentinelcore.android.data.AlarmStatus
 import com.sentinelcore.android.data.HubDevice
+import com.sentinelcore.android.widgets.AlarmWidgetSnapshot
 import com.sentinelcore.android.data.HubDeviceInput
 import com.sentinelcore.android.data.KnownFace
 import com.sentinelcore.android.data.KnownVehicle
@@ -131,6 +138,10 @@ data class SentinelUiState(
     // Whether the server has the Device Hub switched on - drives whether its bottom-bar
     // destination exists at all.
     val deviceHubEnabled: Boolean = false,
+    // Whether the server has the Alarm switched on - drives whether its destination exists.
+    val alarmEnabled: Boolean = false,
+    // The alarm as last polled - see AlarmScreen. Null until the screen has asked.
+    val alarmStatus: AlarmStatus? = null,
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
     // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
@@ -489,6 +500,15 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                         .onSuccess { value -> _state.update { it.copy(deviceHubEnabled = value) } }
                         .onFailure { _state.update { it.copy(deviceHubEnabled = false) } }
                 },
+                // Same again for the alarm: an older server has no such endpoint.
+                viewModelScope.async {
+                    runCatching { repository.alarmStatus() }
+                        .onSuccess { value ->
+                            _state.update { it.copy(alarmEnabled = value.enabled, alarmStatus = value) }
+                            AlarmWidgetSnapshot.write(getApplication(), value)
+                        }
+                        .onFailure { _state.update { it.copy(alarmEnabled = false) } }
+                },
                 // Same treatment, opposite default - see SentinelUiState.isLicensed.
                 viewModelScope.async {
                     runCatching { repository.licenseValid() }
@@ -638,6 +658,44 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     suspend fun refreshCameras() {
         val value = repository.cameras()
         _state.update { it.copy(cameras = value) }
+    }
+
+    // ---------------- Alarm ----------------
+
+    suspend fun refreshAlarm(): AlarmStatus {
+        val value = repository.alarmStatus()
+        _state.update { it.copy(alarmEnabled = value.enabled, alarmStatus = value) }
+        AlarmWidgetSnapshot.write(getApplication(), value)
+        return value
+    }
+
+    suspend fun armAlarm(mode: String, force: Boolean, pin: String?): AlarmCommandReply =
+        repository.armAlarm(mode, force, pin).also { refreshAlarm() }
+
+    suspend fun disarmAlarm(pin: String?): AlarmCommandReply = repository.disarmAlarm(pin).also { refreshAlarm() }
+
+    suspend fun alarmPanic(): AlarmCommandReply = repository.alarmPanic().also { refreshAlarm() }
+
+    suspend fun alarmTest(): AlarmCommandReply = repository.alarmTest()
+
+    suspend fun alarmEvents(): List<AlarmEvent> = repository.alarmEvents()
+
+    fun alarmSensor(id: String): AlarmSensor? = _state.value.alarmStatus?.sensors?.firstOrNull { it.id == id }
+
+    suspend fun saveAlarmSensor(id: String?, input: AlarmSensorInput) {
+        if (id == null) repository.createAlarmSensor(input) else repository.updateAlarmSensor(id, input)
+        refreshAlarm()
+    }
+
+    suspend fun deleteAlarmSensor(id: String) {
+        repository.deleteAlarmSensor(id)
+        refreshAlarm()
+    }
+
+    suspend fun saveAlarmConfig(config: AlarmConfig, newPin: String?, removePin: Boolean) {
+        repository.saveAlarmConfig(config)
+        if (removePin) repository.setAlarmPin("", null) else if (!newPin.isNullOrBlank()) repository.setAlarmPin(newPin.trim(), null)
+        refreshAlarm()
     }
 
     // ---------------- Device Hub ----------------

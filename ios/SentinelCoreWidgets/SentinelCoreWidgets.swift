@@ -10,5 +10,6 @@ struct SentinelCoreWidgets: WidgetBundle {
         OrganizerCalendarWidget()
         OrganizerRemindersWidget()
         OrganizerNotesWidget()
+        AlarmWidget()
     }
 }

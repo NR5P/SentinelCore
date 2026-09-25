@@ -234,6 +234,15 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         private set => SetProperty(ref _deviceHubEnabled, value);
     }
 
+    // Whether the server has the Alarm switched on. Drives whether the section exists at all.
+    private bool _alarmEnabled;
+
+    public bool AlarmEnabled
+    {
+        get => _alarmEnabled;
+        private set => SetProperty(ref _alarmEnabled, value);
+    }
+
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
     // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
@@ -674,6 +683,14 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception) { DeviceHubEnabled = false; }
+
+            // Same again for the alarm: an older server has no such endpoint.
+            try
+            {
+                AlarmEnabled = (await Client.AlarmStatusAsync(ct).ConfigureAwait(false)).Enabled;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { AlarmEnabled = false; }
 
             // Prime the Device Hub at startup rather than waiting until its tab is first opened.
             // The server's state endpoint first makes sure its MQTT subscriptions are ready, so a

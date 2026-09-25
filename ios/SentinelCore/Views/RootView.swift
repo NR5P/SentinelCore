@@ -75,8 +75,17 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sentinelOrganizerOpened)) { _ in
             selection = .organizer
         }
+        // An alarm push was tapped: the person wants the arm/disarm buttons, not the feed.
+        .onReceive(NotificationCenter.default.publisher(for: .sentinelAlarmOpened)) { _ in
+            selection = .alarm
+        }
         // sentinelcore://organizer/<pane>, from tapping an Organizer widget on the Home Screen.
         .onOpenURL { url in
+            // sentinelcore://alarm, from the Alarm widget.
+            if url.scheme == "sentinelcore", url.host() == "alarm" {
+                selection = .alarm
+                return
+            }
             guard url.scheme == "sentinelcore", url.host() == "organizer" else { return }
             if let pane = url.pathComponents.dropFirst().first, ["calendar", "reminders", "notes", "boards"].contains(pane) {
                 UserDefaults.standard.set(pane, forKey: "organizerPane")
@@ -99,7 +108,7 @@ struct RootView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 BrandHeader()
-                List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled), selection: $selection) { section in
+                List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: model.alarmEnabled), selection: $selection) { section in
                     Label(section.title, systemImage: section.icon).tag(section)
                 }
                 .listStyle(.sidebar)
@@ -123,7 +132,7 @@ struct RootView: View {
     }
 
     private var visibleSections: [AppSection] {
-        AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled)
+        AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: model.alarmEnabled)
     }
 
     private var compactNavigation: some View {
@@ -205,6 +214,7 @@ struct RootView: View {
         case .timeline: RecordingTimelineView()
         case .live: LiveCamerasView(isActive: selection == .live)
         case .devices: DeviceHubView(isActive: selection == .devices)
+        case .alarm: AlarmView(isActive: selection == .alarm)
         case .organizer: OrganizerView()
         case .settings: SettingsView()
         }
@@ -220,13 +230,14 @@ private enum CompactTab: Hashable {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events section over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case events, timeline, live, organizer, devices, settings
+    case events, timeline, live, alarm, organizer, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .events: "Events"
         case .timeline: "Timeline"
         case .live: "Live"
+        case .alarm: "Alarm"
         case .organizer: "Organizer"
         case .devices: "Device Hub"
         case .settings: "Settings"
@@ -237,16 +248,19 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .events: "shield.lefthalf.filled"
         case .timeline: "clock.arrow.circlepath"
         case .live: "video.fill"
+        case .alarm: "lock.shield.fill"
         case .organizer: "calendar"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
     }
 
-    // The Device Hub and the Organizer can each be switched off server-side, so every list of
-    // sections is filtered rather than using allCases directly.
-    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
-        allCases.filter { ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) }
+    // The Device Hub, the Organizer and the Alarm can each be switched off server-side, so every
+    // list of sections is filtered rather than using allCases directly.
+    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool, alarmEnabled: Bool = false) -> [AppSection] {
+        allCases.filter {
+            ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) && ($0 != .alarm || alarmEnabled)
+        }
     }
 
     // Which of these get a tab on an iPhone is up to the person - see TabBarLayout.
@@ -258,8 +272,8 @@ enum AppSection: String, CaseIterable, Identifiable {
     // (Manage Cameras, Manage Accounts, Manage Known Faces, Server Settings) did nothing at all
     // when clicked. The sidebar row renders into the split view's detail column, which does have
     // one, so those screens work from here. Both routes now lead to the same place.
-    static func sidebarCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
-        visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled)
+    static func sidebarCases(deviceHubEnabled: Bool, organizerEnabled: Bool, alarmEnabled: Bool = false) -> [AppSection] {
+        visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: alarmEnabled)
     }
 }
 

@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -17,6 +18,7 @@ internal enum class AppSection(
     EVENTS("Events", "events"),
     TIMELINE("Timeline", "timeline"),
     LIVE("Live", "live"),
+    ALARM("Alarm", "alarm"),
     ORGANIZER("Organizer", "organizer"),
     DEVICES("Devices", "devices"),
     SETTINGS("Settings", "settings"),
@@ -29,14 +31,17 @@ internal enum class AppSection(
             EVENTS -> Icons.Default.Security
             TIMELINE -> Icons.Default.History
             LIVE -> Icons.Default.LiveTv
+            ALARM -> Icons.Default.Shield
             ORGANIZER -> Icons.Default.CalendarMonth
             DEVICES -> Icons.Default.Lightbulb
             SETTINGS -> Icons.Default.Settings
         }
 
     companion object {
-        // The Device Hub and the Organizer can each be switched off server-side.
-        fun visible(deviceHubEnabled: Boolean, organizerEnabled: Boolean): List<AppSection> =
-            entries.filter { (it != DEVICES || deviceHubEnabled) && (it != ORGANIZER || organizerEnabled) }
+        // The Device Hub, the Organizer and the Alarm can each be switched off server-side.
+        fun visible(deviceHubEnabled: Boolean, organizerEnabled: Boolean, alarmEnabled: Boolean = false): List<AppSection> =
+            entries.filter {
+                (it != DEVICES || deviceHubEnabled) && (it != ORGANIZER || organizerEnabled) && (it != ALARM || alarmEnabled)
+            }
     }
 }

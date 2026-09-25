@@ -32,6 +32,7 @@ public partial class MainWindow : Window, INavigator
     private TimelineView? _timeline;
     private LiveView? _live;
     private DeviceHubView? _devices;
+    private AlarmView? _alarm;
     private OrganizerView? _organizerView;
     private SettingsView? _settings;
 
@@ -87,6 +88,7 @@ public partial class MainWindow : Window, INavigator
         Events,
         Timeline,
         Live,
+        Alarm,
         Organizer,
         Devices,
         Settings,
@@ -100,6 +102,9 @@ public partial class MainWindow : Window, INavigator
             new(AppSection.Timeline, "Timeline", ""),
             new(AppSection.Live, "Live", ""),
         };
+
+        // The alarm is on by default but can be switched off server-side.
+        if (_model.AlarmEnabled) sections.Add(new SectionItem(AppSection.Alarm, "Alarm", "\uE72E"));
 
         // The Organizer is on by default but can be switched off server-side; what the server said
         // last is remembered, so it's there offline too.
@@ -131,6 +136,7 @@ public partial class MainWindow : Window, INavigator
             AppSection.Timeline => _timeline ??= new TimelineView(_model),
             AppSection.Live => _live ??= NewLiveView(),
             AppSection.Devices => _devices ??= NewDeviceHubView(),
+            AppSection.Alarm => _alarm ??= NewAlarmView(),
             AppSection.Organizer when _organizer is not null => _organizerView ??= new OrganizerView(_organizer),
             _ => _settings ??= new SettingsView(_model, _organizer),
         };
@@ -139,6 +145,13 @@ public partial class MainWindow : Window, INavigator
     private LiveView NewLiveView()
     {
         var view = new LiveView(_model, this);
+        view.SetActive(true);
+        return view;
+    }
+
+    private AlarmView NewAlarmView()
+    {
+        var view = new AlarmView(_model);
         view.SetActive(true);
         return view;
     }
@@ -161,6 +174,7 @@ public partial class MainWindow : Window, INavigator
                 ResumeDeviceCamera();
                 break;
             case nameof(AppModel.DeviceHubEnabled):
+            case nameof(AppModel.AlarmEnabled):
                 BuildSections();
                 break;
             case nameof(AppModel.CompatibilityAdvisory):

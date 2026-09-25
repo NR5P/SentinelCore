@@ -71,6 +71,8 @@ worth handing to someone who should not have to install a runtime first.
   speaks is [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md).
 - **Device Hub** — the lights, gates, locks and sensors the server tracks over MQTT, with the
   controls each kind actually speaks, plus discovery and editing.
+- **Alarm** — arm and disarm the house (with the PIN, if one is set), every sensor's state and
+  battery, and the admin windows for sensors, delays, sirens and the PIN.
 - **Settings** — connection (including the remote fallback address), account, server health, service
   restarts and host reboot, the connection log, and every admin screen: cameras, trigger zones,
   accounts, dashboard login, known faces, known vehicles, schedules, prompt profiles, HomeKit,

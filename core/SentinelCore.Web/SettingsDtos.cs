@@ -676,6 +676,16 @@ public sealed class OrganizerSettingsDto
     public int MaxAttachmentMegabytes { get; set; } = 50;
 }
 
+// The home alarm (see AlarmEngine). On by default like the Organizer: the tab shows an empty
+// "add a sensor" state until there is something to arm, and everything else about the alarm is
+// set on the tab itself, beside the sensors it applies to.
+public sealed class AlarmSettingsDto
+{
+    public const string SectionName = "Alarm";
+
+    public bool Enabled { get; set; } = true;
+}
+
 // Nightly automatic export of the full backup (see AutoExportWorker) to a folder - on this
 // machine, a mounted network share, or a Windows \\server\share path - or over SFTP to another
 // computer. Lives in the main app's appsettings.json with every other section, so it is itself

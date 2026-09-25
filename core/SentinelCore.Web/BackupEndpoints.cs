@@ -61,9 +61,14 @@ public sealed record BackupDocument(
     // Added in schema 5: board automations (scheduled cards and card rules). They live in their
     // own file on the server and no device holds a copy, so this is their only way back.
     IReadOnlyList<OrganizerAutomation>? OrganizerAutomations = null,
+    // Added in schema 6: the alarm's sensors and its settings (PIN hash included, like the
+    // account password hashes above - this file is already that sensitive).
+    AlarmBackup? Alarm = null,
     // What couldn't be included when this file was written, in words - e.g. the main app wasn't
     // running. Informational; restore ignores it.
     IReadOnlyList<string>? Warnings = null);
+
+public sealed record AlarmBackup(IReadOnlyList<AlarmSensor> Sensors, AlarmConfig Config);
 
 public static class BackupEndpoints
 {

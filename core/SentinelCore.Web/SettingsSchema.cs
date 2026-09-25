@@ -643,6 +643,20 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "alarm",
+            Title = "ALARM",
+            Group = SettingsGroups.Automation,
+            Endpoint = "/api/settings/alarm",
+            Basic = true,
+            DtoType = typeof(AlarmSettingsDto),
+            Description = "A home alarm built from Device Hub sensors: door and window contacts, motion, water leak and smoke sensors become an alarm that is armed and disarmed as one from the dashboard and every app, with an exit delay, an entry delay, a PIN, sirens switched through the Device Hub, and the cameras snapshotting through the AI when it goes off. Sensors, delays, sirens and the PIN are all set on the ALARM tab itself. It needs MQTT and the Device Hub to be turned on to hear its sensors.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the Alarm on the dashboard and in the apps. Turning it off hides it everywhere and stops it listening to its sensors, but keeps every sensor and setting for when it is turned back on.")
+            ]
+        },
+        new()
+        {
             Key = "organizer",
             Title = "ORGANIZER",
             Group = SettingsGroups.Automation,

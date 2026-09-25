@@ -51,6 +51,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveCameraOrder: [UUID] = []
     // Whether the server has the Device Hub switched on - drives whether the tab exists at all.
     @Published private(set) var deviceHubEnabled = false
+    // Whether the server has the Alarm switched on - drives whether the tab exists at all.
+    @Published private(set) var alarmEnabled = false
 
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
@@ -375,6 +377,13 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             deviceHubEnabled = false
+        }
+        // Same again for the alarm: an older server has no such endpoint.
+        do {
+            alarmEnabled = try await client.alarmStatus().enabled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            alarmEnabled = false
         }
         if deviceHubEnabled {
             do {

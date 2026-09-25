@@ -422,6 +422,15 @@ builder.Services.AddSingleton<CameraTriggerService>();
 builder.Services.AddHttpClient(nameof(SensorTriggerWatcher));
 builder.Services.AddHostedService<SensorTriggerWatcher>();
 
+// The home alarm: Device Hub sensors armed and disarmed as one - see AlarmEngine. The watcher
+// is its MQTT subscription and its clock; like the sensor-trigger watcher above it holds no
+// broker connection until a sensor exists.
+builder.Services.AddSingleton<IAlarmStore>(new SqliteAlarmStore(camerasRoot));
+builder.Services.AddSingleton<IAlarmActions, AlarmActions>();
+builder.Services.AddSingleton<AlarmEngine>();
+builder.Services.AddHttpClient(nameof(AlarmWatcher), client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHostedService<AlarmWatcher>();
+
 // Gate/door open check - its own small table in the same cameras database, own periodic
 // snapshot loop, own forwarder to a dedicated main-app endpoint (not AlertForwarder's - see
 // GateCheckForwarder for why). Opt-in per camera, off unless a GateChecks row exists for it.
@@ -541,6 +550,7 @@ app.MapOllamaModelEndpoints();
 app.MapCloudVisionModelEndpoints();
 app.MapNotificationTestProxyEndpoints();
 app.MapDeviceHubProxyEndpoints();
+app.MapAlarmEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();
 app.MapTimelineEndpoints();

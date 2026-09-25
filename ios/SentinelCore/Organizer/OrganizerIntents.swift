@@ -193,6 +193,25 @@ struct SentinelShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Today's Reminders",
             systemImageName: "checklist.checked")
+        AppShortcut(
+            intent: ArmAlarmIntent(),
+            phrases: [
+                "Arm the \(.applicationName) alarm",
+                "Arm \(.applicationName)",
+                "Arm the alarm in \(.applicationName)",
+                "Set the \(.applicationName) alarm",
+            ],
+            shortTitle: "Arm the Alarm",
+            systemImageName: "lock.shield.fill")
+        AppShortcut(
+            intent: AlarmStatusIntent(),
+            phrases: [
+                "Is the \(.applicationName) alarm on",
+                "Is \(.applicationName) armed",
+                "\(.applicationName) alarm status",
+            ],
+            shortTitle: "Alarm Status",
+            systemImageName: "lock.shield")
     }
 }
 

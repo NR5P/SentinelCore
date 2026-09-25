@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.sentinelcore.android.ui.AlarmNavigation
 import com.sentinelcore.android.ui.SentinelApp
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.theme.SentinelTheme
@@ -57,6 +58,8 @@ class MainActivity : ComponentActivity() {
 
     private fun handlePushIntent(intent: Intent?) {
         PushNavigation.open(intent?.getStringExtra(EventIdExtra))
+        // An alarm push (see PushNotifications) opens the Alarm screen.
+        if (intent?.getBooleanExtra(AlarmExtra, false) == true) AlarmNavigation.open.value = true
         // A reminder or event alert (see OrganizerAlarms) opens the Organizer.
         if (intent?.getStringExtra(OrganizerAlarms.EXTRA_ITEM_ID) != null) OrganizerNavigation.open.value = true
         // An Organizer widget on the home screen was tapped (see widgets/OrganizerWidgets).
@@ -69,5 +72,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EventIdExtra = "eventId"
+        const val AlarmExtra = "alarm"
     }
 }

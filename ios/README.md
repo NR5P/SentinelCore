@@ -79,6 +79,7 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
 **Other**
 - Device Hub: lights, gates, locks and sensors over MQTT, with a full-screen wall display of big
   tap-to-switch tiles for an iPad mounted on a wall (remembered, so the app reopens onto it).
+- Alarm: arm and disarm the house, see every sensor's state and battery, and (admins) set it up. An Alarm widget (Home and Lock Screen) and "Arm the Sentinel Core alarm" / "Is Sentinel Core armed" shortcuts.
 - Admin screens: cameras and trigger zones, accounts, known faces and vehicles, schedules,
   prompt profiles, HomeKit, backup, licence, and the full server settings tree.
 - Optional dashboard login; a remote fallback address; automatic plain-HTTP fallback when the
