@@ -66,7 +66,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Sentinel Core uses the camera to stream this device as one of your security cameras, and to take a reference photo when enrolling a known person for face recognition.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Sentinel Core uses the microphone only if you choose to include sound while streaming this device as a security camera.</string>
+	<string>Sentinel Core uses the microphone when you tap the microphone button to say a reminder, and if you choose to include sound while streaming this device as a security camera.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Sentinel Core turns what you say into a reminder when you tap the microphone button in the Organizer. Speech may be sent to Apple to be recognized.</string>
 	<key>NSServices</key>
 	<array>
 		<dict>

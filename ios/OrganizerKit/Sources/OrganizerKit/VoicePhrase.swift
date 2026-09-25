@@ -68,7 +68,9 @@ private struct Parser {
     private static let namedTime = regex(#"\b(?:(?:at|by|around)\s+)?(noon|midnight)\b"#)
     private static let periodTime = regex(#"\b(?:in\s+the\s+(morning|afternoon|evening)|at\s+(night))\b"#)
     private static let clockTime = regex(#"\b(\d{1,2}):(\d{2})\b"#)
-    private static let lead = regex(#"^\s*(?:remind\s+me\s+(?:to\s+|that\s+)?|reminder\s+(?:to\s+|that\s+)?)"#)
+    // "Remind me to…", "add a reminder to…": the words that mean "this is a reminder" rather than
+    // what it is about. The in-app microphone hears them too, since people say the whole thing.
+    private static let lead = regex(#"^\s*(?:please\s+)?(?:remind\s+me\s+(?:to\s+|that\s+)?|(?:(?:add|set|create|make|new|put)\s+(?:a\s+|an?\s+new\s+|new\s+)?)?reminder\s+(?:to\s+|that\s+|for\s+(?:me\s+to\s+)?)?)"#)
     private static let dangling = regex(#"\s+(?:at|on|by|in|around|due)\s*$"#)
 
     private func first(_ expression: NSRegularExpression, avoiding: NSRange? = nil) -> NSTextCheckingResult? {

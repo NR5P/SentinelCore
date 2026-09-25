@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Repeat
@@ -108,6 +109,7 @@ import com.sentinelcore.android.organizer.OrganizerDates
 import com.sentinelcore.android.organizer.OrganizerEngine
 import com.sentinelcore.android.organizer.OrganizerItem
 import com.sentinelcore.android.organizer.OrganizerKinds
+import com.sentinelcore.android.organizer.VoiceCapture
 import com.sentinelcore.android.organizer.OrganizerNavigation
 import com.sentinelcore.android.organizer.Recurrence
 import com.sentinelcore.android.ui.theme.SentinelAmber
@@ -534,6 +536,14 @@ private fun RemindersPane(engine: OrganizerEngine, filter: String?, routes: Orga
                 label = { Text("New reminder") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+                // Or say it: "add a reminder to walk the dog tomorrow at 1". The phone's speech
+                // recognizer listens (the same path as the launcher shortcut, see the app shell),
+                // VoicePhrase works out the date, and the reminder is added.
+                leadingIcon = {
+                    IconButton(onClick = { VoiceCapture.pending.value = VoiceCapture.Request(OrganizerKinds.REMINDER, null) }) {
+                        Icon(Icons.Default.Mic, contentDescription = "Speak a reminder", tint = SentinelCyan)
+                    }
+                },
                 trailingIcon = {
                     TextButton(enabled = newTitle.isNotBlank(), onClick = {
                         engine.create(OrganizerKinds.REMINDER, mapOf("title" to newTitle.trim(), "completed" to false), spaceId = filter ?: engine.defaultSpaceId)

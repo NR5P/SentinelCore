@@ -31,6 +31,10 @@
     { "say": "move the car in an hour", "title": "Move the car", "due": "2026-09-23T11:00:00-05:00" },
     { "say": "call grandma may 5", "title": "Call grandma", "due": "2027-05-05" },
     { "say": "order filters on the 30th", "title": "Order filters", "due": "2026-09-30" },
-    { "say": "lock the shed tonight at 10", "title": "Lock the shed", "due": "2026-09-23T22:00:00-05:00" }
+    { "say": "lock the shed tonight at 10", "title": "Lock the shed", "due": "2026-09-23T22:00:00-05:00" },
+    { "say": "add a reminder to take the dog on a walk tomorrow at 1:00pm", "title": "Take the dog on a walk", "due": "2026-09-24T13:00:00-05:00" },
+    { "say": "set a reminder to change the furnace filter Saturday", "title": "Change the furnace filter", "due": "2026-09-26" },
+    { "say": "new reminder call the dentist at 8:30 am", "title": "Call the dentist", "due": "2026-09-24T08:30:00-05:00" },
+    { "say": "create a reminder for the trash tomorrow", "title": "The trash", "due": "2026-09-24" }
   ]
 }
