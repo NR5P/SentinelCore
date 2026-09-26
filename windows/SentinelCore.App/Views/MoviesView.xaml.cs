@@ -226,11 +226,18 @@ public partial class MoviesView : UserControl
         else Notice(message);
     }
 
-    private void ShowEmpty(string title, string message)
+    private void ShowEmpty(string title, string message, bool offerLibraries = false)
     {
         EmptyTitle.Text = title;
         EmptyMessage.Text = message;
+        EmptyLibrariesButton.Visibility = offerLibraries && _model.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Visible;
+    }
+
+    private async void OnEmptyLibrariesClicked(object sender, RoutedEventArgs e)
+    {
+        new MediaLibrariesWindow(_model) { Owner = Window.GetWindow(this) }.ShowDialog();
+        await ReloadAsync();
     }
 
     private void Notice(string message)
@@ -255,8 +262,11 @@ public partial class MoviesView : UserControl
             if (home.Libraries.Count == 0)
             {
                 ShowEmpty("No libraries yet",
-                    "An admin adds the movie and TV folders in the web dashboard, under Settings → Movies & TV. " +
-                    "Films on another computer need that share mounted on the server first.");
+                    _model.IsAdmin
+                        ? "Add the folders your movies and TV shows are in under Settings → Movies & TV libraries. " +
+                          "They can be on the server itself or shared by another computer on the network."
+                        : "An admin adds the movie and TV folders under Settings → Movies & TV libraries.",
+                    offerLibraries: true);
             }
             else
             {

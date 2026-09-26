@@ -219,6 +219,8 @@ fun MoviesScreen(
     model: SentinelViewModel,
     onItem: (String) -> Unit,
     onPlay: (String, Double?) -> Unit,
+    // Settings -> Movies & TV libraries, offered to an admin when there are no libraries yet.
+    onManageLibraries: () -> Unit = {},
 ) {
     val browse: MoviesBrowseModel = viewModel { MoviesBrowseModel(model) }
     var paneIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -272,6 +274,7 @@ fun MoviesScreen(
                 model = model,
                 isAdmin = isAdmin,
                 refreshTick = refreshTick,
+                onManageLibraries = onManageLibraries,
                 onItem = open,
                 onPlay = onPlay,
             )
@@ -295,6 +298,7 @@ private fun MoviesHome(
     model: SentinelViewModel,
     isAdmin: Boolean,
     refreshTick: Int,
+    onManageLibraries: () -> Unit,
     onItem: (MediaItemSummary) -> Unit,
     onPlay: (String, Double?) -> Unit,
 ) {
@@ -309,7 +313,7 @@ private fun MoviesHome(
                 onRetry = { browse.loadHome() },
                 modifier = Modifier.align(Alignment.Center),
             )
-            home.libraries.isEmpty() -> EmptyLibrary(isAdmin, Modifier.align(Alignment.Center))
+            home.libraries.isEmpty() -> EmptyLibrary(isAdmin, onManageLibraries, Modifier.align(Alignment.Center))
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 24.dp),
@@ -373,16 +377,20 @@ private fun MoviesHome(
 }
 
 @Composable
-private fun EmptyLibrary(isAdmin: Boolean, modifier: Modifier = Modifier) {
-    EmptyState(
-        title = "No libraries yet",
-        message = if (isAdmin) {
-            "Add a library on the dashboard under Movies."
-        } else {
-            "An admin can add movie and TV folders on the dashboard under Movies."
-        },
-        modifier = modifier,
-    )
+private fun EmptyLibrary(isAdmin: Boolean, onManageLibraries: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        EmptyState(
+            title = "No libraries yet",
+            message = if (isAdmin) {
+                "Add your movie and TV folders in Settings → Movies & TV libraries."
+            } else {
+                "An admin can add movie and TV folders in Settings → Movies & TV libraries."
+            },
+        )
+        if (isAdmin) {
+            Button(onClick = onManageLibraries) { Text("Add a library") }
+        }
+    }
 }
 
 @Composable

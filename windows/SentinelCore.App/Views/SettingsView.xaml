@@ -77,6 +77,17 @@
 
                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                     <StackPanel>
+                        <TextBlock Text="MOVIES &amp; TV" Style="{StaticResource GroupHeading}" />
+                        <WrapPanel>
+                            <Button Content="Movies &amp; TV libraries" Click="OnMediaLibrariesClicked" />
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0" TextWrapping="Wrap"
+                                   Text="The folders the server scans for films and TV shows, on the server itself or shared by another computer on the network." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                    <StackPanel>
                         <TextBlock Text="SERVER CONFIGURATION" Style="{StaticResource GroupHeading}" />
                         <WrapPanel>
                             <Button Content="Server Settings" Margin="0,0,10,10" Click="OnServerSettingsClicked" />

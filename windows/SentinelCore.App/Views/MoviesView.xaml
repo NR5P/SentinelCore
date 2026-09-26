@@ -53,6 +53,9 @@
                 <TextBlock x:Name="EmptyTitle" FontSize="16" HorizontalAlignment="Center"
                            Foreground="{StaticResource SecondaryText}" />
                 <TextBlock x:Name="EmptyMessage" Style="{StaticResource Caption}" TextAlignment="Center" Margin="0,8,0,0" />
+                <Button x:Name="EmptyLibrariesButton" Content="Movies &amp; TV libraries…" HorizontalAlignment="Center"
+                        Margin="0,14,0,0" Style="{StaticResource PrimaryButton}" Visibility="Collapsed"
+                        Click="OnEmptyLibrariesClicked" />
             </StackPanel>
         </Grid>
     </DockPanel>

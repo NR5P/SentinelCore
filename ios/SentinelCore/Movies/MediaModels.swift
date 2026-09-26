@@ -18,9 +18,90 @@ struct MediaLibrary: Codable, Identifiable, Hashable {
     var name: String
     var kind: String?
     var path: String?
+    // A shared folder on another computer (smb://…), read over the network by the server.
+    var network: Bool?
     var itemCount: Int?
+    var lastScanStartedAt: Date?
     var lastScanFinishedAt: Date?
     var lastScanError: String?
+}
+
+// MARK: - Library management (admin) - MOVIES.md "Libraries", "Folder picker" and "Folders on other computers"
+
+struct MediaLibraryInput: Encodable {
+    var name: String
+    var kind: String
+    var path: String
+}
+
+// One page of the folder picker. `kind` is roots | local | computer | network. A folder that
+// could not be opened still comes back as a page, with `error` (and `needsLogin` when signing in
+// to that computer would fix it).
+struct MediaBrowseListing: Decodable {
+    var path: String
+    var parent: String?
+    var kind: String?
+    var host: String?
+    var folders: [MediaBrowseFolder]
+    var computers: [MediaNetworkComputer]?
+    var videoCount: Int?
+    var hint: String?
+    var error: String?
+    var needsLogin: Bool?
+
+    var isRoots: Bool { kind == "roots" || path.isEmpty }
+    // A computer is not a folder; one of its shared folders, or anything inside one, is.
+    var isPickable: Bool { !path.isEmpty && kind != "computer" && error == nil }
+}
+
+struct MediaBrowseFolder: Decodable, Identifiable, Hashable {
+    var name: String
+    var path: String
+    var videoCount: Int?
+
+    var id: String { path }
+}
+
+// A computer on the network the server signs in to for its shared folders. Never carries the
+// password; `hasPassword` says whether one is saved.
+struct MediaNetworkComputer: Decodable, Identifiable, Hashable {
+    let id: String
+    var name: String
+    var host: String
+    var username: String?
+    var domain: String?
+    var hasPassword: Bool?
+    var path: String
+}
+
+struct MediaNetworkComputerInput: Encodable {
+    var host: String
+    var name: String?
+    var username: String
+    // Blank on an edit keeps the saved password.
+    var password: String
+    var domain: String?
+}
+
+struct MediaNetworkShare: Decodable, Hashable {
+    var name: String
+    var path: String
+}
+
+struct MediaNetworkSignIn: Decodable {
+    var computer: MediaNetworkComputer
+    var shares: [MediaNetworkShare]?
+}
+
+// A computer that answered "who shares files?" on the local network (mDNS). Windows PCs don't.
+struct MediaDiscoveredComputer: Decodable, Identifiable, Hashable {
+    var name: String
+    var host: String
+    var address: String?
+    var path: String
+    var savedId: String?
+
+    var id: String { path }
 }
 
 struct MediaScan: Codable, Hashable {

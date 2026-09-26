@@ -47,13 +47,66 @@ backup restore.
 - `DELETE /api/media/libraries/{id}` → 204. Removes its items and their progress.
 - `POST /api/media/libraries/{id}/scan` → 202. `POST /api/media/scan` → 202 rescans everything.
   A 409 means a scan is already running.
-- `GET /api/media/browse?path=` → `{ "path": "/mnt", "parent": "/", "folders": [ { "name": "movies", "path": "/mnt/movies", "videoCount": 3 } ] }`.
-  Folder picker for the dashboard. With no `path` it lists sensible roots for the OS. `videoCount`
-  is the number of video files directly inside that folder (a hint for picking the right one).
+- `Library` also carries `"network": true` when its path is a shared folder on another computer.
 
-Remote computers: mount the share on the server (CIFS/NFS on Linux, a mapped drive or UNC path on
-Windows) and point the library at the mounted folder. The dashboard shows the exact `mount` line
-for a Windows share when a library path does not exist yet.
+### Folder picker (admin)
+
+`GET /api/media/browse?path=` always answers 200; a folder that cannot be opened comes back with
+`error` (and `needsLogin: true` when signing in to that computer would fix it), so a picker can
+show the message, and a sign-in form, without special-casing status codes.
+
+- No `path` → the starting page:
+  ```json
+  { "path": "", "parent": null, "kind": "roots", "videoCount": 0,
+    "folders": [ { "name": "/mnt/movies", "path": "/mnt/movies", "videoCount": 0 } ],
+    "computers": [ NetworkComputer ] }
+  ```
+  `folders` are places on the server itself (every drive on Windows; mounted disks, /mnt, /media,
+  /Volumes, the home folder and / elsewhere). `computers` are the network computers signed in to.
+- A local path → `{ "path", "parent", "kind": "local", "folders": [ { "name", "path", "videoCount" } ], "videoCount" }`.
+- `smb://host` → `{ "kind": "computer", "host", "folders": [ its shared folders ], "hint"? }`.
+  Not pickable itself. `hint` is set when the computer listed nothing (type the share name instead).
+- `smb://host/Share/…` → `{ "kind": "network", "host", "folders", "videoCount" }`.
+
+Everywhere: `parent` is where "up" goes (`""` is the starting page, null only on it),
+`videoCount` on the response counts videos directly in that folder, and on a folder entry it is
+the same count for that subfolder - null for network folders (it would cost a round trip each).
+Typed paths are accepted: `\\PC\Share\Folder` and `//PC/Share` are read as `smb://PC/Share/Folder`.
+
+## Folders on other computers (admin)
+
+The server reads shared folders (Windows file sharing, a Mac with File Sharing on, a NAS, Samba)
+itself, over SMB 2/3: nothing is mounted, so this works the same with the server on Linux,
+Windows or macOS and needs no root. A library on a share has a path like
+`smb://192.168.1.20/Movies/Films` (a port goes after the host: `smb://nas:4455/…`). ffmpeg reads
+those files through a loopback relay inside the server.
+
+Sign-ins are saved per computer (host, plus port if any) in `media-network.json` beside
+`media.db`, and go into backups with the libraries. With no saved sign-in the server tries a
+guest sign-in, as Explorer and Finder do.
+
+```json
+NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "username": "sam",
+                    "domain": "", "hasPassword": true, "path": "smb://192.168.1.20", "createdAt": "…" }
+```
+
+- `GET /api/media/network` → `[ NetworkComputer ]`. Passwords are never returned.
+- `POST /api/media/network` body `{ "host": "DESKTOP-PC", "name": "Den PC", "username": "sam", "password": "…", "domain": "" }`
+  signs in and lists the computer's shares; it is saved only if that works.
+  → 201 (or 200 when that host was already saved, which it replaces)
+  `{ "computer": NetworkComputer, "shares": [ { "name": "Movies", "path": "smb://DESKTOP-PC/Movies" } ] }`.
+  Failure → 400 `{ "errors": [ "…" ], "needsLogin": true|false }`. `host` may be a name, an IP,
+  `name.local`, `host:port`, or a whole `smb://`/UNC path (only the computer part is used).
+  `username` may be `DOMAIN\user`. Names that DNS cannot resolve are tried as `name.local` over
+  multicast DNS, which Windows 10+, macOS and most NASes answer.
+- `PUT /api/media/network/{id}` same body → 200. A blank `password` keeps the saved one (when the
+  username is unchanged).
+- `DELETE /api/media/network/{id}` → 204. Libraries on that computer fail to scan until it is
+  signed in to again (or allow guests).
+- `GET /api/media/network/discover` → takes ~3 s →
+  `[ { "name": "Living Room Mac", "host": "Living-Room-Mac.local", "address": "192.168.1.31", "path": "smb://Living-Room-Mac.local", "savedId": null } ]`.
+  Computers that advertise file sharing over mDNS (`_smb._tcp`): Macs, NASes, Samba with Avahi.
+  Windows PCs do not; add them by name or address.
 
 ## Browsing
 

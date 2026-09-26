@@ -1042,7 +1042,7 @@ public sealed partial class SentinelClient : IDisposable
 
             var message = ExtractErrorMessage(data);
             if (response.StatusCode == HttpStatusCode.Unauthorized) throw new SentinelAuthenticationRequiredException();
-            throw new SentinelServerException((int)response.StatusCode, message);
+            throw new SentinelServerException((int)response.StatusCode, message) { NeedsLogin = ExtractNeedsLogin(data) };
         }
     }
 
@@ -1080,6 +1080,21 @@ public sealed partial class SentinelClient : IDisposable
         catch (JsonException)
         {
             return null;
+        }
+    }
+
+    // Only the Movies & TV network sign-in sends this: whether a different username or password
+    // would get past the failure, so the form stays open rather than reporting a dead end.
+    private static bool ExtractNeedsLogin(byte[] data)
+    {
+        if (data.Length == 0) return false;
+        try
+        {
+            return JsonSerializer.Deserialize<ApiError>(data, JsonOptions)?.NeedsLogin == true;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
@@ -1180,4 +1195,7 @@ public sealed class SentinelServerException(int status, string? serverMessage)
     : Exception(serverMessage ?? $"Server request failed (HTTP {status}).")
 {
     public int Status { get; } = status;
+
+    /// <summary>The error body said <c>needsLogin: true</c>: signing in (again) would fix it.</summary>
+    public bool NeedsLogin { get; init; }
 }

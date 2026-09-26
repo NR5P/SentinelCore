@@ -232,6 +232,9 @@ public partial class SettingsView : UserControl
     private void OnKnownVehiclesClicked(object sender, RoutedEventArgs e) =>
         new KnownVehiclesWindow(_model) { Owner = this.OwnerWindow() }.ShowDialog();
 
+    private void OnMediaLibrariesClicked(object sender, RoutedEventArgs e) =>
+        new MediaLibrariesWindow(_model) { Owner = this.OwnerWindow() }.ShowDialog();
+
     private void OnManageAccountsClicked(object sender, RoutedEventArgs e) =>
         new AccountAdminWindow(_model) { Owner = this.OwnerWindow() }.ShowDialog();
 

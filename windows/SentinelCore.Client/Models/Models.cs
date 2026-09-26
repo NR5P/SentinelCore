@@ -461,6 +461,9 @@ public sealed class ApiError
     public string? Error { get; init; }
     public List<string>? Errors { get; init; }
     public string? Detail { get; init; }
+
+    /// <summary>Set by the Movies &amp; TV network sign-in when signing in again would fix the failure.</summary>
+    public bool? NeedsLogin { get; init; }
 }
 
 public sealed class LoginBody

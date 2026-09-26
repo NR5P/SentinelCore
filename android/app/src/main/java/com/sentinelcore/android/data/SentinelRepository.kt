@@ -357,6 +357,88 @@ class SentinelRepository(
         Unit
     }
 
+    // ---- Library admin (everything below but mediaLibraries() is Admin-only). With the section
+    // off each of these is a 404 whose `error` says so, which request() hands back as the
+    // exception message.
+
+    suspend fun mediaLibraries(): List<MediaLibrary> = withContext(Dispatchers.IO) {
+        parseMediaLibraries(JSONArray(request("/api/media/libraries")))
+    }
+
+    // Creates when `id` is null. A 400 carries every problem in `errors`, joined into the message.
+    suspend fun saveMediaLibrary(id: String?, input: MediaLibraryInput): MediaLibrary = withContext(Dispatchers.IO) {
+        val path = if (id == null) "/api/media/libraries" else MediaApi.libraryPath(id)
+        parseMediaLibrary(JSONObject(request(path, method = if (id == null) "POST" else "PUT", body = input.toJson().toString())))
+    }
+
+    suspend fun deleteMediaLibrary(id: String): Unit = withContext(Dispatchers.IO) {
+        request(MediaApi.libraryPath(id), method = "DELETE")
+        Unit
+    }
+
+    // 202; a 409 (a scan is already running) throws with the server's message.
+    suspend fun scanMediaLibrary(id: String): Unit = withContext(Dispatchers.IO) {
+        request(MediaApi.libraryPath(id) + "/scan", method = "POST")
+        Unit
+    }
+
+    suspend fun scanAllMedia(): Unit = withContext(Dispatchers.IO) {
+        request("/api/media/scan", method = "POST")
+        Unit
+    }
+
+    // Always a 200 on a working server; a folder that can't be opened comes back with `error`.
+    // Browsing a computer can take a while (name lookup, sign-in), hence the longer timeout.
+    suspend fun mediaBrowse(path: String?): MediaBrowseListing = withContext(Dispatchers.IO) {
+        val (status, body) = requestWithStatus(MediaApi.browsePath(path), method = "GET", body = null, readTimeoutMillis = 60_000)
+        if (status !in 200..299) {
+            throw SentinelApiException(
+                status,
+                parseServerError(body) ?: if (status == 401) "This server requires you to sign in." else "Server request failed (HTTP $status).",
+            )
+        }
+        parseMediaBrowseListing(JSONObject(body))
+    }
+
+    suspend fun mediaNetworkComputers(): List<MediaNetworkComputer> = withContext(Dispatchers.IO) {
+        parseMediaNetworkComputers(JSONArray(request("/api/media/network")))
+    }
+
+    // Signs in and saves only if that works (POST, or PUT to update the saved `id`). A refused
+    // sign-in is a 400 that throws MediaNetworkSignInException, so the form can stay open.
+    suspend fun saveMediaNetworkComputer(id: String?, input: MediaNetworkSignInInput): MediaNetworkSignInResult =
+        withContext(Dispatchers.IO) {
+            val (status, body) = requestWithStatus(
+                if (id == null) "/api/media/network" else MediaApi.networkComputerPath(id),
+                method = if (id == null) "POST" else "PUT",
+                body = input.toJson().toString(),
+                readTimeoutMillis = 60_000,
+            )
+            when {
+                status in 200..299 -> parseMediaNetworkSignIn(JSONObject(body))
+                status == 400 -> throw parseMediaNetworkSignInError(body)
+                    ?: MediaNetworkSignInException("Could not sign in to that computer.", needsLogin = true)
+                else -> throw SentinelApiException(
+                    status,
+                    parseServerError(body) ?: if (status == 401) "This server requires you to sign in." else "Server request failed (HTTP $status).",
+                )
+            }
+        }
+
+    suspend fun deleteMediaNetworkComputer(id: String): Unit = withContext(Dispatchers.IO) {
+        request(MediaApi.networkComputerPath(id), method = "DELETE")
+        Unit
+    }
+
+    // Takes about three seconds: the server listens for mDNS answers.
+    suspend fun discoverMediaNetworkComputers(): List<MediaDiscoveredComputer> = withContext(Dispatchers.IO) {
+        val (status, body) = requestWithStatus("/api/media/network/discover", method = "GET", body = null, readTimeoutMillis = 30_000)
+        if (status !in 200..299) {
+            throw SentinelApiException(status, parseServerError(body) ?: "Server request failed (HTTP $status).")
+        }
+        parseMediaDiscoveredComputers(JSONArray(body))
+    }
+
     // Whether the server has a valid licence file, which is what decides the UNLICENSED watermark
     // over camera images and live video. Readable by any signed-in account, not just an Admin,
     // precisely so this app can ask - see the note on the endpoint in LicenseEndpoints.cs.

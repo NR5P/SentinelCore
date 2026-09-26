@@ -19,7 +19,13 @@ data class MediaLibrary(
     val itemCount: Int = 0,
     val lastScanFinishedAt: String? = null,
     val lastScanError: String? = null,
-)
+    // True when the path is a shared folder on another computer (smb://…).
+    val network: Boolean = false,
+    val createdAt: String? = null,
+    val lastScanStartedAt: String? = null,
+) {
+    val isShows: Boolean get() = kind == "shows"
+}
 
 // This account's progress on one item. Null on a summary means never played.
 data class MediaProgress(
@@ -212,6 +218,102 @@ data class MediaStatus(
     val lastScanFinishedAt: String? = null,
 )
 
+// ---------------- Library admin (MOVIES.md "Libraries", "Folder picker", "Folders on other computers") ----------------
+
+data class MediaLibraryInput(val name: String, val kind: String, val path: String) {
+    fun toJson(): JSONObject = JSONObject().put("name", name).put("kind", kind).put("path", path)
+}
+
+// One row of the folder picker. videoCount is null for folders on another computer - counting
+// them would cost a network round trip each.
+data class MediaBrowseFolder(val name: String, val path: String, val videoCount: Int?)
+
+// A computer the server has a sign-in for. Never carries the password.
+data class MediaNetworkComputer(
+    val id: String,
+    val name: String,
+    val host: String,
+    val username: String = "",
+    val domain: String = "",
+    val hasPassword: Boolean = false,
+    // "smb://host" - what browsing it starts from.
+    val path: String,
+    val createdAt: String? = null,
+)
+
+// GET /api/media/browse. Always a 200; a folder that couldn't be opened carries `error`, and
+// `needsLogin` when signing in to `host` would fix it.
+data class MediaBrowseListing(
+    val path: String,
+    // Where Up goes: "" is the starting page, null only on the starting page itself.
+    val parent: String?,
+    // "roots", "local", "computer" or "network".
+    val kind: String,
+    val host: String? = null,
+    val folders: List<MediaBrowseFolder> = emptyList(),
+    // Only on the starting page.
+    val computers: List<MediaNetworkComputer> = emptyList(),
+    // Videos directly in this folder.
+    val videoCount: Int? = null,
+    val hint: String? = null,
+    val error: String? = null,
+    val needsLogin: Boolean = false,
+) {
+    val isRoots: Boolean get() = kind == "roots"
+    val canGoUp: Boolean get() = parent != null
+    // A computer is not a folder, and the starting page is not a place.
+    val canUse: Boolean get() = path.isNotBlank() && kind != "computer" && kind != "roots" && error == null
+}
+
+// GET /api/media/network/discover - a computer that advertises file sharing over mDNS.
+data class MediaDiscoveredComputer(
+    val name: String,
+    val host: String,
+    val address: String?,
+    val path: String,
+    // Set when the server already has a sign-in for it.
+    val savedId: String?,
+)
+
+data class MediaShare(val name: String, val path: String)
+
+data class MediaNetworkSignInResult(val computer: MediaNetworkComputer, val shares: List<MediaShare>)
+
+data class MediaNetworkSignInInput(
+    val host: String,
+    val name: String,
+    val username: String,
+    val password: String,
+    val domain: String = "",
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("host", host)
+        .put("name", name)
+        .put("username", username)
+        .put("password", password)
+        .put("domain", domain)
+}
+
+// A sign-in the server refused (400). Its own type so the form can stay open with the message.
+class MediaNetworkSignInException(message: String, val needsLogin: Boolean) : Exception(message)
+
+// The library form's small rules, kept pure for the unit tests.
+internal object MediaLibraryForm {
+    fun defaultName(kind: String): String = if (kind == "shows") "TV Shows" else "Movies"
+
+    // A name nobody typed - blank, or still one of the defaults - follows the kind.
+    fun nameAfterKindChange(currentName: String, newKind: String): String {
+        val trimmed = currentName.trim()
+        return if (trimmed.isEmpty() || trimmed == defaultName("movies") || trimmed == defaultName("shows")) {
+            defaultName(newKind)
+        } else currentName
+    }
+
+    fun kindLabel(kind: String): String = if (kind == "shows") "TV Shows" else "Movies"
+
+    fun videoCountLabel(count: Int): String = if (count == 1) "1 video" else "$count videos"
+}
+
 // ---------------- Parsing ----------------
 
 private fun JSONObject.stringOrNull(key: String): String? =
@@ -250,7 +352,81 @@ internal fun parseMediaLibrary(json: JSONObject): MediaLibrary = MediaLibrary(
     itemCount = json.optInt("itemCount"),
     lastScanFinishedAt = json.stringOrNull("lastScanFinishedAt"),
     lastScanError = json.stringOrNull("lastScanError"),
+    network = json.optBoolean("network", false),
+    createdAt = json.stringOrNull("createdAt"),
+    lastScanStartedAt = json.stringOrNull("lastScanStartedAt"),
 )
+
+internal fun parseMediaLibraries(array: JSONArray?): List<MediaLibrary> = array.objects(::parseMediaLibrary)
+
+internal fun parseMediaBrowseFolder(json: JSONObject): MediaBrowseFolder = MediaBrowseFolder(
+    name = json.optString("name"),
+    path = json.optString("path"),
+    videoCount = json.intOrNull("videoCount"),
+)
+
+internal fun parseMediaNetworkComputer(json: JSONObject): MediaNetworkComputer {
+    val host = json.optString("host")
+    return MediaNetworkComputer(
+        id = json.optString("id"),
+        name = json.stringOrNull("name") ?: host,
+        host = host,
+        username = json.stringOrNull("username").orEmpty(),
+        domain = json.stringOrNull("domain").orEmpty(),
+        hasPassword = json.optBoolean("hasPassword"),
+        path = json.stringOrNull("path") ?: "smb://$host",
+        createdAt = json.stringOrNull("createdAt"),
+    )
+}
+
+internal fun parseMediaNetworkComputers(array: JSONArray?): List<MediaNetworkComputer> =
+    array.objects(::parseMediaNetworkComputer)
+
+// "" is a real value for `parent` (up goes to the starting page), so this one keeps blanks
+// that stringOrNull would turn into null.
+private fun JSONObject.rawStringOrNull(key: String): String? =
+    if (!has(key) || isNull(key)) null else optString(key)
+
+internal fun parseMediaBrowseListing(json: JSONObject): MediaBrowseListing = MediaBrowseListing(
+    path = json.rawStringOrNull("path").orEmpty(),
+    parent = json.rawStringOrNull("parent"),
+    kind = json.stringOrNull("kind") ?: "roots",
+    host = json.stringOrNull("host"),
+    folders = json.arrayOrNull("folders").objects(::parseMediaBrowseFolder),
+    computers = json.arrayOrNull("computers").objects(::parseMediaNetworkComputer),
+    videoCount = json.intOrNull("videoCount"),
+    hint = json.stringOrNull("hint"),
+    error = json.stringOrNull("error"),
+    needsLogin = json.optBoolean("needsLogin"),
+)
+
+internal fun parseMediaDiscoveredComputer(json: JSONObject): MediaDiscoveredComputer {
+    val host = json.optString("host")
+    return MediaDiscoveredComputer(
+        name = json.stringOrNull("name") ?: host,
+        host = host,
+        address = json.stringOrNull("address"),
+        path = json.stringOrNull("path") ?: "smb://$host",
+        savedId = json.stringOrNull("savedId"),
+    )
+}
+
+internal fun parseMediaDiscoveredComputers(array: JSONArray?): List<MediaDiscoveredComputer> =
+    array.objects(::parseMediaDiscoveredComputer)
+
+internal fun parseMediaNetworkSignIn(json: JSONObject): MediaNetworkSignInResult = MediaNetworkSignInResult(
+    computer = parseMediaNetworkComputer(json.optJSONObject("computer") ?: JSONObject()),
+    shares = json.arrayOrNull("shares").objects { MediaShare(it.optString("name"), it.optString("path")) },
+)
+
+// A 400 from POST/PUT /api/media/network: every message, and whether signing in differently
+// would help (the form stays open either way; needsLogin just decides the wording).
+internal fun parseMediaNetworkSignInError(body: String): MediaNetworkSignInException? {
+    val json = runCatching { JSONObject(body) }.getOrNull() ?: return null
+    val messages = json.arrayOrNull("errors").strings().ifEmpty { listOfNotNull(json.stringOrNull("error")) }
+    if (messages.isEmpty()) return null
+    return MediaNetworkSignInException(messages.joinToString("\n"), json.optBoolean("needsLogin"))
+}
 
 internal fun parseMediaProgress(json: JSONObject?): MediaProgress? {
     json ?: return null
@@ -533,6 +709,14 @@ internal object MediaApi {
     }
 
     fun seasonWatchedPath(showId: String, season: Int): String = itemPath(showId) + "/seasons/$season/watched"
+
+    fun libraryPath(id: String): String = "/api/media/libraries/${segment(id)}"
+
+    fun networkComputerPath(id: String): String = "/api/media/network/${segment(id)}"
+
+    // No path (or a blank one) is the starting page.
+    fun browsePath(path: String?): String =
+        if (path.isNullOrBlank()) "/api/media/browse" else "/api/media/browse?path=${query(path)}"
 
     fun formatSeconds(seconds: Double): String =
         if (seconds % 1.0 == 0.0) seconds.toLong().toString() else "%.1f".format(java.util.Locale.ROOT, seconds)

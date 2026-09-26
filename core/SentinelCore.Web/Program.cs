@@ -229,6 +229,13 @@ builder.Services.AddHttpClient(TmdbClient.HttpClientName, client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (+https://github.com/)");
 });
 builder.Services.AddSingleton<TmdbClient>();
+// Folders shared from other computers are read over SMB by the server itself (MediaNetwork.cs),
+// with sign-ins in media-network.json; ffmpeg reaches those files through a loopback relay.
+builder.Services.AddSingleton(new MediaNetworkComputerStore(camerasRoot));
+builder.Services.AddSingleton<MediaNetworkResolver>();
+builder.Services.AddSingleton<MediaNetworkFileSystem>();
+builder.Services.AddSingleton<MediaFileRelay>();
+builder.Services.AddSingleton<MediaFiles>();
 builder.Services.AddSingleton<MediaScanner>();
 builder.Services.AddSingleton(sp => new MediaHlsManager(
     sp.GetRequiredService<IConfiguration>(), camerasRoot, sp.GetRequiredService<ILogger<MediaHlsManager>>()));

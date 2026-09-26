@@ -1,0 +1,103 @@
+<Window x:Class="SentinelCore.App.Views.MediaLibrariesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Movies &amp; TV libraries" Height="600" Width="780" MinHeight="440" MinWidth="620">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Style="{StaticResource DialogHeader}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                    <TextBlock Text="Movies &amp; TV libraries" FontSize="17" FontWeight="SemiBold"
+                               Foreground="{StaticResource Green}" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap"
+                               Text="The folders the server scans for films and TV shows. A folder can be on the server itself or a shared folder on another computer on the network." />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="AddButton" Content="Add library…" Style="{StaticResource PrimaryButton}"
+                            Click="OnAddClicked" />
+                    <Button x:Name="ScanAllButton" Content="Scan all" Margin="8,0,0,0" Click="OnScanAllClicked"
+                            ToolTip="Looks for new, changed and removed files in every library" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="600" TextWrapping="Wrap" />
+                <Button Content="Close" HorizontalAlignment="Right" MinWidth="90" Click="OnCloseClicked" />
+            </Grid>
+        </Border>
+
+        <Border x:Name="ScanBanner" DockPanel.Dock="Top" Background="#14241C" CornerRadius="6" Padding="14,10"
+                Margin="12,12,12,0" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock x:Name="ScanText" Style="{StaticResource BodyText}" TextWrapping="Wrap" />
+                <ProgressBar x:Name="ScanProgress" Margin="0,8,0,0" Minimum="0" Maximum="1" />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <ListBox x:Name="LibraryList" Margin="12">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Border Padding="12" Margin="0,4" CornerRadius="6" Background="{StaticResource CardBackground}"
+                                BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource PrimaryText}" />
+                                        <Border Style="{StaticResource Chip}" Margin="10,0,0,0" Padding="6,2">
+                                            <TextBlock Text="{Binding KindLabel}" FontSize="10.5"
+                                                       Foreground="{StaticResource Cyan}" />
+                                        </Border>
+                                        <Border Style="{StaticResource Chip}" Margin="6,0,0,0" Padding="6,2"
+                                                Visibility="{Binding NetworkVisibility}">
+                                            <TextBlock Text="Network" FontSize="10.5"
+                                                       Foreground="{StaticResource Cyan}" />
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding Path}" Style="{StaticResource Caption}" Margin="0,4,0,0"
+                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Path}" />
+                                    <TextBlock Text="{Binding CountText}" Style="{StaticResource Caption}"
+                                               Margin="0,4,0,0" />
+                                    <TextBlock Text="{Binding ScanText}" Foreground="{Binding ScanBrush}" FontSize="11.5"
+                                               Margin="0,2,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Content="Scan now" Tag="{Binding}" Click="OnScanClicked"
+                                            IsEnabled="{Binding CanScan}" />
+                                    <Button Content="Edit" Margin="8,0,0,0" Tag="{Binding}" Click="OnEditClicked" />
+                                    <Button Content="Remove" Margin="8,0,0,0" Tag="{Binding}"
+                                            Style="{StaticResource DangerButton}" Click="OnRemoveClicked" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <StackPanel x:Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="420"
+                        Visibility="Collapsed">
+                <TextBlock x:Name="EmptyTitle" Text="No libraries yet" FontSize="16" HorizontalAlignment="Center"
+                           Foreground="{StaticResource SecondaryText}" />
+                <TextBlock x:Name="EmptyMessage" Style="{StaticResource Caption}" TextAlignment="Center"
+                           TextWrapping="Wrap" Margin="0,8,0,0"
+                           Text="Add a library for your movies, and another for TV shows. Choose the folder on the server, or a shared folder on another computer." />
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</Window>

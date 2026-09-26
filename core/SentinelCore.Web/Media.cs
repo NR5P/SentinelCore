@@ -127,7 +127,12 @@ public sealed record MediaProgress(
 
 // What goes in the backup: the libraries (configuration) and everyone's progress (the one thing a
 // rescan cannot bring back). The catalog itself is rebuilt from the files.
-public sealed record MediaBackup(IReadOnlyList<MediaLibrary> Libraries, IReadOnlyList<MediaProgress> Progress);
+// NetworkComputers (added without a schema bump - older files simply lack it) are the saved
+// sign-ins for libraries on other computers, passwords included like FamilyDrives' SFTP ones.
+public sealed record MediaBackup(
+    IReadOnlyList<MediaLibrary> Libraries,
+    IReadOnlyList<MediaProgress> Progress,
+    IReadOnlyList<MediaNetworkComputer>? NetworkComputers = null);
 
 public sealed class MediaSettingsDto
 {

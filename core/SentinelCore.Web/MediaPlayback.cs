@@ -93,12 +93,13 @@ public static class MediaPlaybackPlanner
     // allows, so a remux of a two-hour film is disk-bound and finishes in a minute or two; a
     // transcode runs at roughly real time on this hardware and is capped at 1080p, which is what
     // the devices watching it can show anyway.
-    public static List<string> BuildFfmpegArguments(MediaItem item, MediaPlaybackPlan plan, double startSeconds, string outputDirectory)
+    // `input` is what ffmpeg opens: the file itself, or the relay URL for one on a network share.
+    public static List<string> BuildFfmpegArguments(MediaItem item, MediaPlaybackPlan plan, double startSeconds, string outputDirectory, string? input = null)
     {
         var args = new List<string> { "-hide_banner", "-loglevel", "warning", "-nostdin" };
         if (startSeconds > 0)
             args.AddRange(["-ss", startSeconds.ToString("0.###", CultureInfo.InvariantCulture)]);
-        args.AddRange(["-i", item.Path]);
+        args.AddRange(["-i", input ?? item.Path]);
         args.AddRange(["-map", "0:v:0"]);
         if (plan.AudioMode != "none")
             args.AddRange(["-map", $"0:a:{plan.AudioTrackIndex ?? 0}"]);
@@ -192,7 +193,8 @@ public sealed class MediaHlsManager : IDisposable
     public void Touch(MediaHlsSession session) => session.LastAccessed = DateTimeOffset.UtcNow;
 
     public async Task<MediaHlsSession> StartAsync(
-        MediaItem item, MediaPlaybackPlan plan, double startSeconds, IReadOnlyList<MediaSubtitleTrack> subtitles, CancellationToken cancellationToken)
+        MediaItem item, MediaPlaybackPlan plan, double startSeconds, IReadOnlyList<MediaSubtitleTrack> subtitles, CancellationToken cancellationToken,
+        string? input = null)
     {
         var key = $"{item.Id:N}|{plan.VideoMode}|{plan.AudioMode}|{plan.AudioTrackIndex}|{Math.Round(startSeconds)}";
         var existing = _sessions.Values.FirstOrDefault(s => s.Key == key && (!s.Finished || File.Exists(s.PlaylistPath)));
@@ -228,7 +230,7 @@ public sealed class MediaHlsManager : IDisposable
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        foreach (var arg in MediaPlaybackPlanner.BuildFfmpegArguments(item, plan, startSeconds, directory)) psi.ArgumentList.Add(arg);
+        foreach (var arg in MediaPlaybackPlanner.BuildFfmpegArguments(item, plan, startSeconds, directory, input)) psi.ArgumentList.Add(arg);
 
         Process process;
         try
@@ -416,22 +418,24 @@ public static class MediaSubtitles
     };
 
     public static async Task<string?> EnsureVttAsync(
-        MediaItem item, MediaSubtitleTrack track, string cacheDirectory, string ffmpegPath, ILogger logger, CancellationToken cancellationToken)
+        MediaItem item, MediaSubtitleTrack track, MediaFiles files, string cacheDirectory, string ffmpegPath, ILogger logger, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(cacheDirectory);
         var cached = Path.Combine(cacheDirectory, $"{item.Id:N}-{track.Index}.vtt");
         if (File.Exists(cached) && new FileInfo(cached).Length > 0) return cached;
 
         var input = track.External ?? item.Path;
-        if (!File.Exists(input)) return null;
+        if (!await Task.Run(() => files.FileExists(input), cancellationToken)) return null;
         if (track.External is not null && track.Codec == "vtt")
         {
-            File.Copy(input, cached, overwrite: true);
+            await using (var source = files.For(input).OpenRead(input))
+            await using (var destination = File.Create(cached))
+                await source.CopyToAsync(destination, cancellationToken);
             return cached;
         }
 
         var temporary = cached + ".part";
-        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", input };
+        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", files.FfmpegInput(input) };
         if (track.External is null) args.AddRange(["-map", $"0:s:{track.StreamIndex ?? 0}"]);
         args.AddRange(["-f", "webvtt", temporary]);
         var ok = await FfmpegProcess.RunAsync(ffmpegPath, args, TimeSpan.FromMinutes(3), logger, "subtitle extraction", ProcessPriorityClass.BelowNormal, cancellationToken);

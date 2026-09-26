@@ -152,6 +152,15 @@ struct SettingsView: View {
                     Text("Number plates the AI treats as household rather than a stranger's.")
                 }
                 Section {
+                    NavigationLink("Movies & TV Libraries") {
+                        MediaLibrariesAdminView()
+                    }
+                } header: {
+                    Text("Movies & TV")
+                } footer: {
+                    Text("The folders the Movies tab is built from - on the server, or shared from another computer on your network.")
+                }
+                Section {
                     NavigationLink("Manage Schedules") {
                         ScheduleListView()
                     }

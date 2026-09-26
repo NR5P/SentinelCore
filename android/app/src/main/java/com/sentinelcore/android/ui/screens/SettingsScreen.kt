@@ -74,6 +74,7 @@ fun SettingsScreen(
     onLicense: () -> Unit,
     onManageSchedules: () -> Unit,
     onServerSettings: () -> Unit,
+    onMediaLibraries: () -> Unit = {},
     // Set while the phone-width bottom bar is in use; the tablet's rail shows every section and
     // has nothing to customize. See TabBarLayout.
     onCustomizeTabBar: (() -> Unit)? = null,
@@ -279,6 +280,21 @@ fun SettingsScreen(
                         }
                         Text(
                             "Number plates the AI treats as household rather than a stranger's.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                item {
+                    SettingsSection("Movies & TV") {
+                        TextButton(
+                            onClick = onMediaLibraries,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Movies & TV libraries", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            "The folders the Movies tab reads from, on the server or on other computers on your network.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

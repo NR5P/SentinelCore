@@ -53,6 +53,7 @@ public sealed class BackupService(
     MainAppHubBackupClient hub,
     IMediaStore media,
     MediaScanner mediaScanner,
+    MediaNetworkComputerStore mediaComputers,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
     IHostEnvironment environment,
@@ -94,7 +95,7 @@ public sealed class BackupService(
             await organizerAutomations.GetAllAsync(ct),
             new AlarmBackup(await alarmStore.GetSensorsAsync(ct), await alarmStore.GetConfigAsync(ct)),
             await familyDrives.GetAllAsync(ct),
-            new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct)),
+            new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct), mediaComputers.All()),
             warnings.Count > 0 ? warnings : null);
     }
 
@@ -441,12 +442,13 @@ public sealed class BackupService(
                 }, ct);
                 mediaLibrariesRestored++;
             }
+            mediaComputers.Restore(mediaBackup.NetworkComputers ?? []);
             mediaProgressRestored = await media.RestoreProgressAsync(
                 (mediaBackup.Progress ?? []).Where(p => p.ItemId != Guid.Empty && p.UserKey is not null), ct);
             if (mediaLibrariesRestored > 0)
             {
                 mediaScanner.RequestScan(null);
-                if (mediaBackup.Libraries!.Any(l => !Directory.Exists(l.Path)))
+                if (mediaBackup.Libraries!.Any(l => !MediaNetworkPath.IsNetwork(l.Path) && !Directory.Exists(l.Path)))
                     notes.Add("Some movie library folders don't exist on this machine yet. Mount them at the same paths (or edit the library) and they will be scanned.");
             }
         }

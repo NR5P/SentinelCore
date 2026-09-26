@@ -140,7 +140,7 @@ private struct MediaHomeTV: View {
             } else if let home, home.isEmpty {
                 ContentUnavailableView(
                     "Nothing here yet", systemImage: "film.stack",
-                    description: Text("Add a Movies or TV Shows folder under Settings → MOVIES & TV on the dashboard. The library fills in as the server scans it."))
+                    description: Text("An admin adds the Movies or TV Shows folder in Settings → Movies & TV Libraries (or in the dashboard's Movies tab). The library fills in as the server scans it."))
             }
         }
         .task(id: TaskKey(active: isActive, token: refreshToken, server: model.activeServerURL)) {

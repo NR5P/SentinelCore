@@ -102,11 +102,11 @@ public sealed class MediaEndpointsTests : IDisposable
 
         Assert.True((await GetJsonAsync(client, "/api/media/enabled")).GetProperty("enabled").GetBoolean());
 
-        // A folder that is not there is refused with a hint about mounting shares.
+        // A folder that is not there is refused with a hint about network folders.
         using (var missing = await client.PostAsJsonAsync("/api/media/libraries", new { name = "Nope", kind = "movies", path = Path.Combine(_root, "not-here") }, Ct))
         {
             Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
-            Assert.Contains("mount", await missing.Content.ReadAsStringAsync(Ct));
+            Assert.Contains("smb://", await missing.Content.ReadAsStringAsync(Ct));
         }
 
         using (var created = await client.PostAsJsonAsync("/api/media/libraries", new { name = "Movies", kind = "movies", path = _movies }, Ct))

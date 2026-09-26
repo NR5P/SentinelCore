@@ -36,6 +36,12 @@ public class WindowSmokeTests
             var device = new HubDevice { Id = Guid.NewGuid(), Name = "Porch light", Kind = "light" };
             var schedule = new Schedule { Id = Guid.NewGuid(), Name = "Gate at dusk", Kind = "solar" };
             var drive = new FamilyDrive { Id = "d1", Name = "USB drive", Kind = "folder", FolderPath = "/mnt/usb" };
+            var library = new MediaLibrary { Id = "l1", Name = "Movies", Kind = "movies", Path = "/mnt/movies" };
+            var computer = new MediaNetworkComputer
+            {
+                Id = "c1", Name = "Den PC", Host = "192.168.1.20", Username = "sam", HasPassword = true,
+                Path = "smb://192.168.1.20",
+            };
             var activity = new ActivityItem
             {
                 Id = Guid.NewGuid().ToString(),
@@ -86,6 +92,13 @@ public class WindowSmokeTests
                 ("FilesDriveEditWindow (add)", () => new FilesDriveEditWindow(model, null)),
                 ("FilesDriveEditWindow (edit)", () => new FilesDriveEditWindow(model, drive)),
                 ("FilesTrashWindow", () => new FilesTrashWindow(model, isAdmin: true)),
+                ("MediaLibrariesWindow", () => new MediaLibrariesWindow(model)),
+                ("MediaLibraryEditWindow (add)", () => new MediaLibraryEditWindow(model, null)),
+                ("MediaLibraryEditWindow (edit)", () => new MediaLibraryEditWindow(model, library)),
+                ("MediaFolderPickerWindow", () => new MediaFolderPickerWindow(model)),
+                ("MediaFolderPickerWindow (start path)", () => new MediaFolderPickerWindow(model, "smb://nas/Movies")),
+                ("MediaNetworkSignInWindow (new)", () => new MediaNetworkSignInWindow(model, null, "den-pc")),
+                ("MediaNetworkSignInWindow (saved)", () => new MediaNetworkSignInWindow(model, computer)),
                 ("TextPromptWindow", () => new TextPromptWindow("Title", "Prompt?")),
                 ("ListPickerWindow", () => new ListPickerWindow("Pick", new[] { "One", "Two" })),
             };

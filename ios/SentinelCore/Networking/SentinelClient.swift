@@ -547,6 +547,55 @@ final class SentinelClient {
         try await get("/api/media/status")
     }
 
+    // MARK: Library management (admin)
+
+    func mediaLibraries() async throws -> [MediaLibrary] {
+        try await get("/api/media/libraries")
+    }
+
+    func saveMediaLibrary(id: String?, _ input: MediaLibraryInput) async throws -> MediaLibrary {
+        if let id {
+            return try await send("/api/media/libraries/\(id)", method: "PUT", body: input)
+        }
+        return try await send("/api/media/libraries", method: "POST", body: input)
+    }
+
+    func deleteMediaLibrary(id: String) async throws {
+        let _: EmptyResponse = try await send("/api/media/libraries/\(id)", method: "DELETE", body: Optional<String>.none)
+    }
+
+    // nil scans every library. A 409 means a scan is already running.
+    func scanMediaLibrary(id: String?) async throws {
+        let path = id.map { "/api/media/libraries/\($0)/scan" } ?? "/api/media/scan"
+        let _: EmptyResponse = try await send(path, method: "POST", body: Optional<String>.none)
+    }
+
+    // "" is the picker's first page; a local path or smb://host/Share/… anything below it.
+    func mediaBrowse(path: String) async throws -> MediaBrowseListing {
+        try await get("/api/media/browse", query: path.isEmpty ? [] : [URLQueryItem(name: "path", value: path)])
+    }
+
+    func mediaNetworkComputers() async throws -> [MediaNetworkComputer] {
+        try await get("/api/media/network")
+    }
+
+    // Signs in (the server tests it before saving) and answers with the computer's shares.
+    func saveMediaNetworkComputer(id: String?, _ input: MediaNetworkComputerInput) async throws -> MediaNetworkSignIn {
+        if let id {
+            return try await send("/api/media/network/\(id)", method: "PUT", body: input)
+        }
+        return try await send("/api/media/network", method: "POST", body: input)
+    }
+
+    func deleteMediaNetworkComputer(id: String) async throws {
+        let _: EmptyResponse = try await send("/api/media/network/\(id)", method: "DELETE", body: Optional<String>.none)
+    }
+
+    // Takes about three seconds: the server listens for file-sharing computers over mDNS.
+    func discoverMediaComputers() async throws -> [MediaDiscoveredComputer] {
+        try await get("/api/media/network/discover")
+    }
+
     func mediaHome() async throws -> MediaHome {
         try await get("/api/media/home")
     }

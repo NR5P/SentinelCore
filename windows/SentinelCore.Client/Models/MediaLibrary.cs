@@ -18,9 +18,130 @@ public sealed class MediaLibrary
     public string Name { get; init; } = "";
     public string Kind { get; init; } = ""; // "movies" | "shows"
     public string Path { get; init; } = "";
+
+    /// <summary>True when <see cref="Path"/> is a shared folder on another computer (smb://…).</summary>
+    public bool Network { get; init; }
     public int ItemCount { get; init; }
+    public DateTimeOffset? CreatedAt { get; init; }
+    public DateTimeOffset? LastScanStartedAt { get; init; }
     public DateTimeOffset? LastScanFinishedAt { get; init; }
     public string? LastScanError { get; init; }
+
+    public bool IsShows => Kind == "shows";
+}
+
+/// <summary>The body of POST and PUT /api/media/libraries.</summary>
+public sealed class MediaLibraryInput
+{
+    public string Name { get; init; } = "";
+    public string Kind { get; init; } = "movies"; // movies | shows
+    public string Path { get; init; } = "";
+}
+
+// ---------------------------------------------------------------- Folder picker (admin)
+
+/// <summary>One folder in a <see cref="MediaBrowseListing"/>.</summary>
+public sealed class MediaBrowseFolder
+{
+    public string Name { get; init; } = "";
+    public string Path { get; init; } = "";
+
+    /// <summary>Videos directly inside this folder. Null for network folders (a round trip each).</summary>
+    public int? VideoCount { get; init; }
+}
+
+/// <summary>
+/// GET /api/media/browse. Always a 200: a folder that cannot be opened carries
+/// <see cref="Error"/>, and <see cref="NeedsLogin"/> when signing in to <see cref="Host"/> would fix it.
+/// </summary>
+public sealed class MediaBrowseListing
+{
+    public string Path { get; init; } = "";
+
+    /// <summary>Where "up" goes. "" is the starting page; null only on the starting page itself.</summary>
+    public string? Parent { get; init; }
+    public string Kind { get; init; } = ""; // roots | local | computer | network
+    public string? Host { get; init; }
+    public List<MediaBrowseFolder> Folders { get; init; } = new();
+
+    /// <summary>Only on the starting page: the network computers already signed in to.</summary>
+    public List<MediaNetworkComputer> Computers { get; init; } = new();
+
+    /// <summary>Videos directly in this folder. May be null.</summary>
+    public int? VideoCount { get; init; }
+    public string? Hint { get; init; }
+    public string? Error { get; init; }
+    public bool NeedsLogin { get; init; }
+
+    public bool IsRoots => Kind == "roots";
+
+    /// <summary>A computer itself lists its shared folders but cannot be a library.</summary>
+    public bool IsComputer => Kind == "computer";
+
+    public bool CanGoUp => Parent is not null && !IsRoots;
+
+    /// <summary>Whether "Use this folder" makes sense here.</summary>
+    public bool CanPick => Path.Length > 0 && !IsRoots && !IsComputer && string.IsNullOrEmpty(Error);
+}
+
+/// <summary>A computer whose shared folders the server has a saved sign-in for. Never a password.</summary>
+public sealed class MediaNetworkComputer
+{
+    public string Id { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Host { get; init; } = "";
+    public string Username { get; init; } = "";
+    public string Domain { get; init; } = "";
+    public bool HasPassword { get; init; }
+
+    /// <summary>smb://host - browsing this lists the computer's shared folders.</summary>
+    public string Path { get; init; } = "";
+    public DateTimeOffset? CreatedAt { get; init; }
+
+    public string DisplayName => string.IsNullOrWhiteSpace(Name) ? Host : Name;
+
+    public string SignInSummary =>
+        Username.Length == 0
+            ? "Guest"
+            : Domain.Length > 0 ? $"{Domain}\\{Username}" : Username;
+}
+
+/// <summary>The body of POST and PUT /api/media/network. A blank password on PUT keeps the saved one.</summary>
+public sealed class MediaNetworkComputerInput
+{
+    public string Host { get; init; } = "";
+    public string? Name { get; init; }
+    public string Username { get; init; } = "";
+    public string? Password { get; init; }
+    public string? Domain { get; init; }
+}
+
+public sealed class MediaNetworkShare
+{
+    public string Name { get; init; } = "";
+    public string Path { get; init; } = "";
+}
+
+/// <summary>What a successful sign-in answers: the saved computer and the shares it lists.</summary>
+public sealed class MediaNetworkSignInResult
+{
+    public MediaNetworkComputer Computer { get; init; } = new();
+    public List<MediaNetworkShare> Shares { get; init; } = new();
+}
+
+/// <summary>
+/// A computer found by GET /api/media/network/discover (mDNS _smb._tcp): Macs, NASes, Samba.
+/// Windows PCs do not advertise themselves this way.
+/// </summary>
+public sealed class MediaDiscoveredComputer
+{
+    public string Name { get; init; } = "";
+    public string Host { get; init; } = "";
+    public string? Address { get; init; }
+    public string Path { get; init; } = "";
+
+    /// <summary>The saved computer this is, when there is one.</summary>
+    public string? SavedId { get; init; }
 }
 
 public sealed class MediaScanState

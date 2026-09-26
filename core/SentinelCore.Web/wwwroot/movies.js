@@ -26,6 +26,7 @@ window.SentinelMovies = (function () {
     right: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     restart: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     folder: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+    computer: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 19.5h6M12 15.5v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     close: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
     search: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
     film: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4" stroke="currentColor" stroke-width="1.6"/></svg>'
@@ -569,7 +570,7 @@ window.SentinelMovies = (function () {
   function setupMarkup() {
     if (!isAdmin) {
       return `<div class="mv-setup"><div class="mv-setup-glyph">${ICON.film}</div>
-        <h2>No libraries yet</h2><p>An admin adds the folders of movies and TV shows on the server, and they show up here for everyone.</p></div>`;
+        <h2>No libraries yet</h2><p>An admin adds the folders of movies and TV shows - on the server or shared from another computer - in the apps under Settings → Movies &amp; TV Libraries, or here, and they show up for everyone.</p></div>`;
     }
     return `<div class="mv-setup">
       <div class="mv-setup-glyph">${ICON.film}</div>
@@ -585,8 +586,8 @@ window.SentinelMovies = (function () {
             <button type="button" class="${setup.kind === "shows" ? "active" : ""}" data-act="setup-kind" data-kind="shows" role="radio" aria-checked="${setup.kind === "shows"}">TV Shows</button>
           </div>
         </div>
-        <label class="mv-field"><span>Folder on the server</span>
-          <div class="mv-path-row"><input class="field-input" id="mv-setup-path" placeholder="/mnt/movies" value="${escapeHtml(setup.path)}" spellcheck="false">
+        <label class="mv-field"><span>Folder (on the server or another computer)</span>
+          <div class="mv-path-row"><input class="field-input" id="mv-setup-path" placeholder="/mnt/movies or smb://PC/Movies" value="${escapeHtml(setup.path)}" spellcheck="false">
           <button type="button" class="mv-btn" data-act="setup-browse">${ICON.folder}<span>browse</span></button></div>
         </label>
         <div id="mv-setup-hint">${mountHint(setup.path)}</div>
@@ -624,33 +625,19 @@ window.SentinelMovies = (function () {
     list.innerHTML = message ? `<li>${escapeHtml(message)}</li>` : "";
   }
 
-  // A Windows share has to be mounted on the server before it can be a library. Given a UNC path
-  // the exact commands are spelled out; after a failed save of a /mnt-style path, the same lines
-  // are offered with that path as the mount point, since "does not exist" usually means "not mounted".
+  // A folder on another computer is read over the network by the server itself; nothing has to
+  // be mounted. Typed or pasted as \\PC\Share or smb://PC/Share, it gets a line saying so, and a
+  // local path that failed gets a pointer to the picker's Network computers section.
   function mountHint(path, afterFailure) {
     const text = String(path || "").trim();
-    const share = /^(?:\\\\|\/\/|smb:\/\/)([^\\/]+)[\\/]+([^\\/]+)/i.exec(text);
-    let unc, mountPoint;
+    const share = /^(?:\\\\|\/\/|smb:\/\/)([^\\/]+)/i.exec(text);
     if (share) {
-      unc = `//${share[1]}/${share[2]}`;
-      mountPoint = `/mnt/${share[2].toLowerCase().replace(/[^a-z0-9._-]+/g, "-") || "media"}`;
-    } else if (afterFailure && /^\/(mnt|media)\//.test(text)) {
-      unc = "//PC/Movies";
-      mountPoint = text.replace(/\/+$/, "");
-    } else {
-      return "";
+      return `<div class="mv-note">A shared folder on <code>${escapeHtml(share[1])}</code>. The server reads it over the network - if that computer wants a password, press browse and sign in to it under Network computers.</div>`;
     }
-    const intro = share
-      ? "That is a Windows share. Mount it on the server first, then use the mounted folder as the path:"
-      : "If this folder lives on a Windows PC, it has to be mounted on the server first (use the PC's name and share):";
-    return `<div class="mv-note mv-mount">
-      <div>${escapeHtml(intro)}</div>
-      <pre>sudo mkdir -p ${escapeHtml(mountPoint)}
-sudo mount -t cifs ${escapeHtml(unc)} ${escapeHtml(mountPoint)} -o username=YOUR-WINDOWS-USER,uid=1000</pre>
-      <div>To mount it at every boot, add this line to <code>/etc/fstab</code> (the credentials file holds <code>username=</code> and <code>password=</code> lines):</div>
-      <pre>${escapeHtml(unc)}  ${escapeHtml(mountPoint)}  cifs  credentials=/etc/smb-movies,uid=1000,nofail  0  0</pre>
-      ${share ? `<div>Then use <code>${escapeHtml(mountPoint)}</code> as the folder.</div>` : ""}
-    </div>`;
+    if (afterFailure) {
+      return `<div class="mv-note">If the videos are on another computer, press browse and choose it under Network computers, or type its address like <code>smb://PC/Movies</code>.</div>`;
+    }
+    return "";
   }
 
   // ---- browse grids ---------------------------------------------------------------------------
@@ -1056,53 +1043,162 @@ sudo mount -t cifs ${escapeHtml(unc)} ${escapeHtml(mountPoint)} -o username=YOUR
 
   // ---- folder browser -------------------------------------------------------------------------
 
+  // Folders on the server, and folders shared by other computers on the network (read over SMB
+  // by the server itself - nothing to mount). The server's /api/media/browse does the work; a
+  // computer that wants a password answers with needsLogin and the sign-in form appears here.
   let folderPick = null;
 
   function openFolderBrowser(startPath, onPick, onCancel) {
     folderPick = { onPick, onCancel, path: null };
     openModal(`${modalHeader("Choose a folder")}
-      <p class="mv-modal-intro">Folders on the server. The number beside a folder is how many videos sit directly inside it.</p>
+      <p class="mv-modal-intro">Folders on this server, or shared from another computer on your network. The number beside a folder is how many videos sit directly inside it.</p>
       <div class="mv-browse-bar">
         <button type="button" class="mv-icon-btn" data-mact="up" aria-label="Up one folder" title="Up one folder">${ICON.back}</button>
-        <code class="mv-browse-path"><span id="mv-browse-path"></span></code>
+        <input class="field-input mv-browse-input" id="mv-browse-input" spellcheck="false" autocomplete="off"
+          placeholder="/mnt/movies or smb://computer/SharedFolder" aria-label="Folder path">
+        <button type="button" class="mv-btn" data-mact="go">go</button>
       </div>
       <div class="mv-folders" id="mv-folders">${loadingMarkup()}</div>
       <div class="mv-modal-foot">
         <button type="button" class="mv-btn mv-btn-quiet" data-mact="cancel">Cancel</button>
         <button type="button" class="mv-btn mv-btn-primary" data-mact="pick" id="mv-browse-pick" disabled>Use this folder</button>
       </div>`, () => { const f = folderPick; folderPick = null; if (f && f.onCancel && !f.picked) f.onCancel(); });
+    el("mv-browse-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadFolder(e.target.value.trim()); }
+    });
     loadFolder(startPath || "", true);
   }
 
+  function folderButton(f, act) {
+    return `<button type="button" class="mv-folder" data-mact="${act || "folder"}" data-path="${escapeHtml(f.path)}">
+        ${f.icon || ICON.folder}<span class="mv-folder-name">${escapeHtml(f.name)}</span>
+        ${f.videoCount ? `<span class="mv-folder-count">${plural(f.videoCount, "video")}</span>` : ""}
+        ${f.note ? `<span class="mv-folder-note">${escapeHtml(f.note)}</span>` : ""}
+      </button>`;
+  }
+
   // fallbackToRoots: the picker opens on whatever was typed in the path box, which may not exist
-  // yet (a share not mounted) - then it opens on the server's roots instead of on an error.
+  // any more - then it opens on the server's roots instead of on an error.
   async function loadFolder(path, fallbackToRoots) {
     const list = el("mv-folders");
     if (!list || !folderPick) return;
     list.innerHTML = loadingMarkup();
     const res = await request(`/api/media/browse${path ? `?path=${enc(path)}` : ""}`);
     if (!folderPick || !el("mv-folders")) return;
-    if (!res.ok && fallbackToRoots && path) { loadFolder(""); return; }
+    const data = res.data || {};
+    if ((!res.ok || (data.error && !data.needsLogin)) && fallbackToRoots && path) { loadFolder(""); return; }
     if (!res.ok) {
-      // Stay where we were: a folder that refuses to open (permissions) shouldn't strand the picker.
+      // Stay where we were: a folder that refuses to open shouldn't strand the picker.
       list.innerHTML = `<div class="mv-empty mv-error">${escapeHtml(res.error)}</div>` + (folderPick.listing || "");
       return;
     }
-    const data = res.data || {};
     folderPick.path = data.path || "";
-    folderPick.parent = data.parent || null;
-    el("mv-browse-path").textContent = folderPick.path || "server roots";
-    el("mv-browse-pick").disabled = !folderPick.path;
+    folderPick.parent = data.parent == null ? null : data.parent;
+    folderPick.kind = data.kind;
+    el("mv-browse-input").value = folderPick.path;
+    // A computer is not a folder; one of its shared folders (or anything inside one) is.
+    el("mv-browse-pick").disabled = !folderPick.path || data.kind === "computer" || !!data.error;
     document.querySelector('#mv-modal [data-mact="up"]').disabled = !folderPick.path;
+
+    if (data.error) {
+      folderPick.listing = "";
+      list.innerHTML = `<div class="mv-empty mv-error">${escapeHtml(data.error)}</div>`
+        + (data.needsLogin && data.host ? signInMarkup({ host: data.host }) : "");
+      return;
+    }
+
+    let listing = "";
     const folders = data.folders || [];
-    const listing = folders.length
-      ? folders.map((f) => `<button type="button" class="mv-folder" data-mact="folder" data-path="${escapeHtml(f.path)}">
-          ${ICON.folder}<span class="mv-folder-name">${escapeHtml(f.name)}</span>
-          ${f.videoCount ? `<span class="mv-folder-count">${plural(f.videoCount, "video")}</span>` : ""}
-        </button>`).join("")
-      : `<div class="mv-empty">No folders inside this one.</div>`;
+    if (data.kind === "roots") {
+      listing += `<div class="mv-folder-section">On this server</div>`;
+      listing += folders.map((f) => folderButton(f)).join("");
+      listing += `<div class="mv-folder-section">Network computers</div>`;
+      listing += (data.computers || []).map((c) => `<div class="mv-folder-row">
+          ${folderButton({ name: c.name, path: c.path, icon: ICON.computer, note: c.username ? `as ${c.username}` : "guest" })}
+          <button type="button" class="mv-btn mv-btn-quiet mv-folder-side" data-mact="net-edit" data-id="${escapeHtml(c.id)}">sign-in</button>
+        </div>`).join("");
+      listing += `<div class="mv-folder-actions">
+          <button type="button" class="mv-btn" data-mact="net-add">+ Add a computer</button>
+          <button type="button" class="mv-btn" data-mact="net-find">${ICON.search}<span>Find computers</span></button>
+        </div>
+        <div id="mv-net-found"></div>`;
+    } else {
+      listing = folders.length
+        ? folders.map((f) => folderButton(f)).join("")
+        : `<div class="mv-empty">${data.kind === "computer" ? "No shared folders listed." : "No folders inside this one."}</div>`;
+      if (data.hint) listing = `<div class="mv-note">${escapeHtml(data.hint)}</div>` + listing;
+      if (data.videoCount) listing = `<div class="mv-folder-here">${plural(data.videoCount, "video")} in this folder</div>` + listing;
+    }
     folderPick.listing = listing;
     list.innerHTML = listing;
+    folderPick.computers = data.computers || folderPick.computers || [];
+  }
+
+  // Signing in to a computer: its name or address, and an account on it. Blank username tries
+  // a guest sign-in; on an edit, a blank password keeps the saved one.
+  function signInMarkup(computer) {
+    const saved = computer.id ? computer : null;
+    return `<form class="mv-form mv-signin" id="mv-signin" data-id="${escapeHtml(saved ? saved.id : "")}">
+      <div class="mv-signin-title">${saved ? `Sign-in for ${escapeHtml(saved.name)}` : "Sign in to a computer"}</div>
+      <label class="mv-field"><span>Computer name or IP address</span>
+        <input class="field-input" id="mv-net-host" value="${escapeHtml(computer.host || "")}" placeholder="DESKTOP-PC or 192.168.1.20" spellcheck="false" autocomplete="off"></label>
+      <label class="mv-field"><span>Name to show (optional)</span>
+        <input class="field-input" id="mv-net-name" value="${escapeHtml(saved && saved.name !== saved.host ? saved.name : "")}" placeholder="Den PC" autocomplete="off"></label>
+      <label class="mv-field"><span>Username on that computer</span>
+        <input class="field-input" id="mv-net-user" value="${escapeHtml(computer.username || "")}" placeholder="blank to try as a guest" spellcheck="false" autocomplete="off"></label>
+      <label class="mv-field"><span>Password</span>
+        <input class="field-input" id="mv-net-pass" type="password" autocomplete="new-password" placeholder="${saved && saved.hasPassword ? "blank keeps the saved password" : ""}"></label>
+      <div class="mv-field-note">For a Windows PC, use the Windows account (a Microsoft account works: its email and password). On a Mac, turn on File Sharing in System Settings. Windows computers don't show up under Find computers - type the PC's name or address here.</div>
+      <ul class="field-errors" id="mv-net-errors"></ul>
+      <div class="mv-signin-foot">
+        ${saved ? `<button type="button" class="mv-btn mv-btn-quiet" data-mact="net-forget" data-id="${escapeHtml(saved.id)}">Forget this computer</button>` : ""}
+        <span class="mv-spacer"></span>
+        <button type="button" class="mv-btn mv-btn-quiet" data-mact="net-back">Back</button>
+        <button type="submit" class="mv-btn mv-btn-primary">Sign in</button>
+      </div>
+    </form>`;
+  }
+
+  function showSignIn(computer) {
+    const list = el("mv-folders");
+    if (!list) return;
+    list.innerHTML = signInMarkup(computer || {});
+    el(computer && computer.host ? "mv-net-user" : "mv-net-host").focus();
+  }
+
+  async function submitSignIn(form) {
+    const id = form.dataset.id;
+    const body = {
+      host: el("mv-net-host").value.trim(),
+      name: el("mv-net-name").value.trim(),
+      username: el("mv-net-user").value.trim(),
+      password: el("mv-net-pass").value
+    };
+    if (!body.host) { showErrors(el("mv-net-errors"), "Type the computer's name or IP address."); return; }
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    submit.textContent = "Signing in…";
+    const res = await request(id ? `/api/media/network/${enc(id)}` : "/api/media/network", { method: id ? "PUT" : "POST", body });
+    if (!el("mv-signin")) return;
+    submit.disabled = false;
+    submit.textContent = "Sign in";
+    if (!res.ok) { showErrors(el("mv-net-errors"), res.error); return; }
+    loadFolder(res.data.computer.path);
+  }
+
+  async function findComputers(button) {
+    const box = el("mv-net-found");
+    if (!box) return;
+    button.disabled = true;
+    box.innerHTML = `<div class="mv-empty">Looking for computers sharing files…</div>`;
+    const res = await request("/api/media/network/discover");
+    button.disabled = false;
+    if (!el("mv-net-found")) return;
+    if (!res.ok) { box.innerHTML = `<div class="mv-empty mv-error">${escapeHtml(res.error)}</div>`; return; }
+    const found = (res.data || []).filter((h) => !h.savedId);
+    box.innerHTML = found.length
+      ? found.map((h) => folderButton({ name: h.name, path: h.path, icon: ICON.computer, note: h.address || h.host })).join("")
+      : `<div class="mv-empty">No other computers answered. Windows PCs don't announce themselves - use Add a computer with the PC's name or address.</div>`;
   }
 
   // ---- libraries ------------------------------------------------------------------------------
@@ -1118,7 +1214,7 @@ sudo mount -t cifs ${escapeHtml(unc)} ${escapeHtml(mountPoint)} -o username=YOUR
     }
     pane.innerHTML = `<button type="button" class="mv-back" data-act="back">${ICON.back}<span>back</span></button>
       <div class="mv-libs-head">
-        <div><h2 class="mv-page-title">Libraries</h2><div class="mv-page-sub">The folders on the server the catalog is built from.</div></div>
+        <div><h2 class="mv-page-title">Libraries</h2><div class="mv-page-sub">The folders the catalog is built from - on the server, or shared from another computer on the network.</div></div>
         <div class="mv-actions">
           <button type="button" class="mv-btn mv-btn-glass" data-act="scan-all">${ICON.restart}<span>Scan all</span></button>
           <button type="button" class="mv-btn mv-btn-primary" data-act="lib-add"><span>+ Add library</span></button>
@@ -1198,8 +1294,8 @@ sudo mount -t cifs ${escapeHtml(unc)} ${escapeHtml(mountPoint)} -o username=YOUR
         <label class="mv-field"><span>Name</span><input class="field-input" id="mv-lib-name" value="${escapeHtml(form.name)}" placeholder="Movies" maxlength="80" autofocus></label>
         <label class="mv-field"><span>Kind</span>
           <select class="field-input" id="mv-lib-kind"><option value="movies">Movies</option><option value="shows">TV Shows</option></select></label>
-        <label class="mv-field"><span>Folder on the server</span>
-          <div class="mv-path-row"><input class="field-input" id="mv-lib-path" value="${escapeHtml(form.path)}" placeholder="/mnt/movies" spellcheck="false">
+        <label class="mv-field"><span>Folder (on the server or another computer)</span>
+          <div class="mv-path-row"><input class="field-input" id="mv-lib-path" value="${escapeHtml(form.path)}" placeholder="/mnt/movies or smb://PC/Movies" spellcheck="false">
             <button type="button" class="mv-btn" data-mact="lib-browse">${ICON.folder}<span>browse</span></button></div></label>
         <div id="mv-lib-hint">${mountHint(form.path)}</div>
         ${existing ? '<div class="mv-field-note">Changing the folder rescans the library. Watched progress is kept for files that are still there.</div>' : '<div class="mv-field-note">Adding a library starts a scan of it straight away.</div>'}
@@ -1689,6 +1785,9 @@ sudo mount -t cifs ${escapeHtml(unc)} ${escapeHtml(mountPoint)} -o username=YOUR
     el("mv-libraries-btn").addEventListener("click", () => go({ name: "libraries" }));
 
     const modal = el("mv-modal");
+    modal.addEventListener("submit", (e) => {
+      if (e.target.id === "mv-signin") { e.preventDefault(); submitSignIn(e.target); }
+    });
     modal.addEventListener("click", (e) => {
       if (e.target === modal) { closeModal(); return; }
       const target = e.target.closest("[data-mact]");
@@ -1698,6 +1797,16 @@ sudo mount -t cifs ${escapeHtml(unc)} ${escapeHtml(mountPoint)} -o username=YOUR
         case "match": applyMatch(target, target.dataset.tmdb); break;
         case "unlock": unlockMatch(target); break;
         case "folder": loadFolder(target.dataset.path); break;
+        case "go": loadFolder(el("mv-browse-input").value.trim()); break;
+        case "net-add": showSignIn({}); break;
+        case "net-edit": showSignIn((folderPick && folderPick.computers || []).find((c) => c.id === target.dataset.id) || {}); break;
+        case "net-back": loadFolder(""); break;
+        case "net-find": findComputers(target); break;
+        case "net-forget": {
+          if (!confirm("Forget this computer's sign-in? Libraries on it stop scanning until you sign in again.")) break;
+          request(`/api/media/network/${enc(target.dataset.id)}`, { method: "DELETE" }).then(() => loadFolder(""));
+          break;
+        }
         case "up": if (folderPick) loadFolder(folderPick.parent || ""); break;
         case "pick":
           if (folderPick && folderPick.path) {

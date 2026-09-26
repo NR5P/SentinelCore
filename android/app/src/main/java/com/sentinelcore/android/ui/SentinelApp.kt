@@ -77,6 +77,8 @@ import com.sentinelcore.android.ui.files.FilesTrashScreen
 import com.sentinelcore.android.ui.screens.AccountAdminScreen
 import com.sentinelcore.android.ui.screens.AccountEditScreen
 import com.sentinelcore.android.ui.screens.CameraAdminScreen
+import com.sentinelcore.android.ui.screens.MediaLibrariesScreen
+import com.sentinelcore.android.ui.screens.MediaLibraryEditScreen
 import com.sentinelcore.android.ui.screens.CameraDiscoveryScreen
 import com.sentinelcore.android.ui.screens.CameraEditScreen
 import com.sentinelcore.android.ui.screens.CameraZoneEditorScreen
@@ -438,6 +440,7 @@ private fun AppShell(
 
 // Under Settings, so the bar highlights Settings (or More, if Settings has no tab) while it's open.
 private const val TAB_BAR_EDITOR_ROUTE = "settings/tab-bar"
+private const val MEDIA_LIBRARIES_ROUTE = "settings/media-libraries"
 
 @Composable
 private fun SentinelNavHost(
@@ -514,6 +517,7 @@ private fun SentinelNavHost(
                 model = model,
                 onItem = { navController.navigate(movieDetailRoute(it)) },
                 onPlay = { id, start -> navController.navigate(moviePlayerRoute(id, start)) },
+                onManageLibraries = { navController.navigate(MEDIA_LIBRARIES_ROUTE) { launchSingleTop = true } },
             )
         }
         composable(
@@ -665,6 +669,7 @@ private fun SentinelNavHost(
                 onLicense = { navController.navigate("settings/license") },
                 onManageSchedules = { navController.navigate("settings/schedules") },
                 onServerSettings = { navController.navigate("settings/server") },
+                onMediaLibraries = { navController.navigate(MEDIA_LIBRARIES_ROUTE) },
                 onCustomizeTabBar = onCustomizeTabBar,
             )
         }
@@ -870,6 +875,26 @@ private fun SentinelNavHost(
             LicenseAdminScreen(
                 state = state,
                 model = model,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(MEDIA_LIBRARIES_ROUTE) {
+            MediaLibrariesScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+                onEditLibrary = { id -> navController.navigate("$MEDIA_LIBRARIES_ROUTE/${Uri.encode(id ?: "new")}") },
+            )
+        }
+        composable(
+            "$MEDIA_LIBRARIES_ROUTE/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            MediaLibraryEditScreen(
+                state = state,
+                model = model,
+                libraryId = entry.arguments?.getString("id")?.takeIf { it != "new" },
                 onBack = { navController.popBackStack() },
             )
         }

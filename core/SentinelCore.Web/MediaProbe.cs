@@ -33,9 +33,9 @@ public static partial class MediaProbe
         return directory.Length == 0 ? probe : Path.Combine(directory, probe);
     }
 
-    public static async Task<bool> ProbeAsync(MediaItem item, string ffprobePath, ILogger logger, CancellationToken cancellationToken)
+    public static async Task<bool> ProbeAsync(MediaItem item, MediaFiles files, string ffprobePath, ILogger logger, CancellationToken cancellationToken)
     {
-        var args = new[] { "-v", "error", "-print_format", "json", "-show_format", "-show_streams", item.Path };
+        var args = new[] { "-v", "error", "-print_format", "json", "-show_format", "-show_streams", files.FfmpegInput(item.Path) };
         var output = await FfmpegProcess.RunCapturingStdoutAsync(
             ffprobePath, args, TimeSpan.FromSeconds(60), logger, $"probe of {Path.GetFileName(item.Path)}",
             ProcessPriorityClass.BelowNormal, cancellationToken);
@@ -50,7 +50,8 @@ public static partial class MediaProbe
         try
         {
             using var document = JsonDocument.Parse(output);
-            Apply(item, document.RootElement);
+            var sidecars = await Task.Run(() => FindSidecarSubtitles(files.For(item.Path), item.Path), cancellationToken);
+            Apply(item, document.RootElement, sidecars);
             item.ProbeError = null;
             return true;
         }
@@ -63,7 +64,7 @@ public static partial class MediaProbe
 
     // Pure: ffprobe's JSON in, the item's file facts out. Separated so MediaProbeTests can feed
     // it captured output without an ffprobe on the test machine.
-    public static void Apply(MediaItem item, JsonElement root)
+    public static void Apply(MediaItem item, JsonElement root, IReadOnlyList<MediaSubtitleTrack>? sidecars = null)
     {
         item.Container = Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant();
         if (root.TryGetProperty("format", out var format))
@@ -109,7 +110,7 @@ public static partial class MediaProbe
             }
         }
 
-        foreach (var sidecar in FindSidecarSubtitles(item.Path))
+        foreach (var sidecar in sidecars ?? FindSidecarSubtitles(LocalMediaFileSystem.Instance, item.Path))
             subtitles.Add(sidecar with { Index = subtitles.Count });
 
         item.AudioTracks = audio;
@@ -120,15 +121,19 @@ public static partial class MediaProbe
     }
 
     // "Movie.srt", "Movie.en.srt", "Movie.eng.forced.srt" beside "Movie.mkv".
-    public static IReadOnlyList<MediaSubtitleTrack> FindSidecarSubtitles(string videoPath)
+    public static IReadOnlyList<MediaSubtitleTrack> FindSidecarSubtitles(IMediaFileSystem fs, string videoPath)
     {
-        var directory = Path.GetDirectoryName(videoPath);
-        if (directory is null || !Directory.Exists(directory)) return [];
+        var directory = fs.Parent(videoPath);
+        if (directory is null) return [];
+        IReadOnlyList<MediaFsEntry> entries;
+        try { entries = fs.List(directory); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
         var stem = Path.GetFileNameWithoutExtension(videoPath);
         var found = new List<MediaSubtitleTrack>();
-        foreach (var file in Directory.EnumerateFiles(directory).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
+        foreach (var entry in entries.Where(e => !e.IsDirectory).OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
         {
-            var name = Path.GetFileName(file);
+            var file = entry.Path;
+            var name = entry.Name;
             var extension = Path.GetExtension(name);
             if (!SidecarExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase)) continue;
             if (!name.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase)) continue;

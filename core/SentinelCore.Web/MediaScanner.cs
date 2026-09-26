@@ -35,6 +35,7 @@ public sealed partial class MediaScanner : IDisposable
     private static partial Regex SeasonInName();
 
     private readonly IMediaStore _store;
+    private readonly MediaFiles _files;
     private readonly TmdbClient _tmdb;
     private readonly MediaArtCache _art;
     private readonly ILogger<MediaScanner> _logger;
@@ -44,9 +45,10 @@ public sealed partial class MediaScanner : IDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private bool? _ffmpegAvailable;
 
-    public MediaScanner(IMediaStore store, TmdbClient tmdb, MediaArtCache art, IConfiguration configuration, ILogger<MediaScanner> logger)
+    public MediaScanner(IMediaStore store, MediaFiles files, TmdbClient tmdb, MediaArtCache art, IConfiguration configuration, ILogger<MediaScanner> logger)
     {
         _store = store;
+        _files = files;
         _tmdb = tmdb;
         _art = art;
         _logger = logger;
@@ -55,6 +57,8 @@ public sealed partial class MediaScanner : IDisposable
     }
 
     public string FfmpegPath => _ffmpegPath;
+
+    public MediaFiles Files => _files;
 
     public bool IsScanning => _scanLock.CurrentCount == 0;
 
@@ -148,23 +152,27 @@ public sealed partial class MediaScanner : IDisposable
     {
         var started = DateTimeOffset.UtcNow;
         await _store.SaveLibraryAsync(library with { LastScanStartedAt = started }, cancellationToken);
-
-        if (!Directory.Exists(library.Path))
-        {
-            await _store.SaveLibraryAsync(library with { LastScanStartedAt = started, LastScanFinishedAt = DateTimeOffset.UtcNow,
-                LastScanError = "The folder does not exist or cannot be read. If it is a network share, check that it is mounted." }, cancellationToken);
-            return;
-        }
+        var fs = _files.For(library.Path);
+        var network = MediaNetworkPath.IsNetwork(library.Path);
 
         List<MediaItem> items;
         try
         {
-            items = library.Kind == MediaLibraryKinds.Shows ? WalkShows(library) : WalkMovies(library);
+            // The whole walk is blocking file I/O (and network round trips for a share).
+            items = await Task.Run(() =>
+            {
+                if (!fs.DirectoryExists(library.Path))
+                    throw new DirectoryNotFoundException(network
+                        ? "The shared folder could not be found. Check the computer is on and the folder is still shared."
+                        : "The folder does not exist or cannot be read. If it is a network share, check that it is mounted.");
+                return library.Kind == MediaLibraryKinds.Shows ? WalkShows(library, fs) : WalkMovies(library, fs);
+            }, cancellationToken);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            var message = ex is DirectoryNotFoundException or MediaNetworkException ? ex.Message : $"Could not read the folder: {ex.Message}";
             await _store.SaveLibraryAsync(library with { LastScanStartedAt = started, LastScanFinishedAt = DateTimeOffset.UtcNow,
-                LastScanError = $"Could not read the folder: {ex.Message}" }, cancellationToken);
+                LastScanError = message }, cancellationToken);
             return;
         }
 
@@ -173,7 +181,9 @@ public sealed partial class MediaScanner : IDisposable
         if (items.Count == 0 && library.ItemCount > 0)
         {
             await _store.SaveLibraryAsync(library with { LastScanStartedAt = started, LastScanFinishedAt = DateTimeOffset.UtcNow,
-                LastScanError = "No video files were found. If this is a network share, check that it is still mounted; the catalog was kept." }, cancellationToken);
+                LastScanError = network
+                    ? "No video files were found. If the other computer is asleep or its sharing changed, fix that and scan again; the catalog was kept."
+                    : "No video files were found. If this is a network share, check that it is still mounted; the catalog was kept." }, cancellationToken);
             return;
         }
 
@@ -187,19 +197,24 @@ public sealed partial class MediaScanner : IDisposable
             LastScanError = null, ItemCount = count }, cancellationToken);
     }
 
+    public static List<MediaItem> WalkMovies(MediaLibrary library) => WalkMovies(library, LocalMediaFileSystem.Instance);
+
+    public static List<MediaItem> WalkShows(MediaLibrary library) => WalkShows(library, LocalMediaFileSystem.Instance);
+
     // Every video file is a movie; the title comes from whichever of the file name and its
     // folder name says more (a year beats no year, and a dedicated folder beats a file).
-    public static List<MediaItem> WalkMovies(MediaLibrary library)
+    public static List<MediaItem> WalkMovies(MediaLibrary library, IMediaFileSystem fs)
     {
-        var root = Path.GetFullPath(library.Path);
+        var root = RootOf(library, fs);
+        var listings = new FolderListings(fs);
         var now = DateTimeOffset.UtcNow;
         var items = new List<MediaItem>();
-        foreach (var (directory, files) in VideoFilesByDirectory(root))
+        foreach (var (directory, files) in VideoFilesByDirectory(listings, root))
         {
             var dedicated = files.Count <= 2 && !PathsEqual(directory, root);
             foreach (var file in files)
             {
-                var stem = Path.GetFileNameWithoutExtension(file);
+                var stem = Path.GetFileNameWithoutExtension(file.Name);
                 var fromFile = MediaNaming.ParseTitle(stem);
                 var parsed = fromFile;
                 if (dedicated)
@@ -214,22 +229,21 @@ public sealed partial class MediaScanner : IDisposable
                     if (folderScore >= fileScore && !(fileExtendsFolder && fromFolder.Year == fromFile.Year))
                         parsed = fromFolder with { Year = fromFolder.Year ?? fromFile.Year };
                 }
-                var info = new FileInfo(file);
                 var item = new MediaItem
                 {
-                    Id = MediaNaming.StableId(library.Id, Path.GetRelativePath(root, file)),
+                    Id = MediaNaming.StableId(library.Id, fs.Relative(root, file.Path)),
                     LibraryId = library.Id,
                     Kind = MediaKinds.Movie,
                     Title = parsed.Title,
                     SortTitle = MediaNaming.SortTitle(parsed.Title),
                     Year = parsed.Year,
-                    Path = file,
-                    FileSize = info.Length,
-                    FileModifiedAt = info.LastWriteTimeUtc,
-                    AddedAt = AddedAtFor(info, library, now)
+                    Path = file.Path,
+                    FileSize = file.Length,
+                    FileModifiedAt = file.ModifiedUtc,
+                    AddedAt = AddedAtFor(file.ModifiedUtc, library, now)
                 };
-                item.PosterLocal = FindArt(directory, dedicated ? PosterNames : [], stem, "-poster");
-                item.BackdropLocal = FindArt(directory, dedicated ? BackdropNames : [], stem, "-backdrop");
+                item.PosterLocal = FindArt(listings, directory, dedicated ? PosterNames : [], stem, "-poster");
+                item.BackdropLocal = FindArt(listings, directory, dedicated ? BackdropNames : [], stem, "-backdrop");
                 items.Add(item);
             }
         }
@@ -237,15 +251,17 @@ public sealed partial class MediaScanner : IDisposable
     }
 
     // Each top-level folder is a show; folders that clean to the same title are one show.
-    public static List<MediaItem> WalkShows(MediaLibrary library)
+    public static List<MediaItem> WalkShows(MediaLibrary library, IMediaFileSystem fs)
     {
-        var root = Path.GetFullPath(library.Path);
+        var root = RootOf(library, fs);
+        var listings = new FolderListings(fs);
         var now = DateTimeOffset.UtcNow;
         var groups = new Dictionary<string, ShowGroup>(StringComparer.Ordinal);
+        var top = listings.Get(root);
 
-        foreach (var directory in Directory.EnumerateDirectories(root).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+        foreach (var directory in top.Where(e => e.IsDirectory).OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
         {
-            var name = Path.GetFileName(directory);
+            var name = directory.Name;
             if (MediaNaming.IsSkippedFolder(name)) continue;
             var parsed = MediaNaming.ParseTitle(name);
             var key = MediaNaming.NormalizeKey(parsed.Title);
@@ -258,12 +274,13 @@ public sealed partial class MediaScanner : IDisposable
                 if (parsed.Year is not null && group.TitleHadYear is false) { group.Title = parsed.Title; group.TitleHadYear = true; }
             }
             group.TitleHadYear |= parsed.Year is not null;
-            group.Folders.Add(directory);
+            group.Folders.Add(directory.Path);
         }
 
-        foreach (var file in Directory.EnumerateFiles(root).Where(MediaNaming.IsVideoFile).Where(f => !MediaNaming.IsSkippedFile(Path.GetFileName(f))))
+        foreach (var file in top.Where(e => !e.IsDirectory && MediaNaming.IsVideoFile(e.Name) && !MediaNaming.IsSkippedFile(e.Name))
+                     .OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
         {
-            var parsed = MediaNaming.ParseTitle(Path.GetFileNameWithoutExtension(file));
+            var parsed = MediaNaming.ParseTitle(Path.GetFileNameWithoutExtension(file.Name));
             var key = MediaNaming.NormalizeKey(parsed.Title);
             if (key.Length == 0) continue;
             if (!groups.TryGetValue(key, out var group)) groups[key] = group = new ShowGroup(parsed.Title, parsed.Year);
@@ -287,25 +304,25 @@ public sealed partial class MediaScanner : IDisposable
             };
             foreach (var folder in group.Folders)
             {
-                show.PosterLocal ??= FindArt(folder, PosterNames, null, null);
-                show.BackdropLocal ??= FindArt(folder, BackdropNames, null, null);
+                show.PosterLocal ??= FindArt(listings, folder, PosterNames, null, null);
+                show.BackdropLocal ??= FindArt(listings, folder, BackdropNames, null, null);
             }
 
             var parsedEpisodes = new List<(MediaItem Item, MediaNaming.ParsedEpisode Parsed)>();
             foreach (var folder in group.Folders)
             {
                 var folderSeason = SeasonInName().Match(Path.GetFileName(folder)) is { Success: true } m ? int.Parse(m.Groups[1].Value) : (int?)null;
-                foreach (var (directory, files) in VideoFilesByDirectory(folder))
+                foreach (var (directory, files) in VideoFilesByDirectory(listings, folder))
                 {
                     var season = folderSeason;
-                    for (var probe = directory; probe is not null && !PathsEqual(probe, folder); probe = Path.GetDirectoryName(probe))
+                    for (var probe = directory; probe is not null && !PathsEqual(probe, folder); probe = fs.Parent(probe))
                     {
                         if (MediaNaming.ParseSeasonFolder(Path.GetFileName(probe)) is { } s) { season = s; break; }
                     }
-                    foreach (var file in files) parsedEpisodes.Add(Episode(library, root, showId, show, file, season, now));
+                    foreach (var file in files) parsedEpisodes.Add(Episode(library, fs, listings, root, showId, show, directory, file, season, now));
                 }
             }
-            foreach (var file in group.LooseFiles) parsedEpisodes.Add(Episode(library, root, showId, show, file, 1, now));
+            foreach (var file in group.LooseFiles) parsedEpisodes.Add(Episode(library, fs, listings, root, showId, show, root, file, 1, now));
             if (parsedEpisodes.Count == 0) continue;
             var episodes = parsedEpisodes.Select(p => p.Item).ToList();
 
@@ -349,18 +366,17 @@ public sealed partial class MediaScanner : IDisposable
     }
 
     private static (MediaItem, MediaNaming.ParsedEpisode) Episode(
-        MediaLibrary library, string root, Guid showId, MediaItem show, string file, int? folderSeason, DateTimeOffset now)
+        MediaLibrary library, IMediaFileSystem fs, FolderListings listings, string root, Guid showId, MediaItem show,
+        string directory, MediaFsEntry file, int? folderSeason, DateTimeOffset now)
     {
-        var stem = Path.GetFileNameWithoutExtension(file);
+        var stem = Path.GetFileNameWithoutExtension(file.Name);
         var parsed = MediaNaming.ParseEpisode(stem, folderSeason);
         var season = parsed.Season ?? folderSeason ?? 1;
         var title = parsed.Title
             ?? (parsed.Episode is { } number ? $"Episode {number}" : MediaNaming.ParseTitle(stem).Title);
-        var info = new FileInfo(file);
-        var directory = Path.GetDirectoryName(file)!;
         return (new MediaItem
         {
-            Id = MediaNaming.StableId(library.Id, Path.GetRelativePath(root, file)),
+            Id = MediaNaming.StableId(library.Id, fs.Relative(root, file.Path)),
             LibraryId = library.Id,
             Kind = MediaKinds.Episode,
             ParentId = showId,
@@ -369,21 +385,26 @@ public sealed partial class MediaScanner : IDisposable
             Year = show.Year,
             SeasonNumber = season,
             EpisodeNumber = parsed.Episode,
-            Path = file,
-            FileSize = info.Length,
-            FileModifiedAt = info.LastWriteTimeUtc,
-            AddedAt = AddedAtFor(info, library, now),
-            ThumbLocal = FindArt(directory, [], stem, "-thumb") ?? FindArt(directory, [], stem, "")
+            Path = file.Path,
+            FileSize = file.Length,
+            FileModifiedAt = file.ModifiedUtc,
+            AddedAt = AddedAtFor(file.ModifiedUtc, library, now),
+            ThumbLocal = FindArt(listings, directory, [], stem, "-thumb") ?? FindArt(listings, directory, [], stem, "")
         }, parsed);
     }
+
+    // A local library's root is made absolute the way it always was, which keeps item ids (a
+    // hash of the path relative to it) stable across this change.
+    private static string RootOf(MediaLibrary library, IMediaFileSystem fs) =>
+        fs is LocalMediaFileSystem ? Path.GetFullPath(library.Path) : library.Path;
 
     // "Recently added" on a library's very first scan would otherwise be every file at once, all
     // stamped with the same second. The file's own date is the better answer then; after that, a
     // file is added when the scanner first sees it, whatever date it was copied with.
-    private static DateTimeOffset AddedAtFor(FileInfo info, MediaLibrary library, DateTimeOffset now)
+    private static DateTimeOffset AddedAtFor(DateTime modifiedUtc, MediaLibrary library, DateTimeOffset now)
     {
         if (library.LastScanFinishedAt is not null) return now;
-        var written = new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero);
+        var written = new DateTimeOffset(DateTime.SpecifyKind(modifiedUtc, DateTimeKind.Utc), TimeSpan.Zero);
         return written < now ? written : now;
     }
 
@@ -393,45 +414,62 @@ public sealed partial class MediaScanner : IDisposable
         public int? Year = year;
         public bool TitleHadYear;
         public readonly List<string> Folders = [];
-        public readonly List<string> LooseFiles = [];
+        public readonly List<MediaFsEntry> LooseFiles = [];
     }
 
-    private static IEnumerable<(string Directory, List<string> Files)> VideoFilesByDirectory(string root)
+    // Each folder is listed once per walk, whatever asks for it: the walk itself, then the
+    // artwork lookups beside each video. On a network share that is the difference between one
+    // round trip per folder and several per file.
+    private sealed class FolderListings(IMediaFileSystem fs)
+    {
+        private readonly Dictionary<string, IReadOnlyList<MediaFsEntry>> _listed = new(StringComparer.Ordinal);
+
+        // The root's own failure is the scan's failure; anything below it is skipped.
+        public IReadOnlyList<MediaFsEntry> Get(string directory) =>
+            _listed.TryGetValue(directory, out var entries) ? entries : _listed[directory] = fs.List(directory);
+
+        public IReadOnlyList<MediaFsEntry> TryGet(string directory)
+        {
+            try { return Get(directory); }
+            catch (UnauthorizedAccessException) { return _listed[directory] = []; }
+            catch (IOException) { return _listed[directory] = []; }
+        }
+    }
+
+    private static IEnumerable<(string Directory, List<MediaFsEntry> Files)> VideoFilesByDirectory(FolderListings listings, string root)
     {
         var pending = new Stack<string>();
         pending.Push(root);
+        var first = true;
         while (pending.Count > 0)
         {
             var directory = pending.Pop();
-            List<string> files;
-            try
-            {
-                foreach (var child in Directory.EnumerateDirectories(directory))
-                    if (!MediaNaming.IsSkippedFolder(Path.GetFileName(child))) pending.Push(child);
-                files = Directory.EnumerateFiles(directory)
-                    .Where(f => MediaNaming.IsVideoFile(f) && !MediaNaming.IsSkippedFile(Path.GetFileName(f)))
-                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-            }
-            catch (UnauthorizedAccessException) { continue; }
-            catch (IOException) { continue; }
+            var entries = first ? listings.Get(directory) : listings.TryGet(directory);
+            first = false;
+            // Pushed in reverse so they pop in name order, the order the old walk visited them in.
+            foreach (var child in entries.Where(e => e.IsDirectory && !MediaNaming.IsSkippedFolder(e.Name))
+                         .OrderByDescending(e => e.Name, StringComparer.OrdinalIgnoreCase))
+                pending.Push(child.Path);
+            var files = entries
+                .Where(e => !e.IsDirectory && MediaNaming.IsVideoFile(e.Name) && !MediaNaming.IsSkippedFile(e.Name))
+                .OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
             if (files.Count > 0) yield return (directory, files);
         }
     }
 
-    private static string? FindArt(string directory, string[] folderNames, string? stem, string? suffix)
+    private static string? FindArt(FolderListings listings, string directory, string[] folderNames, string? stem, string? suffix)
     {
+        var entries = listings.TryGet(directory);
+        if (entries.Count == 0) return null;
+        var byName = new Dictionary<string, MediaFsEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries.Where(e => !e.IsDirectory))
+            byName.TryAdd(entry.Name, entry);
         foreach (var name in folderNames)
-        {
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate)) return candidate;
-        }
+            if (byName.TryGetValue(name, out var found)) return found.Path;
         if (stem is not null && suffix is not null)
             foreach (var extension in new[] { ".jpg", ".jpeg", ".png" })
-            {
-                var candidate = Path.Combine(directory, stem + suffix + extension);
-                if (File.Exists(candidate)) return candidate;
-            }
+                if (byName.TryGetValue(stem + suffix + extension, out var found)) return found.Path;
         return null;
     }
 
@@ -638,7 +676,7 @@ public sealed partial class MediaScanner : IDisposable
             "thumb" => (item.ThumbLocal, item.ThumbRemote, "w500"),
             _ => (null, null, "w500")
         };
-        if (local is not null && File.Exists(local)) return local;
+        if (local is not null && _files.FileExists(local)) return local;
         if (remote is null) return null;
         var cached = _art.PathFor(item.Id, kind);
         if (File.Exists(cached)) return cached;
@@ -682,14 +720,14 @@ public sealed partial class MediaScanner : IDisposable
 
     public async Task ProbeItemAsync(MediaItem item, CancellationToken cancellationToken)
     {
-        if (!File.Exists(item.Path))
+        if (!await Task.Run(() => _files.FileExists(item.Path), cancellationToken))
         {
             item.ProbedAt = DateTimeOffset.UtcNow;
             item.ProbeError = "The file is missing.";
         }
         else
         {
-            await MediaProbe.ProbeAsync(item, _ffprobePath, _logger, cancellationToken);
+            await MediaProbe.ProbeAsync(item, _files, _ffprobePath, _logger, cancellationToken);
         }
         await _store.UpdateProbeAsync(item, cancellationToken);
     }

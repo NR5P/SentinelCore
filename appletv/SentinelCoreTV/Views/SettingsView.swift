@@ -2,14 +2,32 @@ import SwiftUI
 
 // Simplified tvOS port of ios/SentinelCore/Views/SettingsView.swift - camera/account admin and
 // the change-password sheet are dropped (management stays on iOS/macOS/web, where typing and
-// fine-grained editing are practical); server address, sign-in status, push registration, and a
-// connection log remain.
+// fine-grained editing are practical); server address, sign-in status, the movie libraries,
+// push registration, and a connection log remain.
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var address = ""
     @State private var showingDiagnostics = false
 
     var body: some View {
+        #if DEBUG
+        // Simulator testing without a remote: `-debugSection settings -debugSettingsPage
+        // mediaLibraries` (or `folderPicker`) shows that screen in place of Settings.
+        if let page = UserDefaults.standard.string(forKey: "debugSettingsPage") {
+            if page == "folderPicker" {
+                MediaFolderPickerView(startPath: "") { _ in }
+            } else {
+                MediaLibrariesAdminView()
+            }
+        } else {
+            settingsForm
+        }
+        #else
+        settingsForm
+        #endif
+    }
+
+    private var settingsForm: some View {
         Form {
             Section("Server") {
                 TextField("Dashboard address", text: $address)
@@ -54,6 +72,17 @@ struct SettingsView: View {
                 LabeledContent("Motion only", value: "\(model.activity.filter { !$0.isAnalyzed && !$0.isRecording }.count)")
                 if let lastError = model.lastError {
                     Text(lastError).foregroundStyle(SentinelTheme.red)
+                }
+            }
+
+            // The one piece of server management kept on the TV: the movie folders, since this is
+            // where the family watches them. Typing goes through the system keyboard (or the
+            // iPhone's Apple TV Remote keyboard).
+            if model.isAdmin {
+                Section("Movies & TV") {
+                    NavigationLink("Movies & TV Libraries") {
+                        MediaLibrariesAdminView()
+                    }
                 }
             }
 
@@ -141,3 +170,4 @@ struct SettingsView: View {
         return withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme
     }
 }
+

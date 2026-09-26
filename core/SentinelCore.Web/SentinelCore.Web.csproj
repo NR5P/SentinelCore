@@ -20,6 +20,7 @@
          the mobile apps can find it on the LAN instead of the user typing an IP address. -->
     <PackageReference Include="Makaretu.Dns.Multicast.New" Version="0.38.0" />
     <PackageReference Include="QuestPDF" Version="2026.7.2" />
+    <PackageReference Include="SMBLibrary" Version="1.5.8.1" />
     <!-- SFTP delivery for the nightly auto export (AutoExport.cs), so a backup can reach another
          computer without that computer's share being mounted here first. -->
     <PackageReference Include="SSH.NET" Version="2026.0.0" />

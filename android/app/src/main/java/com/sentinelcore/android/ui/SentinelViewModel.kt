@@ -8,6 +8,13 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import com.sentinelcore.android.data.MediaApi
+import com.sentinelcore.android.data.MediaBrowseListing
+import com.sentinelcore.android.data.MediaDiscoveredComputer
+import com.sentinelcore.android.data.MediaLibrary
+import com.sentinelcore.android.data.MediaLibraryInput
+import com.sentinelcore.android.data.MediaNetworkComputer
+import com.sentinelcore.android.data.MediaNetworkSignInInput
+import com.sentinelcore.android.data.MediaNetworkSignInResult
 import com.sentinelcore.android.data.MediaHome
 import com.sentinelcore.android.data.MediaItemDetail
 import com.sentinelcore.android.data.MediaItemsPage
@@ -744,6 +751,28 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun setMediaSeasonWatched(showId: String, season: Int, watched: Boolean) =
         repository.setMediaSeasonWatched(showId, season, watched)
+
+    // Library admin - Settings -> Movies & TV libraries.
+    suspend fun mediaLibraries(): List<MediaLibrary> = repository.mediaLibraries()
+
+    suspend fun saveMediaLibrary(id: String?, input: MediaLibraryInput): MediaLibrary = repository.saveMediaLibrary(id, input)
+
+    suspend fun deleteMediaLibrary(id: String) = repository.deleteMediaLibrary(id)
+
+    suspend fun scanMediaLibrary(id: String) = repository.scanMediaLibrary(id)
+
+    suspend fun scanAllMedia() = repository.scanAllMedia()
+
+    suspend fun mediaBrowse(path: String?): MediaBrowseListing = repository.mediaBrowse(path)
+
+    suspend fun mediaNetworkComputers(): List<MediaNetworkComputer> = repository.mediaNetworkComputers()
+
+    suspend fun saveMediaNetworkComputer(id: String?, input: MediaNetworkSignInInput): MediaNetworkSignInResult =
+        repository.saveMediaNetworkComputer(id, input)
+
+    suspend fun deleteMediaNetworkComputer(id: String) = repository.deleteMediaNetworkComputer(id)
+
+    suspend fun discoverMediaNetworkComputers(): List<MediaDiscoveredComputer> = repository.discoverMediaNetworkComputers()
 
     // A live tile was dragged onto another one. Applied on screen immediately and saved in the
     // background: the arrangement is what the person just asked for, and a round trip to the

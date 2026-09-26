@@ -82,6 +82,10 @@ SixLabors.ImageSharp             Six Labors Split License, used under its Apache
 QuestPDF                         Dual-licensed; used under the Community License.
                                  https://www.questpdf.com/license
 
+SMBLibrary                       LGPL-3.0-or-later. Used unmodified as the separate
+                                 SMBLibrary.dll, which may be replaced with any compatible
+                                 build. Source: https://github.com/TalAloni/SMBLibrary
+
 
 -------------------------------------------------------------------------------
 HomeKit bridge (Node.js sidecar)
