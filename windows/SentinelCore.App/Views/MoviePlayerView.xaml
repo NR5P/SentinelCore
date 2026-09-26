@@ -1,0 +1,11 @@
+<UserControl x:Class="SentinelCore.App.Views.MoviePlayerView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:live="clr-namespace:SentinelCore.App.Live">
+
+    <!-- Full bleed: the page inside draws the title, the close button and every control, because
+         nothing WPF draws can sit on top of WebView2. -->
+    <Grid Background="Black">
+        <live:PlayerHost x:Name="Player" />
+    </Grid>
+</UserControl>

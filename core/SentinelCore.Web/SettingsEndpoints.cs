@@ -53,7 +53,8 @@ public sealed record SettingsSnapshot(
     // deserializes - the same rule the properties above it follow.
     ScheduledRecordingSettingsDto? ScheduledRecording = null,
     OrganizerSettingsDto? Organizer = null,
-    AutoExportSettingsDto? AutoExport = null);
+    AutoExportSettingsDto? AutoExport = null,
+    MediaSettingsDto? Media = null);
 
 public static class SettingsEndpoints
 {
@@ -172,6 +173,12 @@ public static class SettingsEndpoints
 
         settings.MapPut("/organizer", async (OrganizerSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, OrganizerSettingsDto.SectionName, ct));
+
+        settings.MapPut("/media", async (MediaSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            dto.TmdbApiKey = dto.TmdbApiKey?.Trim() ?? string.Empty;
+            return await SaveSectionAsync(dto, appSettings, MediaSettingsDto.SectionName, ct);
+        });
 
         settings.MapPut("/auto-export", async (AutoExportSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
         {
@@ -533,7 +540,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<ScheduledRecordingSettingsDto>(
             ScheduledRecordingOptions.SectionName, cancellationToken),
         await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken),
-        await settings.GetSectionAsync<AutoExportSettingsDto>(AutoExportSettingsDto.SectionName, cancellationToken));
+        await settings.GetSectionAsync<AutoExportSettingsDto>(AutoExportSettingsDto.SectionName, cancellationToken),
+        await settings.GetSectionAsync<MediaSettingsDto>(MediaSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -580,6 +588,7 @@ public static class SettingsEndpoints
         ScheduledRecording = snapshot.ScheduledRecording ?? new(),
         Organizer = snapshot.Organizer ?? new(),
         AutoExport = snapshot.AutoExport ?? new(),
+        Media = snapshot.Media ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -660,6 +669,7 @@ public static class SettingsEndpoints
         if (snapshot.ScheduledRecording is not null) await settings.MergeSectionAsync(ScheduledRecordingOptions.SectionName, snapshot.ScheduledRecording, cancellationToken);
         if (snapshot.Organizer is not null) await settings.MergeSectionAsync(OrganizerSettingsDto.SectionName, snapshot.Organizer, cancellationToken);
         if (snapshot.AutoExport is not null) await MergeUnmaskedAsync(snapshot.AutoExport, AutoExportSettingsDto.SectionName, settings, cancellationToken);
+        if (snapshot.Media is not null) await MergeUnmaskedAsync(snapshot.Media, MediaSettingsDto.SectionName, settings, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

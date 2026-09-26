@@ -77,6 +77,10 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
   knows the person's own space.
 
 **Other**
+- Movies & TV (when switched on server-side): the family media library - Continue Watching and
+  recently added shelves, poster grids with sort/genre/unwatched filters, search, detail pages
+  with seasons and episodes, and playback with resume and progress synced to every device
+  (full-screen AVPlayerViewController on iOS, a sheet on the Mac). See `core/docs/MOVIES.md`.
 - Device Hub: lights, gates, locks and sensors over MQTT, with a full-screen wall display of big
   tap-to-switch tiles for an iPad mounted on a wall (remembered, so the app reopens onto it).
 - Admin screens: cameras and trigger zones, accounts, known faces and vehicles, schedules,

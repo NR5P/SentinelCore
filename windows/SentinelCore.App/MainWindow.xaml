@@ -27,12 +27,12 @@
 
         <Grid x:Name="MainState" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="216" />
+                <ColumnDefinition x:Name="SidebarColumn" Width="216" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
             <!-- Sidebar -->
-            <Border Grid.Column="0" Background="{StaticResource SidebarBackground}"
+            <Border x:Name="Sidebar" Grid.Column="0" Background="{StaticResource SidebarBackground}"
                     BorderBrush="{StaticResource CardBorder}" BorderThickness="0,0,1,0">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="16,18,16,18">

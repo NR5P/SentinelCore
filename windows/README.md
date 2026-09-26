@@ -58,6 +58,12 @@ worth handing to someone who should not have to install a runtime first.
   the full-size view with PTZ. The record button (on both the tile and the full-size view) files a
   trigger with a short look-back clip and starts recording until pressed again, or until the limit
   in Settings → Scheduled Recording stops it.
+- **Movies** — the family film and TV library the server scans (shown only while Movies & TV is on
+  in the server's settings): Home shelves, Movies and TV Shows grids with search, sort, genre and
+  unwatched filters, a detail page with Resume / Start over and season episode lists, and a
+  full-window player in WebView2 (`Live/movie.html`: direct MP4 or HLS through hls.js, subtitles,
+  "Up next" for the next episode). Progress is saved to the server, so it resumes on any device.
+  The API is [`core/docs/MOVIES.md`](../core/docs/MOVIES.md).
 - **This PC as a camera** — the PC's webcam becomes one of the dashboard's cameras (Settings → Cameras, or the
   button at the top of Live). The dashboard's own publish page runs in WebView2 with this session's cookie, and
   the app holds the PC out of sleep while it streams and resumes on the next launch. See

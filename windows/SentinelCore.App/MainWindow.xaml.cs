@@ -31,6 +31,7 @@ public partial class MainWindow : Window, INavigator
     private EventsView? _events;
     private TimelineView? _timeline;
     private LiveView? _live;
+    private MoviesView? _movies;
     private DeviceHubView? _devices;
     private OrganizerView? _organizerView;
     private SettingsView? _settings;
@@ -87,6 +88,7 @@ public partial class MainWindow : Window, INavigator
         Events,
         Timeline,
         Live,
+        Movies,
         Organizer,
         Devices,
         Settings,
@@ -100,6 +102,9 @@ public partial class MainWindow : Window, INavigator
             new(AppSection.Timeline, "Timeline", ""),
             new(AppSection.Live, "Live", ""),
         };
+
+        // Movies & TV is switched on server-side, like the Device Hub, and only exists while it is.
+        if (_model.MoviesEnabled) sections.Add(new SectionItem(AppSection.Movies, "Movies", ""));
 
         // The Organizer is on by default but can be switched off server-side; what the server said
         // last is remembered, so it's there offline too.
@@ -130,6 +135,7 @@ public partial class MainWindow : Window, INavigator
             AppSection.Events => _events ??= new EventsView(_model, this),
             AppSection.Timeline => _timeline ??= new TimelineView(_model),
             AppSection.Live => _live ??= NewLiveView(),
+            AppSection.Movies => _movies ??= new MoviesView(_model, this),
             AppSection.Devices => _devices ??= NewDeviceHubView(),
             AppSection.Organizer when _organizer is not null => _organizerView ??= new OrganizerView(_organizer),
             _ => _settings ??= new SettingsView(_model, _organizer),
@@ -161,6 +167,7 @@ public partial class MainWindow : Window, INavigator
                 ResumeDeviceCamera();
                 break;
             case nameof(AppModel.DeviceHubEnabled):
+            case nameof(AppModel.MoviesEnabled):
                 BuildSections();
                 break;
             case nameof(AppModel.CompatibilityAdvisory):
@@ -207,7 +214,7 @@ public partial class MainWindow : Window, INavigator
         // Advisory, never blocking - the app works normally behind it. Amber rather than red for
         // that reason: this is "you'll want to update the server soon", not "something is broken".
         var advisory = _model.CompatibilityAdvisory;
-        VersionBanner.Visibility = advisory is null ? Visibility.Collapsed : Visibility.Visible;
+        VersionBanner.Visibility = advisory is null || _immersive ? Visibility.Collapsed : Visibility.Visible;
         VersionBannerText.Text = advisory ?? "";
 
         // Which of the two addresses is carrying this session, and whether encryption was dropped
@@ -296,6 +303,39 @@ public partial class MainWindow : Window, INavigator
     }
 
     private void OnBackClicked(object sender, RoutedEventArgs e) => Pop();
+
+    // Whether the view on top has the whole window (the movie player), and, while it is also full
+    // screen, how the window looked before so it can be put back exactly.
+    private bool _immersive;
+    private (WindowStyle Style, WindowState State, ResizeMode Resize)? _windowed;
+
+    public void SetImmersive(bool immersive, bool fullScreen = false)
+    {
+        _immersive = immersive;
+        Sidebar.Visibility = immersive ? Visibility.Collapsed : Visibility.Visible;
+        SidebarColumn.Width = immersive ? new GridLength(0) : new GridLength(216);
+        BackBar.Visibility = !immersive && _stack.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ApplyBanner();
+
+        if (immersive && fullScreen)
+        {
+            if (_windowed is not null) return;
+            _windowed = (WindowStyle, WindowState, ResizeMode);
+            // Normal first: a window that is already maximised does not re-cover the taskbar when
+            // only its style changes.
+            WindowState = WindowState.Normal;
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize;
+            WindowState = WindowState.Maximized;
+        }
+        else if (_windowed is { } saved)
+        {
+            _windowed = null;
+            WindowStyle = saved.Style;
+            ResizeMode = saved.Resize;
+            WindowState = saved.State;
+        }
+    }
 
     protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
     {

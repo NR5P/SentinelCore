@@ -1,0 +1,45 @@
+<UserControl x:Class="SentinelCore.App.Views.MovieDetailView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:design="clr-namespace:SentinelCore.App.Design">
+
+    <DockPanel>
+        <TextBlock x:Name="NoticeText" DockPanel.Dock="Bottom" Style="{StaticResource Caption}"
+                   Margin="28,8,28,10" Visibility="Collapsed" />
+
+        <Grid>
+            <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid>
+                    <!-- The backdrop fades into the window, so the page reads as one surface rather
+                         than a picture with a list stuck underneath. -->
+                    <Grid Height="400" VerticalAlignment="Top" IsHitTestVisible="False">
+                        <design:RemoteImage x:Name="BackdropImage" DecodeWidth="1600" Stretch="UniformToFill"
+                                            VerticalAlignment="Center" Opacity="0.55" />
+                        <Rectangle>
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#4014181C" Offset="0" />
+                                    <GradientStop Color="#9014181C" Offset="0.55" />
+                                    <GradientStop Color="#FF14181C" Offset="1" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <Rectangle>
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                    <GradientStop Color="#C014181C" Offset="0" />
+                                    <GradientStop Color="#0014181C" Offset="0.7" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                    </Grid>
+
+                    <StackPanel x:Name="ContentHost" Margin="28,120,28,24" />
+                </Grid>
+            </ScrollViewer>
+
+            <TextBlock x:Name="LoadingText" Text="Loading…" Style="{StaticResource Caption}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Grid>
+    </DockPanel>
+</UserControl>

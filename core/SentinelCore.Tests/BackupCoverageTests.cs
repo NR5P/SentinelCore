@@ -76,6 +76,8 @@ public sealed class BackupCoverageTests : IDisposable
             ["AutomationRules"] = "Hub.AutomationRules",
             ["Schedules"] = "Hub.Schedules",
             ["Automations"] = "OrganizerAutomations",
+            ["MediaLibraries"] = "Media.Libraries",
+            ["MediaProgress"] = "Media.Progress",
         };
 
         // Excluded on purpose, each for a reason recorded in BackupEndpoints:
@@ -93,6 +95,8 @@ public sealed class BackupCoverageTests : IDisposable
             ["Removals"] = "the organizer's sync log; a restored server tells devices to resync instead",
             ["Runs"] = "a board automation's run log; history",
             ["DueFired"] = "which due cards a board automation has already fired for; runtime memory",
+            ["MediaItems"] = "the movie catalog; a rescan of the library folders rebuilds it with the same ids",
+            ["MediaState"] = "the media scanner's runtime memory",
         };
 
         var root = RepositoryCoreDirectory();

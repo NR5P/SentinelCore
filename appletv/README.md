@@ -46,6 +46,10 @@ server deliberately never sends it the silent Organizer pushes.
 - AI-verified alert feed (`/api/events`) with a notified-only filter and a live-updating poll
 - Motion trigger history with snapshot/clip playback
 - Full-screen "AI Verified Alert" takeover, auto-starting the live feed for the alerted camera
+- Movies & TV (when switched on server-side), laid out like the Apple TV app: a featured hero,
+  Continue Watching and recently added shelves, poster grids, search, full-screen detail pages
+  with seasons and episodes, and the system player (info panel, subtitle menu, Match Content)
+  with resume, progress reporting and automatic next episode. See `core/docs/MOVIES.md`.
 - The Organizer, mostly for viewing: calendar, reminders (which can be checked off), notes and
   boards, synced with the other apps through the shared `OrganizerKit` engine
 - Optional dashboard username/password login, persisted across restarts (see below)

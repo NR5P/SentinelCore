@@ -24,7 +24,8 @@ struct SettingsView: View {
                     NavigationLink {
                         TabBarEditor(visible: AppSection.visibleCases(
                             deviceHubEnabled: model.deviceHubEnabled,
-                            organizerEnabled: model.organizer.status?.enabled ?? model.organizerLastKnownEnabled))
+                            organizerEnabled: model.organizer.status?.enabled ?? model.organizerLastKnownEnabled,
+                            moviesEnabled: model.moviesEnabled))
                     } label: {
                         Label("Customize Tab Bar", systemImage: "square.grid.2x2")
                     }

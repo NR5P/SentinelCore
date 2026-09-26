@@ -4,7 +4,16 @@ import android.Manifest
 import android.app.Application
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.media.MediaCodecList
+import android.media.MediaFormat
 import android.os.Build
+import com.sentinelcore.android.data.MediaApi
+import com.sentinelcore.android.data.MediaHome
+import com.sentinelcore.android.data.MediaItemDetail
+import com.sentinelcore.android.data.MediaItemsPage
+import com.sentinelcore.android.data.MediaPlayback
+import com.sentinelcore.android.data.MediaProgress
+import com.sentinelcore.android.data.MediaStatus
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -131,6 +140,9 @@ data class SentinelUiState(
     // Whether the server has the Device Hub switched on - drives whether its bottom-bar
     // destination exists at all.
     val deviceHubEnabled: Boolean = false,
+    // Whether the server has Movies & TV switched on - the MOVIES tab exists only then. Starts
+    // from what the server said last time, like organizerEnabled.
+    val moviesEnabled: Boolean = false,
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
     // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
@@ -199,6 +211,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             remoteServerUrl = preferences.getString(REMOTE_SERVER_URL_KEY, "").orEmpty(),
             pushRegistrationEnabled = preferences.getBoolean(PUSH_ENABLED_KEY, false),
             organizerEnabled = OrganizerDevice.lastKnownEnabled(application),
+            moviesEnabled = preferences.getBoolean(MOVIES_ENABLED_KEY, false),
         ),
     )
 
@@ -489,6 +502,12 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                         .onSuccess { value -> _state.update { it.copy(deviceHubEnabled = value) } }
                         .onFailure { _state.update { it.copy(deviceHubEnabled = false) } }
                 },
+                // Same treatment: a 404 from a server older than Movies & TV means "off".
+                viewModelScope.async {
+                    runCatching { repository.mediaEnabled() }
+                        .onSuccess(::setMoviesEnabled)
+                        .onFailure { setMoviesEnabled(false) }
+                },
                 // Same treatment, opposite default - see SentinelUiState.isLicensed.
                 viewModelScope.async {
                     runCatching { repository.licenseValid() }
@@ -617,6 +636,67 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     fun absoluteUrl(path: String): String? = repository.absoluteUrl(path)
 
     fun mediaHeaders(): Map<String, String> = repository.mediaHeaders()
+
+    // ---------------- Movies & TV ----------------
+
+    private fun setMoviesEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(MOVIES_ENABLED_KEY, enabled).apply()
+        _state.update { it.copy(moviesEnabled = enabled) }
+    }
+
+    // What this phone can decode, asked of MediaCodecList once: the contract's Android lists
+    // minus HEVC / AC-3 / E-AC-3 when there is no decoder for them, so the server converts
+    // rather than sending a stream that plays silent or black.
+    private val mediaCodecs: Pair<String, String> by lazy {
+        runCatching {
+            val decoders = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filterNot { it.isEncoder }
+            fun has(mime: String) = decoders.any { info -> info.supportedTypes.any { it.equals(mime, ignoreCase = true) } }
+            MediaApi.mediaCodecs(
+                hasHevc = has(MediaFormat.MIMETYPE_VIDEO_HEVC),
+                hasAc3 = has(MediaFormat.MIMETYPE_AUDIO_AC3),
+                hasEac3 = has(MediaFormat.MIMETYPE_AUDIO_EAC3),
+            )
+        }.getOrDefault(MediaApi.VIDEO_CODECS to MediaApi.AUDIO_CODECS)
+    }
+
+    suspend fun loadImage(path: String, maxWidth: Int): Bitmap? = repository.loadImage(path, maxWidth)
+
+    suspend fun mediaStatus(): MediaStatus = repository.mediaStatus()
+
+    suspend fun mediaHome(): MediaHome = repository.mediaHome()
+
+    suspend fun mediaItems(
+        kind: String?,
+        query: String?,
+        genre: String?,
+        sort: String,
+        order: String,
+        unwatched: Boolean,
+        offset: Int,
+        limit: Int = MediaApi.PAGE_SIZE,
+    ): MediaItemsPage = repository.mediaItems(kind, query, genre, sort, order, unwatched, offset, limit)
+
+    suspend fun mediaItem(id: String): MediaItemDetail = repository.mediaItem(id)
+
+    suspend fun mediaPlayback(id: String, start: Double?): MediaPlayback =
+        repository.mediaPlayback(id, start, mediaCodecs.first, mediaCodecs.second)
+
+    suspend fun reportMediaProgress(id: String, positionSeconds: Double, durationSeconds: Double?): MediaProgress? =
+        repository.reportMediaProgress(id, positionSeconds, durationSeconds)
+
+    // Fire and forget, on this ViewModel's scope rather than the player's, so the report made as
+    // the player closes still reaches the server after the player's own scope is gone.
+    fun reportMediaProgressInBackground(id: String, positionSeconds: Double, durationSeconds: Double?) {
+        viewModelScope.launch {
+            runCatching { repository.reportMediaProgress(id, positionSeconds, durationSeconds) }
+                .onFailure { log("Could not save playback progress: ${readableError(it)}", DiagnosticLevel.NOTICE) }
+        }
+    }
+
+    suspend fun setMediaWatched(id: String, watched: Boolean): MediaProgress? = repository.setMediaWatched(id, watched)
+
+    suspend fun setMediaSeasonWatched(showId: String, season: Int, watched: Boolean) =
+        repository.setMediaSeasonWatched(showId, season, watched)
 
     // A live tile was dragged onto another one. Applied on screen immediately and saved in the
     // background: the arrangement is what the person just asked for, and a round trip to the
@@ -1314,6 +1394,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         const val SERVER_URL_KEY = "server_url"
         const val REMOTE_SERVER_URL_KEY = "remote_server_url"
         private const val PUSH_ENABLED_KEY = "push_registration_enabled"
+        private const val MOVIES_ENABLED_KEY = "movies_enabled_last_known"
         private const val ADVANCED_SETTINGS_KEY = "settings_show_advanced"
     }
 }

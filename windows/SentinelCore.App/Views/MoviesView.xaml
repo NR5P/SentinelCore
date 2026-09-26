@@ -1,0 +1,59 @@
+<UserControl x:Class="SentinelCore.App.Views.MoviesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <DockPanel Margin="20,16,20,0">
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Movies" Style="{StaticResource SectionTitle}" />
+                <TextBlock x:Name="StatusText" Style="{StaticResource Caption}" Text="Loading the library…" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="HomeTab" Content="Home" Click="OnTabClicked" Tag="home" />
+                <Button x:Name="MoviesTab" Content="Movies" Margin="6,0,0,0" Click="OnTabClicked" Tag="movie" />
+                <Button x:Name="ShowsTab" Content="TV Shows" Margin="6,0,0,0" Click="OnTabClicked" Tag="show" />
+                <TextBox x:Name="SearchBox" Width="220" Margin="14,0,0,0" TextChanged="OnSearchChanged"
+                         ToolTip="Search titles" />
+                <Button Margin="8,0,0,0" Padding="10,6" Click="OnRefreshClicked" ToolTip="Refresh now">
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- Sort and filter, for the Movies and TV Shows grids (and search results). -->
+        <StackPanel x:Name="FilterBar" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,14"
+                    Visibility="Collapsed">
+            <TextBlock Text="Sort" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <ComboBox x:Name="SortPicker" Width="150" SelectionChanged="OnSortChanged" />
+            <Button x:Name="OrderButton" Margin="6,0,0,0" Padding="10,6" Click="OnOrderClicked"
+                    ToolTip="Ascending or descending" />
+            <TextBlock Text="Genre" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="16,0,8,0" />
+            <ComboBox x:Name="GenrePicker" Width="170" SelectionChanged="OnGenreChanged" />
+            <CheckBox x:Name="UnwatchedBox" Content="Unwatched only" Margin="16,0,0,0"
+                      Checked="OnUnwatchedChanged" Unchecked="OnUnwatchedChanged" />
+            <TextBlock x:Name="CountText" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="16,0,0,0" />
+        </StackPanel>
+
+        <TextBlock x:Name="NoticeText" DockPanel.Dock="Bottom" Style="{StaticResource Caption}"
+                   Margin="0,8,0,10" Visibility="Collapsed" />
+
+        <Grid>
+            <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="ContentHost" Margin="0,0,0,16" />
+            </ScrollViewer>
+
+            <StackPanel x:Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center"
+                        Visibility="Collapsed" MaxWidth="420">
+                <TextBlock x:Name="EmptyTitle" FontSize="16" HorizontalAlignment="Center"
+                           Foreground="{StaticResource SecondaryText}" />
+                <TextBlock x:Name="EmptyMessage" Style="{StaticResource Caption}" TextAlignment="Center" Margin="0,8,0,0" />
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</UserControl>

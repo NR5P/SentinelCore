@@ -234,6 +234,16 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         private set => SetProperty(ref _deviceHubEnabled, value);
     }
 
+    // Whether the server has Movies & TV switched on. Same role as DeviceHubEnabled: the section
+    // exists only while this is true.
+    private bool _moviesEnabled;
+
+    public bool MoviesEnabled
+    {
+        get => _moviesEnabled;
+        private set => SetProperty(ref _moviesEnabled, value);
+    }
+
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
     // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
@@ -705,6 +715,16 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             {
                 Post(Devices.Clear);
             }
+
+            // Same treatment as the Device Hub: the endpoint answers even when the section is off,
+            // and a 404 from a server older than the feature means the same thing - no Movies tab,
+            // not a failed connection.
+            try
+            {
+                MoviesEnabled = (await Client.MediaEnabledAsync(ct).ConfigureAwait(false)).Enabled;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { MoviesEnabled = false; }
 
             // Same treatment, opposite default - see IsLicensed.
             try

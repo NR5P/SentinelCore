@@ -61,6 +61,10 @@ public sealed record BackupDocument(
     // Added in schema 5: board automations (scheduled cards and card rules). They live in their
     // own file on the server and no device holds a copy, so this is their only way back.
     IReadOnlyList<OrganizerAutomation>? OrganizerAutomations = null,
+    // Added in schema 6: the Movies & TV libraries and everyone's watched state. The catalog
+    // itself (MediaItems) is left out because a rescan of the same folders rebuilds it with the
+    // same ids, and the artwork cache is refetched from TMDB.
+    MediaBackup? Media = null,
     // What couldn't be included when this file was written, in words - e.g. the main app wasn't
     // running. Informational; restore ignores it.
     IReadOnlyList<string>? Warnings = null);

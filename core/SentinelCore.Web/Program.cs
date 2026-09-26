@@ -218,6 +218,21 @@ builder.Services.AddSingleton(new OrganizerBlobStore(camerasRoot));
 builder.Services.AddSingleton(sp => new OrganizerPushNudger(
     sp.GetRequiredService<AppSettingsFile>(), sp.GetRequiredService<PushNotificationDispatcher>(), sp.GetRequiredService<ILogger<OrganizerPushNudger>>()));
 builder.Services.AddHostedService<OrganizerBlobSweepWorker>();
+// Movies & TV - the family media library behind the Movies tab (MediaEndpoints, core/docs/MOVIES.md).
+// Artwork fetched from TMDB and extracted subtitles are caches beside media.db; HLS sessions get
+// their own folder, wiped at startup because no session survives a restart.
+builder.Services.AddSingleton<IMediaStore>(new SqliteMediaStore(camerasRoot));
+builder.Services.AddSingleton(new MediaArtCache(Path.Combine(camerasRoot, "media-art"), Path.Combine(camerasRoot, "media-subs")));
+builder.Services.AddHttpClient(TmdbClient.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (+https://github.com/)");
+});
+builder.Services.AddSingleton<TmdbClient>();
+builder.Services.AddSingleton<MediaScanner>();
+builder.Services.AddSingleton(sp => new MediaHlsManager(
+    sp.GetRequiredService<IConfiguration>(), camerasRoot, sp.GetRequiredService<ILogger<MediaHlsManager>>()));
+builder.Services.AddHostedService<MediaScanWorker>();
 
 // Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
 // the data directory rather than /tmp - a bundle with everyone's attachments can be gigabytes.
@@ -503,6 +518,7 @@ app.MapCertificateAuthorityEndpoints();
 app.MapCameraGroupEndpoints();
 app.MapLiveOrderEndpoints();
 app.MapOrganizerEndpoints();
+app.MapMediaEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();

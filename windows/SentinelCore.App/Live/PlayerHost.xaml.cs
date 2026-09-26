@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
 using SentinelCore.Client;
+using SentinelCore.Client.Models;
 using SentinelCore.Client.Networking;
 
 namespace SentinelCore.App.Live;
@@ -31,6 +32,10 @@ public partial class PlayerHost : UserControl
     // Any path that cannot collide with a real endpoint. It is answered locally and never reaches
     // the server.
     private const string PlayerPath = "/__sentinel-player.html";
+
+    // The movie page, answered the same way. A page of its own rather than a mode of player.html:
+    // the live ladder and a feature-length player share nothing but the video element.
+    private const string MoviePath = "/__sentinel-movie.html";
 
     private const string RuntimeDownloadUrl = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
@@ -96,6 +101,7 @@ public partial class PlayerHost : UserControl
         _model = model;
         _cameraId = cameraId;
         _stopped = false;
+        _moviePage = false;
 
         if (!await EnsureInitializedAsync()) return;
         if (_stopped) return;
@@ -135,6 +141,7 @@ public partial class PlayerHost : UserControl
         _model = model;
         _cameraId = Guid.Empty;
         _stopped = false;
+        _moviePage = false;
 
         if (!await EnsureInitializedAsync()) return;
         if (_stopped) return;
@@ -342,8 +349,11 @@ public partial class PlayerHost : UserControl
         // server. Filtered on the path across every origin rather than on one baked-in address,
         // since the origin can change under a player that is already initialised.
         core.AddWebResourceRequestedFilter($"*{PlayerPath}*", CoreWebView2WebResourceContext.Document);
+        core.AddWebResourceRequestedFilter($"*{MoviePath}*", CoreWebView2WebResourceContext.Document);
         core.WebResourceRequested += OnWebResourceRequested;
         core.WebMessageReceived += OnWebMessageReceived;
+        core.ContainsFullScreenElementChanged += (_, _) =>
+            FullScreenChanged?.Invoke(core.ContainsFullScreenElement);
         core.NavigationCompleted += (_, _) =>
         {
             if (_stopped) return;
@@ -371,9 +381,11 @@ public partial class PlayerHost : UserControl
     {
         if (Web.CoreWebView2 is not { } core) return;
         if (!Uri.TryCreate(args.Request.Uri, UriKind.Absolute, out var requested)) return;
-        if (!requested.AbsolutePath.Equals(PlayerPath, StringComparison.OrdinalIgnoreCase)) return;
+        string html;
+        if (requested.AbsolutePath.Equals(PlayerPath, StringComparison.OrdinalIgnoreCase)) html = PlayerHtml.Value;
+        else if (requested.AbsolutePath.Equals(MoviePath, StringComparison.OrdinalIgnoreCase)) html = MovieHtml.Value;
+        else return;
 
-        var html = PlayerHtml.Value;
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(html));
         args.Response = core.Environment.CreateWebResourceResponse(
             stream,
@@ -434,6 +446,13 @@ public partial class PlayerHost : UserControl
             using var document = JsonDocument.Parse(args.WebMessageAsJson);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return;
+
+            if (root.TryGetProperty("type", out var typeValue) && typeValue.GetString() is { Length: > 0 } type)
+            {
+                if (_moviePage && !_stopped) OnMovieMessage(root, type);
+                return;
+            }
+
             var kindName = root.TryGetProperty("kind", out var kindValue) ? kindValue.GetString() : null;
 
             switch (kindName)
@@ -547,14 +566,139 @@ public partial class PlayerHost : UserControl
         }
     }
 
-    private static readonly Lazy<string> PlayerHtml = new(() =>
+    private static readonly Lazy<string> PlayerHtml = new(() => EmbeddedPage("player.html"));
+
+    private static readonly Lazy<string> MovieHtml = new(() => EmbeddedPage("movie.html"));
+
+    // Matched on ".<name>" so "movie.html" can never pick up "player.html" or the other way round,
+    // whatever folder prefix the build gives the resource name.
+    private static string EmbeddedPage(string fileName)
     {
         var assembly = Assembly.GetExecutingAssembly();
         var name = assembly.GetManifestResourceNames()
-            .FirstOrDefault(resource => resource.EndsWith("player.html", StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(resource => resource.EndsWith("." + fileName, StringComparison.OrdinalIgnoreCase));
         if (name is null) return "<html><body style=\"background:#000\"></body></html>";
         using var stream = assembly.GetManifestResourceStream(name)!;
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
-    });
+    }
+
+    // ---------------------------------------------------------------- Movies
+
+    /// <summary>The movie page reported where its player is, about once a second. No request is made.</summary>
+    public event Action<double>? MovieTime;
+
+    /// <summary>
+    /// Time to save progress: every ten seconds while playing, on pause, and at the end. The value
+    /// is the player's own clock - for HLS that is relative to the playback's start, see
+    /// <see cref="MediaPlaybackRules.AbsolutePosition"/>.
+    /// </summary>
+    public event Action<double, string>? MovieProgress;
+
+    /// <summary>The close button, or Esc, on the movie page.</summary>
+    public event Action? MovieClosed;
+
+    /// <summary>The "Up next" countdown ran out, or Play now was pressed.</summary>
+    public event Action? MovieNextRequested;
+
+    /// <summary>
+    /// The viewer asked for a point the current HLS session cannot reach - before its start - so a
+    /// new playback is needed from that absolute position.
+    /// </summary>
+    public event Action<double>? MovieRestartRequested;
+
+    /// <summary>The page could not play the file at all.</summary>
+    public event Action<string>? MovieFailed;
+
+    /// <summary>The page went in or out of full screen.</summary>
+    public event Action<bool>? FullScreenChanged;
+
+    private bool _moviePage;
+
+    /// <summary>
+    /// Plays one item from the library on the movie page. Navigates afresh every time, so the next
+    /// episode starts from a clean page rather than a video element that still holds the last one's
+    /// MediaSource and subtitle tracks.
+    /// </summary>
+    /// <returns>Whether the page is up and playing - false when WebView2 is missing or this was stopped.</returns>
+    public async Task<bool> PlayMovieAsync(AppModel model, MediaPlayback playback)
+    {
+        _model = model;
+        _cameraId = Guid.Empty;
+        _stopped = false;
+        _clipPageReady = false;
+
+        if (!await EnsureInitializedAsync()) return false;
+        if (_stopped) return false;
+
+        await SyncCookiesAsync();
+        if (_stopped) return false;
+
+        _moviePage = true;
+        var navigated = WhenNavigatedAsync();
+        // A query that changes every time, so the next episode is a real navigation and not a
+        // same-URL no-op. The path is what is intercepted; the query is ignored.
+        Web.CoreWebView2.Navigate($"{_origin}{MoviePath}?t={DateTime.UtcNow.Ticks}");
+        await navigated;
+        if (_stopped) return false;
+
+        ShowPlayer();
+        var config = JsonSerializer.Serialize(new
+        {
+            title = playback.Title,
+            subtitle = playback.Subtitle ?? "",
+            mode = playback.Mode,
+            url = playback.Url,
+            mimeType = playback.MimeType ?? "",
+            startSeconds = playback.StartSeconds,
+            durationSeconds = playback.DurationSeconds,
+            initialSeek = MediaPlaybackRules.InitialSeek(playback),
+            poster = playback.BackdropUrl ?? playback.PosterUrl ?? "",
+            subtitles = playback.Subtitles.Select(track => new
+            {
+                index = track.Index,
+                label = string.IsNullOrWhiteSpace(track.Label) ? track.Language ?? $"Track {track.Index + 1}" : track.Label,
+                language = track.Language ?? "",
+                url = track.Url,
+                forced = track.Forced,
+            }),
+            nextEpisodeTitle = playback.HasNextEpisode ? playback.NextEpisodeTitle ?? "Next episode" : null,
+        });
+        await Web.CoreWebView2.ExecuteScriptAsync($"window.sentinelPlayMovie && window.sentinelPlayMovie({config})");
+        Web.Focus();
+        return !_stopped;
+    }
+
+    /// <summary>Messages from movie.html, which speaks <c>type</c> rather than player.html's <c>kind</c>.</summary>
+    private void OnMovieMessage(JsonElement root, string type)
+    {
+        static double Seconds(JsonElement element, string name) =>
+            element.TryGetProperty(name, out var value) && value.TryGetDouble(out var seconds) ? seconds : 0;
+
+        switch (type)
+        {
+            case "time":
+                MovieTime?.Invoke(Seconds(root, "playerSeconds"));
+                break;
+            case "progress":
+                MovieProgress?.Invoke(
+                    Seconds(root, "playerSeconds"),
+                    root.TryGetProperty("reason", out var reason) ? reason.GetString() ?? "tick" : "tick");
+                break;
+            case "close":
+                MovieClosed?.Invoke();
+                break;
+            case "next":
+                MovieNextRequested?.Invoke();
+                break;
+            case "restart":
+                MovieRestartRequested?.Invoke(Seconds(root, "seconds"));
+                break;
+            case "error":
+                MovieFailed?.Invoke(root.TryGetProperty("message", out var message)
+                    ? message.GetString() ?? "This could not be played."
+                    : "This could not be played.");
+                break;
+        }
+    }
 }

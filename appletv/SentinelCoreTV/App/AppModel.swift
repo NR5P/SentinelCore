@@ -51,6 +51,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveCameraOrder: [UUID] = []
     // Whether the server has the Device Hub switched on - drives whether the tab exists at all.
     @Published private(set) var deviceHubEnabled = false
+    // Whether the server has Movies & TV switched on - drives whether the Movies tab exists.
+    // Remembered, so the tab is there from the first frame of the next launch rather than
+    // popping in once the server has answered.
+    @Published private(set) var moviesEnabled: Bool {
+        didSet { UserDefaults.standard.set(moviesEnabled, forKey: "moviesEnabled") }
+    }
 
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
@@ -88,6 +94,7 @@ final class AppModel: ObservableObject {
 
     init() {
         organizerLastKnownEnabled = UserDefaults.standard.object(forKey: "organizerEnabled") as? Bool ?? false
+        moviesEnabled = UserDefaults.standard.bool(forKey: "moviesEnabled")
         do {
             organizer = try OrganizerEngine(directory: OrganizerDevice.directory, deviceId: OrganizerDevice.id, policy: .televisionDefault)
         } catch {
@@ -393,6 +400,14 @@ final class AppModel: ObservableObject {
             }
         } else {
             devices = []
+        }
+        // Same as the Device Hub: its own endpoint that answers even while the section is off,
+        // and a 404 from a server older than Movies & TV means "no Movies tab".
+        do {
+            moviesEnabled = try await client.mediaEnabled().enabled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            moviesEnabled = false
         }
         // Same treatment, opposite default - see isLicensed.
         do {

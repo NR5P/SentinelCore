@@ -96,6 +96,13 @@ import com.sentinelcore.android.ui.screens.LicenseAdminScreen
 import com.sentinelcore.android.ui.screens.PromptProfilesScreen
 import com.sentinelcore.android.ui.screens.KnownFaceEditScreen
 import com.sentinelcore.android.ui.screens.LiveCamerasScreen
+import com.sentinelcore.android.ui.screens.MOVIE_DETAIL_ROUTE
+import com.sentinelcore.android.ui.screens.MOVIE_PLAYER_ROUTE
+import com.sentinelcore.android.ui.screens.MovieDetailScreen
+import com.sentinelcore.android.ui.screens.MoviePlayerScreen
+import com.sentinelcore.android.ui.screens.MoviesScreen
+import com.sentinelcore.android.ui.screens.movieDetailRoute
+import com.sentinelcore.android.ui.screens.moviePlayerRoute
 import com.sentinelcore.android.ui.screens.LivePlayerScreen
 import com.sentinelcore.android.ui.screens.RecordingTimelineScreen
 import com.sentinelcore.android.ui.screens.ScheduleEditScreen
@@ -221,7 +228,8 @@ private fun AppShell(
     } ?: AppSection.EVENTS
     // The Device Hub's wall display is the one screen that takes the whole tablet: no bar, no
     // rail, nothing to tap by accident. Its own Exit (or the back gesture) is the way out.
-    val chromeHidden = currentRoute == DEVICE_WALL_ROUTE
+    // The movie player is the other: a film gets the whole screen.
+    val chromeHidden = currentRoute == DEVICE_WALL_ROUTE || currentRoute == MOVIE_PLAYER_ROUTE
 
     // Navigates straight to the pushed event without waiting for state.events to already contain
     // it - the detail route itself shows a brief loading state if the list hasn't caught up yet,
@@ -324,7 +332,7 @@ private fun AppShell(
             navController.navigate(DEVICE_WALL_ROUTE) { launchSingleTop = true }
         }
     }
-    val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled)
+    val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.moviesEnabled)
     val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -476,6 +484,48 @@ private fun SentinelNavHost(
             }
         }
 
+        composable(AppSection.MOVIES.route) {
+            MoviesScreen(
+                state = state,
+                model = model,
+                onItem = { navController.navigate(movieDetailRoute(it)) },
+                onPlay = { id, start -> navController.navigate(moviePlayerRoute(id, start)) },
+            )
+        }
+        composable(
+            route = MOVIE_DETAIL_ROUTE,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            MovieDetailScreen(
+                state = state,
+                model = model,
+                itemId = entry.arguments?.getString("id").orEmpty(),
+                onBack = { navController.popBackStack() },
+                onItem = { navController.navigate(movieDetailRoute(it)) },
+                onPlay = { id, start -> navController.navigate(moviePlayerRoute(id, start)) },
+            )
+        }
+        composable(
+            route = MOVIE_PLAYER_ROUTE,
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("start") { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
+        ) { entry ->
+            MoviePlayerScreen(
+                model = model,
+                itemId = entry.arguments?.getString("id").orEmpty(),
+                start = entry.arguments?.getString("start")?.toDoubleOrNull(),
+                onBack = { navController.popBackStack() },
+                // The next episode replaces this player rather than stacking on it, so Back
+                // still lands on the screen the first episode was started from.
+                onPlayNext = { nextId ->
+                    navController.popBackStack()
+                    navController.navigate(moviePlayerRoute(nextId, null))
+                },
+            )
+        }
+
         composable(AppSection.DEVICES.route) {
             val context = LocalContext.current
             DeviceHubScreen(
@@ -569,7 +619,7 @@ private fun SentinelNavHost(
         composable(TAB_BAR_EDITOR_ROUTE) {
             TabBarEditorScreen(
                 preferences = tabBarPreferences,
-                visible = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled),
+                visible = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.moviesEnabled),
                 onBack = { navController.popBackStack() },
             )
         }
@@ -870,7 +920,7 @@ private fun SentinelNavigationRail(
             }
         },
     ) {
-        AppSection.visible(state.deviceHubEnabled, state.organizerEnabled).forEach { item ->
+        AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.moviesEnabled).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { onSelected(item) },

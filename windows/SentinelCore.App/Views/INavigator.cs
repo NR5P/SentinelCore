@@ -19,6 +19,16 @@ public interface INavigator
     void Push(FrameworkElement view, string title);
 
     void Pop();
+
+    /// <summary>
+    /// Hands the whole window to the view on top: the sidebar and the back bar go away, and with
+    /// <paramref name="fullScreen"/> the window's own frame and the taskbar too. Used by the movie
+    /// player, whose page draws its own close button. A navigator that has no chrome to hide need
+    /// not do anything.
+    /// </summary>
+    void SetImmersive(bool immersive, bool fullScreen = false)
+    {
+    }
 }
 
 /// <summary>A navigator that goes nowhere, for a view built outside the shell.</summary>

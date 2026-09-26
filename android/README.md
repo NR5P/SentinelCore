@@ -70,6 +70,12 @@ apps; protocol in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md
 - None of these puts anything in Family by default. They wait until the phone has synced and
   knows the person's own space.
 
+**Movies:** the family media library (contract in [`core/docs/MOVIES.md`](../core/docs/MOVIES.md)),
+shown when the server has Movies & TV on: Home shelves, paged Movies and TV Shows grids with
+search, sort, genre and unwatched filters, detail pages with seasons and episodes, and a
+full-screen Media3 player that resumes where anyone in the family left off (direct MP4 or the
+server's HLS remux, with subtitles) and rolls on to the next episode.
+
 **Other:** Device Hub (lights, gates, locks, sensors, and a full-screen wall display of big
 tap-to-switch tiles for a tablet on a wall), the admin screens, optional dashboard login,
 a remote fallback address, a bottom bar on phones and a navigation rail on tablets, and a

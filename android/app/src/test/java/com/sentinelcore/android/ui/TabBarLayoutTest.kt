@@ -19,6 +19,13 @@ class TabBarLayoutTest {
     private val six = AppSection.visible(deviceHubEnabled = true, organizerEnabled = true)
 
     @Test
+    fun `movies appears after live only when switched on`() {
+        assertFalse(AppSection.MOVIES in six)
+        val withMovies = AppSection.visible(deviceHubEnabled = false, organizerEnabled = false, moviesEnabled = true)
+        assertEquals(listOf(EVENTS, TIMELINE, LIVE, AppSection.MOVIES, SETTINGS), withMovies)
+    }
+
+    @Test
     fun `every section gets a tab by default when four are visible`() {
         val layout = TabBarLayout(pinned = null, visible = four)
 

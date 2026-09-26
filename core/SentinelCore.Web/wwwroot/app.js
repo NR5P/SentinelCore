@@ -519,7 +519,8 @@ const views = {
   docs: document.getElementById("view-docs"),
   settings: document.getElementById("view-settings"),
   accounts: document.getElementById("view-accounts"),
-  organizer: document.getElementById("view-organizer")
+  organizer: document.getElementById("view-organizer"),
+  movies: document.getElementById("view-movies")
 };
 let settingsLoaded = false;
 let camerasLoaded = false;
@@ -537,6 +538,9 @@ for (const tab of tabs) {
     // Device state polls every few seconds while the tab is open - stop it the moment it isn't.
     if (currentView === "devices" && target !== "devices") window.GateWatchDevices.stop();
     if (currentView === "organizer" && target !== "organizer") window.SentinelOrganizer.hide();
+    // Closes the player and stops the scan-status poll - a film must not keep streaming (and
+    // reporting progress) behind the Events tab.
+    if (currentView === "movies" && target !== "movies") window.SentinelMovies.hide();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -559,6 +563,9 @@ for (const tab of tabs) {
     if (target === "devices") window.GateWatchDevices.load();
     if (target === "docs") window.GateWatchDocs.load();
     if (target === "organizer") window.SentinelOrganizer.show();
+    // Reads the rest of the hash itself (#movies/item/<id>, #movies/shows, ...), so a refresh
+    // or the back button lands on the same film, not just the same tab.
+    if (target === "movies") window.SentinelMovies.show();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;
       window.GateWatchTimeline.load();
@@ -593,6 +600,9 @@ function landOnHash() {
     window.GateWatchDevices.setDisplay("wall");
     wanted = "devices";
   }
+  // /#movies/item/<id> and the other Movies sub-routes all land on the Movies tab; movies.js
+  // reads the part after the slash when its show() runs.
+  if (wanted.startsWith("movies/")) wanted = "movies";
   const landing = wanted && Array.from(tabs).find((tab) => tab.dataset.view === wanted);
   if (landing) landing.click();
 }

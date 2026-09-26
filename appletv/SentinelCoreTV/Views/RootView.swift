@@ -24,7 +24,9 @@ struct RootView: View {
                     LoginView()
                 } else {
                     TabView(selection: $selection) {
-                        ForEach(AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled)) { section in
+                        ForEach(AppSection.visibleCases(
+                            deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled,
+                            moviesEnabled: model.moviesEnabled)) { section in
                             NavigationStack {
                                 sectionView(section)
                                     .navigationDestination(item: $model.selectedEvent) { event in
@@ -35,6 +37,13 @@ struct RootView: View {
                             .tag(section)
                         }
                     }
+                    #if DEBUG
+                    // Simulator testing without a remote: `-debugSection movies` as a launch argument.
+                    .onAppear {
+                        if let name = UserDefaults.standard.string(forKey: "debugSection"),
+                           let section = AppSection(rawValue: name) { selection = section }
+                    }
+                    #endif
                 }
             }
         }
@@ -72,6 +81,7 @@ struct RootView: View {
     @ViewBuilder private func sectionView(_ section: AppSection) -> some View {
         switch section {
         case .live: LiveCamerasView(isActive: selection == .live)
+        case .movies: MoviesTVView(isActive: selection == .movies)
         case .events: AlertFeedView()
         case .devices: DeviceHubView(isActive: selection == .devices)
         case .organizer: OrganizerTVView()
@@ -84,11 +94,12 @@ struct RootView: View {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events tab over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case live, events, organizer, devices, settings
+    case live, movies, events, organizer, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .live: "Live"
+        case .movies: "Movies"
         case .events: "Events"
         case .organizer: "Organizer"
         case .devices: "Device Hub"
@@ -98,6 +109,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .live: "video.fill"
+        case .movies: "film.stack"
         case .events: "shield.lefthalf.filled"
         case .organizer: "calendar"
         case .devices: "lightbulb.fill"
@@ -105,10 +117,12 @@ enum AppSection: String, CaseIterable, Identifiable {
         }
     }
 
-    // The Device Hub is off by default and only appears once it's switched on server-side.
-    // tvOS has no five-tab limit like the iPhone tab bar, so this is a plain filter.
-    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool) -> [AppSection] {
-        allCases.filter { ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) }
+    // The Device Hub and Movies & TV are off by default and only appear once switched on
+    // server-side. tvOS has no five-tab limit like the iPhone tab bar, so this is a plain filter.
+    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool, moviesEnabled: Bool) -> [AppSection] {
+        allCases.filter {
+            ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) && ($0 != .movies || moviesEnabled)
+        }
     }
 }
 

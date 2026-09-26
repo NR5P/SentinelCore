@@ -48,6 +48,8 @@ public sealed class BackupService(
     IOrganizerAutomationStore organizerAutomations,
     OrganizerAutomationEngine organizerAutomationEngine,
     MainAppHubBackupClient hub,
+    IMediaStore media,
+    MediaScanner mediaScanner,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
     IHostEnvironment environment,
@@ -56,9 +58,10 @@ public sealed class BackupService(
 {
     // 2 added CameraGroups and GateChecks; 3 added Organizer; 4 added RecordingSchedules, Hub,
     // InternetExposed, Warnings, the organizer's feed tokens and preferences, and the settings
-    // AutoExport section; 5 added OrganizerAutomations. Bumping this does not invalidate older
+    // AutoExport section; 5 added OrganizerAutomations; 6 added Media (libraries and watched
+    // progress) and the settings Media section. Bumping this does not invalidate older
     // exports - see Validate, which accepts anything up to this number.
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
 
     public sealed record BundleSummary(int FileCount, IReadOnlyList<string> Warnings);
 
@@ -85,7 +88,8 @@ public sealed class BackupService(
             hubExport.Value,
             await webSettings.GetSectionAsync<InternetExposedSettingsDto>("InternetExposed", ct),
             await organizerAutomations.GetAllAsync(ct),
-            warnings.Count > 0 ? warnings : null);
+            Media: new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct)),
+            Warnings: warnings.Count > 0 ? warnings : null);
     }
 
     // The full bundle: the document plus every file it points at, optionally encrypted.
@@ -385,6 +389,37 @@ public sealed class BackupService(
             organizerAutomationsRestored++;
         }
 
+        // Movies & TV: the libraries keep their ids, and since item ids are derived from the
+        // library id and the file's path, the rescan below lands on the same ids the progress
+        // rows point at. Progress merges newest-wins, so an old backup never un-watches anything.
+        var mediaLibrariesRestored = 0;
+        var mediaProgressRestored = 0;
+        if (document.Media is { } mediaBackup)
+        {
+            var existing = (await media.GetLibrariesAsync(ct)).ToDictionary(l => l.Id);
+            foreach (var library in mediaBackup.Libraries ?? [])
+            {
+                if (library.Id == Guid.Empty || string.IsNullOrWhiteSpace(library.Name) || !MediaLibraryKinds.IsValid(library.Kind)) continue;
+                var keep = existing.GetValueOrDefault(library.Id);
+                await media.SaveLibraryAsync(library with
+                {
+                    LastScanStartedAt = keep?.LastScanStartedAt,
+                    LastScanFinishedAt = keep?.LastScanFinishedAt,
+                    LastScanError = keep?.LastScanError,
+                    ItemCount = keep?.ItemCount ?? 0
+                }, ct);
+                mediaLibrariesRestored++;
+            }
+            mediaProgressRestored = await media.RestoreProgressAsync(
+                (mediaBackup.Progress ?? []).Where(p => p.ItemId != Guid.Empty && p.UserKey is not null), ct);
+            if (mediaLibrariesRestored > 0)
+            {
+                mediaScanner.RequestScan(null);
+                if (mediaBackup.Libraries!.Any(l => !Directory.Exists(l.Path)))
+                    notes.Add("Some movie library folders don't exist on this machine yet. Mount them at the same paths (or edit the library) and they will be scanned.");
+            }
+        }
+
         // Written last among the stores because it's the one part that can still fail after
         // validation passed (the main app stopping mid-restore). Everything above has landed by
         // then, so it's reported as a note on a restore that otherwise worked, not as a failure
@@ -436,6 +471,8 @@ public sealed class BackupService(
             liveOrderRestored,
             organizerItemsRestored,
             organizerAutomationsRestored,
+            mediaLibrariesRestored,
+            mediaProgressRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,
             automationRulesRestored = hubCounts?.RulesRestored ?? 0,
             schedulesRestored = hubCounts?.SchedulesRestored ?? 0,

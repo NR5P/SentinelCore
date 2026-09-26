@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src * data: blob:; media-src * blob:; connect-src *; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src blob:;">
+<title>Sentinel Core movie</title>
+<!--
+  One film or episode from the library, full window. Served by PlayerHost at the made-up path
+  /__sentinel-movie.html on the server's own origin, so the stream, the HLS segments and the
+  subtitle files are all same-origin and ride the session cookie the host copied in.
+
+  The host hands over the playback answer with window.sentinelPlayMovie(config). This page never
+  calls the API itself: it posts {type: ...} messages and the host does the talking -
+    time      {playerSeconds}            about once a second, no request made
+    progress  {playerSeconds, reason}    every 10 s playing, on pause, at the end, on close
+    close                                the close button or Esc
+    next                                 the Up next countdown ran out, or Play now
+    restart   {seconds}                  an HLS session cannot reach that point; ask for a new one
+    error     {message}
+
+  The controls are drawn here rather than left to <video controls>. For HLS the server's playlist
+  clock starts at startSeconds, so the browser's own bar would read 0:00 twenty minutes into a film
+  and would span only the part ffmpeg has produced so far. Everything on screen here is movie
+  time: startSeconds + currentTime.
+-->
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden;
+               font: 13px/1.4 "Segoe UI", system-ui, sans-serif; color: #ecf1f4; user-select: none; }
+  #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  video::cue { background: rgba(0,0,0,0.72); font-size: 1.1em; }
+
+  .bar { position: absolute; left: 0; right: 0; padding: 14px 18px; transition: opacity 0.25s; }
+  #top { top: 0; display: flex; align-items: center; gap: 14px;
+         background: linear-gradient(rgba(0,0,0,0.78), rgba(0,0,0,0)); padding-bottom: 36px; }
+  #bottom { bottom: 0; background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.82)); padding-top: 40px; }
+  body.idle .bar, body.idle #bigPlay { opacity: 0; pointer-events: none; }
+  body.idle { cursor: none; }
+
+  #titles { min-width: 0; }
+  #title { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #subtitleLine { color: #93a2ad; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  button, select {
+    font: inherit; color: #fff; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 6px; padding: 6px 11px; cursor: pointer; outline: none;
+  }
+  button:hover, select:hover { border-color: #38ff9c; }
+  button:focus-visible, select:focus-visible { border-color: #38ff9c; box-shadow: 0 0 0 1px #38ff9c; }
+  select option { background: #171d22; color: #ecf1f4; }
+  .icon { min-width: 38px; font-size: 15px; line-height: 1; padding: 7px 9px; }
+  .primary { background: #1f9c61; border-color: #38ff9c; color: #04120a; font-weight: 600; }
+
+  #seekRow { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  #seek { flex: 1; accent-color: #38ff9c; height: 18px; cursor: pointer; }
+  .time { font-variant-numeric: tabular-nums; color: #cfd8de; min-width: 58px; font-size: 12.5px; }
+  #durationText { text-align: right; }
+  #buttonRow { display: flex; align-items: center; gap: 8px; }
+  #buttonRow .spacer { flex: 1; }
+  #volume { width: 90px; accent-color: #38ff9c; }
+
+  #bigPlay {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 84px; height: 84px; border-radius: 50%; font-size: 30px; padding: 0 0 0 6px;
+    background: rgba(0,0,0,0.55); border: 2px solid rgba(255,255,255,0.55); display: none;
+    transition: opacity 0.25s;
+  }
+  body.paused #bigPlay { display: block; }
+  #spinner {
+    position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+    border: 3px solid rgba(255,255,255,0.2); border-top-color: #38ff9c; border-radius: 50%;
+    animation: spin 0.9s linear infinite; display: none; pointer-events: none;
+  }
+  body.waiting #spinner { display: block; }
+  body.waiting #bigPlay { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #message {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 460px;
+    padding: 16px 20px; border-radius: 8px; background: rgba(0,0,0,0.75); text-align: center;
+    color: #ecf1f4; display: none;
+  }
+  #message.show { display: block; }
+  #toast {
+    position: absolute; left: 50%; top: 72px; transform: translateX(-50%); padding: 6px 14px;
+    border-radius: 14px; background: rgba(0,0,0,0.7); color: #ecf1f4; font-size: 12.5px;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+
+  #upNext {
+    position: absolute; right: 24px; bottom: 110px; width: 320px; padding: 16px 18px;
+    border-radius: 10px; background: rgba(20,24,28,0.94); border: 1px solid #2a333a; display: none;
+  }
+  #upNext.show { display: block; }
+  #upNextLabel { color: #4ae8ff; font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; }
+  #upNextTitle { font-size: 15px; font-weight: 600; margin: 4px 0 2px; }
+  #upNextCountdown { color: #93a2ad; font-size: 12.5px; margin-bottom: 12px; }
+</style>
+</head>
+<body class="paused">
+  <video id="video" playsinline preload="auto"></video>
+  <div id="spinner"></div>
+  <button id="bigPlay" title="Play (Space)">&#9654;</button>
+  <div id="message"></div>
+  <div id="toast"></div>
+
+  <div id="top" class="bar">
+    <button id="closeButton" class="icon" title="Close (Esc)">&#10005;</button>
+    <div id="titles">
+      <div id="title"></div>
+      <div id="subtitleLine"></div>
+    </div>
+  </div>
+
+  <div id="bottom" class="bar">
+    <div id="seekRow">
+      <span id="currentText" class="time">0:00</span>
+      <input id="seek" type="range" min="0" max="1" step="1" value="0">
+      <span id="durationText" class="time">0:00</span>
+    </div>
+    <div id="buttonRow">
+      <button id="playButton" class="icon" title="Play / pause (Space)">&#9654;</button>
+      <button id="backButton" class="icon" title="Back 10 seconds (Left)">&#8634; 10</button>
+      <button id="forwardButton" class="icon" title="Forward 10 seconds (Right)">10 &#8635;</button>
+      <button id="muteButton" class="icon" title="Mute (M)">&#128266;</button>
+      <input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
+      <span class="spacer"></span>
+      <select id="captions" title="Subtitles"><option value="-1">Subtitles off</option></select>
+      <button id="fullButton" class="icon" title="Full screen (F)">&#x26F6;</button>
+    </div>
+  </div>
+
+  <div id="upNext">
+    <div id="upNextLabel">UP NEXT</div>
+    <div id="upNextTitle"></div>
+    <div id="upNextCountdown"></div>
+    <button id="upNextPlay" class="primary">Play now</button>
+    <button id="upNextCancel">Cancel</button>
+  </div>
+
+<script src="/vendor/hls.min.js"></script>
+<script>
+"use strict";
+
+const video = document.getElementById("video");
+const seek = document.getElementById("seek");
+const currentText = document.getElementById("currentText");
+const durationText = document.getElementById("durationText");
+const captions = document.getElementById("captions");
+const volume = document.getElementById("volume");
+const messageBox = document.getElementById("message");
+const toastBox = document.getElementById("toast");
+const upNext = document.getElementById("upNext");
+
+let config = null;
+let hls = null;
+// Movie time where the player's own clock reads 0: startSeconds for HLS, 0 for direct play.
+let offset = 0;
+let duration = 0;
+let lastTimePost = 0;
+let progressTimer = 0;
+let idleTimer = 0;
+let toastTimer = 0;
+let upNextTimer = 0;
+let dragging = false;
+let hlsRecoveries = 0;
+let restarting = false;
+let closing = false;
+
+function post(message) {
+  if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(message);
+}
+
+function clock(seconds) {
+  if (!isFinite(seconds) || seconds < 0) seconds = 0;
+  seconds = Math.floor(seconds);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const ss = (s < 10 ? "0" : "") + s;
+  if (h > 0) return h + ":" + (m < 10 ? "0" : "") + m + ":" + ss;
+  return m + ":" + ss;
+}
+
+function absolute() { return offset + (video.currentTime || 0); }
+
+function knownDuration() {
+  if (duration > 0) return duration;
+  return isFinite(video.duration) ? offset + video.duration : 0;
+}
+
+function showMessage(text) {
+  messageBox.textContent = text;
+  messageBox.classList.toggle("show", !!text);
+}
+
+function toast(text) {
+  toastBox.textContent = text;
+  toastBox.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { toastBox.classList.remove("show"); }, 1600);
+}
+
+function fail(text) {
+  document.body.classList.remove("waiting");
+  showMessage(text);
+  post({ type: "error", message: text });
+}
+
+// ---------------------------------------------------------------- Progress
+
+function report(reason) {
+  if (!config || restarting) return;
+  post({ type: "progress", playerSeconds: video.currentTime || 0, reason: reason });
+}
+
+function startProgressTimer() {
+  clearInterval(progressTimer);
+  progressTimer = setInterval(function () {
+    if (!video.paused && !video.ended) report("tick");
+  }, 10000);
+}
+
+// ---------------------------------------------------------------- Start
+
+window.sentinelPlayMovie = function (value) {
+  config = value || {};
+  offset = config.mode === "hls" ? (config.startSeconds || 0) : 0;
+  duration = config.durationSeconds || 0;
+  document.getElementById("title").textContent = config.title || "";
+  document.getElementById("subtitleLine").textContent = config.subtitle || "";
+  document.title = config.title || "Sentinel Core movie";
+  if (config.poster) video.poster = config.poster;
+  seek.max = String(Math.max(1, Math.round(duration)));
+  updateClock();
+  document.body.classList.add("waiting");
+
+  if (config.mode === "hls") startHls();
+  else startDirect();
+
+  startProgressTimer();
+  poke();
+};
+
+function startDirect() {
+  addTrackElements(0);
+  video.src = config.url;
+  video.addEventListener("loadedmetadata", function once() {
+    video.removeEventListener("loadedmetadata", once);
+    if (config.initialSeek > 0) video.currentTime = config.initialSeek;
+    play();
+  });
+}
+
+function startHls() {
+  if (window.Hls && window.Hls.isSupported()) {
+    // startPosition 0: the playlist is an EVENT playlist that grows while ffmpeg works, which
+    // hls.js treats as live - left to itself it would start at the live edge, not the beginning.
+    hls = new Hls({ startPosition: 0, enableWorker: true, renderTextTracksNatively: true, maxBufferLength: 60 });
+    // attachMedia first, then loadSource once attached - the same order player.html uses.
+    hls.on(Hls.Events.MEDIA_ATTACHED, function () { hls.loadSource(config.url); });
+    hls.on(Hls.Events.MANIFEST_PARSED, function () { play(); });
+    hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, function () { fillHlsCaptions(); });
+    hls.on(Hls.Events.ERROR, function (_event, data) {
+      if (!data || !data.fatal) return;
+      if (hlsRecoveries < 3) {
+        hlsRecoveries++;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) { try { hls.startLoad(); return; } catch (e) { /* fall through */ } }
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); return; } catch (e) { /* fall through */ } }
+      }
+      fail("Playback stopped: " + (data.details || data.type) + ".");
+    });
+    hls.attachMedia(video);
+    // If the master playlist carries no subtitle renditions, fall back to the WebVTT files shifted
+    // onto this session's clock.
+    setTimeout(function () {
+      if (hls && (!hls.subtitleTracks || hls.subtitleTracks.length === 0) && captions.options.length === 1) {
+        addTrackElements(offset);
+      }
+    }, 4000);
+  } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    addTrackElements(offset);
+    video.src = config.url;
+    video.addEventListener("loadedmetadata", function once() {
+      video.removeEventListener("loadedmetadata", once);
+      play();
+    });
+  } else {
+    fail("This PC's WebView2 cannot play this stream.");
+  }
+}
+
+function play() {
+  const attempt = video.play();
+  if (attempt && attempt.catch) {
+    attempt.catch(function () {
+      // Autoplay refused: leave the big play button up for a click.
+      document.body.classList.remove("waiting");
+      document.body.classList.add("paused");
+    });
+  }
+}
+
+// ---------------------------------------------------------------- Subtitles
+
+function addTrackElements(shift) {
+  const tracks = (config && config.subtitles) || [];
+  let forcedIndex = -1;
+  tracks.forEach(function (track, i) {
+    const element = document.createElement("track");
+    element.kind = "subtitles";
+    element.label = track.label || ("Track " + (i + 1));
+    if (track.language) element.srclang = track.language;
+    element.src = shift > 0 ? track.url + (track.url.indexOf("?") >= 0 ? "&" : "?") + "offset=" + shift : track.url;
+    video.appendChild(element);
+    addCaptionOption(String(i), element.label);
+    if (track.forced && forcedIndex < 0) forcedIndex = i;
+  });
+  // A forced track (signs, foreign-language lines) is meant to be on without asking.
+  setTimeout(function () { selectCaption(forcedIndex); }, 0);
+}
+
+function fillHlsCaptions() {
+  while (captions.options.length > 1) captions.remove(1);
+  (hls.subtitleTracks || []).forEach(function (track, i) {
+    addCaptionOption(String(i), track.name || track.lang || ("Track " + (i + 1)));
+  });
+  const forced = (hls.subtitleTracks || []).findIndex(function (track) { return track.forced; });
+  selectCaption(forced);
+}
+
+function addCaptionOption(value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  captions.appendChild(option);
+}
+
+function selectCaption(index) {
+  captions.value = String(index);
+  if (hls && hls.subtitleTracks && hls.subtitleTracks.length > 0) {
+    hls.subtitleTrack = index;
+    hls.subtitleDisplay = index >= 0;
+    return;
+  }
+  for (let i = 0; i < video.textTracks.length; i++) {
+    video.textTracks[i].mode = i === index ? "showing" : "disabled";
+  }
+}
+
+captions.addEventListener("change", function () {
+  selectCaption(parseInt(captions.value, 10));
+  video.focus();
+});
+
+// ---------------------------------------------------------------- Seeking
+
+function seekableEnd() {
+  const ranges = video.seekable;
+  return ranges && ranges.length ? ranges.end(ranges.length - 1) : 0;
+}
+
+// Whether ffmpeg has finished writing the playlist, so every point in it can be reached.
+function hlsComplete() {
+  if (!hls || !hls.levels || hls.levels.length === 0) return false;
+  const level = hls.levels[Math.max(0, hls.currentLevel)];
+  return !!(level && level.details && level.details.live === false);
+}
+
+function seekTo(target) {
+  if (!config) return;
+  const total = knownDuration();
+  target = Math.max(0, total > 0 ? Math.min(target, total - 1) : target);
+
+  if (config.mode !== "hls") {
+    video.currentTime = target;
+    return;
+  }
+
+  const relative = target - offset;
+  // Earlier than this session's start, or well past what ffmpeg has produced: only a new session
+  // can get there.
+  if (relative < 0 || (!hlsComplete() && relative > seekableEnd() + 5)) {
+    restart(target);
+    return;
+  }
+  video.currentTime = Math.max(0, Math.min(relative, Math.max(0, seekableEnd() - 0.5)));
+}
+
+function restart(target) {
+  if (restarting) return;
+  report("restart");
+  restarting = true;
+  document.body.classList.add("waiting");
+  toast("Starting from " + clock(target) + "…");
+  post({ type: "restart", seconds: target });
+}
+
+seek.addEventListener("input", function () {
+  dragging = true;
+  currentText.textContent = clock(parseFloat(seek.value));
+});
+seek.addEventListener("change", function () {
+  dragging = false;
+  seekTo(parseFloat(seek.value));
+});
+
+// ---------------------------------------------------------------- Clock and state
+
+function updateClock() {
+  const total = knownDuration();
+  if (total > 0 && seek.max !== String(Math.round(total))) seek.max = String(Math.round(total));
+  durationText.textContent = clock(total);
+  if (!dragging) {
+    currentText.textContent = clock(absolute());
+    seek.value = String(Math.round(absolute()));
+  }
+}
+
+video.addEventListener("timeupdate", function () {
+  updateClock();
+  const now = Date.now();
+  if (now - lastTimePost >= 1000) {
+    lastTimePost = now;
+    post({ type: "time", playerSeconds: video.currentTime || 0 });
+  }
+});
+video.addEventListener("durationchange", updateClock);
+video.addEventListener("play", function () {
+  document.body.classList.remove("paused");
+  document.getElementById("playButton").innerHTML = "&#10074;&#10074;";
+  hideUpNext();
+  poke();
+});
+video.addEventListener("pause", function () {
+  document.body.classList.add("paused");
+  document.body.classList.remove("idle");
+  document.getElementById("playButton").innerHTML = "&#9654;";
+  if (!video.ended && !closing) report("pause");
+});
+video.addEventListener("waiting", function () { document.body.classList.add("waiting"); });
+video.addEventListener("playing", function () {
+  document.body.classList.remove("waiting");
+  showMessage("");
+});
+video.addEventListener("canplay", function () { document.body.classList.remove("waiting"); });
+video.addEventListener("ended", function () {
+  document.body.classList.add("paused");
+  document.body.classList.remove("idle");
+  report("ended");
+  if (config && config.nextEpisodeTitle) showUpNext();
+});
+video.addEventListener("error", function () {
+  if (hls) return;   // hls.js reports its own errors
+  const code = video.error ? video.error.code : 0;
+  fail(code === 4
+    ? "This file's format is not playable here."
+    : "The video could not be loaded.");
+});
+
+// ---------------------------------------------------------------- Up next
+
+function showUpNext() {
+  let remaining = 10;
+  document.getElementById("upNextTitle").textContent = config.nextEpisodeTitle;
+  const countdown = document.getElementById("upNextCountdown");
+  countdown.textContent = "Starting in " + remaining + " seconds";
+  upNext.classList.add("show");
+  clearInterval(upNextTimer);
+  upNextTimer = setInterval(function () {
+    remaining--;
+    if (remaining <= 0) {
+      hideUpNext();
+      post({ type: "next" });
+      return;
+    }
+    countdown.textContent = "Starting in " + remaining + " second" + (remaining === 1 ? "" : "s");
+  }, 1000);
+  document.getElementById("upNextPlay").focus();
+}
+
+function hideUpNext() {
+  clearInterval(upNextTimer);
+  upNext.classList.remove("show");
+}
+
+document.getElementById("upNextPlay").addEventListener("click", function () {
+  hideUpNext();
+  post({ type: "next" });
+});
+document.getElementById("upNextCancel").addEventListener("click", hideUpNext);
+
+// ---------------------------------------------------------------- Controls
+
+function togglePlay() {
+  if (video.paused || video.ended) play();
+  else video.pause();
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(function () { /* already out */ });
+  else document.documentElement.requestFullscreen().catch(function () { /* refused */ });
+}
+
+function toggleMute() {
+  video.muted = !video.muted;
+  document.getElementById("muteButton").innerHTML = video.muted ? "&#128263;" : "&#128266;";
+  toast(video.muted ? "Muted" : "Sound on");
+}
+
+function closePlayer() {
+  if (closing) return;
+  closing = true;
+  report("close");
+  hideUpNext();
+  try { video.pause(); } catch (e) { /* tearing down */ }
+  post({ type: "close" });
+}
+
+document.getElementById("bigPlay").addEventListener("click", togglePlay);
+document.getElementById("playButton").addEventListener("click", togglePlay);
+document.getElementById("backButton").addEventListener("click", function () { seekTo(absolute() - 10); });
+document.getElementById("forwardButton").addEventListener("click", function () { seekTo(absolute() + 10); });
+document.getElementById("muteButton").addEventListener("click", toggleMute);
+document.getElementById("fullButton").addEventListener("click", toggleFullscreen);
+document.getElementById("closeButton").addEventListener("click", closePlayer);
+volume.addEventListener("input", function () {
+  video.volume = parseFloat(volume.value);
+  if (video.muted && video.volume > 0) toggleMute();
+});
+video.addEventListener("click", togglePlay);
+video.addEventListener("dblclick", toggleFullscreen);
+
+// Captured, so Space on a focused button does not also press it, and the video element never
+// gets a key to act on by itself.
+document.addEventListener("keydown", function (event) {
+  if (event.target === captions && (event.key === "ArrowUp" || event.key === "ArrowDown")) return;
+  let handled = true;
+  switch (event.key) {
+    case " ":
+    case "k":
+    case "K":
+      togglePlay();
+      break;
+    case "ArrowLeft":
+    case "j":
+    case "J":
+      seekTo(absolute() - 10);
+      toast("− 10 s");
+      break;
+    case "ArrowRight":
+    case "l":
+    case "L":
+      seekTo(absolute() + 10);
+      toast("+ 10 s");
+      break;
+    case "f":
+    case "F":
+      toggleFullscreen();
+      break;
+    case "m":
+    case "M":
+      toggleMute();
+      break;
+    case "Escape":
+      if (document.fullscreenElement) toggleFullscreen();
+      else if (upNext.classList.contains("show")) hideUpNext();
+      else closePlayer();
+      break;
+    default:
+      handled = false;
+  }
+  if (handled) {
+    event.preventDefault();
+    event.stopPropagation();
+    poke();
+  }
+}, true);
+
+// Controls fade after three seconds without the mouse while playing.
+function poke() {
+  document.body.classList.remove("idle");
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(function () {
+    if (!video.paused && !upNext.classList.contains("show")) document.body.classList.add("idle");
+  }, 3000);
+}
+document.addEventListener("mousemove", poke);
+
+// Host hooks: a line of text over the video (a next episode that could not start, say), and
+// pausing when the window is hidden to the tray.
+window.sentinelShowMessage = function (text) {
+  document.body.classList.remove("waiting");
+  restarting = false;
+  showMessage(text);
+};
+window.sentinelSetPlaying = function (playing) {
+  if (playing) play();
+  else video.pause();
+};
+
+// The host navigates away to stop; whatever position the page got to is saved on the way.
+window.addEventListener("pagehide", function () {
+  if (!closing) report("close");
+  clearInterval(progressTimer);
+  if (hls) { try { hls.destroy(); } catch (e) { /* already gone */ } hls = null; }
+});
+</script>
+</body>
+</html>

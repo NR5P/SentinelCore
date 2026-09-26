@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -554,6 +555,109 @@ public sealed class SentinelClient : IDisposable
 
     public Task<DeviceScanSnapshot> DeviceScanStatusAsync(Guid scanId, CancellationToken ct = default) =>
         GetAsync<DeviceScanSnapshot>($"/api/devices/discover/{scanId}", ct: ct);
+
+    // MARK: - Movies
+
+    /// <summary>
+    /// Whether the MOVIES section should exist at all. Answers even when the section is off; a 404
+    /// from a server older than the feature means the same thing and the caller treats it so.
+    /// </summary>
+    public Task<MediaEnabled> MediaEnabledAsync(CancellationToken ct = default) =>
+        GetAsync<MediaEnabled>("/api/media/enabled", ct: ct);
+
+    public Task<MediaStatus> MediaStatusAsync(CancellationToken ct = default) =>
+        GetAsync<MediaStatus>("/api/media/status", ct: ct);
+
+    public Task<MediaHome> MediaHomeAsync(CancellationToken ct = default) =>
+        GetAsync<MediaHome>("/api/media/home", ct: ct);
+
+    /// <summary>
+    /// One page of the library. Only what differs from the server's defaults is sent, so the
+    /// request for "everything, by title" is the bare route.
+    /// </summary>
+    public Task<MediaItemsPage> MediaItemsAsync(
+        string? kind = null,
+        string? query = null,
+        string? genre = null,
+        string? sort = null,
+        string? order = null,
+        bool unwatched = false,
+        int offset = 0,
+        int limit = 60,
+        CancellationToken ct = default)
+    {
+        var parameters = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrEmpty(kind)) parameters.Add(new KeyValuePair<string, string>("kind", kind));
+        if (!string.IsNullOrWhiteSpace(query)) parameters.Add(new KeyValuePair<string, string>("q", query.Trim()));
+        if (!string.IsNullOrEmpty(genre)) parameters.Add(new KeyValuePair<string, string>("genre", genre));
+        if (!string.IsNullOrEmpty(sort)) parameters.Add(new KeyValuePair<string, string>("sort", sort));
+        if (!string.IsNullOrEmpty(order)) parameters.Add(new KeyValuePair<string, string>("order", order));
+        if (unwatched) parameters.Add(new KeyValuePair<string, string>("unwatched", "true"));
+        if (offset > 0) parameters.Add(new KeyValuePair<string, string>("offset", offset.ToString(CultureInfo.InvariantCulture)));
+        parameters.Add(new KeyValuePair<string, string>("limit", limit.ToString(CultureInfo.InvariantCulture)));
+        return GetAsync<MediaItemsPage>("/api/media/items", parameters, ct);
+    }
+
+    public Task<MediaItemDetail> MediaItemAsync(string id, CancellationToken ct = default) =>
+        GetAsync<MediaItemDetail>($"/api/media/items/{Uri.EscapeDataString(id)}", ct: ct);
+
+    /// <summary>
+    /// Asks for a way to play one item. <paramref name="start"/> null resumes from the saved
+    /// point, 0 starts over, anything else is a position in seconds.
+    /// </summary>
+    /// <remarks>
+    /// The codecs declared are what the Chromium engine inside WebView2 is known to decode on
+    /// every PC: H.264 video and AAC or MP3 audio. HEVC is deliberately not claimed - it depends on
+    /// a Windows codec pack that is not always present, and a wrong claim here is a black
+    /// rectangle rather than a graceful fallback. The server remuxes or transcodes whatever does
+    /// not fit.
+    /// </remarks>
+    public Task<MediaPlayback> MediaPlaybackAsync(
+        string id, double? start = null, int? audioTrack = null, CancellationToken ct = default)
+    {
+        var parameters = new List<KeyValuePair<string, string>>
+        {
+            new("video", "h264"),
+            new("audio", "aac,mp3"),
+        };
+        if (start is { } startSeconds && startSeconds >= 0)
+        {
+            parameters.Add(new KeyValuePair<string, string>("start", MediaPlaybackRules.StartQueryValue(startSeconds)));
+        }
+        if (audioTrack is { } track)
+        {
+            parameters.Add(new KeyValuePair<string, string>("audioTrack", track.ToString(CultureInfo.InvariantCulture)));
+        }
+        return GetAsync<MediaPlayback>($"/api/media/items/{Uri.EscapeDataString(id)}/playback", parameters, ct);
+    }
+
+    /// <summary>
+    /// Every ten seconds while playing, on pause, and when the player closes. The server marks the
+    /// item watched at 92% and ignores anything under 30 seconds, so the caller need not.
+    /// </summary>
+    public Task<MediaProgress> ReportMediaProgressAsync(
+        string id, double positionSeconds, double durationSeconds, CancellationToken ct = default) =>
+        SendAsync<MediaProgress, MediaProgressInput>(
+            $"/api/media/items/{Uri.EscapeDataString(id)}/progress",
+            HttpMethod.Post,
+            new MediaProgressInput { PositionSeconds = positionSeconds, DurationSeconds = durationSeconds },
+            ct);
+
+    /// <summary>On a show this applies to every episode.</summary>
+    public Task<MediaProgress> SetMediaWatchedAsync(string id, bool watched, CancellationToken ct = default) =>
+        SendAsync<MediaProgress, MediaWatchedInput>(
+            $"/api/media/items/{Uri.EscapeDataString(id)}/watched",
+            HttpMethod.Post,
+            new MediaWatchedInput { Watched = watched },
+            ct);
+
+    public Task<MediaProgress> SetMediaSeasonWatchedAsync(
+        string showId, int season, bool watched, CancellationToken ct = default) =>
+        SendAsync<MediaProgress, MediaWatchedInput>(
+            $"/api/media/items/{Uri.EscapeDataString(showId)}/seasons/{season}/watched",
+            HttpMethod.Post,
+            new MediaWatchedInput { Watched = watched },
+            ct);
 
     // MARK: - Schedules
 

@@ -66,6 +66,12 @@ final class AppModel: ObservableObject {
     // Whether the server has the Device Hub switched on. Drives whether the section exists at
     // all - see AppSection.visibleCases in RootView.
     @Published private(set) var deviceHubEnabled = false
+    // Whether the server has Movies & TV switched on - drives whether the Movies section exists.
+    // Remembered, so the section is there from the first frame of the next launch (and offline)
+    // rather than popping in once the server has answered.
+    @Published private(set) var moviesEnabled: Bool {
+        didSet { UserDefaults.standard.set(moviesEnabled, forKey: "moviesEnabled") }
+    }
 
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
@@ -118,6 +124,7 @@ final class AppModel: ObservableObject {
         remoteServerURL = UserDefaults.standard.string(forKey: "remoteServerURL") ?? ""
         pushRegistrationEnabled = UserDefaults.standard.bool(forKey: "pushRegistrationEnabled")
         organizerLastKnownEnabled = UserDefaults.standard.object(forKey: "organizerEnabled") as? Bool ?? false
+        moviesEnabled = UserDefaults.standard.bool(forKey: "moviesEnabled")
         do {
             organizer = try OrganizerEngine(directory: OrganizerDevice.directory, deviceId: OrganizerDevice.id, policy: OrganizerDevice.savedPolicy)
         } catch {
@@ -569,6 +576,14 @@ final class AppModel: ObservableObject {
             }
         } else {
             devices = []
+        }
+        // Same as the Device Hub: its own endpoint that answers even while the section is off,
+        // and a 404 from a server older than Movies & TV means "no Movies section".
+        do {
+            moviesEnabled = try await client.mediaEnabled().enabled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            moviesEnabled = false
         }
         // Same treatment, opposite default - see isLicensed.
         do {

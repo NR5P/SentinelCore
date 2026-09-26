@@ -27,6 +27,7 @@
       <button class="tab active" data-view="events" data-tip-below data-tip="Confirmed events only, newest first - the snapshot, its clip, and what the AI made of it. Anything the AI rejected, is still judging, or never got to is filtered out; use &quot;show hidden&quot; to see it and why." >events</button>
       <button class="tab" data-view="timeline" data-tip-below data-tip="Review saved trigger clips across a day, with Sentinel AI events marked on the time rail.">timeline</button>
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
+      <button class="tab hidden" id="tab-movies" data-view="movies" data-tip-below data-tip="Your own movies and TV shows, scanned from folders on the server and played here and in every app. Watched state is per person. Only appears when Movies &amp; TV is turned on in Settings.">movies</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones.">cameras</button>
       <button class="tab hidden" id="tab-organizer" data-view="organizer" data-tip-below data-tip="Notes, calendar, reminders and boards - shared with the SentinelCore apps on every device, and kept on each one so they work with no signal.">organizer</button>
       <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
@@ -276,6 +277,28 @@
       <div id="org-pane-reminders" class="tab-pane hidden"></div>
       <div id="org-pane-notes" class="tab-pane hidden"></div>
       <div id="org-pane-boards" class="tab-pane hidden"></div>
+    </section>
+
+    <section id="view-movies" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">MOVIES &amp; TV</div>
+        <div class="toolbar-actions">
+          <span id="mv-scan-state" class="event-count hidden" data-tip-below data-tip-right data-tip="A library scan is running. Playback keeps working while it does."></span>
+          <button id="mv-libraries-btn" class="btn hidden" data-tip-below data-tip-right data-tip="The folders this library is built from: add, rescan, edit or remove them.">&#9881; libraries</button>
+        </div>
+      </div>
+      <div class="mv-bar">
+        <nav class="tabs" id="mv-subtabs">
+          <button class="tab active" data-mv-pane="home">home</button>
+          <button class="tab" data-mv-pane="movies">movies</button>
+          <button class="tab" data-mv-pane="shows">tv shows</button>
+        </nav>
+      </div>
+      <div id="mv-pane-home" class="tab-pane mv-pane"></div>
+      <div id="mv-pane-movies" class="tab-pane mv-pane hidden"></div>
+      <div id="mv-pane-shows" class="tab-pane mv-pane hidden"></div>
+      <div id="mv-pane-detail" class="tab-pane mv-pane hidden"></div>
+      <div id="mv-pane-libraries" class="tab-pane mv-pane hidden"></div>
     </section>
 
     <section id="view-automations" class="view hidden">
@@ -693,6 +716,28 @@
     <div class="zone-editor-panel org-auto-panel" id="org-auto-panel"></div>
   </div>
 
+  <div id="mv-modal" class="lightbox hidden">
+    <div class="zone-editor-panel mv-modal-panel" id="mv-modal-panel"></div>
+  </div>
+
+  <!-- The Movies player. Fixed and full-screen, above everything but the toast; the browser's
+       own transport controls do the seeking and volume, this only adds the title bar, the
+       "up next" card and an error card. -->
+  <div id="mv-player" class="mv-player hidden" aria-hidden="true">
+    <video id="mv-video" controls playsinline crossorigin="use-credentials"></video>
+    <div class="mv-player-top">
+      <div class="mv-player-titles">
+        <div class="mv-player-title" id="mv-player-title"></div>
+        <div class="mv-player-sub" id="mv-player-sub"></div>
+      </div>
+      <div class="mv-player-time" id="mv-player-time"></div>
+      <button class="mv-player-restart hidden" id="mv-player-restart" data-pact="restart" title="This stream started part-way in; go back to the beginning">from the start</button>
+      <button class="mv-player-close" id="mv-player-close" title="Close (Esc)" aria-label="Close player">&#x2715;</button>
+    </div>
+    <div class="mv-player-msg hidden" id="mv-player-msg"></div>
+    <div class="mv-upnext hidden" id="mv-upnext"></div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/hls.min.js"></script>
@@ -715,5 +760,6 @@
   <script src="voice-phrase.js"></script>
   <script src="organizer.js"></script>
   <script src="organizer-automations.js"></script>
+  <script src="movies.js"></script>
 </body>
 </html>

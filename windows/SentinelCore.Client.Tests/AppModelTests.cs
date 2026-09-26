@@ -211,6 +211,7 @@ public class AppModelTests : IDisposable
         Assert.Single(model.Cameras);
         Assert.True(model.DeviceHubEnabled);
         Assert.Single(model.Devices);
+        Assert.True(model.MoviesEnabled);
         Assert.NotNull(model.LastUpdated);
         Assert.Null(model.LastError);
     }
@@ -233,6 +234,44 @@ public class AppModelTests : IDisposable
         Assert.Equal(ConnectionState.Online, model.ConnectionState);
         Assert.False(model.DeviceHubEnabled);
         Assert.Empty(model.Devices);
+    }
+
+    [Fact]
+    public async Task A_server_without_Movies_is_not_a_failed_connection()
+    {
+        // A server older than the Movies tab answers /api/media/enabled with a 404. That means "no
+        // Movies tab", never a failed connection.
+        using var server = new FakeServer()
+            .OnGet("/api/auth/status", """{"enabled":false,"configured":false,"authenticated":true,"role":"Admin"}""")
+            .OnGet("/api/health", """{"status":"ok"}""")
+            .OnGet("/api/activity", "[]")
+            .OnGet("/api/cameras", "[]");
+        using var model = NewModel();
+        model.ServerUrl = server.BaseUrl;
+
+        await model.ConnectAsync();
+
+        Assert.Equal(ConnectionState.Online, model.ConnectionState);
+        Assert.False(model.MoviesEnabled);
+        Assert.Null(model.LastError);
+    }
+
+    [Fact]
+    public async Task Movies_switched_off_on_the_server_hides_the_tab()
+    {
+        using var server = new FakeServer()
+            .OnGet("/api/auth/status", """{"enabled":false,"configured":false,"authenticated":true,"role":"Admin"}""")
+            .OnGet("/api/health", """{"status":"ok"}""")
+            .OnGet("/api/activity", "[]")
+            .OnGet("/api/cameras", "[]")
+            .OnGet("/api/media/enabled", """{"enabled":false}""");
+        using var model = NewModel();
+        model.ServerUrl = server.BaseUrl;
+
+        await model.ConnectAsync();
+
+        Assert.Equal(ConnectionState.Online, model.ConnectionState);
+        Assert.False(model.MoviesEnabled);
     }
 
     [Fact]
@@ -455,6 +494,7 @@ public class AppModelTests : IDisposable
                 {"connected":true,"devices":[{"id":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","power":"on",
                  "brightness":128,"available":true}]}
                 """)
+            .OnGet("/api/media/enabled", """{"enabled":true}""")
             .OnGet("/api/license/status", license ?? """{"valid":true,"customerName":"Acme"}""")
             .OnGet("/api/push/status",
                 """{"enabled":false,"appleConfigured":false,"firebaseConfigured":false,"registeredDevices":0}""");

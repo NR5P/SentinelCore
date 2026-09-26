@@ -134,6 +134,115 @@ final class SentinelClient {
         )
     }
 
+    // MARK: - Movies & TV (see core/docs/MOVIES.md)
+
+    // Whether the Movies tab should exist at all. Its own endpoint, readable by a Viewer, and it
+    // answers even while the section is switched off; a 404 is an older server and means off too.
+    func mediaEnabled() async throws -> MediaEnabled {
+        try await get("/api/media/enabled")
+    }
+
+    func mediaStatus() async throws -> MediaStatus {
+        try await get("/api/media/status")
+    }
+
+    func mediaHome() async throws -> MediaHome {
+        try await get("/api/media/home")
+    }
+
+    // kind nil returns movies and shows together (never episodes). Sort and order in the server's
+    // vocabulary; it picks a sensible default order for each sort when none is given.
+    func mediaItems(
+        kind: String?, query: String? = nil, genre: String? = nil, sort: MediaSort? = nil, order: String? = nil,
+        unwatched: Bool = false, offset: Int = 0, limit: Int = 60
+    ) async throws -> MediaItemsPage {
+        var items: [URLQueryItem] = []
+        if let kind { items.append(.init(name: "kind", value: kind)) }
+        if let query, !query.isEmpty { items.append(.init(name: "q", value: query)) }
+        if let genre, !genre.isEmpty { items.append(.init(name: "genre", value: genre)) }
+        if let sort { items.append(.init(name: "sort", value: sort.rawValue)) }
+        if let order { items.append(.init(name: "order", value: order)) }
+        if unwatched { items.append(.init(name: "unwatched", value: "true")) }
+        items.append(.init(name: "offset", value: String(offset)))
+        items.append(.init(name: "limit", value: String(limit)))
+        return try await get("/api/media/items", query: items)
+    }
+
+    func mediaItem(id: String) async throws -> MediaItemDetail {
+        try await get("/api/media/items/\(id)")
+    }
+
+    // start nil resumes from the saved progress, 0 starts over. The codec lists are what every
+    // Apple device decodes in hardware; the server remuxes or transcodes anything else.
+    //
+    // Over the long-timeout session: for anything that isn't direct play the server starts ffmpeg
+    // and only answers once the first segments exist, which can take over a minute for a
+    // transcode - the main session gives up after 15 seconds.
+    func mediaPlayback(id: String, start: Double?) async throws -> MediaPlayback {
+        var items: [URLQueryItem] = [
+            .init(name: "video", value: "h264,hevc"),
+            .init(name: "audio", value: "aac,ac3,eac3,mp3"),
+        ]
+        if let start { items.append(.init(name: "start", value: String(Int(start.rounded(.down))))) }
+        guard let url = url(path: "/api/media/items/\(id)/playback", query: items) else {
+            throw ClientError.invalidServerAddress
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 100
+        model.log("GET \(url.absoluteString)")
+        let (data, response) = try await organizerSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
+        model.log("GET \(http.statusCode) (media playback)")
+        guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 401 { throw ClientError.authenticationRequired }
+            let message = (try? JSONDecoder.sentinel.decode(APIError.self, from: data))
+                .flatMap { $0.error ?? $0.errors?.joined(separator: "\n") }
+            throw ClientError.server(status: http.statusCode, message: message)
+        }
+        return try JSONDecoder.sentinel.decode(MediaPlayback.self, from: data)
+    }
+
+    // Fire-and-forget on purpose: the reply is the new progress object, but nothing here needs
+    // it, and an older or oddly-configured server answering with an empty body must not read as
+    // a failure ten seconds into every film.
+    func reportMediaProgress(id: String, position: Double, duration: Double?) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/media/items/\(id)/progress",
+            method: "POST",
+            body: MediaProgressBody(positionSeconds: position, durationSeconds: duration)
+        )
+    }
+
+    func setMediaWatched(id: String, watched: Bool) async throws -> MediaProgress {
+        try await send("/api/media/items/\(id)/watched", method: "POST", body: MediaWatchedBody(watched: watched))
+    }
+
+    func setMediaSeasonWatched(showId: String, season: Int, watched: Bool) async throws {
+        let _: EmptyResponse = try await send(
+            "/api/media/items/\(showId)/seasons/\(season)/watched",
+            method: "POST",
+            body: MediaWatchedBody(watched: watched)
+        )
+    }
+
+    // The wire gives artwork and stream paths relative to the server ("/api/media/items/x/poster").
+    // Always resolved against the address in use *now*, so a poster fetched after the plain-HTTP
+    // fallback kicked in goes to the address that works. An absolute URL passes through untouched.
+    func mediaURL(_ path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
+        if path.hasPrefix("http://") || path.hasPrefix("https://") { return URL(string: path) }
+        guard let question = path.firstIndex(of: "?") else { return url(path: path) }
+        let query = URLComponents(string: "?" + path[path.index(after: question)...])?.queryItems ?? []
+        return url(path: String(path[..<question]), query: query)
+    }
+
+    func mediaPosterURL(id: String) -> URL? { url(path: "/api/media/items/\(id)/poster") }
+    func mediaBackdropURL(id: String) -> URL? { url(path: "/api/media/items/\(id)/backdrop") }
+    func mediaThumbURL(id: String) -> URL? { url(path: "/api/media/items/\(id)/thumb") }
+    func mediaSeasonPosterURL(showId: String, season: Int) -> URL? {
+        url(path: "/api/media/items/\(showId)/seasons/\(season)/poster")
+    }
+
     func updateCamera(id: UUID, _ input: CameraInput) async throws {
         let _: EmptyResponse = try await send("/api/cameras/\(id.uuidString)", method: "PUT", body: input)
     }

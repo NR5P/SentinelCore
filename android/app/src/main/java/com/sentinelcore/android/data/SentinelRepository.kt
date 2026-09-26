@@ -139,6 +139,70 @@ class SentinelRepository(
         JSONObject(request("/api/device-hub/enabled")).optBoolean("enabled")
     }
 
+    // ---------------- Movies & TV (core/docs/MOVIES.md) ----------------
+
+    // Answers even when the section is off; a 404 from an older server throws, which the caller
+    // reads as "off" too.
+    suspend fun mediaEnabled(): Boolean = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/media/enabled")).optBoolean("enabled")
+    }
+
+    suspend fun mediaStatus(): MediaStatus = withContext(Dispatchers.IO) {
+        parseMediaStatus(JSONObject(request("/api/media/status")))
+    }
+
+    suspend fun mediaHome(): MediaHome = withContext(Dispatchers.IO) {
+        parseMediaHome(JSONObject(request("/api/media/home")))
+    }
+
+    suspend fun mediaItems(
+        kind: String?,
+        query: String?,
+        genre: String?,
+        sort: String,
+        order: String,
+        unwatched: Boolean,
+        offset: Int,
+        limit: Int = MediaApi.PAGE_SIZE,
+    ): MediaItemsPage = withContext(Dispatchers.IO) {
+        parseMediaItemsPage(JSONObject(request(MediaApi.itemsPath(kind, query, genre, sort, order, unwatched, offset, limit))))
+    }
+
+    suspend fun mediaItem(id: String): MediaItemDetail = withContext(Dispatchers.IO) {
+        parseMediaItemDetail(JSONObject(request(MediaApi.itemPath(id))))
+    }
+
+    suspend fun mediaPlayback(id: String, start: Double?, video: String, audio: String): MediaPlayback =
+        withContext(Dispatchers.IO) {
+            parseMediaPlayback(JSONObject(request(MediaApi.playbackPath(id, start, video, audio))))
+        }
+
+    suspend fun reportMediaProgress(id: String, positionSeconds: Double, durationSeconds: Double?): MediaProgress? =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("positionSeconds", positionSeconds)
+            durationSeconds?.let { body.put("durationSeconds", it) }
+            val text = request(MediaApi.itemPath(id) + "/progress", method = "POST", body = body.toString())
+            runCatching { parseMediaProgress(JSONObject(text)) }.getOrNull()
+        }
+
+    suspend fun setMediaWatched(id: String, watched: Boolean): MediaProgress? = withContext(Dispatchers.IO) {
+        val text = request(
+            MediaApi.itemPath(id) + "/watched",
+            method = "POST",
+            body = JSONObject().put("watched", watched).toString(),
+        )
+        runCatching { parseMediaProgress(JSONObject(text)) }.getOrNull()
+    }
+
+    suspend fun setMediaSeasonWatched(showId: String, season: Int, watched: Boolean): Unit = withContext(Dispatchers.IO) {
+        request(
+            MediaApi.seasonWatchedPath(showId, season),
+            method = "POST",
+            body = JSONObject().put("watched", watched).toString(),
+        )
+        Unit
+    }
+
     // Whether the server has a valid licence file, which is what decides the UNLICENSED watermark
     // over camera images and live video. Readable by any signed-in account, not just an Admin,
     // precisely so this app can ask - see the note on the endpoint in LicenseEndpoints.cs.
@@ -965,6 +1029,37 @@ class SentinelRepository(
             bitmap
         } catch (error: Exception) {
             logger("Image request failed: ${error.message ?: error.javaClass.simpleName}", DiagnosticLevel.NOTICE)
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    // Artwork for the Movies tab: downsampled on decode to about maxWidth pixels, since TMDB
+    // posters and backdrops arrive far larger than any tile draws them. Cached under its own key
+    // per width, so a poster in a grid and the same poster on a detail screen don't collide.
+    suspend fun loadImage(path: String, maxWidth: Int): Bitmap? = withContext(Dispatchers.IO) {
+        val urlString = absoluteUrl(path) ?: return@withContext null
+        val key = "$urlString#w$maxWidth"
+        imageCache.get(key)?.let { return@withContext it }
+
+        val connection = openConnection(URL(urlString))
+        try {
+            connection.requestMethod = "GET"
+            connection.connect()
+            storeCookies(connection)
+            if (connection.responseCode !in 200..299) return@withContext null
+            val bytes = connection.inputStream.use { it.readBytes() }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = MediaPlaybackMath.imageSampleSize(bounds.outWidth, maxWidth)
+            }
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+            if (bitmap != null) imageCache.put(key, bitmap)
+            bitmap
+        } catch (error: Exception) {
+            logger("Artwork request failed: ${error.message ?: error.javaClass.simpleName}", DiagnosticLevel.NOTICE)
             null
         } finally {
             connection.disconnect()

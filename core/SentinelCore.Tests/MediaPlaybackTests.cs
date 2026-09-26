@@ -1,0 +1,176 @@
+using System.Text.Json;
+using SentinelCore.Web;
+using Xunit;
+
+namespace SentinelCore.Tests;
+
+// Direct play or HLS, copy or re-encode: the decisions that make a film play on a given device,
+// or show a black screen with no error. Pinned here because the failure is silent on Apple.
+public sealed class MediaPlaybackTests
+{
+    private static readonly HashSet<string> AppleVideo = ["h264", "hevc"];
+    private static readonly HashSet<string> AppleAudio = ["aac", "ac3", "eac3", "mp3"];
+    private static readonly HashSet<string> BrowserVideo = ["h264"];
+    private static readonly HashSet<string> BrowserAudio = ["aac", "mp3"];
+
+    private static MediaItem Item(string container, string video, string audio, string? tag = null, int audioTracks = 1) => new()
+    {
+        Id = Guid.NewGuid(),
+        Path = $"/films/film.{container}",
+        Container = container,
+        VideoCodec = video,
+        VideoTag = tag,
+        AudioCodec = audio,
+        AudioTracks = [.. Enumerable.Range(0, audioTracks).Select(i => new MediaAudioTrack(i, i == 0 ? audio : "aac", 2, "eng", null, i == 0))],
+        DurationSeconds = 6000
+    };
+
+    [Fact]
+    public void AnMp4OfH264AndAac_PlaysDirectEverywhere()
+    {
+        Assert.True(MediaPlaybackPlanner.Plan(Item("mp4", "h264", "aac"), BrowserVideo, BrowserAudio, null).Direct);
+        Assert.True(MediaPlaybackPlanner.Plan(Item("mp4", "h264", "aac"), AppleVideo, AppleAudio, null).Direct);
+    }
+
+    [Fact]
+    public void AnMkv_IsRemuxedNotReencoded()
+    {
+        var plan = MediaPlaybackPlanner.Plan(Item("mkv", "h264", "aac"), BrowserVideo, BrowserAudio, null);
+        Assert.False(plan.Direct);
+        Assert.Equal("copy", plan.VideoMode);
+        Assert.Equal("copy", plan.AudioMode);
+    }
+
+    [Fact]
+    public void Hevc_IsCopiedForApple_AndTaggedHvc1_ButTranscodedForABrowser()
+    {
+        var apple = MediaPlaybackPlanner.Plan(Item("mkv", "hevc", "eac3"), AppleVideo, AppleAudio, null);
+        Assert.Equal("copy", apple.VideoMode);
+        Assert.Equal("copy", apple.AudioMode);
+        Assert.True(apple.TagHvc1);
+
+        var browser = MediaPlaybackPlanner.Plan(Item("mkv", "hevc", "eac3"), BrowserVideo, BrowserAudio, null);
+        Assert.Equal("h264", browser.VideoMode);
+        Assert.Equal("aac", browser.AudioMode);
+        Assert.False(browser.TagHvc1);
+    }
+
+    [Fact]
+    public void AnHevcMp4TaggedHev1_IsNotDirectPlayedOnApple()
+    {
+        // AVPlayer shows a black picture for hev1 and reports nothing; the remux retags it.
+        Assert.False(MediaPlaybackPlanner.Plan(Item("mp4", "hevc", "aac", tag: "hev1"), AppleVideo, AppleAudio, null).Direct);
+        Assert.True(MediaPlaybackPlanner.Plan(Item("mp4", "hevc", "aac", tag: "hvc1"), AppleVideo, AppleAudio, null).Direct);
+    }
+
+    [Fact]
+    public void ChoosingANonDefaultAudioTrack_GoesThroughHls()
+    {
+        var plan = MediaPlaybackPlanner.Plan(Item("mp4", "h264", "aac", audioTracks: 2), BrowserVideo, BrowserAudio, 1);
+        Assert.False(plan.Direct);
+        Assert.Equal(1, plan.AudioTrackIndex);
+    }
+
+    [Fact]
+    public void FfmpegArguments_SeekBeforeTheInput_AndWriteFragmentedMp4()
+    {
+        var item = Item("mkv", "hevc", "eac3");
+        var plan = MediaPlaybackPlanner.Plan(item, AppleVideo, AppleAudio, null);
+        var args = MediaPlaybackPlanner.BuildFfmpegArguments(item, plan, 1234.5, "/tmp/session");
+        Assert.True(args.IndexOf("-ss") < args.IndexOf("-i"), "seeking after -i decodes everything up to the start point");
+        Assert.Equal("1234.5", args[args.IndexOf("-ss") + 1]);
+        Assert.Contains("fmp4", args);
+        Assert.Contains("hvc1", args);
+        Assert.Contains("event", args);
+        Assert.Equal("copy", args[args.IndexOf("-c:v") + 1]);
+    }
+
+    [Fact]
+    public void Codecs_DefaultWhenTheClientSaysNothing()
+    {
+        Assert.Equal(["h264"], MediaPlaybackPlanner.ParseCodecs(null, "h264"));
+        Assert.Equal(["h264", "hevc"], MediaPlaybackPlanner.ParseCodecs("H264, hevc", "h264").Order());
+    }
+
+    [Fact]
+    public void EventPlaylists_AreToldToStartAtTheBeginning()
+    {
+        var playlist = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:6.0,\nseg_00000.m4s\n";
+        var served = MediaEndpoints.WithStartAtBeginning(playlist);
+        Assert.StartsWith("#EXTM3U\n#EXT-X-START:TIME-OFFSET=0", served);
+        Assert.Equal(served, MediaEndpoints.WithStartAtBeginning(served));
+    }
+
+    [Fact]
+    public void Subtitles_ShiftToTheSessionStart_AndDropWhatIsAlreadyOver()
+    {
+        var vtt = "WEBVTT\n\n1\n00:00:05.000 --> 00:00:08.000\nGone\n\n2\n00:01:40.000 --> 00:01:45.500 line:90%\nKept\n";
+        var shifted = MediaSubtitles.Shift(vtt, 100);
+        Assert.DoesNotContain("Gone", shifted);
+        Assert.Contains("00:00:00.000 --> 00:00:05.500 line:90%", shifted);
+        Assert.Contains("Kept", shifted);
+        Assert.Equal(vtt, MediaSubtitles.Shift(vtt, 0));
+    }
+
+    [Fact]
+    public void Progress_PercentAndWatched()
+    {
+        Assert.Equal(50, new MediaProgress("", Guid.Empty, 60, 120, false, DateTimeOffset.UtcNow).Percent);
+        Assert.Equal(100, new MediaProgress("", Guid.Empty, 0, 120, true, DateTimeOffset.UtcNow).Percent);
+        Assert.Equal(0, new MediaProgress("", Guid.Empty, 60, null, false, DateTimeOffset.UtcNow).Percent);
+    }
+
+    // What ffprobe printed for a real episode of the library this was built for (trimmed): a
+    // Matroska file with 10-bit HEVC, E-AC-3 5.1 and a SubRip track.
+    private const string BlackMirrorProbe = """
+        {
+          "streams": [
+            { "index": 0, "codec_name": "hevc", "profile": "Main 10", "codec_type": "video", "codec_tag_string": "[0][0][0][0]",
+              "width": 1920, "height": 1080, "pix_fmt": "yuv420p10le", "disposition": { "default": 1, "attached_pic": 0 },
+              "tags": { "DURATION-eng": "00:44:06.040000000" } },
+            { "index": 1, "codec_name": "eac3", "codec_type": "audio", "channels": 6, "disposition": { "default": 1 },
+              "tags": { "language": "eng", "title": "English 5.1" } },
+            { "index": 2, "codec_name": "subrip", "codec_type": "subtitle", "disposition": { "default": 0, "forced": 0 },
+              "tags": { "language": "eng" } },
+            { "index": 3, "codec_name": "hdmv_pgs_subtitle", "codec_type": "subtitle", "disposition": { "default": 0 } },
+            { "index": 4, "codec_name": "mjpeg", "codec_type": "video", "disposition": { "attached_pic": 1 } }
+          ],
+          "format": { "format_name": "matroska,webm", "duration": "2646.040000", "bit_rate": "4630000" }
+        }
+        """;
+
+    [Fact]
+    public void Probe_ReadsCodecsTracksAndDuration()
+    {
+        var item = new MediaItem { Path = "/nowhere/Black Mirror - S01E01.mkv" };
+        using var document = JsonDocument.Parse(BlackMirrorProbe);
+        MediaProbe.Apply(item, document.RootElement);
+
+        Assert.Equal("mkv", item.Container);
+        Assert.Equal("hevc", item.VideoCodec);
+        Assert.Equal(1920, item.Width);
+        Assert.Equal(2646.04, item.DurationSeconds!.Value, 2);
+        Assert.Equal(4_630_000, item.Bitrate);
+        Assert.Equal("eac3", item.AudioCodec);
+        Assert.Equal(6, item.AudioChannels);
+        // The PGS track is a picture, not text, and cannot be offered as WebVTT; cover art is not video.
+        var subtitle = Assert.Single(item.SubtitleTracks);
+        Assert.Equal("subrip", subtitle.Codec);
+        Assert.Equal(0, subtitle.StreamIndex);
+    }
+
+    [Fact]
+    public void Probe_FallsBackToTheMatroskaDurationTag()
+    {
+        var item = new MediaItem { Path = "/nowhere/x.mkv" };
+        using var document = JsonDocument.Parse(BlackMirrorProbe.Replace("\"duration\": \"2646.040000\",", ""));
+        MediaProbe.Apply(item, document.RootElement);
+        Assert.Equal(2646.04, item.DurationSeconds!.Value, 2);
+    }
+
+    [Theory]
+    [InlineData("/usr/bin/ffmpeg", "/usr/bin/ffprobe")]
+    [InlineData("ffmpeg", "ffprobe")]
+    [InlineData("/opt/tools/avconv", "ffprobe")]
+    public void Ffprobe_IsFoundBesideFfmpeg(string ffmpeg, string ffprobe) => Assert.Equal(ffprobe, MediaProbe.DeriveFfprobePath(ffmpeg));
+}

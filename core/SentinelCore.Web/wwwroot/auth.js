@@ -8,6 +8,7 @@ window.GateWatchAuth = (function () {
   const accountsTab = document.getElementById("tab-accounts");
   const settingsTab = document.getElementById("tab-settings");
   const devicesTab = document.getElementById("tab-devices");
+  const moviesTab = document.getElementById("tab-movies");
   const titleEl = document.getElementById("login-title");
   const introEl = document.getElementById("login-intro");
   const confirmRow = document.getElementById("login-confirm-row");
@@ -90,6 +91,20 @@ window.GateWatchAuth = (function () {
     }
   }
 
+  // Same shape as the Device Hub check: the Movies tab exists only while Movies & TV is switched
+  // on in Settings, and every signed-in role gets it (watched state is per person). A 404 is an
+  // older server that has no media section at all - treated as off, like any other failure.
+  async function checkMovies() {
+    try {
+      const response = await fetch("/api/media/enabled");
+      if (!response.ok) return;
+      const { enabled } = await response.json();
+      moviesTab.classList.toggle("hidden", !enabled);
+    } catch {
+      // Leave the tab hidden.
+    }
+  }
+
   async function check() {
     try {
       const response = await fetch("/api/auth/status");
@@ -104,7 +119,7 @@ window.GateWatchAuth = (function () {
       // The Device Hub tab only exists when it's switched on in Settings. Unlike the two above
       // this isn't a role decision - a Viewer gets the tab too, they just can't add or edit
       // devices there - so it needs its own (non-admin) endpoint to ask.
-      if (payload.authenticated || !payload.enabled) await checkDeviceHub();
+      if (payload.authenticated || !payload.enabled) await Promise.all([checkDeviceHub(), checkMovies()]);
       if (payload.authenticated) return;
 
       if (payload.enabled && !payload.configured) useFirstAdminMode();
@@ -117,5 +132,7 @@ window.GateWatchAuth = (function () {
     }
   }
 
-  return { check };
+  // checkMovies is also called by settings.js after MOVIES & TV is saved, so switching the
+  // section on shows the tab straight away instead of after a reload.
+  return { check, checkMovies };
 })();

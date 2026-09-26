@@ -658,6 +658,23 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "media",
+            Title = "MOVIES & TV",
+            Group = SettingsGroups.Automation,
+            Endpoint = "/api/settings/media",
+            Basic = true,
+            DtoType = typeof(MediaSettingsDto),
+            Description = "A family movie and TV library, like Jellyfin, on the dashboard and in every app including Apple TV. Point it at folders of movies and TV shows (on this server, or on another computer's share mounted here) from the Movies tab; it reads the titles from the file names, fetches official posters, descriptions and ratings from TMDB, and streams to each device in a format it can play. Everyone who signs in gets their own watched list and resume points.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the Movies tab on the dashboard and in the apps. Turning it off hides it everywhere but keeps the libraries and everyone's watched history."),
+                Password("tmdbApiKey", "TMDB API Key", "Free from themoviedb.org: make an account, then Settings -> API -> request a key (Personal use). Either the \"API Key\" or the longer \"API Read Access Token\" works. Without one the library still plays, but uses the file names as titles and shows only artwork that sits beside the files."),
+                Number("rescanHours", "Rescan Every (hours)", "How often the library folders are checked for new files. The server also checks at startup and whenever a library is added. 0 turns the periodic check off; the Scan button on the Movies tab still works.", 0, 168)
+            ],
+            ExtraAction = new SettingsActionSchema("rescanMedia", "scan now", "Checks every library folder for new, moved or deleted files right away, then fetches anything missing from TMDB.", "/api/media/scan", "POST")
+        },
+        new()
+        {
             Key = "packageTheftWatch",
             Title = "PACKAGE THEFT WATCH",
             Group = SettingsGroups.Ai,

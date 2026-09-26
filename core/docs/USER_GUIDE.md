@@ -13,6 +13,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
 3b. [Semantic search — finding events by what the picture shows](#3b-semantic-search--finding-events-by-what-the-picture-shows)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
+4c. [The MOVIES tab — your own movies and TV shows](#4c-the-movies-tab--your-own-movies-and-tv-shows)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
 5b. [Gate/door open check — a safety check independent of motion alerts](#5b-gatedoor-open-check--a-safety-check-independent-of-motion-alerts)
@@ -362,6 +363,76 @@ or `1x` where it's expressed as a multiple of the frame rate. A camera sending a
 Do **not** lower the frame rate to chase latency: most cameras express the keyframe interval in
 frames, so fewer frames per second means keyframes arrive *further apart in time* — more delay,
 not less.
+
+## 4c. The MOVIES tab — your own movies and TV shows
+
+A family movie and TV library, like Jellyfin or Plex, built into the dashboard and every app
+(Apple TV included). The server scans folders of video files, fetches posters, descriptions,
+ratings and cast from TMDB (The Movie Database), and plays the films back to whatever device
+you're on. The tab only appears once **Settings → MOVIES & TV → Enabled** is turned on.
+
+**What's on it.** **Home** has a featured title across the top, then rows for *Continue watching*
+(anything half-watched, plus the next episode of a show you're following), recently added movies
+and shows, and new episodes — hover a row for its arrows, or swipe it on a phone. **Movies** and
+**TV Shows** are poster grids with a search box, a genre filter, sorting (title, recently added,
+year, rating) and an **unwatched** toggle. Click any poster for its page: the description, cast,
+the file's quality (e.g. `1080p · HEVC · EAC3 5.1 · 1.4 GB`), **Play** or **Resume**, **Start
+over**, and **Mark watched**. A show's page lists its seasons and episodes, and **Play S1 · E3**
+always points at the next one to watch.
+
+**Adding a library (admins).** The first time, the tab asks for one: give it a name, choose
+**Movies** or **TV Shows**, and pick the folder with **browse** (the number beside each folder
+is how many videos sit directly inside it, which makes the right one easy to spot). Later, the
+**⚙ libraries** button lists every library with its item count and last scan, and lets you add,
+edit, rescan or remove one. Removing a library never touches the files themselves. Scans run in
+the background with live progress, and playback keeps working while they do.
+
+How to lay out the folders:
+
+- **Movies:** one file per film, loose or in its own folder — `17 Again (2009)/17.Again.2009.1080p.mp4`
+  is read as "17 Again", 2009. Release junk (1080p, BluRay, x265, YIFY…) is ignored.
+- **TV:** one folder per show, episodes named `S01E02`, `1x02`, or inside `Season 1/` folders.
+- A `poster.jpg`, `folder.jpg` or `fanart.jpg` next to the files beats TMDB's artwork, and
+  `.srt` / `.vtt` subtitle files with the same name as the video are picked up.
+
+**Movies on another computer.** The server can only scan folders it can see, so a share on a
+Windows PC has to be mounted on the server first (the dashboard prints these exact lines if you
+type a `\\PC\Share` path). On the Linux server:
+
+```
+sudo mkdir -p /mnt/movies
+sudo mount -t cifs //PC/Movies /mnt/movies -o username=YOUR-WINDOWS-USER,uid=1000
+```
+
+To mount it at every boot, put the Windows username and password in a file only root can read
+(`/etc/smb-movies` with `username=…` and `password=…` lines, `sudo chmod 600 /etc/smb-movies`),
+then add this line to `/etc/fstab`:
+
+```
+//PC/Movies  /mnt/movies  cifs  credentials=/etc/smb-movies,uid=1000,nofail  0  0
+```
+
+Then add `/mnt/movies` (or a folder inside it) as the library. `nofail` keeps the server booting
+normally when the PC is switched off; the library just shows nothing new until it's back.
+
+**The TMDB key.** Titles, artwork and descriptions come from TMDB, which needs a free API key:
+make an account at themoviedb.org, then *Settings → API → request a key (Personal use)*, and
+paste either the "API Key" or the longer "API Read Access Token" into **Settings → MOVIES & TV**.
+Without a key everything still plays, with titles taken from the file names. If a film was
+matched to the wrong title, an admin opens it and uses **Fix match…** to pick the right one; that
+choice is locked so later scans keep it.
+
+**How playback works.** An MP4 the browser can decode plays straight from the file, so seeking
+is instant. Anything else (MKV, AVI, a codec the device can't play) is converted on the fly by
+**ffmpeg** on the server — usually just repackaged, which is quick; a full conversion runs at
+about real time, so jumping far ahead may take a moment. ffmpeg must be installed on the server
+for this (the libraries page warns when it isn't). In the player: **space** plays/pauses,
+**← / →** jump 10 seconds, **F** is full screen, **Esc** closes. At the end of an episode the
+next one starts after a 10-second countdown, which you can cancel.
+
+**Watched state is per person.** Everyone who signs in has their own resume points, watched
+ticks and *Continue watching* row, and they follow you between the dashboard and the apps. A
+film counts as watched once you're past about 92% of it (the credits don't have to finish).
 
 ## 5. The CAMERAS tab — adding your own cameras
 

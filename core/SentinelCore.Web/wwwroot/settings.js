@@ -295,6 +295,7 @@ window.GateWatchSettings = (function () {
     webhook: "Forward each analysed event to another system.",
     mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker.",
     deviceHub: "Adds a DEVICE HUB tab for switching lights, plugs, and other MQTT devices on and off. Needs MQTT above turned on first.",
+    media: "Adds a MOVIES tab: your own movies and TV shows, scanned from folders on the server, with artwork and descriptions from TMDB, playable here and in every app.",
     bugReports: "Email the developer when something breaks internally, using the Email account above.",
     loginAlerts: "Email and/or Telegram you when someone enters the wrong password for this dashboard.",
     triggerApi: "Let a doorbell, NVR, or script trigger a camera by fetching a web address.",
@@ -2575,6 +2576,8 @@ window.GateWatchSettings = (function () {
         showToast(`${label}: not saved`, false);
       } else {
         showToast(`${label} saved`, true);
+        // The Movies tab only exists while the section is on - show or hide it now.
+        if (endpoint === "/api/settings/media") window.GateWatchAuth.checkMovies();
       }
     } catch {
       showFieldErrors(errorsEl, ["Network error while saving."]);
