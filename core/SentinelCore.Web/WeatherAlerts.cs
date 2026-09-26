@@ -330,6 +330,12 @@ public sealed class WeatherAlertWorker(
         var now = _clock.GetUtcNow();
         var selection = WeatherAlertPolicy.Select(options, feed.Alerts, state.Contains);
 
+        // Anything already dealt with that the NWS is still listing stays remembered, however
+        // stale its expiry looks - otherwise the prune below forgets it and the next check sends
+        // it again.
+        foreach (var alert in feed.Alerts)
+            if (state.Contains(alert.Id)) state.MarkSeen(alert.Id, Until(alert, now));
+
         foreach (var followUp in selection.SkippedFollowUps)
             state.MarkSeen(followUp.Id, Until(followUp, now));
 
@@ -370,6 +376,15 @@ public sealed class WeatherAlertWorker(
         return new WeatherAlertRun(sent, failed, selection.SkippedFollowUps.Count);
     }
 
-    private static DateTimeOffset Until(WeatherAlert alert, DateTimeOffset now) =>
-        alert.Expires ?? alert.Ends ?? now.AddDays(1);
+    // The later of the message expiry and the hazard end (a long winter warning's message can
+    // expire well before the storm does), never earlier than now: the alert is in the feed, so
+    // it matters at least until this check.
+    private static DateTimeOffset Until(WeatherAlert alert, DateTimeOffset now)
+    {
+        if (alert.Expires is null && alert.Ends is null) return now.AddDays(1);
+        var until = now;
+        if (alert.Expires > until) until = alert.Expires.Value;
+        if (alert.Ends > until) until = alert.Ends.Value;
+        return until;
+    }
 }

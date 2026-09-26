@@ -19,6 +19,10 @@ public sealed class WeatherAlertTests : IDisposable
 {
     private readonly string _directory;
 
+    // The worker's clock. The fixture alerts are dated from it, so they are live when the test
+    // runs rather than on the day it was written.
+    private readonly ManualTime _clock = new(DateTimeOffset.UtcNow);
+
     public WeatherAlertTests()
     {
         _directory = Path.Combine(Path.GetTempPath(), $"weather-alerts-{Guid.NewGuid():N}");
@@ -242,6 +246,37 @@ public sealed class WeatherAlertTests : IDisposable
     }
 
     [Fact]
+    public async Task Worker_StaysQuiet_WhileTheFeedStillListsAnAlertPastItsExpiry()
+    {
+        // The NWS feed can lag its own expiry times. An alert still listed days after it
+        // "expired" was already sent, so neither the next check nor a restart may send it again.
+        var statePath = Path.Combine(_directory, "seen.json");
+        var source = new FakeSource { Alerts = [Alert("t1", "Tornado Warning", "Extreme")] };
+        var notifier = new FakeNotifier { Accept = true };
+        var options = new WeatherAlertOptions { Enabled = true };
+
+        var first = await CreateWorker(source, notifier, statePath).RunOnceAsync(options, CancellationToken.None);
+        Assert.Equal(1, first.Sent);
+
+        _clock.Advance(TimeSpan.FromHours(2));   // just past its end
+        var atEnd = await CreateWorker(source, notifier, statePath).RunOnceAsync(options, CancellationToken.None);
+        Assert.Equal(0, atEnd.Sent);
+
+        _clock.Advance(WeatherAlertState.Grace + TimeSpan.FromDays(2));   // long past end + grace
+        var late = await CreateWorker(source, notifier, statePath).RunOnceAsync(options, CancellationToken.None);
+        Assert.Equal(0, late.Sent);
+        var lateAgain = await CreateWorker(source, notifier, statePath).RunOnceAsync(options, CancellationToken.None);
+        Assert.Equal(0, lateAgain.Sent);
+        Assert.Single(notifier.Sent);
+
+        // Once it finally leaves the feed it is forgotten after the grace period.
+        source.Alerts = [];
+        _clock.Advance(WeatherAlertState.Grace + TimeSpan.FromMinutes(1));
+        await CreateWorker(source, notifier, statePath).RunOnceAsync(options, CancellationToken.None);
+        Assert.Equal(0, new WeatherAlertState(statePath).Count);
+    }
+
+    [Fact]
     public async Task Worker_RetriesWhenNoChannelAcceptedIt()
     {
         var statePath = Path.Combine(_directory, "seen.json");
@@ -366,24 +401,32 @@ public sealed class WeatherAlertTests : IDisposable
         if (!File.Exists(settingsPath)) File.WriteAllText(settingsPath, "{}");
         return new WeatherAlertWorker(
             source, notifier, new AppSettingsFile(settingsPath), new WeatherAlertState(statePath),
-            NullLogger<WeatherAlertWorker>.Instance);
+            NullLogger<WeatherAlertWorker>.Instance, _clock);
     }
 
-    private static WeatherAlert Alert(string id, string eventName, string severity, string[]? references = null) => new()
+    // In effect from half an hour ago for another ninety minutes, by the worker's clock.
+    private WeatherAlert Alert(string id, string eventName, string severity, string[]? references = null) => new()
     {
         Id = id,
         Event = eventName,
         Severity = severity,
         Headline = $"{eventName} in effect",
         Description = "Details.",
-        Onset = new DateTimeOffset(2026, 9, 25, 14, 0, 0, TimeSpan.Zero),
-        Ends = new DateTimeOffset(2026, 9, 25, 16, 0, 0, TimeSpan.Zero),
-        Expires = new DateTimeOffset(2026, 9, 25, 16, 0, 0, TimeSpan.Zero),
+        Onset = _clock.Now.AddMinutes(-30),
+        Ends = _clock.Now.AddMinutes(90),
+        Expires = _clock.Now.AddMinutes(90),
         AreaDescription = "Jefferson",
         Sender = "NWS Louisville KY",
         MessageType = references is null ? "Alert" : "Update",
         References = references ?? []
     };
+
+    private sealed class ManualTime(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+        public void Advance(TimeSpan by) => Now += by;
+    }
 
     private sealed class FakeSource : IWeatherAlertSource
     {
