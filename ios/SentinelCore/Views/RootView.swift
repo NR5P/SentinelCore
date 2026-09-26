@@ -108,7 +108,7 @@ struct RootView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 BrandHeader()
-                List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: model.alarmEnabled), selection: $selection) { section in
+                List(AppSection.sidebarCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: model.alarmEnabled, filesEnabled: model.familyFilesEnabled), selection: $selection) { section in
                     Label(section.title, systemImage: section.icon).tag(section)
                 }
                 .listStyle(.sidebar)
@@ -132,7 +132,7 @@ struct RootView: View {
     }
 
     private var visibleSections: [AppSection] {
-        AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: model.alarmEnabled)
+        AppSection.visibleCases(deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: model.alarmEnabled, filesEnabled: model.familyFilesEnabled)
     }
 
     private var compactNavigation: some View {
@@ -216,6 +216,7 @@ struct RootView: View {
         case .devices: DeviceHubView(isActive: selection == .devices)
         case .alarm: AlarmView(isActive: selection == .alarm)
         case .organizer: OrganizerView()
+        case .files: FilesView()
         case .settings: SettingsView()
         }
     }
@@ -230,7 +231,7 @@ private enum CompactTab: Hashable {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events section over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case events, timeline, live, alarm, organizer, devices, settings
+    case events, timeline, live, alarm, organizer, files, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
@@ -239,6 +240,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .live: "Live"
         case .alarm: "Alarm"
         case .organizer: "Organizer"
+        case .files: "Files"
         case .devices: "Device Hub"
         case .settings: "Settings"
         }
@@ -250,16 +252,18 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .live: "video.fill"
         case .alarm: "lock.shield.fill"
         case .organizer: "calendar"
+        case .files: "folder"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"
         }
     }
 
-    // The Device Hub, the Organizer and the Alarm can each be switched off server-side, so every
-    // list of sections is filtered rather than using allCases directly.
-    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool, alarmEnabled: Bool = false) -> [AppSection] {
+    // The Device Hub, the Organizer, the Alarm and Files can each be switched off server-side, so
+    // every list of sections is filtered rather than using allCases directly.
+    static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool, alarmEnabled: Bool = false, filesEnabled: Bool = false) -> [AppSection] {
         allCases.filter {
-            ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled) && ($0 != .alarm || alarmEnabled)
+            ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled)
+                && ($0 != .alarm || alarmEnabled) && ($0 != .files || filesEnabled)
         }
     }
 
@@ -272,8 +276,8 @@ enum AppSection: String, CaseIterable, Identifiable {
     // (Manage Cameras, Manage Accounts, Manage Known Faces, Server Settings) did nothing at all
     // when clicked. The sidebar row renders into the split view's detail column, which does have
     // one, so those screens work from here. Both routes now lead to the same place.
-    static func sidebarCases(deviceHubEnabled: Bool, organizerEnabled: Bool, alarmEnabled: Bool = false) -> [AppSection] {
-        visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: alarmEnabled)
+    static func sidebarCases(deviceHubEnabled: Bool, organizerEnabled: Bool, alarmEnabled: Bool = false, filesEnabled: Bool = false) -> [AppSection] {
+        visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled, alarmEnabled: alarmEnabled, filesEnabled: filesEnabled)
     }
 }
 

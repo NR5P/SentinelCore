@@ -28,8 +28,8 @@ address. Use HTTPS before exposing a server beyond the local network.
 
 | Package | What's in it |
 | --- | --- |
-| `ui/` | The Compose app shell (`SentinelApp`, `SentinelViewModel`), screens, the Organizer UI (`ui/organizer`), theme, tab bar customization. |
-| `data/`, `net/` | The API client and models; server discovery over mDNS. |
+| `ui/` | The Compose app shell (`SentinelApp`, `SentinelViewModel`), screens, the Organizer UI (`ui/organizer`), the Files library UI (`ui/files`), theme, tab bar customization. |
+| `data/`, `net/` | The API client and models; server discovery over mDNS. The Files library's wire format and path helpers are in `data/FamilyFilesModels.kt`, its picked-file naming in `data/FamilyUploadNaming.kt`. |
 | `organizer/` | The Organizer's on-device store and sync engine (`OrganizerEngine`, kept once per process by `OrganizerRuntime`), local alarms, holidays, and the voice and share entry points (`VoiceCapture`, `VoicePhrase`). |
 | `widgets/` | Home-screen widgets and the background sync that keeps them current (WorkManager, plus the server's silent push). |
 | `push/` | Firebase Cloud Messaging: security alerts, and the silent "Organizer changed" push. |
@@ -74,6 +74,18 @@ apps; protocol in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md
 tap-to-switch tiles for a tablet on a wall), the admin screens, optional dashboard login,
 a remote fallback address, a bottom bar on phones and a navigation rail on tablets, and a
 customizable tab bar.
+
+**Files:** the household's shared file library on the server (`/api/family-files`), as a FILES
+tab that appears when the server has the feature on. Browse folders with thumbnails, search the
+whole library, add photos and videos from the phone's picker or any file through the system
+picker (uploads stream straight from the content Uri and carry on if you switch tabs), make
+folders, rename, and move things to the trash; open or share a file through whatever app handles
+its type. The trash screen puts files back per batch or one at a time. An Admin also manages the
+backup drives (a folder on the server's machine, or another computer over SFTP with a pinned host
+key), runs a backup, brings files back from a drive, checks for duplicates and runs the nightly
+pass by hand; everyone else sees the drives read-only. Downloaded copies for Open and Share go
+under the app's cache as `files-open/`, one of the `res/xml/file_paths.xml` entries the
+FileProvider serves.
 
 ## Things to know before changing code here
 

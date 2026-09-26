@@ -49,6 +49,7 @@ public sealed class BackupService(
     OrganizerAutomationEngine organizerAutomationEngine,
     IAlarmStore alarmStore,
     AlarmEngine alarmEngine,
+    FamilyDriveStore familyDrives,
     MainAppHubBackupClient hub,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
@@ -58,8 +59,9 @@ public sealed class BackupService(
 {
     // 2 added CameraGroups and GateChecks; 3 added Organizer; 4 added RecordingSchedules, Hub,
     // InternetExposed, Warnings, the organizer's feed tokens and preferences, and the settings
-    // AutoExport section; 5 added OrganizerAutomations; 6 added Alarm. Bumping this does not
-    // invalidate older exports - see Validate, which accepts anything up to this number.
+    // AutoExport section; 5 added OrganizerAutomations; 6 added Alarm, FamilyDrives and the
+    // settings FamilyFiles section. Bumping this does not invalidate older exports - see
+    // Validate, which accepts anything up to this number.
     public const int CurrentSchemaVersion = 6;
 
     public sealed record BundleSummary(int FileCount, IReadOnlyList<string> Warnings);
@@ -88,6 +90,7 @@ public sealed class BackupService(
             await webSettings.GetSectionAsync<InternetExposedSettingsDto>("InternetExposed", ct),
             await organizerAutomations.GetAllAsync(ct),
             new AlarmBackup(await alarmStore.GetSensorsAsync(ct), await alarmStore.GetConfigAsync(ct)),
+            await familyDrives.GetAllAsync(ct),
             warnings.Count > 0 ? warnings : null);
     }
 
@@ -404,6 +407,15 @@ public sealed class BackupService(
             alarmEngine.Invalidate();
         }
 
+        // Same id, so a second restore replaces rather than adds a twin of every drive.
+        var familyDrivesRestored = 0;
+        foreach (var drive in document.FamilyDrives ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(drive.Id)) continue;
+            await familyDrives.UpsertAsync(drive.Normalized(), ct);
+            familyDrivesRestored++;
+        }
+
         // Written last among the stores because it's the one part that can still fail after
         // validation passed (the main app stopping mid-restore). Everything above has landed by
         // then, so it's reported as a note on a restore that otherwise worked, not as a failure
@@ -456,6 +468,7 @@ public sealed class BackupService(
             organizerItemsRestored,
             organizerAutomationsRestored,
             alarmSensorsRestored,
+            familyDrivesRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,
             automationRulesRestored = hubCounts?.RulesRestored ?? 0,
             schedulesRestored = hubCounts?.SchedulesRestored ?? 0,

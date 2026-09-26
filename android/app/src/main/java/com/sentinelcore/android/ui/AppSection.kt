@@ -2,6 +2,7 @@ package com.sentinelcore.android.ui
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.LiveTv
@@ -20,6 +21,7 @@ internal enum class AppSection(
     LIVE("Live", "live"),
     ALARM("Alarm", "alarm"),
     ORGANIZER("Organizer", "organizer"),
+    FILES("Files", "files"),
     DEVICES("Devices", "devices"),
     SETTINGS("Settings", "settings"),
     ;
@@ -33,15 +35,26 @@ internal enum class AppSection(
             LIVE -> Icons.Default.LiveTv
             ALARM -> Icons.Default.Shield
             ORGANIZER -> Icons.Default.CalendarMonth
+            FILES -> Icons.Default.Folder
             DEVICES -> Icons.Default.Lightbulb
             SETTINGS -> Icons.Default.Settings
         }
 
     companion object {
-        // The Device Hub, the Organizer and the Alarm can each be switched off server-side.
-        fun visible(deviceHubEnabled: Boolean, organizerEnabled: Boolean, alarmEnabled: Boolean = false): List<AppSection> =
+        // The Device Hub, the Organizer, the Alarm and the Files library can each be switched off
+        // server-side. Named arguments at every call site: two optional booleans in a row are
+        // one positional slip away from gating the wrong section.
+        fun visible(
+            deviceHubEnabled: Boolean,
+            organizerEnabled: Boolean,
+            alarmEnabled: Boolean = false,
+            filesEnabled: Boolean = false,
+        ): List<AppSection> =
             entries.filter {
-                (it != DEVICES || deviceHubEnabled) && (it != ORGANIZER || organizerEnabled) && (it != ALARM || alarmEnabled)
+                (it != DEVICES || deviceHubEnabled) &&
+                    (it != ORGANIZER || organizerEnabled) &&
+                    (it != ALARM || alarmEnabled) &&
+                    (it != FILES || filesEnabled)
             }
     }
 }

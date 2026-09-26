@@ -230,6 +230,16 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton(new AutoExportStateFile(Path.Combine(camerasRoot, "auto-export-state.json")));
 builder.Services.AddSingleton<AutoExportRunner>();
 builder.Services.AddHostedService<AutoExportWorker>();
+// The family file library, its backup drives and the nightly duplicate check - see
+// FamilyFiles.cs. The library folder is a setting; everything else sits under the data directory.
+builder.Services.AddSingleton(sp => new FamilyFilesLocations(camerasRoot, sp.GetRequiredService<AppSettingsFile>()));
+builder.Services.AddSingleton(sp => new FamilyFilesIndex(sp.GetRequiredService<FamilyFilesLocations>().IndexFile));
+builder.Services.AddSingleton(sp => new FamilyFilesTrash(sp.GetRequiredService<FamilyFilesLocations>().Trash));
+builder.Services.AddSingleton(sp => new FamilyDriveStore(sp.GetRequiredService<FamilyFilesLocations>().DrivesFile));
+builder.Services.AddSingleton(sp => new FamilyFilesStateFile(sp.GetRequiredService<FamilyFilesLocations>().StateFile));
+builder.Services.AddSingleton<FamilyFilesLibrary>();
+builder.Services.AddSingleton<FamilyFilesJobs>();
+builder.Services.AddHostedService<FamilyFilesWorker>();
 // Board automations: scheduled cards and "when a card moves to Done..." rules, run here so they
 // happen with every device asleep - see OrganizerAutomationEngine.
 builder.Services.TryAddSingleton(TimeProvider.System);
@@ -538,6 +548,7 @@ app.MapAuthEndpoints();
 app.MapAccountEndpoints();
 app.MapBackupEndpoints();
 app.MapAutoExportEndpoints();
+app.MapFamilyFilesEndpoints();
 app.MapChatEndpoints();
 app.MapQueueEndpoints();
 app.MapSystemStatusEndpoints();

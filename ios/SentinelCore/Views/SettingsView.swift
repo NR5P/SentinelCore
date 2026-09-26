@@ -25,7 +25,8 @@ struct SettingsView: View {
                         TabBarEditor(visible: AppSection.visibleCases(
                             deviceHubEnabled: model.deviceHubEnabled,
                             organizerEnabled: model.organizer.status?.enabled ?? model.organizerLastKnownEnabled,
-                            alarmEnabled: model.alarmEnabled))
+                            alarmEnabled: model.alarmEnabled,
+                            filesEnabled: model.familyFilesEnabled))
                     } label: {
                         Label("Customize Tab Bar", systemImage: "square.grid.2x2")
                     }

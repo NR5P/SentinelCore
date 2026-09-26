@@ -26,7 +26,13 @@ namespace SentinelCore.Web;
 // after a JSON-only restore the server lists the attachments it's missing so the devices
 // upload them again - see OrganizerStore.
 //
+// Since schema 6 it carries the family files backup drives (FamilyFilesDrives.cs) - but not
+// the family file library itself, which can be far larger than everything else put together
+// and has those drives as its backup: a restored install gets its drives back and brings the
+// files in from one with "bring files back" on the Files tab.
+//
 // Still NOT included, deliberately:
+//   - The family file library's files (above), and its trash.
 //   - Events, captured images, recordings, and the "reviewed" marks on them: history, not
 //     configuration, and large. An install restored from this file is your setup, not your past.
 //   - Login sessions: restoring one onto another machine would be handing over a live login.
@@ -64,6 +70,11 @@ public sealed record BackupDocument(
     // Added in schema 6: the alarm's sensors and its settings (PIN hash included, like the
     // account password hashes above - this file is already that sensitive).
     AlarmBackup? Alarm = null,
+    // Also schema 6: the family files backup drives (FamilyFilesDrives.cs) - where the
+    // library is mirrored, passwords included, so a restored install goes on backing up to the
+    // same places. The library's files themselves are deliberately not here: the drives are
+    // their backup, and a restored install brings them back from one with "bring files back".
+    IReadOnlyList<FamilyDrive>? FamilyDrives = null,
     // What couldn't be included when this file was written, in words - e.g. the main app wasn't
     // running. Informational; restore ignores it.
     IReadOnlyList<string>? Warnings = null);

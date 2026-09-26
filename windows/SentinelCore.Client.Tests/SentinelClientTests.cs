@@ -663,4 +663,251 @@ public class SentinelClientTests
         Assert.True(device.IsOn);
         Assert.False(device.IsReporting);
     }
+
+    // MARK: - Family Files
+
+    [Fact]
+    public async Task A_Family_Files_status_decodes_drives_the_nightly_pass_the_trash_and_a_running_job()
+    {
+        const string json = """
+            {"enabled":true,"isAdmin":true,"username":"nathan","libraryFolder":"/srv/family","maxUploadBytes":2147483648,
+             "library":{"files":1234,"bytes":9876543210,"indexedUtc":"2026-09-25T02:00:00Z"},
+             "drives":[{"id":"d1","name":"USB drive","kind":"folder","enabled":true,"location":"/mnt/usb/Family Files",
+                        "folderPath":"/mnt/usb/Family Files","sftpHost":"","sftpPort":22,"sftpUsername":"","sftpFolder":"",
+                        "sftpHostKeyFingerprint":"","hasPassword":false,"lastAttemptUtc":"2026-09-25T02:05:00Z",
+                        "lastSuccessUtc":"2026-09-25T02:05:00Z","lastResult":"ok","lastMessage":"Copied 3 files.",
+                        "lastFileCount":1234,"lastBytes":9876543210,"lastCopied":3,"lastRemoved":0,
+                        "lastFreeBytes":50000000000,"lastHostKeyFingerprint":null}],
+             "nightly":{"hour":2,"minute":0,"removeDuplicates":true,"trashKeepDays":30,"nextRunUtc":"2026-09-26T02:00:00Z",
+                        "lastRunUtc":"2026-09-25T02:00:00Z","lastResult":"ok","lastMessage":"Backed up to 1 drive."},
+             "duplicates":{"ranUtc":"2026-09-25T02:01:00Z","removed":true,"groups":2,"copies":3,"bytes":4096,
+                           "filesChecked":1234,"trashBatchId":"b9"},
+             "trash":{"batches":1,"files":3,"bytes":4096},
+             "job":{"kind":"sync","driveId":"d1","driveName":"USB drive","startedUtc":"2026-09-25T10:00:00Z",
+                    "message":"Copying beach.jpg","done":40,"total":100}}
+            """;
+        using var server = new FakeServer().OnGet("/api/family-files/status", json);
+        using var client = ClientFor(server);
+
+        var status = await client.FamilyFilesStatusAsync();
+
+        Assert.True(status.Enabled);
+        Assert.True(status.IsAdmin);
+        Assert.Equal(2147483648L, status.MaxUploadBytes);
+        Assert.Equal(1234, status.Library?.Files);
+        var drive = Assert.Single(status.Drives);
+        Assert.Equal("USB drive", drive.Name);
+        Assert.Equal("ok", drive.LastResult);
+        Assert.Equal(50000000000L, drive.LastFreeBytes);
+        Assert.False(drive.IsSftp);
+        Assert.Equal(2, status.Nightly?.Hour);
+        Assert.True(status.Nightly?.RemoveDuplicates);
+        Assert.Equal(3, status.Duplicates?.Copies);
+        Assert.Equal(3, status.Trash?.Files);
+        Assert.Equal("sync", status.Job?.Kind);
+        Assert.Equal(40, status.Job?.Done);
+        Assert.Equal("Backing up to USB drive", status.Job?.Title);
+    }
+
+    [Fact]
+    public async Task A_switched_off_Family_Files_status_carries_nothing_but_the_flag_and_still_decodes()
+    {
+        // Every other field is absent, not null - the models have to treat the two the same.
+        using var server = new FakeServer()
+            .OnGet("/api/family-files/status", """{"enabled":false,"isAdmin":false,"username":"kid"}""");
+        using var client = ClientFor(server);
+
+        var status = await client.FamilyFilesStatusAsync();
+
+        Assert.False(status.Enabled);
+        Assert.Null(status.Library);
+        Assert.Empty(status.Drives);
+        Assert.Null(status.Job);
+    }
+
+    [Fact]
+    public async Task A_folder_listing_asks_for_the_path_and_decodes_folders_then_files()
+    {
+        const string json = """
+            {"path":"Photos/2026","name":"2026","parent":"Photos",
+             "folders":[{"path":"Photos/2026/Beach","name":"Beach"}],
+             "files":[{"path":"Photos/2026/sunset.jpg","name":"sunset.jpg","size":204800,
+                       "modifiedUtc":"2026-08-01T18:30:00Z","sha256":"abc","isImage":true,"contentType":"image/jpeg"}]}
+            """;
+        using var server = new FakeServer().OnGet("/api/family-files/list", json);
+        using var client = ClientFor(server);
+
+        var listing = await client.FamilyFilesListAsync("Photos/2026");
+
+        Assert.Equal("GET /api/family-files/list?path=Photos%2F2026", server.Requests.Single());
+        Assert.Equal("Photos", listing.Parent);
+        Assert.Equal("Beach", Assert.Single(listing.Folders).Name);
+        var file = Assert.Single(listing.Files);
+        Assert.Equal(204800, file.Size);
+        Assert.True(file.IsImage);
+        Assert.Equal(new DateTimeOffset(2026, 8, 1, 18, 30, 0, TimeSpan.Zero), file.ModifiedUtc);
+    }
+
+    [Fact]
+    public async Task An_upload_arrives_as_raw_bytes_at_the_library_path_with_the_original_date()
+    {
+        var local = Path.Combine(Path.GetTempPath(), $"sentinel-upload-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(local, "hello from the beach");
+        try
+        {
+            // The fake server matches on the URL as it arrives - escaped, which is the point.
+            using var server = new FakeServer().On(
+                "PUT",
+                "/api/family-files/files/Photos/2026%20trip/notes.txt",
+                """{"path":"Photos/2026 trip/notes.txt","name":"notes.txt","size":20,"sha256":"x","alreadyThere":false}""");
+            using var client = ClientFor(server);
+
+            var sent = new List<long>();
+            var result = await client.FamilyFilesUploadAsync(
+                local,
+                "Photos/2026 trip/notes.txt",
+                new DateTimeOffset(2026, 9, 25, 10, 0, 0, TimeSpan.Zero),
+                new SynchronousProgress(sent));
+
+            // The body is the file itself, not JSON or multipart, and the path travels in the URL
+            // with each segment escaped on its own - a space in a folder name has to survive.
+            var request = server.Requests.Single();
+            Assert.StartsWith("PUT /api/family-files/files/Photos/2026%20trip/notes.txt?modified=", request);
+            Assert.Contains("modified=2026-09-25T10%3A00%3A00Z", request);
+            Assert.StartsWith("application/octet-stream", server.ContentTypes.Single());
+            Assert.Equal("hello from the beach", server.Bodies.Single());
+            Assert.Equal("Photos/2026 trip/notes.txt", result.Path);
+            Assert.False(result.AlreadyThere);
+            Assert.Equal(20, sent.LastOrDefault());
+        }
+        finally
+        {
+            File.Delete(local);
+        }
+    }
+
+    [Fact]
+    public async Task A_download_streams_the_file_to_disk_and_reports_the_bytes_as_they_land()
+    {
+        var payload = new byte[300_000];
+        new Random(7).NextBytes(payload);
+        var local = Path.Combine(Path.GetTempPath(), "sentinel-download", $"{Guid.NewGuid():N}", "clip.bin");
+        try
+        {
+            using var server = new FakeServer().OnBytes("/api/family-files/files/Videos/clip.bin", payload, "application/octet-stream");
+            using var client = ClientFor(server);
+
+            var seen = new List<long>();
+            await client.FamilyFilesDownloadAsync("Videos/clip.bin", local, new SynchronousProgress(seen));
+
+            Assert.Equal("GET /api/family-files/files/Videos/clip.bin", server.Requests.Single());
+            Assert.Equal(payload, await File.ReadAllBytesAsync(local));
+            Assert.Equal(payload.Length, seen.Last());
+            // No half-written file left beside the real one.
+            Assert.False(File.Exists(local + ".part"));
+        }
+        finally
+        {
+            if (Path.GetDirectoryName(local) is { } folder && Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task A_missing_library_file_is_a_server_error_not_a_written_file()
+    {
+        var local = Path.Combine(Path.GetTempPath(), $"sentinel-missing-{Guid.NewGuid():N}.bin");
+        using var server = new FakeServer()
+            .OnGet("/api/family-files/files/gone.bin", """{"error":"That file isn't in the library."}""", HttpStatusCode.NotFound);
+        using var client = ClientFor(server);
+
+        var error = await Assert.ThrowsAsync<SentinelServerException>(() => client.FamilyFilesDownloadAsync("gone.bin", local));
+
+        Assert.Equal(404, error.Status);
+        Assert.Equal("That file isn't in the library.", error.Message);
+        Assert.False(File.Exists(local));
+    }
+
+    [Fact]
+    public async Task Creating_a_backup_drive_sends_every_field_and_decodes_the_saved_drive()
+    {
+        using var server = new FakeServer().On(
+            "POST",
+            "/api/family-files/drives",
+            """
+            {"id":"d7","name":"NAS","kind":"sftp","enabled":true,"location":"sftp://nas/backups/family",
+             "sftpHost":"nas","sftpPort":22,"sftpUsername":"backup","sftpFolder":"/backups/family",
+             "sftpHostKeyFingerprint":"","hasPassword":true,"lastResult":"","lastMessage":""}
+            """);
+        using var client = ClientFor(server);
+
+        var drive = await client.FamilyFilesCreateDriveAsync(new FamilyDriveInput
+        {
+            Name = "NAS",
+            Kind = "sftp",
+            SftpHost = "nas",
+            SftpUsername = "backup",
+            SftpPassword = "secret",
+            SftpFolder = "/backups/family",
+        });
+
+        Assert.Equal("d7", drive.Id);
+        Assert.True(drive.IsSftp);
+        Assert.True(drive.HasPassword);
+        Assert.Null(drive.LastAttemptUtc);
+
+        // All of DRIVE_INPUT travels, blanks included: the server validates the kind in use and
+        // ignores the rest, and a client that dropped a field would fail its validation instead.
+        var body = server.Bodies.Single();
+        Assert.StartsWith("application/json", server.ContentTypes.Single());
+        Assert.Contains("\"sftpPassword\":\"secret\"", body);
+        Assert.Contains("\"folderPath\":\"\"", body);
+        Assert.Contains("\"sftpPort\":22", body);
+        Assert.Contains("\"enabled\":true", body);
+    }
+
+    [Fact]
+    public async Task A_failed_drive_test_is_an_answer_with_the_host_key_the_server_saw()
+    {
+        // A 400 here is the test's verdict, not a broken request - and it carries the one thing
+        // the edit form needs next: the fingerprint to offer.
+        using var server = new FakeServer().On(
+            "POST",
+            "/api/family-files/drives/test",
+            """{"error":"The host key does not match.","hostKeyFingerprint":"SHA256:abc"}""",
+            HttpStatusCode.BadRequest);
+        using var client = ClientFor(server);
+
+        var result = await client.FamilyFilesTestDriveAsync(new FamilyDriveInput { Name = "NAS", Kind = "sftp" });
+
+        Assert.False(result.Ok);
+        Assert.Equal("The host key does not match.", result.Message);
+        Assert.Equal("SHA256:abc", result.HostKeyFingerprint);
+    }
+
+    [Fact]
+    public async Task Library_paths_are_escaped_one_segment_at_a_time()
+    {
+        Assert.Equal("Q%26A%20%232.pdf", SentinelClient.EscapeLibraryPath("Q&A #2.pdf"));
+        Assert.Equal("Photos/2026/a%2Bb.jpg", SentinelClient.EscapeLibraryPath("/Photos/2026/a+b.jpg"));
+
+        using var server = new FakeServer().On("DELETE", "/api/family-files/files/Docs/Q%26A%20%232.pdf", """{"trashed":1,"batchId":"b1"}""");
+        using var client = ClientFor(server);
+
+        var result = await client.FamilyFilesDeleteAsync("Docs/Q&A #2.pdf");
+
+        Assert.Equal(1, result.Trashed);
+        Assert.Equal("DELETE /api/family-files/files/Docs/Q%26A%20%232.pdf", server.Requests.Single());
+    }
+
+    /// <summary>
+    /// Progress<T> posts to a SynchronizationContext, which a test has none of - so the reports
+    /// would arrive after the assertions. This one records them on the spot.
+    /// </summary>
+    private sealed class SynchronousProgress(List<long> sink) : IProgress<long>
+    {
+        public void Report(long value)
+        {
+            lock (sink) sink.Add(value);
+        }
+    }
 }

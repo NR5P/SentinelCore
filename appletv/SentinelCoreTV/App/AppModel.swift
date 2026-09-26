@@ -53,6 +53,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var deviceHubEnabled = false
     // Whether the server has the Alarm switched on - drives whether the tab exists at all.
     @Published private(set) var alarmEnabled = false
+    // Whether the server has Family Files switched on - the shared file library. Same job as
+    // deviceHubEnabled: decides whether the Files tab exists at all.
+    @Published private(set) var familyFilesEnabled = false
 
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
@@ -402,6 +405,14 @@ final class AppModel: ObservableObject {
             }
         } else {
             devices = []
+        }
+        // Same treatment as the Device Hub: /status always answers on a server that has the
+        // feature, and a 404 from an older one just means no Files tab.
+        do {
+            familyFilesEnabled = try await client.familyFilesStatus().enabled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            familyFilesEnabled = false
         }
         // Same treatment, opposite default - see isLicensed.
         do {

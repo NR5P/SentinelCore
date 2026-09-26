@@ -18,7 +18,7 @@ namespace SentinelCore.Client.Networking;
 /// The app talks to the dashboard's JSON API only. It never connects directly to cameras or to the
 /// main bridge on port 5080.
 /// </remarks>
-public sealed class SentinelClient : IDisposable
+public sealed partial class SentinelClient : IDisposable
 {
     // This client only targets a server on the current LAN (or a tunnel to it). A long timeout
     // leaves the UI in CONNECTING when the host is powered off or this PC is on another network,
@@ -901,7 +901,12 @@ public sealed class SentinelClient : IDisposable
     /// Runs the request, logs it, and turns a non-2xx response into a typed exception with the
     /// server's message extracted, without assuming the success body is JSON.
     /// </summary>
-    private async Task<byte[]> ExecuteAndValidateAsync(HttpRequestMessage request, CancellationToken ct)
+    /// <param name="client">
+    /// The session to send on. Defaults to the 15-second one; a transfer that can legitimately
+    /// take minutes (a Family Files upload) passes the no-timeout session instead.
+    /// </param>
+    private async Task<byte[]> ExecuteAndValidateAsync(
+        HttpRequestMessage request, CancellationToken ct, HttpClient? client = null)
     {
         var started = Stopwatch.StartNew();
         var method = request.Method.Method;
@@ -911,7 +916,7 @@ public sealed class SentinelClient : IDisposable
         HttpResponseMessage response;
         try
         {
-            response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            response = await (client ?? _http).SendAsync(request, ct).ConfigureAwait(false);
         }
         catch (Exception error) when (IsWorthReporting(error))
         {

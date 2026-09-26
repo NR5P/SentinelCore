@@ -1425,7 +1425,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
-    body.appendChild(buildSectionIntro("Saves everything you'd otherwise have to set up again into one file. That's settings, cameras, camera groups, trigger zones, recording schedules, gate checks, user accounts, Device Hub devices, automation rules and schedules. It's also all Organizer notes, events, reminders and boards with their attachments, known faces with their photos, the licence, and this server's HTTPS certificate authority and HomeKit pairing. Restore it here, on this machine or a replacement. To have this done for you every night, and sent to another computer, turn on NIGHTLY AUTO EXPORT."));
+    body.appendChild(buildSectionIntro("Saves everything you'd otherwise have to set up again into one file. That's settings, cameras, camera groups, trigger zones, recording schedules, gate checks, user accounts, Device Hub devices, automation rules and schedules. It's also all Organizer notes, events, reminders and boards with their attachments, known faces with their photos, the licence, and this server's HTTPS certificate authority and HomeKit pairing. Restore it here, on this machine or a replacement. To have this done for you every night, and sent to another computer, turn on NIGHTLY AUTO EXPORT. The FILES library itself is not in this file - only its backup drives are; the drives hold the files, and a restored server brings them back from one with \"bring files back\" on the FILES tab."));
 
     const warning = document.createElement("div");
     warning.className = "settings-hint";

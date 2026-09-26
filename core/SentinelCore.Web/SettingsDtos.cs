@@ -772,3 +772,42 @@ public sealed class AutoExportSettingsDto : IValidatableObject
             yield return new ValidationResult("Use a passphrase of at least 8 characters, or leave it blank.", [nameof(Passphrase)]);
     }
 }
+
+// The family file library and its backup drives (FamilyFiles.cs). The drives themselves are a
+// list, kept in their own file under the data directory and edited on the Files tab; this is
+// the flat part a settings form can show.
+public sealed class FamilyFilesSettingsDto : IValidatableObject
+{
+    public const string SectionName = "FamilyFiles";
+
+    public bool Enabled { get; set; } = true;
+
+    // Blank means <data>/family-files/library. A full path moves the library to a bigger disk;
+    // the files already there are not moved automatically.
+    public string LibraryFolder { get; set; } = string.Empty;
+
+    [Range(1, 1048576)]
+    public int MaxUploadMegabytes { get; set; } = 4096;
+
+    // Local time in the Schedules time zone, like every other nightly job here. An hour after
+    // the auto export's default so the two don't compete for the disk.
+    [Range(0, 23)]
+    public int Hour { get; set; } = 4;
+
+    [Range(0, 59)]
+    public int Minute { get; set; }
+
+    // When on, the nightly check moves every duplicate but one to the trash; when off, it only
+    // lists them on the Files tab.
+    public bool RemoveDuplicates { get; set; } = true;
+
+    [Range(1, 365)]
+    public int TrashKeepDays { get; set; } = 30;
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (!string.IsNullOrWhiteSpace(LibraryFolder) && !Path.IsPathRooted(LibraryFolder.Trim()))
+            yield return new ValidationResult(
+                "The library folder must be a full path, e.g. /mnt/bigdisk/family-files, or blank for the default.", [nameof(LibraryFolder)]);
+    }
+}

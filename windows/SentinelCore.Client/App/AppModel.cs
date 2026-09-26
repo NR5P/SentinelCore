@@ -243,6 +243,16 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         private set => SetProperty(ref _alarmEnabled, value);
     }
 
+    // Whether the server has Family Files switched on. Same job as DeviceHubEnabled: drives whether
+    // the FILES section exists at all.
+    private bool _familyFilesEnabled;
+
+    public bool FamilyFilesEnabled
+    {
+        get => _familyFilesEnabled;
+        private set => SetProperty(ref _familyFilesEnabled, value);
+    }
+
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
     // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
@@ -722,6 +732,15 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             {
                 Post(Devices.Clear);
             }
+
+            // Same treatment as the Device Hub: a server older than Family Files has no /status
+            // route, and its 404 means "no Files section", not "the connection failed".
+            try
+            {
+                FamilyFilesEnabled = (await Client.FamilyFilesStatusAsync(ct).ConfigureAwait(false)).Enabled;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception) { FamilyFilesEnabled = false; }
 
             // Same treatment, opposite default - see IsLicensed.
             try

@@ -2,6 +2,7 @@ package com.sentinelcore.android.ui
 
 import com.sentinelcore.android.ui.AppSection.DEVICES
 import com.sentinelcore.android.ui.AppSection.EVENTS
+import com.sentinelcore.android.ui.AppSection.FILES
 import com.sentinelcore.android.ui.AppSection.LIVE
 import com.sentinelcore.android.ui.AppSection.ORGANIZER
 import com.sentinelcore.android.ui.AppSection.SETTINGS
@@ -14,9 +15,10 @@ import org.junit.Test
 
 class TabBarLayoutTest {
 
-    private val four = AppSection.visible(deviceHubEnabled = false, organizerEnabled = false)
-    private val five = AppSection.visible(deviceHubEnabled = true, organizerEnabled = false)
-    private val six = AppSection.visible(deviceHubEnabled = true, organizerEnabled = true)
+    private val four = AppSection.visible(deviceHubEnabled = false, organizerEnabled = false, filesEnabled = false)
+    private val five = AppSection.visible(deviceHubEnabled = true, organizerEnabled = false, filesEnabled = false)
+    private val six = AppSection.visible(deviceHubEnabled = true, organizerEnabled = true, filesEnabled = false)
+    private val seven = AppSection.visible(deviceHubEnabled = true, organizerEnabled = true, filesEnabled = true)
 
     @Test
     fun `every section gets a tab by default when four are visible`() {
@@ -44,6 +46,26 @@ class TabBarLayoutTest {
         assertEquals(listOf(DEVICES, SETTINGS), layout.more)
         assertTrue(layout.showsMore)
         assertEquals(4, TabBarLayout.limit(six))
+    }
+
+    @Test
+    fun `seven visible default to the first four plus More`() {
+        val layout = TabBarLayout(pinned = null, visible = seven)
+
+        assertEquals(listOf(EVENTS, TIMELINE, LIVE, ORGANIZER), layout.bar)
+        assertEquals(listOf(FILES, DEVICES, SETTINGS), layout.more)
+        assertTrue(layout.showsMore)
+        assertEquals(4, TabBarLayout.limit(seven))
+    }
+
+    @Test
+    fun `the Files section sits after Organizer and only when the server has it on`() {
+        assertEquals(listOf(EVENTS, TIMELINE, LIVE, ORGANIZER, FILES, DEVICES, SETTINGS), seven)
+        assertFalse(FILES in six)
+        assertEquals(
+            listOf(EVENTS, TIMELINE, LIVE, FILES, SETTINGS),
+            AppSection.visible(deviceHubEnabled = false, organizerEnabled = false, filesEnabled = true),
+        )
     }
 
     @Test

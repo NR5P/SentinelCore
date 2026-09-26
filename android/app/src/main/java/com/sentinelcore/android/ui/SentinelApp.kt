@@ -70,6 +70,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.ui.components.ConnectionBadge
 import com.sentinelcore.android.ui.components.LocalIsLicensed
+import com.sentinelcore.android.ui.files.DriveEditScreen
+import com.sentinelcore.android.ui.files.FilesDrivesScreen
+import com.sentinelcore.android.ui.files.FilesScreen
+import com.sentinelcore.android.ui.files.FilesTrashScreen
 import com.sentinelcore.android.ui.screens.AccountAdminScreen
 import com.sentinelcore.android.ui.screens.AccountEditScreen
 import com.sentinelcore.android.ui.screens.CameraAdminScreen
@@ -338,7 +342,12 @@ private fun AppShell(
             navController.navigate(DEVICE_WALL_ROUTE) { launchSingleTop = true }
         }
     }
-    val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.alarmEnabled)
+    val visibleSections = AppSection.visible(
+        state.deviceHubEnabled,
+        state.organizerEnabled,
+        alarmEnabled = state.alarmEnabled,
+        filesEnabled = state.familyFilesEnabled,
+    )
     val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -611,7 +620,40 @@ private fun SentinelNavHost(
         composable(TAB_BAR_EDITOR_ROUTE) {
             TabBarEditorScreen(
                 preferences = tabBarPreferences,
-                visible = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled),
+                visible = AppSection.visible(
+                    state.deviceHubEnabled,
+                    state.organizerEnabled,
+                    alarmEnabled = state.alarmEnabled,
+                    filesEnabled = state.familyFilesEnabled,
+                ),
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(AppSection.FILES.route) {
+            FilesScreen(
+                state = state,
+                model = model,
+                onTrash = { navController.navigate("files/trash") },
+                onDrives = { navController.navigate("files/drives") },
+            )
+        }
+        composable("files/trash") {
+            FilesTrashScreen(state = state, model = model, onBack = { navController.popBackStack() })
+        }
+        composable("files/drives") {
+            FilesDrivesScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+                onEditDrive = { id -> navController.navigate("files/drive/${id ?: "new"}") },
+            )
+        }
+        composable("files/drive/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            DriveEditScreen(
+                state = state,
+                model = model,
+                driveId = entry.arguments?.getString("id")?.takeIf { it != "new" },
                 onBack = { navController.popBackStack() },
             )
         }
@@ -912,7 +954,12 @@ private fun SentinelNavigationRail(
             }
         },
     ) {
-        AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.alarmEnabled).forEach { item ->
+        AppSection.visible(
+            state.deviceHubEnabled,
+            state.organizerEnabled,
+            alarmEnabled = state.alarmEnabled,
+            filesEnabled = state.familyFilesEnabled,
+        ).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { onSelected(item) },

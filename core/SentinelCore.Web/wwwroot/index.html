@@ -30,6 +30,7 @@
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones.">cameras</button>
       <button class="tab hidden" id="tab-organizer" data-view="organizer" data-tip-below data-tip="Notes, calendar, reminders and boards - shared with the SentinelCore apps on every device, and kept on each one so they work with no signal.">organizer</button>
       <button class="tab" data-view="weather" data-tip-below data-tip-right data-tip="Current conditions, radar, and the hourly and seven-day forecast for the location in Settings, from the US National Weather Service.">weather</button>
+      <button class="tab hidden" id="tab-files" data-view="files" data-tip-below data-tip="The household's shared files - photos, scans, documents - kept on this server, backed up to your own drives every night, with duplicates weeded out.">files</button>
       <button class="tab" data-view="automations" data-tip-below data-tip-right data-tip="Fire a custom MQTT message or call any API endpoint when the AI detects something specific on a camera.">automations</button>
       <button class="tab hidden" id="tab-alarm" data-view="alarm" data-tip-below data-tip-right data-tip="The home alarm: arm and disarm the house, see every sensor's state and battery, and set up what happens when it goes off.">alarm</button>
       <button class="tab hidden" id="tab-devices" data-view="devices" data-tip-below data-tip-right data-tip="Switch lights, plugs, and other MQTT devices on and off. Only appears when the Device Hub is turned on in Settings.">device hub</button>
@@ -291,6 +292,27 @@
       <div id="weather-root">
         <div class="empty-state">loading weather&hellip;</div>
       </div>
+    </section>
+
+    <section id="view-files" class="view hidden">
+      <div class="toolbar">
+        <div class="toolbar-label">FILES</div>
+        <div class="toolbar-actions">
+          <span id="files-summary" class="event-count"></span>
+          <button id="files-upload-btn" class="btn" data-tip-below data-tip-right data-tip="Add files to this folder. You can also drop files anywhere on this page.">add files</button>
+          <button id="files-folder-btn" class="btn" data-tip-below data-tip-right data-tip="Make a folder inside this one.">new folder</button>
+          <button id="files-drives-btn" class="btn" data-tip-below data-tip-right data-tip="The drives this library is backed up to, the nightly pass, and the duplicate check.">backup drives</button>
+          <button id="files-trash-btn" class="btn" data-tip-below data-tip-right data-tip="Deleted files and retired duplicates, waiting to be put back or emptied.">trash</button>
+          <input type="file" id="files-input" multiple hidden />
+        </div>
+      </div>
+      <div class="files-bar">
+        <div class="files-crumbs" id="files-crumbs"></div>
+        <input class="field-input files-search" id="files-search" type="search" placeholder="search by name…" autocomplete="off" />
+      </div>
+      <div id="files-job" class="files-banner hidden"></div>
+      <div id="files-uploads" class="files-banner hidden"></div>
+      <div id="files-list" class="settings-root"><div class="empty-state">loading…</div></div>
     </section>
 
     <section id="view-automations" class="view hidden">
@@ -745,6 +767,10 @@
     <div class="zone-editor-panel org-auto-panel" id="org-auto-panel"></div>
   </div>
 
+  <div id="files-modal" class="lightbox hidden">
+    <div class="zone-editor-panel files-modal-panel" id="files-modal-panel"></div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/hls.min.js"></script>
@@ -769,5 +795,6 @@
   <script src="voice-phrase.js"></script>
   <script src="organizer.js"></script>
   <script src="organizer-automations.js"></script>
+  <script src="files.js"></script>
 </body>
 </html>

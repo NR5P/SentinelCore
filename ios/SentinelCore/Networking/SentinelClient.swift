@@ -19,8 +19,9 @@ final class SentinelClient {
     // Separate from `session` only for its timeouts: the main session gives up on any request
     // after 15 seconds, which would cut off the Organizer's 25-second long poll every time and
     // any attachment upload bigger than a few megabytes. Same shared cookie storage, so it is
-    // signed in exactly when the rest of the app is.
-    private lazy var organizerSession: URLSession = Self.makeOrganizerSession()
+    // signed in exactly when the rest of the app is. Also the session Family Files uploads and
+    // downloads go through (FilesClient.swift), for the same reason: a video takes minutes.
+    lazy var organizerSession: URLSession = Self.makeOrganizerSession()
 
     private static func makeOrganizerSession() -> URLSession {
         let configuration = URLSessionConfiguration.default
@@ -889,6 +890,15 @@ final class SentinelClient {
 
         guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         model.log("\(method) \(http.statusCode) in \(elapsed(from: started))")
+        return try validated(data, response)
+    }
+
+    // The one rule for turning a response into a result or a ClientError, on its own so the
+    // Family Files transfers (FilesClient.swift), which run on organizerSession rather than
+    // `session`, fail exactly the way every other request does: 401 is "sign in", anything else
+    // non-2xx carries the server's own message.
+    func validated(_ data: Data, _ response: URLResponse) throws -> Data {
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? JSONDecoder.sentinel.decode(APIError.self, from: data))
                 .flatMap { $0.error ?? $0.errors?.joined(separator: "\n") ?? $0.detail }

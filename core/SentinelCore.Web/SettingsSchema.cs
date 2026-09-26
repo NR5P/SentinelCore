@@ -1176,6 +1176,32 @@ public static class SettingsSchema
                 "Run the export once, right now, to the destination as saved - save first. It shows how it went; the dashboard's Backup section shows how the last nightly run went, and a failed night is sent to you on every alert channel you've set up. It works even while Enabled is off, so you can check the destination before turning it on.",
                 "/api/backup/auto/run",
                 "POST")
+        },
+        new()
+        {
+            Key = "familyFiles",
+            Title = "FAMILY FILES",
+            Group = SettingsGroups.Maintenance,
+            Endpoint = "/api/settings/family-files",
+            Basic = true,
+            DtoType = typeof(FamilyFilesSettingsDto),
+            Description = "A shared file library for the household - photos, scans, documents - that everyone adds to and fetches from on the dashboard's FILES tab and in the apps. It is mirrored every night to the backup drives set up on that tab: a USB disk or network share plugged into this machine, or another computer over SFTP, and as many of them as you like. The nightly pass also finds files with identical contents and keeps only one copy, moving the rest to a trash folder where they wait before being deleted for good. The library isn't part of the backup file above (it can be far bigger); the drives are its backup, and a lost library is rebuilt from any one of them with 'bring files back'.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the FILES tab and run the nightly backup and duplicate check. Turning it off hides the tab and stops the nightly pass but deletes nothing."),
+                Text("libraryFolder", "Library Folder", "Where the files themselves live on this machine. Blank keeps them under the data folder. Set a full path on a bigger disk before adding much - changing it later does not move what is already there."),
+                Number("maxUploadMegabytes", "Largest File (MB)", "The biggest single file anyone can add.", 1, 1048576),
+                Number("hour", "Hour (0-23)", "Hour the nightly backup and duplicate check run, in 24-hour time, in the Schedules time zone (the server's own if that's blank). If the server is off then, it runs as soon as it's back.", 0, 23),
+                Number("minute", "Minute", "Minute past the hour to run.", 0, 59),
+                Check("removeDuplicates", "Remove Duplicates", "When two or more files have exactly the same contents, keep the oldest and move the others to the trash. Turn this off to only list them on the FILES tab and decide yourself."),
+                Number("trashKeepDays", "Keep Trash For (days)", "How long a deleted file or a retired duplicate waits in the trash before it is deleted for good. Anything in the trash can be put back from the FILES tab until then.", 1, 365)
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "runFamilyFilesBackupNow",
+                "back up now",
+                "Copy the library to every enabled backup drive right now. It runs in the background; the FILES tab shows progress and the result for each drive.",
+                "/api/family-files/sync",
+                "POST")
         }
     ];
 

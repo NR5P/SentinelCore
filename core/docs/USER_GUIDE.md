@@ -25,6 +25,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 6ac. [Board automations — cards that add and move themselves](#6ac-board-automations--cards-that-add-and-move-themselves)
 6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
 6c. [One arrival, not four alerts — repeat triggers from one camera](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera)
+6d. [The FILES tab — the family file library, its backup drives, and the nightly duplicate check](#6d-the-files-tab--the-family-file-library-its-backup-drives-and-the-nightly-duplicate-check)
 7. [The SETTINGS tab](#7-the-settings-tab)
 7a. [System health — how hard the server is working](#7a-system-health--how-hard-the-server-is-working)
 8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
@@ -1253,6 +1254,64 @@ about, the truck having moved twenty feet is not.
 Clip merging is not a setting — it follows the pre-roll and post-roll you already set per zone in
 [section 6](#6-motion-zones-on-your-own-cameras).
 
+## 6d. The FILES tab — the family file library, its backup drives, and the nightly duplicate check
+
+The FILES tab is a shared file library for the household — the photos off everyone's phones, the
+scans of the passports and the lease, the tax returns, the kids' school work — kept on this server
+and reachable from the dashboard and every app. Everyone who can sign in can add files and get
+them back; the backups and the housekeeping are the admin's.
+
+**Putting files in and getting them out.** Drop files anywhere on the tab, or press **add files**;
+in the apps, the Files tab has a photo picker and a file picker. Files go into whichever folder
+you're looking at, and you can make folders, rename, move and search by name. **get** saves a copy
+to the computer you're on; clicking a picture opens it. Nothing you add is ever overwritten: if a
+file with the same name and *different* contents is already there, the new one is saved as
+`name (2).ext`, and if it's the same file, the upload is simply acknowledged. Deleting a file or a
+folder moves it to the **trash**, where it waits (30 days by default) and can be put back with one
+press. Nothing is deleted for good until then, unless an admin empties the trash.
+
+**Backup drives.** Under **backup drives**, an admin adds where the library should be copied to,
+and as many places as you like:
+
+- **A folder on the server** — a USB disk plugged into it, a mounted network share
+  (`/mnt/nas/family`), or on Windows a `\\server\share` path. The folder is created if it isn't
+  there, and anything else already in it is never touched.
+- **Another computer (SFTP)** — a NAS, a Mac with Remote Login on, a Linux box: address, port,
+  username, password and a folder. Press **test** first; it shows the computer's host-key
+  fingerprint, and saving that fingerprint means nothing is ever sent if a different machine
+  starts answering at that address.
+
+Every night the whole library is copied to every enabled drive, and **back up now** does it on
+demand for one drive or all of them. A drive holds a plain copy of the folders — open it in any
+file manager, with or without this software — plus one small manifest file that records what was
+written. That manifest is what makes deletion safe: a file that has left the library (deleted, or
+retired as a duplicate) is removed from the drive on the next backup, but only ever a file this
+feature wrote there. Each drive shows when it was last backed up to, how much is on it, how much
+space it has left, and what went wrong if something did. A night that doesn't fully complete is
+retried hourly a few times and reported on your alert channels once.
+
+**Bringing files back.** If the server is lost, restore your backup file onto a new one (that
+brings the drives' settings back), plug the drive in or point at the NAS again, and press **bring
+files back**: anything on the drive that the library doesn't have is copied in. Nothing already in
+the library is touched; a file that exists in both at a different size comes back as
+`name (from drive).ext` so you can compare. It's also the way to merge in a drive that has been
+away for a while.
+
+**Duplicates.** The same photo tends to arrive three times — from the phone, from the shared
+album, from the export — under three names. The nightly pass compares files by their *contents*,
+not their names, and when it finds identical files it keeps the oldest copy and moves the others
+to the trash (turn **Remove Duplicates** off in Settings to have it only list them). **check now**
+runs the comparison without moving anything; **check and remove** does the full thing straight
+away. The report on the drives screen shows what was kept and what was retired, and retired copies
+sit in the trash like any other deletion, so an unwanted removal is one press from undone.
+
+**Settings → Family Files** holds the switches: on/off (turning it off hides the tab and stops the
+nightly pass but deletes nothing), the **library folder** (set a full path on a big disk before
+adding much — it isn't moved for you later), the largest file anyone can add, the nightly time,
+remove-duplicates, and how long the trash keeps things. The library is deliberately *not* part of
+the backup file in [section 7](#7-the-settings-tab): it can be far bigger than everything else put
+together, and the drives are its backup.
+
 ## 7. The SETTINGS tab
 
 Every section below saves independently and applies live — no restart needed, except where
@@ -1475,6 +1534,8 @@ The full list below covers both modes:
   another computer, keeps the last *N*, and tells you on your alert channels if a night fails.
   Set a passphrase if the file is leaving this machine. Press **export now** after saving to test
   it. See DEPLOYMENT.md, *Nightly Auto Export*.
+- **Family Files** — the switches for the FILES tab's shared library, its nightly backup to your
+  own drives and the duplicate check. See [section 6d](#6d-the-files-tab--the-family-file-library-its-backup-drives-and-the-nightly-duplicate-check).
 - **Login** — an optional username/password gate for this dashboard, off by default. See
   [section 2](#2-opening-the-dashboard).
 - **Login Alerts** — tells you when someone fails to sign in to the dashboard, which is the one
@@ -2242,6 +2303,9 @@ persistent issue doesn't flood the inbox.
 - `SentinelCore.Web/data/triggers.db` — trigger zone configs and trigger events
 - `SentinelCore.Web/data/organizer.db` — the Organizer's notes, events, reminders and boards, and
   `organizer-automations.db` beside it for [board automations](#6ac-board-automations--cards-that-add-and-move-themselves)
+- `SentinelCore.Web/data/family-files/` — the FILES tab: `library/` (the files themselves, unless
+  **Library Folder** points elsewhere), `trash/`, `drives.json` (the backup drives, passwords
+  included), `index.json` (cached checksums) and `state.json` (last backup and duplicate results)
 - Recorded clips live alongside the trigger event data
 - `homekit-bridge/persist/` — HomeKit pairing keys and this bridge's identity, if you're using
   HomeKit. Deleting it unpairs every iPhone and forces re-pairing with a new code, so it's

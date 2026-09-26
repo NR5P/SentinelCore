@@ -317,6 +317,15 @@ Everything shown is picked up live via `IOptionsMonitor<T>` - .NET's built-in fi
 
 Run it interactively with `dotnet run --project SentinelCore.Web/SentinelCore.Web.csproj`, or install it as a systemd service the same way as the main app - see `systemd/sentinelcore-web.service`. Meant for LAN-only access; nothing about it is designed to be exposed to the Internet.
 
+### Family Files
+
+The FILES tab is a shared file library for the household, kept as a plain folder tree under the
+dashboard's data directory (or wherever **Settings -> Family Files -> Library Folder** points) and
+reachable from the dashboard and every app. It is mirrored nightly to any number of backup drives
+- a folder or mounted share on the server, or another computer over SFTP - and a nightly pass
+retires files with identical contents to a trash folder that keeps them for 30 days. See
+`docs/USER_GUIDE.md` section 6d; the code is `SentinelCore.Web/FamilyFiles*.cs`.
+
 ### Rebooting the machine
 
 Off by default (`HostReboot:Enabled`). Restarts the host itself rather than a service - the one
