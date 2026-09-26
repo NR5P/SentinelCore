@@ -35,6 +35,7 @@ public class WindowSmokeTests
             var camera = new Camera { Id = Guid.NewGuid(), Name = "Front Door", StreamUrl = "rtsp://x" };
             var device = new HubDevice { Id = Guid.NewGuid(), Name = "Porch light", Kind = "light" };
             var schedule = new Schedule { Id = Guid.NewGuid(), Name = "Gate at dusk", Kind = "solar" };
+            var drive = new FamilyDrive { Id = "d1", Name = "USB drive", Kind = "folder", FolderPath = "/mnt/usb" };
             var activity = new ActivityItem
             {
                 Id = Guid.NewGuid().ToString(),
@@ -54,6 +55,7 @@ public class WindowSmokeTests
                 ("MoviesView", () => new MoviesView(model)),
                 ("MovieDetailView", () => new MovieDetailView(model, null, "m1")),
                 ("MoviePlayerView", () => new MoviePlayerView(model, NullNavigator.Instance, "m1", null)),
+                ("FilesView", () => new FilesView(model)),
                 ("SettingsView", () => new SettingsView(model)),
                 ("ServerSetupView", () => new ServerSetupView()),
                 ("LoginView", () => new LoginView()),
@@ -80,6 +82,10 @@ public class WindowSmokeTests
                 ("DeviceEditWindow (add)", () => new DeviceEditWindow(model, null)),
                 ("DeviceEditWindow (edit)", () => new DeviceEditWindow(model, device)),
                 ("DeviceDiscoveryWindow", () => new DeviceDiscoveryWindow(model)),
+                ("FilesDrivesWindow", () => new FilesDrivesWindow(model)),
+                ("FilesDriveEditWindow (add)", () => new FilesDriveEditWindow(model, null)),
+                ("FilesDriveEditWindow (edit)", () => new FilesDriveEditWindow(model, drive)),
+                ("FilesTrashWindow", () => new FilesTrashWindow(model, isAdmin: true)),
                 ("TextPromptWindow", () => new TextPromptWindow("Title", "Prompt?")),
                 ("ListPickerWindow", () => new ListPickerWindow("Pick", new[] { "One", "Two" })),
             };

@@ -106,6 +106,20 @@ final class SentinelClient {
         try await send("/api/cameras", method: "POST", body: input)
     }
 
+    // MARK: - Alarm (control only - see the note on AlarmStatus)
+
+    func alarmStatus() async throws -> AlarmStatus {
+        try await get("/api/alarm/status")
+    }
+
+    func armAlarm(mode: String, force: Bool, pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/arm", method: "POST", body: AlarmArmInput(mode: mode, force: force, pin: pin))
+    }
+
+    func disarmAlarm(pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/disarm", method: "POST", body: AlarmDisarmInput(pin: pin))
+    }
+
     // MARK: - Device Hub (control only - see the note on HubDevice)
 
     func deviceHubEnabled() async throws -> DeviceHubEnabled {
@@ -124,6 +138,42 @@ final class SentinelClient {
 
     func deviceStates() async throws -> HubDeviceStateSnapshot {
         try await get("/api/devices/state")
+    }
+
+    // MARK: - Family Files (read-only on the TV - see FilesTVView)
+
+    // Always answers on a server that has the feature, even when it is off in Settings; a 404
+    // means an older server. AppModel reads either as "no Files tab".
+    func familyFilesStatus() async throws -> FamilyFilesStatus {
+        try await get("/api/family-files/status")
+    }
+
+    func familyFolder(path: String) async throws -> FamilyFolderListing {
+        try await get("/api/family-files/list", query: [URLQueryItem(name: "path", value: path)])
+    }
+
+    // A JPEG up to 400px, image files only - 404 for anything else.
+    func familyThumbnail(path: String) async throws -> Data {
+        guard let url = url(path: "/api/family-files/thumbnail/\(path)") else { throw ClientError.invalidServerAddress }
+        return try await performData(URLRequest(url: url))
+    }
+
+    // The file itself, for showing a picture full screen. A photo can be tens of megabytes, so
+    // this goes through the long-timeout session rather than the 15-second one.
+    func familyFileData(path: String) async throws -> Data {
+        guard let url = url(path: "/api/family-files/files/\(path)") else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 120
+        model.log("GET \(url.absoluteString) (file)")
+        let (data, response) = try await organizerSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let message = (try? JSONDecoder.sentinel.decode(APIError.self, from: data))
+                .flatMap { $0.error ?? $0.errors?.joined(separator: "\n") }
+            if http.statusCode == 401 { throw ClientError.authenticationRequired }
+            throw ClientError.server(status: http.statusCode, message: message)
+        }
+        return data
     }
 
     func sendDeviceCommand(id: UUID, action: String? = nil, brightness: Int? = nil) async throws -> DeviceCommandResult {

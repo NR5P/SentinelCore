@@ -1,0 +1,60 @@
+<Window x:Class="SentinelCore.App.Views.AlarmSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Alarm settings" Height="760" Width="560" MinHeight="520" MinWidth="460">
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="280" TextWrapping="Wrap" Foreground="{StaticResource Red}" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" MinWidth="90" Click="OnCancelClicked" />
+                    <Button x:Name="SaveButton" Content="Save" Margin="10,0,0,0" MinWidth="90"
+                            Style="{StaticResource PrimaryButton}" Click="OnSaveClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <TextBlock Text="Delays" Style="{StaticResource GroupHeading}" Margin="0,0,0,8" />
+                <TextBlock Text="Exit delay (seconds)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="ExitBox" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="How long you have to leave after arming Away. Home and Night arm at once." />
+                <TextBlock Text="Entry delay (seconds)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="EntryBox" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="How long an entry door may be open before the siren, so whoever came in can disarm." />
+                <TextBlock Text="Siren time (seconds)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="SirenBox" />
+
+                <TextBlock Text="Switch on when triggered" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6" TextWrapping="Wrap"
+                           Text="Device Hub devices switched ON when the alarm triggers and OFF when it is disarmed or the siren time is up." />
+                <StackPanel x:Name="SirenPanel" />
+
+                <TextBlock Text="Cameras to snapshot" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,6" Text="None ticked means all of them." />
+                <StackPanel x:Name="CameraPanel" />
+
+                <TextBlock Text="Notifications" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+                <CheckBox x:Name="PushToggle" Content="Notify everyone's phones" />
+                <CheckBox x:Name="ArmDisarmToggle" Content="Also on every arm and disarm" Margin="0,6,0,0" />
+                <TextBlock Text="Low battery at (%)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="BatteryBox" />
+                <TextBlock Text="Offline after (hours)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="OfflineBox" />
+
+                <TextBlock Text="PIN" Style="{StaticResource GroupHeading}" Margin="0,20,0,8" />
+                <CheckBox x:Name="PinToArmToggle" Content="Ask for the PIN to arm as well" />
+                <TextBlock x:Name="PinLabel" Style="{StaticResource FieldLabel}" />
+                <PasswordBox x:Name="PinBox" MaxLength="8" />
+                <CheckBox x:Name="RemovePinToggle" Content="Remove the PIN" Margin="0,8,0,0" Visibility="Collapsed" />
+                <TextBlock x:Name="PinHint" Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

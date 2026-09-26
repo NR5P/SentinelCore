@@ -1,6 +1,8 @@
 package com.sentinelcore.android.data
 
 import java.time.Instant
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class SecurityEvent(
     val id: String,
@@ -965,3 +967,169 @@ data class ScheduleRunResult(val fired: Boolean, val detail: String)
 // What a backup restore put back: the non-zero counts by noun, plus anything the server says is
 // still to do ("restart the dashboard") that a count can't express.
 data class BackupRestoreSummary(val counts: List<Pair<Int, String>>, val notes: List<String>)
+
+// ---------------- Alarm ----------------
+
+// The home alarm as /api/alarm/status reports it. Everything the screen shows comes from this
+// one call; the app polls it while the screen is open and counts the delays down from the
+// deadlines it carries. Most fields are null when the alarm is switched off server-side, which
+// answers with just `enabled` and `hubEnabled`.
+data class AlarmStatus(
+    val enabled: Boolean,
+    val hubEnabled: Boolean = false,
+    val canEdit: Boolean = false,
+    val mode: String = "disarmed",
+    val status: String = "disarmed",
+    val changedAt: Instant? = null,
+    val changedBy: String? = null,
+    val exitUntil: Instant? = null,
+    val pendingUntil: Instant? = null,
+    val triggeredAt: Instant? = null,
+    val triggeredBy: String? = null,
+    val sirenOn: Boolean = false,
+    val pinSet: Boolean = false,
+    val brokerConnected: Boolean = false,
+    val ready: Boolean = false,
+    val issues: List<String> = emptyList(),
+    val sensors: List<AlarmSensor> = emptyList(),
+    val config: AlarmConfig? = null,
+    val now: Instant? = null,
+) {
+    val isTriggered: Boolean get() = status == "triggered"
+}
+
+data class AlarmSensor(
+    val id: String,
+    val deviceId: String,
+    val name: String,
+    val zone: String,
+    val armedHome: Boolean,
+    val armedNight: Boolean,
+    val armedAway: Boolean,
+    val inverted: Boolean,
+    val enabled: Boolean,
+    val deviceName: String?,
+    val room: String?,
+    val deviceMissing: Boolean,
+    // open | closed | unknown
+    val state: String,
+    val offline: Boolean,
+    val battery: Double?,
+    val lowBattery: Boolean,
+    val linkQuality: Double?,
+    val lastSeen: Instant?,
+    val lastChanged: Instant?,
+    val bypassed: Boolean,
+    val watched: Boolean,
+) {
+    val isOpen: Boolean get() = state == "open"
+
+    val stateLabel: String
+        get() = when {
+            zone == "interior" && state == "open" -> "Motion"
+            zone == "interior" && state == "closed" -> "Clear"
+            zone == "always" && state == "open" -> "Alert"
+            zone == "always" && state == "closed" -> "OK"
+            state == "open" -> "Open"
+            state == "closed" -> "Closed"
+            else -> "No reading"
+        }
+
+    val zoneLabel: String get() = AlarmZones.label(zone)
+}
+
+object AlarmZones {
+    val all = listOf("entry", "perimeter", "interior", "always")
+
+    fun label(zone: String): String = when (zone) {
+        "entry" -> "Entry door"
+        "perimeter" -> "Perimeter"
+        "interior" -> "Interior motion"
+        "always" -> "24-hour"
+        else -> zone.replaceFirstChar { it.uppercase() }
+    }
+
+    fun explanation(zone: String): String = when (zone) {
+        "entry" -> "The way in. Opening it while armed starts the entry delay so whoever came in can disarm."
+        "perimeter" -> "Windows and other doors. Instant when armed."
+        "interior" -> "Motion inside. Instant, and by default only watched in Away."
+        "always" -> "Watched around the clock, armed or not: water leak, smoke, tamper."
+        else -> ""
+    }
+}
+
+object AlarmModes {
+    fun label(mode: String): String = when (mode) {
+        "home" -> "Home"
+        "night" -> "Night"
+        "away" -> "Away"
+        else -> "Disarmed"
+    }
+}
+
+data class AlarmConfig(
+    val exitDelaySeconds: Int = 60,
+    val entryDelaySeconds: Int = 30,
+    val sirenSeconds: Int = 300,
+    val sirenDeviceIds: List<String> = emptyList(),
+    val cameraIds: List<String> = emptyList(),
+    val notifyPush: Boolean = true,
+    val notifyArmDisarm: Boolean = true,
+    val lowBatteryPercent: Int = 20,
+    val offlineAfterHours: Int = 24,
+    val requirePinToArm: Boolean = false,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("exitDelaySeconds", exitDelaySeconds)
+        put("entryDelaySeconds", entryDelaySeconds)
+        put("sirenSeconds", sirenSeconds)
+        put("sirenDeviceIds", JSONArray(sirenDeviceIds))
+        put("cameraIds", JSONArray(cameraIds))
+        put("notifyPush", notifyPush)
+        put("notifyArmDisarm", notifyArmDisarm)
+        put("lowBatteryPercent", lowBatteryPercent)
+        put("offlineAfterHours", offlineAfterHours)
+        put("requirePinToArm", requirePinToArm)
+    }
+}
+
+data class AlarmEvent(
+    val id: Long,
+    val at: Instant,
+    val kind: String,
+    val message: String,
+)
+
+data class AlarmSensorInput(
+    val deviceId: String = "",
+    val name: String = "",
+    val zone: String = "perimeter",
+    val armedHome: Boolean = true,
+    val armedNight: Boolean = true,
+    val armedAway: Boolean = true,
+    val inverted: Boolean = false,
+    val enabled: Boolean = true,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("deviceId", deviceId)
+        put("name", name)
+        put("zone", zone)
+        put("armedHome", armedHome)
+        put("armedNight", armedNight)
+        put("armedAway", armedAway)
+        put("inverted", inverted)
+        put("enabled", enabled)
+    }
+
+    companion object {
+        fun from(sensor: AlarmSensor) = AlarmSensorInput(
+            deviceId = sensor.deviceId, name = sensor.name, zone = sensor.zone,
+            armedHome = sensor.armedHome, armedNight = sensor.armedNight, armedAway = sensor.armedAway,
+            inverted = sensor.inverted, enabled = sensor.enabled,
+        )
+    }
+}
+
+// What arm, disarm, panic and test answer on success. A refusal (something open, wrong PIN) is
+// a 4xx SentinelApiException whose message is the server's explanation.
+data class AlarmCommandReply(val ok: Boolean, val note: String?)

@@ -24,7 +24,7 @@ their push until the TestFlight build is reinstalled. BUILDING.md §3 has more.
 
 | Folder / target | What it is |
 | --- | --- |
-| `SentinelCore/` (target `SentinelCore`) | The app, for iOS and macOS. Subfolders: `App` (model, lifecycle, push, background refresh), `Views`, `Live` (video players), `Organizer`, `Publish` (this device as a camera), `Networking`, `Models`, `Design`. |
+| `SentinelCore/` (target `SentinelCore`) | The app, for iOS and macOS. Subfolders: `App` (model, lifecycle, push, background refresh), `Views`, `Live` (video players), `Organizer`, `Files` (the shared file library and its backup drives), `Publish` (this device as a camera), `Networking`, `Models`, `Design`. |
 | `SentinelCoreWidgets/` (iOS only) | Calendar, Reminders and Notes widgets. They read a snapshot the app writes to the App Group, and ticking a reminder off on a widget leaves an action for the app to apply. |
 | `SentinelCoreShare/` (iOS only) | The share extension: "Sentinel Core" in the share sheet saves text or a link as an Organizer note. |
 | `OrganizerKit/` (Swift package) | The Organizer's on-device store and sync engine, calendar maths, voice-phrase parsing, the Apple Reminders mapping, and the widget snapshot. Shared with the Apple TV app and tested with `swift test`. |
@@ -33,7 +33,8 @@ their push until the TestFlight build is reinstalled. BUILDING.md §3 has more.
 
 Folders are synchronized groups: new files join their target without editing the project.
 Entitlements: `SentinelCore-iOS.entitlements` (push, App Group) and `SentinelCore.entitlements`
-(macOS sandbox: network, camera, microphone, user-selected files, Calendars/Reminders, push).
+(macOS sandbox: network, camera, microphone, user-selected files read and write - the write half
+is for saving a copy of a Files download - Calendars/Reminders, push).
 
 ## Features
 
@@ -83,6 +84,16 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
   (full-screen AVPlayerViewController on iOS, a sheet on the Mac). See `core/docs/MOVIES.md`.
 - Device Hub: lights, gates, locks and sensors over MQTT, with a full-screen wall display of big
   tap-to-switch tiles for an iPad mounted on a wall (remembered, so the app reopens onto it).
+- Alarm: arm and disarm the house, see every sensor's state and battery, and (admins) set it up. An Alarm widget (Home and Lock Screen) and "Arm the Sentinel Core alarm" / "Is Sentinel Core armed" shortcuts.
+- **Files** (`Files/`): the household's shared file library on the server, a Files tab when the
+  server has Family Files switched on. Browse folders, search the whole library, add photos and
+  videos from the picker or any file from the Files app/Finder (big videos stream from disk),
+  open a file in Quick Look, share it, rename it, or move it to the trash. Backup drives - a
+  folder the server can see or another computer over SFTP - each hold a full copy; an admin
+  adds and tests them, starts a backup or brings files back from one, runs the nightly pass
+  (index, duplicate check, backup, trash cleanup) by hand and sees the last duplicate report.
+  Trashed files and removed duplicates wait in the Trash screen, in batches, until put back or
+  the trash is emptied. A running server job shows as a banner above every Files screen.
 - Admin screens: cameras and trigger zones, accounts, known faces and vehicles, schedules,
   prompt profiles, HomeKit, backup, licence, and the full server settings tree.
 - Optional dashboard login; a remote fallback address; automatic plain-HTTP fallback when the

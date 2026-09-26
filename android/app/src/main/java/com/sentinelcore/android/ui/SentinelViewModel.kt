@@ -40,10 +40,35 @@ import com.sentinelcore.android.data.DeviceScanSnapshot
 import com.sentinelcore.android.data.DeviceScanStartResult
 import com.sentinelcore.android.data.DiagnosticEntry
 import com.sentinelcore.android.data.DiagnosticLevel
+import com.sentinelcore.android.data.FamilyDeleteResult
+import com.sentinelcore.android.data.FamilyDrive
+import com.sentinelcore.android.data.FamilyDriveInput
+import com.sentinelcore.android.data.FamilyDriveTestResult
+import com.sentinelcore.android.data.FamilyDuplicateReport
+import com.sentinelcore.android.data.FamilyFileEntry
+import com.sentinelcore.android.data.FamilyFilesStatus
+import com.sentinelcore.android.data.FamilyFolderListing
+import com.sentinelcore.android.data.FamilyJob
+import com.sentinelcore.android.data.FamilyRestoreResult
+import com.sentinelcore.android.data.FamilyTrashBatch
+import com.sentinelcore.android.data.FamilyUploadNaming
+import com.sentinelcore.android.data.FamilyUploadProgress
+import com.sentinelcore.android.data.FamilyUploadState
+import android.net.Uri
+import java.io.File
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.sentinelcore.android.data.HomeKitSettings
 import com.sentinelcore.android.data.BackupRestoreSummary
 import com.sentinelcore.android.data.HomeKitStatus
+import com.sentinelcore.android.data.AlarmCommandReply
+import com.sentinelcore.android.data.AlarmConfig
+import com.sentinelcore.android.data.AlarmEvent
+import com.sentinelcore.android.data.AlarmSensor
+import com.sentinelcore.android.data.AlarmSensorInput
+import com.sentinelcore.android.data.AlarmStatus
 import com.sentinelcore.android.data.HubDevice
+import com.sentinelcore.android.widgets.AlarmWidgetSnapshot
 import com.sentinelcore.android.data.HubDeviceInput
 import com.sentinelcore.android.data.KnownFace
 import com.sentinelcore.android.data.KnownVehicle
@@ -143,6 +168,12 @@ data class SentinelUiState(
     // Whether the server has Movies & TV switched on - the MOVIES tab exists only then. Starts
     // from what the server said last time, like organizerEnabled.
     val moviesEnabled: Boolean = false,
+    // Whether the server has the Alarm switched on - drives whether its destination exists.
+    val alarmEnabled: Boolean = false,
+    // The alarm as last polled - see AlarmScreen. Null until the screen has asked.
+    val alarmStatus: AlarmStatus? = null,
+    // Whether the server has the Files library switched on - same treatment as the Device Hub.
+    val familyFilesEnabled: Boolean = false,
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
     // that simply failed says nothing about the licence. Accusing a paying customer over a dropped
@@ -508,6 +539,22 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                         .onSuccess(::setMoviesEnabled)
                         .onFailure { setMoviesEnabled(false) }
                 },
+                // Same again for the alarm: an older server has no such endpoint.
+                viewModelScope.async {
+                    runCatching { repository.alarmStatus() }
+                        .onSuccess { value ->
+                            _state.update { it.copy(alarmEnabled = value.enabled, alarmStatus = value) }
+                            AlarmWidgetSnapshot.write(getApplication(), value)
+                        }
+                        .onFailure { _state.update { it.copy(alarmEnabled = false) } }
+                },
+                // Same again: /status answers enabled:false when the feature is off, and an
+                // older server has no such route at all.
+                viewModelScope.async {
+                    runCatching { repository.familyFilesEnabled() }
+                        .onSuccess { value -> _state.update { it.copy(familyFilesEnabled = value) } }
+                        .onFailure { _state.update { it.copy(familyFilesEnabled = false) } }
+                },
                 // Same treatment, opposite default - see SentinelUiState.isLicensed.
                 viewModelScope.async {
                     runCatching { repository.licenseValid() }
@@ -720,6 +767,44 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(cameras = value) }
     }
 
+    // ---------------- Alarm ----------------
+
+    suspend fun refreshAlarm(): AlarmStatus {
+        val value = repository.alarmStatus()
+        _state.update { it.copy(alarmEnabled = value.enabled, alarmStatus = value) }
+        AlarmWidgetSnapshot.write(getApplication(), value)
+        return value
+    }
+
+    suspend fun armAlarm(mode: String, force: Boolean, pin: String?): AlarmCommandReply =
+        repository.armAlarm(mode, force, pin).also { refreshAlarm() }
+
+    suspend fun disarmAlarm(pin: String?): AlarmCommandReply = repository.disarmAlarm(pin).also { refreshAlarm() }
+
+    suspend fun alarmPanic(): AlarmCommandReply = repository.alarmPanic().also { refreshAlarm() }
+
+    suspend fun alarmTest(): AlarmCommandReply = repository.alarmTest()
+
+    suspend fun alarmEvents(): List<AlarmEvent> = repository.alarmEvents()
+
+    fun alarmSensor(id: String): AlarmSensor? = _state.value.alarmStatus?.sensors?.firstOrNull { it.id == id }
+
+    suspend fun saveAlarmSensor(id: String?, input: AlarmSensorInput) {
+        if (id == null) repository.createAlarmSensor(input) else repository.updateAlarmSensor(id, input)
+        refreshAlarm()
+    }
+
+    suspend fun deleteAlarmSensor(id: String) {
+        repository.deleteAlarmSensor(id)
+        refreshAlarm()
+    }
+
+    suspend fun saveAlarmConfig(config: AlarmConfig, newPin: String?, removePin: Boolean) {
+        repository.saveAlarmConfig(config)
+        if (removePin) repository.setAlarmPin("", null) else if (!newPin.isNullOrBlank()) repository.setAlarmPin(newPin.trim(), null)
+        refreshAlarm()
+    }
+
     // ---------------- Device Hub ----------------
 
     suspend fun refreshDevices() {
@@ -895,6 +980,102 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     suspend fun knownVehicles(): List<KnownVehicle> = repository.knownVehicles()
 
     suspend fun saveKnownVehicles(vehicles: List<KnownVehicle>) = repository.saveKnownVehicles(vehicles)
+
+    // ---------------- Files library ----------------
+    //
+    // Screen-owned data, like Known Vehicles: the screens under ui/files load what they show and
+    // these are plain passthroughs. Uploads are the exception, below - they outlive the screen.
+
+    suspend fun familyFilesStatus(): FamilyFilesStatus = repository.familyFilesStatus()
+
+    suspend fun familyFilesJob(): FamilyJob? = repository.familyFilesJob()
+
+    suspend fun familyFilesList(path: String): FamilyFolderListing = repository.familyFilesList(path)
+
+    suspend fun familyFilesSearch(query: String): List<FamilyFileEntry> = repository.familyFilesSearch(query)
+
+    suspend fun familyFilesDownload(path: String, destination: File) = repository.familyFilesDownload(path, destination)
+
+    suspend fun familyFilesThumbnail(path: String): Bitmap? = repository.familyFilesThumbnail(path)
+
+    suspend fun familyFilesCreateFolder(path: String): String = repository.familyFilesCreateFolder(path)
+
+    suspend fun familyFilesMove(from: String, to: String): String = repository.familyFilesMove(from, to)
+
+    suspend fun familyFilesDelete(path: String): FamilyDeleteResult = repository.familyFilesDelete(path)
+
+    suspend fun familyFilesTrash(): List<FamilyTrashBatch> = repository.familyFilesTrash()
+
+    suspend fun familyFilesRestoreTrash(batchId: String, path: String? = null): FamilyRestoreResult =
+        repository.familyFilesRestoreTrash(batchId, path)
+
+    suspend fun familyFilesEmptyTrash(): String = repository.familyFilesEmptyTrash()
+
+    suspend fun familyDrives(): List<FamilyDrive> = repository.familyDrives()
+
+    suspend fun saveFamilyDrive(id: String?, input: FamilyDriveInput): FamilyDrive = repository.saveFamilyDrive(id, input)
+
+    suspend fun deleteFamilyDrive(id: String): String = repository.deleteFamilyDrive(id)
+
+    suspend fun testFamilyDrive(input: FamilyDriveInput): FamilyDriveTestResult = repository.testFamilyDrive(input)
+
+    suspend fun syncFamilyDrive(id: String): String = repository.syncFamilyDrive(id)
+
+    suspend fun restoreFamilyDrive(id: String): String = repository.restoreFamilyDrive(id)
+
+    suspend fun syncAllFamilyDrives(): String = repository.syncAllFamilyDrives()
+
+    suspend fun checkFamilyDuplicates(remove: Boolean): String = repository.checkFamilyDuplicates(remove)
+
+    suspend fun familyDuplicatesReport(): FamilyDuplicateReport? = repository.familyDuplicatesReport()
+
+    suspend fun runFamilyNightly(): String = repository.runFamilyNightly()
+
+    // The upload queue lives here rather than in the Files screen so that switching tabs
+    // mid-upload doesn't cancel a half-sent video. One batch at a time; a second pick while one
+    // is running waits its turn. The screen shows `familyUpload` as its banner and reloads the
+    // folder whenever `finished` ticks.
+    private val _familyUpload = MutableStateFlow(FamilyUploadState())
+    val familyUpload: StateFlow<FamilyUploadState> = _familyUpload.asStateFlow()
+    private val familyUploadLock = Mutex()
+
+    fun uploadFamilyFiles(uris: List<Uri>, folderPath: String) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            familyUploadLock.withLock {
+                val resolver = getApplication<Application>().contentResolver
+                val failures = mutableListOf<String>()
+                var alreadyThere = 0
+                uris.forEachIndexed { index, uri ->
+                    val name = FamilyUploadNaming.displayName(resolver, uri)
+                    _familyUpload.update {
+                        it.copy(current = FamilyUploadProgress(index + 1, uris.size, name, 0L, null))
+                    }
+                    runCatching {
+                        repository.familyFilesUpload(uri, folderPath, name, FamilyUploadNaming.modified(resolver, uri)) { sent, total ->
+                            _familyUpload.update { state ->
+                                state.copy(current = state.current?.copy(sentBytes = sent, totalBytes = total))
+                            }
+                        }
+                    }.onSuccess { if (it.alreadyThere) alreadyThere++ }
+                        .onFailure { error ->
+                            if (error is CancellationException) throw error
+                            failures.add("$name: ${readableError(error)}")
+                            log("Files upload of $name failed: ${readableError(error)}", DiagnosticLevel.NOTICE)
+                        }
+                }
+                _familyUpload.update {
+                    it.copy(
+                        current = null,
+                        finished = it.finished + 1,
+                        lastUploaded = uris.size - failures.size,
+                        lastAlreadyThere = alreadyThere,
+                        lastFailures = failures,
+                    )
+                }
+            }
+        }
+    }
 
     // Both of these change whether the whole app needs a login, so each re-reads the auth status
     // rather than assuming it landed - the sign-in gate reads the same field.

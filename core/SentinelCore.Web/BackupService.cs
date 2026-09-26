@@ -47,6 +47,9 @@ public sealed class BackupService(
     IRecordingScheduleStore recordingSchedules,
     IOrganizerAutomationStore organizerAutomations,
     OrganizerAutomationEngine organizerAutomationEngine,
+    IAlarmStore alarmStore,
+    AlarmEngine alarmEngine,
+    FamilyDriveStore familyDrives,
     MainAppHubBackupClient hub,
     IMediaStore media,
     MediaScanner mediaScanner,
@@ -58,10 +61,11 @@ public sealed class BackupService(
 {
     // 2 added CameraGroups and GateChecks; 3 added Organizer; 4 added RecordingSchedules, Hub,
     // InternetExposed, Warnings, the organizer's feed tokens and preferences, and the settings
-    // AutoExport section; 5 added OrganizerAutomations; 6 added Media (libraries and watched
-    // progress) and the settings Media section. Bumping this does not invalidate older
-    // exports - see Validate, which accepts anything up to this number.
-    public const int CurrentSchemaVersion = 6;
+    // AutoExport section; 5 added OrganizerAutomations; 6 added Alarm, FamilyDrives and the
+    // settings FamilyFiles section; 7 added Media (movie libraries and watched progress) and the
+    // settings Media section. Bumping this does not invalidate older exports - see Validate,
+    // which accepts anything up to this number.
+    public const int CurrentSchemaVersion = 7;
 
     public sealed record BundleSummary(int FileCount, IReadOnlyList<string> Warnings);
 
@@ -88,8 +92,10 @@ public sealed class BackupService(
             hubExport.Value,
             await webSettings.GetSectionAsync<InternetExposedSettingsDto>("InternetExposed", ct),
             await organizerAutomations.GetAllAsync(ct),
-            Media: new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct)),
-            Warnings: warnings.Count > 0 ? warnings : null);
+            new AlarmBackup(await alarmStore.GetSensorsAsync(ct), await alarmStore.GetConfigAsync(ct)),
+            await familyDrives.GetAllAsync(ct),
+            new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct)),
+            warnings.Count > 0 ? warnings : null);
     }
 
     // The full bundle: the document plus every file it points at, optionally encrypted.
@@ -389,6 +395,31 @@ public sealed class BackupService(
             organizerAutomationsRestored++;
         }
 
+        // Straight into the store, then the engine is told to re-read: same ids, so a re-import
+        // replaces rather than duplicates. The alarm's armed/disarmed state is not in the file -
+        // a restored server comes up disarmed.
+        var alarmSensorsRestored = 0;
+        if (document.Alarm is { } alarmBackup)
+        {
+            foreach (var sensor in alarmBackup.Sensors ?? [])
+            {
+                if (sensor.Id == Guid.Empty || sensor.DeviceId == Guid.Empty) continue;
+                await alarmStore.SaveSensorAsync(sensor, ct);
+                alarmSensorsRestored++;
+            }
+            if (alarmBackup.Config is { } alarmConfig) await alarmStore.SaveConfigAsync(alarmConfig, ct);
+            alarmEngine.Invalidate();
+        }
+
+        // Same id, so a second restore replaces rather than adds a twin of every drive.
+        var familyDrivesRestored = 0;
+        foreach (var drive in document.FamilyDrives ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(drive.Id)) continue;
+            await familyDrives.UpsertAsync(drive.Normalized(), ct);
+            familyDrivesRestored++;
+        }
+
         // Movies & TV: the libraries keep their ids, and since item ids are derived from the
         // library id and the file's path, the rescan below lands on the same ids the progress
         // rows point at. Progress merges newest-wins, so an old backup never un-watches anything.
@@ -471,6 +502,8 @@ public sealed class BackupService(
             liveOrderRestored,
             organizerItemsRestored,
             organizerAutomationsRestored,
+            alarmSensorsRestored,
+            familyDrivesRestored,
             mediaLibrariesRestored,
             mediaProgressRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,

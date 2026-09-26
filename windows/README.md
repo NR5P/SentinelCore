@@ -30,7 +30,7 @@ with scratch data:
 
 Without it they are skipped, not failed.
 
-175 tests. The client library is exercised end to end against a real loopback HTTP server rather
+286 tests. The client library is exercised end to end against a real loopback HTTP server rather
 than a mocked handler — status codes, cookies, error-body shapes and all — because half of what that
 layer does is precisely the part a mock replaces.
 
@@ -75,8 +75,20 @@ worth handing to someone who should not have to install a runtime first.
   to be rebuilt (Settings → Organizer). Reminder and event alerts come from that copy, so they fire
   with the server down. The engine is `SentinelCore.Client/Organizer/`; the protocol every client
   speaks is [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md).
+- **Files** — the household's shared file library, once it is switched on in Settings. Browse
+  folder by folder or search the whole library; add files with a dialog or by dropping them on the
+  list (a dropped folder keeps its structure); double-click to open a file (it is fetched into
+  `%TEMP%\SentinelCore\Files` and handed to Windows), or save a copy, rename, or move it to the
+  trash, where it can be put back. Uploads and downloads stream, so a video does not have to fit in
+  memory. **Backup drives** shows every drive (a folder the server can see, or another computer
+  over SFTP), how its last backup went and how much room is left, and lets an admin back up now,
+  bring files back, run the nightly pass, or check for duplicate copies; a Viewer sees the same
+  list read-only. The server does the copying and reports progress in a banner that polls while a
+  job runs. The API is `SentinelCore.Client/Networking/SentinelClient.FamilyFiles.cs`.
 - **Device Hub** — the lights, gates, locks and sensors the server tracks over MQTT, with the
   controls each kind actually speaks, plus discovery and editing.
+- **Alarm** — arm and disarm the house (with the PIN, if one is set), every sensor's state and
+  battery, and the admin windows for sensors, delays, sirens and the PIN.
 - **Settings** — connection (including the remote fallback address), account, server health, service
   restarts and host reboot, the connection log, and every admin screen: cameras, trigger zones,
   accounts, dashboard login, known faces, known vehicles, schedules, prompt profiles, HomeKit,
@@ -106,10 +118,10 @@ notifications at once.
 
 | Project | What's in it |
 | --- | --- |
-| `SentinelCore.Client` | Models, the API client, mDNS discovery, credential and preference storage, and `AppModel` — all of it UI-framework-free and testable without a window. |
-| `SentinelCore.App` | The WPF application: theme, views, dialogs, tray icon, and the WebView2 live player. |
-| `SentinelCore.Client.Tests` | 140 tests over the client library, including the DNS-SD parser and the connect/fallback sequence. |
-| `SentinelCore.App.Tests` | 35 tests over the presentation layer — row wording, badges, converters, relative time. |
+| `SentinelCore.Client` | Models, the API client, mDNS discovery, credential and preference storage, and `AppModel` — all of it UI-framework-free and testable without a window. `Models/FamilyFiles.cs` and `Networking/SentinelClient.FamilyFiles.cs` are the Files library and its backup drives. |
+| `SentinelCore.App` | The WPF application: theme, views, dialogs, tray icon, and the WebView2 live player. The Files section is `Views/FilesView.xaml`, with `FilesDrivesWindow`, `FilesDriveEditWindow` and `FilesTrashWindow` beside it. |
+| `SentinelCore.Client.Tests` | 250 tests over the client library, including the DNS-SD parser, the connect/fallback sequence and the Files transfers. |
+| `SentinelCore.App.Tests` | 36 tests over the presentation layer — row wording, badges, converters, relative time, and a smoke test that builds every screen. |
 
 ## Where things are kept
 

@@ -363,9 +363,10 @@ public sealed class InternetOutageSettingsDto
 
 public sealed class LocationSettingsDto
 {
-    // Only ever used to work out sunrise and sunset here, which is what lets a schedule fire
-    // "when it gets dark" instead of at a clock time that needs changing every few weeks. The
-    // calculation is local arithmetic - nothing is sent anywhere. See LocationOptions.
+    // Used to work out sunrise and sunset here (local arithmetic, which is what lets a schedule
+    // fire "when it gets dark" instead of at a clock time that needs changing every few weeks),
+    // and by the Weather tab, which sends the pair to the National Weather Service for the
+    // forecast while that tab is open. See LocationOptions.
     [Range(-90, 90)]
     public double Latitude { get; set; }
 
@@ -424,6 +425,34 @@ public sealed class LoginAlertSettingsDto
 
     [Range(1, 1440)]
     public int CooldownMinutes { get; set; } = 15;
+}
+
+// Mirrors WeatherAlertOptions in the main app. Off by default, and the kinds default to what
+// can hurt you - see the options class for why.
+public sealed class WeatherAlertsSettingsDto
+{
+    public bool Enabled { get; set; }
+
+    [Range(1, 60)]
+    public int CheckIntervalMinutes { get; set; } = 5;
+
+    public string MinimumLevel { get; set; } = WeatherAlertOptions.LevelWatch;
+
+    public bool Tornado { get; set; } = true;
+    public bool SevereThunderstorm { get; set; } = true;
+    public bool Flood { get; set; } = true;
+    public bool Winter { get; set; } = true;
+    public bool Wind { get; set; } = true;
+    public bool Temperature { get; set; } = true;
+    public bool Tropical { get; set; } = true;
+    public bool Fire { get; set; }
+    public bool Other { get; set; }
+    public bool NotifyOnUpdates { get; set; }
+
+    // A method, not a property: SettingsSchemaTests treats every property as a field a client
+    // must be able to edit.
+    public bool HasAnyKind() =>
+        Tornado || SevereThunderstorm || Flood || Winter || Wind || Temperature || Tropical || Fire || Other;
 }
 
 // Mirrors NuisanceAdvisorOptions in the main app.
@@ -647,6 +676,16 @@ public sealed class OrganizerSettingsDto
     public int MaxAttachmentMegabytes { get; set; } = 50;
 }
 
+// The home alarm (see AlarmEngine). On by default like the Organizer: the tab shows an empty
+// "add a sensor" state until there is something to arm, and everything else about the alarm is
+// set on the tab itself, beside the sensors it applies to.
+public sealed class AlarmSettingsDto
+{
+    public const string SectionName = "Alarm";
+
+    public bool Enabled { get; set; } = true;
+}
+
 // Nightly automatic export of the full backup (see AutoExportWorker) to a folder - on this
 // machine, a mounted network share, or a Windows \\server\share path - or over SFTP to another
 // computer. Lives in the main app's appsettings.json with every other section, so it is itself
@@ -731,5 +770,44 @@ public sealed class AutoExportSettingsDto : IValidatableObject
 
         if (!string.IsNullOrEmpty(Passphrase) && Passphrase.Length < 8)
             yield return new ValidationResult("Use a passphrase of at least 8 characters, or leave it blank.", [nameof(Passphrase)]);
+    }
+}
+
+// The family file library and its backup drives (FamilyFiles.cs). The drives themselves are a
+// list, kept in their own file under the data directory and edited on the Files tab; this is
+// the flat part a settings form can show.
+public sealed class FamilyFilesSettingsDto : IValidatableObject
+{
+    public const string SectionName = "FamilyFiles";
+
+    public bool Enabled { get; set; } = true;
+
+    // Blank means <data>/family-files/library. A full path moves the library to a bigger disk;
+    // the files already there are not moved automatically.
+    public string LibraryFolder { get; set; } = string.Empty;
+
+    [Range(1, 1048576)]
+    public int MaxUploadMegabytes { get; set; } = 4096;
+
+    // Local time in the Schedules time zone, like every other nightly job here. An hour after
+    // the auto export's default so the two don't compete for the disk.
+    [Range(0, 23)]
+    public int Hour { get; set; } = 4;
+
+    [Range(0, 59)]
+    public int Minute { get; set; }
+
+    // When on, the nightly check moves every duplicate but one to the trash; when off, it only
+    // lists them on the Files tab.
+    public bool RemoveDuplicates { get; set; } = true;
+
+    [Range(1, 365)]
+    public int TrashKeepDays { get; set; } = 30;
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (!string.IsNullOrWhiteSpace(LibraryFolder) && !Path.IsPathRooted(LibraryFolder.Trim()))
+            yield return new ValidationResult(
+                "The library folder must be a full path, e.g. /mnt/bigdisk/family-files, or blank for the default.", [nameof(LibraryFolder)]);
     }
 }

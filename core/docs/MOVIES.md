@@ -214,6 +214,6 @@ files whose name contains "sample" or "trailer" are skipped.
 ## Data
 
 `media.db` in the web host's data folder: `MediaLibraries`, `MediaItems`, `MediaProgress`,
-`MediaState`. Backups (schema 6) carry the libraries and everyone's progress; the catalog and the
+`MediaState`. Backups (schema 7) carry the libraries and everyone's progress; the catalog and the
 artwork cache are rebuilt by a rescan. HLS sessions live under `<data>/media-hls/`, extracted
 subtitles under `<data>/media-subs/`.

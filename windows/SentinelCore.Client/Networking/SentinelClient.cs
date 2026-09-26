@@ -19,7 +19,7 @@ namespace SentinelCore.Client.Networking;
 /// The app talks to the dashboard's JSON API only. It never connects directly to cameras or to the
 /// main bridge on port 5080.
 /// </remarks>
-public sealed class SentinelClient : IDisposable
+public sealed partial class SentinelClient : IDisposable
 {
     // This client only targets a server on the current LAN (or a tunnel to it). A long timeout
     // leaves the UI in CONNECTING when the host is powered off or this PC is on another network,
@@ -659,6 +659,50 @@ public sealed class SentinelClient : IDisposable
             new MediaWatchedInput { Watched = watched },
             ct);
 
+    // MARK: - Alarm
+
+    /// <summary>
+    /// Always answers, alarm on or off: Enabled says whether the section exists. Polled while the
+    /// section is on screen; the state machine itself lives on the server.
+    /// </summary>
+    public Task<AlarmStatus> AlarmStatusAsync(CancellationToken ct = default) =>
+        GetAsync<AlarmStatus>("/api/alarm/status", ct: ct);
+
+    /// <summary>
+    /// A refused arm (something open, wrong PIN, nothing to watch) is a 4xx whose body's error
+    /// becomes the SentinelServerException message.
+    /// </summary>
+    public Task<AlarmCommandReply> ArmAlarmAsync(string mode, bool force, string? pin, CancellationToken ct = default) =>
+        SendAsync<AlarmCommandReply, AlarmArmInput>("/api/alarm/arm", HttpMethod.Post, new AlarmArmInput { Mode = mode, Force = force, Pin = pin }, ct);
+
+    public Task<AlarmCommandReply> DisarmAlarmAsync(string? pin, CancellationToken ct = default) =>
+        SendAsync<AlarmCommandReply, AlarmDisarmInput>("/api/alarm/disarm", HttpMethod.Post, new AlarmDisarmInput { Pin = pin }, ct);
+
+    public Task<AlarmCommandReply> AlarmPanicAsync(CancellationToken ct = default) =>
+        SendAsync<AlarmCommandReply, object>("/api/alarm/panic", HttpMethod.Post, null, ct);
+
+    public Task<AlarmCommandReply> AlarmTestAsync(CancellationToken ct = default) =>
+        SendAsync<AlarmCommandReply, object>("/api/alarm/test", HttpMethod.Post, null, ct);
+
+    public Task<List<AlarmEvent>> AlarmEventsAsync(int limit = 200, CancellationToken ct = default) =>
+        GetAsync<List<AlarmEvent>>("/api/alarm/events", new[] { KeyValuePair.Create("limit", limit.ToString()) }, ct);
+
+    public Task CreateAlarmSensorAsync(AlarmSensorInput input, CancellationToken ct = default) =>
+        SendNoResultAsync("/api/alarm/sensors", HttpMethod.Post, input, ct);
+
+    public Task UpdateAlarmSensorAsync(Guid id, AlarmSensorInput input, CancellationToken ct = default) =>
+        SendNoResultAsync($"/api/alarm/sensors/{id}", HttpMethod.Put, input, ct);
+
+    public Task DeleteAlarmSensorAsync(Guid id, CancellationToken ct = default) =>
+        SendNoResultAsync<object>($"/api/alarm/sensors/{id}", HttpMethod.Delete, null, ct);
+
+    public Task<AlarmConfig> SaveAlarmConfigAsync(AlarmConfig config, CancellationToken ct = default) =>
+        SendAsync<AlarmConfig, AlarmConfig>("/api/alarm/config", HttpMethod.Put, config, ct);
+
+    /// <summary>Empty clears the PIN. An admin needs no current PIN; anyone else does.</summary>
+    public Task SetAlarmPinAsync(string pin, string? currentPin, CancellationToken ct = default) =>
+        SendNoResultAsync("/api/alarm/pin", HttpMethod.Put, new AlarmPinInput { Pin = pin, CurrentPin = currentPin }, ct);
+
     // MARK: - Schedules
 
     /// <summary>
@@ -961,7 +1005,12 @@ public sealed class SentinelClient : IDisposable
     /// Runs the request, logs it, and turns a non-2xx response into a typed exception with the
     /// server's message extracted, without assuming the success body is JSON.
     /// </summary>
-    private async Task<byte[]> ExecuteAndValidateAsync(HttpRequestMessage request, CancellationToken ct)
+    /// <param name="client">
+    /// The session to send on. Defaults to the 15-second one; a transfer that can legitimately
+    /// take minutes (a Family Files upload) passes the no-timeout session instead.
+    /// </param>
+    private async Task<byte[]> ExecuteAndValidateAsync(
+        HttpRequestMessage request, CancellationToken ct, HttpClient? client = null)
     {
         var started = Stopwatch.StartNew();
         var method = request.Method.Method;
@@ -971,7 +1020,7 @@ public sealed class SentinelClient : IDisposable
         HttpResponseMessage response;
         try
         {
-            response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+            response = await (client ?? _http).SendAsync(request, ct).ConfigureAwait(false);
         }
         catch (Exception error) when (IsWorthReporting(error))
         {

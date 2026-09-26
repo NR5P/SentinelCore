@@ -72,6 +72,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var moviesEnabled: Bool {
         didSet { UserDefaults.standard.set(moviesEnabled, forKey: "moviesEnabled") }
     }
+    // Whether the server has the Alarm switched on. Remembered like the Organizer's flag so the
+    // section is there on an offline launch, where a disarm that can't reach the server at least
+    // says so instead of the section vanishing.
+    @Published private(set) var alarmEnabled: Bool = UserDefaults.standard.bool(forKey: "alarmEnabled") {
+        didSet { UserDefaults.standard.set(alarmEnabled, forKey: "alarmEnabled") }
+    }
+    // Whether the server has Family Files switched on - the shared file library with its backup
+    // drives. Same job as deviceHubEnabled: decides whether the FILES section exists at all.
+    @Published private(set) var familyFilesEnabled = false
 
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
@@ -557,6 +566,15 @@ final class AppModel: ObservableObject {
             if Self.isCancellation(error) { throw error }
             deviceHubEnabled = false
         }
+        // Same reasoning: an older server has no alarm, and that is not a failed connection.
+        do {
+            let alarm = try await client.alarmStatus()
+            alarmEnabled = alarm.enabled
+            AlarmWidgetBridge.write(alarm)
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            if case ClientError.server(status: 404, _) = error { alarmEnabled = false }
+        }
         // Prime the Device Hub at app startup rather than waiting until its tab is first opened.
         // The server's state endpoint first makes sure its MQTT subscriptions are ready, so a
         // retained device report can tell us whether each light is currently on or off.
@@ -584,6 +602,14 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             moviesEnabled = false
+        }
+        // Same treatment as the Device Hub: /status always answers on a server that has the
+        // feature, and a 404 from an older one just means no Files section.
+        do {
+            familyFilesEnabled = try await client.familyFilesStatus().enabled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            familyFilesEnabled = false
         }
         // Same treatment, opposite default - see isLicensed.
         do {

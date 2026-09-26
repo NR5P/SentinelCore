@@ -4,4 +4,6 @@
     <external-cache-path name="captures" path="captures/" />
     <!-- Organizer attachments copied out under their own names so another app can open them. -->
     <cache-path name="organizer" path="organizer-open/" />
+    <!-- Files-library downloads, copied out under their real names for Open and Share. -->
+    <cache-path name="files" path="files-open/" />
 </paths>

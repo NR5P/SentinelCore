@@ -70,7 +70,7 @@ public sealed class FcmSender(
                                 sound = "default",
                                 // Each card's notification replaces that card's last one, not
                                 // every other notification that has no camera event behind it.
-                                tag = message.EventId ?? (message.OrganizerItemId is { } item ? $"organizer-{item}" : "sentinel-test")
+                                tag = message.EventId ?? (message.OrganizerItemId is { } item ? $"organizer-{item}" : message.EventType == PushMessage.AlarmType ? "alarm" : "sentinel-test")
                             }
                         }
                     }

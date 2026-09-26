@@ -19,8 +19,9 @@ final class SentinelClient {
     // Separate from `session` only for its timeouts: the main session gives up on any request
     // after 15 seconds, which would cut off the Organizer's 25-second long poll every time and
     // any attachment upload bigger than a few megabytes. Same shared cookie storage, so it is
-    // signed in exactly when the rest of the app is.
-    private lazy var organizerSession: URLSession = Self.makeOrganizerSession()
+    // signed in exactly when the rest of the app is. Also the session Family Files uploads and
+    // downloads go through (FilesClient.swift), for the same reason: a video takes minutes.
+    lazy var organizerSession: URLSession = Self.makeOrganizerSession()
 
     private static func makeOrganizerSession() -> URLSession {
         let configuration = URLSessionConfiguration.default
@@ -643,6 +644,58 @@ final class SentinelClient {
         url(path: "/api/media/items/\(showId)/seasons/\(season)/poster")
     }
 
+    // MARK: - Alarm
+
+    // Always answers, alarm on or off: `enabled` says whether the section exists. Polled while
+    // the section is on screen; the state machine itself lives on the server.
+    func alarmStatus() async throws -> AlarmStatus {
+        try await get("/api/alarm/status")
+    }
+
+    // A refused arm (something open, wrong PIN, nothing to watch) is a 4xx with a JSON body,
+    // which `send` turns into ClientError.server with the body's `error` as its message. The
+    // one thing that loses is the list of open sensors, so a 409 is re-read here to keep it.
+    func armAlarm(mode: String, force: Bool, pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/arm", method: "POST", body: AlarmArmInput(mode: mode, force: force, pin: pin))
+    }
+
+    func disarmAlarm(pin: String?) async throws -> AlarmCommandReply {
+        try await send("/api/alarm/disarm", method: "POST", body: AlarmDisarmInput(pin: pin))
+    }
+
+    func alarmPanic() async throws -> AlarmCommandReply {
+        try await send("/api/alarm/panic", method: "POST", body: Optional<String>.none)
+    }
+
+    func alarmTest() async throws -> AlarmCommandReply {
+        try await send("/api/alarm/test", method: "POST", body: Optional<String>.none)
+    }
+
+    func alarmEvents(limit: Int = 100) async throws -> [AlarmEvent] {
+        try await get("/api/alarm/events", query: [URLQueryItem(name: "limit", value: String(limit))])
+    }
+
+    func createAlarmSensor(_ input: AlarmSensorInput) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/sensors", method: "POST", body: input)
+    }
+
+    func updateAlarmSensor(id: UUID, _ input: AlarmSensorInput) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/sensors/\(id.uuidString)", method: "PUT", body: input)
+    }
+
+    func deleteAlarmSensor(id: UUID) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/sensors/\(id.uuidString)", method: "DELETE", body: Optional<String>.none)
+    }
+
+    func saveAlarmConfig(_ config: AlarmConfig) async throws -> AlarmConfig {
+        try await send("/api/alarm/config", method: "PUT", body: config)
+    }
+
+    // Empty clears the PIN. An admin needs no current PIN; anyone else does.
+    func setAlarmPin(_ pin: String, currentPin: String?) async throws {
+        let _: EmptyResponse = try await send("/api/alarm/pin", method: "PUT", body: AlarmPinInput(pin: pin, currentPin: currentPin))
+    }
+
     // MARK: - Schedules
 
     // Schedules live in the main app and are proxied by the web host, exactly like automation
@@ -947,6 +1000,15 @@ final class SentinelClient {
 
         guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         model.log("\(method) \(http.statusCode) in \(elapsed(from: started))")
+        return try validated(data, response)
+    }
+
+    // The one rule for turning a response into a result or a ClientError, on its own so the
+    // Family Files transfers (FilesClient.swift), which run on organizerSession rather than
+    // `session`, fail exactly the way every other request does: 401 is "sign in", anything else
+    // non-2xx carries the server's own message.
+    func validated(_ data: Data, _ response: URLResponse) throws -> Data {
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? JSONDecoder.sentinel.decode(APIError.self, from: data))
                 .flatMap { $0.error ?? $0.errors?.joined(separator: "\n") ?? $0.detail }

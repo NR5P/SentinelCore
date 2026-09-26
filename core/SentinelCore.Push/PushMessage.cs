@@ -21,6 +21,10 @@ public sealed record PushMessage(
 {
     public const string OrganizerType = "organizer";
 
+    // The home alarm: triggered, armed, disarmed, a sensor's battery. Time-sensitive on iOS so it
+    // breaks through a Focus; the apps open the Alarm tab for it.
+    public const string AlarmType = "alarm";
+
     public const string OrganizerChangedType = "organizer-changed";
 
     // Something in the Organizer changed: devices sync in the background so their Home Screen

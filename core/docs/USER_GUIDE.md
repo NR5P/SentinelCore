@@ -12,6 +12,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 3. [The EVENTS tab — everything the cameras caught](#3-the-events-tab--everything-the-cameras-caught)
 3a. [The TIMELINE tab — trigger-clip review](#3a-the-timeline-tab--trigger-clip-review)
 3b. [Semantic search — finding events by what the picture shows](#3b-semantic-search--finding-events-by-what-the-picture-shows)
+3c. [The WEATHER tab — forecast, radar and warnings](#3c-the-weather-tab--forecast-radar-and-warnings)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 4c. [The MOVIES tab — your own movies and TV shows](#4c-the-movies-tab--your-own-movies-and-tv-shows)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
@@ -25,6 +26,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 6ac. [Board automations — cards that add and move themselves](#6ac-board-automations--cards-that-add-and-move-themselves)
 6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
 6c. [One arrival, not four alerts — repeat triggers from one camera](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera)
+6d. [The FILES tab — the family file library, its backup drives, and the nightly duplicate check](#6d-the-files-tab--the-family-file-library-its-backup-drives-and-the-nightly-duplicate-check)
 7. [The SETTINGS tab](#7-the-settings-tab)
 7a. [System health — how hard the server is working](#7a-system-health--how-hard-the-server-is-working)
 8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
@@ -37,6 +39,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 12. [Email](#12-email)
 13. [MQTT & Home Assistant](#13-mqtt--home-assistant)
 13a. [The DEVICE HUB tab — controlling lights & other MQTT devices](#13a-the-device-hub-tab--controlling-lights--other-mqtt-devices)
+13b. [The ALARM tab — a home alarm built from your sensors](#13b-the-alarm-tab--a-home-alarm-built-from-your-sensors)
 14. [Apple HomeKit](#14-apple-homekit)
 15. [Why didn't I get an alert? (rate limiting & suppression, explained)](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained)
 16. [Self-monitoring](#16-self-monitoring)
@@ -82,8 +85,9 @@ ever see the dashboard warn that it was reached from *outside* your network, tak
 seriously — that's a different thing entirely, and means the port is more exposed than intended.
 
 Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") showing
-whether the dashboard can currently reach its own backend, and eight tabs: **feed**,
-**timeline**, **live**, **cameras**, **triggers**, **automations**, **docs**, **settings**.
+whether the dashboard can currently reach its own backend, and a row of tabs: **events**,
+**timeline**, **live**, **cameras**, **organizer**, **weather**, **automations**, **device hub**
+(only when the Device Hub is switched on), **docs**, **settings** and **accounts**.
 
 The very first time you open the dashboard, it asks you to **create the admin account** - a
 username and a password of at least 8 characters. Until that account exists the server does
@@ -300,6 +304,51 @@ from measured CLIP scores, where a correct image/caption match scored about 0.25
 one about 0.17–0.24 — a narrow band, so small changes here matter more than the range suggests.
 
 Only alerts analysed *after* you turn this on are encoded; older events stay text-searchable only.
+
+## 3c. The WEATHER tab — forecast, radar and warnings
+
+The weather where the server is: what it's doing now, the radar, the next two days hour by hour,
+and the seven-day forecast, with any watches, warnings and advisories in force across the top.
+Everything comes from the US National Weather Service (weather.gov), which is free and needs no
+account or key — so the tab covers the United States and its territories, and says so plainly if
+the location is somewhere else.
+
+**It needs your location.** Set it once under **Settings → LOCATION** (the same one schedules use
+to follow the sun): type a town and press Find, or enter the latitude and longitude yourself. Until
+then the tab offers to take you there. Nothing is fetched until somebody opens the tab, and nothing
+runs while it's closed. While it's open, the server asks weather.gov for the forecast every ten
+minutes and for a fresh radar frame every two, and keeps one copy so several open dashboards share
+it rather than each asking. The coordinates go to weather.gov to ask for the forecast — that is the
+only thing that leaves your network, and only while the tab is open.
+
+What's on it, top to bottom:
+
+- **Watches, warnings and advisories** for the location, worst first: red for severe and extreme,
+  amber for moderate, blue for the rest. Click one for the full text and what to do.
+- **NOW** — the nearest NWS observation station's latest report: temperature, what it feels like
+  when wind chill or heat index apply, humidity, dew point, wind and gusts, pressure, visibility,
+  and today's sunrise and sunset. The station is usually an airport a few miles away — its name is
+  under the panel — so a degree or two of difference from the porch is normal. If the nearest
+  station hasn't reported, the next one over is used.
+- **RADAR** — the loop of the last hour or so from the radar station nearest you, or the
+  whole-country picture with **national**; **still** shows the latest frame alone. Click the
+  picture to see it full size. It refreshes on its own every two minutes.
+- **The next 48 hours** — a strip you can scroll sideways: temperature, conditions and the chance
+  of rain for each hour, with a marker where each new day starts. Hover an hour for the wind and
+  humidity.
+- **The 7-day forecast** — a card per day with the high and low, conditions, chance of rain and
+  wind. Click a day for the NWS's written forecast for the day and the night.
+
+Times are shown in the location's own time zone, so it reads right even from a phone two zones
+away. If a station is down or weather.gov has a bad minute, the parts that did answer stay on
+screen with a note about the one that didn't, and the last good answer is kept — marked as such —
+rather than replaced with an error. Refresh in the corner asks again straight away.
+
+**Being told, not just shown.** The tab only shows what's in force while you're looking at it. To
+have a tornado watch or a flood warning sent to you as it's issued — by email, Telegram, or push to
+the apps — turn on **Settings → WEATHER ALERTS** and pick the kinds of weather and the level
+(warnings only, watches and warnings, or everything). See
+[section 7](#7-the-settings-tab) under *Weather Alerts*.
 
 ## 4. The LIVE tab — viewing your own cameras
 
@@ -1078,11 +1127,13 @@ Because this is worked out from the sun's real position, the clock time moves th
 well over an hour by itself. Nothing needs changing in spring or autumn.
 
 **This needs your location.** Set it once under **Settings → LOCATION**: type a town and press
-Find, or enter the latitude and longitude yourself. Only the two numbers are saved, and they are
-used for nothing but this calculation — it happens on your own machine, with nothing sent
-anywhere. (Pressing Find is the one exception: the place name you typed goes to OpenStreetMap's
-public lookup service to get the coordinates back. On a server with no internet access, that
-button reports it can't reach the service and you enter the numbers directly.)
+Find, or enter the latitude and longitude yourself. Only the two numbers are saved. This
+calculation happens on your own machine, with nothing sent anywhere; the other thing the location
+is used for is the [WEATHER tab](#3c-the-weather-tab--forecast-radar-and-warnings), which sends the
+coordinates to weather.gov for the forecast while that tab is open. (Pressing Find also goes out:
+the place name you typed goes to OpenStreetMap's public lookup service to get the coordinates
+back. On a server with no internet access, that button reports it can't reach the service and you
+enter the numbers directly.)
 
 At high latitudes some darkness levels genuinely never happen in midsummer — the sun never gets
 18° below the horizon in a Scottish June. A schedule set to one of those simply doesn't fire on
@@ -1274,6 +1325,64 @@ about, the truck having moved twenty feet is not.
 Clip merging is not a setting — it follows the pre-roll and post-roll you already set per zone in
 [section 6](#6-motion-zones-on-your-own-cameras).
 
+## 6d. The FILES tab — the family file library, its backup drives, and the nightly duplicate check
+
+The FILES tab is a shared file library for the household — the photos off everyone's phones, the
+scans of the passports and the lease, the tax returns, the kids' school work — kept on this server
+and reachable from the dashboard and every app. Everyone who can sign in can add files and get
+them back; the backups and the housekeeping are the admin's.
+
+**Putting files in and getting them out.** Drop files anywhere on the tab, or press **add files**;
+in the apps, the Files tab has a photo picker and a file picker. Files go into whichever folder
+you're looking at, and you can make folders, rename, move and search by name. **get** saves a copy
+to the computer you're on; clicking a picture opens it. Nothing you add is ever overwritten: if a
+file with the same name and *different* contents is already there, the new one is saved as
+`name (2).ext`, and if it's the same file, the upload is simply acknowledged. Deleting a file or a
+folder moves it to the **trash**, where it waits (30 days by default) and can be put back with one
+press. Nothing is deleted for good until then, unless an admin empties the trash.
+
+**Backup drives.** Under **backup drives**, an admin adds where the library should be copied to,
+and as many places as you like:
+
+- **A folder on the server** — a USB disk plugged into it, a mounted network share
+  (`/mnt/nas/family`), or on Windows a `\\server\share` path. The folder is created if it isn't
+  there, and anything else already in it is never touched.
+- **Another computer (SFTP)** — a NAS, a Mac with Remote Login on, a Linux box: address, port,
+  username, password and a folder. Press **test** first; it shows the computer's host-key
+  fingerprint, and saving that fingerprint means nothing is ever sent if a different machine
+  starts answering at that address.
+
+Every night the whole library is copied to every enabled drive, and **back up now** does it on
+demand for one drive or all of them. A drive holds a plain copy of the folders — open it in any
+file manager, with or without this software — plus one small manifest file that records what was
+written. That manifest is what makes deletion safe: a file that has left the library (deleted, or
+retired as a duplicate) is removed from the drive on the next backup, but only ever a file this
+feature wrote there. Each drive shows when it was last backed up to, how much is on it, how much
+space it has left, and what went wrong if something did. A night that doesn't fully complete is
+retried hourly a few times and reported on your alert channels once.
+
+**Bringing files back.** If the server is lost, restore your backup file onto a new one (that
+brings the drives' settings back), plug the drive in or point at the NAS again, and press **bring
+files back**: anything on the drive that the library doesn't have is copied in. Nothing already in
+the library is touched; a file that exists in both at a different size comes back as
+`name (from drive).ext` so you can compare. It's also the way to merge in a drive that has been
+away for a while.
+
+**Duplicates.** The same photo tends to arrive three times — from the phone, from the shared
+album, from the export — under three names. The nightly pass compares files by their *contents*,
+not their names, and when it finds identical files it keeps the oldest copy and moves the others
+to the trash (turn **Remove Duplicates** off in Settings to have it only list them). **check now**
+runs the comparison without moving anything; **check and remove** does the full thing straight
+away. The report on the drives screen shows what was kept and what was retired, and retired copies
+sit in the trash like any other deletion, so an unwanted removal is one press from undone.
+
+**Settings → Family Files** holds the switches: on/off (turning it off hides the tab and stops the
+nightly pass but deletes nothing), the **library folder** (set a full path on a big disk before
+adding much — it isn't moved for you later), the largest file anyone can add, the nightly time,
+remove-duplicates, and how long the trash keeps things. The library is deliberately *not* part of
+the backup file in [section 7](#7-the-settings-tab): it can be far bigger than everything else put
+together, and the drives are its backup.
+
 ## 7. The SETTINGS tab
 
 Every section below saves independently and applies live — no restart needed, except where
@@ -1298,7 +1407,7 @@ without having switched to advanced still finds it.
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
 shows only the settings most people actually change: Alert Intake & History, Email, Daily
 Summary, Telegram Alerts, Discord Alerts, Push Notifications, Server Outage Alerts, Internet Outage
-Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
+Alerts, Weather Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
 Insect Advisor, Login Alerts, Bug Reports, System Health, Apple HomeKit, Nightly Auto Export, Backup, Login and
 License. **Advanced** adds everything else: the AI tuning knobs, image processing,
 self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces, multi-frame analysis,
@@ -1364,6 +1473,20 @@ The full list below covers both modes:
   Iris on demand. (Called **Blue Iris Snapshot** in earlier versions.)
 - **Push Notifications** — native push alerts to the iPhone, Android, and Apple TV apps, with
   their own confidence gate. See [PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md).
+- **Weather Alerts** — **off by default.** When on, the server asks the US National Weather
+  Service every few minutes (five by default) for watches, warnings and advisories covering the
+  location set under LOCATION, and sends each new one to you the same way it sends a server-outage
+  notice: by email, Telegram, and push to the apps, whichever of those you have set up. Tick the
+  kinds you care about — tornado, severe thunderstorm, flood, winter weather, wind, heat and cold,
+  tropical, fire weather, and everything else — and choose how serious it has to be: **warnings
+  only** (it's happening or about to), **watches and warnings** (the default; conditions are right
+  for it), or **everything** including advisories and statements. Each alert is sent once. The
+  NWS reissues a warning every quarter hour or so while it tracks a storm; those follow-ups are
+  skipped unless you tick **Include Follow-Ups**. At most five are sent per check, worst first,
+  so switching it on during a bad night doesn't fire off twenty at once. **Send test alert**
+  delivers a clearly-marked sample tornado warning so you can see where a real one lands. Needs
+  a location inside the United States, and sends its coordinates to weather.gov on every check.
+  Quiet Hours don't apply — a tornado warning at 3am is exactly the one you want.
 - **Self-Monitoring** — watches the bridge's own health; see [section 16](#16-self-monitoring).
 - **Spider Web & Insect Advisor** — spots the overnight flood of triggers caused by a web or an
   insect drifting across the lens, and tells you which camera needs wiping rather than letting
@@ -1402,8 +1525,9 @@ The full list below covers both modes:
   [section 15](#15-why-didnt-i-get-an-alert-rate-limiting--suppression-explained) for how this
   fits with the other rate-limiting layers.
 - **Location** — the latitude/longitude used to work out sunrise and sunset, so schedules and
-  anything else that runs "at dusk" know when that is here. See
-  [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark).
+  anything else that runs "at dusk" know when that is here, and for the WEATHER tab's forecast.
+  See [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark)
+  and [section 3c](#3c-the-weather-tab--forecast-radar-and-warnings).
 - **Schedules** — run something at a time of day, at sunset, or when it gets dark. Its own
   section below. See
   [section 6ab](#6ab-schedules--doing-something-at-a-time-at-sunset-or-when-it-gets-dark).
@@ -1481,6 +1605,8 @@ The full list below covers both modes:
   another computer, keeps the last *N*, and tells you on your alert channels if a night fails.
   Set a passphrase if the file is leaving this machine. Press **export now** after saving to test
   it. See DEPLOYMENT.md, *Nightly Auto Export*.
+- **Family Files** — the switches for the FILES tab's shared library, its nightly backup to your
+  own drives and the duplicate check. See [section 6d](#6d-the-files-tab--the-family-file-library-its-backup-drives-and-the-nightly-duplicate-check).
 - **Login** — an optional username/password gate for this dashboard, off by default. See
   [section 2](#2-opening-the-dashboard).
 - **Login Alerts** — tells you when someone fails to sign in to the dashboard, which is the one
@@ -1956,6 +2082,88 @@ its State Topic: check the topic, or turn on **Optimistic** for a device that ge
 reports. If the toolbar says *broker disconnected*, nothing can be controlled at all — check
 the MQTT section's broker settings first.
 
+## 13b. The ALARM tab — a home alarm built from your sensors
+
+The Device Hub already reads sensors: a door contact, a motion sensor, a water-leak sensor. The
+Alarm turns a set of them into a home alarm that is armed and disarmed as one - from the
+dashboard, the iPhone, the Mac, Android, Windows and the Apple TV - with an exit delay, an entry
+delay, a PIN, a siren, and the cameras taking a look the moment it goes off.
+
+On by default (**Settings → ALARM → Enabled** hides it everywhere). It needs **MQTT** and the
+**Device Hub** (sections 13 and 13a) turned on to hear its sensors; until they are, the tab shows
+an empty state saying so.
+
+**What you need.** Sensors that report over MQTT. The cheapest and best-supported are Zigbee
+ones - an Aqara or Sonoff door contact costs about $10-20 and runs a year or two on a coin cell -
+read through **Zigbee2MQTT**, a free program that runs next to Sentinel and republishes every
+Zigbee message on your broker. Its devices show up in the Device Hub's **discover** scan
+already named, with open/closed and battery readings. Z-Wave (via zwave-js), Shelly, ESPHome and
+a Konnected board reusing an old wired alarm's door contacts all work the same way, because
+the alarm only ever sees a Device Hub device.
+
+**Adding a sensor.** Add the device on the Device Hub tab first (discover finds Zigbee2MQTT
+ones by itself), then on the Alarm tab click **+ add sensor**, pick the device, and say what it
+guards:
+
+| Zone | What it means |
+|---|---|
+| **entry door** | The way in and out. Opening it while armed starts the **entry delay** instead of the siren, so whoever came in can disarm. |
+| **perimeter** | Windows and other doors. Instant when armed. |
+| **interior motion** | Motion inside. Instant, but by default only watched in **Away** - people at home walk around. |
+| **24-hour** | Water leak, smoke, tamper. Watched around the clock, armed or not. |
+
+Each sensor also says which modes watch it (Home, Night, Away). The defaults follow the zone;
+change them per sensor. **Reads the other way round** is for the odd sensor that reports ON
+for closed.
+
+**Modes.** *Disarmed*; *Home* (doors and windows watch, motion inside is ignored, arms at
+once); *Night* (the same sensors as Home, kept separate so a later schedule can move between
+them); *Away* (everything watches, after the **exit delay**). Arming refuses if something is
+open and tells you what - **arm anyway** skips those sensors until you disarm. A door still open
+when the exit delay ends is skipped the same way, with a notification, rather than setting the
+siren off behind you.
+
+**When it goes off.** The alarm marks itself *triggered* and, all at once: switches on every
+device listed under **Switch on when triggered** (a siren, a strobe, every lamp - any Device Hub
+device that can be switched; a plug with a lamp on it is a fine stand-in for testing), sends a
+push to everyone's phones, and takes a snapshot on the chosen cameras (or all of them) through
+the same AI pipeline as a motion trigger, so the alert on your phone says what was in the frame.
+The siren devices switch off after the **siren time** or when the alarm is disarmed, whichever
+is first; the alarm itself stays triggered until someone disarms it. **Panic** does all of this
+on demand, whatever mode the house is in. **Test** (admin) does it briefly - siren for five
+seconds, one notification, the cameras - without changing the mode.
+
+**PIN.** Set one under **settings** on the tab (4-8 digits). With a PIN set, disarming needs it
+- on the dashboard, in the apps, everywhere; arming never does unless you tick **ask for the PIN
+to arm as well**. Five wrong PINs in a row lock it out for five minutes and notify everyone.
+Without a PIN, anyone signed in can disarm - fine for a household where the login is the
+lock. An admin can reset a forgotten PIN; anyone else changing it needs the old one.
+
+**Batteries and health.** Every sensor tile shows its battery and Zigbee signal as the sensor
+last reported them, when it was last heard from and when it last opened. A sensor at or below
+**Low battery at** is flagged and everyone is told once; one silent for longer than **Offline
+after** (a day, by default - battery sensors check in at least hourly) is flagged offline the
+same way. The status card says **ready to arm** only when every sensor an Away arm would watch
+is closed, reporting, and online, and lists what is wrong otherwise.
+
+**Activity** (the button under the sensors, or the toolbar in the apps) is every arm, disarm,
+trigger, skipped sensor, wrong PIN, low battery and outage, newest first, with who did it.
+
+**On your phone.** The iPhone and Android apps have an **Alarm widget** for the Home Screen
+(and the iPhone's Lock Screen) showing armed/disarmed and what's open; tapping it opens the
+Alarm tab. It shows the last state the app saw, so it is as fresh as the last time the app was
+open or an alarm notification arrived. On iPhone, Mac and iPad you can also say **"Arm the
+Sentinel Core alarm"** or **"Is Sentinel Core armed"** to the assistant, or use them in
+Shortcuts and on the Action button. Disarming is never by voice - it needs the PIN.
+
+**Who can do what.** Anyone signed in can arm, disarm (with the PIN) and press panic - that is
+what the household does with an alarm. Adding sensors, the delays, sirens, cameras and the PIN
+are **admin-only**.
+
+**What it is not.** A monitored, certified alarm. Nothing here calls anyone; it tells your
+phones and rings whatever you wired up. Keep your real smoke and CO detectors as they are - a
+smoke sensor here is a second voice, not a replacement.
+
 ## 14. Apple HomeKit
 
 Off by default. When enabled, each camera appears in Apple's **Home** app as a motion sensor,
@@ -2166,6 +2374,9 @@ persistent issue doesn't flood the inbox.
 - `SentinelCore.Web/data/triggers.db` — trigger zone configs and trigger events
 - `SentinelCore.Web/data/organizer.db` — the Organizer's notes, events, reminders and boards, and
   `organizer-automations.db` beside it for [board automations](#6ac-board-automations--cards-that-add-and-move-themselves)
+- `SentinelCore.Web/data/family-files/` — the FILES tab: `library/` (the files themselves, unless
+  **Library Folder** points elsewhere), `trash/`, `drives.json` (the backup drives, passwords
+  included), `index.json` (cached checksums) and `state.json` (last backup and duplicate results)
 - Recorded clips live alongside the trigger event data
 - `homekit-bridge/persist/` — HomeKit pairing keys and this bridge's identity, if you're using
   HomeKit. Deleting it unpairs every iPhone and forces re-pairing with a new code, so it's

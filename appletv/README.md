@@ -52,6 +52,10 @@ server deliberately never sends it the silent Organizer pushes.
   with resume, progress reporting and automatic next episode. See `core/docs/MOVIES.md`.
 - The Organizer, mostly for viewing: calendar, reminders (which can be checked off), notes and
   boards, synced with the other apps through the shared `OrganizerKit` engine
+- Files, read-only (`SentinelCoreTV/Files/`): a Files tab whenever the server has Family Files
+  switched on - browse the shared library folder by folder, see pictures full screen, and a
+  Backup Drives section on the root showing each drive's last result. Adding, renaming and
+  trashing stay on the phones, computers and dashboard
 - Optional dashboard username/password login, persisted across restarts (see below)
 - Server connection settings, push registration, and a connection log
 

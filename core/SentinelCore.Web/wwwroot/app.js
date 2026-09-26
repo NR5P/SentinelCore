@@ -516,11 +516,14 @@ const views = {
   cameras: document.getElementById("view-cameras"),
   automations: document.getElementById("view-automations"),
   devices: document.getElementById("view-devices"),
+  alarm: document.getElementById("view-alarm"),
   docs: document.getElementById("view-docs"),
   settings: document.getElementById("view-settings"),
   accounts: document.getElementById("view-accounts"),
   organizer: document.getElementById("view-organizer"),
-  movies: document.getElementById("view-movies")
+  movies: document.getElementById("view-movies"),
+  weather: document.getElementById("view-weather"),
+  files: document.getElementById("view-files")
 };
 let settingsLoaded = false;
 let camerasLoaded = false;
@@ -541,6 +544,10 @@ for (const tab of tabs) {
     // Closes the player and stops the scan-status poll - a film must not keep streaming (and
     // reporting progress) behind the Events tab.
     if (currentView === "movies" && target !== "movies") window.SentinelMovies.hide();
+    // The weather asks weather.gov every ten minutes while it's open - and only while it's open.
+    if (currentView === "weather" && target !== "weather") window.SentinelWeather.hide();
+    if (currentView === "alarm" && target !== "alarm") window.SentinelAlarm.stop();
+    if (currentView === "files" && target !== "files") window.SentinelFiles.hide();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -566,6 +573,9 @@ for (const tab of tabs) {
     // Reads the rest of the hash itself (#movies/item/<id>, #movies/shows, ...), so a refresh
     // or the back button lands on the same film, not just the same tab.
     if (target === "movies") window.SentinelMovies.show();
+    if (target === "weather") window.SentinelWeather.show();
+    if (target === "alarm") window.SentinelAlarm.show();
+    if (target === "files") window.SentinelFiles.show();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;
       window.GateWatchTimeline.load();

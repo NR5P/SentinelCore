@@ -3,11 +3,14 @@ package com.sentinelcore.android.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.net.CookieManager
 import java.net.CookiePolicy
@@ -39,6 +42,8 @@ class SentinelRepository(
 
     private val cookieManager = CookieManager(null, CookiePolicy.ACCEPT_ALL)
     private val sessionCookieStore = SessionCookieStore(context.applicationContext)
+    // Only for the Files library's uploads, which stream straight out of a content Uri.
+    private val appContext = context.applicationContext
 
     // Set by storeCookies when a response handed over a cookie the jar will never give back.
     // Read by login(), where it is the whole difference between "wrong password" and "right
@@ -128,6 +133,155 @@ class SentinelRepository(
 
     suspend fun createCamera(input: CameraInput): Camera = withContext(Dispatchers.IO) {
         parseCamera(JSONObject(request("/api/cameras", method = "POST", body = input.toJson().toString())))
+    }
+
+    // ---------------- Alarm ----------------
+
+    // Always answers, alarm on or off: `enabled` says whether the destination exists.
+    suspend fun alarmStatus(): AlarmStatus = withContext(Dispatchers.IO) {
+        parseAlarmStatus(JSONObject(request("/api/alarm/status")))
+    }
+
+    // A refused arm (something open, wrong PIN, nothing to watch) is a 4xx whose body's `error`
+    // becomes the SentinelApiException message - see openValidated.
+    suspend fun armAlarm(mode: String, force: Boolean, pin: String?): AlarmCommandReply = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("mode", mode)
+            put("force", force)
+            if (pin != null) put("pin", pin)
+        }
+        parseAlarmReply(JSONObject(request("/api/alarm/arm", method = "POST", body = body.toString())))
+    }
+
+    suspend fun disarmAlarm(pin: String?): AlarmCommandReply = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply { if (pin != null) put("pin", pin) }
+        parseAlarmReply(JSONObject(request("/api/alarm/disarm", method = "POST", body = body.toString())))
+    }
+
+    suspend fun alarmPanic(): AlarmCommandReply = withContext(Dispatchers.IO) {
+        parseAlarmReply(JSONObject(request("/api/alarm/panic", method = "POST", body = "{}")))
+    }
+
+    suspend fun alarmTest(): AlarmCommandReply = withContext(Dispatchers.IO) {
+        parseAlarmReply(JSONObject(request("/api/alarm/test", method = "POST", body = "{}")))
+    }
+
+    suspend fun alarmEvents(limit: Int = 200): List<AlarmEvent> = withContext(Dispatchers.IO) {
+        val array = JSONArray(request("/api/alarm/events?limit=$limit"))
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                add(
+                    AlarmEvent(
+                        id = item.optLong("id"),
+                        at = parseInstant(item.getString("at")),
+                        kind = item.optString("kind"),
+                        message = item.optString("message"),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun createAlarmSensor(input: AlarmSensorInput): Unit = withContext(Dispatchers.IO) {
+        request("/api/alarm/sensors", method = "POST", body = input.toJson().toString())
+        Unit
+    }
+
+    suspend fun updateAlarmSensor(id: String, input: AlarmSensorInput): Unit = withContext(Dispatchers.IO) {
+        request("/api/alarm/sensors/${queryValue(id)}", method = "PUT", body = input.toJson().toString())
+        Unit
+    }
+
+    suspend fun deleteAlarmSensor(id: String): Unit = withContext(Dispatchers.IO) {
+        request("/api/alarm/sensors/${queryValue(id)}", method = "DELETE")
+        Unit
+    }
+
+    suspend fun saveAlarmConfig(config: AlarmConfig): AlarmConfig = withContext(Dispatchers.IO) {
+        parseAlarmConfig(JSONObject(request("/api/alarm/config", method = "PUT", body = config.toJson().toString())))
+    }
+
+    // Empty clears the PIN. An admin needs no current PIN; anyone else does.
+    suspend fun setAlarmPin(pin: String, currentPin: String?): Unit = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("pin", pin)
+            if (currentPin != null) put("currentPin", currentPin)
+        }
+        request("/api/alarm/pin", method = "PUT", body = body.toString())
+        Unit
+    }
+
+    private fun parseAlarmReply(json: JSONObject) =
+        AlarmCommandReply(ok = json.optBoolean("ok"), note = json.nullableString("note"))
+
+    private fun parseAlarmStatus(json: JSONObject): AlarmStatus {
+        val sensors = json.optJSONArray("sensors") ?: JSONArray()
+        val issues = json.optJSONArray("issues") ?: JSONArray()
+        return AlarmStatus(
+            enabled = json.optBoolean("enabled"),
+            hubEnabled = json.optBoolean("hubEnabled"),
+            canEdit = json.optBoolean("canEdit"),
+            mode = json.optString("mode", "disarmed"),
+            status = json.optString("status", "disarmed"),
+            changedAt = json.nullableString("changedAt")?.let(::parseInstant),
+            changedBy = json.nullableString("changedBy"),
+            exitUntil = json.nullableString("exitUntil")?.let(::parseInstant),
+            pendingUntil = json.nullableString("pendingUntil")?.let(::parseInstant),
+            triggeredAt = json.nullableString("triggeredAt")?.let(::parseInstant),
+            triggeredBy = json.nullableString("triggeredBy"),
+            sirenOn = json.optBoolean("sirenOn"),
+            pinSet = json.optBoolean("pinSet"),
+            brokerConnected = json.optBoolean("brokerConnected"),
+            ready = json.optBoolean("ready"),
+            issues = buildList { for (index in 0 until issues.length()) add(issues.getString(index)) },
+            sensors = buildList { for (index in 0 until sensors.length()) add(parseAlarmSensor(sensors.getJSONObject(index))) },
+            config = json.optJSONObject("config")?.let(::parseAlarmConfig),
+            now = json.nullableString("now")?.let(::parseInstant),
+        )
+    }
+
+    private fun parseAlarmSensor(item: JSONObject) = AlarmSensor(
+        id = item.getString("id"),
+        deviceId = item.optString("deviceId"),
+        name = item.optString("name"),
+        zone = item.optString("zone", "perimeter"),
+        armedHome = item.optBoolean("armedHome"),
+        armedNight = item.optBoolean("armedNight"),
+        armedAway = item.optBoolean("armedAway"),
+        inverted = item.optBoolean("inverted"),
+        enabled = item.optBoolean("enabled", true),
+        deviceName = item.nullableString("deviceName"),
+        room = item.nullableString("room"),
+        deviceMissing = item.optBoolean("deviceMissing"),
+        state = item.optString("state", "unknown"),
+        offline = item.optBoolean("offline"),
+        battery = if (item.isNull("battery")) null else item.optDouble("battery"),
+        lowBattery = item.optBoolean("lowBattery"),
+        linkQuality = if (item.isNull("linkQuality")) null else item.optDouble("linkQuality"),
+        lastSeen = item.nullableString("lastSeen")?.let(::parseInstant),
+        lastChanged = item.nullableString("lastChanged")?.let(::parseInstant),
+        bypassed = item.optBoolean("bypassed"),
+        watched = item.optBoolean("watched"),
+    )
+
+    private fun parseAlarmConfig(json: JSONObject): AlarmConfig {
+        fun ids(key: String): List<String> {
+            val array = json.optJSONArray(key) ?: JSONArray()
+            return buildList { for (index in 0 until array.length()) add(array.getString(index)) }
+        }
+        return AlarmConfig(
+            exitDelaySeconds = json.optInt("exitDelaySeconds", 60),
+            entryDelaySeconds = json.optInt("entryDelaySeconds", 30),
+            sirenSeconds = json.optInt("sirenSeconds", 300),
+            sirenDeviceIds = ids("sirenDeviceIds"),
+            cameraIds = ids("cameraIds"),
+            notifyPush = json.optBoolean("notifyPush", true),
+            notifyArmDisarm = json.optBoolean("notifyArmDisarm", true),
+            lowBatteryPercent = json.optInt("lowBatteryPercent", 20),
+            offlineAfterHours = json.optInt("offlineAfterHours", 24),
+            requirePinToArm = json.optBoolean("requirePinToArm"),
+        )
     }
 
     // ---------------- Device Hub ----------------
@@ -1311,6 +1465,282 @@ class SentinelRepository(
             restartService = json.optString("restartService").ifEmpty { "bridge" },
             dataEndpoint = json.optString("dataEndpoint").ifEmpty { null },
         )
+    }
+
+    // ---------------- Family Files ----------------
+    //
+    // The household's shared file library (/api/family-files, see FamilyFilesModels.kt for the
+    // wire format). Every route takes the normal session; the admin ones answer 403 to a Viewer,
+    // which surfaces as a SentinelApiException like any other refusal.
+
+    // Whether the FILES destination should exist at all. Answers even when the feature is off
+    // (enabled:false), and an older server has no such route - the caller treats both as "no".
+    suspend fun familyFilesEnabled(): Boolean = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/status")).optBoolean("enabled")
+    }
+
+    suspend fun familyFilesStatus(): FamilyFilesStatus = withContext(Dispatchers.IO) {
+        parseFamilyFilesStatus(JSONObject(request("/api/family-files/status")))
+    }
+
+    suspend fun familyFilesJob(): FamilyJob? = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/job")).optJSONObject("job")?.let(::parseFamilyJob)
+    }
+
+    suspend fun familyFilesList(path: String): FamilyFolderListing = withContext(Dispatchers.IO) {
+        parseFamilyFolderListing(JSONObject(request("/api/family-files/list?path=${queryValue(path)}")))
+    }
+
+    suspend fun familyFilesSearch(query: String, limit: Int = 100): List<FamilyFileEntry> = withContext(Dispatchers.IO) {
+        parseFamilyFileList(JSONObject(request("/api/family-files/search?q=${queryValue(query)}&limit=$limit")))
+    }
+
+    // Streams the content Uri straight onto the socket - a phone video is easily a gigabyte, and
+    // the rest of this repository's habit of buffering a body as a String would not survive it.
+    // Fixed-length when the provider says how big it is (so the server can refuse a too-large
+    // file up front), chunked otherwise. The timeouts are minutes: a big file over Wi-Fi is slow
+    // and the server hashes it before answering.
+    suspend fun familyFilesUpload(
+        uri: Uri,
+        folderPath: String,
+        displayName: String,
+        modified: String?,
+        onProgress: ((sent: Long, total: Long?) -> Unit)? = null,
+    ): FamilyUploadResult = withContext(Dispatchers.IO) {
+        val resolver = appContext.contentResolver
+        val size = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+            }
+        }.getOrNull()?.takeIf { it >= 0 }
+        val route = "/api/family-files/files/" + FamilyFilePaths.encode(FamilyFilePaths.join(folderPath, displayName)) +
+            (modified?.let { "?modified=${queryValue(it)}" } ?: "")
+        val url = URL(absoluteUrl(route) ?: throw IllegalArgumentException(
+            "Enter a valid server address, such as http://192.168.1.50:3320.",
+        ))
+        val started = System.nanoTime()
+        logger("PUT $url", DiagnosticLevel.INFO)
+        val connection = openConnection(url)
+        try {
+            connection.requestMethod = "PUT"
+            connection.connectTimeout = 60_000
+            connection.readTimeout = 10 * 60_000
+            connection.doOutput = true
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
+            if (size != null) connection.setFixedLengthStreamingMode(size) else connection.setChunkedStreamingMode(0)
+            val input = resolver.openInputStream(uri) ?: throw IOException("Could not open that file.")
+            input.use { source ->
+                connection.outputStream.use { output ->
+                    val buffer = ByteArray(128 * 1024)
+                    var sent = 0L
+                    while (true) {
+                        val read = source.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        sent += read
+                        onProgress?.invoke(sent, size)
+                    }
+                }
+            }
+            val status = connection.responseCode
+            storeCookies(connection)
+            logger("PUT $status in ${elapsedMilliseconds(started)} ms", DiagnosticLevel.INFO)
+            if (status !in 200..299) {
+                val errorBody = connection.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+                val message = parseServerError(errorBody) ?: when (status) {
+                    401 -> "This server requires you to sign in."
+                    413 -> "That file is larger than the server allows."
+                    507 -> "The server's disk is full."
+                    else -> "Upload failed (HTTP $status)."
+                }
+                throw SentinelApiException(status, message)
+            }
+            parseFamilyUploadResult(JSONObject(connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }))
+        } catch (error: SentinelApiException) {
+            throw error
+        } catch (error: Exception) {
+            logger(
+                "PUT failed after ${elapsedMilliseconds(started)} ms: " + (error.message ?: error.javaClass.simpleName),
+                DiagnosticLevel.ERROR,
+            )
+            throw IOException(error.message ?: "Could not connect to Sentinel Core.", error)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    // Streams the file into `destination` rather than through memory, for the same reason the
+    // upload streams. The caller owns the file (normally under the cache dir, see ui/files).
+    suspend fun familyFilesDownload(path: String, destination: File) = withContext(Dispatchers.IO) {
+        val connection = openValidated("/api/family-files/files/" + FamilyFilePaths.encode(path))
+        try {
+            connection.readTimeout = 5 * 60_000
+            destination.parentFile?.mkdirs()
+            connection.inputStream.use { input ->
+                destination.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
+            }
+        } catch (error: Exception) {
+            destination.delete()
+            throw error
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    // A JPEG up to 400px for an image file, null for anything else; cached like every other
+    // image this app shows.
+    suspend fun familyFilesThumbnail(path: String): Bitmap? =
+        loadImage("/api/family-files/thumbnail/" + FamilyFilePaths.encode(path))
+
+    suspend fun familyFilesCreateFolder(path: String): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/folders", method = "POST", body = JSONObject().put("path", path).toString()))
+            .optString("path")
+    }
+
+    // Rename or move a file or a whole folder.
+    suspend fun familyFilesMove(from: String, to: String): String = withContext(Dispatchers.IO) {
+        JSONObject(
+            request(
+                "/api/family-files/move",
+                method = "POST",
+                body = JSONObject().put("from", from).put("to", to).toString(),
+            ),
+        ).optString("path")
+    }
+
+    // To the trash, not gone: a file or a whole folder.
+    suspend fun familyFilesDelete(path: String): FamilyDeleteResult = withContext(Dispatchers.IO) {
+        val json = JSONObject(request("/api/family-files/files/" + FamilyFilePaths.encode(path), method = "DELETE"))
+        FamilyDeleteResult(trashed = json.optInt("trashed"), batchId = json.optString("batchId").ifBlank { null })
+    }
+
+    suspend fun familyFilesTrash(): List<FamilyTrashBatch> = withContext(Dispatchers.IO) {
+        parseFamilyTrashBatches(JSONObject(request("/api/family-files/trash")))
+    }
+
+    // A whole batch, or one file of it when `path` is given.
+    suspend fun familyFilesRestoreTrash(batchId: String, path: String? = null): FamilyRestoreResult = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("batchId", batchId)
+        path?.let { body.put("path", it) }
+        val json = JSONObject(request("/api/family-files/trash/restore", method = "POST", body = body.toString()))
+        FamilyRestoreResult(restored = json.optInt("restored"), detail = json.optString("detail"))
+    }
+
+    // Admin. Empties the trash for good.
+    suspend fun familyFilesEmptyTrash(): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/trash", method = "DELETE")).optString("detail")
+    }
+
+    // Admin: the drives with their settings. A Viewer gets the same list, minus the settings,
+    // from familyFilesStatus().
+    suspend fun familyDrives(): List<FamilyDrive> = withContext(Dispatchers.IO) {
+        parseFamilyDriveList(JSONObject(request("/api/family-files/drives")))
+    }
+
+    // Admin. Creates when `id` is null, otherwise updates that drive.
+    suspend fun saveFamilyDrive(id: String?, input: FamilyDriveInput): FamilyDrive = withContext(Dispatchers.IO) {
+        val path = if (id == null) "/api/family-files/drives" else "/api/family-files/drives/${queryValue(id)}"
+        parseFamilyDrive(JSONObject(request(path, method = if (id == null) "POST" else "PUT", body = input.toJson().toString())))
+    }
+
+    // Admin. Forgets the drive; nothing on it is touched.
+    suspend fun deleteFamilyDrive(id: String): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/drives/${queryValue(id)}", method = "DELETE")).optString("detail")
+    }
+
+    // Admin. Tries the form as typed. A failure is a 400 that still carries the host key the
+    // server saw, which is what the form offers to fill in - so this reads the body either way
+    // instead of letting request() turn the 400 into an exception.
+    suspend fun testFamilyDrive(input: FamilyDriveInput): FamilyDriveTestResult = withContext(Dispatchers.IO) {
+        val (status, body) = requestWithStatus(
+            "/api/family-files/drives/test",
+            method = "POST",
+            body = input.toJson().toString(),
+            readTimeoutMillis = 90_000,
+        )
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        val fingerprint = json?.takeIf { it.has("hostKeyFingerprint") && !it.isNull("hostKeyFingerprint") }
+            ?.optString("hostKeyFingerprint")?.ifBlank { null }
+        when {
+            status in 200..299 -> FamilyDriveTestResult(true, json?.optString("detail").orEmpty().ifBlank { "Connected." }, fingerprint)
+            status == 400 && json != null -> FamilyDriveTestResult(
+                false,
+                parseServerError(body) ?: "The connection test failed.",
+                fingerprint,
+            )
+            else -> throw SentinelApiException(
+                status,
+                parseServerError(body) ?: if (status == 401) "This server requires you to sign in." else "Server request failed (HTTP $status).",
+            )
+        }
+    }
+
+    // Admin. Each of these starts a background job (202) and answers 409 while another runs;
+    // the caller polls familyFilesStatus() until `job` is null again.
+    suspend fun syncFamilyDrive(id: String): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/drives/${queryValue(id)}/sync", method = "POST")).optString("detail")
+    }
+
+    // Copies anything on the drive that the library lacks back into the library.
+    suspend fun restoreFamilyDrive(id: String): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/drives/${queryValue(id)}/restore", method = "POST")).optString("detail")
+    }
+
+    suspend fun syncAllFamilyDrives(): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/sync", method = "POST")).optString("detail")
+    }
+
+    suspend fun checkFamilyDuplicates(remove: Boolean): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/duplicates/check?remove=$remove", method = "POST")).optString("detail")
+    }
+
+    suspend fun familyDuplicatesReport(): FamilyDuplicateReport? = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/duplicates")).optJSONObject("report")?.let(::parseFamilyDuplicateReport)
+    }
+
+    suspend fun runFamilyNightly(): String = withContext(Dispatchers.IO) {
+        JSONObject(request("/api/family-files/nightly/run", method = "POST")).optString("detail")
+    }
+
+    // request() with the status handed back instead of mapped to an exception, for the one
+    // route whose error body carries something the caller wants (see testFamilyDrive).
+    private fun requestWithStatus(
+        path: String,
+        method: String,
+        body: String?,
+        readTimeoutMillis: Int? = null,
+    ): Pair<Int, String> {
+        val url = URL(absoluteUrl(path) ?: throw IllegalArgumentException(
+            "Enter a valid server address, such as http://192.168.1.50:3320.",
+        ))
+        val started = System.nanoTime()
+        logger("$method $url", DiagnosticLevel.INFO)
+        val connection = openConnection(url)
+        try {
+            readTimeoutMillis?.let { connection.readTimeout = it }
+            connection.requestMethod = method
+            connection.setRequestProperty("Accept", "application/json")
+            if (body != null) {
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.bufferedWriter(StandardCharsets.UTF_8).use { it.write(body) }
+            }
+            val status = connection.responseCode
+            storeCookies(connection)
+            logger("$method $status in ${elapsedMilliseconds(started)} ms", DiagnosticLevel.INFO)
+            val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+            return status to text
+        } catch (error: Exception) {
+            logger(
+                "$method failed after ${elapsedMilliseconds(started)} ms: " + (error.message ?: error.javaClass.simpleName),
+                DiagnosticLevel.ERROR,
+            )
+            throw IOException(error.message ?: "Could not connect to Sentinel Core.", error)
+        } finally {
+            connection.disconnect()
+        }
     }
 
     // The Organizer's way to the server (see organizer/OrganizerEngine): the same address and

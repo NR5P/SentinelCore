@@ -269,6 +269,17 @@ public sealed class MqttDeviceDiscovery
         var schemaField = ReadString(root, "schema", "schema");
         var isJsonSchema = string.Equals(schemaField, "json", StringComparison.OrdinalIgnoreCase);
 
+        // A sensor whose state is one key of a JSON payload says so with a value_template -
+        // Zigbee2MQTT announces every door contact as `{{ value_json.contact }}` on the device's
+        // one state topic. Without honouring it the sensor's open/closed was never read, which
+        // made every Zigbee door and motion sensor a permanently blank tile. Only the plain
+        // "one key" form is understood; a template doing arithmetic is left as a raw sensor.
+        var stateKey = ValueTemplateKey(ReadString(root, "value_template", "val_tpl"));
+        if (stateKey is not null && !commandable)
+        {
+            isJsonSchema = true;
+        }
+
         var brightnessCommandTopic = Expand(ReadString(root, "brightness_command_topic", "bri_cmd_t"), basePrefix);
         var brightnessStateTopic = Expand(ReadString(root, "brightness_state_topic", "bri_stat_t"), basePrefix);
         var brightnessScale = ReadInt(root, "brightness_scale", "bri_scl") ?? 255;
@@ -297,8 +308,8 @@ public sealed class MqttDeviceDiscovery
                 string.Empty,
                 true),
             _ => (
-                ReadString(root, "payload_on", "pl_on") ?? "ON",
-                ReadString(root, "payload_off", "pl_off") ?? "OFF",
+                ReadPayload(root, "payload_on", "pl_on") ?? "ON",
+                ReadPayload(root, "payload_off", "pl_off") ?? "OFF",
                 string.Empty,
                 false)
         };
@@ -314,7 +325,7 @@ public sealed class MqttDeviceDiscovery
             PayloadStop: payloadStop,
             Momentary: momentary,
             Schema: isJsonSchema ? DeviceTopics.SchemaJson : DeviceTopics.SchemaRaw,
-            StateValueTemplate: isJsonSchema ? "state" : string.Empty,
+            StateValueTemplate: stateKey ?? (isJsonSchema ? "state" : string.Empty),
             SupportsBrightness: supportsBrightness,
             BrightnessCommandTopic: brightnessCommandTopic ?? string.Empty,
             BrightnessStateTopic: brightnessStateTopic ?? string.Empty,
@@ -568,6 +579,40 @@ public sealed class MqttDeviceDiscovery
         if (string.IsNullOrWhiteSpace(topic)) return null;
         if (string.IsNullOrEmpty(basePrefix)) return topic;
         return topic.Replace("~", basePrefix, StringComparison.Ordinal);
+    }
+
+    // "{{ value_json.contact }}" -> "contact"; "{{ value_json['occupancy'] }}" -> "occupancy".
+    // Anything more elaborate (a filter, a comparison) is not a key and returns null.
+    public static string? ValueTemplateKey(string? template)
+    {
+        if (string.IsNullOrWhiteSpace(template)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(
+            template.Trim(),
+            @"^\{\{\s*value_json(?:\.(?<dotted>[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*)|\[\s*['""](?<quoted>[A-Za-z0-9_]+)['""]\s*\])\s*\}\}$");
+        if (!match.Success) return null;
+        return match.Groups["dotted"].Success ? match.Groups["dotted"].Value : match.Groups["quoted"].Value;
+    }
+
+    // A payload that Home Assistant lets be a JSON boolean or number as well as a string -
+    // Zigbee2MQTT announces a door contact with payload_on: false (contact false = open).
+    private static string? ReadPayload(JsonElement root, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (!root.TryGetProperty(key, out var element)) continue;
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.String when !string.IsNullOrWhiteSpace(element.GetString()):
+                    return element.GetString();
+                case JsonValueKind.True:
+                    return "true";
+                case JsonValueKind.False:
+                    return "false";
+                case JsonValueKind.Number:
+                    return element.GetRawText();
+            }
+        }
+        return null;
     }
 
     private static string? ReadString(JsonElement root, params string[] keys)

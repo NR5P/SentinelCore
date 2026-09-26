@@ -317,6 +317,15 @@ Everything shown is picked up live via `IOptionsMonitor<T>` - .NET's built-in fi
 
 Run it interactively with `dotnet run --project SentinelCore.Web/SentinelCore.Web.csproj`, or install it as a systemd service the same way as the main app - see `systemd/sentinelcore-web.service`. Meant for LAN-only access; nothing about it is designed to be exposed to the Internet.
 
+### Family Files
+
+The FILES tab is a shared file library for the household, kept as a plain folder tree under the
+dashboard's data directory (or wherever **Settings -> Family Files -> Library Folder** points) and
+reachable from the dashboard and every app. It is mirrored nightly to any number of backup drives
+- a folder or mounted share on the server, or another computer over SFTP - and a nightly pass
+retires files with identical contents to a trash folder that keeps them for 30 days. See
+`docs/USER_GUIDE.md` section 6d; the code is `SentinelCore.Web/FamilyFiles*.cs`.
+
 ### Rebooting the machine
 
 Off by default (`HostReboot:Enabled`). Restarts the host itself rather than a service - the one
@@ -337,6 +346,10 @@ Off by default. When `DeviceHub:Enabled` is on (and `Mqtt:Enabled` with it), a *
 Devices are stored in `devices.db` as raw topics and payloads rather than per-vendor integrations, so anything that speaks MQTT is describable. `DeviceTopics` holds all the payload building and parsing, deliberately connection-free so every vendor quirk is testable without a broker.
 
 Any signed-in account can switch a device; adding, editing, deleting, and discovery are admin-only. The dashboard's tab also has a **wall display** - big tap-to-switch tiles grouped by room, with the rest of the dashboard hidden - for a tablet mounted on a wall; `/#wall` opens it directly, and the choice is remembered per browser in `localStorage` (`devices.js`). See `docs/USER_GUIDE.md` section 13a.
+
+## Alarm
+
+On by default (`Alarm:Enabled` in appsettings hides it). An **ALARM** tab on the dashboard and in every app turns Device Hub sensors into a home alarm: each sensor is given a zone (entry door, perimeter, interior motion, 24-hour) and the modes that watch it (home / night / away); arming runs an exit delay, an entry door starts an entry delay, and a trigger switches on siren devices through the Device Hub, pushes to every phone, and snapshots the chosen cameras through the AI pipeline. The state machine (`AlarmEngine`) and the sensor subscription (`AlarmWatcher`, a second read-only MQTT client like `SensorTriggerWatcher`) live in the Web host beside the cameras and push it uses; sensors, config and the PIN hash are in `alarm.db` and in the backup. Battery and link quality come from the measurements the sensors already report.
 
 ## The additional action
 

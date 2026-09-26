@@ -54,6 +54,9 @@ public sealed record SettingsSnapshot(
     ScheduledRecordingSettingsDto? ScheduledRecording = null,
     OrganizerSettingsDto? Organizer = null,
     AutoExportSettingsDto? AutoExport = null,
+    WeatherAlertsSettingsDto? WeatherAlerts = null,
+    AlarmSettingsDto? Alarm = null,
+    FamilyFilesSettingsDto? FamilyFiles = null,
     MediaSettingsDto? Media = null);
 
 public static class SettingsEndpoints
@@ -174,6 +177,9 @@ public static class SettingsEndpoints
         settings.MapPut("/organizer", async (OrganizerSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, OrganizerSettingsDto.SectionName, ct));
 
+        settings.MapPut("/alarm", async (AlarmSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, AlarmSettingsDto.SectionName, ct));
+
         settings.MapPut("/media", async (MediaSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
         {
             dto.TmdbApiKey = dto.TmdbApiKey?.Trim() ?? string.Empty;
@@ -188,6 +194,12 @@ public static class SettingsEndpoints
             dto.SftpFolder = dto.SftpFolder?.Trim() ?? string.Empty;
             dto.SftpHostKeyFingerprint = dto.SftpHostKeyFingerprint?.Trim() ?? string.Empty;
             return await SaveSectionAsync(dto, appSettings, AutoExportSettingsDto.SectionName, ct);
+        });
+
+        settings.MapPut("/family-files", async (FamilyFilesSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            dto.LibraryFolder = dto.LibraryFolder?.Trim() ?? string.Empty;
+            return await SaveSectionAsync(dto, appSettings, FamilyFilesSettingsDto.SectionName, ct);
         });
 
         settings.MapPut("/package-theft-watch", async (PackageTheftWatchSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
@@ -226,6 +238,20 @@ public static class SettingsEndpoints
 
         settings.MapPut("/quiet-hours", async (QuietHoursSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "QuietHours", ct));
+
+        settings.MapPut("/weather-alerts", async (WeatherAlertsSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            dto.MinimumLevel = dto.MinimumLevel?.Trim().ToLowerInvariant() ?? WeatherAlertOptions.LevelWatch;
+            return await SaveSectionAsync(dto, appSettings, WeatherAlertOptions.SectionName, ct, extra =>
+            {
+                if (dto.MinimumLevel is not (WeatherAlertOptions.LevelWarning or WeatherAlertOptions.LevelWatch or WeatherAlertOptions.LevelAdvisory))
+                    extra.Add("Send Alerts At must be warnings only, watches and warnings, or everything.");
+                // Switched on with every kind unticked would check the NWS every few minutes and
+                // never say anything, which reads as broken rather than as a choice.
+                if (dto.Enabled && !dto.HasAnyKind())
+                    extra.Add("Tick at least one kind of weather to be told about, or turn Weather Alerts off.");
+            });
+        });
 
         settings.MapPut("/location", async (LocationSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "Location", ct, extra =>
@@ -541,6 +567,9 @@ public static class SettingsEndpoints
             ScheduledRecordingOptions.SectionName, cancellationToken),
         await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken),
         await settings.GetSectionAsync<AutoExportSettingsDto>(AutoExportSettingsDto.SectionName, cancellationToken),
+        await settings.GetSectionAsync<WeatherAlertsSettingsDto>(WeatherAlertOptions.SectionName, cancellationToken),
+        await settings.GetSectionAsync<AlarmSettingsDto>(AlarmSettingsDto.SectionName, cancellationToken),
+        await settings.GetSectionAsync<FamilyFilesSettingsDto>(FamilyFilesSettingsDto.SectionName, cancellationToken),
         await settings.GetSectionAsync<MediaSettingsDto>(MediaSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
@@ -588,6 +617,9 @@ public static class SettingsEndpoints
         ScheduledRecording = snapshot.ScheduledRecording ?? new(),
         Organizer = snapshot.Organizer ?? new(),
         AutoExport = snapshot.AutoExport ?? new(),
+        WeatherAlerts = snapshot.WeatherAlerts ?? new(),
+        Alarm = snapshot.Alarm ?? new(),
+        FamilyFiles = snapshot.FamilyFiles ?? new(),
         Media = snapshot.Media ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
@@ -669,6 +701,9 @@ public static class SettingsEndpoints
         if (snapshot.ScheduledRecording is not null) await settings.MergeSectionAsync(ScheduledRecordingOptions.SectionName, snapshot.ScheduledRecording, cancellationToken);
         if (snapshot.Organizer is not null) await settings.MergeSectionAsync(OrganizerSettingsDto.SectionName, snapshot.Organizer, cancellationToken);
         if (snapshot.AutoExport is not null) await MergeUnmaskedAsync(snapshot.AutoExport, AutoExportSettingsDto.SectionName, settings, cancellationToken);
+        if (snapshot.WeatherAlerts is not null) await settings.MergeSectionAsync(WeatherAlertOptions.SectionName, snapshot.WeatherAlerts, cancellationToken);
+        if (snapshot.Alarm is not null) await settings.MergeSectionAsync(AlarmSettingsDto.SectionName, snapshot.Alarm, cancellationToken);
+        if (snapshot.FamilyFiles is not null) await settings.MergeSectionAsync(FamilyFilesSettingsDto.SectionName, snapshot.FamilyFiles, cancellationToken);
         if (snapshot.Media is not null) await MergeUnmaskedAsync(snapshot.Media, MediaSettingsDto.SectionName, settings, cancellationToken);
     }
 

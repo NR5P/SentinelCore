@@ -245,6 +245,16 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton(new AutoExportStateFile(Path.Combine(camerasRoot, "auto-export-state.json")));
 builder.Services.AddSingleton<AutoExportRunner>();
 builder.Services.AddHostedService<AutoExportWorker>();
+// The family file library, its backup drives and the nightly duplicate check - see
+// FamilyFiles.cs. The library folder is a setting; everything else sits under the data directory.
+builder.Services.AddSingleton(sp => new FamilyFilesLocations(camerasRoot, sp.GetRequiredService<AppSettingsFile>()));
+builder.Services.AddSingleton(sp => new FamilyFilesIndex(sp.GetRequiredService<FamilyFilesLocations>().IndexFile));
+builder.Services.AddSingleton(sp => new FamilyFilesTrash(sp.GetRequiredService<FamilyFilesLocations>().Trash));
+builder.Services.AddSingleton(sp => new FamilyDriveStore(sp.GetRequiredService<FamilyFilesLocations>().DrivesFile));
+builder.Services.AddSingleton(sp => new FamilyFilesStateFile(sp.GetRequiredService<FamilyFilesLocations>().StateFile));
+builder.Services.AddSingleton<FamilyFilesLibrary>();
+builder.Services.AddSingleton<FamilyFilesJobs>();
+builder.Services.AddHostedService<FamilyFilesWorker>();
 // Board automations: scheduled cards and "when a card moves to Done..." rules, run here so they
 // happen with every device asleep - see OrganizerAutomationEngine.
 builder.Services.TryAddSingleton(TimeProvider.System);
@@ -272,6 +282,7 @@ builder.Services.AddHostedService<Go2RtcWarmUpService>();
 // Watches browser-published (webcam device) cameras and tells the owner when one goes dark. A
 // singleton as well as a hosted service so the publish/status endpoint can read what it has seen.
 builder.Services.AddSingleton<OwnerNotifier>();
+builder.Services.AddSingleton<IOwnerNotifier>(sp => sp.GetRequiredService<OwnerNotifier>());
 builder.Services.AddSingleton<PublisherWatchdog>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PublisherWatchdog>());
 
@@ -357,6 +368,17 @@ builder.Services.AddHttpClient(nameof(ChatEndpoints), client => client.Timeout =
 // Short, because the overwhelmingly likely failure is a server with no route out at all, and
 // the Settings form should say so promptly rather than appearing to hang.
 builder.Services.AddHttpClient(nameof(LocationLookupEndpoints), client => client.Timeout = TimeSpan.FromSeconds(8));
+// The Weather tab: a handful of GETs to api.weather.gov, each answered in well under a second
+// when the service is up. Long enough for a slow minute there, short enough that a server with no
+// route out tells the tab so promptly rather than leaving it on "loading".
+builder.Services.AddHttpClient(nameof(WeatherService), client => client.Timeout = TimeSpan.FromSeconds(12));
+builder.Services.AddSingleton<WeatherService>();
+// WEATHER ALERTS: the same NWS client, polled by a worker that tells the owner about new watches
+// and warnings. What it has already sent lives beside the other web-host data, so a restart
+// doesn't repeat the warning that is still up.
+builder.Services.AddSingleton<IWeatherAlertSource>(sp => sp.GetRequiredService<WeatherService>());
+builder.Services.AddSingleton(new WeatherAlertState(Path.Combine(camerasRoot, "weather-alerts-seen.json")));
+builder.Services.AddHostedService<WeatherAlertWorker>();
 // Same reasoning, shorter: listing what Ollama has pulled is a local call to a process that is
 // either running and instant or not running at all, and the Model dropdown should fall back to a
 // plain text box quickly rather than making someone wait to find out.
@@ -424,6 +446,15 @@ builder.Services.AddHostedService<ScheduledRecordingRetentionWorker>();
 builder.Services.AddSingleton<CameraTriggerService>();
 builder.Services.AddHttpClient(nameof(SensorTriggerWatcher));
 builder.Services.AddHostedService<SensorTriggerWatcher>();
+
+// The home alarm: Device Hub sensors armed and disarmed as one - see AlarmEngine. The watcher
+// is its MQTT subscription and its clock; like the sensor-trigger watcher above it holds no
+// broker connection until a sensor exists.
+builder.Services.AddSingleton<IAlarmStore>(new SqliteAlarmStore(camerasRoot));
+builder.Services.AddSingleton<IAlarmActions, AlarmActions>();
+builder.Services.AddSingleton<AlarmEngine>();
+builder.Services.AddHttpClient(nameof(AlarmWatcher), client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHostedService<AlarmWatcher>();
 
 // Gate/door open check - its own small table in the same cameras database, own periodic
 // snapshot loop, own forwarder to a dedicated main-app endpoint (not AlertForwarder's - see
@@ -533,6 +564,7 @@ app.MapAuthEndpoints();
 app.MapAccountEndpoints();
 app.MapBackupEndpoints();
 app.MapAutoExportEndpoints();
+app.MapFamilyFilesEndpoints();
 app.MapChatEndpoints();
 app.MapQueueEndpoints();
 app.MapSystemStatusEndpoints();
@@ -540,10 +572,12 @@ app.MapLocalAddressEndpoints();
 app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
+app.MapWeatherEndpoints();
 app.MapOllamaModelEndpoints();
 app.MapCloudVisionModelEndpoints();
 app.MapNotificationTestProxyEndpoints();
 app.MapDeviceHubProxyEndpoints();
+app.MapAlarmEndpoints();
 app.MapHomeKitEndpoints();
 app.MapPushEndpoints();
 app.MapTimelineEndpoints();

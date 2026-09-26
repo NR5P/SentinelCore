@@ -115,6 +115,13 @@ final class PushAppDelegate: NSObject, UNUserNotificationCenterDelegate, @unchec
             }
             return
         }
+        // The alarm: triggered, armed, a sensor's battery - open the Alarm section.
+        if response.notification.request.content.userInfo["eventType"] as? String == "alarm" {
+            await MainActor.run {
+                NotificationCenter.default.post(name: .sentinelAlarmOpened, object: nil)
+            }
+            return
+        }
         guard let eventId = response.notification.request.content.userInfo["eventId"] as? String else {
             return
         }

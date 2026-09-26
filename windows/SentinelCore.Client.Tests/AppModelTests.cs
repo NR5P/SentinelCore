@@ -275,6 +275,47 @@ public class AppModelTests : IDisposable
     }
 
     [Fact]
+    public async Task A_server_without_Family_Files_is_not_a_failed_connection()
+    {
+        // Same rule as the Device Hub: no /api/family-files/status on an older server means no
+        // Files section, and nothing more.
+        using var server = new FakeServer()
+            .OnGet("/api/auth/status", """{"enabled":false,"configured":false,"authenticated":true,"role":"Admin"}""")
+            .OnGet("/api/health", """{"status":"ok"}""")
+            .OnGet("/api/activity", "[]")
+            .OnGet("/api/cameras", "[]");
+        using var model = NewModel();
+        model.ServerUrl = server.BaseUrl;
+
+        await model.ConnectAsync();
+
+        Assert.Equal(ConnectionState.Online, model.ConnectionState);
+        Assert.False(model.FamilyFilesEnabled);
+        Assert.Null(model.LastError);
+    }
+
+    [Fact]
+    public async Task A_server_with_Family_Files_switched_on_gets_the_Files_section()
+    {
+        using var server = new FakeServer()
+            .OnGet("/api/auth/status", """{"enabled":false,"configured":false,"authenticated":true,"role":"Viewer"}""")
+            .OnGet("/api/health", """{"status":"ok"}""")
+            .OnGet("/api/activity", "[]")
+            .OnGet("/api/cameras", "[]")
+            .OnGet("/api/family-files/status", """
+                {"enabled":true,"isAdmin":false,"username":"kid","maxUploadBytes":1,
+                 "library":{"files":0,"bytes":0},"drives":[],"nightly":{"hour":2,"minute":0,"removeDuplicates":false,
+                 "trashKeepDays":30,"lastResult":"","lastMessage":""},"duplicates":null,"trash":{"batches":0,"files":0,"bytes":0},"job":null}
+                """);
+        using var model = NewModel();
+        model.ServerUrl = server.BaseUrl;
+
+        await model.ConnectAsync();
+
+        Assert.True(model.FamilyFilesEnabled);
+    }
+
+    [Fact]
     public async Task A_licence_check_that_could_not_be_made_leaves_the_watermark_off()
     {
         // An older server has no such endpoint, and a request that simply failed says nothing about

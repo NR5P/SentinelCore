@@ -1,0 +1,74 @@
+<Window x:Class="SentinelCore.App.Views.FilesDrivesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Backup drives" Height="680" Width="720" MinHeight="480" MinWidth="600">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="520" TextWrapping="Wrap" />
+                <Button Content="Close" HorizontalAlignment="Right" MinWidth="90" Click="OnCloseClicked" />
+            </Grid>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <TextBlock Text="Backup drives" FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource Green}"
+                           Margin="0,0,0,14" />
+
+                <Border x:Name="JobBanner" Background="#14241C" CornerRadius="6" Padding="14,10" Margin="0,0,0,14"
+                        Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock x:Name="JobText" Style="{StaticResource BodyText}" TextWrapping="Wrap" />
+                        <ProgressBar x:Name="JobProgress" Margin="0,8,0,0" Minimum="0" Maximum="1" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="DRIVES" Style="{StaticResource GroupHeading}" />
+                        <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                   Text="Every enabled drive gets a full copy of the library on the nightly pass. A folder can be a USB drive plugged into the server or a network share; SFTP sends the copy to another computer." />
+                        <StackPanel x:Name="DriveHost" Margin="0,12,0,0" />
+                        <TextBlock x:Name="NoDrivesText" Style="{StaticResource Caption}" Margin="0,12,0,0"
+                                   Text="No backup drives are set up yet." Visibility="Collapsed" />
+                        <StackPanel x:Name="DriveActions" Orientation="Horizontal" Margin="0,14,0,0">
+                            <Button x:Name="AddDriveButton" Content="Add a drive…" Style="{StaticResource PrimaryButton}"
+                                    Click="OnAddDriveClicked" />
+                            <Button x:Name="SyncAllButton" Content="Back up to all drives now" Margin="8,0,0,0"
+                                    Click="OnSyncAllClicked" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="NIGHTLY" Style="{StaticResource GroupHeading}" />
+                        <TextBlock x:Name="NightlyText" Style="{StaticResource BodyText}" TextWrapping="Wrap"
+                                   Text="Loading…" />
+                        <Button x:Name="RunNightlyButton" Content="Run the nightly pass now" Margin="0,14,0,0"
+                                HorizontalAlignment="Left" Click="OnRunNightlyClicked" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="DUPLICATES" Style="{StaticResource GroupHeading}" />
+                        <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                   Text="Files that are byte-for-byte the same as another file in the library. The oldest copy stays; the rest can go to the trash." />
+                        <TextBlock x:Name="DuplicatesText" Style="{StaticResource BodyText}" TextWrapping="Wrap"
+                                   Margin="0,8,0,0" Text="Loading…" />
+                        <StackPanel x:Name="DuplicateActions" Orientation="Horizontal" Margin="0,14,0,0">
+                            <Button x:Name="CheckButton" Content="Check now" Click="OnCheckDuplicatesClicked" />
+                            <Button x:Name="CheckRemoveButton" Content="Check and remove now" Margin="8,0,0,0"
+                                    Style="{StaticResource DangerButton}" Click="OnCheckAndRemoveClicked" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

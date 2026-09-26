@@ -947,10 +947,12 @@ public sealed class LocationOptions
 {
     public const string SectionName = "Location";
 
-    // Only ever used to work out when the sun rises and sets here, which is what lets a schedule
-    // say "when it gets dark" instead of a clock time that would need changing every few weeks.
-    // Never transmitted anywhere: the sunrise calculation is local arithmetic (SolarCalculator),
-    // with no service to call and nothing to look up at run time.
+    // Used for two things. Working out when the sun rises and sets here, which is what lets a
+    // schedule say "when it gets dark" instead of a clock time that would need changing every few
+    // weeks - local arithmetic (SolarCalculator), with no service to call. And the dashboard's
+    // Weather tab, which is the one place the pair is transmitted: the web host sends it to the US
+    // National Weather Service to fetch the forecast, only while somebody has that tab open
+    // (SentinelCore.Web's WeatherService).
     //
     // Unset is (0, 0) - a point in the Gulf of Guinea, and the reason GeoCoordinate.IsValid
     // treats it as "not configured" rather than as a real place near the equator.
@@ -964,6 +966,47 @@ public sealed class LocationOptions
     // Settings screen can show somewhere recognisable rather than two numbers nobody can check
     // at a glance; nothing reads it back.
     public string Label { get; init; } = string.Empty;
+}
+
+// Tell the owner about National Weather Service watches, warnings and advisories for the
+// location in LocationOptions, as they are issued. Checked and sent by the web host
+// (SentinelCore.Web's WeatherAlertWorker) through the same email / Telegram / push channels the
+// outage and login alerts use.
+//
+// Off by default: it sends the coordinates to the NWS every few minutes, most of the world is
+// outside the NWS's coverage, and nobody should be surprised by a weather notification they
+// never asked for. The kinds default to the ones that can hurt you; fire weather and the
+// long tail (fog, air quality, marine) default off because they are noise for most homes.
+public sealed class WeatherAlertOptions
+{
+    public const string SectionName = "WeatherAlerts";
+
+    // How serious an alert has to be. A warning means it is happening or imminent, a watch means
+    // conditions favour it, and everything else (advisories, statements) is the rest.
+    public const string LevelWarning = "warning";
+    public const string LevelWatch = "watch";
+    public const string LevelAdvisory = "advisory";
+
+    public bool Enabled { get; init; }
+
+    [Range(1, 60)]
+    public int CheckIntervalMinutes { get; init; } = 5;
+
+    public string MinimumLevel { get; init; } = LevelWatch;
+
+    public bool Tornado { get; init; } = true;
+    public bool SevereThunderstorm { get; init; } = true;
+    public bool Flood { get; init; } = true;
+    public bool Winter { get; init; } = true;
+    public bool Wind { get; init; } = true;
+    public bool Temperature { get; init; } = true;
+    public bool Tropical { get; init; } = true;
+    public bool Fire { get; init; }
+    public bool Other { get; init; }
+
+    // The NWS reissues a warning every so often as it tracks a storm, each reissue a new alert
+    // that references the one it replaces. One message per storm is what most people want.
+    public bool NotifyOnUpdates { get; init; }
 }
 
 public sealed class ScheduleOptions

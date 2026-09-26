@@ -63,7 +63,10 @@ public sealed class ApnsSender(
                             ["alert"] = new { title = message.Title, body = message.Body },
                             ["sound"] = "default",
                             ["category"] = "SECURITY_EVENT",
-                            ["thread-id"] = message.Camera ?? (message.OrganizerItemId is null ? "sentinel-core" : "organizer")
+                            ["thread-id"] = message.Camera ?? (message.OrganizerItemId is null ? (message.EventType == PushMessage.AlarmType ? "alarm" : "sentinel-core") : "organizer"),
+                            // An alarm going off is exactly what a Focus mode is meant to let
+                            // through. Apple allows this level with no extra entitlement.
+                            ["interruption-level"] = message.EventType == PushMessage.AlarmType ? "time-sensitive" : "active"
                         },
                         eventId = message.EventId,
                         camera = message.Camera,

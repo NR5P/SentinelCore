@@ -70,6 +70,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.ui.components.ConnectionBadge
 import com.sentinelcore.android.ui.components.LocalIsLicensed
+import com.sentinelcore.android.ui.files.DriveEditScreen
+import com.sentinelcore.android.ui.files.FilesDrivesScreen
+import com.sentinelcore.android.ui.files.FilesScreen
+import com.sentinelcore.android.ui.files.FilesTrashScreen
 import com.sentinelcore.android.ui.screens.AccountAdminScreen
 import com.sentinelcore.android.ui.screens.AccountEditScreen
 import com.sentinelcore.android.ui.screens.CameraAdminScreen
@@ -83,6 +87,10 @@ import com.sentinelcore.android.ui.screens.DeviceWallPreference
 import com.sentinelcore.android.ui.screens.DeviceWallScreen
 import com.sentinelcore.android.ui.screens.DeviceDiscoveryScreen
 import com.sentinelcore.android.ui.screens.DeviceEditScreen
+import com.sentinelcore.android.ui.screens.AlarmEventsScreen
+import com.sentinelcore.android.ui.screens.AlarmScreen
+import com.sentinelcore.android.ui.screens.AlarmSensorEditScreen
+import com.sentinelcore.android.ui.screens.AlarmSettingsScreen
 import com.sentinelcore.android.ui.screens.DeviceHubScreen
 import com.sentinelcore.android.ui.screens.EventDetailScreen
 import com.sentinelcore.android.ui.screens.ActivityDetailScreen
@@ -255,6 +263,16 @@ private fun AppShell(
         }
     }
 
+    // An alarm push was tapped - see PushNotifications. The person wants the arm/disarm
+    // buttons, not the feed.
+    val openAlarm by AlarmNavigation.open.collectAsStateWithLifecycle()
+    LaunchedEffect(openAlarm, state.alarmEnabled) {
+        if (openAlarm && state.alarmEnabled) {
+            AlarmNavigation.open.value = false
+            navController.navigate(AppSection.ALARM.route) { launchSingleTop = true }
+        }
+    }
+
     // A reminder or event alert was tapped - see OrganizerAlarms.
     val openOrganizer by OrganizerNavigation.open.collectAsStateWithLifecycle()
     LaunchedEffect(openOrganizer, state.organizerEnabled) {
@@ -332,7 +350,13 @@ private fun AppShell(
             navController.navigate(DEVICE_WALL_ROUTE) { launchSingleTop = true }
         }
     }
-    val visibleSections = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.moviesEnabled)
+    val visibleSections = AppSection.visible(
+        state.deviceHubEnabled,
+        state.organizerEnabled,
+        moviesEnabled = state.moviesEnabled,
+        alarmEnabled = state.alarmEnabled,
+        filesEnabled = state.familyFilesEnabled,
+    )
     val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -526,6 +550,34 @@ private fun SentinelNavHost(
             )
         }
 
+        composable(AppSection.ALARM.route) {
+            AlarmScreen(
+                state = state,
+                model = model,
+                onAddSensor = { navController.navigate("alarm/sensors/new") },
+                onEditSensor = { navController.navigate("alarm/sensors/${it.id}") },
+                onSettings = { navController.navigate("alarm/settings") },
+                onEvents = { navController.navigate("alarm/events") },
+            )
+        }
+        composable("alarm/sensors/new") {
+            AlarmSensorEditScreen(model = model, state = state, sensorId = null, onBack = { navController.popBackStack() })
+        }
+        composable("alarm/sensors/{sensorId}") { entry ->
+            AlarmSensorEditScreen(
+                model = model,
+                state = state,
+                sensorId = entry.arguments?.getString("sensorId"),
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable("alarm/settings") {
+            AlarmSettingsScreen(model = model, state = state, onBack = { navController.popBackStack() })
+        }
+        composable("alarm/events") {
+            AlarmEventsScreen(model = model, onBack = { navController.popBackStack() })
+        }
+
         composable(AppSection.DEVICES.route) {
             val context = LocalContext.current
             DeviceHubScreen(
@@ -619,7 +671,41 @@ private fun SentinelNavHost(
         composable(TAB_BAR_EDITOR_ROUTE) {
             TabBarEditorScreen(
                 preferences = tabBarPreferences,
-                visible = AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.moviesEnabled),
+                visible = AppSection.visible(
+                    state.deviceHubEnabled,
+                    state.organizerEnabled,
+                    moviesEnabled = state.moviesEnabled,
+                    alarmEnabled = state.alarmEnabled,
+                    filesEnabled = state.familyFilesEnabled,
+                ),
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(AppSection.FILES.route) {
+            FilesScreen(
+                state = state,
+                model = model,
+                onTrash = { navController.navigate("files/trash") },
+                onDrives = { navController.navigate("files/drives") },
+            )
+        }
+        composable("files/trash") {
+            FilesTrashScreen(state = state, model = model, onBack = { navController.popBackStack() })
+        }
+        composable("files/drives") {
+            FilesDrivesScreen(
+                state = state,
+                model = model,
+                onBack = { navController.popBackStack() },
+                onEditDrive = { id -> navController.navigate("files/drive/${id ?: "new"}") },
+            )
+        }
+        composable("files/drive/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
+            DriveEditScreen(
+                state = state,
+                model = model,
+                driveId = entry.arguments?.getString("id")?.takeIf { it != "new" },
                 onBack = { navController.popBackStack() },
             )
         }
@@ -920,7 +1006,13 @@ private fun SentinelNavigationRail(
             }
         },
     ) {
-        AppSection.visible(state.deviceHubEnabled, state.organizerEnabled, state.moviesEnabled).forEach { item ->
+        AppSection.visible(
+            state.deviceHubEnabled,
+            state.organizerEnabled,
+            moviesEnabled = state.moviesEnabled,
+            alarmEnabled = state.alarmEnabled,
+            filesEnabled = state.familyFilesEnabled,
+        ).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { onSelected(item) },

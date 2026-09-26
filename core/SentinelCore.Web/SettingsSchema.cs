@@ -643,6 +643,20 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "alarm",
+            Title = "ALARM",
+            Group = SettingsGroups.Automation,
+            Endpoint = "/api/settings/alarm",
+            Basic = true,
+            DtoType = typeof(AlarmSettingsDto),
+            Description = "A home alarm built from Device Hub sensors: door and window contacts, motion, water leak and smoke sensors become an alarm that is armed and disarmed as one from the dashboard and every app, with an exit delay, an entry delay, a PIN, sirens switched through the Device Hub, and the cameras snapshotting through the AI when it goes off. Sensors, delays, sirens and the PIN are all set on the ALARM tab itself. It needs MQTT and the Device Hub to be turned on to hear its sensors.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the Alarm on the dashboard and in the apps. Turning it off hides it everywhere and stops it listening to its sensors, but keeps every sensor and setting for when it is turned back on.")
+            ]
+        },
+        new()
+        {
             Key = "organizer",
             Title = "ORGANIZER",
             Group = SettingsGroups.Automation,
@@ -780,13 +794,48 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "weatherAlerts",
+            Title = "WEATHER ALERTS",
+            Group = SettingsGroups.Alerts,
+            Endpoint = "/api/settings/weather-alerts",
+            Basic = true,
+            DtoType = typeof(WeatherAlertsSettingsDto),
+            Description = "Off by default. When on, the server checks the US National Weather Service every few minutes for watches, warnings and advisories covering the location set under LOCATION, and tells you about new ones the same way it tells you about a server outage: by email, Telegram and push to the apps, whichever of those are set up. Pick the kinds of weather you want to hear about and how serious it has to be. Each alert is sent once; the NWS reissues a warning every so often as it tracks a storm, and those follow-ups are skipped unless you ask for them. Needs a location inside the United States, and sends its coordinates to weather.gov on every check.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Check for new National Weather Service alerts for your location and send them to you."),
+                Select("minimumLevel", "Send Alerts At", "How serious an alert has to be before you hear about it. Warnings mean it is happening or about to; watches mean conditions are right for it; advisories and statements cover the rest.",
+                    (WeatherAlertOptions.LevelWarning, "Warnings only"),
+                    (WeatherAlertOptions.LevelWatch, "Watches and warnings"),
+                    (WeatherAlertOptions.LevelAdvisory, "Everything, including advisories")),
+                Check("tornado", "Tornado", "Tornado watches and warnings."),
+                Check("severeThunderstorm", "Severe Thunderstorm", "Severe thunderstorm watches and warnings."),
+                Check("flood", "Flood", "Flash flood, flood and coastal flood alerts."),
+                Check("winter", "Winter Weather", "Winter storm, blizzard, ice storm, snow and freezing rain alerts."),
+                Check("wind", "Wind", "High wind warnings, wind advisories and other wind alerts."),
+                Check("temperature", "Heat & Cold", "Extreme heat, heat advisories, extreme cold, wind chill, freeze and frost alerts."),
+                Check("tropical", "Tropical", "Hurricane, tropical storm and storm surge alerts."),
+                Check("fire", "Fire Weather", "Red flag warnings and fire weather watches."),
+                Check("other", "Everything Else", "Any alert not covered above: fog, air quality, marine, dust, and so on."),
+                Check("notifyOnUpdates", "Include Follow-Ups", "Also send the NWS's updates to an alert you were already told about. Off means one message per alert; on can mean several during a long storm."),
+                Number("checkIntervalMinutes", "Check Interval (min)", "How often to ask the NWS for new alerts. A tornado warning can arrive between checks, so shorter is better here - the request is tiny.", 1, 60, recommended: 5)
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "sendTestWeatherAlert",
+                "send test alert",
+                "Send a sample tornado warning through every channel that is set up - email, Telegram, push - so you can see what a real one will look like and where it arrives. Ignores Enabled and the choices above.",
+                "/api/settings/weather-alerts/test",
+                "POST")
+        },
+        new()
+        {
             Key = "location",
             Title = "LOCATION",
             Group = SettingsGroups.Automation,
             Endpoint = "/api/settings/location",
             Basic = true,
             DtoType = typeof(LocationSettingsDto),
-            Description = "Where this server is, used for one thing only: working out when the sun rises and sets here, so a schedule can fire at sunset or \"when it gets dark\" instead of at a fixed clock time that drifts out of step through the year. Nothing is sent anywhere - the calculation happens on this machine. You can type a town to fill the coordinates in, or enter them yourself; only the numbers are saved.",
+            Description = "Where this server is, used for two things: working out when the sun rises and sets here, so a schedule can fire at sunset or \"when it gets dark\" instead of at a fixed clock time that drifts out of step through the year; and the dashboard's WEATHER tab, which shows the US National Weather Service forecast and radar for these coordinates. The sunrise calculation happens on this machine. The coordinates leave it only while someone has the WEATHER tab open (they go to weather.gov to fetch the forecast) or when you press Find below. You can type a town to fill the coordinates in, or enter them yourself; only the numbers are saved.",
             Fields =
             [
                 Text("label", "Town or City", "A place name to look up, e.g. \"Louisville, KY\". Filling this in and pressing Find sets the two coordinates below. Only ever a convenience - entering the coordinates directly works just as well, and is the only option on a server with no internet access.",
@@ -1143,6 +1192,32 @@ public static class SettingsSchema
                 "export now",
                 "Run the export once, right now, to the destination as saved - save first. It shows how it went; the dashboard's Backup section shows how the last nightly run went, and a failed night is sent to you on every alert channel you've set up. It works even while Enabled is off, so you can check the destination before turning it on.",
                 "/api/backup/auto/run",
+                "POST")
+        },
+        new()
+        {
+            Key = "familyFiles",
+            Title = "FAMILY FILES",
+            Group = SettingsGroups.Maintenance,
+            Endpoint = "/api/settings/family-files",
+            Basic = true,
+            DtoType = typeof(FamilyFilesSettingsDto),
+            Description = "A shared file library for the household - photos, scans, documents - that everyone adds to and fetches from on the dashboard's FILES tab and in the apps. It is mirrored every night to the backup drives set up on that tab: a USB disk or network share plugged into this machine, or another computer over SFTP, and as many of them as you like. The nightly pass also finds files with identical contents and keeps only one copy, moving the rest to a trash folder where they wait before being deleted for good. The library isn't part of the backup file above (it can be far bigger); the drives are its backup, and a lost library is rebuilt from any one of them with 'bring files back'.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the FILES tab and run the nightly backup and duplicate check. Turning it off hides the tab and stops the nightly pass but deletes nothing."),
+                Text("libraryFolder", "Library Folder", "Where the files themselves live on this machine. Blank keeps them under the data folder. Set a full path on a bigger disk before adding much - changing it later does not move what is already there."),
+                Number("maxUploadMegabytes", "Largest File (MB)", "The biggest single file anyone can add.", 1, 1048576),
+                Number("hour", "Hour (0-23)", "Hour the nightly backup and duplicate check run, in 24-hour time, in the Schedules time zone (the server's own if that's blank). If the server is off then, it runs as soon as it's back.", 0, 23),
+                Number("minute", "Minute", "Minute past the hour to run.", 0, 59),
+                Check("removeDuplicates", "Remove Duplicates", "When two or more files have exactly the same contents, keep the oldest and move the others to the trash. Turn this off to only list them on the FILES tab and decide yourself."),
+                Number("trashKeepDays", "Keep Trash For (days)", "How long a deleted file or a retired duplicate waits in the trash before it is deleted for good. Anything in the trash can be put back from the FILES tab until then.", 1, 365)
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "runFamilyFilesBackupNow",
+                "back up now",
+                "Copy the library to every enabled backup drive right now. It runs in the background; the FILES tab shows progress and the result for each drive.",
+                "/api/family-files/sync",
                 "POST")
         }
     ];

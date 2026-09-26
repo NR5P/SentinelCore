@@ -33,6 +33,8 @@ public partial class MainWindow : Window, INavigator
     private LiveView? _live;
     private MoviesView? _movies;
     private DeviceHubView? _devices;
+    private AlarmView? _alarm;
+    private FilesView? _files;
     private OrganizerView? _organizerView;
     private SettingsView? _settings;
 
@@ -89,7 +91,9 @@ public partial class MainWindow : Window, INavigator
         Timeline,
         Live,
         Movies,
+        Alarm,
         Organizer,
+        Files,
         Devices,
         Settings,
     }
@@ -106,12 +110,16 @@ public partial class MainWindow : Window, INavigator
         // Movies & TV is switched on server-side, like the Device Hub, and only exists while it is.
         if (_model.MoviesEnabled) sections.Add(new SectionItem(AppSection.Movies, "Movies", ""));
 
+        // The alarm is on by default but can be switched off server-side.
+        if (_model.AlarmEnabled) sections.Add(new SectionItem(AppSection.Alarm, "Alarm", "\uE72E"));
+
         // The Organizer is on by default but can be switched off server-side; what the server said
         // last is remembered, so it's there offline too.
         if (_organizer is { Enabled: true }) sections.Add(new SectionItem(AppSection.Organizer, "Organizer", "\uE8BF"));
 
-        // The Device Hub is off by default and only appears once it's switched on server-side, so
-        // the list is filtered rather than fixed.
+        // Family Files and the Device Hub are off by default and only appear once switched on
+        // server-side, so the list is filtered rather than fixed.
+        if (_model.FamilyFilesEnabled) sections.Add(new SectionItem(AppSection.Files, "Files", ""));
         if (_model.DeviceHubEnabled) sections.Add(new SectionItem(AppSection.Devices, "Device Hub", ""));
         sections.Add(new SectionItem(AppSection.Settings, "Settings", ""));
 
@@ -137,6 +145,8 @@ public partial class MainWindow : Window, INavigator
             AppSection.Live => _live ??= NewLiveView(),
             AppSection.Movies => _movies ??= new MoviesView(_model, this),
             AppSection.Devices => _devices ??= NewDeviceHubView(),
+            AppSection.Alarm => _alarm ??= NewAlarmView(),
+            AppSection.Files => _files ??= NewFilesView(),
             AppSection.Organizer when _organizer is not null => _organizerView ??= new OrganizerView(_organizer),
             _ => _settings ??= new SettingsView(_model, _organizer),
         };
@@ -149,9 +159,23 @@ public partial class MainWindow : Window, INavigator
         return view;
     }
 
+    private AlarmView NewAlarmView()
+    {
+        var view = new AlarmView(_model);
+        view.SetActive(true);
+        return view;
+    }
+
     private DeviceHubView NewDeviceHubView()
     {
         var view = new DeviceHubView(_model);
+        view.SetActive(true);
+        return view;
+    }
+
+    private FilesView NewFilesView()
+    {
+        var view = new FilesView(_model);
         view.SetActive(true);
         return view;
     }
@@ -168,6 +192,8 @@ public partial class MainWindow : Window, INavigator
                 break;
             case nameof(AppModel.DeviceHubEnabled):
             case nameof(AppModel.MoviesEnabled):
+            case nameof(AppModel.AlarmEnabled):
+            case nameof(AppModel.FamilyFilesEnabled):
                 BuildSections();
                 break;
             case nameof(AppModel.CompatibilityAdvisory):

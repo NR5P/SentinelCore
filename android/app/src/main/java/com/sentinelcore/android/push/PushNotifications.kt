@@ -92,6 +92,7 @@ class SentinelFirebaseMessagingService : FirebaseMessagingService() {
             title = title,
             body = body,
             eventId = message.data["eventId"],
+            alarm = message.data["eventType"] == "alarm",
         )
     }
 
@@ -115,11 +116,15 @@ class SentinelFirebaseMessagingService : FirebaseMessagingService() {
             title: String,
             body: String,
             eventId: String?,
+            // The home alarm (triggered, armed, a sensor's battery): tapping opens the Alarm
+            // screen rather than the feed.
+            alarm: Boolean = false,
         ) {
             ensureChannel(context)
             val intent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(MainActivity.EventIdExtra, eventId)
+                if (alarm) putExtra(MainActivity.AlarmExtra, true)
             }
             val pendingIntent = PendingIntent.getActivity(
                 context,

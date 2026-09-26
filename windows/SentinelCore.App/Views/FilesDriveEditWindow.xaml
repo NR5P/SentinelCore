@@ -1,0 +1,89 @@
+<Window x:Class="SentinelCore.App.Views.FilesDriveEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Backup drive" Height="620" Width="560" MinHeight="480" MinWidth="460">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="TestButton" Content="Test connection" MinWidth="120" Click="OnTestClicked" />
+                    <Button x:Name="DeleteButton" Content="Remove" MinWidth="90" Margin="10,0,0,0"
+                            Style="{StaticResource DangerButton}" Click="OnDeleteClicked" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" MinWidth="90" Click="OnCancelClicked" />
+                    <Button x:Name="SaveButton" Content="Save" Margin="10,0,0,0" MinWidth="90"
+                            Style="{StaticResource PrimaryButton}" Click="OnSaveClicked" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource SidebarBackground}" Padding="18,10">
+            <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" TextWrapping="Wrap" MinHeight="16" />
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <TextBlock x:Name="HeadingText" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" Margin="0,0,0,10" />
+
+                <TextBlock Text="Name" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                <TextBox x:Name="NameBox" />
+                <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0"
+                           Text="How it shows up here, e.g. &quot;USB drive&quot; or &quot;NAS&quot;." />
+
+                <TextBlock Text="Kind" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="KindBox" SelectionChanged="OnKindChanged">
+                    <ComboBoxItem Content="A folder the server can see (USB drive, network share)" Tag="folder" />
+                    <ComboBoxItem Content="Another computer, over SFTP" Tag="sftp" />
+                </ComboBox>
+
+                <StackPanel x:Name="FolderPanel">
+                    <TextBlock Text="Folder on the server" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="FolderPathBox" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap"
+                               Text="A full path as the server sees it, e.g. /mnt/usb/Family Files or \\nas\backups\family. The copy is made by the server, not by this PC." />
+                </StackPanel>
+
+                <StackPanel x:Name="SftpPanel" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="110" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                            <TextBlock Text="Host" Style="{StaticResource FieldLabel}" />
+                            <TextBox x:Name="HostBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Port" Style="{StaticResource FieldLabel}" />
+                            <TextBox x:Name="PortBox" Text="22" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="Username" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="UsernameBox" />
+
+                    <TextBlock Text="Password" Style="{StaticResource FieldLabel}" />
+                    <PasswordBox x:Name="PasswordBox" />
+                    <TextBlock x:Name="PasswordHint" Style="{StaticResource Caption}" Margin="2,4,0,0"
+                               Text="Leave blank to keep the saved password." Visibility="Collapsed" />
+
+                    <TextBlock Text="Folder on that computer" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="SftpFolderBox" />
+
+                    <TextBlock Text="Host key fingerprint (optional)" Style="{StaticResource FieldLabel}" />
+                    <TextBox x:Name="FingerprintBox" FontFamily="Consolas, Courier New" />
+                    <TextBlock Style="{StaticResource Caption}" Margin="2,4,0,0" TextWrapping="Wrap"
+                               Text="SHA256:… as ssh prints it. Test the connection and the fingerprint the server saw can be filled in for you. With one set, the backup refuses to talk to an impostor." />
+                </StackPanel>
+
+                <CheckBox x:Name="EnabledToggle" Content="Enabled - included in the nightly pass" Margin="0,16,0,0"
+                          IsChecked="True" />
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

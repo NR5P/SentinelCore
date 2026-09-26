@@ -12,11 +12,18 @@ namespace SentinelCore.Web;
 // goes out on an install with no channel configured - the caller logs regardless. Deliberately
 // not gated on Email:Enabled / Telegram:Enabled: those toggles route camera alerts, and someone
 // may well want those off while still wanting to hear that a camera has gone dark.
+// The seam a worker that wants to tell the owner something is tested through - see
+// WeatherAlertWorker. OwnerNotifier is the one real implementation.
+public interface IOwnerNotifier
+{
+    Task<bool> SendAsync(string subject, string text, CancellationToken cancellationToken);
+}
+
 public sealed class OwnerNotifier(
     AppSettingsFile settings,
     IHttpClientFactory httpClientFactory,
     PushNotificationDispatcher push,
-    ILogger<OwnerNotifier> logger)
+    ILogger<OwnerNotifier> logger) : IOwnerNotifier
 {
     private const string TelegramApiBaseUrl = "https://api.telegram.org";
 

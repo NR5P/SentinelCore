@@ -258,12 +258,17 @@ public static class DeviceTopics
         var power = DevicePower.Unknown;
         if (TryResolvePath(root, string.IsNullOrWhiteSpace(device.StateValueTemplate) ? "state" : device.StateValueTemplate, out var stateElement))
         {
+            // A boolean is "on" unless the device's payloads say otherwise: a Zigbee2MQTT door
+            // contact reports contact:true for CLOSED, and its discovery says payload_on is
+            // false, so the payloads win whenever they name a boolean at all.
             power = stateElement.ValueKind switch
             {
-                JsonValueKind.True => DevicePower.On,
-                JsonValueKind.False => DevicePower.Off,
+                JsonValueKind.True => MatchPower(device, "true") is var t && t != DevicePower.Unknown ? t : DevicePower.On,
+                JsonValueKind.False => MatchPower(device, "false") is var f && f != DevicePower.Unknown ? f : DevicePower.Off,
                 JsonValueKind.String => MatchPower(device, stateElement.GetString()?.Trim() ?? string.Empty),
-                JsonValueKind.Number => stateElement.GetDouble() > 0 ? DevicePower.On : DevicePower.Off,
+                JsonValueKind.Number => MatchPower(device, stateElement.GetRawText()) is var n && n != DevicePower.Unknown
+                    ? n
+                    : stateElement.GetDouble() > 0 ? DevicePower.On : DevicePower.Off,
                 _ => DevicePower.Unknown
             };
         }
