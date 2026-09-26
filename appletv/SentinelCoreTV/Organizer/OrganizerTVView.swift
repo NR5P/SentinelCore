@@ -267,7 +267,14 @@ private struct NotesTV: View {
                                 .lineLimit(5)
                                 .frame(maxWidth: .infinity, alignment: .topLeading)
                             Spacer(minLength: 0)
-                            Text(engine.space(note.spaceId)?.name ?? "").font(.caption2).foregroundStyle(spaceColor(engine, note.spaceId))
+                            HStack {
+                                Text(engine.space(note.spaceId)?.name ?? "").font(.caption2).foregroundStyle(spaceColor(engine, note.spaceId))
+                                Spacer()
+                                let progress = NoteChecklist.progress(note.string("body") ?? "")
+                                if progress.total > 0 {
+                                    Text("☑ \(progress.done)/\(progress.total)").font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
                         }
                         .padding(24)
                         .frame(height: 280)
@@ -289,7 +296,7 @@ private struct NoteTVDetail: View {
             if let note = engine.item(noteId) {
                 VStack(alignment: .leading, spacing: 24) {
                     Text(note.title.isEmpty ? "Untitled" : note.title).font(.title2.bold())
-                    ForEach(Array((note.string("body") ?? "").components(separatedBy: "\n").enumerated()), id: \.offset) { index, line in
+                    ForEach(Array(NoteChecklist.lines(note.string("body") ?? "").enumerated()), id: \.offset) { index, line in
                         noteLine(line, index: index, note: note)
                     }
                     let pictures = engine.children(of: note.id, kind: .attachment).filter { $0.string("contentType")?.hasPrefix("image/") == true }
@@ -310,28 +317,25 @@ private struct NoteTVDetail: View {
     }
 
     // Checklist lines are buttons, so the shopping list on the TV can be ticked off from the sofa.
+    // Which lines are items is NoteChecklist's call, the same rule the phone and dashboard use.
     @ViewBuilder
-    private func noteLine(_ line: String, index: Int, note: OrganizerItem) -> some View {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("- [ ] ") || trimmed.hasPrefix("- [x] ") || trimmed.hasPrefix("- [X] ") {
-            let done = !trimmed.hasPrefix("- [ ] ")
+    private func noteLine(_ line: NoteChecklist.Line, index: Int, note: OrganizerItem) -> some View {
+        let trimmed = line.text.trimmingCharacters(in: .whitespaces)
+        if let item = line.item {
             Button {
-                var lines = (note.string("body") ?? "").components(separatedBy: "\n")
-                guard lines.indices.contains(index) else { return }
-                lines[index] = done
-                    ? lines[index].replacingOccurrences(of: "[x]", with: "[ ]").replacingOccurrences(of: "[X]", with: "[ ]")
-                    : lines[index].replacingOccurrences(of: "[ ]", with: "[x]")
-                engine.update(note.id, ["body": .string(lines.joined(separator: "\n"))])
+                engine.update(note.id, ["body": .string(NoteChecklist.toggle(note.string("body") ?? "", line: index))])
             } label: {
                 HStack {
-                    Image(systemName: done ? "checkmark.square.fill" : "square").foregroundStyle(done ? SentinelTheme.green : .secondary)
-                    Text(String(trimmed.dropFirst(6))).strikethrough(done)
+                    Image(systemName: item.done ? "checkmark.square.fill" : "square").foregroundStyle(item.done ? SentinelTheme.green : .secondary)
+                    Text(item.text).strikethrough(item.done)
                 }
             }
+        } else if line.isCode {
+            if !trimmed.hasPrefix("```") { Text(line.text).font(.body.monospaced()) }
         } else if trimmed.hasPrefix("#") {
             Text(trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)).font(.headline).foregroundStyle(SentinelTheme.cyan)
         } else if !trimmed.isEmpty {
-            Text((try? AttributedString(markdown: line)) ?? AttributedString(line))
+            Text((try? AttributedString(markdown: line.text)) ?? AttributedString(line.text))
         }
     }
 }

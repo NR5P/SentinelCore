@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,6 +71,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sentinelcore.android.organizer.NoteChecklist
 import com.sentinelcore.android.organizer.OrganizerEngine
 import com.sentinelcore.android.organizer.OrganizerItem
 import com.sentinelcore.android.organizer.OrganizerKinds
@@ -352,25 +354,34 @@ fun OrganizerImage(engine: OrganizerEngine, hash: String, modifier: Modifier = M
 // ---- markdown --------------------------------------------------------------------------------
 
 // The same small Markdown the dashboard and Apple apps render: headings, lists, checklists (tap to
-// tick), quotes and **bold**. Each line keeps its index so a tap flips exactly that line.
+// tick), quotes and **bold**. Each line keeps its index so a tap flips exactly that line. Items
+// follow NoteChecklist's rule, so a "- [ ]" inside a ``` code block stays plain text.
 @Composable
-fun MarkdownNote(source: String, onToggleLine: ((Int) -> Unit)?) {
+fun MarkdownNote(source: String, onToggleLine: ((Int) -> Unit)?, onDeleteLine: ((Int) -> Unit)? = null) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        source.split("\n").forEachIndexed { index, line ->
+        val lines = source.split("\n")
+        val code = NoteChecklist.codeLines(lines)
+        lines.forEachIndexed { index, line ->
             val trimmed = line.trim()
-            val check = checklist(trimmed)
+            val check = if (code[index]) null else NoteChecklist.item(line)
             when {
+                code[index] -> if (!trimmed.startsWith("```")) Text(line, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
                 trimmed.startsWith("#") ->
                     Text(inline(trimmed.trimStart('#').trim()), color = SentinelCyan, style = MaterialTheme.typography.titleMedium)
                 check != null -> Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().clickable(enabled = onToggleLine != null) { onToggleLine?.invoke(index) },
                 ) {
-                    Icon(if (check.first) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, contentDescription = null,
-                        tint = if (check.first) SentinelGreen else SentinelTextDim)
+                    Icon(if (check.done) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank, contentDescription = null,
+                        tint = if (check.done) SentinelGreen else SentinelTextDim)
                     Spacer(Modifier.width(8.dp))
-                    Text(inline(check.second), textDecoration = if (check.first) TextDecoration.LineThrough else null,
-                        color = if (check.first) SentinelTextDim else Color.Unspecified)
+                    Text(inline(check.text), textDecoration = if (check.done) TextDecoration.LineThrough else null,
+                        color = if (check.done) SentinelTextDim else Color.Unspecified, modifier = Modifier.weight(1f))
+                    onDeleteLine?.let { delete ->
+                        IconButton(onClick = { delete(index) }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Remove item", tint = SentinelTextDim, modifier = Modifier.size(18.dp))
+                        }
+                    }
                 }
                 trimmed.startsWith("- ") || trimmed.startsWith("* ") -> Text(inline("•  " + trimmed.drop(2)))
                 trimmed.startsWith("> ") -> Text(inline(trimmed.drop(2)), color = SentinelTextDim, modifier = Modifier.padding(start = 10.dp))
@@ -394,25 +405,6 @@ private fun inline(text: String) = buildAnnotatedString {
         withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(rest.substring(start + 2, end)) }
         rest = rest.substring(end + 2)
     }
-}
-
-fun checklist(line: String): Pair<Boolean, String>? {
-    for ((marker, done) in listOf("- [ ] " to false, "- [x] " to true, "- [X] " to true, "* [ ] " to false, "* [x] " to true)) {
-        if (line.startsWith(marker)) return done to line.drop(marker.length)
-    }
-    return null
-}
-
-fun toggleChecklistLine(source: String, index: Int): String {
-    val lines = source.split("\n").toMutableList()
-    if (index !in lines.indices) return source
-    lines[index] = when {
-        "[ ]" in lines[index] -> lines[index].replaceFirst("[ ]", "[x]")
-        "[x]" in lines[index] -> lines[index].replaceFirst("[x]", "[ ]")
-        "[X]" in lines[index] -> lines[index].replaceFirst("[X]", "[ ]")
-        else -> lines[index]
-    }
-    return lines.joinToString("\n")
 }
 
 // ---- choices & pickers ------------------------------------------------------------------------

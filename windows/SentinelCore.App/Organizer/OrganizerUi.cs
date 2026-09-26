@@ -74,6 +74,21 @@ internal static class Ui
         Child = new TextBlock { Text = text, FontSize = 11, Foreground = foreground ?? Palette.PrimaryText },
     };
 
+    /// <summary>Grey prompt text inside <paramref name="box"/> while it's empty - WPF has no placeholder of its own.</summary>
+    public static Grid WithPlaceholder(TextBox box, string prompt)
+    {
+        var hint = new TextBlock
+        {
+            Text = prompt, Foreground = Palette.SecondaryText, IsHitTestVisible = false,
+            Margin = new Thickness(11, 7, 8, 0), VerticalAlignment = VerticalAlignment.Top,
+        };
+        box.TextChanged += (_, _) => hint.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        var grid = new Grid();
+        grid.Children.Add(box);
+        grid.Children.Add(hint);
+        return grid;
+    }
+
     /// <summary>"#RRGGBB" as a brush; anything else is no color.</summary>
     public static Brush? ColorBrush(string? hex, byte alpha = 255)
     {

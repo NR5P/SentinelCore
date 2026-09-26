@@ -720,6 +720,7 @@ private fun SentinelNavHost(
                     },
                     openReminder = { navController.navigate("organizer/reminder/${it ?: "new"}") },
                     openNote = { navController.navigate("organizer/note/${it ?: "new"}") },
+                    openChecklist = { navController.navigate("organizer/note/new?checklist=true") },
                     openCard = { navController.navigate("organizer/card/$it") },
                     openGroups = { navController.navigate("organizer/groups") },
                     openSubscribe = { navController.navigate("organizer/subscribe") },
@@ -746,8 +747,19 @@ private fun SentinelNavHost(
         composable("organizer/reminder/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
             ReminderEditorScreen(model.organizer, entry.arguments?.getString("id")?.takeIf { it != "new" }) { navController.popBackStack() }
         }
-        composable("organizer/note/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
-            NoteEditorScreen(model.organizer, entry.arguments?.getString("id")?.takeIf { it != "new" }) { navController.popBackStack() }
+        composable(
+            route = "organizer/note/{id}?checklist={checklist}",
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("checklist") { type = NavType.BoolType; defaultValue = false },
+            ),
+        ) { entry ->
+            NoteEditorScreen(
+                engine = model.organizer,
+                itemId = entry.arguments?.getString("id")?.takeIf { it != "new" },
+                startAsChecklist = entry.arguments?.getBoolean("checklist") ?: false,
+                onDone = { navController.popBackStack() },
+            )
         }
         composable("organizer/card/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->
             CardEditorScreen(model.organizer, entry.arguments?.getString("id").orEmpty()) { navController.popBackStack() }

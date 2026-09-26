@@ -567,7 +567,7 @@ internal sealed class CommentsEditor : StackPanel
         _composeButtons.Children.Add(_post);
         _composeButtons.Children.Add(_discard);
         var box = new StackPanel();
-        box.Children.Add(WithPlaceholder(_new, "Write a comment…"));
+        box.Children.Add(Ui.WithPlaceholder(_new, "Write a comment…"));
         box.Children.Add(_composeButtons);
         Children.Add(Beside(_composerAvatar, box));
         _new.TextChanged += (_, _) => UpdateComposer();
@@ -799,21 +799,6 @@ internal sealed class CommentsEditor : StackPanel
                 ? new TextBlock { Text = initials, Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
                 : new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), Foreground = Brushes.White, FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
         };
-    }
-
-    /// <summary>Grey prompt text inside <paramref name="box"/> while it's empty - WPF has no placeholder of its own.</summary>
-    private static Grid WithPlaceholder(TextBox box, string prompt)
-    {
-        var hint = new TextBlock
-        {
-            Text = prompt, Foreground = Palette.SecondaryText, IsHitTestVisible = false,
-            Margin = new Thickness(11, 7, 8, 0), VerticalAlignment = VerticalAlignment.Top,
-        };
-        box.TextChanged += (_, _) => hint.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        var grid = new Grid();
-        grid.Children.Add(box);
-        grid.Children.Add(hint);
-        return grid;
     }
 
     private void DeleteComment(OrganizerItem comment)

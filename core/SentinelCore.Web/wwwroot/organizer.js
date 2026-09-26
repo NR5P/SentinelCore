@@ -5,6 +5,7 @@
 // current copy, and a change from another device simply arrives as another render.
 window.SentinelOrganizer = (function () {
   const S = window.SentinelOrganizerSync;
+  const Checklist = window.SentinelNoteChecklist;
   const PANES = ["calendar", "reminders", "notes", "boards"];
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const RRULE_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
@@ -261,7 +262,8 @@ window.SentinelOrganizer = (function () {
   // Deliberately small: headings, lists, checklists, quotes, code, bold/italic and links. Text is
   // escaped first and only these constructs are turned back into markup, so nothing a synced
   // note contains can inject HTML.
-  function renderMarkdown(source) {
+  // `removable` gives each checklist item a delete button - the note editor's check-off view.
+  function renderMarkdown(source, { removable = false } = {}) {
     const lines = String(source || "").split("\n");
     const out = [];
     let list = null;
@@ -292,7 +294,8 @@ window.SentinelOrganizer = (function () {
       } else if ((m = /^\s*[-*]\s+\[( |x|X)\]\s+(.*)$/.exec(line))) {
         if (list !== "ul") { closeList(); out.push('<ul class="org-md-checklist">'); list = "ul"; }
         const done = m[1] !== " ";
-        out.push(`<li><label><input type="checkbox" data-md-line="${index}"${done ? " checked" : ""}> <span${done ? ' class="org-done"' : ""}>${inline(m[2])}</span></label></li>`);
+        const remove = removable ? `<button class="org-md-remove" data-md-remove="${index}" title="remove this item">&times;</button>` : "";
+        out.push(`<li><label><input type="checkbox" data-md-line="${index}"${done ? " checked" : ""}> <span${done ? ' class="org-done"' : ""}>${inline(m[2])}</span></label>${remove}</li>`);
       } else if ((m = /^\s*[-*]\s+(.*)$/.exec(line))) {
         if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; }
         out.push(`<li>${inline(m[1])}</li>`);
@@ -312,14 +315,6 @@ window.SentinelOrganizer = (function () {
     closeList();
     if (inCode) out.push("</code></pre>");
     return out.join("");
-  }
-
-  function toggleChecklistLine(source, lineIndex) {
-    const lines = String(source || "").split("\n");
-    const line = lines[lineIndex];
-    if (line === undefined) return source;
-    lines[lineIndex] = line.replace(/\[( |x|X)\]/, (m, mark) => (mark === " " ? "[x]" : "[ ]"));
-    return lines.join("\n");
   }
 
   // ---- shell --------------------------------------------------------------------------------
@@ -1173,6 +1168,7 @@ window.SentinelOrganizer = (function () {
             <div class="org-note-tools">
               <input class="field-input" id="org-note-search" placeholder="search notes" value="${escapeHtml(noteSearch)}" />
               <button class="btn" id="org-note-add">+ note</button>
+              <button class="btn" id="org-note-add-checklist" title="a list to tick off - type a title, Enter, then one item per Enter">+ checklist</button>
             </div>
             <div id="org-note-list" class="org-note-list"></div>
           </div>
@@ -1183,12 +1179,16 @@ window.SentinelOrganizer = (function () {
         noteSearch = el("org-note-search").value;
         renderNoteList();
       });
-      el("org-note-add").addEventListener("click", () => {
+      const addNote = (asChecklist) => {
+        flushNoteSave();
         const note = S.create("note", { title: "", body: "" }, { spaceId: defaultSpace() });
         selectedNoteId = note.id;
+        notePreview = asChecklist;
         renderNotes();
         el("note-title").focus();
-      });
+      };
+      el("org-note-add").addEventListener("click", () => addNote(false));
+      el("org-note-add-checklist").addEventListener("click", () => addNote(true));
       renderNoteEditor();
     } else {
       refreshNoteEditorFromRemote();
@@ -1206,8 +1206,10 @@ window.SentinelOrganizer = (function () {
     root.innerHTML = notes.length ? notes.map((n) => {
       const preview = String(n.fields.body || "").replace(/[#*`>\-[\]]/g, "").trim().split("\n")[0].slice(0, 90);
       const hasFiles = S.children(n.id).some((c) => c.kind === "attachment");
+      const tally = Checklist.progress(n.fields.body);
+      const progress = tally.total ? ` <span class="org-note-progress${tally.done === tally.total ? " org-note-progress-done" : ""}">&#9745; ${tally.done}/${tally.total}</span>` : "";
       return `<div class="org-note-item${n.id === selectedNoteId ? " active" : ""}" data-note="${escapeHtml(n.id)}">
-        <div class="org-note-item-title">${n.fields.pinned ? "&#128204; " : ""}${escapeHtml(n.fields.title || "untitled")}${hasFiles ? " &#128206;" : ""}</div>
+        <div class="org-note-item-title">${n.fields.pinned ? "&#128204; " : ""}${escapeHtml(n.fields.title || "untitled")}${hasFiles ? " &#128206;" : ""}${progress}</div>
         <div class="org-note-item-preview">${escapeHtml(preview)}</div>
         <div class="org-note-item-meta"><span class="org-dot" style="background:${escapeHtml(spaceColor(n.spaceId))}"></span>${escapeHtml(spaceName(n.spaceId))} &middot; ${escapeHtml(new Date(n.updatedAt).toLocaleDateString())}</div>
       </div>`;
@@ -1216,7 +1218,8 @@ window.SentinelOrganizer = (function () {
       item.addEventListener("click", () => {
         flushNoteSave();
         selectedNoteId = item.dataset.note;
-        notePreview = false;
+        // A note that's a list opens ready to tick off; anything else opens for writing.
+        notePreview = Checklist.progress(S.get(selectedNoteId).fields.body).total > 0;
         renderNotes();
       });
     }
@@ -1230,6 +1233,7 @@ window.SentinelOrganizer = (function () {
       return;
     }
     const f = note.fields;
+    const tally = Checklist.progress(f.body);
     root.innerHTML = `
       <div class="org-note-head">
         <input class="field-input org-title-input" id="note-title" placeholder="title" value="${escapeHtml(f.title || "")}" />
@@ -1238,20 +1242,31 @@ window.SentinelOrganizer = (function () {
       <div class="org-note-actions">
         <button class="btn btn-small${f.pinned ? " btn-on" : ""}" id="note-pin">${f.pinned ? "pinned" : "pin"}</button>
         <button class="btn btn-small${notePreview ? " btn-on" : ""}" id="note-preview">${notePreview ? "edit" : "preview"}</button>
-        <span class="event-count">markdown: # heading, **bold**, - [ ] checklist</span>
+        ${notePreview
+          ? (tally.done ? `<button class="btn btn-small" id="note-clear-checked" title="remove the ticked items">clear checked (${tally.done})</button>` : "")
+          : '<button class="btn btn-small" id="note-make-checklist" title="turn every line of this note into a checkbox">&#9745; checklist</button>'}
+        <span class="event-count">${notePreview ? "tick items off, or add more below" : "Enter continues a - [ ] item &middot; # heading, **bold**"}</span>
         <span class="org-spacer"></span>
         <button class="btn btn-small org-danger" id="note-delete">delete</button>
       </div>
       ${notePreview
-        ? `<div class="org-md" id="note-rendered">${renderMarkdown(f.body) || '<div class="org-empty">empty</div>'}</div>`
+        ? `<div class="org-md" id="note-rendered" data-body="${escapeHtml(f.body || "")}">
+            ${renderMarkdown(f.body, { removable: true })}
+            <input class="field-input org-note-add-item" id="note-add-item" placeholder="+ add an item, then Enter" autocomplete="off" />
+          </div>`
         : `<textarea class="field-textarea org-note-body" id="note-body" placeholder="write here">${escapeHtml(f.body || "")}</textarea>`}
       ${linksEditor(f.links, true)}
       <div id="note-attachments"></div>
       <div class="event-count">${f.updatedBy || note.updatedBy ? `last edited by ${escapeHtml(note.updatedBy || "")} ` : ""}${escapeHtml(new Date(note.updatedAt).toLocaleString())}</div>`;
 
     el("note-title").addEventListener("input", () => queueNoteSave());
+    // Title, Enter, first item: a new list can be written without touching the mouse.
+    el("note-title").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && el("note-add-item")) { event.preventDefault(); el("note-add-item").focus(); }
+    });
     if (el("note-body")) {
       el("note-body").addEventListener("input", () => queueNoteSave());
+      el("note-body").addEventListener("keydown", (event) => continueListOnEnter(event, el("note-body")));
       el("note-body").addEventListener("paste", (event) => {
         const files = [...(event.clipboardData ? event.clipboardData.files : [])];
         if (files.length) {
@@ -1269,13 +1284,35 @@ window.SentinelOrganizer = (function () {
       selectedNoteId = null;
       renderNotes();
     });
+    // Every change in the check-off view is saved at once. A title still being typed goes first,
+    // so the redraw doesn't put the old one back.
+    const editBody = (change, keepFocus) => {
+      flushNoteSave();
+      S.update(note.id, { body: change(S.get(note.id).fields.body || "") });
+      renderNoteEditor();
+      if (keepFocus && el("note-add-item")) el("note-add-item").focus();
+    };
+    if (el("note-make-checklist")) {
+      el("note-make-checklist").addEventListener("click", () => {
+        flushNoteSave();
+        notePreview = true;
+        editBody((body) => Checklist.makeChecklist(body), true);
+      });
+    }
+    if (el("note-clear-checked")) el("note-clear-checked").addEventListener("click", () => editBody((body) => Checklist.clearChecked(body)));
     if (el("note-rendered")) {
       for (const box of el("note-rendered").querySelectorAll("[data-md-line]")) {
-        box.addEventListener("change", () => {
-          S.update(note.id, { body: toggleChecklistLine(S.get(note.id).fields.body, Number(box.dataset.mdLine)) });
-          renderNoteEditor();
-        });
+        box.addEventListener("change", () => editBody((body) => Checklist.toggle(body, Number(box.dataset.mdLine))));
       }
+      for (const button of el("note-rendered").querySelectorAll("[data-md-remove]")) {
+        button.addEventListener("click", () => editBody((body) => Checklist.removeLine(body, Number(button.dataset.mdRemove))));
+      }
+      el("note-add-item").addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.isComposing) return;
+        event.preventDefault();
+        const text = event.target.value;
+        if (text.trim()) editBody((body) => Checklist.addItem(body, text), true);
+      });
     }
     bindLinksEditor(() => S.update(note.id, { links: collectLinks() }));
     renderAttachments(el("note-attachments"), () => note.id, () => note.id);
@@ -1290,6 +1327,40 @@ window.SentinelOrganizer = (function () {
     const body = el("note-body");
     if (title && document.activeElement !== title && title.value !== (note.fields.title || "")) title.value = note.fields.title || "";
     if (body && document.activeElement !== body && body.value !== (note.fields.body || "")) body.value = note.fields.body || "";
+    // The check-off view is redrawn whole, keeping a half-typed item and where the cursor was.
+    const rendered = el("note-rendered");
+    if (rendered && rendered.dataset.body !== (note.fields.body || "")) {
+      const adding = el("note-add-item");
+      const draft = adding.value;
+      const focused = document.activeElement === adding;
+      renderNoteEditor();
+      el("note-add-item").value = draft;
+      if (focused) el("note-add-item").focus();
+    }
+  }
+
+  // Enter at the end of "- [ ] milk" starts "- [ ] " on the next line; Enter on an empty item
+  // ends the list instead, the way a word processor's bullets behave.
+  function continueListOnEnter(event, area) {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing || area.selectionStart !== area.selectionEnd) return;
+    const caret = area.selectionStart;
+    const lineStart = area.value.lastIndexOf("\n", caret - 1) + 1;
+    const lineEnd = area.value.indexOf("\n", caret);
+    if (caret !== (lineEnd < 0 ? area.value.length : lineEnd)) return;
+    const next = Checklist.continueOnEnter(area.value.slice(lineStart, caret));
+    if (!next) return;
+    event.preventDefault();
+    if (next.endList) replaceText(area, lineStart, caret, "");
+    else replaceText(area, caret, caret, `\n${next.insert}`);
+    queueNoteSave();
+  }
+
+  // Typed through execCommand so Ctrl+Z still undoes it; setRangeText is the fallback where that
+  // is gone, and it doesn't reach the undo history.
+  function replaceText(area, start, end, text) {
+    area.setSelectionRange(start, end);
+    const done = text ? document.execCommand("insertText", false, text) : (start === end || document.execCommand("delete"));
+    if (!done) area.setRangeText(text, start, end, "end");
   }
 
   function queueNoteSave() {

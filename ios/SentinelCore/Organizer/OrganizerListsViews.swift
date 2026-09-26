@@ -222,6 +222,10 @@ struct OrganizerNotesView: View {
                         Text(preview(note)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                         HStack {
                             SpaceTag(spaceId: note.spaceId)
+                            let progress = NoteChecklist.progress(note.string("body") ?? "")
+                            if progress.total > 0 {
+                                Text("☑ \(progress.done)/\(progress.total)").font(.caption2).foregroundStyle(.secondary)
+                            }
                             if let updated = note.updatedAt {
                                 Text(updated.formatted(.relative(presentation: .named))).font(.caption2).foregroundStyle(.secondary)
                             }
@@ -246,6 +250,13 @@ struct OrganizerNotesView: View {
         .toolbar {
             ToolbarItem {
                 NavigationLink {
+                    NewNoteView(spaceId: spaceFilter ?? engine.defaultSpaceId, checklist: true)
+                } label: {
+                    Label("New Checklist", systemImage: "checklist")
+                }
+            }
+            ToolbarItem {
+                NavigationLink {
                     NewNoteView(spaceId: spaceFilter ?? engine.defaultSpaceId)
                 } label: {
                     Label("New Note", systemImage: "square.and.pencil")
@@ -264,14 +275,16 @@ struct OrganizerNotesView: View {
 }
 
 // Creates the note the moment it's opened, so typing starts straight away and nothing is lost.
+// A new checklist opens ready to tick: name it, press Return, then type item after item.
 struct NewNoteView: View {
     @Environment(OrganizerEngine.self) private var engine
     let spaceId: String
+    var checklist = false
     @State private var noteId: String?
 
     var body: some View {
         Group {
-            if let noteId { NoteEditorView(noteId: noteId) } else { ProgressView() }
+            if let noteId { NoteEditorView(noteId: noteId, startAsChecklist: checklist) } else { ProgressView() }
         }
         .onAppear {
             if noteId == nil { noteId = engine.create(.note, fields: ["title": "", "body": ""], spaceId: spaceId).id }
@@ -283,31 +296,55 @@ struct NoteEditorView: View {
     @Environment(OrganizerEngine.self) private var engine
     @Environment(\.dismiss) private var dismiss
     let noteId: String
+    var startAsChecklist = false
 
     @State private var title = ""
     @State private var body_ = ""
     @State private var links: [OrganizerLink] = []
+    // The rendered note, which is also where a checklist gets ticked, added to and cleared.
     @State private var preview = false
     @State private var loaded = false
     @State private var saveTask: Task<Void, Never>?
     @State private var confirmingDelete = false
+    @State private var newItem = ""
     @FocusState private var bodyFocused: Bool
     @FocusState private var titleFocused: Bool
+    @FocusState private var addItemFocused: Bool
 
     var body: some View {
         let note = engine.item(noteId)
+        let progress = NoteChecklist.progress(body_)
         Form {
             Section {
                 TextField("Title", text: $title)
                     .font(.title2.bold())
                     .focused($titleFocused)
                     .onChange(of: title) { queueSave() }
+                    // On a checklist Return goes from the name straight to the first item.
+                    .onSubmit { if preview { addItemFocused = true } }
                 if preview {
-                    MarkdownNoteView(source: body_) { line in
-                        body_ = MarkdownNoteView.toggling(body_, line: line)
-                        saveNow()
+                    if !body_.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        MarkdownNoteView(source: body_) { line in
+                            edit { NoteChecklist.toggle($0, line: line) }
+                        } remove: { line in
+                            edit { NoteChecklist.removeLine($0, index: line) }
+                        }
+                        .frame(minHeight: progress.total > 0 ? nil : 200, alignment: .topLeading)
                     }
-                    .frame(minHeight: 200, alignment: .topLeading)
+                    // Return adds the item and stays here, so a list goes in one line after another.
+                    HStack {
+                        Image(systemName: "plus.circle.fill").foregroundStyle(SentinelTheme.green)
+                        TextField("Add item", text: $newItem, prompt: Text("Add item"))
+                            .labelsHidden()
+                            .multilineTextAlignment(.leading)
+                            .focused($addItemFocused)
+                            .onSubmit(addItem)
+                    }
+                    if progress.done > 0 {
+                        Button("Clear Checked (\(progress.done))", systemImage: "trash") {
+                            edit(NoteChecklist.clearChecked)
+                        }
+                    }
                 } else {
                     TextEditor(text: $body_)
                         .focused($bodyFocused)
@@ -316,7 +353,7 @@ struct NoteEditorView: View {
                         .onChange(of: body_) { queueSave() }
                 }
             } footer: {
-                Text("Markdown: # heading, **bold**, - [ ] checklist")
+                Text("Markdown: # heading, **bold**. Checklist turns lines into tick boxes.")
             }
             if let note {
                 Section {
@@ -341,6 +378,12 @@ struct NoteEditorView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
+            if !preview {
+                ToolbarItem {
+                    Button("Checklist", systemImage: "checklist", action: makeChecklist)
+                        .help("Turn each line into a tick box")
+                }
+            }
             ToolbarItem {
                 Button(preview ? "Edit" : "Preview", systemImage: preview ? "pencil" : "eye") {
                     saveNow()
@@ -368,7 +411,28 @@ struct NoteEditorView: View {
         title = note.title
         body_ = note.string("body") ?? ""
         links = OrganizerLink.from(note.fields["links"])
+        // A note with a checklist opens ready to tick; anything else opens to write in.
+        preview = startAsChecklist || NoteChecklist.progress(body_).total > 0
         if note.title.isEmpty && body_.isEmpty { titleFocused = true }
+    }
+
+    // A tick, delete or clear on the rendered note is saved straight away, like any other tap.
+    private func edit(_ change: (String) -> String) {
+        body_ = change(body_)
+        saveNow()
+    }
+
+    private func addItem() {
+        edit { NoteChecklist.addItem($0, text: newItem) }
+        newItem = ""
+        addItemFocused = true
+    }
+
+    private func makeChecklist() {
+        edit(NoteChecklist.makeChecklist)
+        preview = true
+        // The Add item field only exists once the rendered note is on screen.
+        Task { addItemFocused = true }
     }
 
     private func refreshFromRemote() {

@@ -1,0 +1,47 @@
+{
+  "about": "What the note checklist helpers do to a note's body, on every surface. A note stays plain Markdown text: a checklist item is a line like '- [ ] milk' or '- [x] milk' (also '*' and 'X', any leading spaces). Lines inside ``` code fences are never items. Bodies here use \\n; a surface whose text box uses \\r\\n converts first. Read by core/SentinelCore.Web/scripts/note-checklist.test.js, ios/OrganizerKit NoteChecklistTests.swift, android NoteChecklistTest.kt and windows SentinelCore.Client.Tests NoteChecklistTests.cs - change them together.",
+  "progress": [
+    { "body": "", "done": 0, "total": 0 },
+    { "body": "just words\n- a bullet", "done": 0, "total": 0 },
+    { "body": "- [ ] milk\n- [x] eggs\n- [X] bread", "done": 2, "total": 3 },
+    { "body": "  * [ ] indented star\n- [ ]\n- [] not an item", "done": 0, "total": 1 },
+    { "body": "```\n- [ ] in code\n```\n- [x] outside", "done": 1, "total": 1 }
+  ],
+  "addItem": [
+    { "body": "", "text": "milk", "expect": "- [ ] milk" },
+    { "body": "", "text": "   ", "expect": "" },
+    { "body": "Groceries", "text": "  milk  ", "expect": "Groceries\n- [ ] milk" },
+    { "body": "Groceries\n\n\n", "text": "milk", "expect": "Groceries\n- [ ] milk" },
+    { "body": "- [ ] milk\n- [x] eggs\n\nremember the coupons", "text": "bread", "expect": "- [ ] milk\n- [x] eggs\n- [ ] bread\n\nremember the coupons" },
+    { "body": "# Trip\n- [ ] tickets\n\n# Packing\n- [ ] socks\nnotes after", "text": "hat", "expect": "# Trip\n- [ ] tickets\n\n# Packing\n- [ ] socks\n- [ ] hat\nnotes after" },
+    { "body": "- [ ] outside\n```\n- [ ] in code\n```", "text": "next", "expect": "- [ ] outside\n- [ ] next\n```\n- [ ] in code\n```" }
+  ],
+  "removeLine": [
+    { "body": "- [ ] milk\n- [x] eggs\n- [ ] bread", "line": 1, "expect": "- [ ] milk\n- [ ] bread" },
+    { "body": "- [ ] only", "line": 0, "expect": "" },
+    { "body": "- [ ] milk", "line": 5, "expect": "- [ ] milk" }
+  ],
+  "clearChecked": [
+    { "body": "- [ ] milk\n- [x] eggs\n- [X] bread\n- [ ] jam", "expect": "- [ ] milk\n- [ ] jam" },
+    { "body": "keep me\n- [x] gone", "expect": "keep me" },
+    { "body": "```\n- [x] code stays\n```", "expect": "```\n- [x] code stays\n```" },
+    { "body": "- [ ] nothing checked", "expect": "- [ ] nothing checked" }
+  ],
+  "makeChecklist": [
+    { "body": "", "expect": "" },
+    { "body": "milk\neggs\nbread", "expect": "- [ ] milk\n- [ ] eggs\n- [ ] bread" },
+    { "body": "- milk\n* eggs\n1. bread\n2) jam", "expect": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] jam" },
+    { "body": "  - nested\n   plain with spaces   ", "expect": "  - [ ] nested\n- [ ] plain with spaces" },
+    { "body": "# Groceries\n\nmilk\n- [x] eggs\n> a quote stays", "expect": "# Groceries\n\n- [ ] milk\n- [x] eggs\n> a quote stays" },
+    { "body": "todo\n```\ncode line\n```", "expect": "- [ ] todo\n```\ncode line\n```" }
+  ],
+  "continueOnEnter": [
+    { "line": "- [ ] milk", "expect": { "insert": "- [ ] " } },
+    { "line": "- [x] eggs", "expect": { "insert": "- [ ] " } },
+    { "line": "  * [ ] indented", "expect": { "insert": "  * [ ] " } },
+    { "line": "- [ ] ", "expect": { "endList": true } },
+    { "line": "- a bullet", "expect": { "insert": "- " } },
+    { "line": "- ", "expect": { "endList": true } },
+    { "line": "plain words", "expect": null }
+  ]
+}

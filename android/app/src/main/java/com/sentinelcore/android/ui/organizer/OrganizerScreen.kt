@@ -61,6 +61,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudOff
@@ -77,6 +78,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -105,6 +107,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sentinelcore.android.organizer.NoteChecklist
 import com.sentinelcore.android.organizer.OrganizerDates
 import com.sentinelcore.android.organizer.OrganizerEngine
 import com.sentinelcore.android.organizer.OrganizerItem
@@ -135,6 +138,8 @@ class OrganizerRoutes(
     val openEvent: (itemId: String?, day: LocalDate?, originalStart: String?) -> Unit,
     val openReminder: (itemId: String?) -> Unit,
     val openNote: (itemId: String?) -> Unit,
+    // A new note that opens straight on its check-off view, ready for a title and items.
+    val openChecklist: () -> Unit,
     val openCard: (itemId: String) -> Unit,
     val openGroups: () -> Unit,
     val openSubscribe: () -> Unit,
@@ -188,14 +193,23 @@ fun OrganizerScreen(engine: OrganizerEngine, routes: OrganizerRoutes) {
         floatingActionButton = {
             // Boards make their own boards, columns and cards inline.
             if (pane != 3) {
-                FloatingActionButton(onClick = {
-                    when (pane) {
-                        0 -> routes.openEvent(null, LocalDate.now(), null)
-                        1 -> routes.openReminder(null)
-                        else -> routes.openNote(null)
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Notes get a second, smaller button for a checklist - a shopping or to-do list
+                    // without typing any "- [ ]".
+                    if (pane == 2) {
+                        SmallFloatingActionButton(onClick = routes.openChecklist) {
+                            Icon(Icons.Default.Checklist, contentDescription = "New checklist")
+                        }
                     }
-                }, containerColor = SentinelGreen) {
-                    Icon(Icons.Default.Add, contentDescription = listOf("New event", "New reminder", "New note")[pane])
+                    FloatingActionButton(onClick = {
+                        when (pane) {
+                            0 -> routes.openEvent(null, LocalDate.now(), null)
+                            1 -> routes.openReminder(null)
+                            else -> routes.openNote(null)
+                        }
+                    }, containerColor = SentinelGreen) {
+                        Icon(Icons.Default.Add, contentDescription = listOf("New event", "New reminder", "New note")[pane])
+                    }
                 }
             }
         },
@@ -624,6 +638,9 @@ private fun NotesPane(engine: OrganizerEngine, filter: String?, routes: Organize
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (note.bool("pinned")) Icon(Icons.Default.PushPin, contentDescription = "Pinned", tint = SentinelAmber, modifier = Modifier.size(14.dp))
                         Text(note.title.ifEmpty { "Untitled" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        val progress = NoteChecklist.progress(note.string("body").orEmpty())
+                        if (progress.total > 0) Text("☑ ${progress.done}/${progress.total}", style = MaterialTheme.typography.labelSmall,
+                            color = if (progress.done == progress.total) SentinelGreen else SentinelTextDim, modifier = Modifier.padding(horizontal = 4.dp))
                         if (engine.children(note.id, OrganizerKinds.ATTACHMENT).isNotEmpty()) Icon(Icons.Default.AttachFile, contentDescription = null, tint = SentinelTextDim, modifier = Modifier.size(14.dp))
                     }
                     Text(note.string("body").orEmpty().replace("- [ ] ", "☐ ").replace("- [x] ", "☑ ").replace("#", "").trim(),

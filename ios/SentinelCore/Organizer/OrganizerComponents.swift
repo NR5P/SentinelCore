@@ -337,14 +337,17 @@ struct OrganizerImage: View {
 // MARK: - markdown
 
 // The same small Markdown the dashboard renders: headings, lists, tickable checklists, quotes,
-// code and inline emphasis/links. Lines are kept so a checklist tap can flip exactly its line.
+// code and inline emphasis/links. Lines are kept so a checklist tap can flip exactly its line;
+// which lines are items is NoteChecklist's call, the same rule every other device uses.
 struct MarkdownNoteView: View {
     let source: String
     var toggle: ((Int) -> Void)?
+    // Given, each item gets a delete button - the note's check-off view.
+    var remove: ((Int) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(source.components(separatedBy: "\n").enumerated()), id: \.offset) { index, line in
+            ForEach(Array(NoteChecklist.lines(source).enumerated()), id: \.offset) { index, line in
                 row(line, index: index)
             }
         }
@@ -353,25 +356,38 @@ struct MarkdownNoteView: View {
     }
 
     @ViewBuilder
-    private func row(_ line: String, index: Int) -> some View {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("### ") {
+    private func row(_ line: NoteChecklist.Line, index: Int) -> some View {
+        let trimmed = line.text.trimmingCharacters(in: .whitespaces)
+        if line.isCode {
+            if !trimmed.hasPrefix("```") { Text(line.text).font(.body.monospaced()) }
+        } else if let item = line.item {
+            HStack(alignment: .firstTextBaseline) {
+                Button {
+                    toggle?(index)
+                } label: {
+                    HStack(alignment: .firstTextBaseline) {
+                        Image(systemName: item.done ? "checkmark.square.fill" : "square")
+                            .foregroundStyle(item.done ? SentinelTheme.green : .secondary)
+                        Text(inline(item.text)).strikethrough(item.done).foregroundStyle(item.done ? .secondary : .primary)
+                    }
+                }
+                .buttonStyle(.plain)
+                if let remove {
+                    Spacer(minLength: 8)
+                    Button { remove(index) } label: {
+                        Image(systemName: "xmark").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Delete \(item.text)")
+                    .help("Delete item")
+                }
+            }
+        } else if trimmed.hasPrefix("### ") {
             Text(inline(String(trimmed.dropFirst(4)))).font(.subheadline.bold()).foregroundStyle(SentinelTheme.cyan)
         } else if trimmed.hasPrefix("## ") {
             Text(inline(String(trimmed.dropFirst(3)))).font(.headline).foregroundStyle(SentinelTheme.cyan)
         } else if trimmed.hasPrefix("# ") {
             Text(inline(String(trimmed.dropFirst(2)))).font(.title3.bold()).foregroundStyle(SentinelTheme.cyan)
-        } else if let (done, text) = Self.checklist(trimmed) {
-            Button {
-                toggle?(index)
-            } label: {
-                HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: done ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(done ? SentinelTheme.green : .secondary)
-                    Text(inline(text)).strikethrough(done).foregroundStyle(done ? .secondary : .primary)
-                }
-            }
-            .buttonStyle(.plain)
         } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
             HStack(alignment: .firstTextBaseline) { Text("•"); Text(inline(String(trimmed.dropFirst(2)))) }
         } else if trimmed.hasPrefix("> ") {
@@ -382,31 +398,12 @@ struct MarkdownNoteView: View {
         } else if trimmed.isEmpty {
             Color.clear.frame(height: 4)
         } else {
-            Text(inline(line))
+            Text(inline(line.text))
         }
     }
 
     private func inline(_ text: String) -> AttributedString {
         (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
-    }
-
-    static func checklist(_ line: String) -> (Bool, String)? {
-        for (marker, done) in [("- [ ] ", false), ("- [x] ", true), ("- [X] ", true), ("* [ ] ", false), ("* [x] ", true)] where line.hasPrefix(marker) {
-            return (done, String(line.dropFirst(marker.count)))
-        }
-        return nil
-    }
-
-    static func toggling(_ source: String, line index: Int) -> String {
-        var lines = source.components(separatedBy: "\n")
-        guard lines.indices.contains(index) else { return source }
-        let line = lines[index]
-        if let range = line.range(of: "[ ]") {
-            lines[index] = line.replacingCharacters(in: range, with: "[x]")
-        } else if let range = line.range(of: "[x]") ?? line.range(of: "[X]") {
-            lines[index] = line.replacingCharacters(in: range, with: "[ ]")
-        }
-        return lines.joined(separator: "\n")
     }
 }
 

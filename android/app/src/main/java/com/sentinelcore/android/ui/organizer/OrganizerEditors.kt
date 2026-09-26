@@ -53,6 +53,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import com.sentinelcore.android.organizer.NoteChecklist
 import com.sentinelcore.android.organizer.OrganizerComments
 import com.sentinelcore.android.organizer.OrganizerDates
 import com.sentinelcore.android.organizer.OrganizerEngine
@@ -349,28 +357,52 @@ fun ReminderEditorScreen(engine: OrganizerEngine, itemId: String?, onDone: () ->
 
 // Saves as you type (a moment after you stop), and takes another device's edits when you're not
 // in the middle of your own - the server keeps both if two people rewrite the same note.
+//
+// A note with checklist items opens on its rendered view, which doubles as the place to tick them
+// off: each item has a remove button, and an "Add item" box under the note appends one after
+// another without the keyboard going away. Every change there saves straight away. The body stays
+// plain Markdown - NoteChecklist does the edits.
 @Composable
-fun NoteEditorScreen(engine: OrganizerEngine, itemId: String?, onDone: () -> Unit) {
+fun NoteEditorScreen(engine: OrganizerEngine, itemId: String?, startAsChecklist: Boolean = false, onDone: () -> Unit) {
     val revision = rememberOrganizerRevision(engine)
     val noteId = remember(itemId) { itemId ?: engine.create(OrganizerKinds.NOTE, mapOf("title" to "", "body" to ""), spaceId = engine.defaultSpaceId).id }
     val note = engine.item(noteId)
     var title by remember { mutableStateOf(note?.title.orEmpty()) }
-    var body by remember { mutableStateOf(note?.string("body").orEmpty()) }
+    // A TextFieldValue so Enter can carry a list on with the cursor after the new marker.
+    var body by remember { mutableStateOf(TextFieldValue(note?.string("body").orEmpty())) }
     var dirty by remember { mutableStateOf(false) }
-    var preview by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf(startAsChecklist || NoteChecklist.progress(body.text).total > 0) }
+    var newItem by remember { mutableStateOf("") }
+    val titleFocus = remember { FocusRequester() }
+    val addItemFocus = remember { FocusRequester() }
+    // Which field wants the keyboard once the check-off view is on screen.
+    var focusNext by remember { mutableStateOf(if (startAsChecklist) titleFocus else null) }
     val keptOffline = engine.keptOffline.collectAsStateValue()
 
     fun saveNow() {
         val current = engine.item(noteId) ?: return
         val updates = buildMap {
             if (current.title != title) put("title", title)
-            if (current.string("body").orEmpty() != body) put("body", body)
+            if (current.string("body").orEmpty() != body.text) put("body", body.text)
         }
         if (updates.isNotEmpty()) engine.update(noteId, updates)
         dirty = false
     }
 
-    LaunchedEffect(title, body) {
+    // The check-off view's edits: applied and saved at once, like a tick always was.
+    fun changeBody(text: String) {
+        body = TextFieldValue(text, TextRange(text.length))
+        dirty = true
+        saveNow()
+    }
+
+    fun addItem() {
+        if (newItem.isBlank()) return
+        changeBody(NoteChecklist.addItem(body.text, newItem))
+        newItem = ""
+    }
+
+    LaunchedEffect(title, body.text) {
         if (!dirty) return@LaunchedEffect
         delay(600)
         saveNow()
@@ -379,8 +411,15 @@ fun NoteEditorScreen(engine: OrganizerEngine, itemId: String?, onDone: () -> Uni
         val current = engine.item(noteId) ?: return@LaunchedEffect
         if (!dirty) {
             if (current.title != title) title = current.title
-            if (current.string("body").orEmpty() != body) body = current.string("body").orEmpty()
+            val text = current.string("body").orEmpty()
+            if (text != body.text) body = TextFieldValue(text, TextRange(minOf(body.selection.end, text.length)))
         }
+    }
+    LaunchedEffect(focusNext, preview) {
+        val requester = focusNext ?: return@LaunchedEffect
+        if (!preview) return@LaunchedEffect
+        runCatching { requester.requestFocus() }
+        focusNext = null
     }
     DisposableEffect(noteId) { onDispose { if (dirty) saveNow() } }
 
@@ -389,19 +428,36 @@ fun NoteEditorScreen(engine: OrganizerEngine, itemId: String?, onDone: () -> Uni
         return
     }
     EditorFrame(title.ifBlank { "Note" }, { if (dirty) saveNow(); onDone() }, null) {
-        OutlinedTextField(title, { title = it; dirty = true }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
+        // In the check-off view the title is one line and Next goes to Add item, so a new
+        // checklist is: type a title, Enter, then items one after another.
+        OutlinedTextField(title, { title = it; dirty = true }, label = { Text("Title") }, singleLine = preview,
+            keyboardOptions = KeyboardOptions(imeAction = if (preview) ImeAction.Next else ImeAction.Default),
+            keyboardActions = KeyboardActions(onNext = { runCatching { addItemFocus.requestFocus() } }),
+            modifier = Modifier.fillMaxWidth().focusRequester(titleFocus))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Markdown: # heading, **bold**, - [ ] checklist", style = MaterialTheme.typography.labelSmall, color = SentinelTextDim, modifier = Modifier.weight(1f))
+            Text("Markdown: # heading, **bold**, - [ ] item. Checklist turns lines into items.",
+                style = MaterialTheme.typography.labelSmall, color = SentinelTextDim, modifier = Modifier.weight(1f))
+            if (!preview) TextButton(onClick = {
+                changeBody(NoteChecklist.makeChecklist(body.text))
+                preview = true
+                focusNext = addItemFocus
+            }) { Text("Checklist") }
             TextButton(onClick = { if (dirty) saveNow(); preview = !preview }) { Text(if (preview) "Edit" else "Preview") }
         }
         if (preview) {
-            MarkdownNote(body) { line ->
-                body = toggleChecklistLine(body, line)
-                dirty = true
-                saveNow()
-            }
+            MarkdownNote(body.text,
+                onToggleLine = { line -> changeBody(NoteChecklist.toggle(body.text, line)) },
+                onDeleteLine = { line -> changeBody(NoteChecklist.removeLine(body.text, line)) })
+            OutlinedTextField(newItem, { newItem = it }, label = { Text("Add item") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                // Handling Done ourselves keeps the keyboard up for the next item.
+                keyboardActions = KeyboardActions(onDone = { addItem() }),
+                trailingIcon = { TextButton(enabled = newItem.isNotBlank(), onClick = { addItem() }) { Text("Add") } },
+                modifier = Modifier.fillMaxWidth().focusRequester(addItemFocus))
+            val checked = NoteChecklist.progress(body.text).done
+            if (checked > 0) TextButton(onClick = { changeBody(NoteChecklist.clearChecked(body.text)) }) { Text("Clear checked ($checked)") }
         } else {
-            OutlinedTextField(body, { body = it; dirty = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp))
+            OutlinedTextField(body, { body = continuedList(body, it); dirty = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 260.dp))
         }
         HorizontalDivider()
         SpaceSelector(engine, note.spaceId) { engine.update(noteId, mapOf("spaceId" to it)) }
@@ -411,6 +467,25 @@ fun NoteEditorScreen(engine: OrganizerEngine, itemId: String?, onDone: () -> Uni
         LinksEditor(OrganizerLink.from(note)) { engine.update(noteId, mapOf("links" to OrganizerLink.json(it))) }
         AttachmentsEditor(engine, noteId) { noteId }
         DeleteButton("Delete note") { dirty = false; engine.deleteTree(noteId); onDone() }
+    }
+}
+
+// Enter at the end of a list line starts the next one ("- [ ] " or "- "); Enter on an empty item
+// ends the list by clearing its marker instead. Only a single newline typed at the end of a line
+// counts - a paste, or Enter in the middle of a line, goes through untouched.
+private fun continuedList(old: TextFieldValue, new: TextFieldValue): TextFieldValue {
+    val at = old.selection.start
+    val typedNewline = old.selection.collapsed && new.selection.collapsed && new.selection.start == at + 1 &&
+        new.text.length == old.text.length + 1 && new.text[at] == '\n' &&
+        new.text.startsWith(old.text.substring(0, at)) && new.text.endsWith(old.text.substring(at))
+    if (!typedNewline || (at < old.text.length && old.text[at] != '\n')) return new
+    val lineStart = old.text.lastIndexOf('\n', at - 1) + 1
+    return when (val next = NoteChecklist.continueOnEnter(old.text.substring(lineStart, at))) {
+        null -> new
+        NoteChecklist.Continuation.EndList ->
+            TextFieldValue(old.text.substring(0, lineStart) + old.text.substring(at), TextRange(lineStart))
+        is NoteChecklist.Continuation.Insert ->
+            TextFieldValue(old.text.substring(0, at) + "\n" + next.prefix + old.text.substring(at), TextRange(at + 1 + next.prefix.length))
     }
 }
 
