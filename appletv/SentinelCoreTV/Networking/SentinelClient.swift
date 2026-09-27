@@ -140,6 +140,20 @@ final class SentinelClient {
         try await get("/api/devices/state")
     }
 
+    // MARK: - Weather (see WeatherTVView)
+
+    // Always 200 with a `state` on a server that has weather; a 404 means an older server.
+    func weather() async throws -> WeatherReport {
+        try await get("/api/weather")
+    }
+
+    // A GIF from radar.weather.gov, proxied by the server. `kind` is "loop" or "still".
+    func weatherRadar(scope: String, kind: String) async throws -> Data {
+        let query = [URLQueryItem(name: "scope", value: scope), URLQueryItem(name: "kind", value: kind)]
+        guard let url = url(path: "/api/weather/radar", query: query) else { throw ClientError.invalidServerAddress }
+        return try await performData(URLRequest(url: url))
+    }
+
     // MARK: - Family Files (read-only on the TV - see FilesTVView)
 
     // Always answers on a server that has the feature, even when it is off in Settings; a 404

@@ -84,6 +84,7 @@ struct RootView: View {
         case .live: LiveCamerasView(isActive: selection == .live)
         case .movies: MoviesTVView(isActive: selection == .movies)
         case .events: AlertFeedView()
+        case .weather: WeatherTVView(isActive: selection == .weather)
         case .devices: DeviceHubView(isActive: selection == .devices)
         case .alarm: AlarmView(isActive: selection == .alarm)
         case .organizer: OrganizerTVView()
@@ -97,13 +98,14 @@ struct RootView: View {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events tab over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case live, movies, events, alarm, organizer, files, devices, settings
+    case live, movies, events, weather, alarm, organizer, files, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .live: "Live"
         case .movies: "Movies"
         case .events: "Events"
+        case .weather: "Weather"
         case .alarm: "Alarm"
         case .organizer: "Organizer"
         case .files: "Files"
@@ -116,6 +118,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .live: "video.fill"
         case .movies: "film.stack"
         case .events: "shield.lefthalf.filled"
+        case .weather: "cloud.sun.fill"
         case .alarm: "lock.shield.fill"
         case .organizer: "calendar"
         case .files: "folder"
