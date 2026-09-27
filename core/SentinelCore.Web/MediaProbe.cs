@@ -136,8 +136,12 @@ public static partial class MediaProbe
             var name = entry.Name;
             var extension = Path.GetExtension(name);
             if (!SidecarExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase)) continue;
-            if (!name.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase)) continue;
-            var middle = name[(stem.Length + 1)..^extension.Length];
+            // "Movie.srt" has nothing between the stem and the extension; "Movie.en.srt" has "en".
+            var subtitleStem = Path.GetFileNameWithoutExtension(name);
+            string middle;
+            if (subtitleStem.Equals(stem, StringComparison.OrdinalIgnoreCase)) middle = "";
+            else if (subtitleStem.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase)) middle = subtitleStem[(stem.Length + 1)..];
+            else continue;
             var parts = middle.Split('.', StringSplitOptions.RemoveEmptyEntries);
             var forced = parts.Any(part => part.Equals("forced", StringComparison.OrdinalIgnoreCase));
             var language = parts.FirstOrDefault(part => part.Length is 2 or 3 && !part.Equals("sdh", StringComparison.OrdinalIgnoreCase) && !part.Equals("forced", StringComparison.OrdinalIgnoreCase));

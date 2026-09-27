@@ -727,7 +727,15 @@ public sealed partial class MediaScanner : IDisposable
         }
         else
         {
-            await MediaProbe.ProbeAsync(item, _files, _ffprobePath, _logger, cancellationToken);
+            // One odd file must not stop the probe pass for the rest of the library (a sidecar
+            // subtitle once threw here and left most of the shelf unprobed).
+            try { await MediaProbe.ProbeAsync(item, _files, _ffprobePath, _logger, cancellationToken); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Probing {Path} failed", item.Path);
+                item.ProbedAt = DateTimeOffset.UtcNow;
+                item.ProbeError = $"Reading this file failed: {ex.Message}";
+            }
         }
         await _store.UpdateProbeAsync(item, cancellationToken);
     }

@@ -168,6 +168,32 @@ public sealed class MediaPlaybackTests
         Assert.Equal(2646.04, item.DurationSeconds!.Value, 2);
     }
 
+    // The YIFY layout: "Movie.srt" beside "Movie.mp4", no language in between. This once threw
+    // (a negative substring length), which failed playback with a 500 and stopped the scan.
+    [Fact]
+    public void Sidecars_AreFoundWithAndWithoutALanguage()
+    {
+        var directory = Directory.CreateTempSubdirectory("sidecars").FullName;
+        try
+        {
+            var video = Path.Combine(directory, "17.Again.2009.1080p.BrRip.x264.YIFY.mp4");
+            foreach (var name in new[]
+            {
+                "17.Again.2009.1080p.BrRip.x264.YIFY.mp4", "17.Again.2009.1080p.BrRip.x264.YIFY.srt",
+                "17.Again.2009.1080p.BrRip.x264.YIFY.eng.forced.srt", "17.Again.2009.1080p.BrRip.x264.YIFY.nfo",
+                "17.Again.srt", "Other.srt",
+            })
+                File.WriteAllText(Path.Combine(directory, name), "");
+
+            var found = MediaProbe.FindSidecarSubtitles(LocalMediaFileSystem.Instance, video);
+
+            Assert.Equal(2, found.Count);
+            Assert.Contains(found, s => s.External!.EndsWith("YIFY.srt") && s.Language is null && !s.Forced);
+            Assert.Contains(found, s => s.External!.EndsWith("YIFY.eng.forced.srt") && s.Language == "eng" && s.Forced);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     [Theory]
     [InlineData("/usr/bin/ffmpeg", "/usr/bin/ffprobe")]
     [InlineData("ffmpeg", "ffprobe")]
