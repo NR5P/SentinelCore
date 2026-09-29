@@ -271,6 +271,26 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task ATitleStartingWithThe_IsAlsoSearchedWithoutIt_ButStillMatchedWhole()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1");
+        _prowlarr.EmptyForLeadingThe = true;
+        _prowlarr.Releases =
+        [
+            Release("The Addams Family 1991 Extended 1080P BluRay x264", 60, "magnet:?xt=urn:btih:a1"),
+            Release("The Addams Family Values 1993 1080p BluRay", 40, "magnet:?xt=urn:btih:a2"),
+        ];
+
+        var search = await SearchAsync(client, new { kind = "movie", title = "The Addams Family" });
+
+        Assert.Equal(["The Addams Family", "Addams Family"], _prowlarr.Queries);
+        Assert.Equal("The Addams Family 1991 Extended 1080P BluRay x264", Assert.Single(search.GetProperty("results").EnumerateArray()).GetProperty("title").GetString());
+        Assert.Equal("The Addams Family Values 1993 1080p BluRay", Assert.Single(search.GetProperty("others").EnumerateArray()).GetProperty("title").GetString());
+    }
+
+    [Fact]
     public async Task EpisodeSearch_AsksForTheEpisode_AndGrabNeedsATvLibrary()
     {
         using var factory = CreateFactory();
@@ -486,6 +506,7 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         public readonly List<int> Categories = [];
         public byte[]? TorrentFile;
         public string? PostedIndexer;
+        public bool EmptyForLeadingThe;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -501,6 +522,8 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                     var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
                     Queries.Add(query["query"]!);
                     Categories.Add(int.Parse(query["categories"]!));
+                    // The Pirate Bay: a query starting with "The" finds nothing at all.
+                    if (EmptyForLeadingThe && query["query"]!.StartsWith("The ", StringComparison.Ordinal)) return Json("[]");
                     return Json(JsonSerializer.Serialize(Releases.Select(r => new
                     {
                         guid = r.Guid, title = r.Title, indexer = r.Indexer, size = r.Size, seeders = r.Seeders, leechers = r.Leechers,

@@ -265,18 +265,27 @@ public sealed class MediaDownloadManager(
         var request = new MediaReleaseRanker.Request(isMovie ? MediaKinds.Movie : MediaKinds.Episode, input.Title, input.Year,
             input.Season, input.Episode, options.PreferredQuality);
         var title = SearchText(input.Title);
+        // Some sites find nothing for a query that starts with "The" (The Pirate Bay: "The Addams
+        // Family" 0 results, "Addams Family" 86), so the title is tried without a leading article
+        // too. Results are still matched against the full title.
+        var titles = new List<string> { title };
+        if (System.Text.RegularExpressions.Regex.Match(title, @"^(?:the|a|an)\s+(.{3,})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) is { Success: true } bare)
+            titles.Add(bare.Groups[1].Value);
         var queries = new List<string>();
-        if (isMovie)
+        foreach (var t in titles)
         {
-            if (input.Year is { } year) queries.Add($"{title} {year}");
-            queries.Add(title);
+            if (isMovie)
+            {
+                if (input.Year is { } year) queries.Add($"{t} {year}");
+                queries.Add(t);
+            }
+            else if (input.Season is { } season)
+            {
+                if (input.Episode is { } episode) queries.Add($"{t} S{season:00}E{episode:00}");
+                else { queries.Add($"{t} S{season:00}"); queries.Add($"{t} Season {season}"); }
+            }
+            else queries.Add(t);
         }
-        else if (input.Season is { } season)
-        {
-            if (input.Episode is { } episode) queries.Add($"{title} S{season:00}E{episode:00}");
-            else { queries.Add($"{title} S{season:00}"); queries.Add($"{title} Season {season}"); }
-        }
-        else queries.Add(title);
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var releases = new List<MediaRelease>();
