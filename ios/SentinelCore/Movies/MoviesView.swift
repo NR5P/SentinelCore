@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Movies & TV - the family media library on an iPhone, iPad or Mac: a home page of shelves
-// (Continue Watching, recently added), poster grids of every movie and show, search, and a detail
+// (Continue Watching, My List, recently added, most played, genres), poster grids of every movie and show, search, and a detail
 // page behind every tile. See core/docs/MOVIES.md for the API.
 struct MoviesView: View {
     enum Pane: String, CaseIterable, Identifiable {
@@ -100,6 +100,13 @@ private struct MediaHomeView: View {
     @State private var home: MediaHome?
     @State private var errorMessage: String?
     @State private var loading = false
+    // Bumped each time Home comes back into view after a detail page, which may have changed My
+    // List or what is watched.
+    @State private var returns = 0
+    @State private var hasAppeared = false
+    @State private var surprising = false
+    // A Surprise Me that found nothing (or failed), in the server's words.
+    @State private var surpriseError: String?
 
     private var layout: MediaLayout { MediaLayout(compact: horizontalSizeClass == .compact) }
 
@@ -124,16 +131,9 @@ private struct MediaHomeView: View {
                         }
                     }
                 }
-                if let items = home?.recentMovies, !items.isEmpty {
-                    MediaShelf(title: "Recently Added Movies") {
-                        ForEach(items) { MediaPosterTile(item: $0).frame(width: layout.posterWidth) }
-                    }
-                }
-                if let items = home?.recentShows, !items.isEmpty {
-                    MediaShelf(title: "Recently Added Shows") {
-                        ForEach(items) { MediaPosterTile(item: $0).frame(width: layout.posterWidth) }
-                    }
-                }
+                posterShelf("My List", home?.myList)
+                posterShelf("Recently Added Movies", home?.recentMovies)
+                posterShelf("Recently Added Shows", home?.recentShows)
                 if let items = home?.recentEpisodes, !items.isEmpty {
                     MediaShelf(title: "New Episodes") {
                         ForEach(items) { item in
@@ -149,11 +149,37 @@ private struct MediaHomeView: View {
                         }
                     }
                 }
+                posterShelf("Most Played", home?.mostPlayed)
+                posterShelf("Top Rated", home?.topRated)
+                ForEach(home?.genreShelves ?? []) { shelf in
+                    posterShelf(shelf.genre, shelf.items)
+                }
+                posterShelf("Watch Again", home?.recentlyWatched)
             }
             .padding(.vertical)
         }
         .environment(\.mediaLayout, layout)
         .refreshable { await load() }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Task { await surpriseMe() }
+                } label: {
+                    Label("Surprise Me", systemImage: "shuffle")
+                }
+                .disabled(surprising)
+                .help("Open a movie or show picked at random")
+            }
+        }
+        .alert("Surprise Me", isPresented: Binding(get: { surpriseError != nil }, set: { if !$0 { surpriseError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(surpriseError ?? "")
+        }
+        .onAppear {
+            if hasAppeared { returns += 1 }
+            hasAppeared = true
+        }
         .overlay {
             if home == nil, loading {
                 ProgressView("Loading…")
@@ -165,7 +191,7 @@ private struct MediaHomeView: View {
                     description: Text("An admin adds the Movies or TV Shows folder in Settings → Movies & TV Libraries (or in the dashboard's Movies tab). The library fills in as the server scans it."))
             }
         }
-        .task(id: TaskKey(active: isActive, token: refreshToken, server: model.activeServerURL)) {
+        .task(id: TaskKey(active: isActive, token: refreshToken, returns: returns, server: model.activeServerURL)) {
             guard isActive, !model.activeServerURL.isEmpty else { return }
             await load()
         }
@@ -174,8 +200,19 @@ private struct MediaHomeView: View {
     private struct TaskKey: Hashable {
         var active: Bool
         var token: Int
+        var returns: Int
         // The tab can be on screen before the app has connected; loading waits for an address.
         var server: String
+    }
+
+    // A row of posters, or nothing when the server sent none.
+    @ViewBuilder
+    private func posterShelf(_ title: String, _ items: [MediaItemSummary]?) -> some View {
+        if let items, !items.isEmpty {
+            MediaShelf(title: title) {
+                ForEach(items) { MediaPosterTile(item: $0).frame(width: layout.posterWidth) }
+            }
+        }
     }
 
     private func load() async {
@@ -187,6 +224,18 @@ private struct MediaHomeView: View {
         } catch {
             if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.localizedDescription
+        }
+    }
+
+    // Asks the server for a title at random and opens it the way a context menu's Details does.
+    private func surpriseMe() async {
+        surprising = true
+        defer { surprising = false }
+        do {
+            open(try await model.client.mediaRandom().route)
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            surpriseError = error.localizedDescription
         }
     }
 }
@@ -402,6 +451,7 @@ private struct MediaGridView: View {
     @State private var sort: MediaSort = .title
     @State private var genre: String?
     @State private var unwatchedOnly = false
+    @State private var myListOnly = false
     @State private var loading = false
     @State private var loadingMore = false
     @State private var errorMessage: String?
@@ -413,6 +463,7 @@ private struct MediaGridView: View {
         var sort: MediaSort
         var genre: String?
         var unwatched: Bool
+        var myList: Bool
         var token: Int
         var server: String
     }
@@ -451,11 +502,11 @@ private struct MediaGridView: View {
                 ContentUnavailableView("Couldn't load the library", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
             } else if items.isEmpty, !loading {
                 ContentUnavailableView(
-                    unwatchedOnly || genre != nil ? "Nothing matches" : (kind == "show" ? "No TV shows yet" : "No movies yet"),
+                    unwatchedOnly || myListOnly || genre != nil ? "Nothing matches" : (kind == "show" ? "No TV shows yet" : "No movies yet"),
                     systemImage: kind == "show" ? "tv" : "film")
             }
         }
-        .task(id: FilterKey(sort: sort, genre: genre, unwatched: unwatchedOnly, token: refreshToken, server: model.activeServerURL)) {
+        .task(id: FilterKey(sort: sort, genre: genre, unwatched: unwatchedOnly, myList: myListOnly, token: refreshToken, server: model.activeServerURL)) {
             guard !model.activeServerURL.isEmpty else { return }
             await reload()
         }
@@ -465,6 +516,7 @@ private struct MediaGridView: View {
         var parts = [kind == "show" ? "\(total) shows" : "\(total) movies"]
         if let genre { parts.append(genre) }
         if unwatchedOnly { parts.append("unwatched") }
+        if myListOnly { parts.append("on My List") }
         parts.append("by \(sort.title.lowercased())")
         return parts.joined(separator: " · ")
     }
@@ -480,6 +532,7 @@ private struct MediaGridView: View {
             }
             .pickerStyle(.menu)
             Toggle("Unwatched Only", isOn: $unwatchedOnly)
+            Toggle("My List Only", isOn: $myListOnly)
         } label: {
             Label("Sort and Filter", systemImage: "line.3.horizontal.decrease.circle")
         }
@@ -490,7 +543,7 @@ private struct MediaGridView: View {
         defer { loading = false }
         do {
             let page = try await model.client.mediaItems(
-                kind: kind, genre: genre, sort: sort, unwatched: unwatchedOnly, offset: 0, limit: Self.pageSize)
+                kind: kind, genre: genre, sort: sort, unwatched: unwatchedOnly, inList: myListOnly, offset: 0, limit: Self.pageSize)
             items = page.items
             total = page.total ?? page.items.count
             if let pageGenres = page.genres { genres = pageGenres }
@@ -507,7 +560,7 @@ private struct MediaGridView: View {
         defer { loadingMore = false }
         do {
             let page = try await model.client.mediaItems(
-                kind: kind, genre: genre, sort: sort, unwatched: unwatchedOnly, offset: items.count, limit: Self.pageSize)
+                kind: kind, genre: genre, sort: sort, unwatched: unwatchedOnly, inList: myListOnly, offset: items.count, limit: Self.pageSize)
             let known = Set(items.map(\.id))
             items.append(contentsOf: page.items.filter { !known.contains($0.id) })
             total = page.total ?? total

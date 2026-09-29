@@ -1,3 +1,4 @@
+using System.Net;
 using SentinelCore.Client;
 using SentinelCore.Client.Models;
 using SentinelCore.Client.Networking;
@@ -47,6 +48,73 @@ public class MediaClientTests
         Assert.Contains("unwatched=true", request);
         Assert.Contains("offset=120", request);
         Assert.Contains("limit=60", request);
+    }
+
+    [Fact]
+    public async Task Most_played_and_My_List_reach_the_query_string_and_My_List_is_off_by_default()
+    {
+        using var server = new FakeServer().OnGet("/api/media/items", EmptyPage);
+        using var client = ClientFor(server);
+
+        await client.MediaItemsAsync(sort: "plays", order: "desc", inList: true);
+        await client.MediaItemsAsync(sort: "plays");
+
+        Assert.Contains("sort=plays", server.Requests[0]);
+        Assert.Contains("list=true", server.Requests[0]);
+        Assert.DoesNotContain("list=", server.Requests[1]);
+    }
+
+    [Fact]
+    public async Task My_List_posts_the_contract_body_and_decodes_the_answer()
+    {
+        using var server = new FakeServer()
+            .On("POST", "/api/media/items/m1/list", """{"itemId":"m1","inList":true}""")
+            .On("POST", "/api/media/items/e1/list", """{"itemId":"s1","inList":false}""");
+        using var client = ClientFor(server);
+
+        var added = await client.SetInMyListAsync("m1", true);
+        var removed = await client.SetInMyListAsync("e1", false);
+
+        Assert.Equal("POST /api/media/items/m1/list", server.Requests[0]);
+        Assert.Contains("\"inList\":true", server.Bodies[0]);
+        Assert.Equal("m1", added.ItemId);
+        Assert.True(added.InList);
+        Assert.Equal("POST /api/media/items/e1/list", server.Requests[1]);
+        Assert.Contains("\"inList\":false", server.Bodies[1]);
+        Assert.Equal("s1", removed.ItemId);   // an episode's id saves its show
+        Assert.False(removed.InList);
+    }
+
+    [Fact]
+    public async Task Random_sends_only_the_filters_given_and_decodes_one_summary()
+    {
+        const string pick = """{"id":"m1","kind":"movie","title":"17 Again","genres":["Comedy"],"playCount":2,"inList":true}""";
+        using var server = new FakeServer().OnGet("/api/media/random", pick);
+        using var client = ClientFor(server);
+
+        var item = await client.GetRandomMediaAsync();
+        await client.GetRandomMediaAsync(kind: "movie", libraryId: "l1", genre: "Science Fiction");
+
+        Assert.Equal("GET /api/media/random", server.Requests[0]);
+        Assert.Equal("m1", item.Id);
+        Assert.Equal(2, item.PlayCount);
+        Assert.True(item.InList);
+        Assert.Contains("kind=movie", server.Requests[1]);
+        Assert.Contains("libraryId=l1", server.Requests[1]);
+        Assert.Contains("genre=Science%20Fiction", server.Requests[1]);
+    }
+
+    [Fact]
+    public async Task Random_with_nothing_to_pick_surfaces_the_servers_sentence()
+    {
+        using var server = new FakeServer().OnGet("/api/media/random",
+            """{"error":"Nothing in the library matches that yet."}""", HttpStatusCode.NotFound);
+        using var client = ClientFor(server);
+
+        var error = await Assert.ThrowsAsync<SentinelServerException>(() => client.GetRandomMediaAsync(kind: "show"));
+
+        Assert.Equal(404, error.Status);
+        Assert.Equal("Nothing in the library matches that yet.", error.Message);
     }
 
     [Fact]
@@ -180,6 +248,69 @@ public class MediaClientTests
         Assert.Equal("/api/media/items/m1/backdrop", home.Featured!.BackdropUrl);
         Assert.Equal(396, home.MovieCount);
         Assert.Equal("movies", home.Libraries.Single().Kind);
+
+        // This payload is an older server's: no discovery rows, no play counts, no My List.
+        Assert.Empty(home.MyList);
+        Assert.Empty(home.MostPlayed);
+        Assert.Empty(home.RecentlyWatched);
+        Assert.Empty(home.TopRated);
+        Assert.Empty(home.GenreShelves);
+        Assert.Equal(0, movie.PlayCount);
+        Assert.False(movie.InList);
+    }
+
+    [Fact]
+    public async Task Home_decodes_the_discovery_rows_play_counts_and_My_List()
+    {
+        const string json = """
+            {
+              "continueWatching": [], "recentMovies": [], "recentShows": [], "recentEpisodes": [], "featured": null,
+              "myList": [{"id":"m1","kind":"movie","title":"17 Again","genres":[],"playCount":3,"inList":true}],
+              "mostPlayed": [{"id":"s1","kind":"show","title":"Black Mirror","genres":[],"playCount":12,"inList":false}],
+              "recentlyWatched": [{"id":"m2","kind":"movie","title":"Up","genres":[],"playCount":1}],
+              "topRated": [{"id":"m3","kind":"movie","title":"Heat","genres":[],"rating":8.3}],
+              "genreShelves": [
+                {"genre":"Comedy","items":[{"id":"m1","kind":"movie","title":"17 Again","genres":["Comedy"]}]},
+                {"genre":"Drama","items":null}
+              ],
+              "movieCount": 3, "showCount": 1, "libraries": []
+            }
+            """;
+        using var server = new FakeServer().OnGet("/api/media/home", json);
+        using var client = ClientFor(server);
+
+        var home = await client.MediaHomeAsync();
+
+        var saved = home.MyList.Single();
+        Assert.True(saved.InList);
+        Assert.Equal(3, saved.PlayCount);
+        Assert.Equal(12, home.MostPlayed.Single().PlayCount);
+        Assert.False(home.MostPlayed.Single().InList);
+        Assert.Equal("m2", home.RecentlyWatched.Single().Id);
+        Assert.Equal(8.3, home.TopRated.Single().Rating);
+        Assert.Equal(new[] { "Comedy", "Drama" }, home.GenreShelves.Select(shelf => shelf.Genre));
+        Assert.Equal("m1", home.GenreShelves[0].Items.Single().Id);
+        Assert.Empty(home.GenreShelves[1].Items);   // a null row is an empty one
+    }
+
+    [Fact]
+    public async Task Null_discovery_rows_decode_as_empty()
+    {
+        const string json = """
+            {"continueWatching":[],"recentMovies":[],"recentShows":[],"recentEpisodes":[],
+             "myList":null,"mostPlayed":null,"recentlyWatched":null,"topRated":null,"genreShelves":null,
+             "movieCount":0,"showCount":0,"libraries":[]}
+            """;
+        using var server = new FakeServer().OnGet("/api/media/home", json);
+        using var client = ClientFor(server);
+
+        var home = await client.MediaHomeAsync();
+
+        Assert.Empty(home.MyList);
+        Assert.Empty(home.MostPlayed);
+        Assert.Empty(home.RecentlyWatched);
+        Assert.Empty(home.TopRated);
+        Assert.Empty(home.GenreShelves);
     }
 
     [Fact]

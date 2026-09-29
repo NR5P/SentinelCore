@@ -101,6 +101,16 @@ class MediaPlaybackMathTest {
         )
         assertEquals("asc", MediaApi.defaultOrder("title"))
         assertEquals("desc", MediaApi.defaultOrder("rating"))
+        assertEquals(
+            "/api/media/items?kind=show&sort=plays&order=desc&list=true&offset=0&limit=60",
+            MediaApi.itemsPath("show", sort = "plays", list = true),
+        )
+        assertEquals("desc", MediaApi.defaultOrder("plays"))
+    }
+
+    @Test
+    fun `my list path`() {
+        assertEquals("/api/media/items/m%201/list", MediaApi.listPath("m 1"))
     }
 
     @Test

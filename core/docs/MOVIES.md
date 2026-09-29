@@ -125,7 +125,9 @@ NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "user
 
   "showId": null, "showTitle": null, "seasonNumber": null, "episodeNumber": null, "airDate": null,
 
-  "seasonCount": null, "episodeCount": null, "watchedEpisodeCount": null, "nextEpisodeId": null
+  "seasonCount": null, "episodeCount": null, "watchedEpisodeCount": null, "nextEpisodeId": null,
+
+  "playCount": 3, "inList": false
 }
 ```
 
@@ -136,6 +138,9 @@ NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "user
 - Show summaries fill `seasonCount`, `episodeCount`, `watchedEpisodeCount` and `nextEpisodeId`
   (the episode to play next: the in-progress one, else the first unwatched, else the first).
 - `runtimeMinutes` comes from TMDB; `durationSeconds` from the file (null until probed).
+- `playCount` is how many times anyone in the household has pressed Play on it (a show adds up
+  its episodes). `inList` is whether the current user saved it to My List (always false on
+  episodes). Both are missing on servers older than these features; treat that as 0 / false.
 
 ### Routes
 
@@ -143,15 +148,33 @@ NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "user
   ```json
   { "continueWatching": [ ItemSummary ], "recentMovies": [ ItemSummary ], "recentShows": [ ItemSummary ],
     "recentEpisodes": [ ItemSummary ], "featured": ItemSummary|null,
+    "myList": [ ItemSummary ], "mostPlayed": [ ItemSummary ], "recentlyWatched": [ ItemSummary ],
+    "topRated": [ ItemSummary ], "genreShelves": [ { "genre": "Comedy", "items": [ ItemSummary ] } ],
     "movieCount": 396, "showCount": 45, "libraries": [ Library ] }
   ```
   `continueWatching` mixes movies and episodes: everything in progress, newest first, plus the
   next episode of a show whose last episode was finished ("next up"). `featured` is something with a
-  backdrop to use as a hero. 20 items per row at most.
-- `GET /api/media/items?kind=movie|show&libraryId=&q=&genre=&sort=title|added|year|rating&order=asc|desc&unwatched=true&offset=0&limit=60`
+  backdrop to use as a hero. 20 items per row at most. The rest, all movies and shows only:
+  - `myList`: the current user's My List, most recently added first.
+  - `mostPlayed`: the household's most played titles (everyone's plays), ties broken by the most
+    recently played.
+  - `recentlyWatched` ("Watch again"): movies this user finished and shows they have finished
+    episodes of, newest first, leaving out anything on `continueWatching`.
+  - `topRated`: TMDB rating 7 or more that this user has not watched, best first. Empty without TMDB.
+  - `genreShelves`: up to three genres with at least six titles, a different pick each day, each
+    row unwatched titles first in an order that changes daily.
+
+  Suggested order on screen: Continue watching, My List, Recently added movies, Recently added
+  shows, New episodes, Most played, Top rated, the genre shelves, Watch again. Hide empty rows.
+  All five keys are missing from older servers; treat that as empty.
+- `GET /api/media/items?kind=movie|show&libraryId=&q=&genre=&sort=title|added|year|rating|plays&order=asc|desc&unwatched=true&list=true&offset=0&limit=60`
   → `{ "items": [ ItemSummary ], "total": 396, "genres": ["Action", …] }`. `genres` is the full
-  list for the filter menu. Default sort is `title` ascending; `added` and `rating` default to
-  descending. `kind` omitted returns movies and shows together (never episodes).
+  list for the filter menu. Default sort is `title` ascending; `added`, `rating` and `plays`
+  ("Most played") default to descending. `list=true` keeps only the current user's My List. `kind` omitted returns movies and shows together (never episodes).
+- `GET /api/media/random?kind=movie|show&libraryId=&genre=&unwatched=true` → one ItemSummary picked
+  at random ("Surprise me"). Movies and shows only. Titles the user has not watched are preferred
+  (`unwatched=false` turns that off; if everything is watched it picks from everything). **404**
+  `{ "error": "Nothing in the library matches that yet." }` when nothing matches.
 - `GET /api/media/items/{id}` → ItemDetail: an ItemSummary plus
   ```json
   {
@@ -216,6 +239,11 @@ Response:
   `{ "positionSeconds": 1234.5, "durationSeconds": 6120 }` every 10 seconds while playing, on
   pause, and when the player closes. At 92% or more the server marks the item watched and clears
   the resume point; below 30 seconds nothing is saved. Returns the new `progress` object.
+- `POST /api/media/items/{id}/list` body `{ "inList": true }` adds to (or with false removes from)
+  the current user's My List → `{ "itemId": "…", "inList": true }`. Posting an episode's id saves its
+  show, and `itemId` says which one was saved.
+- Every successful `playback` request records a play for "Most played", once per person per
+  title per four hours (a seek, a new audio track or a reconnect asks for playback again).
 - `POST /api/media/items/{id}/watched` body `{ "watched": true }` → the new `progress`. On a show it
   applies to every episode, on a season route `POST /api/media/items/{showId}/seasons/{n}/watched` to
   that season.
@@ -267,6 +295,8 @@ files whose name contains "sample" or "trailer" are skipped.
 ## Data
 
 `media.db` in the web host's data folder: `MediaLibraries`, `MediaItems`, `MediaProgress`,
-`MediaState`. Backups (schema 7) carry the libraries and everyone's progress; the catalog and the
+`MediaState`, `MediaPlays` (play history, seeded with one play per progress row when first
+created), `MediaWatchlist` (My List). Backups (schema 7) carry the libraries, everyone's progress,
+and (as `media.plays` / `media.watchlist`, no schema bump) the play history and My Lists; the catalog and the
 artwork cache are rebuilt by a rescan. HLS sessions live under `<data>/media-hls/`, extracted
 subtitles under `<data>/media-subs/`.

@@ -23,6 +23,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
@@ -129,6 +131,23 @@ fun MovieDetailScreen(
             reloadTick++
         }
     }
+    // My List flips at once and goes back if the server says no, so it never waits on a reload.
+    val toggleList: () -> Unit = toggle@{
+        val before = detail ?: return@toggle
+        val wanted = !before.summary.inList
+        detail = before.copy(summary = before.summary.copy(inList = wanted))
+        scope.launch {
+            runCatching { model.setMediaInList(before.summary.id, wanted) }
+                .onSuccess { saved ->
+                    error = null
+                    detail?.let { if (it.summary.inList != saved) detail = it.copy(summary = it.summary.copy(inList = saved)) }
+                }
+                .onFailure {
+                    detail?.let { now -> detail = now.copy(summary = now.summary.copy(inList = before.summary.inList)) }
+                    error = it.message ?: "Could not update My List."
+                }
+        }
+    }
 
     val current = detail
     Column(Modifier.fillMaxSize()) {
@@ -150,6 +169,7 @@ fun MovieDetailScreen(
                 selectedSeason = selectedSeason,
                 onSelectSeason = { selectedSeason = it },
                 act = act,
+                onToggleList = toggleList,
                 onItem = onItem,
                 onPlay = onPlay,
             )
@@ -168,6 +188,7 @@ private fun DetailBody(
     selectedSeason: Int?,
     onSelectSeason: (Int) -> Unit,
     act: (suspend () -> Unit) -> Unit,
+    onToggleList: () -> Unit,
     onItem: (String) -> Unit,
     onPlay: (String, Double?) -> Unit,
 ) {
@@ -202,6 +223,17 @@ private fun DetailBody(
                         modifier = Modifier.size(18.dp),
                     )
                     Text(if (summary.isWatched) "  Watched" else "  Mark watched")
+                }
+                // Movies and shows; an episode is saved through its show.
+                if (!summary.isEpisode) {
+                    OutlinedButton(onClick = onToggleList) {
+                        Icon(
+                            if (summary.inList) Icons.Default.Check else Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text("  My List")
+                    }
                 }
             }
         }
@@ -362,7 +394,9 @@ private fun TitleBlock(model: SentinelViewModel, item: MediaItemSummary, onShow:
                 item.episodeCode?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = SentinelTextDim) }
             }
             Text(item.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            metaLine(item)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = SentinelTextDim) }
+            listOfNotNull(metaLine(item), item.playCountLabel).joinToString(" · ").ifBlank { null }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = SentinelTextDim)
+            }
             if (item.genres.isNotEmpty()) {
                 Text(item.genres.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = SentinelTextDim)
             }

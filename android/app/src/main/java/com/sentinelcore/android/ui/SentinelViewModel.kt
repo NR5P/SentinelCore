@@ -21,6 +21,7 @@ import com.sentinelcore.android.data.MediaNetworkSignInInput
 import com.sentinelcore.android.data.MediaNetworkSignInResult
 import com.sentinelcore.android.data.MediaHome
 import com.sentinelcore.android.data.MediaItemDetail
+import com.sentinelcore.android.data.MediaItemSummary
 import com.sentinelcore.android.data.MediaItemsPage
 import com.sentinelcore.android.data.MediaPlayback
 import com.sentinelcore.android.data.MediaProgress
@@ -760,7 +761,10 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         unwatched: Boolean,
         offset: Int,
         limit: Int = MediaApi.PAGE_SIZE,
-    ): MediaItemsPage = repository.mediaItems(kind, query, genre, sort, order, unwatched, offset, limit)
+        list: Boolean = false,
+    ): MediaItemsPage = repository.mediaItems(kind, query, genre, sort, order, unwatched, offset, limit, list)
+
+    suspend fun mediaRandom(): MediaItemSummary = repository.mediaRandom()
 
     suspend fun mediaItem(id: String): MediaItemDetail = repository.mediaItem(id)
 
@@ -780,6 +784,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     }
 
     suspend fun setMediaWatched(id: String, watched: Boolean): MediaProgress? = repository.setMediaWatched(id, watched)
+
+    suspend fun setMediaInList(id: String, inList: Boolean): Boolean = repository.setMediaInList(id, inList)
 
     suspend fun setMediaSeasonWatched(showId: String, season: Int, watched: Boolean) =
         repository.setMediaSeasonWatched(showId, season, watched)

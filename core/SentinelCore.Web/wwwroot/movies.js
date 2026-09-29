@@ -14,7 +14,7 @@ window.SentinelMovies = (function () {
   const CHROME_IDLE_MS = 3000;
   const HEVC_PROBE = 'video/mp4; codecs="hvc1.1.6.L120.B0"';
   const PANES = ["home", "movies", "shows", "detail", "libraries"];
-  const SORT_ORDER = { title: "asc", added: "desc", year: "desc", rating: "desc" };
+  const SORT_ORDER = { title: "asc", added: "desc", year: "desc", rating: "desc", plays: "desc" };
   const PHASES = { files: "finding files", metadata: "fetching details", probing: "reading file info", idle: "idle" };
 
   const ICON = {
@@ -27,6 +27,7 @@ window.SentinelMovies = (function () {
     restart: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     folder: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
     computer: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 19.5h6M12 15.5v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    plus: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
     close: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>',
     search: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
     film: '<svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4" stroke="currentColor" stroke-width="1.6"/></svg>'
@@ -50,8 +51,8 @@ window.SentinelMovies = (function () {
   let searchTimer = null;
   const scrollMemory = {};
   const browse = {
-    movies: { kind: "movie", noun: "movies", q: "", genre: "", sort: "title", unwatched: false, offset: 0, total: 0, genres: [], built: false },
-    shows: { kind: "show", noun: "shows", q: "", genre: "", sort: "title", unwatched: false, offset: 0, total: 0, genres: [], built: false }
+    movies: { kind: "movie", noun: "movies", q: "", genre: "", sort: "title", unwatched: false, list: false, offset: 0, total: 0, genres: [], built: false },
+    shows: { kind: "show", noun: "shows", q: "", genre: "", sort: "title", unwatched: false, list: false, offset: 0, total: 0, genres: [], built: false }
   };
 
   // ---- small helpers --------------------------------------------------------------------------
@@ -172,7 +173,8 @@ window.SentinelMovies = (function () {
     return !!(p && !p.watched && p.positionSeconds > 0);
   }
 
-  function metaLine(item) {
+  // The play count is everyone's, so it only goes on the detail page, not the hero or the cards.
+  function metaLine(item, withPlays) {
     const parts = [];
     if (item.year) parts.push(escapeHtml(item.year));
     if (item.kind === "show") {
@@ -182,6 +184,8 @@ window.SentinelMovies = (function () {
     }
     if (Number(item.rating) > 0) parts.push(`<span class="mv-star">&#9733;</span> ${Number(item.rating).toFixed(1)}`);
     if (item.certification) parts.push(`<span class="mv-cert">${escapeHtml(item.certification)}</span>`);
+    const plays = Number(item.playCount) || 0;
+    if (withPlays && plays > 0) parts.push(plays === 1 ? "Played once" : `Played ${plays} times`);
     return parts.join('<span class="mv-dot">&middot;</span>');
   }
 
@@ -310,7 +314,7 @@ window.SentinelMovies = (function () {
 
   function rowMarkup(key, title, items, card) {
     if (!items || !items.length) return "";
-    return `<section class="mv-row" data-row="${key}">
+    return `<section class="mv-row" data-row="${escapeHtml(key)}">
       <h3 class="mv-row-title">${title}</h3>
       <div class="mv-row-wrap">
         <button type="button" class="mv-row-arrow mv-prev" data-act="scroll" data-dir="-1" aria-label="Scroll left">${ICON.left}</button>
@@ -391,6 +395,7 @@ window.SentinelMovies = (function () {
     route = r;
     if (r.name === "home" || r.name === "movies" || r.name === "shows") lastList = r.name;
     for (const p of PANES) el(`mv-pane-${p}`).classList.toggle("hidden", p !== r.name);
+    el("mv-surprise-btn").classList.toggle("hidden", r.name === "libraries");
     for (const button of document.querySelectorAll("#mv-subtabs [data-mv-pane]")) {
       button.classList.toggle("active", button.dataset.mvPane === (r.name === "detail" ? lastList : r.name));
     }
@@ -511,11 +516,18 @@ window.SentinelMovies = (function () {
       wireImages(pane);
       return;
     }
+    // Everything after New episodes is missing from an older server, which rowMarkup treats as empty.
+    const shelves = (homeData.genreShelves || []).filter((shelf) => shelf && shelf.genre);
     const rows = [
       rowMarkup("continue", "Continue watching", homeData.continueWatching, continueCard),
+      rowMarkup("mylist", "My List", homeData.myList, posterCard),
       rowMarkup("movies", "Recently added movies", homeData.recentMovies, posterCard),
       rowMarkup("shows", "Recently added shows", homeData.recentShows, posterCard),
-      rowMarkup("episodes", "New episodes", homeData.recentEpisodes, episodeCard)
+      rowMarkup("episodes", "New episodes", homeData.recentEpisodes, episodeCard),
+      rowMarkup("mostplayed", "Most played", homeData.mostPlayed, posterCard),
+      rowMarkup("toprated", "Top rated", homeData.topRated, posterCard),
+      ...shelves.map((shelf) => rowMarkup(`genre-${shelf.genre}`, escapeHtml(shelf.genre), shelf.items, posterCard)),
+      rowMarkup("again", "Watch again", homeData.recentlyWatched, posterCard)
     ].join("");
     const hero = homeData.featured ? heroMarkup(homeData.featured) : "";
     const empty = rows ? "" : `<div class="mv-empty"><div class="mv-empty-title">Nothing here yet</div>
@@ -648,9 +660,10 @@ window.SentinelMovies = (function () {
       <label class="mv-search">${ICON.search}<input type="search" class="field-input" data-f="q" placeholder="Search ${s.noun}" value="${escapeHtml(s.q)}" aria-label="Search ${s.noun}"></label>
       <select class="field-input mv-select" data-f="genre" aria-label="Genre"><option value="">All genres</option></select>
       <select class="field-input mv-select" data-f="sort" aria-label="Sort">
-        <option value="title">Title</option><option value="added">Recently added</option><option value="year">Year</option><option value="rating">Rating</option>
+        <option value="title">Title</option><option value="added">Recently added</option><option value="year">Year</option><option value="rating">Rating</option><option value="plays">Most played</option>
       </select>
       <button type="button" class="btn mv-toggle ${s.unwatched ? "btn-on" : ""}" data-act="unwatched" aria-pressed="${s.unwatched}">unwatched</button>
+      <button type="button" class="btn mv-toggle ${s.list ? "btn-on" : ""}" data-act="mylist" aria-pressed="${s.list}">my list</button>
       <span class="mv-count" data-f="count"></span>
     </div>
     <div class="mv-grid-host"></div>`;
@@ -686,6 +699,7 @@ window.SentinelMovies = (function () {
     if (s.q) params.set("q", s.q);
     if (s.genre) params.set("genre", s.genre);
     if (s.unwatched) params.set("unwatched", "true");
+    if (s.list) params.set("list", "true");
     const res = await request(`/api/media/items?${params}`);
     if (token !== routeToken) return;
     host.classList.remove("mv-busy");
@@ -702,7 +716,7 @@ window.SentinelMovies = (function () {
     }
     pane.querySelector('[data-f="count"]').textContent = s.total ? plural(s.total, key === "movies" ? "movie" : "show") : "";
     if (!items.length) {
-      const filtered = s.q || s.genre || s.unwatched;
+      const filtered = s.q || s.genre || s.unwatched || s.list;
       host.innerHTML = `<div class="mv-empty"><div class="mv-empty-title">${filtered ? `No ${s.noun} match` : `No ${s.noun} yet`}</div>
         <div>${filtered ? "Try a different search or clear the filters." : "Add a library of " + s.noun + " (the gear button up top) and they appear here once scanned."}</div></div>`;
       return;
@@ -780,11 +794,18 @@ window.SentinelMovies = (function () {
       const watched = !!(item.progress && item.progress.watched);
       out.push(`<button type="button" class="mv-btn mv-btn-glass" data-act="watched" data-id="${escapeHtml(item.id)}" data-value="${!watched}">${ICON.check}<span>${watched ? "Mark unwatched" : "Mark watched"}</span></button>`);
     }
+    // My List holds movies and shows; an episode page would only ever show it unsaved.
+    if (item.kind !== "episode") out.push(listButton(item));
     if (isAdmin) {
       out.push(`<button type="button" class="mv-btn mv-btn-quiet" data-act="fix-match">Fix match&hellip;</button>`);
       out.push(`<button type="button" class="mv-btn mv-btn-quiet" data-act="refresh-meta">Refresh metadata</button>`);
     }
     return out.join("");
+  }
+
+  function listButton(item) {
+    const on = !!item.inList;
+    return `<button type="button" class="mv-btn mv-btn-glass mv-list-btn ${on ? "on" : ""}" data-act="list" data-id="${escapeHtml(item.id)}" aria-pressed="${on}">${on ? ICON.check : ICON.plus}<span>My List</span></button>`;
   }
 
   function drawDetail() {
@@ -809,7 +830,7 @@ window.SentinelMovies = (function () {
             <div class="mv-detail-poster">${art(item.posterUrl, "mv-poster", item.title, item.year)}</div>
             <div class="mv-detail-info">
               <h2 class="mv-detail-title">${escapeHtml(item.title)}</h2>
-              <div class="mv-meta">${metaLine(item)}</div>
+              <div class="mv-meta">${metaLine(item, true)}</div>
               ${genres ? `<div class="mv-genres">${genres}</div>` : ""}
               ${item.tagline ? `<p class="mv-tagline">${escapeHtml(item.tagline)}</p>` : ""}
               ${item.overview ? `<p class="mv-overview">${escapeHtml(item.overview)}</p>` : ""}
@@ -923,6 +944,38 @@ window.SentinelMovies = (function () {
     homeData = null;
     if (route.name === "detail") reloadDetail();
     else refreshCurrent();
+  }
+
+  // Flipped on screen straight away and put back if the server says no. Home is refetched next
+  // time it opens either way, so the My List row catches up there.
+  async function setInList(button) {
+    if (!detail) return;
+    const item = detail;
+    const value = !item.inList;
+    item.inList = value;
+    button.outerHTML = listButton(item);
+    const res = await request(`/api/media/items/${enc(item.id)}/list`, { method: "POST", body: { inList: value } });
+    if (res.ok) { homeData = null; return; }
+    item.inList = !value;
+    const current = detail === item && el("mv-pane-detail").querySelector('[data-act="list"]');
+    if (current) current.outerHTML = listButton(item);
+    showToast(res.error, false);
+  }
+
+  // Asks the server for one title, within whatever grid the user came from (its kind and genre),
+  // and opens it. Nothing matching is a 404 with the reason worded for us.
+  async function surprise(button) {
+    const s = browse[route.name === "detail" ? lastList : route.name];
+    const params = new URLSearchParams();
+    if (s) {
+      params.set("kind", s.kind);
+      if (s.genre) params.set("genre", s.genre);
+    }
+    button.disabled = true;
+    const res = await request(`/api/media/random${params.toString() ? `?${params}` : ""}`);
+    button.disabled = false;
+    if (!res.ok || !res.data || !res.data.id) { showToast(res.error || "Nothing in the library matches that yet.", false); return; }
+    go({ name: "detail", id: res.data.id });
   }
 
   async function refreshMetadata(button) {
@@ -1738,6 +1791,8 @@ window.SentinelMovies = (function () {
         case "season-watched": if (detail) setWatched(detail.id, target.dataset.value === "true", target.dataset.n); break;
         case "fix-match": openFixMatch(); break;
         case "refresh-meta": refreshMetadata(target); break;
+        case "list": setInList(target); break;
+        case "surprise": surprise(target); break;
         case "unwatched": {
           const s = browse[route.name];
           if (!s) break;
@@ -1745,6 +1800,16 @@ window.SentinelMovies = (function () {
           s.offset = 0;
           target.classList.toggle("btn-on", s.unwatched);
           target.setAttribute("aria-pressed", String(s.unwatched));
+          loadBrowse(route.name, routeToken);
+          break;
+        }
+        case "mylist": {
+          const s = browse[route.name];
+          if (!s) break;
+          s.list = !s.list;
+          s.offset = 0;
+          target.classList.toggle("btn-on", s.list);
+          target.setAttribute("aria-pressed", String(s.list));
           loadBrowse(route.name, routeToken);
           break;
         }

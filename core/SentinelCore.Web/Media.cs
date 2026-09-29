@@ -125,14 +125,31 @@ public sealed record MediaProgress(
         Watched ? 100 : DurationSeconds is > 0 ? Math.Clamp(PositionSeconds / DurationSeconds.Value * 100, 0, 100) : 0;
 }
 
+// One press of Play by one person. Keyed like MediaProgress. The play history is what "Most
+// played" counts.
+public sealed record MediaPlay(string UserKey, Guid ItemId, DateTimeOffset PlayedAt)
+{
+    // Asking for playback again this soon (a seek in an HLS stream, an audio-track change, a
+    // dropped connection) is the same sitting, not another play.
+    public static readonly TimeSpan SameSitting = TimeSpan.FromHours(4);
+}
+
+public sealed record MediaPlayStats(int Count, DateTimeOffset LastPlayedAt);
+
+// A movie or show someone saved to My List. Per person, like progress.
+public sealed record MediaWatchlistEntry(string UserKey, Guid ItemId, DateTimeOffset AddedAt);
+
 // What goes in the backup: the libraries (configuration) and everyone's progress (the one thing a
 // rescan cannot bring back). The catalog itself is rebuilt from the files.
 // NetworkComputers (added without a schema bump - older files simply lack it) are the saved
 // sign-ins for libraries on other computers, passwords included like FamilyDrives' SFTP ones.
+// Plays and Watchlist were added the same way.
 public sealed record MediaBackup(
     IReadOnlyList<MediaLibrary> Libraries,
     IReadOnlyList<MediaProgress> Progress,
-    IReadOnlyList<MediaNetworkComputer>? NetworkComputers = null);
+    IReadOnlyList<MediaNetworkComputer>? NetworkComputers = null,
+    IReadOnlyList<MediaPlay>? Plays = null,
+    IReadOnlyList<MediaWatchlistEntry>? Watchlist = null);
 
 public sealed class MediaSettingsDto
 {
@@ -160,6 +177,11 @@ public sealed class MediaProgressInput
 public sealed class MediaWatchedInput
 {
     public bool Watched { get; set; }
+}
+
+public sealed class MediaListInput
+{
+    public bool InList { get; set; }
 }
 
 public sealed class MediaMatchInput

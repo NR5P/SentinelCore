@@ -11,7 +11,7 @@ namespace SentinelCore.App.Views;
 
 /// <summary>
 /// One movie, show or episode: backdrop and poster, the facts, Play / Resume / Start over, Mark
-/// watched, the overview and cast, and what the file is. A show adds season buttons and the
+/// watched, My List, the overview and cast, and what the file is. A show adds season buttons and the
 /// episode list, with Play for the next episode to watch.
 /// </summary>
 /// <remarks>
@@ -27,6 +27,10 @@ public partial class MovieDetailView : UserControl
     private MediaItemDetail? _detail;
     private int? _selectedSeason;
     private int _generation;
+
+    // What the My List button shows. Flipped before the server answers and put back if it refuses,
+    // so the button responds at once; a reload takes the server's word again.
+    private bool _inList;
 
     public MovieDetailView(AppModel model, INavigator? navigator, string itemId)
     {
@@ -46,6 +50,7 @@ public partial class MovieDetailView : UserControl
             var detail = await _model.Client.MediaItemAsync(_itemId);
             if (generation != _generation) return;
             _detail = detail;
+            _inList = detail.InList;
             LoadingText.Visibility = Visibility.Collapsed;
             NoticeText.Visibility = Visibility.Collapsed;
             Render(detail);
@@ -129,6 +134,10 @@ public partial class MovieDetailView : UserControl
 
         var facts = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
         var meta = detail.IsEpisode ? EpisodeMeta(detail) : MediaPlaybackRules.MetaLine(detail);
+        if (MediaPlaybackRules.PlayCountText(detail.PlayCount) is { Length: > 0 } plays)
+        {
+            meta = meta.Length > 0 ? $"{meta} · {plays}" : plays;
+        }
         if (meta.Length > 0)
         {
             facts.Children.Add(new TextBlock
@@ -253,6 +262,7 @@ public partial class MovieDetailView : UserControl
             var allWatched = detail.EpisodeCount is { } total && total > 0 && detail.WatchedEpisodeCount >= total;
             AddAction(allWatched ? "Mark unwatched" : "Mark all watched", primary: false,
                 () => SetWatchedAsync(detail.Id, !allWatched));
+            actions.Children.Add(MyListButton(detail));
             return actions;
         }
 
@@ -283,7 +293,45 @@ public partial class MovieDetailView : UserControl
 
         AddAction(detail.IsWatched ? "Mark unwatched" : "Mark watched", primary: false,
             () => SetWatchedAsync(detail.Id, !detail.IsWatched));
+        // Episodes are never on My List themselves - their show is.
+        if (!detail.IsEpisode) actions.Children.Add(MyListButton(detail));
         return actions;
+    }
+
+    private Button MyListButton(MediaItemDetail detail)
+    {
+        var button = new Button { Margin = new Thickness(0, 0, 8, 8), Padding = new Thickness(16, 8, 16, 8) };
+        void Show()
+        {
+            button.Content = _inList ? "✓ My List" : "+ My List";
+            button.Foreground = _inList ? Palette.Green : Palette.PrimaryText;
+        }
+        Show();
+
+        button.Click += async (_, _) =>
+        {
+            var wanted = !_inList;
+            _inList = wanted;
+            Show();
+            button.IsEnabled = false;
+            try
+            {
+                var saved = await _model.Client.SetInMyListAsync(detail.Id, wanted);
+                _inList = saved.InList;
+                NoticeText.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception error)
+            {
+                _inList = !wanted;
+                Notice(AppModel.UserFacingMessage(error));
+            }
+            finally
+            {
+                Show();
+                button.IsEnabled = true;
+            }
+        };
+        return button;
     }
 
     private static IEnumerable<MediaItemSummary> AllEpisodes(MediaItemDetail show) =>

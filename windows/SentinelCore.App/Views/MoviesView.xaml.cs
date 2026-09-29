@@ -10,8 +10,9 @@ using SentinelCore.Client.Models;
 namespace SentinelCore.App.Views;
 
 /// <summary>
-/// The family film and TV library: a Home tab of shelves (continue watching, recently added) under
-/// a featured hero, and Movies / TV Shows grids with search, sort, genre and unwatched filters.
+/// The family film and TV library: a Home tab of shelves (continue watching, My List, recently
+/// added, most played, genres) under a featured hero, Movies / TV Shows grids with search, sort,
+/// genre, unwatched and My List filters, and Surprise me for when nobody can decide.
 /// </summary>
 /// <remarks>
 /// The whole contract is core/docs/MOVIES.md. The section only exists while the server has Movies
@@ -25,13 +26,14 @@ public partial class MoviesView : UserControl
         public override string ToString() => Label;
     }
 
-    // Year and rating default to newest and best first - nobody sorts by year to find 1931.
+    // Year, rating and plays default to newest, best and most first - nobody sorts by year to find 1931.
     private static readonly SortOption[] Sorts =
     {
         new("Title", "title", "asc"),
         new("Recently added", "added", "desc"),
         new("Year", "year", "desc"),
         new("Rating", "rating", "desc"),
+        new("Most played", "plays", "desc"),
     };
 
     private const int PageSize = 60;
@@ -146,7 +148,8 @@ public partial class MoviesView : UserControl
         try
         {
             var page = await _model.Client.MediaItemsAsync(
-                kind, Query, genre, sort, _order, UnwatchedBox.IsChecked == true, offset, PageSize);
+                kind, Query, genre, sort, _order, UnwatchedBox.IsChecked == true, offset, PageSize,
+                inList: MyListBox.IsChecked == true);
             if (generation != _generation) return;
 
             if (reset)
@@ -173,8 +176,8 @@ public partial class MoviesView : UserControl
             if (_total == 0)
             {
                 ShowEmpty(Query.Length > 0 ? $"Nothing matches “{Query}”" : "Nothing here",
-                    UnwatchedBox.IsChecked == true || genre is not null
-                        ? "Try another genre, or turn off Unwatched only."
+                    UnwatchedBox.IsChecked == true || MyListBox.IsChecked == true || genre is not null
+                        ? "Try another genre, or turn off Unwatched only and My List."
                         : "The server has not found any titles of this kind yet.");
             }
             else
@@ -256,7 +259,9 @@ public partial class MoviesView : UserControl
 
         var nothing = home.Featured is null
             && home.ContinueWatching.Count == 0 && home.RecentMovies.Count == 0
-            && home.RecentShows.Count == 0 && home.RecentEpisodes.Count == 0;
+            && home.RecentShows.Count == 0 && home.RecentEpisodes.Count == 0
+            && home.MyList.Count == 0 && home.MostPlayed.Count == 0 && home.RecentlyWatched.Count == 0
+            && home.TopRated.Count == 0 && home.GenreShelves.All(shelf => shelf.Items.Count == 0);
         if (nothing)
         {
             if (home.Libraries.Count == 0)
@@ -279,10 +284,17 @@ public partial class MoviesView : UserControl
 
         if (home.Featured is { } featured) ContentHost.Children.Add(Hero(featured));
 
+        // The order MOVIES.md suggests; an empty row is left out, and so is every row a server
+        // older than it does not send.
         AddShelf("Continue watching", home.ContinueWatching, resume: true);
+        AddShelf("My List", home.MyList, resume: false);
         AddShelf("Recently added movies", home.RecentMovies, resume: false);
         AddShelf("Recently added shows", home.RecentShows, resume: false);
         AddShelf("New episodes", home.RecentEpisodes, resume: false);
+        AddShelf("Most played", home.MostPlayed, resume: false);
+        AddShelf("Top rated", home.TopRated, resume: false);
+        foreach (var shelf in home.GenreShelves) AddShelf(shelf.Genre, shelf.Items, resume: false);
+        AddShelf("Watch again", home.RecentlyWatched, resume: false);
     }
 
     private void AddShelf(string heading, List<MediaItemSummary> items, bool resume)
@@ -389,6 +401,29 @@ public partial class MoviesView : UserControl
         _navigator.Push(new MovieDetailView(_model, _navigator, item.Id), title);
     }
 
+    // Scoped to the tab and genre on screen, so Surprise me on TV Shows picks a show. A 404 means
+    // nothing matched, and its message says so.
+    private async void OnSurpriseClicked(object sender, RoutedEventArgs e)
+    {
+        var kind = _tab == "home" ? null : _tab;
+        var genre = !IsHome && GenrePicker.SelectedItem is string picked && picked != AllGenres ? picked : null;
+        SurpriseButton.IsEnabled = false;
+        try
+        {
+            var item = await _model.Client.GetRandomMediaAsync(kind, genre: genre);
+            NoticeText.Visibility = Visibility.Collapsed;
+            Open(item);
+        }
+        catch (Exception error)
+        {
+            Notice(AppModel.UserFacingMessage(error));
+        }
+        finally
+        {
+            SurpriseButton.IsEnabled = true;
+        }
+    }
+
     // Home is reloaded once the player's last progress save has landed, so Continue watching shows
     // where the film was left rather than where it was before.
     private void Play(string itemId, double? start, string title) =>
@@ -451,6 +486,11 @@ public partial class MoviesView : UserControl
     }
 
     private void OnUnwatchedChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_suppressFilterEvents && !IsHome) _ = ReloadAsync();
+    }
+
+    private void OnMyListChanged(object sender, RoutedEventArgs e)
     {
         if (!_suppressFilterEvents && !IsHome) _ = ReloadAsync();
     }

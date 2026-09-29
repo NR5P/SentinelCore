@@ -233,4 +233,67 @@ class MediaParsingTest {
         assertNull(idle.scan)
         assertFalse(idle.enabled)
     }
+
+    @Test
+    fun `play count and my list parse, and default when an older server leaves them out`() {
+        val item = parseMediaItem(JSONObject(movieSummary).put("playCount", 3).put("inList", true))
+        assertEquals(3, item.playCount)
+        assertTrue(item.inList)
+        assertEquals("Played 3 times", item.playCountLabel)
+
+        val old = parseMediaItem(JSONObject(movieSummary))
+        assertEquals(0, old.playCount)
+        assertFalse(old.inList)
+        assertNull(old.playCountLabel)
+
+        assertEquals("Played once", parseMediaItem(JSONObject(movieSummary).put("playCount", 1)).playCountLabel)
+        assertNull(parseMediaItem(JSONObject(movieSummary).put("playCount", JSONObject.NULL)).playCountLabel)
+    }
+
+    @Test
+    fun `home discovery rows parse`() {
+        val home = parseMediaHome(
+            JSONObject(
+                """{ "continueWatching": [], "recentMovies": [], "recentShows": [], "recentEpisodes": [], "featured": null,
+                     "myList": [ $movieSummary ], "mostPlayed": [ $movieSummary, $movieSummary ], "recentlyWatched": [ $movieSummary ],
+                     "topRated": [ $movieSummary ],
+                     "genreShelves": [ { "genre": "Comedy", "items": [ $movieSummary ] },
+                                       { "genre": "Drama", "items": [] },
+                                       { "genre": null, "items": [ $movieSummary ] },
+                                       { "genre": "Horror", "items": [ $movieSummary, $movieSummary ] } ],
+                     "movieCount": 396, "showCount": 45, "libraries": [] }""",
+            ),
+        )
+        assertEquals("m1", home.myList.single().id)
+        assertEquals(2, home.mostPlayed.size)
+        assertEquals(1, home.recentlyWatched.size)
+        assertEquals(1, home.topRated.size)
+        // Shelves with no name or no titles are dropped; the rest keep the server's order.
+        assertEquals(listOf("Comedy", "Horror"), home.genreShelves.map { it.genre })
+        assertEquals(2, home.genreShelves.last().items.size)
+    }
+
+    @Test
+    fun `home from an older server has empty discovery rows`() {
+        val home = parseMediaHome(
+            JSONObject("""{ "continueWatching": [ $movieSummary ], "recentMovies": [], "movieCount": 1, "showCount": 0, "libraries": [] }"""),
+        )
+        assertEquals(1, home.continueWatching.size)
+        assertTrue(home.myList.isEmpty())
+        assertTrue(home.mostPlayed.isEmpty())
+        assertTrue(home.recentlyWatched.isEmpty())
+        assertTrue(home.topRated.isEmpty())
+        assertTrue(home.genreShelves.isEmpty())
+
+        val nulls = parseMediaHome(JSONObject("""{ "myList": null, "genreShelves": null, "topRated": null }"""))
+        assertTrue(nulls.myList.isEmpty())
+        assertTrue(nulls.genreShelves.isEmpty())
+        assertTrue(nulls.topRated.isEmpty())
+    }
+
+    @Test
+    fun `my list result names the item actually saved`() {
+        assertEquals("s1" to true, parseMediaListResult(JSONObject("""{ "itemId": "s1", "inList": true }"""), "e1"))
+        assertEquals("m1" to false, parseMediaListResult(JSONObject("""{ "inList": false }"""), "m1"))
+    }
 }

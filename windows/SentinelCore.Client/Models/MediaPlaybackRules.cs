@@ -135,6 +135,14 @@ public static class MediaPlaybackRules
         return string.Join(" · ", parts);
     }
 
+    /// <summary>"Played once", "Played 3 times", or "" when nobody has played it (or the server is too old to say).</summary>
+    public static string PlayCountText(int playCount) => playCount switch
+    {
+        <= 0 => "",
+        1 => "Played once",
+        _ => $"Played {playCount.ToString(CultureInfo.InvariantCulture)} times",
+    };
+
     /// <summary>The <c>start</c> query value the client sends, in the invariant format the server parses.</summary>
     public static string StartQueryValue(double start) => start.ToString("0.###", CultureInfo.InvariantCulture);
 }

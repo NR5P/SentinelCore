@@ -178,6 +178,12 @@ struct MediaItemSummary: Codable, Identifiable, Hashable {
     // Sent on summaries from 2026-09-26 so shelves and episode lists can show it without a
     // detail request; optional because an earlier server does not.
     var overview: String?
+
+    // Sent from 2026-09-29 (Most played, My List). Optional, not defaulted: a `var x = 0` would
+    // make the synthesized decoder require the key, and an older server leaves both out. Read
+    // them through `plays` and `isInList`.
+    var playCount: Int?
+    var inList: Bool?
 }
 
 extension MediaItemSummary {
@@ -185,6 +191,9 @@ extension MediaItemSummary {
     var isShow: Bool { kind == "show" }
     var isEpisode: Bool { kind == "episode" }
     var isWatched: Bool { progress?.isWatched == true }
+    var isInList: Bool { inList == true }
+    // Everyone's presses of Play, a show adding up its episodes.
+    var plays: Int { playCount ?? 0 }
     // A place to pick up from: started, not finished.
     var canResume: Bool { !isWatched && (progress?.position ?? 0) > 0 }
     var progressFraction: Double? { progress?.fraction }
@@ -242,6 +251,17 @@ extension MediaItemSummary {
         }
         if let ratingLabel { parts.append(ratingLabel) }
         return parts.joined(separator: " · ")
+    }
+
+    // "Played 3 times" - nil until someone has pressed Play.
+    var playCountLabel: String? {
+        guard plays > 0 else { return nil }
+        return plays == 1 ? "Played once" : "Played \(plays) times"
+    }
+
+    // The meta line on a detail page: metaLine plus how often it has been played.
+    var detailMetaLine: String {
+        [metaLine, playCountLabel].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     // Episodes still to watch on a show - the badge on its poster. nil when nothing is left or
@@ -410,6 +430,12 @@ struct MediaHome: Decodable {
     var recentShows: [MediaItemSummary]?
     var recentEpisodes: [MediaItemSummary]?
     var featured: MediaItemSummary?
+    // From 2026-09-29; all five are missing from an older server, which reads as empty rows.
+    var myList: [MediaItemSummary]?
+    var mostPlayed: [MediaItemSummary]?
+    var recentlyWatched: [MediaItemSummary]?
+    var topRated: [MediaItemSummary]?
+    var genreShelves: [MediaGenreShelf]?
     var movieCount: Int?
     var showCount: Int?
     var libraries: [MediaLibrary]?
@@ -417,7 +443,17 @@ struct MediaHome: Decodable {
     var isEmpty: Bool {
         (continueWatching ?? []).isEmpty && (recentMovies ?? []).isEmpty
             && (recentShows ?? []).isEmpty && (recentEpisodes ?? []).isEmpty && featured == nil
+            && (myList ?? []).isEmpty && (mostPlayed ?? []).isEmpty && (recentlyWatched ?? []).isEmpty
+            && (topRated ?? []).isEmpty && (genreShelves ?? []).allSatisfy(\.items.isEmpty)
     }
+}
+
+// One of Home's genre rows: "Comedy" and its titles.
+struct MediaGenreShelf: Decodable, Identifiable {
+    var genre: String
+    var items: [MediaItemSummary]
+
+    var id: String { genre }
 }
 
 struct MediaItemsPage: Decodable {
@@ -462,9 +498,20 @@ struct MediaWatchedBody: Encodable {
     var watched: Bool
 }
 
+// POST /api/media/items/{id}/list
+struct MediaListBody: Encodable {
+    var inList: Bool
+}
+
+// The answer to it. `itemId` is the show when an episode's id was posted.
+struct MediaListResult: Decodable {
+    var itemId: String?
+    var inList: Bool
+}
+
 // The sort menu over a Movies or TV Shows grid, in the server's vocabulary.
 enum MediaSort: String, CaseIterable, Identifiable {
-    case title, added, year, rating
+    case title, added, year, rating, plays
     var id: Self { self }
     var title: String {
         switch self {
@@ -472,6 +519,7 @@ enum MediaSort: String, CaseIterable, Identifiable {
         case .added: "Recently Added"
         case .year: "Year"
         case .rating: "Rating"
+        case .plays: "Most Played"
         }
     }
 }

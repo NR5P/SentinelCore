@@ -18,6 +18,8 @@
                 <Button x:Name="HomeTab" Content="Home" Click="OnTabClicked" Tag="home" />
                 <Button x:Name="MoviesTab" Content="Movies" Margin="6,0,0,0" Click="OnTabClicked" Tag="movie" />
                 <Button x:Name="ShowsTab" Content="TV Shows" Margin="6,0,0,0" Click="OnTabClicked" Tag="show" />
+                <Button x:Name="SurpriseButton" Content="Surprise me" Margin="14,0,0,0" Click="OnSurpriseClicked"
+                        ToolTip="Pick something to watch at random" />
                 <TextBox x:Name="SearchBox" Width="220" Margin="14,0,0,0" TextChanged="OnSearchChanged"
                          ToolTip="Search titles" />
                 <Button Margin="8,0,0,0" Padding="10,6" Click="OnRefreshClicked" ToolTip="Refresh now">
@@ -37,6 +39,8 @@
             <ComboBox x:Name="GenrePicker" Width="170" SelectionChanged="OnGenreChanged" />
             <CheckBox x:Name="UnwatchedBox" Content="Unwatched only" Margin="16,0,0,0"
                       Checked="OnUnwatchedChanged" Unchecked="OnUnwatchedChanged" />
+            <CheckBox x:Name="MyListBox" Content="My List" Margin="16,0,0,0"
+                      Checked="OnMyListChanged" Unchecked="OnMyListChanged" />
             <TextBlock x:Name="CountText" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="16,0,0,0" />
         </StackPanel>
 

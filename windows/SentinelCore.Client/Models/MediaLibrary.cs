@@ -215,6 +215,12 @@ public class MediaItemSummary
     public int? WatchedEpisodeCount { get; init; }
     public string? NextEpisodeId { get; init; }
 
+    // How many times anyone in the household pressed Play on it (a show adds up its episodes), and
+    // whether the signed-in user saved it to My List (never on episodes). Both are missing on
+    // servers older than those features, which is 0 and false.
+    public int PlayCount { get; init; }
+    public bool InList { get; init; }
+
     [JsonIgnore] public bool IsMovie => Kind == "movie";
     [JsonIgnore] public bool IsShow => Kind == "show";
     [JsonIgnore] public bool IsEpisode => Kind == "episode";
@@ -320,6 +326,29 @@ public sealed class MediaHome
     public int MovieCount { get; init; }
     public int ShowCount { get; init; }
     public List<MediaLibrary> Libraries { get; init; } = new();
+
+    // The discovery rows. All five are missing from older servers; a null is treated the same, so
+    // the view never has to ask.
+    private List<MediaItemSummary> _myList = new();
+    private List<MediaItemSummary> _mostPlayed = new();
+    private List<MediaItemSummary> _recentlyWatched = new();
+    private List<MediaItemSummary> _topRated = new();
+    private List<MediaGenreShelf> _genreShelves = new();
+
+    public List<MediaItemSummary> MyList { get => _myList; init => _myList = value ?? new(); }
+    public List<MediaItemSummary> MostPlayed { get => _mostPlayed; init => _mostPlayed = value ?? new(); }
+    public List<MediaItemSummary> RecentlyWatched { get => _recentlyWatched; init => _recentlyWatched = value ?? new(); } // "Watch again"
+    public List<MediaItemSummary> TopRated { get => _topRated; init => _topRated = value ?? new(); }
+    public List<MediaGenreShelf> GenreShelves { get => _genreShelves; init => _genreShelves = value ?? new(); }
+}
+
+// One of Home's genre rows: a different pick of genres each day.
+public sealed class MediaGenreShelf
+{
+    private List<MediaItemSummary> _items = new();
+
+    public string Genre { get; init; } = "";
+    public List<MediaItemSummary> Items { get => _items; init => _items = value ?? new(); }
 }
 
 public sealed class MediaItemsPage
@@ -368,4 +397,17 @@ public sealed class MediaProgressInput
 public sealed class MediaWatchedInput
 {
     public bool Watched { get; init; }
+}
+
+// POST /api/media/items/{id}/list
+public sealed class MediaListInput
+{
+    public bool InList { get; init; }
+}
+
+// What the list route answers. ItemId is the show when an episode's id was posted.
+public sealed class MediaListResult
+{
+    public string ItemId { get; init; } = "";
+    public bool InList { get; init; }
 }

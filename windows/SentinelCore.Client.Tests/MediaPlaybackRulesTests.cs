@@ -130,6 +130,16 @@ public class MediaPlaybackRulesTests
         Assert.Equal("", MediaPlaybackRules.MetaLine(new MediaItemSummary { Kind = "movie" }));
     }
 
+    [Theory]
+    [InlineData(0, "")]
+    [InlineData(-1, "")]
+    [InlineData(1, "Played once")]
+    [InlineData(3, "Played 3 times")]
+    public void Play_count_text_says_once_and_hides_zero(int playCount, string expected)
+    {
+        Assert.Equal(expected, MediaPlaybackRules.PlayCountText(playCount));
+    }
+
     [Fact]
     public void The_start_query_value_is_culture_proof()
     {

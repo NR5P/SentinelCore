@@ -584,6 +584,7 @@ public sealed partial class SentinelClient : IDisposable
         bool unwatched = false,
         int offset = 0,
         int limit = 60,
+        bool inList = false,
         CancellationToken ct = default)
     {
         var parameters = new List<KeyValuePair<string, string>>();
@@ -593,6 +594,7 @@ public sealed partial class SentinelClient : IDisposable
         if (!string.IsNullOrEmpty(sort)) parameters.Add(new KeyValuePair<string, string>("sort", sort));
         if (!string.IsNullOrEmpty(order)) parameters.Add(new KeyValuePair<string, string>("order", order));
         if (unwatched) parameters.Add(new KeyValuePair<string, string>("unwatched", "true"));
+        if (inList) parameters.Add(new KeyValuePair<string, string>("list", "true"));
         if (offset > 0) parameters.Add(new KeyValuePair<string, string>("offset", offset.ToString(CultureInfo.InvariantCulture)));
         parameters.Add(new KeyValuePair<string, string>("limit", limit.ToString(CultureInfo.InvariantCulture)));
         return GetAsync<MediaItemsPage>("/api/media/items", parameters, ct);
@@ -600,6 +602,21 @@ public sealed partial class SentinelClient : IDisposable
 
     public Task<MediaItemDetail> MediaItemAsync(string id, CancellationToken ct = default) =>
         GetAsync<MediaItemDetail>($"/api/media/items/{Uri.EscapeDataString(id)}", ct: ct);
+
+    /// <summary>
+    /// One movie or show picked at random ("Surprise me"), unwatched ones preferred. When nothing
+    /// matches the server answers 404 with a sentence to show, which arrives as the
+    /// SentinelServerException message like every other refusal.
+    /// </summary>
+    public Task<MediaItemSummary> GetRandomMediaAsync(
+        string? kind = null, string? libraryId = null, string? genre = null, CancellationToken ct = default)
+    {
+        var parameters = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrEmpty(kind)) parameters.Add(new KeyValuePair<string, string>("kind", kind));
+        if (!string.IsNullOrEmpty(libraryId)) parameters.Add(new KeyValuePair<string, string>("libraryId", libraryId));
+        if (!string.IsNullOrEmpty(genre)) parameters.Add(new KeyValuePair<string, string>("genre", genre));
+        return GetAsync<MediaItemSummary>("/api/media/random", parameters, ct);
+    }
 
     /// <summary>
     /// Asks for a way to play one item. <paramref name="start"/> null resumes from the saved
@@ -649,6 +666,14 @@ public sealed partial class SentinelClient : IDisposable
             $"/api/media/items/{Uri.EscapeDataString(id)}/watched",
             HttpMethod.Post,
             new MediaWatchedInput { Watched = watched },
+            ct);
+
+    /// <summary>Adds to or removes from the signed-in user's My List. An episode's id saves its show.</summary>
+    public Task<MediaListResult> SetInMyListAsync(string id, bool inList, CancellationToken ct = default) =>
+        SendAsync<MediaListResult, MediaListInput>(
+            $"/api/media/items/{Uri.EscapeDataString(id)}/list",
+            HttpMethod.Post,
+            new MediaListInput { InList = inList },
             ct);
 
     public Task<MediaProgress> SetMediaSeasonWatchedAsync(

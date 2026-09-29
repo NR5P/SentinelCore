@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -93,8 +94,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 // The Movies tab: a family media library in the style of Jellyfin. The contract is
-// core/docs/MOVIES.md. Home shows shelves (continue watching, recently added); Movies and TV Shows
-// are paged poster grids with sort, genre and unwatched filters; search spans both.
+// core/docs/MOVIES.md. Home shows shelves (continue watching, My List, recently added, most played,
+// genres…); Movies and TV Shows are paged poster grids with sort, genre, unwatched and My List
+// filters; search spans both.
 
 const val MOVIE_DETAIL_ROUTE = "movies/item/{id}"
 const val MOVIE_PLAYER_ROUTE = "movies/play/{id}?start={start}"
@@ -111,13 +113,21 @@ private enum class MoviesPane(val title: String, val kind: String?) {
     SHOWS("TV Shows", "show"),
 }
 
-private val SORTS = listOf("title" to "Title", "added" to "Date added", "year" to "Year", "rating" to "Rating")
+private val SORTS = listOf(
+    "title" to "Title",
+    "added" to "Date added",
+    "year" to "Year",
+    "rating" to "Rating",
+    "plays" to "Most played",
+)
 
 internal data class LibraryFilter(
     val sort: String = "title",
     val order: String = "asc",
     val genre: String? = null,
     val unwatched: Boolean = false,
+    // Only this account's My List.
+    val inList: Boolean = false,
 )
 
 // One paged grid's worth of results. Replaced only when a response arrives, so coming back to the
@@ -139,6 +149,7 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
     var home by mutableStateOf<MediaHome?>(null)
     var homeLoading by mutableStateOf(false)
     var homeError by mutableStateOf<String?>(null)
+    var surprising by mutableStateOf(false)
     private val grids = mutableMapOf<String, LibraryGrid>()
     val filters = mutableMapOf<String, LibraryFilter>()
 
@@ -160,6 +171,19 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
         }
     }
 
+    // "Surprise me": opens a random title's page, or shows the server's reason (a 404 when nothing
+    // matches) where Home shows its other errors.
+    fun surprise(onItem: (MediaItemSummary) -> Unit) {
+        if (surprising) return
+        viewModelScope.launch {
+            surprising = true
+            runCatching { app.mediaRandom() }
+                .onSuccess { homeError = null; onItem(it) }
+                .onFailure { homeError = it.message ?: "Could not pick something." }
+            surprising = false
+        }
+    }
+
     // Loads the first page for these parameters. The same parameters again (coming back to the
     // screen, or Refresh) reload in place; different ones clear the grid first.
     fun reload(kind: String?, query: String, filter: LibraryFilter) {
@@ -174,7 +198,7 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
         grid.loading = true
         grid.job = viewModelScope.launch {
             runCatching {
-                app.mediaItems(kind, query, filter.genre, filter.sort, filter.order, filter.unwatched, offset = 0)
+                app.mediaItems(kind, query, filter.genre, filter.sort, filter.order, filter.unwatched, offset = 0, list = filter.inList)
             }.onSuccess { page ->
                 if (generation != grid.generation) return@onSuccess
                 grid.items.clear()
@@ -199,7 +223,7 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
         grid.loading = true
         grid.job = viewModelScope.launch {
             runCatching {
-                app.mediaItems(kind, query, filter.genre, filter.sort, filter.order, filter.unwatched, offset = offset)
+                app.mediaItems(kind, query, filter.genre, filter.sort, filter.order, filter.unwatched, offset = offset, list = filter.inList)
             }.onSuccess { page ->
                 if (generation != grid.generation) return@onSuccess
                 val known = grid.items.map { it.id }.toHashSet()
@@ -239,6 +263,11 @@ fun MoviesScreen(
             state,
             onRefresh = { refreshTick++ },
             actions = {
+                if (pane == MoviesPane.HOME && query.isBlank()) {
+                    IconButton(onClick = { browse.surprise(open) }, enabled = !browse.surprising) {
+                        Icon(Icons.Default.Shuffle, contentDescription = "Surprise me")
+                    }
+                }
                 IconButton(onClick = {
                     searchOpen = !searchOpen
                     if (!searchOpen) query = ""
@@ -333,23 +362,14 @@ private fun MoviesHome(
                         }
                     }
                 }
+                if (home.myList.isNotEmpty()) {
+                    item { PosterShelf(model, "My List", home.myList, keyPrefix = "ml-", onItem = onItem) }
+                }
                 if (home.recentMovies.isNotEmpty()) {
-                    item {
-                        Shelf("Recently Added Movies") {
-                            items(home.recentMovies, key = { "rm-" + it.id }) { entry ->
-                                PosterCard(model, entry, onClick = { onItem(entry) }, modifier = Modifier.width(120.dp))
-                            }
-                        }
-                    }
+                    item { PosterShelf(model, "Recently Added Movies", home.recentMovies, keyPrefix = "rm-", onItem = onItem) }
                 }
                 if (home.recentShows.isNotEmpty()) {
-                    item {
-                        Shelf("Recently Added Shows") {
-                            items(home.recentShows, key = { "rs-" + it.id }) { entry ->
-                                PosterCard(model, entry, onClick = { onItem(entry) }, modifier = Modifier.width(120.dp))
-                            }
-                        }
-                    }
+                    item { PosterShelf(model, "Recently Added Shows", home.recentShows, keyPrefix = "rs-", onItem = onItem) }
                 }
                 if (home.recentEpisodes.isNotEmpty()) {
                     item {
@@ -360,8 +380,25 @@ private fun MoviesHome(
                         }
                     }
                 }
-                if (home.featured == null && home.continueWatching.isEmpty() && home.recentMovies.isEmpty() &&
-                    home.recentShows.isEmpty() && home.recentEpisodes.isEmpty()
+                if (home.mostPlayed.isNotEmpty()) {
+                    item { PosterShelf(model, "Most Played", home.mostPlayed, keyPrefix = "mp-", onItem = onItem) }
+                }
+                if (home.topRated.isNotEmpty()) {
+                    item { PosterShelf(model, "Top Rated", home.topRated, keyPrefix = "tr-", onItem = onItem) }
+                }
+                // The index keeps two shelves' card keys apart even if a server ever repeated a genre.
+                home.genreShelves.forEachIndexed { index, shelf ->
+                    item {
+                        PosterShelf(model, shelf.genre, shelf.items, keyPrefix = "g$index-", onItem = onItem)
+                    }
+                }
+                if (home.recentlyWatched.isNotEmpty()) {
+                    item { PosterShelf(model, "Watch Again", home.recentlyWatched, keyPrefix = "wa-", onItem = onItem) }
+                }
+                if (home.featured == null && home.continueWatching.isEmpty() && home.myList.isEmpty() &&
+                    home.recentMovies.isEmpty() && home.recentShows.isEmpty() && home.recentEpisodes.isEmpty() &&
+                    home.mostPlayed.isEmpty() && home.topRated.isEmpty() && home.genreShelves.isEmpty() &&
+                    home.recentlyWatched.isEmpty()
                 ) {
                     item {
                         EmptyState(
@@ -419,6 +456,22 @@ private fun Shelf(title: String, content: androidx.compose.foundation.lazy.LazyL
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
+    }
+}
+
+// A row of posters; keyPrefix keeps its keys apart from the other rows, which can hold the same titles.
+@Composable
+private fun PosterShelf(
+    model: SentinelViewModel,
+    title: String,
+    entries: List<MediaItemSummary>,
+    keyPrefix: String,
+    onItem: (MediaItemSummary) -> Unit,
+) {
+    Shelf(title) {
+        items(entries, key = { keyPrefix + it.id }) { entry ->
+            PosterCard(model, entry, onClick = { onItem(entry) }, modifier = Modifier.width(120.dp))
+        }
     }
 }
 
@@ -549,7 +602,8 @@ private fun LibraryGridPane(
                     title = if (query.isNotBlank()) "No matches" else "Nothing here",
                     message = when {
                         query.isNotBlank() -> "Nothing matches \"${query.trim()}\"."
-                        filter.unwatched || filter.genre != null -> "Nothing matches these filters."
+                        filter.inList && !filter.unwatched && filter.genre == null -> "Nothing is on your list yet."
+                        filter.unwatched || filter.inList || filter.genre != null -> "Nothing matches these filters."
                         else -> "Nothing has been added to this library yet."
                     },
                     modifier = Modifier.align(Alignment.Center),
@@ -644,6 +698,11 @@ private fun FilterBar(
             selected = filter.unwatched,
             onClick = { onChange(filter.copy(unwatched = !filter.unwatched)) },
             label = { Text("Unwatched") },
+        )
+        FilterChip(
+            selected = filter.inList,
+            onClick = { onChange(filter.copy(inList = !filter.inList)) },
+            label = { Text("My List") },
         )
         if (total > 0) {
             Text("$total $noun", style = MaterialTheme.typography.labelMedium, color = SentinelTextDim)

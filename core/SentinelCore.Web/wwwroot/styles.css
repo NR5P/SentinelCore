@@ -4740,6 +4740,12 @@ body.hub-wall main {
   box-shadow: none;
 }
 
+/* My List on the detail page: the same glass button, lit green once the title is saved. */
+.mv-list-btn.on {
+  border-color: var(--green);
+  color: var(--green);
+}
+
 .mv-btn-quiet {
   border-color: transparent;
   color: var(--text-dim);

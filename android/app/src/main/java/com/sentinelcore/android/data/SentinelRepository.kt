@@ -383,8 +383,15 @@ class SentinelRepository(
         unwatched: Boolean,
         offset: Int,
         limit: Int = MediaApi.PAGE_SIZE,
+        list: Boolean = false,
     ): MediaItemsPage = withContext(Dispatchers.IO) {
-        parseMediaItemsPage(JSONObject(request(MediaApi.itemsPath(kind, query, genre, sort, order, unwatched, offset, limit))))
+        parseMediaItemsPage(JSONObject(request(MediaApi.itemsPath(kind, query, genre, sort, order, unwatched, offset, limit, list))))
+    }
+
+    // "Surprise me". A 404 when nothing matches throws with the server's own "Nothing in the
+    // library matches that yet." as the message.
+    suspend fun mediaRandom(): MediaItemSummary = withContext(Dispatchers.IO) {
+        parseMediaItem(JSONObject(request(MediaApi.RANDOM_PATH)))
     }
 
     suspend fun mediaItem(id: String): MediaItemDetail = withContext(Dispatchers.IO) {
@@ -411,6 +418,16 @@ class SentinelRepository(
             body = JSONObject().put("watched", watched).toString(),
         )
         runCatching { parseMediaProgress(JSONObject(text)) }.getOrNull()
+    }
+
+    // Adds to (or removes from) this account's My List. Returns whether it is on the list now.
+    suspend fun setMediaInList(id: String, inList: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val text = request(
+            MediaApi.listPath(id),
+            method = "POST",
+            body = JSONObject().put("inList", inList).toString(),
+        )
+        runCatching { parseMediaListResult(JSONObject(text), id).second }.getOrDefault(inList)
     }
 
     suspend fun setMediaSeasonWatched(showId: String, season: Int, watched: Boolean): Unit = withContext(Dispatchers.IO) {

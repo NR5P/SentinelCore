@@ -95,7 +95,8 @@ public sealed class BackupService(
             await organizerAutomations.GetAllAsync(ct),
             new AlarmBackup(await alarmStore.GetSensorsAsync(ct), await alarmStore.GetConfigAsync(ct)),
             await familyDrives.GetAllAsync(ct),
-            new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct), mediaComputers.All()),
+            new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct), mediaComputers.All(),
+                await media.AllPlaysAsync(ct), await media.AllWatchlistAsync(ct)),
             warnings.Count > 0 ? warnings : null);
     }
 
@@ -445,6 +446,8 @@ public sealed class BackupService(
             mediaComputers.Restore(mediaBackup.NetworkComputers ?? []);
             mediaProgressRestored = await media.RestoreProgressAsync(
                 (mediaBackup.Progress ?? []).Where(p => p.ItemId != Guid.Empty && p.UserKey is not null), ct);
+            await media.RestorePlaysAsync((mediaBackup.Plays ?? []).Where(p => p.ItemId != Guid.Empty && p.UserKey is not null), ct);
+            await media.RestoreWatchlistAsync((mediaBackup.Watchlist ?? []).Where(w => w.ItemId != Guid.Empty && w.UserKey is not null), ct);
             if (mediaLibrariesRestored > 0)
             {
                 mediaScanner.RequestScan(null);

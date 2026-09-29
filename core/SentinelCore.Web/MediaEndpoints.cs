@@ -12,6 +12,11 @@ public static class MediaEndpoints
     private const int DefaultPageSize = 60;
     private const int MaxPageSize = 500;
     private const int ShelfSize = 20;
+    // TMDB's 0-10 vote average; 7 and up is "people liked it".
+    private const double TopRatedFloor = 7.0;
+    // A genre needs this many titles before it gets its own shelf on Home.
+    private const int GenreShelfMinimum = 6;
+    private const int GenreShelfCount = 3;
     private const string OffMessage = "Movies & TV is turned off in Settings.";
 
     public static void MapMediaEndpoints(this WebApplication app)
@@ -458,6 +463,12 @@ public static class MediaEndpoints
                 recentMovies = recentMovies.Select(view.Summary),
                 recentShows = recentShows.Select(view.Summary),
                 recentEpisodes = recentEpisodes.Select(view.Summary),
+                myList = view.MyList().Take(ShelfSize).Select(view.Summary),
+                mostPlayed = view.MostPlayed().Take(ShelfSize).Select(view.Summary),
+                recentlyWatched = view.RecentlyWatched(continueWatching).Take(ShelfSize).Select(view.Summary),
+                topRated = view.TopRated().Take(ShelfSize).Select(view.Summary),
+                genreShelves = view.GenreShelves(GenreShelfCount, DateTimeOffset.UtcNow)
+                    .Select(shelf => new { genre = shelf.Genre, items = shelf.Items.Select(view.Summary) }),
                 featured = view.Featured(continueWatching, recentMovies, shows) is { } featured ? view.Summary(featured) : null,
                 movieCount = movies.Count,
                 showCount = shows.Count,
@@ -467,7 +478,7 @@ public static class MediaEndpoints
 
         enabled.MapGet("/items", async (
             HttpContext context, IMediaStore store, string? kind, Guid? libraryId, string? q, string? genre, string? sort, string? order,
-            bool? unwatched, int? offset, int? limit, CancellationToken ct) =>
+            bool? unwatched, bool? list, int? offset, int? limit, CancellationToken ct) =>
         {
             var kinds = kind switch
             {
@@ -486,26 +497,43 @@ public static class MediaEndpoints
             if (!string.IsNullOrWhiteSpace(genre))
                 items = items.Where(i => i.Genres.Contains(genre.Trim(), StringComparer.OrdinalIgnoreCase));
             if (unwatched == true) items = items.Where(i => !view.IsWatched(i));
+            if (list == true) items = items.Where(view.InList);
 
             var sortKey = sort?.ToLowerInvariant() ?? "title";
-            var descending = order is null ? sortKey is "added" or "rating" or "year" : order.Equals("desc", StringComparison.OrdinalIgnoreCase);
+            var descending = order is null ? sortKey is "added" or "rating" or "year" or "plays" : order.Equals("desc", StringComparison.OrdinalIgnoreCase);
             items = sortKey switch
             {
+                "plays" => descending
+                    ? items.OrderByDescending(view.PlayCount).ThenByDescending(i => view.PlaysOf(i)?.LastPlayedAt ?? DateTimeOffset.MinValue).ThenBy(i => i.SortTitle, StringComparer.Ordinal)
+                    : Order(items, view.PlayCount, descending),
                 "added" => Order(items, i => i.Kind == MediaKinds.Show ? view.LatestEpisodeAdded(i) : i.AddedAt, descending),
                 "year" => Order(items, i => i.Year ?? 0, descending),
                 "rating" => Order(items, i => i.Rating ?? 0, descending),
                 _ => Order(items, i => i.SortTitle, descending)
             };
 
-            var list = items.ToList();
+            var matches = items.ToList();
             var skip = Math.Max(0, offset ?? 0);
             var take = Math.Clamp(limit ?? DefaultPageSize, 1, MaxPageSize);
             return Results.Ok(new
             {
-                items = list.Skip(skip).Take(take).Select(view.Summary),
-                total = list.Count,
+                items = matches.Skip(skip).Take(take).Select(view.Summary),
+                total = matches.Count,
                 genres = await store.GenresAsync(kind is MediaKinds.Movie or MediaKinds.Show ? kind : null, libraryId, ct)
             });
+        });
+
+        // "Surprise me": one movie or show at random, unwatched ones first.
+        enabled.MapGet("/random", async (HttpContext context, IMediaStore store, string? kind, Guid? libraryId, string? genre, bool? unwatched, CancellationToken ct) =>
+        {
+            var view = await MediaView.LoadAsync(store, UserKey(context), ct);
+            var pool = view.Items.Where(i => (kind is MediaKinds.Movie or MediaKinds.Show ? i.Kind == kind : i.Kind is MediaKinds.Movie or MediaKinds.Show)
+                && (libraryId is null || i.LibraryId == libraryId)
+                && (string.IsNullOrWhiteSpace(genre) || i.Genres.Contains(genre.Trim(), StringComparer.OrdinalIgnoreCase))).ToList();
+            if (unwatched != false && pool.Where(i => !view.IsWatched(i)).ToList() is { Count: > 0 } fresh) pool = fresh;
+            return pool.Count == 0
+                ? Results.NotFound(new { error = "Nothing in the library matches that yet." })
+                : Results.Ok(view.Summary(pool[Random.Shared.Next(pool.Count)]));
         });
 
         enabled.MapGet("/items/{id:guid}", async (Guid id, HttpContext context, IMediaStore store, MediaScanner scanner, CancellationToken ct) =>
@@ -588,9 +616,11 @@ public static class MediaEndpoints
             var subtitleOffset = plan.Direct ? 0 : startSeconds;
             var subtitles = item.SubtitleTracks.Select(track => SubtitleDto(item, track, subtitleOffset)).ToList();
             var summary = view.Summary(item);
+            var play = new MediaPlay(UserKey(context), item.Id, DateTimeOffset.UtcNow);
 
             if (plan.Direct)
             {
+                await store.RecordPlayAsync(play, MediaPlay.SameSitting, ct);
                 var extension = Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant();
                 return Results.Ok(new
                 {
@@ -633,6 +663,7 @@ public static class MediaEndpoints
                     .Select(line => line.Replace(input, Path.GetFileName(item.Path)).Replace(item.Path, Path.GetFileName(item.Path)));
                 return Results.Json(new { error = ex.Message, detail = string.Join("\n", tail) }, statusCode: StatusCodes.Status502BadGateway);
             }
+            await store.RecordPlayAsync(play, MediaPlay.SameSitting, ct);
 
             return Results.Ok(new
             {
@@ -756,6 +787,16 @@ public static class MediaEndpoints
                 : [item];
             var result = await SetWatchedAsync(targets, input.Watched, UserKey(context), store, ct);
             return JsonOrNull(item.Kind == MediaKinds.Show ? null : result);
+        });
+
+        enabled.MapPost("/items/{id:guid}/list", async (Guid id, MediaListInput input, HttpContext context, IMediaStore store, CancellationToken ct) =>
+        {
+            var item = await store.GetItemAsync(id, ct);
+            if (item is null) return Results.NotFound(new { error = "That title is not in the library any more." });
+            // My List holds movies and shows; saving an episode saves its show.
+            var target = item.Kind == MediaKinds.Episode && item.ParentId is { } parent ? parent : item.Id;
+            await store.SetInWatchlistAsync(UserKey(context), target, input.InList, ct);
+            return Results.Ok(new { itemId = target, inList = input.InList });
         });
 
         enabled.MapPost("/items/{id:guid}/seasons/{season:int}/watched", async (
@@ -930,9 +971,15 @@ public static class MediaEndpoints
         private readonly Dictionary<Guid, MediaProgress> _progress;
         private readonly Dictionary<Guid, List<MediaItem>> _episodesByShow;
 
-        private MediaView(IReadOnlyList<MediaItem> items, IReadOnlyList<MediaProgress> progress)
+        private readonly IReadOnlyDictionary<Guid, MediaPlayStats> _plays;
+        private readonly Dictionary<Guid, DateTimeOffset> _list;
+
+        private MediaView(IReadOnlyList<MediaItem> items, IReadOnlyList<MediaProgress> progress,
+            IReadOnlyDictionary<Guid, MediaPlayStats> plays, IReadOnlyList<MediaWatchlistEntry> watchlist)
         {
             Items = items;
+            _plays = plays;
+            _list = watchlist.GroupBy(w => w.ItemId).ToDictionary(g => g.Key, g => g.First().AddedAt);
             _byId = items.ToDictionary(i => i.Id);
             _progress = progress.GroupBy(p => p.ItemId).ToDictionary(g => g.Key, g => g.First());
             _episodesByShow = items.Where(i => i.Kind == MediaKinds.Episode && i.ParentId is not null)
@@ -946,7 +993,86 @@ public static class MediaEndpoints
         public IReadOnlyList<MediaProgress> Progress { get; }
 
         public static async Task<MediaView> LoadAsync(IMediaStore store, string userKey, CancellationToken cancellationToken) =>
-            new(await store.GetItemsAsync(new MediaQuery(), cancellationToken), await store.GetProgressAsync(userKey, cancellationToken));
+            new(await store.GetItemsAsync(new MediaQuery(), cancellationToken), await store.GetProgressAsync(userKey, cancellationToken),
+                await store.PlayStatsAsync(cancellationToken), await store.GetWatchlistAsync(userKey, cancellationToken));
+
+        // Everyone's plays. A show counts the plays of its episodes.
+        public MediaPlayStats? PlaysOf(MediaItem item)
+        {
+            if (item.Kind != MediaKinds.Show) return _plays.GetValueOrDefault(item.Id);
+            var episodes = EpisodesOf(item.Id).Select(e => _plays.GetValueOrDefault(e.Id)).OfType<MediaPlayStats>().ToList();
+            return episodes.Count == 0 ? null : new MediaPlayStats(episodes.Sum(p => p.Count), episodes.Max(p => p.LastPlayedAt));
+        }
+
+        public int PlayCount(MediaItem item) => PlaysOf(item)?.Count ?? 0;
+
+        public bool InList(MediaItem item) => _list.ContainsKey(item.Id);
+
+        // My List, newest addition first. Only movies and shows go in it.
+        public IEnumerable<MediaItem> MyList() => _list.OrderByDescending(e => e.Value)
+            .Select(e => Find(e.Key)).OfType<MediaItem>().Where(i => i.Kind is MediaKinds.Movie or MediaKinds.Show);
+
+        // The household's favourites: most plays first, the more recently played breaking ties.
+        public IEnumerable<MediaItem> MostPlayed() => Items
+            .Where(i => i.Kind is MediaKinds.Movie or MediaKinds.Show)
+            .Select(i => (Item: i, Plays: PlaysOf(i)))
+            .Where(p => p.Plays is { Count: > 0 })
+            .OrderByDescending(p => p.Plays!.Count).ThenByDescending(p => p.Plays!.LastPlayedAt).ThenBy(p => p.Item.SortTitle, StringComparer.Ordinal)
+            .Select(p => p.Item);
+
+        // What this person finished lately: movies they watched to the end and shows they have
+        // seen episodes of, newest first. Anything already on Continue Watching is left off.
+        public IEnumerable<MediaItem> RecentlyWatched(IReadOnlyCollection<MediaItem> continueWatching)
+        {
+            var skip = continueWatching.Select(i => i.Kind == MediaKinds.Episode && i.ParentId is { } show ? show : i.Id).ToHashSet();
+            var seen = new HashSet<Guid>();
+            foreach (var progress in Progress.Where(p => p.Watched).OrderByDescending(p => p.UpdatedAt))
+            {
+                if (Find(progress.ItemId) is not { } item) continue;
+                var target = item.Kind == MediaKinds.Episode && item.ParentId is { } parent ? Find(parent) : item;
+                if (target is null || skip.Contains(target.Id) || !seen.Add(target.Id)) continue;
+                yield return target;
+            }
+        }
+
+        // Well-reviewed titles this person has not finished yet. Needs TMDB ratings.
+        public IEnumerable<MediaItem> TopRated() => Items
+            .Where(i => i.Kind is MediaKinds.Movie or MediaKinds.Show && i.Rating is >= TopRatedFloor && !IsWatched(i))
+            .OrderByDescending(i => i.Rating).ThenBy(i => i.SortTitle, StringComparer.Ordinal);
+
+        // A few genre shelves that change daily: genres with enough titles to fill a row, picked
+        // by the day of the year, each row unwatched-first in a daily shuffle.
+        public List<(string Genre, List<MediaItem> Items)> GenreShelves(int count, DateTimeOffset now)
+        {
+            var titles = Items.Where(i => i.Kind is MediaKinds.Movie or MediaKinds.Show).ToList();
+            var genres = titles.SelectMany(i => i.Genres).GroupBy(g => g, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() >= GenreShelfMinimum)
+                .Select(g => g.Key).OrderBy(g => g, StringComparer.OrdinalIgnoreCase).ToList();
+            if (genres.Count == 0) return [];
+            var day = now.UtcDateTime.DayOfYear + now.UtcDateTime.Year * 366;
+            var start = day % genres.Count;
+            return Enumerable.Range(0, Math.Min(count, genres.Count))
+                .Select(offset => genres[(start + offset * Math.Max(1, genres.Count / count)) % genres.Count])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(genre => (genre, titles
+                    .Where(i => i.Genres.Contains(genre, StringComparer.OrdinalIgnoreCase))
+                    .OrderBy(IsWatched)
+                    .ThenBy(i => DailyShuffle(i.Id, day))
+                    .Take(ShelfSize).ToList()))
+                .ToList();
+        }
+
+        // Guid.GetHashCode is stable across restarts (HashCode.Combine is not), so the day's
+        // order survives the server restarting.
+        private static uint DailyShuffle(Guid id, int day)
+        {
+            var x = unchecked((uint)id.GetHashCode() ^ (uint)day * 2654435761u);
+            x ^= x >> 16;
+            x = unchecked(x * 0x7feb352du);
+            x ^= x >> 15;
+            x = unchecked(x * 0x846ca68bu);
+            return x ^ (x >> 16);
+        }
 
         public MediaItem? Find(Guid id) => _byId.GetValueOrDefault(id);
 
@@ -1088,7 +1214,9 @@ public static class MediaEndpoints
                 BackdropUrl = ArtUrl(item, "backdrop") ?? (show is not null ? ArtUrl(show, "backdrop") : null),
                 ThumbUrl = item.Kind == MediaKinds.Episode ? ArtUrl(item, "thumb") : null,
                 AddedAt = item.Kind == MediaKinds.Show ? LatestEpisodeAdded(item) : item.AddedAt,
-                Progress = item.IsPlayable ? ProgressDto(ProgressOf(item.Id)) : null
+                Progress = item.IsPlayable ? ProgressDto(ProgressOf(item.Id)) : null,
+                PlayCount = PlayCount(item),
+                InList = InList(item)
             };
             if (show is not null)
             {
@@ -1132,7 +1260,7 @@ public static class MediaEndpoints
                 summary.Rating, summary.Certification, summary.RuntimeMinutes, summary.DurationSeconds, summary.PosterUrl,
                 summary.BackdropUrl, summary.ThumbUrl, summary.AddedAt, summary.Progress, summary.ShowId, summary.ShowTitle,
                 summary.SeasonNumber, summary.EpisodeNumber, summary.AirDate, summary.SeasonCount, summary.EpisodeCount,
-                summary.WatchedEpisodeCount, summary.NextEpisodeId, summary.Overview,
+                summary.WatchedEpisodeCount, summary.NextEpisodeId, summary.Overview, summary.PlayCount, summary.InList,
                 tagline = item.Tagline,
                 releaseDate = item.ReleaseDate,
                 cast = item.Cast.Select(c => new { name = c.Name, character = c.Character }),
@@ -1205,5 +1333,7 @@ public static class MediaEndpoints
         public int? EpisodeCount { get; set; }
         public int? WatchedEpisodeCount { get; set; }
         public Guid? NextEpisodeId { get; set; }
+        public int PlayCount { get; set; }
+        public bool InList { get; set; }
     }
 }

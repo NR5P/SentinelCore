@@ -66,6 +66,10 @@ data class MediaItemSummary(
     val episodeCount: Int? = null,
     val watchedEpisodeCount: Int? = null,
     val nextEpisodeId: String? = null,
+    // Plays by anyone in the household (a show adds up its episodes), and whether this account
+    // saved it to My List. Missing on older servers, hence the defaults.
+    val playCount: Int = 0,
+    val inList: Boolean = false,
 ) {
     val isMovie: Boolean get() = kind == "movie"
     val isShow: Boolean get() = kind == "show"
@@ -89,6 +93,14 @@ data class MediaItemSummary(
             total > 0 && (watchedEpisodeCount ?: 0) >= total
         } else {
             progress?.watched == true
+        }
+
+    // "Played once" / "Played 3 times", or null when nobody has played it.
+    val playCountLabel: String?
+        get() = when {
+            playCount <= 0 -> null
+            playCount == 1 -> "Played once"
+            else -> "Played $playCount times"
         }
 
     // 0-1 for a progress bar, or null when there is nothing part-way to show.
@@ -166,7 +178,17 @@ data class MediaHome(
     val movieCount: Int = 0,
     val showCount: Int = 0,
     val libraries: List<MediaLibrary> = emptyList(),
+    // The discovery rows. All missing from older servers, which reads as empty.
+    val myList: List<MediaItemSummary> = emptyList(),
+    val mostPlayed: List<MediaItemSummary> = emptyList(),
+    // "Watch again".
+    val recentlyWatched: List<MediaItemSummary> = emptyList(),
+    val topRated: List<MediaItemSummary> = emptyList(),
+    val genreShelves: List<MediaGenreShelf> = emptyList(),
 )
+
+// One genre row on Home - a few genres are picked each day.
+data class MediaGenreShelf(val genre: String, val items: List<MediaItemSummary>)
 
 data class MediaItemsPage(
     val items: List<MediaItemSummary>,
@@ -465,6 +487,8 @@ internal fun parseMediaItem(json: JSONObject): MediaItemSummary = MediaItemSumma
     episodeCount = json.intOrNull("episodeCount"),
     watchedEpisodeCount = json.intOrNull("watchedEpisodeCount"),
     nextEpisodeId = json.stringOrNull("nextEpisodeId"),
+    playCount = json.optInt("playCount", 0),
+    inList = json.optBoolean("inList", false),
 )
 
 internal fun parseMediaItems(array: JSONArray?): List<MediaItemSummary> = array.objects(::parseMediaItem)
@@ -537,7 +561,19 @@ internal fun parseMediaHome(json: JSONObject): MediaHome = MediaHome(
     movieCount = json.optInt("movieCount"),
     showCount = json.optInt("showCount"),
     libraries = json.arrayOrNull("libraries").objects(::parseMediaLibrary),
+    myList = parseMediaItems(json.arrayOrNull("myList")),
+    mostPlayed = parseMediaItems(json.arrayOrNull("mostPlayed")),
+    recentlyWatched = parseMediaItems(json.arrayOrNull("recentlyWatched")),
+    topRated = parseMediaItems(json.arrayOrNull("topRated")),
+    // A shelf without a genre name or without titles has nothing to show.
+    genreShelves = json.arrayOrNull("genreShelves").objects { shelf ->
+        MediaGenreShelf(genre = shelf.stringOrNull("genre").orEmpty(), items = parseMediaItems(shelf.arrayOrNull("items")))
+    }.filter { it.genre.isNotEmpty() && it.items.isNotEmpty() },
 )
+
+// POST /api/media/items/{id}/list. `itemId` is the show when an episode's id was posted.
+internal fun parseMediaListResult(json: JSONObject, fallbackId: String): Pair<String, Boolean> =
+    (json.stringOrNull("itemId") ?: fallbackId) to json.optBoolean("inList")
 
 internal fun parseMediaItemsPage(json: JSONObject): MediaItemsPage = MediaItemsPage(
     items = parseMediaItems(json.arrayOrNull("items")),
@@ -677,6 +713,7 @@ internal object MediaApi {
         unwatched: Boolean = false,
         offset: Int = 0,
         limit: Int = PAGE_SIZE,
+        list: Boolean = false,
     ): String {
         val parts = buildList {
             kind?.let { add("kind=${query(it)}") }
@@ -685,6 +722,7 @@ internal object MediaApi {
             add("sort=${query(sort)}")
             add("order=${query(order)}")
             if (unwatched) add("unwatched=true")
+            if (list) add("list=true")
             add("offset=$offset")
             add("limit=$limit")
         }
@@ -707,6 +745,11 @@ internal object MediaApi {
         }
         return itemPath(id) + "/playback?" + parts.joinToString("&")
     }
+
+    fun listPath(id: String): String = itemPath(id) + "/list"
+
+    // "Surprise me": one movie or show at random, unwatched ones preferred (the server's default).
+    const val RANDOM_PATH = "/api/media/random"
 
     fun seasonWatchedPath(showId: String, season: Int): String = itemPath(showId) + "/seasons/$season/watched"
 

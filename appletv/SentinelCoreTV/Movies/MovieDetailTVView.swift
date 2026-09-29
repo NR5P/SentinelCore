@@ -12,6 +12,8 @@ struct MovieDetailTVView: View {
     @State private var seasonNumber: Int?
     @State private var playing: MoviePlayRequest?
     @State private var working = false
+    // A My List change the server turned down; the button has already been put back.
+    @State private var listError: String?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -42,6 +44,11 @@ struct MovieDetailTVView: View {
         }
         .fullScreenCover(item: $playing, onDismiss: { Task { await load() } }) { request in
             MoviePlayerTVView(request: request, client: model.client)
+        }
+        .alert("My List", isPresented: Binding(get: { listError != nil }, set: { if !$0 { listError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(listError ?? "")
         }
     }
 
@@ -92,7 +99,7 @@ struct MovieDetailTVView: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.6)
             HStack(spacing: 16) {
-                if !item.metaLine.isEmpty { Text(item.metaLine) }
+                if !item.detailMetaLine.isEmpty { Text(item.detailMetaLine) }
                 if let certification = item.certification, !certification.isEmpty {
                     CertificationBadge(text: certification)
                 }
@@ -121,7 +128,7 @@ struct MovieDetailTVView: View {
         }
     }
 
-    // Play / Resume / Start Over / Mark Watched. A show plays its next episode.
+    // Play / Resume / Start Over / Mark Watched / My List. A show plays its next episode.
     @ViewBuilder
     private func actions(_ detail: MediaItemDetail) -> some View {
         let item = detail.summary
@@ -163,6 +170,15 @@ struct MovieDetailTVView: View {
                 Label(item.isWatched ? "Mark as Unwatched" : "Mark as Watched", systemImage: item.isWatched ? "eye.slash" : "checkmark")
             }
             .disabled(working)
+            // Episodes are never on My List; the server saves an episode's show instead.
+            if !item.isEpisode {
+                Button {
+                    Task { await toggleMyList() }
+                } label: {
+                    Label("My List", systemImage: item.isInList ? "checkmark" : "plus")
+                }
+                .accessibilityLabel(item.isInList ? "Remove from My List" : "Add to My List")
+            }
             if item.canResume, let remaining = item.remainingLabel {
                 Text(remaining).font(.caption).foregroundStyle(.white.opacity(0.7))
             }
@@ -281,6 +297,20 @@ struct MovieDetailTVView: View {
         defer { working = false }
         _ = try? await model.client.setMediaWatched(id: id, watched: watched)
         await load()
+    }
+
+    // Flips the button at once and puts it back if the server says no.
+    private func toggleMyList() async {
+        guard let current = detail?.summary.isInList else { return }
+        detail?.summary.inList = !current
+        do {
+            let result = try await model.client.setMediaInList(id: route.id, inList: !current)
+            detail?.summary.inList = result.inList
+        } catch {
+            detail?.summary.inList = current
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            listError = error.localizedDescription
+        }
     }
 
     private func setSeasonWatched(_ watched: Bool, season: Int, showId: String) async {

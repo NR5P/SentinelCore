@@ -1,7 +1,7 @@
 import SwiftUI
 
 // A film or show: backdrop across the top with the poster over its lower edge, the facts, Play /
-// Resume / Start Over / Mark Watched, then for a show the season picker and its episodes, then the
+// Resume / Start Over / Mark Watched / My List, then for a show the season picker and its episodes, then the
 // cast and the file.
 struct MovieDetailView: View {
     let route: MediaRoute
@@ -12,6 +12,8 @@ struct MovieDetailView: View {
     @State private var seasonNumber: Int?
     @State private var playing: MoviePlayRequest?
     @State private var working = false
+    // A My List change the server turned down; the button has already been put back.
+    @State private var listError: String?
 
     private var compact: Bool { horizontalSizeClass == .compact }
 
@@ -42,6 +44,11 @@ struct MovieDetailView: View {
             await load()
         }
         .moviePlayer($playing, client: model.client) { Task { await load() } }
+        .alert("My List", isPresented: Binding(get: { listError != nil }, set: { if !$0 { listError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(listError ?? "")
+        }
     }
 
     @ViewBuilder
@@ -95,7 +102,7 @@ struct MovieDetailView: View {
                         .font(compact ? .title2.bold() : .largeTitle.bold())
                         .lineLimit(3)
                     HStack(spacing: 8) {
-                        if !item.metaLine.isEmpty { Text(item.metaLine) }
+                        if !item.detailMetaLine.isEmpty { Text(item.detailMetaLine) }
                         if let certification = item.certification, !certification.isEmpty {
                             CertificationBadge(text: certification)
                         }
@@ -121,44 +128,66 @@ struct MovieDetailView: View {
         }
     }
 
-    // Play / Resume / Start Over / Mark Watched. A show plays its next episode.
+    // Play / Resume / Start Over / Mark Watched / My List. A show plays its next episode.
     @ViewBuilder
     private func actions(_ detail: MediaItemDetail) -> some View {
         let item = detail.summary
         let playTarget = item.isShow ? detail.nextEpisode : item
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                if let target = playTarget {
-                    Button {
-                        playing = MoviePlayRequest(itemId: target.id, start: nil, overview: item.isShow ? nil : detail.overview)
-                    } label: {
-                        Label(playTitle(target, isShow: item.isShow), systemImage: "play.fill")
-                            .frame(minWidth: compact ? 0 : 120)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    if target.canResume {
-                        Button {
-                            playing = MoviePlayRequest(itemId: target.id, start: 0, overview: item.isShow ? nil : detail.overview)
-                        } label: {
-                            Label("Start Over", systemImage: "backward.end.fill")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-                Button {
-                    Task { await setWatched(!item.isWatched, on: item.id) }
-                } label: {
-                    Label(item.isWatched ? "Unwatched" : "Watched", systemImage: item.isWatched ? "eye.slash" : "checkmark")
-                }
-                .buttonStyle(.bordered)
-                .disabled(working)
-                .accessibilityLabel(item.isWatched ? "Mark as unwatched" : "Mark as watched")
+            // Four buttons outgrow an iPhone's width; the ones after Play drop to their icons.
+            ViewThatFits(in: .horizontal) {
+                actionButtons(detail, playTarget: playTarget, iconOnly: false)
+                actionButtons(detail, playTarget: playTarget, iconOnly: true)
             }
             .controlSize(compact ? .regular : .large)
             if let target = playTarget, target.canResume, let remaining = target.remainingLabel {
                 Text(remaining).font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func actionButtons(_ detail: MediaItemDetail, playTarget: MediaItemSummary?, iconOnly: Bool) -> some View {
+        let item = detail.summary
+        return HStack(spacing: 10) {
+            if let target = playTarget {
+                Button {
+                    playing = MoviePlayRequest(itemId: target.id, start: nil, overview: item.isShow ? nil : detail.overview)
+                } label: {
+                    Label(playTitle(target, isShow: item.isShow), systemImage: "play.fill")
+                        .labelStyle(.titleAndIcon)
+                        .frame(minWidth: compact ? 0 : 120)
+                }
+                .buttonStyle(.borderedProminent)
+                if target.canResume {
+                    Button {
+                        playing = MoviePlayRequest(itemId: target.id, start: 0, overview: item.isShow ? nil : detail.overview)
+                    } label: {
+                        Label("Start Over", systemImage: "backward.end.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Start Over")
+                }
+            }
+            Button {
+                Task { await setWatched(!item.isWatched, on: item.id) }
+            } label: {
+                Label(item.isWatched ? "Unwatched" : "Watched", systemImage: item.isWatched ? "eye.slash" : "checkmark")
+            }
+            .buttonStyle(.bordered)
+            .disabled(working)
+            .accessibilityLabel(item.isWatched ? "Mark as unwatched" : "Mark as watched")
+            // Episodes are never on My List; the server saves an episode's show instead.
+            if !item.isEpisode {
+                Button {
+                    Task { await toggleMyList() }
+                } label: {
+                    Label("My List", systemImage: item.isInList ? "checkmark" : "plus")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(item.isInList ? "Remove from My List" : "Add to My List")
+            }
+        }
+        .labelStyle(ActionLabelStyle(iconOnly: iconOnly))
     }
 
     private func playTitle(_ target: MediaItemSummary, isShow: Bool) -> String {
@@ -322,10 +351,39 @@ struct MovieDetailView: View {
         await load()
     }
 
+    // Flips the button at once and puts it back if the server says no.
+    private func toggleMyList() async {
+        guard let current = detail?.summary.isInList else { return }
+        detail?.summary.inList = !current
+        do {
+            let result = try await model.client.setMediaInList(id: route.id, inList: !current)
+            detail?.summary.inList = result.inList
+        } catch {
+            detail?.summary.inList = current
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            listError = error.localizedDescription
+        }
+    }
+
     private func setSeasonWatched(_ watched: Bool, season: Int, showId: String) async {
         working = true
         defer { working = false }
         try? await model.client.setMediaSeasonWatched(showId: showId, season: season, watched: watched)
         await load()
+    }
+}
+
+// The detail's buttons: icon and title, or just the icon when the row is short of room. Play
+// keeps its title either way - it is the button the page is for.
+private struct ActionLabelStyle: LabelStyle {
+    let iconOnly: Bool
+
+    @ViewBuilder
+    func makeBody(configuration: Configuration) -> some View {
+        if iconOnly {
+            configuration.icon
+        } else {
+            Label(configuration)
+        }
     }
 }

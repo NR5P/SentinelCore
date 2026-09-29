@@ -42,6 +42,20 @@ public interface IMediaStore
     Task<IReadOnlyList<MediaProgress>> AllProgressAsync(CancellationToken cancellationToken);
     // Newest edit wins, so restoring an old backup never rolls anyone back.
     Task<int> RestoreProgressAsync(IEnumerable<MediaProgress> rows, CancellationToken cancellationToken);
+
+    // Records a play unless the same person already started the same item within `dedupe` (a
+    // seek, an audio-track change or a reconnect asks for playback again). True when recorded.
+    Task<bool> RecordPlayAsync(MediaPlay play, TimeSpan dedupe, CancellationToken cancellationToken);
+    // Everyone's plays per item: "Most played" is a household shelf.
+    Task<IReadOnlyDictionary<Guid, MediaPlayStats>> PlayStatsAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<MediaPlay>> AllPlaysAsync(CancellationToken cancellationToken);
+    // Adds the plays that are not already there (same person, item and time).
+    Task<int> RestorePlaysAsync(IEnumerable<MediaPlay> rows, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<MediaWatchlistEntry>> GetWatchlistAsync(string userKey, CancellationToken cancellationToken);
+    Task SetInWatchlistAsync(string userKey, Guid itemId, bool inList, CancellationToken cancellationToken);
+    Task<IReadOnlyList<MediaWatchlistEntry>> AllWatchlistAsync(CancellationToken cancellationToken);
+    Task<int> RestoreWatchlistAsync(IEnumerable<MediaWatchlistEntry> rows, CancellationToken cancellationToken);
 }
 
 public sealed class SqliteMediaStore : IMediaStore, IDisposable
@@ -119,8 +133,32 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
                 Key TEXT PRIMARY KEY,
                 Value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS MediaWatchlist (
+                UserKey TEXT NOT NULL,
+                ItemId TEXT NOT NULL,
+                AddedAt TEXT NOT NULL,
+                PRIMARY KEY (UserKey, ItemId)
+            );
             """;
         command.ExecuteNonQuery();
+
+        // Play history arrived after people had already been watching. A new table is seeded with
+        // one play per existing progress row, so "Most played" means something on day one.
+        using var exists = _connection.CreateCommand();
+        exists.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'MediaPlays'";
+        var hadPlays = (long)exists.ExecuteScalar()! > 0;
+        using var plays = _connection.CreateCommand();
+        plays.CommandText = """
+            CREATE TABLE IF NOT EXISTS MediaPlays (
+                UserKey TEXT NOT NULL,
+                ItemId TEXT NOT NULL,
+                PlayedAt TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_MediaPlays_Item ON MediaPlays (ItemId, UserKey, PlayedAt);
+            """
+            + (hadPlays ? "" : "INSERT INTO MediaPlays (UserKey, ItemId, PlayedAt) SELECT UserKey, ItemId, UpdatedAt FROM MediaProgress;");
+        plays.ExecuteNonQuery();
     }
 
     // MARK: - Libraries
@@ -191,6 +229,8 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
             command.Transaction = transaction;
             command.CommandText = """
                 DELETE FROM MediaProgress WHERE ItemId IN (SELECT Id FROM MediaItems WHERE LibraryId = $id);
+                DELETE FROM MediaPlays WHERE ItemId IN (SELECT Id FROM MediaItems WHERE LibraryId = $id);
+                DELETE FROM MediaWatchlist WHERE ItemId IN (SELECT Id FROM MediaItems WHERE LibraryId = $id);
                 DELETE FROM MediaItems WHERE LibraryId = $id;
                 DELETE FROM MediaLibraries WHERE Id = $id;
                 """;
@@ -625,6 +665,165 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
             return restored;
         }
         finally { _lock.Release(); }
+    }
+
+    // MARK: - Plays
+
+    public async Task<bool> RecordPlayAsync(MediaPlay play, TimeSpan dedupe, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO MediaPlays (UserKey, ItemId, PlayedAt)
+                SELECT $user, $item, $at
+                WHERE NOT EXISTS (SELECT 1 FROM MediaPlays WHERE UserKey = $user AND ItemId = $item AND PlayedAt > $since)
+                """;
+            command.Parameters.AddWithValue("$user", play.UserKey);
+            command.Parameters.AddWithValue("$item", play.ItemId.ToString("N"));
+            command.Parameters.AddWithValue("$at", play.PlayedAt.ToUniversalTime().ToString("O"));
+            command.Parameters.AddWithValue("$since", (play.PlayedAt - dedupe).ToUniversalTime().ToString("O"));
+            return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, MediaPlayStats>> PlayStatsAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT ItemId, COUNT(*), MAX(PlayedAt) FROM MediaPlays GROUP BY ItemId";
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var stats = new Dictionary<Guid, MediaPlayStats>();
+            while (await reader.ReadAsync(cancellationToken))
+                stats[Guid.ParseExact(reader.GetString(0), "N")] =
+                    new MediaPlayStats((int)reader.GetInt64(1), DateTimeOffset.Parse(reader.GetString(2)));
+            return stats;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<IReadOnlyList<MediaPlay>> AllPlaysAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT UserKey, ItemId, PlayedAt FROM MediaPlays ORDER BY PlayedAt";
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var list = new List<MediaPlay>();
+            while (await reader.ReadAsync(cancellationToken))
+                list.Add(new MediaPlay(reader.GetString(0), Guid.ParseExact(reader.GetString(1), "N"), DateTimeOffset.Parse(reader.GetString(2))));
+            return list;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<int> RestorePlaysAsync(IEnumerable<MediaPlay> rows, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+            var restored = 0;
+            foreach (var row in rows)
+            {
+                using var command = _connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT INTO MediaPlays (UserKey, ItemId, PlayedAt)
+                    SELECT $user, $item, $at
+                    WHERE NOT EXISTS (SELECT 1 FROM MediaPlays WHERE UserKey = $user AND ItemId = $item AND PlayedAt = $at)
+                    """;
+                command.Parameters.AddWithValue("$user", row.UserKey);
+                command.Parameters.AddWithValue("$item", row.ItemId.ToString("N"));
+                command.Parameters.AddWithValue("$at", row.PlayedAt.ToUniversalTime().ToString("O"));
+                restored += await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            transaction.Commit();
+            return restored;
+        }
+        finally { _lock.Release(); }
+    }
+
+    // MARK: - My List
+
+    public async Task<IReadOnlyList<MediaWatchlistEntry>> GetWatchlistAsync(string userKey, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT UserKey, ItemId, AddedAt FROM MediaWatchlist WHERE UserKey = $user ORDER BY AddedAt DESC";
+            command.Parameters.AddWithValue("$user", userKey);
+            return await ReadWatchlistAsync(command, cancellationToken);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task SetInWatchlistAsync(string userKey, Guid itemId, bool inList, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            // Adding what is already there keeps its original place in the list.
+            command.CommandText = inList
+                ? "INSERT OR IGNORE INTO MediaWatchlist (UserKey, ItemId, AddedAt) VALUES ($user, $item, $at)"
+                : "DELETE FROM MediaWatchlist WHERE UserKey = $user AND ItemId = $item";
+            command.Parameters.AddWithValue("$user", userKey);
+            command.Parameters.AddWithValue("$item", itemId.ToString("N"));
+            command.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<IReadOnlyList<MediaWatchlistEntry>> AllWatchlistAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT UserKey, ItemId, AddedAt FROM MediaWatchlist ORDER BY UserKey, AddedAt DESC";
+            return await ReadWatchlistAsync(command, cancellationToken);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<int> RestoreWatchlistAsync(IEnumerable<MediaWatchlistEntry> rows, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+            var restored = 0;
+            foreach (var row in rows)
+            {
+                using var command = _connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "INSERT OR IGNORE INTO MediaWatchlist (UserKey, ItemId, AddedAt) VALUES ($user, $item, $at)";
+                command.Parameters.AddWithValue("$user", row.UserKey);
+                command.Parameters.AddWithValue("$item", row.ItemId.ToString("N"));
+                command.Parameters.AddWithValue("$at", row.AddedAt.ToUniversalTime().ToString("O"));
+                restored += await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            transaction.Commit();
+            return restored;
+        }
+        finally { _lock.Release(); }
+    }
+
+    private static async Task<IReadOnlyList<MediaWatchlistEntry>> ReadWatchlistAsync(SqliteCommand command, CancellationToken cancellationToken)
+    {
+        using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var list = new List<MediaWatchlistEntry>();
+        while (await reader.ReadAsync(cancellationToken))
+            list.Add(new MediaWatchlistEntry(reader.GetString(0), Guid.ParseExact(reader.GetString(1), "N"), DateTimeOffset.Parse(reader.GetString(2))));
+        return list;
     }
 
     // MARK: - Rows

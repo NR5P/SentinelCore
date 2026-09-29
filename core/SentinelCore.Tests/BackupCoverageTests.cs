@@ -80,6 +80,8 @@ public sealed class BackupCoverageTests : IDisposable
             ["AlarmSettings"] = "Alarm.Config",
             ["MediaLibraries"] = "Media.Libraries",
             ["MediaProgress"] = "Media.Progress",
+            ["MediaPlays"] = "Media.Plays",
+            ["MediaWatchlist"] = "Media.Watchlist",
         };
 
         // Excluded on purpose, each for a reason recorded in BackupEndpoints:

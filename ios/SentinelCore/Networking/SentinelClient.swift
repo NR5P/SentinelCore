@@ -601,10 +601,11 @@ final class SentinelClient {
     }
 
     // kind nil returns movies and shows together (never episodes). Sort and order in the server's
-    // vocabulary; it picks a sensible default order for each sort when none is given.
+    // vocabulary; it picks a sensible default order for each sort when none is given. inList keeps
+    // only the signed-in account's My List.
     func mediaItems(
         kind: String?, query: String? = nil, genre: String? = nil, sort: MediaSort? = nil, order: String? = nil,
-        unwatched: Bool = false, offset: Int = 0, limit: Int = 60
+        unwatched: Bool = false, inList: Bool = false, offset: Int = 0, limit: Int = 60
     ) async throws -> MediaItemsPage {
         var items: [URLQueryItem] = []
         if let kind { items.append(.init(name: "kind", value: kind)) }
@@ -613,6 +614,7 @@ final class SentinelClient {
         if let sort { items.append(.init(name: "sort", value: sort.rawValue)) }
         if let order { items.append(.init(name: "order", value: order)) }
         if unwatched { items.append(.init(name: "unwatched", value: "true")) }
+        if inList { items.append(.init(name: "list", value: "true")) }
         items.append(.init(name: "offset", value: String(offset)))
         items.append(.init(name: "limit", value: String(limit)))
         return try await get("/api/media/items", query: items)
@@ -620,6 +622,12 @@ final class SentinelClient {
 
     func mediaItem(id: String) async throws -> MediaItemDetail {
         try await get("/api/media/items/\(id)")
+    }
+
+    // "Surprise me": one movie or show at random, unwatched ones first. 404 with the server's own
+    // "nothing matches" message when the library is empty.
+    func mediaRandom() async throws -> MediaItemSummary {
+        try await get("/api/media/random")
     }
 
     // start nil resumes from the saved progress, 0 starts over. The codec lists are what every
@@ -665,6 +673,11 @@ final class SentinelClient {
 
     func setMediaWatched(id: String, watched: Bool) async throws -> MediaProgress {
         try await send("/api/media/items/\(id)/watched", method: "POST", body: MediaWatchedBody(watched: watched))
+    }
+
+    // Adds to (or with false removes from) the signed-in account's My List.
+    func setMediaInList(id: String, inList: Bool) async throws -> MediaListResult {
+        try await send("/api/media/items/\(id)/list", method: "POST", body: MediaListBody(inList: inList))
     }
 
     func setMediaSeasonWatched(showId: String, season: Int, watched: Bool) async throws {
