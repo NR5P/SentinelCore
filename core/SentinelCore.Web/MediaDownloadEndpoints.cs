@@ -326,7 +326,7 @@ public static class MediaDownloadEndpoints
                         privacy = d.Privacy,
                         language = d.Language,
                         // A site that needs nothing typed in can be added with one tap.
-                        needsSetup = d.Fields.Any(f => f.Type is "text" or "password" && f.Value is null && !f.Name.StartsWith("baseUrl", StringComparison.Ordinal)),
+                        needsSetup = d.Fields.Any(f => f.Type is "text" or "password" && f.Value is null && ProwlarrClient.IsCredential(f.Name)),
                         fields = d.Fields.Select(f => new
                         {
                             name = f.Name,

@@ -119,7 +119,7 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
             var definition = Str(schema, "definitionName") ?? Str(schema, "implementation") ?? "";
             if (definition.Length == 0) continue;
             list.Add(new SiteDefinition(definition, Str(schema, "name") ?? definition, Str(schema, "description"),
-                Str(schema, "privacy"), Str(schema, "language"), Fields(schema), node));
+                Str(schema, "privacy"), Str(schema, "language"), Fields(schema, SiteUrls(schema)), node));
         }
         list.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name));
         _catalog = (DateTimeOffset.UtcNow, list);
@@ -139,10 +139,19 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
         body["enable"] = true;
         body["appProfileId"] = await AppProfileIdAsync(cancellationToken);
         body.Remove("id");
+        var urls = definition.Schema["indexerUrls"] is JsonArray list ? list.Select(u => u?.GetValue<string>()).OfType<string>().ToList() : [];
         if (body["fields"] is JsonArray fields)
             foreach (var field in fields.OfType<JsonObject>())
-                if (field["name"]?.GetValue<string>() is { } fieldName && values.TryGetValue(fieldName, out var value))
+            {
+                var fieldName = field["name"]?.GetValue<string>();
+                if (fieldName is not null && values.TryGetValue(fieldName, out var value))
                     field["value"] = JsonNode.Parse(value.GetRawText());
+                // Prowlarr leaves a site's address blank in the schema and keeps the choices in
+                // indexerUrls; its own web page quietly picks the first. Without one the site
+                // test fails with "Invalid URI: The URI is empty".
+                if (fieldName == "baseUrl" && string.IsNullOrWhiteSpace(field["value"]?.ToString()) && urls.Count > 0)
+                    field["value"] = urls[0];
+            }
 
         using var response = await SendAsync(HttpMethod.Post, "api/v1/indexer", body, cancellationToken, TimeSpan.FromSeconds(90));
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
@@ -173,7 +182,18 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
 
     // The fields a person has to fill in: the ones with no sensible default (a login, a cookie)
     // plus the choices a site offers. Prowlarr's own bookkeeping fields are left out.
-    private static List<SiteField> Fields(JsonElement schema)
+    private static List<string> SiteUrls(JsonElement schema) =>
+        schema.TryGetProperty("indexerUrls", out var urls) && urls.ValueKind == JsonValueKind.Array
+            ? urls.EnumerateArray().Where(u => u.ValueKind == JsonValueKind.String).Select(u => u.GetString()!).ToList()
+            : [];
+
+    // A field a site genuinely needs filled in before it works: a login, a cookie, a key. Most
+    // text fields (an uploader filter, a seed ratio) are optional, and a site with only those is
+    // added with one tap.
+    public static bool IsCredential(string fieldName) =>
+        System.Text.RegularExpressions.Regex.IsMatch(fieldName, "user|pass|cookie|key|token|email|login|uid|pid|2fa|captcha|auth", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    private static List<SiteField> Fields(JsonElement schema, List<string> siteUrls)
     {
         var list = new List<SiteField>();
         if (!schema.TryGetProperty("fields", out var fields)) return list;
@@ -190,6 +210,14 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
                 options = select.EnumerateArray()
                     .Select(o => new SettingsFieldOption(o.TryGetProperty("value", out var v) ? v.ToString() : "", Str(o, "name") ?? ""))
                     .ToList();
+            var fieldValue = f.TryGetProperty("value", out var value) && value.ValueKind != JsonValueKind.Null ? JsonNode.Parse(value.GetRawText()) : null;
+            // The site's addresses are not in the field's own options (Prowlarr fetches them
+            // with a separate call); offer them, starting on the first as Prowlarr's page does.
+            if (name == "baseUrl" && siteUrls.Count > 0)
+            {
+                options = siteUrls.Select(u => new SettingsFieldOption(u, u)).ToList();
+                fieldValue ??= JsonValue.Create(siteUrls[0]);
+            }
             list.Add(new SiteField(name, Str(f, "label") ?? name, type switch
             {
                 "password" => "password",
@@ -197,7 +225,7 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
                 "select" => "select",
                 "number" => "number",
                 _ => "text"
-            }, Str(f, "helpText"), f.TryGetProperty("value", out var value) ? JsonNode.Parse(value.GetRawText()) : null, options, advanced));
+            }, Str(f, "helpText"), fieldValue, options, advanced));
         }
         return list;
     }

@@ -361,6 +361,17 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         var posted = JsonDocument.Parse(_prowlarr.PostedIndexer!).RootElement;
         Assert.True(posted.GetProperty("enable").GetBoolean());
         Assert.Equal(7, posted.GetProperty("appProfileId").GetInt32());
+        // Prowlarr's schema leaves the address blank; the site's first address is sent.
+        var baseUrl = posted.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "baseUrl");
+        Assert.Equal("https://public.example/", baseUrl.GetProperty("value").GetString());
+
+        // The catalog offers the addresses to pick from, starting on the first; an optional
+        // uploader filter does not make it a "set up" site.
+        var field = site.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "baseUrl");
+        Assert.Equal("https://public.example/", field.GetProperty("value").GetString());
+        Assert.Equal(2, field.GetProperty("options").GetArrayLength());
+        var privateSite = (await JsonAsync(await client.GetAsync("/api/media/downloads/sites/catalog?q=private", Ct), HttpStatusCode.OK))[0];
+        Assert.True(privateSite.GetProperty("needsSetup").GetBoolean());
 
         var list = await JsonAsync(await client.GetAsync("/api/media/downloads/sites", Ct), HttpStatusCode.OK);
         Assert.Equal("Public Site", Assert.Single(list.EnumerateArray()).GetProperty("name").GetString());
@@ -499,7 +510,10 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                 case "/api/v1/indexer/schema":
                     return Json("""
                         [ { "name": "Public Site", "definitionName": "publicsite", "protocol": "torrent", "privacy": "public", "description": "A public site",
-                            "fields": [ { "name": "definitionFile", "value": "publicsite", "type": "hidden" }, { "name": "baseUrl", "label": "Base Url", "type": "select", "value": "https://a", "selectOptions": [] } ] },
+                            "indexerUrls": [ "https://public.example/", "https://mirror.public.example/" ],
+                            "fields": [ { "name": "definitionFile", "value": "publicsite", "type": "hidden" },
+                                        { "name": "baseUrl", "label": "Base Url", "type": "select", "value": null, "selectOptions": null, "selectOptionsProviderAction": "getUrls" },
+                                        { "name": "uploader", "label": "Filter by Uploader", "type": "textbox", "value": null } ] },
                           { "name": "Private Place", "definitionName": "privateplace", "protocol": "torrent", "privacy": "private",
                             "fields": [ { "name": "username", "label": "Username", "type": "textbox" } ] } ]
                         """);
