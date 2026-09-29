@@ -178,6 +178,7 @@ fi
 if [ "$SKIP_TEST" -eq 0 ]; then
     say "Testing: starting the VPN, qBittorrent and Prowlarr"
     HOME_IP=$(curl -fsS --max-time 10 https://api.ipify.org || echo "?")
+    TEST_START=$(date '+%Y-%m-%d %H:%M:%S')
     # Earlier failed attempts would otherwise still count as restarts below.
     systemctl reset-failed "${UNITS[@]:1}" 2>/dev/null || true
     # Started as $APP_USER, the way SentinelCore will, which also proves the permission works.
@@ -201,7 +202,8 @@ if [ "$SKIP_TEST" -eq 0 ]; then
             sleep 2
         done
     else
-        journalctl -u sentinelcore-vpn -n 15 --no-pager
+        journalctl -u sentinelcore-vpn -u sentinelcore-vpn-watch --since "$TEST_START" --no-pager | tail -20
+        [ -f /run/sentinelcore-vpn/status.json ] && echo "  VPN check says: $(cat /run/sentinelcore-vpn/status.json)"
     fi
     sudo -u "$APP_USER" systemctl --no-ask-password stop sentinelcore-downloads.target || true
 

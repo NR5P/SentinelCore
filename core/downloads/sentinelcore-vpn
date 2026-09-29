@@ -87,6 +87,28 @@ wg_setconf_lines() {
     grep -iE '^[[:space:]]*(\[(Interface|Peer)\][[:space:]]*$|(PrivateKey|ListenPort|FwMark|PublicKey|PresharedKey|AllowedIPs|Endpoint|PersistentKeepalive)[[:space:]]*=)' "$CONF_DIR/vpn.conf" | tr -d '\r'
 }
 
+# The biggest tunnel MTU that fits the path to the VPN server. Many connections carry less than
+# 1500 bytes (T-Mobile Home Internet and other cellular links carry about 1440), and a tunnel
+# sized for 1500 passes its handshake and DNS but silently loses every full-size packet - TLS
+# connections open and then hang. Measured from the host with don't-fragment pings; 80 bytes
+# is WireGuard's worst-case overhead. Providers that drop pings get the IPv6 minimum, 1280.
+probe_mtu() {
+    local endpoint=$1 host ip size
+    host=${endpoint%:*}
+    host=${host#[}
+    host=${host%]}
+    ip=$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 { print $1 }')
+    if [ -n "$ip" ]; then
+        for size in 1500 1480 1460 1440 1420 1400 1380 1360 1340 1320 1300; do
+            if ping -c1 -M do -s $((size - 28)) -W2 "$ip" >/dev/null 2>&1; then
+                echo $((size - 80))
+                return
+            fi
+        done
+    fi
+    echo 1280
+}
+
 mask_to_bits() {
     local bits=0 octet
     IFS=. read -r -a octets <<< "$1"
@@ -180,7 +202,11 @@ prepare() {
         done
         local mtu
         mtu=$(wg_values MTU | head -1)
-        ip -n "$NS" link set "$WG_IF" mtu "${mtu:-1420}" up
+        if [ -z "$mtu" ]; then
+            mtu=$(probe_mtu "$(wg_values Endpoint | head -1)")
+            log "measured the path to the VPN server: tunnel MTU $mtu"
+        fi
+        ip -n "$NS" link set "$WG_IF" mtu "$mtu" up
         ip -n "$NS" route add default dev "$WG_IF"
         [ "$has_v6" -eq 1 ] && ip -n "$NS" -6 route add default dev "$WG_IF" || true
         local dns=()
