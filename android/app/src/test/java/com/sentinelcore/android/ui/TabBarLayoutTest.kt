@@ -35,12 +35,22 @@ class TabBarLayoutTest {
             moviesEnabled = true,
             alarmEnabled = true,
             filesEnabled = true,
+            weatherEnabled = true,
         )
         assertEquals(
-            listOf(EVENTS, TIMELINE, LIVE, AppSection.MOVIES, AppSection.ALARM, ORGANIZER, FILES, DEVICES, SETTINGS),
+            listOf(EVENTS, TIMELINE, LIVE, AppSection.MOVIES, AppSection.ALARM, ORGANIZER, AppSection.WEATHER, FILES, DEVICES, SETTINGS),
             all,
         )
         assertEquals(AppSection.entries.toList(), all)
+    }
+
+    @Test
+    fun `weather sits after the organizer, like the web dashboard's tabs, and only when the server has it`() {
+        assertFalse(AppSection.WEATHER in seven)
+        assertEquals(
+            listOf(EVENTS, TIMELINE, LIVE, ORGANIZER, AppSection.WEATHER, FILES, DEVICES, SETTINGS),
+            AppSection.visible(deviceHubEnabled = true, organizerEnabled = true, filesEnabled = true, weatherEnabled = true),
+        )
     }
 
     @Test

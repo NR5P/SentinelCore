@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data: blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<title>Sentinel Core radar</title>
+<!-- Leaflet comes from the server itself (core/SentinelCore.Web/wwwroot/vendor/leaflet, served
+     without a login), the same copy the dashboard's Weather tab uses. Every tile, legend and storm
+     list comes from the server too - this page never talks to anything else. -->
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<style>
+  :root {
+    --bg: #1b2126;
+    --deep: #14181c;
+    --input: #111619;
+    --border: #2a333a;
+    --border-bright: #3a4a55;
+    --text: #ecf1f4;
+    --dim: #93a2ad;
+    --green: #38ff9c;
+    --cyan: #4ae8ff;
+    --amber: #ffb545;
+    --red: #ff4d5e;
+    --font: "Segoe UI", system-ui, sans-serif;
+  }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 var(--font); overflow: hidden; }
+  #panel { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; padding: 2px 4px 4px; gap: 8px; }
+  .head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .title { color: var(--cyan); font-weight: 600; letter-spacing: 0.08em; font-size: 12px; margin-right: auto; }
+  .layers { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+  .group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .group-name { color: var(--dim); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; margin-right: 2px; }
+  button, select {
+    font: 12px/1 var(--font); color: var(--text); background: var(--input);
+    border: 1px solid var(--border); border-radius: 5px; padding: 5px 9px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--green); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.on { color: #0b1a12; background: var(--green); border-color: var(--green); }
+  select { padding: 4px 6px; max-width: 280px; }
+  .map-wrap { position: relative; flex: 1; min-height: 160px; }
+  #map { position: absolute; inset: 0; background: var(--deep); border: 1px solid var(--border); border-radius: 6px; font-family: var(--font); }
+  #time {
+    position: absolute; top: 10px; right: 10px; z-index: 800; padding: 4px 10px;
+    background: rgba(20, 24, 28, 0.88); border: 1px solid var(--border-bright); border-radius: 5px;
+    color: var(--green); font-size: 12px; pointer-events: none;
+  }
+  #time.old { color: var(--amber); border-color: rgba(255, 181, 69, 0.5); }
+  #toast {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 900; max-width: 80%;
+    padding: 6px 12px; border-radius: 6px; background: rgba(20, 24, 28, 0.94); border: 1px solid var(--amber);
+    color: var(--amber); font-size: 12px; display: none;
+  }
+  #failed { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; color: var(--dim); padding: 20px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 11px; color: var(--dim); }
+  #frame { flex: 1; min-width: 140px; accent-color: var(--green); }
+  #opacity { width: 90px; accent-color: var(--cyan); }
+  label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  input[type=checkbox] { accent-color: var(--green); }
+  .legend img { display: block; max-width: 100%; height: auto; border-radius: 4px; }
+  .legend img:not([src]), .legend img.missing { display: none; }
+  .note { color: var(--dim); font-size: 11px; margin-top: 4px; }
+
+  /* Leaflet, restyled to match the app. */
+  #map .leaflet-bar { border: 1px solid var(--border-bright); box-shadow: none; }
+  #map .leaflet-bar a { background: rgba(27, 33, 38, 0.94); color: var(--green); border-bottom-color: var(--border); }
+  #map .leaflet-bar a:hover { background: #232b31; color: var(--green); }
+  #map .map-buttons a { font-size: 16px; }
+  #map .map-buttons a.on, #map .map-buttons a.on:hover { color: #fff; background: #2f8cff; }
+  #map .leaflet-control-attribution { background: rgba(20, 24, 28, 0.78); color: var(--dim); font-size: 10px; }
+  #map .leaflet-control-attribution a { color: var(--dim); }
+  #map .leaflet-popup-content-wrapper, #map .leaflet-popup-tip {
+    background: rgba(27, 33, 38, 0.97); color: var(--text); border: 1px solid var(--border-bright); box-shadow: 0 0 18px rgba(0, 0, 0, 0.6);
+  }
+  #map .leaflet-popup-close-button { color: var(--dim); }
+  #map .leaflet-tooltip { background: rgba(27, 33, 38, 0.96); color: var(--text); border: 1px solid var(--border-bright); font-size: 11px; box-shadow: none; }
+  #map .leaflet-tooltip-top::before { border-top-color: var(--border-bright); }
+  .radar-tiles { image-rendering: pixelated; }
+
+  .popup { font-size: 11.5px; min-width: 210px; }
+  .popup-title { color: var(--cyan); font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; }
+  .popup-badge { color: var(--red); font-weight: bold; margin-bottom: 6px; }
+  .popup dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+  .popup dt { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; padding-top: 1px; }
+  .popup dd { margin: 0; }
+
+  .home-icon, .me-icon, .cell-icon { background: none; border: none; }
+  .home-pin { position: relative; width: 0; height: 0; }
+  .home-dot {
+    position: absolute; left: -13px; top: -13px; width: 26px; height: 26px; border-radius: 50%;
+    background: #04121a; border: 3px solid var(--cyan); color: var(--cyan); font-size: 15px; line-height: 20px; text-align: center;
+    box-shadow: 0 0 0 2px #000, 0 0 14px rgba(74, 232, 255, 0.9); box-sizing: border-box;
+  }
+  .home-pulse {
+    position: absolute; left: -13px; top: -13px; width: 26px; height: 26px; border-radius: 50%;
+    border: 2px solid var(--cyan); animation: pulse 2s ease-out infinite; box-sizing: border-box;
+  }
+  .home-label {
+    position: absolute; left: 18px; top: -10px; white-space: nowrap; padding: 1px 6px;
+    background: rgba(4, 18, 26, 0.9); border: 1px solid var(--cyan); border-radius: 4px; color: var(--cyan); font-size: 11px; letter-spacing: 0.08em;
+  }
+  @keyframes pulse { from { transform: scale(1); opacity: 0.9; } to { transform: scale(3.2); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .home-pulse { animation: none; opacity: 0; } }
+
+  .me-dot {
+    position: relative; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; box-sizing: border-box;
+    background: #2f8cff; border: 3px solid #fff; box-shadow: 0 0 0 1px #000, 0 0 12px rgba(47, 140, 255, 0.9);
+  }
+  .me-label {
+    position: absolute; left: 16px; top: -3px; padding: 0 5px; background: rgba(10, 20, 40, 0.9);
+    border: 1px solid #2f8cff; border-radius: 4px; color: #9cc9ff; font-size: 10px; letter-spacing: 0.1em;
+  }
+  .me-accuracy { stroke: #2f8cff; stroke-width: 1; fill: #2f8cff; fill-opacity: 0.12; }
+
+  .site { stroke: #9fb3c8; stroke-width: 1.5; fill: #14181c; fill-opacity: 0.9; }
+  .site-on { stroke: var(--green); stroke-width: 2.5; fill: var(--green); fill-opacity: 0.35; }
+
+  .cell-marker {
+    position: relative; left: -8px; top: -8px; width: 16px; height: 16px; border-radius: 50%; box-sizing: border-box;
+    border: 2px solid #000; background: #cfd8dc; color: #000; font-size: 10px; font-weight: bold; line-height: 12px; text-align: center;
+  }
+  .cell-marker.threat-0 { left: -5px; top: -5px; width: 10px; height: 10px; border-width: 1.5px; }
+  .cell-marker.threat-1 { background: #ffd54f; }
+  .cell-marker.threat-2 { background: #ff9800; }
+  .cell-marker.threat-3 { background: #ff4d5e; color: #fff; }
+  .cell-marker.threat-4 { background: #ff00e5; color: #fff; box-shadow: 0 0 10px #ff00e5; }
+  .cell-incoming { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  .cell-arrow {
+    position: absolute; left: 50%; top: 50%; width: 34px; height: 12px; margin: -6px 0 0 -17px;
+    color: #fff; font-size: 10px; line-height: 12px; text-align: right; text-shadow: 0 0 2px #000, 0 0 2px #000; pointer-events: none;
+  }
+  .track { stroke: #cfd8dc; stroke-width: 2; stroke-dasharray: 5 5; fill: none; }
+  .track-1 { stroke: #ffd54f; }
+  .track-2 { stroke: #ff9800; }
+  .track-3 { stroke: #ff4d5e; }
+  .track-4 { stroke: #ff00e5; }
+  .track-incoming { stroke-width: 3; }
+  .track-dot { stroke: #000; stroke-width: 1; fill: #fff; fill-opacity: 1; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <div class="head">
+    <div class="title" id="title">RADAR</div>
+    <div class="layers" id="layers"></div>
+  </div>
+  <div class="map-wrap">
+    <div id="map" aria-label="Radar map"></div>
+    <div id="time"></div>
+    <div id="toast"></div>
+    <div id="failed"></div>
+  </div>
+  <div class="row">
+    <button type="button" id="play" title="Play the last hour or so of radar as a loop.">&#9654; play</button>
+    <input type="range" id="frame" min="0" max="0" value="0" aria-label="Radar frame">
+    <label title="How see-through the radar is over the map.">opacity <input type="range" id="opacity" min="0.2" max="1" step="0.05"></label>
+  </div>
+  <div class="row">
+    <label title="Which radar the per-radar layers come from. Defaults to the one nearest home; clicking a radar dish on the map picks it too.">radar <select id="station"></select></label>
+    <label><input type="checkbox" data-overlay="cells"> storm tracks</label>
+    <label><input type="checkbox" data-overlay="warnings"> warnings</label>
+    <label><input type="checkbox" data-overlay="outlook"> SPC outlook</label>
+    <label><input type="checkbox" data-overlay="sites"> radar sites</label>
+  </div>
+  <div class="legend">
+    <img id="legend" alt="">
+    <div class="note" id="note"></div>
+  </div>
+</div>
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script>
+// The Windows app's radar map: a port of the RadarMap half of the dashboard's weather.js
+// (core/SentinelCore.Web/wwwroot/weather.js). WPF has no map control, and WebView2 is already how
+// this app plays live video, so the map runs here - served from the server's own origin by
+// Live/RadarMapHost.xaml.cs, which makes every tile, legend and storm request same-origin and
+// carries the app's session cookie.
+//
+// The host passes home and the time zone in the query string, and drives the page through the
+// window.sentinel* functions at the bottom. The page tells the host things with postMessage:
+// { type: "ready" }, { type: "failed", message }, { type: "expand" }.
+(function () {
+  "use strict";
+
+  const RADAR_REFRESH_INTERVAL_MS = 2 * 60_000;
+  const FRAME_INTERVAL_MS = 550;
+  const LAST_FRAME_HOLD_MS = 1800;
+
+  const query = new URLSearchParams(location.search);
+  const num = (name) => {
+    const value = Number(query.get(name));
+    return query.has(name) && Number.isFinite(value) ? value : null;
+  };
+  const home = num("lat") != null && num("lon") != null
+    ? { latitude: num("lat"), longitude: num("lon"), label: query.get("label") || "Home" }
+    : null;
+  const timeZone = query.get("tz") || undefined;
+
+  const $ = (id) => document.getElementById(id);
+
+  function post(message) {
+    try {
+      if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(message);
+    } catch { /* no host to tell */ }
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatTime(iso, options) {
+    const date = new Date(iso);
+    try {
+      return new Intl.DateTimeFormat(undefined, { timeZone, ...options }).format(date);
+    } catch {
+      return new Intl.DateTimeFormat(undefined, options).format(date);
+    }
+  }
+  const CLOCK = { hour: "numeric", minute: "2-digit" };
+
+  let toastTimer = null;
+  function toast(text) {
+    const el = $("toast");
+    el.textContent = text;
+    el.style.display = "block";
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.style.display = "none"; }, 6000);
+  }
+
+  // Per-viewer preferences, kept in this app's own browser profile.
+  const PREFS_KEY = "sentinel-weather-map";
+  const prefs = Object.assign({
+    layer: "reflectivity",
+    station: null,
+    opacity: 0.75,
+    cells: true,
+    warnings: true,
+    outlook: false,
+    sites: true,
+    followMe: false
+  }, readPrefs());
+
+  function readPrefs() {
+    try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { return {}; }
+  }
+
+  function savePrefs() {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* storage unavailable */ }
+  }
+
+  function warningColor(phenomena) {
+    return {
+      TO: "#ff2d3d",
+      SV: "#ffc400",
+      FF: "#00e676",
+      FA: "#2e9d4f",
+      FL: "#2e9d4f",
+      MA: "#ff8c00",
+      EW: "#ff3df5",
+      SQ: "#d63384",
+      DS: "#d9b38c",
+      SS: "#b388ff"
+    }[phenomena] || "#4be7ff";
+  }
+
+  function warningTags(warning) {
+    return [
+      warning.tornadoTag ? `tornado ${warning.tornadoTag.toLowerCase()}` : null,
+      warning.hailInches ? `hail ${warning.hailInches}"` : null,
+      warning.windMph ? `wind ${warning.windMph} mph` : null,
+      warning.damageTag ? `${warning.damageTag.toLowerCase()} damage threat` : null
+    ].filter(Boolean).join(" · ");
+  }
+
+  function cellTitle(cell) {
+    if (cell.tornadic) return "Possible tornado";
+    if (cell.rotation) return "Rotating storm";
+    if (cell.threat === 2) return "Severe hail storm";
+    if (cell.threat === 1) return "Strong storm";
+    return "Storm";
+  }
+
+  function cellHazards(cell) {
+    const parts = [];
+    if (cell.tornadic) parts.push("tornado vortex signature");
+    if (cell.rotation) parts.push(`mesocyclone (rank ${cell.mesoStrength})`);
+    if (cell.maxHailInches) parts.push(`hail to ${cell.maxHailInches.toFixed(2)}"`);
+    else if (cell.hailProbability) parts.push(`${cell.hailProbability}% hail`);
+    return parts.join(" · ");
+  }
+
+  if (typeof L === "undefined") {
+    const failed = $("failed");
+    failed.style.display = "flex";
+    failed.textContent = "The map library didn't load from the server.";
+    post({ type: "failed", message: "The map library didn't load from the server." });
+    return;
+  }
+
+  let map = null;
+  let info = null;
+  let storms = null;
+  let homeMarker = null;
+  let meMarker = null;
+  let meCircle = null;
+  let meWatch = null;
+  let cellsGroup = null;
+  let warningsGroup = null;
+  let outlookGroup = null;
+  let sitesGroup = null;
+  let meButton = null;
+  let expandButton = null;
+  const cellMarkers = new Map();
+  let openCellId = null;
+  let redrawingCells = false;
+
+  // The loop: one tile layer per frame, all on the map, only the current one visible - so each
+  // frame's tiles are already loaded by the time it comes round.
+  let frames = [];
+  let frameLayers = [];
+  let frameIndex = 0;
+  let playing = false;
+  let playTimer = null;
+  let refreshTimer = null;
+  let active = true;
+
+  // ---- Chrome ----
+
+  $("play").addEventListener("click", () => playing ? stop() : play());
+  $("frame").addEventListener("input", (e) => { stop(); showFrame(Number(e.target.value)); });
+  const opacity = $("opacity");
+  opacity.value = prefs.opacity;
+  opacity.addEventListener("input", () => { prefs.opacity = Number(opacity.value); savePrefs(); showFrame(frameIndex); });
+  $("station").addEventListener("change", (e) => selectStation(e.target.value));
+  for (const box of document.querySelectorAll("[data-overlay]")) {
+    box.checked = !!prefs[box.dataset.overlay];
+    box.addEventListener("change", () => {
+      prefs[box.dataset.overlay] = box.checked;
+      savePrefs();
+      applyOverlays();
+    });
+  }
+
+  // ---- The map ----
+
+  function create() {
+    map = L.map($("map"), {
+      center: home ? [home.latitude, home.longitude] : [39.5, -98.35],
+      zoom: home ? 8 : 4,
+      minZoom: 3,
+      maxZoom: 16,
+      zoomSnap: 0.5,
+      zoomDelta: 0.5,
+      wheelPxPerZoomLevel: 90,
+      worldCopyJump: true,
+      attributionControl: true
+    });
+    map.attributionControl.setPrefix(false);
+
+    map.createPane("wxOutlook").style.zIndex = 330;
+    map.createPane("wxRadar").style.zIndex = 350;
+    const labels = map.createPane("wxLabels");
+    labels.style.zIndex = 380;
+    labels.style.pointerEvents = "none";
+    map.createPane("wxWarnings").style.zIndex = 420;
+
+    L.tileLayer("/api/weather/map/tile/base/{z}/{x}/{y}", {
+      maxNativeZoom: 16,
+      maxZoom: 16,
+      attribution: "Basemap © Esri, HERE, Garmin, © OpenStreetMap contributors · NWS · SPC · IEM"
+    }).addTo(map);
+    L.tileLayer("/api/weather/map/tile/labels/{z}/{x}/{y}", {
+      maxNativeZoom: 16,
+      maxZoom: 16,
+      pane: "wxLabels"
+    }).addTo(map);
+
+    outlookGroup = L.layerGroup();
+    warningsGroup = L.layerGroup();
+    cellsGroup = L.layerGroup();
+    sitesGroup = L.layerGroup();
+
+    addButtons();
+    placeHome();
+
+    let moveTimer = null;
+    map.on("moveend", () => {
+      clearTimeout(moveTimer);
+      moveTimer = setTimeout(loadStorms, 400);
+    });
+    map.on("zoomend", () => drawCells());
+
+    if (prefs.followMe) locateMe(false);
+  }
+
+  // Home, locate-me and expand buttons under Leaflet's zoom buttons.
+  function addButtons() {
+    const Buttons = L.Control.extend({
+      options: { position: "topleft" },
+      onAdd() {
+        const bar = L.DomUtil.create("div", "leaflet-bar map-buttons");
+        const make = (html, title, handler) => {
+          const a = L.DomUtil.create("a", "", bar);
+          a.href = "#";
+          a.innerHTML = html;
+          a.title = title;
+          a.setAttribute("role", "button");
+          L.DomEvent.on(a, "click", (e) => { L.DomEvent.stop(e); handler(a); });
+          return a;
+        };
+        make("&#8962;", "Back to home", () => goHome());
+        meButton = make("&#9678;", "Show where this PC is (uses Windows location, which needs the server on HTTPS)", () => {
+          if (meWatch != null) stopLocating();
+          else locateMe(true);
+        });
+        meButton.classList.toggle("on", !!prefs.followMe);
+        expandButton = make("&#x26F6;", "Make the map fill the Weather section", () => post({ type: "expand" }));
+        L.DomEvent.disableClickPropagation(bar);
+        return bar;
+      }
+    });
+    map.addControl(new Buttons());
+  }
+
+  function goHome() {
+    if (!home) return;
+    map.flyTo([home.latitude, home.longitude], Math.max(map.getZoom(), 8), { duration: 0.8 });
+  }
+
+  // The house: a pulsing ring and a labelled pin that stays readable over any radar colour.
+  function placeHome() {
+    if (!home) return;
+    const icon = L.divIcon({
+      className: "home-icon",
+      html: `<div class="home-pin"><span class="home-pulse"></span><span class="home-dot">&#8962;</span><span class="home-label">${escapeHtml(home.label.toUpperCase())}</span></div>`,
+      iconSize: [0, 0]
+    });
+    if (homeMarker) homeMarker.setLatLng([home.latitude, home.longitude]).setIcon(icon);
+    else homeMarker = L.marker([home.latitude, home.longitude], { icon, zIndexOffset: 1000, keyboard: false, title: "Home" }).addTo(map);
+  }
+
+  // This PC's own position. Only asked for when the button is pressed (or was pressed last time
+  // and remembered). The engine only offers it to a secure page, so on a plain-HTTP server it
+  // explains itself instead.
+  function locateMe(fly) {
+    if (!navigator.geolocation) {
+      toast("Location isn't available here.");
+      return;
+    }
+    stopLocating();
+    prefs.followMe = true;
+    savePrefs();
+    if (meButton) meButton.classList.add("on");
+    let first = true;
+    meWatch = navigator.geolocation.watchPosition((position) => {
+      const at = [position.coords.latitude, position.coords.longitude];
+      const accuracy = position.coords.accuracy || 0;
+      const icon = L.divIcon({ className: "me-icon", html: `<div class="me-dot"><span class="me-label">YOU</span></div>`, iconSize: [0, 0] });
+      if (!meMarker) {
+        meMarker = L.marker(at, { icon, zIndexOffset: 1100, keyboard: false, title: "You are here" }).addTo(map);
+        meCircle = L.circle(at, { radius: accuracy, className: "me-accuracy", interactive: false }).addTo(map);
+      } else {
+        meMarker.setLatLng(at);
+        meCircle.setLatLng(at).setRadius(accuracy);
+      }
+      meMarker.bindTooltip(`You are here (±${Math.round(accuracy)} m)${homeDistanceText(at)}`, { direction: "top", offset: [0, -10] });
+      if (first && fly) map.flyTo(at, Math.max(map.getZoom(), 10), { duration: 0.8 });
+      first = false;
+    }, (error) => {
+      stopLocating();
+      if (fly) toast(error.code === 1
+        ? "Location was refused. Windows location has to be on, and it is only offered when the server is reached over HTTPS."
+        : "Couldn't get this PC's location.");
+    }, { enableHighAccuracy: true, maximumAge: 30_000, timeout: 20_000 });
+  }
+
+  function stopLocating() {
+    if (meWatch != null) navigator.geolocation.clearWatch(meWatch);
+    meWatch = null;
+    if (meMarker) { meMarker.remove(); meMarker = null; }
+    if (meCircle) { meCircle.remove(); meCircle = null; }
+    if (meButton) meButton.classList.remove("on");
+    prefs.followMe = false;
+    savePrefs();
+  }
+
+  function homeDistanceText(at) {
+    if (!home) return "";
+    const miles = map.distance(at, [home.latitude, home.longitude]) / 1609.344;
+    return miles < 0.2 ? " - at home" : ` - ${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi from home`;
+  }
+
+  // ---- Layers and frames ----
+
+  function layerById(id) {
+    return info?.layers.find(l => l.id === id);
+  }
+
+  function currentLayer() {
+    return layerById(prefs.layer) || layerById("reflectivity") || info?.layers[0];
+  }
+
+  function tileUrl(layer, time) {
+    const params = new URLSearchParams();
+    if (layer.scope === "station" && info.station) params.set("station", info.station);
+    if (time) params.set("time", time);
+    const q = params.toString();
+    return `/api/weather/map/tile/${encodeURIComponent(layer.id)}/{z}/{x}/{y}${q ? `?${q}` : ""}`;
+  }
+
+  function rebuildFrames() {
+    if (!map || !info) return;
+    const wasPlaying = playing;
+    stop();
+    for (const layer of frameLayers) if (layer) layer.remove();
+    frameLayers = [];
+
+    const layer = currentLayer();
+    renderLayerChrome();
+    if (!layer) return;
+    if (layer.scope === "station" && !info.station) return;
+
+    frames = layer.times.length ? layer.times : [null];
+    frameIndex = frames.length - 1;
+
+    // Only the newest frame loads up front; the rest are added when the loop plays, so a glance
+    // at the section costs one screen of tiles rather than twelve.
+    frameLayers = frames.map(() => null);
+    ensureFrameLayer(frameIndex);
+
+    const slider = $("frame");
+    slider.max = String(frames.length - 1);
+    slider.value = String(frameIndex);
+    slider.disabled = frames.length < 2;
+    $("play").disabled = frames.length < 2;
+
+    showFrame(frameIndex);
+    if (wasPlaying) play();
+  }
+
+  function ensureFrameLayer(index) {
+    if (frameLayers[index]) return frameLayers[index];
+    const tiles = L.tileLayer(tileUrl(currentLayer(), frames[index]), {
+      pane: "wxRadar",
+      opacity: 0,
+      maxNativeZoom: info.maximumRadarZoom || 12,
+      maxZoom: 16,
+      className: "radar-tiles",
+      keepBuffer: 1,
+      updateWhenZooming: false
+    }).addTo(map);
+    frameLayers[index] = tiles;
+    return tiles;
+  }
+
+  function showFrame(index) {
+    if (!frames.length) return;
+    frameIndex = Math.max(0, Math.min(index, frames.length - 1));
+    ensureFrameLayer(frameIndex);
+    frameLayers.forEach((layer, i) => layer && layer.setOpacity(i === frameIndex ? prefs.opacity : 0));
+    $("frame").value = String(frameIndex);
+
+    const time = frames[frameIndex];
+    const label = $("time");
+    if (time) {
+      const minutesAgo = Math.round((Date.now() - new Date(time).getTime()) / 60_000);
+      label.textContent = `${formatTime(time, CLOCK)} · ${minutesAgo <= 1 ? "just now" : `${minutesAgo} min ago`}`;
+    } else {
+      label.textContent = "latest";
+    }
+    label.classList.toggle("old", frameIndex < frames.length - 1);
+  }
+
+  function play() {
+    if (frames.length < 2) return;
+    playing = true;
+    frames.forEach((_, i) => ensureFrameLayer(i));
+    $("play").textContent = "❚❚ pause";
+    const tick = () => {
+      if (!playing) return;
+      const next = frameIndex >= frames.length - 1 ? 0 : frameIndex + 1;
+      showFrame(next);
+      playTimer = setTimeout(tick, next === frames.length - 1 ? LAST_FRAME_HOLD_MS : FRAME_INTERVAL_MS);
+    };
+    if (frameIndex === frames.length - 1) showFrame(0);
+    playTimer = setTimeout(tick, FRAME_INTERVAL_MS);
+  }
+
+  function stop() {
+    playing = false;
+    clearTimeout(playTimer);
+    $("play").textContent = "▶ play";
+  }
+
+  function renderLayerChrome() {
+    const buttons = $("layers");
+    const layer = currentLayer();
+    const group = scope => info.layers.filter(l => l.scope === scope).map(l =>
+      `<button type="button" class="${l.id === layer?.id ? "on" : ""}" data-layer="${escapeHtml(l.id)}" title="${escapeHtml(l.description)}"${l.scope === "station" && !info.station ? " disabled" : ""}>${escapeHtml(l.name)}</button>`
+    ).join("");
+    buttons.innerHTML = `
+      <span class="group"><span class="group-name">national</span>${group("national")}</span>
+      <span class="group"><span class="group-name">${escapeHtml(info.station || "radar")}</span>${group("station")}</span>`;
+    for (const button of buttons.querySelectorAll("[data-layer]")) {
+      button.addEventListener("click", () => {
+        prefs.layer = button.dataset.layer;
+        savePrefs();
+        rebuildFrames();
+      });
+    }
+
+    $("title").textContent = layer ? `RADAR · ${layer.scope === "station" ? `${info.station} ` : ""}${layer.name.toUpperCase()}` : "RADAR";
+
+    const legend = $("legend");
+    if (layer) {
+      const params = layer.scope === "station" && info.station ? `?station=${encodeURIComponent(info.station)}` : "";
+      const src = `/api/weather/map/legend/${encodeURIComponent(layer.id)}${params}`;
+      if (legend.getAttribute("src") !== src) {
+        legend.classList.remove("missing");
+        legend.onerror = () => legend.classList.add("missing");
+        legend.src = src;
+      }
+      legend.alt = `${layer.name} colour key`;
+    }
+    $("note").textContent = layer
+      ? `${layer.description} ${layer.scope === "station" ? `From radar ${info.station}; it sees about 150 miles out.` : "Updated every few minutes."} Scroll to zoom, drag to pan.`
+      : "";
+
+    const select = $("station");
+    const sites = [...(info.stations || [])];
+    const dist = s => home ? map.distance([home.latitude, home.longitude], [s.latitude, s.longitude]) / 1609.344 : 0;
+    sites.sort((a, b) => dist(a) - dist(b));
+    select.innerHTML = sites.map(s =>
+      `<option value="${escapeHtml(s.id)}"${s.id === info.station ? " selected" : ""}>${escapeHtml(s.id)} · ${escapeHtml(s.name)}${home ? ` (${Math.round(dist(s))} mi)` : ""}</option>`
+    ).join("");
+
+    drawSites();
+  }
+
+  async function selectStation(station) {
+    prefs.station = station === info?.homeStation ? null : station;
+    if (layerById(prefs.layer)?.scope !== "station") prefs.layer = "station-reflectivity";
+    savePrefs();
+    await loadInfo();
+  }
+
+  function drawSites() {
+    sitesGroup.clearLayers();
+    for (const site of info.stations || []) {
+      const selected = site.id === info.station;
+      const marker = L.circleMarker([site.latitude, site.longitude], {
+        radius: selected ? 6 : 4,
+        className: selected ? "site site-on" : "site",
+        pane: "markerPane"
+      });
+      marker.bindTooltip(`${escapeHtml(site.id)} · ${escapeHtml(site.name)}${selected ? " (selected)" : " - click to use this radar"}`, { direction: "top" });
+      marker.on("click", () => selectStation(site.id));
+      marker.addTo(sitesGroup);
+    }
+  }
+
+  // ---- Storms, warnings, outlook ----
+
+  function applyOverlays() {
+    if (!map) return;
+    const toggle = (group, on) => on ? group.addTo(map) : group.remove();
+    toggle(cellsGroup, prefs.cells);
+    toggle(warningsGroup, prefs.warnings);
+    toggle(outlookGroup, prefs.outlook);
+    toggle(sitesGroup, prefs.sites);
+  }
+
+  function cellIcon(cell) {
+    // The arrow glyph points east; a heading of 0 is north.
+    const arrow = cell.headingDegrees != null
+      ? `<span class="cell-arrow" style="transform:rotate(${cell.headingDegrees - 90}deg)">➤</span>`
+      : "";
+    return L.divIcon({
+      className: "cell-icon",
+      html: `<div class="cell-marker threat-${cell.threat}${cell.towardHome ? " cell-incoming" : ""}">${cell.tornadic ? "T" : cell.rotation ? "M" : cell.threat === 2 ? "H" : ""}${arrow}</div>`,
+      iconSize: [0, 0]
+    });
+  }
+
+  function popupWidth() {
+    return Math.max(200, Math.min(320, map.getSize().x - 70));
+  }
+
+  function cellPopup(cell) {
+    const rows = [
+      ["tracked by", `${cell.radar} radar · cell ${cell.stormId}`],
+      ["motion", cell.speedMph ? `toward the ${cell.headingCompass} at ${cell.speedMph} mph` : "nearly stationary"],
+      cell.distanceMiles != null ? ["from home", `${cell.distanceMiles.toFixed(1)} mi ${cell.bearingCompass || ""}`] : null,
+      cell.towardHome ? ["reaches home", `in about ${cell.etaMinutes} min, passing ${cell.closestMiles.toFixed(1)} mi away`] : null,
+      cell.tornadic ? ["tornado", "tornado vortex signature - strong rotation near the ground"] : null,
+      cell.mesoStrength ? ["rotation", `mesocyclone rank ${cell.mesoStrength} of 25${cell.rotation ? "" : " (weak)"}`] : null,
+      ["hail", `${cell.hailProbability ?? 0}% chance, ${cell.severeHailProbability ?? 0}% severe${cell.maxHailInches ? `, up to ${cell.maxHailInches.toFixed(2)}"` : ""}`],
+      cell.maxDbz != null ? ["max reflectivity", `${cell.maxDbz} dBZ`] : null,
+      cell.topKft != null ? ["storm top", `${cell.topKft.toFixed(0)},000 ft`] : null,
+      cell.vil != null ? ["VIL", `${cell.vil} kg/m² (water in the column; 40+ often means hail)`] : null,
+      cell.validAt ? ["scan", formatTime(cell.validAt, CLOCK)] : null
+    ].filter(Boolean);
+    return `<div class="popup"><div class="popup-title">${escapeHtml(cellTitle(cell))}</div><dl>${rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join("")}</dl></div>`;
+  }
+
+  // Tracks draw for anything notable, anything heading home, and everything once zoomed in far
+  // enough that they don't turn the map into a hairball.
+  function drawCells() {
+    if (!map || !cellsGroup) return;
+    redrawingCells = true;
+    cellsGroup.clearLayers();
+    cellMarkers.clear();
+    const zoom = map.getZoom();
+    for (const cell of storms?.cells || []) {
+      if (cell.threat === 0 && zoom < 9 && !cell.towardHome && cell.id !== openCellId) continue;
+      const showTrack = cell.track?.length && (cell.threat >= 1 || cell.towardHome || zoom >= 10);
+      if (showTrack) {
+        const points = [[cell.latitude, cell.longitude], ...cell.track.map(p => [p.latitude, p.longitude])];
+        L.polyline(points, { className: `track track-${cell.threat}${cell.towardHome ? " track-incoming" : ""}`, interactive: false }).addTo(cellsGroup);
+        for (const point of cell.track) {
+          L.circleMarker([point.latitude, point.longitude], { radius: 2.5, className: "track-dot", interactive: true })
+            .bindTooltip(`+${point.minutes} min`, { direction: "right" })
+            .addTo(cellsGroup);
+        }
+      }
+      const hazards = cellHazards(cell);
+      const marker = L.marker([cell.latitude, cell.longitude], { icon: cellIcon(cell), zIndexOffset: 500 + cell.threat * 10 })
+        .bindTooltip(`${escapeHtml(cellTitle(cell))}${hazards ? ` · ${escapeHtml(hazards)}` : ""}${cell.speedMph ? ` · ${escapeHtml(cell.headingCompass)} ${cell.speedMph} mph` : ""}`, { direction: "top", offset: [0, -8] })
+        .bindPopup(cellPopup(cell), { maxWidth: popupWidth(), autoPanPadding: [12, 12] })
+        .addTo(cellsGroup);
+      marker.on("popupopen", () => { openCellId = cell.id; });
+      marker.on("popupclose", () => { if (!redrawingCells) openCellId = null; });
+      cellMarkers.set(cell.id, marker);
+    }
+    redrawingCells = false;
+    if (openCellId && prefs.cells) cellMarkers.get(openCellId)?.openPopup();
+  }
+
+  function toLatLngs(polygons) {
+    return polygons.map(rings => rings.map(ring => ring.map(([lon, lat]) => [lat, lon])));
+  }
+
+  function drawWarnings() {
+    warningsGroup.clearLayers();
+    // Weakest first so a tornado warning draws on top of the severe thunderstorm warning it
+    // sits inside.
+    const order = { TO: 9, EW: 8, SV: 7, SQ: 6, FF: 5, MA: 4 };
+    const warnings = [...(storms?.warnings || [])].sort((a, b) => (order[a.phenomena] || 0) - (order[b.phenomena] || 0));
+    for (const warning of warnings) {
+      const color = warningColor(warning.phenomena);
+      const until = warning.expires ? `until ${formatTime(warning.expires, CLOCK)}` : "";
+      const tags = warningTags(warning);
+      const badges = [warning.emergency ? "EMERGENCY" : null, warning.particularlyDangerous ? "PARTICULARLY DANGEROUS SITUATION" : null].filter(Boolean);
+      L.polygon(toLatLngs(warning.polygons), {
+        pane: "wxWarnings",
+        color,
+        weight: warning.phenomena === "TO" ? 3 : 2,
+        fillColor: color,
+        fillOpacity: 0.12
+      })
+        .bindTooltip(`${escapeHtml(warning.name)} ${escapeHtml(until)}`, { sticky: true })
+        .bindPopup(`<div class="popup"><div class="popup-title" style="color:${color}">${escapeHtml(warning.name)}</div>
+          ${badges.length ? `<div class="popup-badge">${badges.map(escapeHtml).join(" · ")}</div>` : ""}
+          <dl>
+            <dt>in effect</dt><dd>${escapeHtml(warning.issued ? formatTime(warning.issued, CLOCK) : "")} - ${escapeHtml(warning.expires ? formatTime(warning.expires, CLOCK) : "")}</dd>
+            ${tags ? `<dt>threats</dt><dd>${escapeHtml(tags)}</dd>` : ""}
+            ${warning.office ? `<dt>issued by</dt><dd>NWS ${escapeHtml(warning.office)}</dd>` : ""}
+            ${warning.containsHome ? `<dt>home</dt><dd><b>inside this warning</b></dd>` : ""}
+          </dl></div>`, { maxWidth: popupWidth(), autoPanPadding: [12, 12] })
+        .addTo(warningsGroup);
+    }
+  }
+
+  function drawOutlook() {
+    outlookGroup.clearLayers();
+    const areas = [...(storms?.outlook?.areas || [])].sort((a, b) => a.rank - b.rank);
+    for (const area of areas) {
+      L.polygon(toLatLngs(area.polygons), {
+        pane: "wxOutlook",
+        color: area.stroke || "#888",
+        weight: 1.5,
+        fillColor: area.fill || "#888",
+        fillOpacity: 0.18,
+        interactive: true
+      }).bindTooltip(`SPC today: ${escapeHtml(area.name)}`, { sticky: true }).addTo(outlookGroup);
+    }
+  }
+
+  async function getJson(url) {
+    const response = await fetch(url, { credentials: "same-origin" });
+    if (response.status === 401) throw new Error("signed out");
+    return response.ok ? response.json() : null;
+  }
+
+  async function loadStorms() {
+    if (!map || !active) return;
+    const bounds = map.getBounds().pad(0.3);
+    const params = new URLSearchParams({
+      west: bounds.getWest().toFixed(3),
+      south: bounds.getSouth().toFixed(3),
+      east: bounds.getEast().toFixed(3),
+      north: bounds.getNorth().toFixed(3)
+    });
+    try {
+      // Home's surroundings are always included, so a storm heading for the house stays drawn
+      // while someone looks at one three states away.
+      const [view, near] = await Promise.all([
+        getJson(`/api/weather/storms?${params}`),
+        home
+          ? getJson(`/api/weather/storms?west=${home.longitude - 2.5}&south=${home.latitude - 2}&east=${home.longitude + 2.5}&north=${home.latitude + 2}`)
+          : Promise.resolve(null)
+      ]);
+      if (!view) return;
+      const byId = new Map(view.cells.map(c => [c.id, c]));
+      for (const cell of near?.cells || []) byId.set(cell.id, cell);
+      const warningsById = new Map(view.warnings.map(w => [w.id, w]));
+      for (const warning of near?.warnings || []) warningsById.set(warning.id, warning);
+      storms = { ...view, cells: [...byId.values()], warnings: [...warningsById.values()] };
+      drawCells();
+      drawWarnings();
+      drawOutlook();
+      applyOverlays();
+    } catch (err) {
+      console.error("Failed to load storms", err);
+    }
+  }
+
+  async function loadInfo() {
+    try {
+      const params = prefs.station ? `?station=${encodeURIComponent(prefs.station)}` : "";
+      const next = await getJson(`/api/weather/map${params}`);
+      if (!next) throw new Error("the server has no radar map");
+      const sameFrames = info && JSON.stringify(info.layers.map(l => l.times)) === JSON.stringify(next.layers.map(l => l.times)) && info.station === next.station;
+      info = next;
+      if (!sameFrames || !frameLayers.length) rebuildFrames();
+      else renderLayerChrome();
+    } catch (err) {
+      console.error("Failed to load the radar map", err);
+      if (!info) toast(`Couldn't load the radar map: ${err.message}`);
+    }
+  }
+
+  function focusCell(id) {
+    const cell = storms?.cells.find(c => c.id === id);
+    if (!cell || !map) return false;
+    if (!prefs.cells) {
+      prefs.cells = true;
+      savePrefs();
+      document.querySelector('[data-overlay="cells"]').checked = true;
+      applyOverlays();
+    }
+    openCellId = id;
+    map.flyTo([cell.latitude, cell.longitude], Math.max(map.getZoom(), 9), { duration: 0.8 });
+    map.once("moveend", () => cellMarkers.get(id)?.openPopup());
+    return true;
+  }
+
+  function startTimers() {
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(() => { loadInfo(); loadStorms(); }, RADAR_REFRESH_INTERVAL_MS);
+  }
+
+  // ---- What the host can ask of the page ----
+
+  // The host asks for a cell it listed from its own storm request; if this page hasn't got that
+  // cell yet (its own request is still in flight), it flies to the coordinates it was given.
+  window.sentinelFocusCell = (id, latitude, longitude) => {
+    if (focusCell(id)) return;
+    if (map && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      openCellId = id;
+      map.flyTo([latitude, longitude], Math.max(map.getZoom(), 9), { duration: 0.8 });
+      map.once("moveend", () => { loadStorms(); });
+    }
+  };
+
+  window.sentinelRefresh = () => { loadInfo(); loadStorms(); };
+
+  // Paused while the Weather section is off screen: no timers, no loop, no tile requests.
+  window.sentinelSetActive = (on) => {
+    active = !!on;
+    if (active) {
+      startTimers();
+      loadInfo();
+      loadStorms();
+    } else {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+      stop();
+    }
+  };
+
+  window.sentinelSetExpanded = (on) => {
+    if (expandButton) {
+      expandButton.classList.toggle("on", !!on);
+      expandButton.title = on ? "Put the forecast back beside the map" : "Make the map fill the Weather section";
+    }
+    setTimeout(() => map && map.invalidateSize(), 60);
+  };
+
+  window.addEventListener("resize", () => map && map.invalidateSize());
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && expandButton?.classList.contains("on")) post({ type: "expand" });
+  });
+
+  create();
+  loadInfo().then(loadStorms);
+  startTimers();
+  post({ type: "ready" });
+})();
+</script>
+</body>
+</html>

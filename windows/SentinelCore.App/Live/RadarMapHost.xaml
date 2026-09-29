@@ -1,0 +1,39 @@
+<UserControl x:Class="SentinelCore.App.Live.RadarMapHost"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
+
+    <Grid Background="{StaticResource CardBackground}">
+        <!-- The interactive map: Live/radar.html, served from the server's own origin. -->
+        <wv2:WebView2 x:Name="Web" Visibility="Collapsed" />
+
+        <!-- The fallback when the map can't run (no WebView2 runtime, or the page couldn't load its
+             map library): the NWS's own animated radar loop, local or national. -->
+        <DockPanel x:Name="Fallback" Visibility="Collapsed">
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="LocalButton" Content="Local" Padding="10,4" Click="OnScopeClicked" Tag="local"
+                            ToolTip="The loop from the radar nearest home." />
+                    <Button x:Name="NationalButton" Content="National" Padding="10,4" Margin="6,0,0,0" Click="OnScopeClicked" Tag="national"
+                            ToolTip="The whole country's radar loop." />
+                </StackPanel>
+                <TextBlock x:Name="FallbackTitle" Text="RADAR" Foreground="{StaticResource Cyan}" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                <TextBlock x:Name="FallbackNote" Style="{StaticResource Caption}" />
+                <Button x:Name="RuntimeButton" Content="Get the WebView2 runtime" Margin="0,8,0,0"
+                        HorizontalAlignment="Left" Visibility="Collapsed" Click="OnRuntimeLinkClicked" />
+            </StackPanel>
+            <Grid>
+                <Image x:Name="LoopImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                <TextBlock x:Name="LoopMessage" Style="{StaticResource Caption}" HorizontalAlignment="Center"
+                           VerticalAlignment="Center" TextAlignment="Center" MaxWidth="360" />
+            </Grid>
+        </DockPanel>
+
+        <StackPanel x:Name="Placeholder" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="18">
+            <TextBlock x:Name="PlaceholderText" Text="LOADING RADAR" Style="{StaticResource Caption}" HorizontalAlignment="Center" />
+        </StackPanel>
+    </Grid>
+</UserControl>

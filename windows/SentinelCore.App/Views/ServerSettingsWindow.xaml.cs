@@ -32,9 +32,14 @@ public partial class ServerSettingsWindow : Window
     // How to put a value back into a field's control, for a lookup that fills several at once.
     private readonly Dictionary<string, Action<SettingsValue>> _writers = new();
 
-    public ServerSettingsWindow(AppModel model)
+    // A section to open on instead of the first, by key or title ("location" from the Weather
+    // section's "no location set" notice). Case-insensitive; ignored when nothing matches.
+    private readonly string? _initialSection;
+
+    public ServerSettingsWindow(AppModel model, string? initialSection = null)
     {
         _model = model;
+        _initialSection = initialSection;
         InitializeComponent();
         Loaded += async (_, _) => await LoadAsync();
     }
@@ -48,7 +53,13 @@ public partial class ServerSettingsWindow : Window
             _schema = await _model.Client.SettingsSchemaAsync();
             _snapshot = await _model.Client.SettingsSnapshotAsync();
             BuildSectionList();
-            if (_schema.Count > 0) ShowSection(VisibleSections().FirstOrDefault() ?? _schema[0]);
+            var wanted = string.IsNullOrWhiteSpace(_initialSection)
+                ? null
+                : _schema.FirstOrDefault(section =>
+                    string.Equals(section.Key, _initialSection, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(section.Title, _initialSection, StringComparison.OrdinalIgnoreCase));
+            if (wanted is not null) ShowSection(wanted);
+            else if (_schema.Count > 0) ShowSection(VisibleSections().FirstOrDefault() ?? _schema[0]);
             Message("");
         }
         catch (Exception error)

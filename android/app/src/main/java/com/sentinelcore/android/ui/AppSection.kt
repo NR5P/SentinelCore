@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.ui.graphics.vector.ImageVector
 
 // Internal rather than private so TabBarLayout's unit tests can reach it.
@@ -23,6 +24,7 @@ internal enum class AppSection(
     MOVIES("Movies", "movies"),
     ALARM("Alarm", "alarm"),
     ORGANIZER("Organizer", "organizer"),
+    WEATHER("Weather", "weather"),
     FILES("Files", "files"),
     DEVICES("Devices", "devices"),
     SETTINGS("Settings", "settings"),
@@ -38,6 +40,7 @@ internal enum class AppSection(
             MOVIES -> Icons.Default.Movie
             ALARM -> Icons.Default.Shield
             ORGANIZER -> Icons.Default.CalendarMonth
+            WEATHER -> Icons.Default.WbSunny
             FILES -> Icons.Default.Folder
             DEVICES -> Icons.Default.Lightbulb
             SETTINGS -> Icons.Default.Settings
@@ -45,7 +48,7 @@ internal enum class AppSection(
 
     companion object {
         // The Device Hub, the Organizer, Movies & TV, the Alarm and the Files library can each be
-        // switched off server-side. Named arguments at every call site: optional booleans in a
+        // switched off server-side; the Weather tab is missing only on a server older than it. Named arguments at every call site: optional booleans in a
         // row are one positional slip away from gating the wrong section.
         fun visible(
             deviceHubEnabled: Boolean,
@@ -53,13 +56,15 @@ internal enum class AppSection(
             moviesEnabled: Boolean = false,
             alarmEnabled: Boolean = false,
             filesEnabled: Boolean = false,
+            weatherEnabled: Boolean = false,
         ): List<AppSection> =
             entries.filter {
                 (it != DEVICES || deviceHubEnabled) &&
                     (it != ORGANIZER || organizerEnabled) &&
                     (it != MOVIES || moviesEnabled) &&
                     (it != ALARM || alarmEnabled) &&
-                    (it != FILES || filesEnabled)
+                    (it != FILES || filesEnabled) &&
+                    (it != WEATHER || weatherEnabled)
             }
     }
 }

@@ -1,0 +1,57 @@
+<UserControl x:Class="SentinelCore.App.Views.WeatherView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:live="clr-namespace:SentinelCore.App.Live">
+
+    <DockPanel Margin="20,16,20,16">
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Weather" Style="{StaticResource SectionTitle}" />
+                <TextBlock x:Name="UpdatedText" Style="{StaticResource Caption}" />
+            </StackPanel>
+
+            <Button x:Name="RefreshButton" Grid.Column="1" VerticalAlignment="Center" Padding="10,6" Click="OnRefreshClicked"
+                    ToolTip="Ask the National Weather Service again now. The section refreshes itself every ten minutes while it's open, and the radar every two.">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Refresh" Margin="8,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!--
+            The report scrolls; the radar map never sits inside the scroller. WebView2 is a child
+            window, which WPF can neither clip nor scroll - inside a ScrollViewer it would paint over
+            everything around it. So the map has a cell of its own in this grid: beside the report on
+            a wide window, above it on a narrow one, and the whole grid when expanded. Moving it
+            between cells changes only Grid.Row/Column, never its parent. See ApplyLayout.
+        -->
+        <Grid x:Name="Body">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="ReportColumn" Width="*" />
+                <ColumnDefinition x:Name="MapColumn" Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="MapRow" Height="0" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <ScrollViewer x:Name="ReportScroller" Grid.Row="1" Grid.Column="0"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="ReportHost" Margin="0,0,6,0">
+                    <TextBlock Text="Loading weather…" Style="{StaticResource Caption}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border x:Name="MapCard" Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}" Padding="8"
+                    Margin="16,0,0,0" Visibility="Collapsed">
+                <live:RadarMapHost x:Name="RadarMap" />
+            </Border>
+        </Grid>
+    </DockPanel>
+</UserControl>

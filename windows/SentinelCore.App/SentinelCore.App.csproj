@@ -51,6 +51,7 @@
     <Resource Include="Resources\SentinelCore.ico" />
     <EmbeddedResource Include="Live\player.html" />
     <EmbeddedResource Include="Live\movie.html" />
+    <EmbeddedResource Include="Live\radar.html" />
   </ItemGroup>
 
 </Project>

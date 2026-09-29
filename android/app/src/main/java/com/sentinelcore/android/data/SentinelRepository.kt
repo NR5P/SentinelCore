@@ -293,6 +293,71 @@ class SentinelRepository(
         JSONObject(request("/api/device-hub/enabled")).optBoolean("enabled")
     }
 
+    // ---------------- Weather (core/SentinelCore.Web/WeatherEndpoints.cs) ----------------
+
+    // Whether this server has the Weather tab at all. A bogus radar scope is refused with a 400
+    // before the server reaches out to weather.gov, so the probe costs nothing upstream; a server
+    // older than the tab has no such route and answers 404.
+    suspend fun weatherAvailable(): Boolean = withContext(Dispatchers.IO) {
+        requestWithStatus("/api/weather/radar?scope=probe&kind=probe", "GET", null).first == 400
+    }
+
+    // Always 200 with a `state` - "no location set" and the like are states the tab explains.
+    suspend fun weatherReport(): WeatherReport = withContext(Dispatchers.IO) {
+        WeatherJson.report(JSONObject(request("/api/weather")))
+    }
+
+    suspend fun weatherDetails(): WeatherDetails = withContext(Dispatchers.IO) {
+        WeatherJson.details(JSONObject(request("/api/weather/details")))
+    }
+
+    // The radar map's description: home, the radar sites, the layers and their frame times.
+    // Throws SentinelApiException(404) on a server from before the map, which the tab reads as
+    // "show the animated radar picture instead".
+    suspend fun weatherMap(station: String?): WeatherMapInfo = withContext(Dispatchers.IO) {
+        val query = station?.let { "?station=${queryValue(it)}" }.orEmpty()
+        WeatherJson.mapInfo(JSONObject(request("/api/weather/map$query")))
+    }
+
+    suspend fun weatherStorms(path: String): WeatherStorms = withContext(Dispatchers.IO) {
+        WeatherJson.storms(JSONObject(quietText(path) ?: throw IOException("Could not load the storms.")))
+    }
+
+    // Map tiles, legends and the radar GIF. Not logged per request: a pan across the radar map is
+    // dozens of tiles, and they would bury the Diagnostics screen. Null on any failure.
+    suspend fun weatherBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
+        val urlString = absoluteUrl(path) ?: return@withContext null
+        val connection = openConnection(URL(urlString))
+        try {
+            connection.requestMethod = "GET"
+            connection.connect()
+            storeCookies(connection)
+            if (connection.responseCode !in 200..299) return@withContext null
+            connection.inputStream.use { it.readBytes() }
+        } catch (error: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun quietText(path: String): String? {
+        val urlString = absoluteUrl(path) ?: return null
+        val connection = openConnection(URL(urlString))
+        return try {
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "application/json")
+            connection.connect()
+            storeCookies(connection)
+            if (connection.responseCode !in 200..299) return null
+            connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        } catch (error: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     // ---------------- Movies & TV (core/docs/MOVIES.md) ----------------
 
     // Answers even when the section is off; a 404 from an older server throws, which the caller

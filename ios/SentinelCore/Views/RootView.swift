@@ -8,6 +8,7 @@ struct RootView: View {
     @State private var selection: AppSection? = .events
     @State private var morePath: [AppSection] = []
     @AppStorage(TabBarLayout.storageKey) private var tabBarSections = ""
+    @AppStorage(TabBarLayout.weatherAddedKey) private var tabBarWeatherAdded = false
     @State private var editingTabBar = false
     // An iPad on a wall that was left in the Device Hub's wall display wants the app to open
     // straight back onto it, not onto Events. Once per launch, and only once the server has said
@@ -79,11 +80,24 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sentinelAlarmOpened)) { _ in
             selection = .alarm
         }
+        #if DEBUG
+        // Simulator testing without taps: `-debugSection weather` as a launch argument, like the
+        // Apple TV app's.
+        .onAppear {
+            if let name = UserDefaults.standard.string(forKey: "debugSection"),
+               let section = AppSection(rawValue: name) { selection = section }
+        }
+        #endif
         // sentinelcore://organizer/<pane>, from tapping an Organizer widget on the Home Screen.
         .onOpenURL { url in
             // sentinelcore://alarm, from the Alarm widget.
             if url.scheme == "sentinelcore", url.host() == "alarm" {
                 selection = .alarm
+                return
+            }
+            // sentinelcore://weather, straight to the forecast and radar.
+            if url.scheme == "sentinelcore", url.host() == "weather" {
+                selection = .weather
                 return
             }
             guard url.scheme == "sentinelcore", url.host() == "organizer" else { return }
@@ -179,7 +193,13 @@ struct RootView: View {
         // so whatever sends the app to one (a tapped Organizer alert, an event) lands there.
         .onChange(of: selection) { _, section in showUnderMoreIfNeeded(section) }
         .onChange(of: layout) { _, _ in showUnderMoreIfNeeded(selection) }
-        .onAppear { showUnderMoreIfNeeded(selection) }
+        .onAppear {
+            if !tabBarWeatherAdded {
+                tabBarSections = TabBarLayout.addingWeather(to: tabBarSections)
+                tabBarWeatherAdded = true
+            }
+            showUnderMoreIfNeeded(selection)
+        }
         .onChange(of: morePath) { _, path in
             // Only while More is the tab on screen - a section with a tab owns `selection` then.
             if selection.map({ !compactLayout.bar.contains($0) }) ?? true {
@@ -223,6 +243,7 @@ struct RootView: View {
         case .devices: DeviceHubView(isActive: selection == .devices)
         case .alarm: AlarmView(isActive: selection == .alarm)
         case .organizer: OrganizerView()
+        case .weather: WeatherView(isActive: selection == .weather)
         case .files: FilesView()
         case .settings: SettingsView()
         }
@@ -238,7 +259,8 @@ private enum CompactTab: Hashable {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events section over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case events, timeline, live, movies, alarm, organizer, files, devices, settings
+    // Weather sits after the Organizer, as on the dashboard's tab row.
+    case events, timeline, live, movies, alarm, organizer, weather, files, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
@@ -248,6 +270,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .movies: "Movies"
         case .alarm: "Alarm"
         case .organizer: "Organizer"
+        case .weather: "Weather"
         case .files: "Files"
         case .devices: "Device Hub"
         case .settings: "Settings"
@@ -261,6 +284,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .movies: "film.stack"
         case .alarm: "lock.shield.fill"
         case .organizer: "calendar"
+        case .weather: "cloud.sun.fill"
         case .files: "folder"
         case .devices: "lightbulb.fill"
         case .settings: "gearshape.fill"

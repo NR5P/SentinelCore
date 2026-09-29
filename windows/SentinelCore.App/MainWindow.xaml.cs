@@ -32,6 +32,7 @@ public partial class MainWindow : Window, INavigator
     private TimelineView? _timeline;
     private LiveView? _live;
     private MoviesView? _movies;
+    private WeatherView? _weather;
     private DeviceHubView? _devices;
     private AlarmView? _alarm;
     private FilesView? _files;
@@ -91,6 +92,7 @@ public partial class MainWindow : Window, INavigator
         Timeline,
         Live,
         Movies,
+        Weather,
         Alarm,
         Organizer,
         Files,
@@ -109,6 +111,9 @@ public partial class MainWindow : Window, INavigator
 
         // Movies & TV is switched on server-side, like the Device Hub, and only exists while it is.
         if (_model.MoviesEnabled) sections.Add(new SectionItem(AppSection.Movies, "Movies", ""));
+
+        // Always there, like the dashboard's tab: with no location set it says how to set one.
+        sections.Add(new SectionItem(AppSection.Weather, "Weather", "\uE753"));
 
         // The alarm is on by default but can be switched off server-side.
         if (_model.AlarmEnabled) sections.Add(new SectionItem(AppSection.Alarm, "Alarm", "\uE72E"));
@@ -144,6 +149,7 @@ public partial class MainWindow : Window, INavigator
             AppSection.Timeline => _timeline ??= new TimelineView(_model),
             AppSection.Live => _live ??= NewLiveView(),
             AppSection.Movies => _movies ??= new MoviesView(_model, this),
+            AppSection.Weather => _weather ??= NewWeatherView(),
             AppSection.Devices => _devices ??= NewDeviceHubView(),
             AppSection.Alarm => _alarm ??= NewAlarmView(),
             AppSection.Files => _files ??= NewFilesView(),
@@ -155,6 +161,13 @@ public partial class MainWindow : Window, INavigator
     private LiveView NewLiveView()
     {
         var view = new LiveView(_model, this);
+        view.SetActive(true);
+        return view;
+    }
+
+    private WeatherView NewWeatherView()
+    {
+        var view = new WeatherView(_model);
         view.SetActive(true);
         return view;
     }
@@ -404,6 +417,7 @@ public partial class MainWindow : Window, INavigator
         {
             e.Cancel = true;
             _live?.SetActive(false);
+            _weather?.SetActive(false);
             Hide();
             return;
         }

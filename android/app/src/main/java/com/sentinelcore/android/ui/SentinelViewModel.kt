@@ -8,6 +8,10 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import com.sentinelcore.android.data.MediaApi
+import com.sentinelcore.android.data.WeatherDetails
+import com.sentinelcore.android.data.WeatherMapInfo
+import com.sentinelcore.android.data.WeatherReport
+import com.sentinelcore.android.data.WeatherStorms
 import com.sentinelcore.android.data.MediaBrowseListing
 import com.sentinelcore.android.data.MediaDiscoveredComputer
 import com.sentinelcore.android.data.MediaLibrary
@@ -177,6 +181,10 @@ data class SentinelUiState(
     val moviesEnabled: Boolean = false,
     // Whether the server has the Alarm switched on - drives whether its destination exists.
     val alarmEnabled: Boolean = false,
+    // Whether the server has the Weather tab - every server since it was added does, whatever
+    // the location setting; only an older server lacks it. Starts from what the server said last
+    // time, like moviesEnabled, so the tab doesn't blink in on every launch.
+    val weatherEnabled: Boolean = false,
     // The alarm as last polled - see AlarmScreen. Null until the screen has asked.
     val alarmStatus: AlarmStatus? = null,
     // Whether the server has the Files library switched on - same treatment as the Device Hub.
@@ -250,6 +258,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             pushRegistrationEnabled = preferences.getBoolean(PUSH_ENABLED_KEY, false),
             organizerEnabled = OrganizerDevice.lastKnownEnabled(application),
             moviesEnabled = preferences.getBoolean(MOVIES_ENABLED_KEY, false),
+            weatherEnabled = preferences.getBoolean(WEATHER_ENABLED_KEY, false),
         ),
     )
 
@@ -546,6 +555,12 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                         .onSuccess(::setMoviesEnabled)
                         .onFailure { setMoviesEnabled(false) }
                 },
+                // Same again for the weather: only an older server lacks it.
+                viewModelScope.async {
+                    runCatching { repository.weatherAvailable() }
+                        .onSuccess(::setWeatherEnabled)
+                        .onFailure { setWeatherEnabled(false) }
+                },
                 // Same again for the alarm: an older server has no such endpoint.
                 viewModelScope.async {
                     runCatching { repository.alarmStatus() }
@@ -690,6 +705,23 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     fun absoluteUrl(path: String): String? = repository.absoluteUrl(path)
 
     fun mediaHeaders(): Map<String, String> = repository.mediaHeaders()
+
+    // ---------------- Weather ----------------
+
+    private fun setWeatherEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(WEATHER_ENABLED_KEY, enabled).apply()
+        _state.update { it.copy(weatherEnabled = enabled) }
+    }
+
+    suspend fun weatherReport(): WeatherReport = repository.weatherReport()
+
+    suspend fun weatherDetails(): WeatherDetails = repository.weatherDetails()
+
+    suspend fun weatherMap(station: String?): WeatherMapInfo = repository.weatherMap(station)
+
+    suspend fun weatherStorms(path: String): WeatherStorms = repository.weatherStorms(path)
+
+    suspend fun weatherBytes(path: String): ByteArray? = repository.weatherBytes(path)
 
     // ---------------- Movies & TV ----------------
 
@@ -1605,6 +1637,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         const val REMOTE_SERVER_URL_KEY = "remote_server_url"
         private const val PUSH_ENABLED_KEY = "push_registration_enabled"
         private const val MOVIES_ENABLED_KEY = "movies_enabled_last_known"
+        private const val WEATHER_ENABLED_KEY = "weather_enabled_last_known"
         private const val ADVANCED_SETTINGS_KEY = "settings_show_advanced"
     }
 }

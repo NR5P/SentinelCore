@@ -30,7 +30,7 @@ struct TabBarLayout: Equatable {
             chosen.append(section)
         }
         if chosen.isEmpty {
-            chosen = Array(visible.prefix(Self.limit(visible: visible)))
+            chosen = Self.defaultBar(visible: visible)
         }
         if chosen.count == visible.count && chosen.count <= Self.maxTabs {
             bar = chosen
@@ -40,6 +40,26 @@ struct TabBarLayout: Equatable {
             self.bar = bar
             more = visible.filter { !bar.contains($0) }
         }
+    }
+
+    // The first sections in AppSection order, except that Weather always gets a tab: it takes the
+    // last slot when it would otherwise fall under More.
+    static func defaultBar(visible: [AppSection]) -> [AppSection] {
+        var bar = Array(visible.prefix(limit(visible: visible)))
+        if visible.contains(.weather) && !bar.contains(.weather) && !bar.isEmpty {
+            bar[bar.count - 1] = .weather
+        }
+        return bar
+    }
+
+    // Weather arrived after people had already picked their tabs. Once, it is put in the fourth
+    // slot of a customized bar (whatever was there moves along, to More if the bar is full).
+    static let weatherAddedKey = "tabBarWeatherAdded"
+
+    static func addingWeather(to stored: String) -> String {
+        guard var sections = decode(stored), !sections.contains(.weather) else { return stored }
+        sections.insert(.weather, at: min(maxTabs - 2, sections.count))
+        return encode(sections)
     }
 
     // Stored as a comma-separated list of AppSection raw values; empty means "never customized".

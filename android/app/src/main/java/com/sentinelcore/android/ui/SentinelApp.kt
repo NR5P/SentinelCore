@@ -111,6 +111,7 @@ import com.sentinelcore.android.ui.screens.MOVIE_PLAYER_ROUTE
 import com.sentinelcore.android.ui.screens.MovieDetailScreen
 import com.sentinelcore.android.ui.screens.MoviePlayerScreen
 import com.sentinelcore.android.ui.screens.MoviesScreen
+import com.sentinelcore.android.ui.weather.WeatherScreen
 import com.sentinelcore.android.ui.screens.movieDetailRoute
 import com.sentinelcore.android.ui.screens.moviePlayerRoute
 import com.sentinelcore.android.ui.screens.LivePlayerScreen
@@ -358,6 +359,7 @@ private fun AppShell(
         moviesEnabled = state.moviesEnabled,
         alarmEnabled = state.alarmEnabled,
         filesEnabled = state.familyFilesEnabled,
+        weatherEnabled = state.weatherEnabled,
     )
     val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
 
@@ -554,6 +556,10 @@ private fun SentinelNavHost(
             )
         }
 
+        composable(AppSection.WEATHER.route) {
+            WeatherScreen(state = state, model = model)
+        }
+
         composable(AppSection.ALARM.route) {
             AlarmScreen(
                 state = state,
@@ -682,6 +688,7 @@ private fun SentinelNavHost(
                     moviesEnabled = state.moviesEnabled,
                     alarmEnabled = state.alarmEnabled,
                     filesEnabled = state.familyFilesEnabled,
+                    weatherEnabled = state.weatherEnabled,
                 ),
                 onBack = { navController.popBackStack() },
             )
@@ -1049,6 +1056,7 @@ private fun SentinelNavigationRail(
             moviesEnabled = state.moviesEnabled,
             alarmEnabled = state.alarmEnabled,
             filesEnabled = state.familyFilesEnabled,
+            weatherEnabled = state.weatherEnabled,
         ).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,
