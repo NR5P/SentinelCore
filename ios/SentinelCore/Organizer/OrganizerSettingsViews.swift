@@ -285,7 +285,15 @@ struct OrganizerOfflineSettingsSection: View {
                         .foregroundStyle(SentinelTheme.amber)
                 }
             }
-            Button("Sync Now") { Task { await engine.sync() } }
+            if engine.declinedReset != nil {
+                // "Not Now" on the new-server question: nothing syncs until it's answered.
+                LabeledContent("Sync paused") {
+                    Text("This server doesn't have your data").foregroundStyle(SentinelTheme.amber)
+                }
+                Button("Decide About This Server…") { engine.reconsiderReset() }
+            } else {
+                Button("Sync Now") { Task { await engine.sync() } }
+            }
         } header: {
             Text("Organizer on This Device")
                 // The restore line compares against the server's own count, which is only read

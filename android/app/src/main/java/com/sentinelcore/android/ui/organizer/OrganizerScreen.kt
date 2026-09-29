@@ -257,22 +257,29 @@ fun SyncBanner(engine: OrganizerEngine) {
 }
 
 // The server answering isn't the one this phone last synced with. Nothing syncs until answered.
+// "Not now" (or Back) is remembered for this server; Settings > Organizer brings the question back.
 @Composable
 fun ResetPromptDialog(engine: OrganizerEngine) {
     val prompt by engine.resetPrompt.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val current = prompt ?: return
     AlertDialog(
-        onDismissRequest = {},
+        onDismissRequest = { engine.declineReset() },
         title = { Text("This server doesn't have your Organizer data") },
         text = {
             Text("This phone has ${current.localCount} Organizer items from a server that isn't the one answering now" +
                 (current.serverCount?.let { " (it has $it)" } ?: "") +
                 ". If the old server was lost or reinstalled, upload this copy to fill the new one back up - anything already on " +
-                "the new server is kept, and newer edits win. Using the server's copy replaces what's on this phone.")
+                "the new server is kept, and newer edits win. Using the server's copy replaces what's on this phone. " +
+                "Not now keeps this phone's copy and pauses Organizer sync until you decide in Settings.")
         },
         confirmButton = { TextButton(onClick = { scope.launch { engine.resolveReset(upload = true) } }) { Text("Upload this phone's copy") } },
-        dismissButton = { TextButton(onClick = { scope.launch { engine.resolveReset(upload = false) } }) { Text("Use the server's copy", color = SentinelRed) } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { engine.declineReset() }) { Text("Not now") }
+                TextButton(onClick = { scope.launch { engine.resolveReset(upload = false) } }) { Text("Use the server's copy", color = SentinelRed) }
+            }
+        },
     )
 }
 

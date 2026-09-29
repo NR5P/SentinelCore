@@ -107,14 +107,17 @@ struct RootView: View {
             selection = .organizer
         }
         // The server answering isn't the one this device last synced with. Asked wherever the
-        // person happens to be, because nothing syncs until they answer.
+        // person happens to be, because nothing syncs until they answer. "Not Now" is remembered
+        // for this server (the binding's setter can't do it: it also fires after the other
+        // buttons), and Settings > Organizer on This Device brings the question back.
         .alert("This server doesn't have your Organizer data",
                isPresented: Binding(get: { model.organizer.resetPrompt != nil }, set: { _ in }),
                presenting: model.organizer.resetPrompt) { _ in
             Button("Upload This Device's Copy") { Task { await model.organizer.resolveReset(upload: true) } }
             Button("Use the Server's Copy", role: .destructive) { Task { await model.organizer.resolveReset(upload: false) } }
+            Button("Not Now", role: .cancel) { model.organizer.declineReset() }
         } message: { prompt in
-            Text("This device has \(prompt.localCount) Organizer items from a server that isn't the one answering now\(prompt.serverCount.map { " (it has \($0))" } ?? ""). If the old server was lost or reinstalled, upload this copy to fill the new one back up - anything already on the new server is kept, and newer edits win. Using the server's copy replaces what's on this device.")
+            Text("This device has \(prompt.localCount) Organizer items from a server that isn't the one answering now\(prompt.serverCount.map { " (it has \($0))" } ?? ""). If the old server was lost or reinstalled, upload this copy to fill the new one back up - anything already on the new server is kept, and newer edits win. Using the server's copy replaces what's on this device. Not Now keeps this device's copy and pauses Organizer sync until you decide in Settings.")
         }
     }
 

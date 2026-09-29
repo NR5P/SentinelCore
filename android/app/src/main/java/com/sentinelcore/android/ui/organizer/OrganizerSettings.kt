@@ -64,6 +64,7 @@ fun OrganizerOfflineSettings(engine: OrganizerEngine) {
     val scope = rememberCoroutineScope()
     val policy by engine.policy.collectAsStateWithLifecycle()
     val sync by engine.syncState.collectAsStateWithLifecycle()
+    val declinedReset by engine.declinedReset.collectAsStateWithLifecycle()
     rememberOrganizerRevision(engine)
     val summary = engine.storageSummary()
     // The restore line compares against the server's own count, read only when connecting.
@@ -114,8 +115,16 @@ fun OrganizerOfflineSettings(engine: OrganizerEngine) {
             },
             style = MaterialTheme.typography.labelSmall, color = SentinelTextDim,
         )
+        // "Not now" on the new-server question: nothing syncs until it's answered.
+        if (declinedReset != null) {
+            Text("Sync paused: this server doesn't have your data", color = SentinelAmber)
+        }
         Row {
-            TextButton(onClick = { scope.launch { engine.sync() } }) { Text("Sync now") }
+            if (declinedReset != null) {
+                TextButton(onClick = { engine.reconsiderReset() }) { Text("Decide about this server") }
+            } else {
+                TextButton(onClick = { scope.launch { engine.sync() } }) { Text("Sync now") }
+            }
             // Exact alarm timing needs the person's permission on Android 12+; without it alerts
             // arrive within a few minutes of their time.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

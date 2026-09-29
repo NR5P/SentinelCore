@@ -32,7 +32,8 @@ window.SentinelOrganizerSync = (function () {
   let lastSyncedAt = null;
   let lastError = null;
   let lastClock = { ms: 0, counter: 0 };
-  let resetHandler = async () => false;
+  // Answers true (upload), false (use the server's copy) or null (not now).
+  let resetHandler = async () => null;
 
   const deviceId = (() => {
     try {
@@ -592,6 +593,8 @@ window.SentinelOrganizerSync = (function () {
 
     meta.cursor = reply.cursor;
     meta.serverId = reply.serverId;
+    // The server this browser knows answered after all (the old one came back).
+    delete meta.declinedReset;
     await saveMeta();
 
     if ((reply.missingBlobs || []).length) uploadBlobs();
@@ -600,10 +603,21 @@ window.SentinelOrganizerSync = (function () {
 
   // The server this browser last synced with isn't the one answering now: it was rebuilt, or
   // this is a different install. Nothing has been applied yet.
+  //
+  // "Not now" is remembered by server id in meta.declinedReset, so the question isn't asked on
+  // every sync. Nothing syncs with that server until reconsiderReset() asks it again; a
+  // different server answering asks afresh.
   async function handleReset(reply) {
     const liveItems = [...items.values()].filter((item) => !item.deleted);
+    if (liveItems.length > 0 && meta.declinedReset === reply.serverId) return;
     await refreshStatus();
-    const upload = liveItems.length > 0 && await resetHandler({ localCount: liveItems.length, serverItemCount: status ? status.itemCount : null });
+    const upload = liveItems.length > 0 ? await resetHandler({ localCount: liveItems.length, serverItemCount: status ? status.itemCount : null }) : false;
+
+    if (upload === null || upload === undefined) {
+      meta.declinedReset = reply.serverId;
+      await saveMeta();
+      return;
+    }
 
     if (upload) {
       // Every field with the clock it already had, so the merge treats it exactly like the
@@ -620,6 +634,7 @@ window.SentinelOrganizerSync = (function () {
       await clear("pending");
       meta.serverId = reply.serverId;
       meta.cursor = 0;
+      delete meta.declinedReset;
       const restoreSpaces = meta.spaces.filter((space) => space.kind === "Group");
       for (const change of changes) inflight.set(change.id, change);
       await syncOnce({ restoreSpaces });
@@ -641,6 +656,12 @@ window.SentinelOrganizerSync = (function () {
     if (waiting) return;
     waiting = true;
     while (started) {
+      // Paused by "not now": the old cursor means nothing to this server, and every wait would
+      // come straight back.
+      if (meta.declinedReset) {
+        await sleep(30000);
+        continue;
+      }
       try {
         const response = await fetch(`/api/organizer/wait?cursor=${meta.cursor}&timeout=25`);
         if (!response.ok) {
@@ -745,6 +766,12 @@ window.SentinelOrganizerSync = (function () {
     blobUrl,
     subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
     onServerReset: (handler) => { resetHandler = handler; },
+    declinedReset: () => !!meta.declinedReset,
+    reconsiderReset: async () => {
+      delete meta.declinedReset;
+      await saveMeta();
+      await sync();
+    },
     state: () => ({
       online,
       syncing,

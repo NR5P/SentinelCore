@@ -29,13 +29,16 @@
         </Grid>
 
         <!-- The server answering isn't the one this PC last synced with: nothing is sent until the
-             person says what to do. See OrganizerEngine.ResolveResetAsync. -->
+             person says what to do. See OrganizerEngine.ResolveResetAsync. "Not now" is remembered for
+             this server (OrganizerEngine.DeclineReset); the banner then offers the question back. -->
         <Border x:Name="ResetBanner" DockPanel.Dock="Top" Background="#2A2214" CornerRadius="6" Padding="14,10"
                 Margin="0,0,0,10" Visibility="Collapsed">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Upload this PC's copy" Style="{StaticResource PrimaryButton}" Click="OnUploadCopyClicked" />
-                    <Button Content="Use the server's" Margin="8,0,0,0" Click="OnUseServerCopyClicked" />
+                    <Button x:Name="UploadCopyButton" Content="Upload this PC's copy" Style="{StaticResource PrimaryButton}" Click="OnUploadCopyClicked" />
+                    <Button x:Name="UseServerCopyButton" Content="Use the server's" Margin="8,0,0,0" Click="OnUseServerCopyClicked" />
+                    <Button x:Name="NotNowButton" Content="Not now" Margin="8,0,0,0" Click="OnNotNowClicked" />
+                    <Button x:Name="DecideButton" Content="Decide" Margin="8,0,0,0" Click="OnDecideClicked" Visibility="Collapsed" />
                 </StackPanel>
                 <TextBlock x:Name="ResetText" Style="{StaticResource BodyText}" TextWrapping="Wrap" Margin="0,0,14,0"
                            VerticalAlignment="Center" />

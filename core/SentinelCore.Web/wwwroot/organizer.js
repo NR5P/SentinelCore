@@ -330,6 +330,8 @@ window.SentinelOrganizer = (function () {
 
     S.subscribe(() => { if (visible) queueRender(); });
     S.onServerReset(confirmReset);
+    // "Not now" on the new-server question pauses sync; the status label is the way back to it.
+    el("org-sync-state").addEventListener("click", () => { if (S.declinedReset()) S.reconsiderReset(); });
 
     const status = await S.refreshStatus();
     el("tab-organizer").classList.toggle("hidden", !(status && status.enabled));
@@ -384,12 +386,15 @@ window.SentinelOrganizer = (function () {
     const state = S.state();
     const target = el("org-sync-state");
     let text;
-    if (!state.online) text = state.waitingChanges ? `offline - ${state.waitingChanges} change${state.waitingChanges === 1 ? "" : "s"} waiting` : "offline - showing saved copy";
+    const paused = S.declinedReset();
+    if (paused) text = "sync paused - decide…";
+    else if (!state.online) text = state.waitingChanges ? `offline - ${state.waitingChanges} change${state.waitingChanges === 1 ? "" : "s"} waiting` : "offline - showing saved copy";
     else if (state.syncing) text = "syncing…";
     else if (state.waitingChanges) text = `${state.waitingChanges} change${state.waitingChanges === 1 ? "" : "s"} to send`;
     else text = state.lastSyncedAt ? "synced" : "connecting…";
     target.textContent = text;
-    target.classList.toggle("org-sync-offline", !state.online);
+    target.classList.toggle("org-sync-offline", !state.online || paused);
+    target.classList.toggle("org-sync-paused", paused);
     if (state.lastError && state.online) {
       showToast(state.lastError, false);
       S.clearError();
@@ -2087,6 +2092,8 @@ window.SentinelOrganizer = (function () {
     });
   }
 
+  let resetModalClosed = null;
+
   function confirmReset(info) {
     return new Promise((resolve) => {
       openModal(`
@@ -2098,15 +2105,28 @@ window.SentinelOrganizer = (function () {
         <div class="zone-editor-footer">
           <button class="btn" id="org-reset-upload">upload this copy</button>
           <button class="btn" id="org-reset-discard">use the server's copy</button>
+          <button class="btn" id="org-reset-later">not now</button>
         </div>`);
-      el("org-reset-upload").addEventListener("click", () => { closeModal(); resolve(true); });
-      el("org-reset-discard").addEventListener("click", () => { closeModal(); resolve(false); });
+      // Esc or a click outside closes the modal without either button - that's "not now" too,
+      // or sync would wait on an answer that never comes.
+      let answered = false;
+      const answer = (value) => { if (!answered) { answered = true; resolve(value); } };
+      resetModalClosed = () => answer(null);
+      el("org-reset-upload").addEventListener("click", () => { answer(true); closeModal(); });
+      el("org-reset-discard").addEventListener("click", () => { answer(false); closeModal(); });
+      el("org-reset-later").addEventListener("click", () => closeModal());
     });
   }
 
   // ---- modal --------------------------------------------------------------------------------
 
   function openModal(html) {
+    // Something else taking over the modal while the new-server question is up answers it "not now".
+    if (resetModalClosed && !html.includes("org-reset-upload")) {
+      const closed = resetModalClosed;
+      resetModalClosed = null;
+      closed();
+    }
     el("org-modal-panel").innerHTML = html;
     el("org-modal").classList.remove("hidden");
   }
@@ -2114,6 +2134,9 @@ window.SentinelOrganizer = (function () {
   function closeModal() {
     el("org-modal").classList.add("hidden");
     el("org-modal-panel").innerHTML = "";
+    const closed = resetModalClosed;
+    resetModalClosed = null;
+    if (closed) closed();
     queueRender();
   }
 

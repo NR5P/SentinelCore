@@ -48,6 +48,10 @@ public final class OrganizerEngine {
     public private(set) var spaces: [OrganizerSpace] = []
     public private(set) var syncState = SyncState()
     public var resetPrompt: ResetPrompt?
+    // A ResetPrompt the person said "not now" to. Remembered by server id, so the question isn't
+    // asked again every time this server answers - and nothing syncs with it until they decide,
+    // from Settings (reconsiderReset). Cleared once they answer or a different server answers.
+    public private(set) var declinedReset: ResetPrompt?
     public private(set) var policy: OfflinePolicy
     public private(set) var keptOffline: Set<String> = []
     public private(set) var plannedAlerts: [PlannedAlert] = []
@@ -119,6 +123,9 @@ public final class OrganizerEngine {
         }
         if let data = store.meta("holidays")?.data(using: .utf8), let saved = try? JSONDecoder().decode(HolidayState.self, from: data) {
             holidayState = saved
+        }
+        if let declined = store.meta("declinedReset") {
+            declinedReset = ResetPrompt(id: declined, localCount: items.values.filter { !$0.deleted }.count, serverCount: nil)
         }
         syncState.waitingChanges = pending.count
         replanAlerts()
@@ -543,6 +550,7 @@ public final class OrganizerEngine {
         serverId = nil
         cursor = 0
         spaces = []
+        declinedReset = nil
         store.wipe(keepPending: keepPending)
         // The wipe takes the holiday choice with the rest of the metadata. It's kept: a rebuilt
         // server gets it back from here.
@@ -567,7 +575,7 @@ public final class OrganizerEngine {
         waitTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                if self.resetPrompt != nil || self.syncState.turnedOff || self.syncState.needsSignIn {
+                if self.resetPrompt != nil || self.declinedReset != nil || self.syncState.turnedOff || self.syncState.needsSignIn {
                     try? await Task.sleep(for: .seconds(30))
                     if self.syncState.turnedOff || self.syncState.needsSignIn { await self.refreshStatus() }
                     continue
@@ -749,6 +757,11 @@ public final class OrganizerEngine {
 
         cursor = reply.cursor
         serverId = reply.serverId
+        // The server this device knows answered after all (the old one came back).
+        if declinedReset != nil {
+            declinedReset = nil
+            store.setMeta("declinedReset", nil)
+        }
         missingBlobs = Set(reply.missingBlobs)
         store.save(saved.filter { items[$0.id] != nil })
         store.deleteItems(dropped)
@@ -770,7 +783,29 @@ public final class OrganizerEngine {
             return
         }
         await refreshStatus()
-        resetPrompt = ResetPrompt(id: reply.serverId, localCount: live, serverCount: status?.itemCount)
+        let prompt = ResetPrompt(id: reply.serverId, localCount: live, serverCount: status?.itemCount)
+        if store.meta("declinedReset") == reply.serverId {
+            declinedReset = prompt
+        } else {
+            resetPrompt = prompt
+        }
+    }
+
+    // "Not now" to a ResetPrompt: keep this device's copy as it is, stop asking about this server,
+    // and don't sync with it. A different server answering asks afresh.
+    public func declineReset() {
+        guard let prompt = resetPrompt else { return }
+        resetPrompt = nil
+        declinedReset = prompt
+        store.setMeta("declinedReset", prompt.id)
+    }
+
+    // Brings a declined ResetPrompt back so the person can answer it.
+    public func reconsiderReset() {
+        guard let prompt = declinedReset else { return }
+        declinedReset = nil
+        store.setMeta("declinedReset", nil)
+        resetPrompt = prompt
     }
 
     // The person's answer to a ResetPrompt. Uploading sends every item with the clocks it already
@@ -779,6 +814,8 @@ public final class OrganizerEngine {
     public func resolveReset(upload: Bool) async {
         guard let prompt = resetPrompt else { return }
         resetPrompt = nil
+        declinedReset = nil
+        store.setMeta("declinedReset", nil)
         if upload {
             var restore: [String: OrganizerChange] = [:]
             for item in items.values {

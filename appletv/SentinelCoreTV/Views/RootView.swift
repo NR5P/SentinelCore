@@ -69,11 +69,13 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in model.setOrganizerActive(phase == .active) }
         // Same question the phone app asks when the server has been replaced. A TV only holds a
         // light copy, so using the server's is the likely answer here - but it's the person's call.
+        // "Not Now" (Menu on the remote) is remembered for this server so it doesn't come straight back.
         .alert("This server doesn't have your Organizer data",
                isPresented: Binding(get: { model.organizer.resetPrompt != nil }, set: { _ in }),
                presenting: model.organizer.resetPrompt) { _ in
             Button("Use the Server's Copy") { Task { await model.organizer.resolveReset(upload: false) } }
             Button("Upload This TV's Copy") { Task { await model.organizer.resolveReset(upload: true) } }
+            Button("Not Now", role: .cancel) { model.organizer.declineReset() }
         } message: { prompt in
             Text("This TV has \(prompt.localCount) Organizer items from a server that isn't the one answering now.")
         }

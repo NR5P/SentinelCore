@@ -245,6 +245,40 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(engine.items(.note).count, 2, "nothing was thrown away")
     }
 
+    func testNotNowToARebuiltServerIsRememberedForThatServer() async throws {
+        let folder = directory()
+        let engine = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)
+        let transport = ScriptedTransport { request in
+            request.path == "/api/organizer/status" ?ScriptedTransport.status(username: nil) :ScriptedTransport.reply(serverId: "server-a")
+        }
+        engine.connect(transport)
+        await settle(engine)
+        engine.create(.note, fields: ["title": "Keep me"], spaceId: "family")
+        await engine.sync()
+
+        transport.setHandler { request in
+            request.path == "/api/organizer/status" ?ScriptedTransport.status(username: nil, serverId: "server-b") :ScriptedTransport.reply(serverId: "server-b", reset: true, cursor: 0)
+        }
+        await engine.sync()
+        XCTAssertEqual(engine.resetPrompt?.id, "server-b")
+
+        engine.declineReset()
+        await engine.sync()
+        XCTAssertNil(engine.resetPrompt, "not asked again on the next sync")
+        XCTAssertEqual(engine.declinedReset?.id, "server-b")
+        XCTAssertEqual(engine.items(.note).count, 1, "nothing was thrown away")
+
+        let relaunched = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)
+        relaunched.connect(transport)
+        await settle(relaunched)
+        XCTAssertNil(relaunched.resetPrompt, "not asked again after a relaunch")
+        XCTAssertEqual(relaunched.declinedReset?.id, "server-b")
+
+        relaunched.reconsiderReset()
+        XCTAssertEqual(relaunched.resetPrompt?.id, "server-b")
+        XCTAssertNil(relaunched.declinedReset)
+    }
+
     func testSigningInAsSomeoneElseStartsFromAnEmptyCopy() async throws {
         let folder = directory()
         let engine = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)

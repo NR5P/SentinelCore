@@ -115,6 +115,11 @@ class OrganizerEngine(
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
     private val _resetPrompt = MutableStateFlow<ResetPrompt?>(null)
     val resetPrompt: StateFlow<ResetPrompt?> = _resetPrompt.asStateFlow()
+    // A ResetPrompt the person said "not now" to. Remembered by server id, so the question isn't
+    // asked again every time this server answers - and nothing syncs with it until they decide,
+    // from Settings (reconsiderReset). Cleared once they answer or a different server answers.
+    private val _declinedReset = MutableStateFlow<ResetPrompt?>(null)
+    val declinedReset: StateFlow<ResetPrompt?> = _declinedReset.asStateFlow()
     private val _policy = MutableStateFlow(policy)
     val policy: StateFlow<OfflinePolicy> = _policy.asStateFlow()
     private val _keptOffline = MutableStateFlow<Set<String>>(emptySet())
@@ -153,6 +158,9 @@ class OrganizerEngine(
                     .getOrNull()?.let { _keptOffline.value = it }
             }
             HolidayState.fromJson(store.meta("holidays"))?.let { _holidays.value = it }
+            store.meta("declinedReset")?.let { declined ->
+                _declinedReset.value = ResetPrompt(declined, items.values.count { !it.deleted }, null)
+            }
             _syncState.update { it.copy(waitingChanges = pending.size) }
         }
         replanAlerts()
@@ -541,6 +549,7 @@ class OrganizerEngine(
             serverId = null
             cursor = 0
             _spaces.value = emptyList()
+            _declinedReset.value = null
             store.wipe(keepPending)
             // The wipe takes the holiday choice with the rest of the metadata. It's kept: a rebuilt
             // server gets it back from here.
@@ -568,7 +577,7 @@ class OrganizerEngine(
             waitJob = scope.launch {
                 while (isActive) {
                     val state = _syncState.value
-                    if (_resetPrompt.value != null || state.turnedOff || state.needsSignIn) {
+                    if (_resetPrompt.value != null || _declinedReset.value != null || state.turnedOff || state.needsSignIn) {
                         delay(30_000)
                         if (state.turnedOff || state.needsSignIn) refreshStatus()
                         continue
@@ -749,6 +758,11 @@ class OrganizerEngine(
 
             cursor = reply.optLong("cursor")
             serverId = reply.getString("serverId")
+            // The server this device knows answered after all (the old one came back).
+            if (_declinedReset.value != null) {
+                _declinedReset.value = null
+                store.setMeta("declinedReset", null)
+            }
             missingBlobs = reply.optJSONArray("missingBlobs")?.let { array -> (0 until array.length()).map { array.getString(it) }.toSet() } ?: emptySet()
             store.saveItems(saved.filter { it.id in items })
             store.deleteItems(dropped)
@@ -774,7 +788,25 @@ class OrganizerEngine(
             return
         }
         refreshStatus()
-        _resetPrompt.value = ResetPrompt(newServerId, live, _status.value?.itemCount)
+        val prompt = ResetPrompt(newServerId, live, _status.value?.itemCount)
+        if (store.meta("declinedReset") == newServerId) _declinedReset.value = prompt else _resetPrompt.value = prompt
+    }
+
+    // "Not now" to a ResetPrompt: keep this device's copy as it is, stop asking about this server,
+    // and don't sync with it. A different server answering asks afresh.
+    fun declineReset() {
+        val prompt = _resetPrompt.value ?: return
+        _resetPrompt.value = null
+        _declinedReset.value = prompt
+        store.setMeta("declinedReset", prompt.serverId)
+    }
+
+    // Brings a declined ResetPrompt back so the person can answer it.
+    fun reconsiderReset() {
+        val prompt = _declinedReset.value ?: return
+        _declinedReset.value = null
+        store.setMeta("declinedReset", null)
+        _resetPrompt.value = prompt
     }
 
     // The person's answer to a ResetPrompt. Uploading sends every item with the clocks it
@@ -783,6 +815,8 @@ class OrganizerEngine(
     suspend fun resolveReset(upload: Boolean) {
         val prompt = _resetPrompt.value ?: return
         _resetPrompt.value = null
+        _declinedReset.value = null
+        store.setMeta("declinedReset", null)
         if (!upload) {
             resetLocalCopy(keepPending = false)
             synchronized(lock) {

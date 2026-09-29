@@ -97,6 +97,9 @@ public partial class OrganizerView : UserControl
             _ => (Palette.Amber, "Can't reach the server - working from this PC's copy" + waiting),
         };
 
+        var asking = engine.ResetPrompt is not null;
+        UploadCopyButton.Visibility = UseServerCopyButton.Visibility = NotNowButton.Visibility = asking ? Visibility.Visible : Visibility.Collapsed;
+        DecideButton.Visibility = asking ? Visibility.Collapsed : Visibility.Visible;
         if (engine.ResetPrompt is { } prompt)
         {
             ResetBanner.Visibility = Visibility.Visible;
@@ -104,6 +107,11 @@ public partial class OrganizerView : UserControl
             ResetText.Text = $"This server doesn't have your Organizer data ({server}). It may have been rebuilt. " +
                              $"Upload this PC's copy ({prompt.LocalCount} item{(prompt.LocalCount == 1 ? "" : "s")}) to it, " +
                              "or replace this PC's copy with the server's?";
+        }
+        else if (engine.DeclinedReset is not null)
+        {
+            ResetBanner.Visibility = Visibility.Visible;
+            ResetText.Text = "Organizer sync is paused: this server doesn't have your Organizer data. Changes here are kept on this PC.";
         }
         else
         {
@@ -162,6 +170,10 @@ public partial class OrganizerView : UserControl
         if (!Ui.Confirm(this, "Replace everything in this PC's Organizer with the server's copy? Anything that exists only on this PC will be lost.")) return;
         await _session.Engine.ResolveResetAsync(upload: false);
     }
+
+    private void OnNotNowClicked(object sender, RoutedEventArgs e) => _session.Engine.DeclineReset();
+
+    private void OnDecideClicked(object sender, RoutedEventArgs e) => _session.Engine.ReconsiderReset();
 
     private void OnDismissErrorClicked(object sender, RoutedEventArgs e) => _session.Engine.ClearError();
 

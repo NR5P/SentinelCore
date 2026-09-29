@@ -222,6 +222,39 @@ class OrganizerEngineTest {
     }
 
     @Test
+    fun `not now to a rebuilt server is remembered for that server`() = runBlocking {
+        val store = InMemoryOrganizerStore(directory())
+        val engine = engine(store)
+        val transport = onlyStatus { _, _, _ -> ScriptedTransport.reply("server-a") }
+        engine.connect(transport)
+        settle(engine)
+        engine.create(OrganizerKinds.NOTE, mapOf("title" to "Keep me"), spaceId = "family")
+        engine.sync()
+
+        transport.handler = { _, path, _ ->
+            if (path == "/api/organizer/status") ScriptedTransport.status(serverId = "server-b") else ScriptedTransport.reply("server-b", reset = true, cursor = 0)
+        }
+        engine.sync()
+        assertEquals("server-b", engine.resetPrompt.value?.serverId)
+
+        engine.declineReset()
+        engine.sync()
+        assertNull("not asked again on the next sync", engine.resetPrompt.value)
+        assertEquals("server-b", engine.declinedReset.value?.serverId)
+        assertEquals(1, engine.items(OrganizerKinds.NOTE).size)
+
+        val relaunched = engine(store)
+        relaunched.connect(transport)
+        settle(relaunched)
+        assertNull("not asked again after a relaunch", relaunched.resetPrompt.value)
+        assertEquals("server-b", relaunched.declinedReset.value?.serverId)
+
+        relaunched.reconsiderReset()
+        assertEquals("server-b", relaunched.resetPrompt.value?.serverId)
+        assertNull(relaunched.declinedReset.value)
+    }
+
+    @Test
     fun `signing in as someone else starts from an empty copy`() = runBlocking {
         val engine = engine(InMemoryOrganizerStore(directory()))
         val transport = ScriptedTransport { _, path, _ ->

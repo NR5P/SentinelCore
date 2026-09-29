@@ -109,6 +109,7 @@ public sealed class OrganizerEngine : IDisposable
     private IReadOnlyList<OrganizerSpace> _spaces = Array.Empty<OrganizerSpace>();
     private OrganizerSyncState _syncState = new();
     private OrganizerResetPrompt? _resetPrompt;
+    private OrganizerResetPrompt? _declinedReset;
     private OfflinePolicy _policy;
     private IReadOnlySet<string> _keptOffline = new HashSet<string>();
     private IReadOnlyList<PlannedAlert> _plannedAlerts = Array.Empty<PlannedAlert>();
@@ -163,6 +164,8 @@ public sealed class OrganizerEngine : IDisposable
                 catch (Exception) { }
             }
             if (HolidayState.FromJson(store.Meta("holidays")) is { } holidays) _holidays = holidays;
+            if (store.Meta("declinedReset") is { } declined)
+                _declinedReset = new OrganizerResetPrompt(declined, _items.Values.Count(item => !item.Deleted), null);
             _syncState = _syncState with { WaitingChanges = _pending.Count };
         }
         ReplanAlerts();
@@ -179,6 +182,13 @@ public sealed class OrganizerEngine : IDisposable
     public IReadOnlyList<OrganizerSpace> Spaces { get { lock (_gate) return _spaces; } }
     public OrganizerSyncState SyncState { get { lock (_gate) return _syncState; } }
     public OrganizerResetPrompt? ResetPrompt { get { lock (_gate) return _resetPrompt; } }
+
+    /// <summary>
+    /// A <see cref="ResetPrompt"/> the person said "not now" to. Remembered by server id, so the
+    /// question isn't asked again every time this server answers - and nothing syncs with it until
+    /// they decide (<see cref="ReconsiderReset"/>). Cleared once they answer or a different server answers.
+    /// </summary>
+    public OrganizerResetPrompt? DeclinedReset { get { lock (_gate) return _declinedReset; } }
     public OfflinePolicy Policy { get { lock (_gate) return _policy; } }
     public IReadOnlySet<string> KeptOffline { get { lock (_gate) return _keptOffline; } }
     public IReadOnlyList<PlannedAlert> PlannedAlerts { get { lock (_gate) return _plannedAlerts; } }
@@ -719,6 +729,7 @@ public sealed class OrganizerEngine : IDisposable
             _serverId = null;
             _cursor = 0;
             _spaces = Array.Empty<OrganizerSpace>();
+            _declinedReset = null;
             _store.Wipe(keepPending);
             // The wipe takes the holiday choice with the rest of the metadata. It's kept: a rebuilt
             // server gets it back from here.
@@ -757,7 +768,7 @@ public sealed class OrganizerEngine : IDisposable
             try
             {
                 var state = SyncState;
-                if (ResetPrompt is not null || state.TurnedOff || state.NeedsSignIn)
+                if (ResetPrompt is not null || DeclinedReset is not null || state.TurnedOff || state.NeedsSignIn)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
                     if (state.TurnedOff || state.NeedsSignIn) await RefreshStatusAsync().ConfigureAwait(false);
@@ -1010,6 +1021,12 @@ public sealed class OrganizerEngine : IDisposable
 
             _cursor = reply["cursor"] is JsonValue cursor ? cursor.GetValue<long>() : _cursor;
             _serverId = OrganizerJson.Text(reply, "serverId") ?? _serverId;
+            // The server this PC knows answered after all (the old one came back).
+            if (_declinedReset is not null)
+            {
+                _declinedReset = null;
+                _store.SetMeta("declinedReset", null);
+            }
             _missingBlobs = (reply["missingBlobs"] as JsonArray ?? new JsonArray())
                 .Select(node => node?.GetValue<string>()).OfType<string>().ToHashSet();
             _store.SaveItems(saved.Where(item => _items.ContainsKey(item.Id)).ToList());
@@ -1044,7 +1061,41 @@ public sealed class OrganizerEngine : IDisposable
             return;
         }
         await RefreshStatusAsync().ConfigureAwait(false);
-        lock (_gate) _resetPrompt = new OrganizerResetPrompt(newServerId, live, _status?.ItemCount);
+        lock (_gate)
+        {
+            var prompt = new OrganizerResetPrompt(newServerId, live, _status?.ItemCount);
+            if (_store.Meta("declinedReset") == newServerId) _declinedReset = prompt;
+            else _resetPrompt = prompt;
+        }
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// "Not now" to a <see cref="ResetPrompt"/>: keep this PC's copy as it is, stop asking about
+    /// this server, and don't sync with it. A different server answering asks afresh.
+    /// </summary>
+    public void DeclineReset()
+    {
+        lock (_gate)
+        {
+            if (_resetPrompt is null) return;
+            _declinedReset = _resetPrompt;
+            _resetPrompt = null;
+            _store.SetMeta("declinedReset", _declinedReset.ServerId);
+        }
+        RaiseChanged();
+    }
+
+    /// <summary>Brings a declined <see cref="ResetPrompt"/> back so the person can answer it.</summary>
+    public void ReconsiderReset()
+    {
+        lock (_gate)
+        {
+            if (_declinedReset is null) return;
+            _resetPrompt = _declinedReset;
+            _declinedReset = null;
+            _store.SetMeta("declinedReset", null);
+        }
         RaiseChanged();
     }
 
@@ -1060,6 +1111,11 @@ public sealed class OrganizerEngine : IDisposable
         {
             prompt = _resetPrompt;
             _resetPrompt = null;
+            if (prompt is not null)
+            {
+                _declinedReset = null;
+                _store.SetMeta("declinedReset", null);
+            }
         }
         if (prompt is null) return;
         RaiseChanged();

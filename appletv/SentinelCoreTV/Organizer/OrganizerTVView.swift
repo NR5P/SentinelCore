@@ -69,7 +69,12 @@ struct OrganizerTVView: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 1000)
                 Spacer()
-                if !engine.syncState.online, engine.isConnected || engine.syncState.waitingChanges > 0 {
+                // "Not Now" on the new-server question - the way back to it, since nothing syncs until then.
+                if engine.declinedReset != nil {
+                    Button("Sync Paused - Decide…", systemImage: "exclamationmark.icloud") { engine.reconsiderReset() }
+                        .font(.caption)
+                        .foregroundStyle(SentinelTheme.amber)
+                } else if !engine.syncState.online,engine.isConnected || engine.syncState.waitingChanges > 0 {
                     Label("Offline - showing this TV's copy", systemImage: "icloud.slash")
                         .font(.caption)
                         .foregroundStyle(SentinelTheme.amber)

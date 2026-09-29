@@ -230,6 +230,40 @@ public sealed class OrganizerEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task NotNowToARebuiltServerIsRememberedForThatServer()
+    {
+        var store = new InMemoryOrganizerStore(NewDirectory());
+        var engine = Engine(store);
+        var transport = OnlyStatus((_, _, _) => ScriptedTransport.Reply("server-a"));
+        engine.Connect(transport);
+        await Settle(engine);
+        engine.Create(OrganizerKinds.Note, F(("title", "Keep me")), spaceId: "family");
+        await engine.SyncAsync();
+
+        transport.Handler = (_, path, _) => path == "/api/organizer/status"
+            ? ScriptedTransport.Status(serverId: "server-b")
+            : ScriptedTransport.Reply("server-b", reset: true, cursor: 0);
+        await engine.SyncAsync();
+        Assert.Equal("server-b", engine.ResetPrompt?.ServerId);
+
+        engine.DeclineReset();
+        await engine.SyncAsync();
+        Assert.Null(engine.ResetPrompt);
+        Assert.Equal("server-b", engine.DeclinedReset?.ServerId);
+        Assert.Single(engine.Items(OrganizerKinds.Note));
+
+        var relaunched = Engine(store);
+        relaunched.Connect(transport);
+        await Settle(relaunched);
+        Assert.Null(relaunched.ResetPrompt);
+        Assert.Equal("server-b", relaunched.DeclinedReset?.ServerId);
+
+        relaunched.ReconsiderReset();
+        Assert.Equal("server-b", relaunched.ResetPrompt?.ServerId);
+        Assert.Null(relaunched.DeclinedReset);
+    }
+
+    [Fact]
     public async Task SigningInAsSomeoneElseStartsFromAnEmptyCopy()
     {
         var engine = Engine(new InMemoryOrganizerStore(NewDirectory()));

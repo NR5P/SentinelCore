@@ -3238,6 +3238,11 @@ body.hub-wall main {
   color: var(--amber);
 }
 
+.org-sync-paused {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .org-x {
   background: transparent;
   border: none;
