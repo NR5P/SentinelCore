@@ -37,7 +37,14 @@ public sealed class TestSmbServer : IDisposable
 
     public string Host => $"127.0.0.1:{Port}";
 
-    public void Dispose() => _server.Stop();
+    // SMBLibrary's Stop can race its own connection threads and throw a NullReferenceException
+    // from ReleaseConnection while a client is still closing - seen on the media box 2026-09-29,
+    // failing a test whose assertions had all passed. The server is going away either way.
+    public void Dispose()
+    {
+        try { _server.Stop(); }
+        catch (NullReferenceException) { }
+    }
 
     private static int FreePort()
     {
