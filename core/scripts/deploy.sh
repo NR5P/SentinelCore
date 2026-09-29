@@ -107,7 +107,23 @@ echo "==> Clearing stale build servers (works around an intermittent CLR crash s
 dotnet build-server shutdown >/dev/null 2>&1 || true
 
 echo "==> Building solution (Release)"
-dotnet build -c Release
+# The .NET SDK on the media box sometimes dies at the very start of a build with "Internal CLR
+# error (0x80131506)" - before anything is compiled, so a retry is safe. The retries also turn off
+# the build servers and parallel nodes, which is what has always got past it by hand.
+built=0
+for attempt in 1 2 3; do
+  if [[ $attempt -eq 1 ]]; then
+    dotnet build -c Release && { built=1; break; }
+  else
+    echo "==> Build failed (attempt $((attempt - 1))); retrying without build servers or parallel nodes"
+    dotnet build-server shutdown >/dev/null 2>&1 || true
+    dotnet build -c Release --disable-build-servers -m:1 && { built=1; break; }
+  fi
+done
+if [[ $built -ne 1 ]]; then
+  echo "ERROR: the build failed three times. Nothing was restarted." >&2
+  exit 1
+fi
 
 if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
   echo "==> Running tests"
