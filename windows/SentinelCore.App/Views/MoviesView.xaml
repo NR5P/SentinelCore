@@ -21,7 +21,16 @@
                 <Button x:Name="SurpriseButton" Content="Surprise me" Margin="14,0,0,0" Click="OnSurpriseClicked"
                         ToolTip="Pick something to watch at random" />
                 <!-- Movie downloads: only while the server says this user may add (status.canDownload). -->
-                <Button x:Name="AddButton" Content="+ Add" Margin="14,0,0,0" Style="{StaticResource PrimaryButton}"
+                <!-- The VPN light: a dot and a few words ("VPN · SE"); click for Downloads, which says more. -->
+                <Button x:Name="VpnLightButton" Margin="14,0,0,0" Padding="10,5" Visibility="Collapsed"
+                        Click="OnDownloadsClicked">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="VpnLightDot" Width="8" Height="8" VerticalAlignment="Center"
+                                 Fill="{StaticResource SecondaryText}" />
+                        <TextBlock x:Name="VpnLightText" Margin="7,0,0,0" VerticalAlignment="Center" FontSize="12" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="AddButton" Content="+ Add" Margin="6,0,0,0" Style="{StaticResource PrimaryButton}"
                         Visibility="Collapsed" Click="OnAddClicked"
                         ToolTip="Find a movie or TV episodes and download them into the library" />
                 <Button x:Name="DownloadsButton" Content="Downloads" Margin="6,0,0,0" Visibility="Collapsed"

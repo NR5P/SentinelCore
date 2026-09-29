@@ -253,41 +253,113 @@ public class MediaDownloadTextTests
         Assert.Equal("", MediaDownloadText.SiteFieldValue("password", null));
     }
 
-    // ---------------------------------------------------------------- VPN line
+    // ---------------------------------------------------------------- The VPN light
 
-    private static MediaDownloadServiceStatus Status(string? services, string? vpnState, bool required = true, string? ip = null,
-        string? location = null, string? error = null) => new()
+    private static MediaDownloadServiceStatus Status(string? services, string? vpnState, bool? verified = null,
+        string? ip = null, string? location = null, string? country = null, string? error = null) => new()
     {
         Services = services,
-        Vpn = new MediaDownloadVpn { State = vpnState, Required = required, Ip = ip, Location = location, Error = error },
+        Vpn = new MediaDownloadVpn
+        {
+            State = vpnState, Verified = verified, Ip = ip, Location = location, Country = country, Error = error,
+        },
     };
 
-    [Fact]
-    public void Vpn_line_wording()
-    {
-        Assert.Null(MediaDownloadText.VpnLine(null));
+    private static MediaDownloadText.VpnLookResult Look(MediaDownloadServiceStatus status) =>
+        MediaDownloadText.VpnLook(status)!;
 
-        Assert.Equal((MediaDownloadText.VpnTone.Off, "Off - starts by itself when someone searches or downloads."),
-            MediaDownloadText.VpnLine(Status("stopped", "off")));
-        Assert.Equal((MediaDownloadText.VpnTone.On, "Connected · Stockholm, SE · 185.65.134.1"),
-            MediaDownloadText.VpnLine(Status("running", "connected", ip: "185.65.134.1", location: "Stockholm, SE")));
-        Assert.Equal((MediaDownloadText.VpnTone.On, "Connected"),
-            MediaDownloadText.VpnLine(Status("running", "connected")));
-        Assert.Equal((MediaDownloadText.VpnTone.Busy, "Connecting…"),
-            MediaDownloadText.VpnLine(Status("starting", "off")));
-        Assert.Equal((MediaDownloadText.VpnTone.Busy, "Connecting…"),
-            MediaDownloadText.VpnLine(Status("running", "connecting")));
-        Assert.Equal((MediaDownloadText.VpnTone.Warn, "Handshake failed."),
-            MediaDownloadText.VpnLine(Status("running", "down", error: "Handshake failed.")));
-        Assert.Equal(MediaDownloadText.VpnTone.Warn, MediaDownloadText.VpnLine(Status("failed", "off"))!.Value.Tone);
-        Assert.Contains("journalctl -u sentinelcore-vpn", MediaDownloadText.VpnLine(Status("failed", "off"))!.Value.Text);
-        Assert.Equal(MediaDownloadText.VpnTone.Warn, MediaDownloadText.VpnLine(Status("notInstalled", "connected"))!.Value.Tone);
-        Assert.Contains("install-downloads.sh", MediaDownloadText.VpnLine(Status("notInstalled", "off"))!.Value.Text);
-        Assert.Equal((MediaDownloadText.VpnTone.Off, "qBittorrent and Prowlarr are run outside this server."),
-            MediaDownloadText.VpnLine(Status("external", "unknown", required: true)));
-        Assert.Equal((MediaDownloadText.VpnTone.Off, "qBittorrent and Prowlarr are run outside this server; the VPN is not checked."),
-            MediaDownloadText.VpnLine(Status("external", "off", required: false)));
-        Assert.Equal((MediaDownloadText.VpnTone.Off, "Off - starts by itself when someone searches or downloads."),
-            MediaDownloadText.VpnLine(new MediaDownloadServiceStatus()));
+    [Fact]
+    public void No_status_no_light() => Assert.Null(MediaDownloadText.VpnLook(null));
+
+    [Fact]
+    public void Green_only_when_connected_and_verified()
+    {
+        var look = Look(Status("running", "connected", verified: true, ip: "185.65.134.1", location: "Stockholm, SE", country: "SE"));
+
+        Assert.Equal(MediaDownloadText.VpnTone.On, look.Tone);
+        Assert.Equal("VPN · SE", look.Short);
+        Assert.Equal("Connected and verified · Stockholm, SE · 185.65.134.1 · your home address is hidden", look.Text);
+
+        var noCountry = Look(Status("running", "connected", verified: true));
+        Assert.Equal("VPN on", noCountry.Short);
+        Assert.Equal("Connected and verified · your home address is hidden", noCountry.Text);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)] // an older server that never says: not verified
+    public void Connected_but_not_verified_is_checking(bool? verified)
+    {
+        var look = Look(Status("running", "connected", verified: verified, ip: "185.65.134.1", location: "Stockholm, SE", country: "SE"));
+
+        Assert.Equal(MediaDownloadText.VpnTone.Busy, look.Tone);
+        Assert.Equal("VPN checking", look.Short);
+        Assert.Equal("Connected · Stockholm, SE · 185.65.134.1 · checking it hides your home address…", look.Text);
+    }
+
+    [Theory]
+    [InlineData("starting", "off")]
+    [InlineData("running", "connecting")]
+    public void Starting_or_connecting_is_connecting(string services, string state)
+    {
+        var look = Look(Status(services, state));
+
+        Assert.Equal(MediaDownloadText.VpnTone.Busy, look.Tone);
+        Assert.Equal("VPN connecting", look.Short);
+        Assert.Equal("Connecting…", look.Text);
+    }
+
+    [Theory]
+    [InlineData("stopped", "off")]
+    [InlineData("stopped", "unknown")]
+    [InlineData(null, null)]
+    public void Idle_is_grey(string? services, string? state)
+    {
+        var look = Look(Status(services, state));
+
+        Assert.Equal(MediaDownloadText.VpnTone.Idle, look.Tone);
+        Assert.Equal("VPN idle", look.Short);
+        Assert.StartsWith("Off until someone searches or downloads", look.Text);
+        Assert.Equal(MediaDownloadText.VpnTone.Idle, Look(new MediaDownloadServiceStatus()).Tone);
+    }
+
+    [Fact]
+    public void External_services_are_grey()
+    {
+        var look = Look(Status("external", "unknown"));
+
+        Assert.Equal(MediaDownloadText.VpnTone.Idle, look.Tone);
+        Assert.Equal("VPN idle", look.Short);
+        Assert.Contains("run outside this server", look.Text);
+    }
+
+    [Fact]
+    public void Disabled_is_amber_and_wins_over_everything()
+    {
+        foreach (var services in new[] { "running", "notInstalled", "failed", "external" })
+        {
+            var look = Look(Status(services, "disabled"));
+            Assert.Equal(MediaDownloadText.VpnTone.Disabled, look.Tone);
+            Assert.Equal("VPN off", look.Short);
+            Assert.Contains("home connection", look.Text);
+        }
+    }
+
+    [Fact]
+    public void Problems_are_red()
+    {
+        var notInstalled = Look(Status("notInstalled", "connected", verified: true));
+        Assert.Equal(MediaDownloadText.VpnTone.Problem, notInstalled.Tone);
+        Assert.Equal("VPN not set up", notInstalled.Short);
+        Assert.Contains("install-downloads.sh", notInstalled.Text);
+
+        var down = Look(Status("running", "down", error: "Handshake failed."));
+        Assert.Equal(MediaDownloadText.VpnTone.Problem, down.Tone);
+        Assert.Equal("VPN problem", down.Short);
+        Assert.Equal("Handshake failed.", down.Text);
+
+        var failed = Look(Status("failed", "off"));
+        Assert.Equal(MediaDownloadText.VpnTone.Problem, failed.Tone);
+        Assert.Contains("journalctl -u sentinelcore-vpn", failed.Text);
     }
 }

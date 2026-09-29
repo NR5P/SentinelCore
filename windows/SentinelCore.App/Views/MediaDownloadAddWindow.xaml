@@ -27,6 +27,11 @@
             <!-- 1. Find the title -->
             <DockPanel x:Name="FindPanel">
                 <StackPanel DockPanel.Dock="Top">
+                    <!-- Use VPN is off in Settings: say so before anything is searched. -->
+                    <Border x:Name="VpnOffNote" Background="#2A2212" BorderBrush="{StaticResource Amber}" BorderThickness="1"
+                            CornerRadius="6" Padding="12,8" Margin="0,0,0,12" Visibility="Collapsed">
+                        <TextBlock x:Name="VpnOffText" Foreground="{StaticResource Amber}" TextWrapping="Wrap" />
+                    </Border>
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="MovieKindButton" Content="Movie" MinWidth="90" Click="OnKindClicked" Tag="movie" />
                         <Button x:Name="ShowKindButton" Content="TV show" MinWidth="90" Margin="6,0,0,0" Click="OnKindClicked" Tag="show" />

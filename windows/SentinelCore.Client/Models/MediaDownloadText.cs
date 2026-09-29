@@ -264,51 +264,81 @@ public static class MediaDownloadText
         { } element => element.GetRawText(),
     };
 
-    /// <summary>The colour the VPN line's dot takes.</summary>
+    /// <summary>The VPN light's colour (core/docs/MOVIE_DOWNLOADS.md, "The VPN light").</summary>
     public enum VpnTone
     {
-        Off,
+        /// <summary>Green: connected, and the sites were checked to see another address than home.</summary>
         On,
+
+        /// <summary>Cyan, pulsing: connected but not yet verified, connecting, or the services starting.</summary>
         Busy,
-        Warn,
+
+        /// <summary>Grey: off until someone needs it, or run outside this server.</summary>
+        Idle,
+
+        /// <summary>Amber: Use VPN is off in Settings - the home connection is used.</summary>
+        Disabled,
+
+        /// <summary>Red: not installed, failed, or down.</summary>
+        Problem,
     }
 
     /// <summary>
-    /// The VPN line at the top of Downloads: whether it is connected (and where), connecting,
-    /// broken, not installed, run elsewhere, or simply off until someone needs it. Null status, null line.
+    /// How the VPN light looks: its tone, the pill's few words ("VPN · SE") and the Downloads
+    /// screen's sentence. One function for both, so they can never disagree.
     /// </summary>
-    public static (VpnTone Tone, string Text)? VpnLine(MediaDownloadServiceStatus? status)
+    public sealed record VpnLookResult(VpnTone Tone, string Short, string Text);
+
+    /// <summary>
+    /// The look for a status, following the web's <c>vpnLook</c> in the table's order: disabled,
+    /// not installed, connected (verified or not), connecting, failed or down, external, idle.
+    /// Null for no status at all - there is then no light to draw.
+    /// </summary>
+    public static VpnLookResult? VpnLook(MediaDownloadServiceStatus? status)
     {
         if (status is null) return null;
         var vpn = status.Vpn;
-        var vpnState = vpn?.State;
+        var state = vpn?.State;
         var services = status.Services;
 
+        if (state == "disabled")
+        {
+            return new VpnLookResult(VpnTone.Disabled, "VPN off",
+                "Turned off in Settings · searching and downloading use your home connection, so the sites see your home address.");
+        }
         if (services == "notInstalled")
         {
-            return (VpnTone.Warn,
+            return new VpnLookResult(VpnTone.Problem, "VPN not set up",
                 "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.");
         }
-        if (vpnState == "connected")
+        if (state == "connected")
         {
-            var parts = new List<string> { "Connected" };
-            if (!string.IsNullOrWhiteSpace(vpn!.Location)) parts.Add(vpn.Location!);
-            if (!string.IsNullOrWhiteSpace(vpn.Ip)) parts.Add(vpn.Ip!);
-            return (VpnTone.On, string.Join(" · ", parts));
+            var where = "";
+            if (!string.IsNullOrWhiteSpace(vpn!.Location)) where += $" · {vpn.Location}";
+            if (!string.IsNullOrWhiteSpace(vpn.Ip)) where += $" · {vpn.Ip}";
+            return vpn.IsVerified
+                ? new VpnLookResult(VpnTone.On,
+                    string.IsNullOrWhiteSpace(vpn.Country) ? "VPN on" : $"VPN · {vpn.Country}",
+                    $"Connected and verified{where} · your home address is hidden")
+                : new VpnLookResult(VpnTone.Busy, "VPN checking", $"Connected{where} · checking it hides your home address…");
         }
-        if (services == "starting" || vpnState == "connecting") return (VpnTone.Busy, "Connecting…");
-        if (services == "failed" || vpnState == "down")
+        if (services == "starting" || state == "connecting") return new VpnLookResult(VpnTone.Busy, "VPN connecting", "Connecting…");
+        if (services == "failed" || state == "down")
         {
-            return (VpnTone.Warn, string.IsNullOrWhiteSpace(vpn?.Error)
+            return new VpnLookResult(VpnTone.Problem, "VPN problem", string.IsNullOrWhiteSpace(vpn?.Error)
                 ? "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn)."
                 : vpn!.Error!);
         }
         if (services == "external")
         {
-            return (VpnTone.Off, vpn?.Required == true
-                ? "qBittorrent and Prowlarr are run outside this server."
-                : "qBittorrent and Prowlarr are run outside this server; the VPN is not checked.");
+            return new VpnLookResult(VpnTone.Idle, "VPN idle",
+                "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used.");
         }
-        return (VpnTone.Off, "Off - starts by itself when someone searches or downloads.");
+        return new VpnLookResult(VpnTone.Idle, "VPN idle",
+            "Off until someone searches or downloads, then it connects by itself. Press Test to check it now.");
     }
+
+    /// <summary>The note at the top of the Add window while Use VPN is off in Settings.</summary>
+    public const string VpnOffWarning =
+        "The VPN is turned off in Settings, so the sites and everyone sharing will see your home address.";
 }

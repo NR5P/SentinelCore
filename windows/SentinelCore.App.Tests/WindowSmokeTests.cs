@@ -106,6 +106,27 @@ public class WindowSmokeTests
                     CanDownload = true, TmdbConfigured = false, MovieLibrary = false, ShowLibrary = true,
                 })),
                 ("MediaDownloadSitesWindow", () => new MediaDownloadSitesWindow(model)),
+                ("MediaDownloadAddWindow (VPN off)", () => new MediaDownloadAddWindow(model, DownloadStatus("stopped", "disabled", false))),
+                ("MoviesView (every VPN light)", () =>
+                {
+                    var view = new MoviesView(model);
+                    foreach (var (services, state, verified) in new[]
+                    {
+                        ("running", "connected", true),      // green
+                        ("running", "connected", false),     // cyan, checking
+                        ("starting", "connecting", false),   // cyan, connecting
+                        ("stopped", "off", false),           // grey
+                        ("external", "unknown", false),      // grey
+                        ("stopped", "disabled", false),      // amber
+                        ("failed", "down", false),           // red
+                        ("notInstalled", "off", false),      // red
+                    })
+                    {
+                        view.ApplyDownloadStatus(DownloadStatus(services, state, verified));
+                    }
+                    view.ApplyDownloadStatus(MediaDownloadStatus.Off);
+                    return view;
+                }),
                 ("TextPromptWindow", () => new TextPromptWindow("Title", "Prompt?")),
                 ("ListPickerWindow", () => new ListPickerWindow("Pick", new[] { "One", "Two" })),
             };
@@ -131,6 +152,16 @@ public class WindowSmokeTests
 
         Assert.True(failures.Count == 0, "Screens that could not be built:\n  " + string.Join("\n  ", failures));
     }
+
+    private static MediaDownloadStatus DownloadStatus(string services, string vpnState, bool verified) => new()
+    {
+        CanDownload = true,
+        Status = new MediaDownloadServiceStatus
+        {
+            Services = services,
+            Vpn = new MediaDownloadVpn { State = vpnState, Verified = verified, Country = "SE", Location = "Stockholm, SE" },
+        },
+    };
 
     private static AppModel NewModel()
     {

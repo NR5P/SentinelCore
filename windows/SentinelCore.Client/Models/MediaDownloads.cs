@@ -30,6 +30,9 @@ public sealed class MediaDownloadStatus
 
     /// <summary>False only when the server says so; an older server that doesn't say is assumed to have TMDB.</summary>
     [JsonIgnore] public bool HasTmdb => TmdbConfigured != false;
+
+    /// <summary>Use VPN is off in Settings: the sites and everyone sharing see the home address.</summary>
+    [JsonIgnore] public bool VpnDisabled => Status?.Vpn?.IsDisabled == true;
 }
 
 /// <summary>The VPN and services half of the status: what the Downloads screen's VPN line reads.</summary>
@@ -45,15 +48,45 @@ public sealed class MediaDownloadServiceStatus
 
 public sealed class MediaDownloadVpn
 {
-    /// <summary>connected | connecting | down | off | unknown</summary>
+    /// <summary>
+    /// connected | connecting | down | off | unknown | disabled. Disabled: Use VPN is off in
+    /// Settings, downloads use the home connection, and the address fields are all null.
+    /// </summary>
     public string? State { get; init; }
+
+    /// <summary>The useVpn setting.</summary>
     public bool? Required { get; init; }
+
+    /// <summary>
+    /// The address the sites see was compared with the server's own and differs. Missing (an
+    /// older server) counts as not verified.
+    /// </summary>
+    public bool? Verified { get; init; }
+
+    /// <summary>When it was last verified. Kept as text: it is only ever shown, never computed with.</summary>
+    public string? VerifiedAt { get; init; }
     public string? Ip { get; init; }
     public string? Location { get; init; }
     public string? Country { get; init; }
     public string? Provider { get; init; }
     public DateTimeOffset? CheckedAt { get; init; }
     public string? Error { get; init; }
+
+    [JsonIgnore] public bool IsVerified => Verified == true;
+    [JsonIgnore] public bool IsDisabled => State == "disabled";
+}
+
+/// <summary>
+/// POST /api/media/downloads/vpn/test: whether the VPN works and hides the home address, in a
+/// sentence either way, plus the status to redraw the VPN light from.
+/// </summary>
+public sealed class MediaDownloadVpnTest
+{
+    public bool? Ok { get; init; }
+    public string? Message { get; init; }
+    public MediaDownloadServiceStatus? Status { get; init; }
+
+    [JsonIgnore] public bool Succeeded => Ok == true;
 }
 
 // ---------------------------------------------------------------- Finding the title (TMDB)

@@ -112,22 +112,55 @@ public partial class MoviesView : UserControl
             _downloadStatus = MediaDownloadStatus.Off;
         }
 
-        var can = _downloadStatus.ShowsAddButton;
-        AddButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
-        DownloadsButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
-        DownloadsButton.Content = "Downloads";
-        if (!can) return;
+        ApplyDownloadStatus(_downloadStatus);
+        if (!_downloadStatus.ShowsAddButton) return;
 
         // How many are on the way, so a download in progress is visible from the library itself.
+        // The list carries the VPN's state too, which is the fresher of the two.
         try
         {
             var list = await _model.Client.MediaDownloadsAsync();
             DownloadsButton.Content = list.Active.Count > 0 ? $"Downloads · {list.Active.Count}" : "Downloads";
+            if (list.Status is not null) DrawVpnLight(list.Status);
         }
         catch (Exception)
         {
             // The button still opens the screen, which says what went wrong.
         }
+    }
+
+    /// <summary>
+    /// Shows or hides "+ Add", Downloads and the VPN light for a status answer. Public so the
+    /// window smoke test can put the light through each of its looks without a server.
+    /// </summary>
+    public void ApplyDownloadStatus(MediaDownloadStatus status)
+    {
+        _downloadStatus = status;
+        var can = status.ShowsAddButton;
+        AddButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        DownloadsButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        DownloadsButton.Content = "Downloads";
+        DrawVpnLight(status.Status);
+    }
+
+    /// <summary>
+    /// The VPN light next to "+ Add": only for someone who may add, and only when there is a
+    /// status to read (core/docs/MOVIE_DOWNLOADS.md, "The VPN light").
+    /// </summary>
+    private void DrawVpnLight(MediaDownloadServiceStatus? status)
+    {
+        var look = _downloadStatus.ShowsAddButton ? MediaDownloadText.VpnLook(status) : null;
+        if (look is null)
+        {
+            VpnLightButton.Visibility = Visibility.Collapsed;
+            VpnLight.Paint(VpnLightDot, MediaDownloadText.VpnTone.Idle); // stop any pulse
+            return;
+        }
+        VpnLightButton.Visibility = Visibility.Visible;
+        VpnLightText.Text = look.Short;
+        VpnLightText.Foreground = look.Tone == MediaDownloadText.VpnTone.Idle ? Palette.SecondaryText : VpnLight.Brush(look.Tone);
+        VpnLightButton.ToolTip = look.Text;
+        VpnLight.Paint(VpnLightDot, look.Tone);
     }
 
     private void OnAddClicked(object sender, RoutedEventArgs e)

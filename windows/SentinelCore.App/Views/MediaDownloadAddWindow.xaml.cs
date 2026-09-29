@@ -74,6 +74,9 @@ public partial class MediaDownloadAddWindow : Window
             _showGeneration++;
         };
 
+        VpnOffText.Text = MediaDownloadText.VpnOffWarning;
+        VpnOffNote.Visibility = _status.VpnDisabled ? Visibility.Visible : Visibility.Collapsed;
+
         UpdateKind();
         ShowStage(Stage.Find);
         Loaded += (_, _) => QueryBox.Focus();

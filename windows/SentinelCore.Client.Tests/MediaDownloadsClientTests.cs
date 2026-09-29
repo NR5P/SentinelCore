@@ -107,6 +107,137 @@ public class MediaDownloadsClientTests
         Assert.Equal(500, error.Status);
     }
 
+    [Fact]
+    public async Task Status_decodes_verified_and_treats_missing_as_not_verified()
+    {
+        using var server = new FakeServer()
+            .OnGet("/api/media/downloads/status", """
+                { "canDownload": true, "status": { "services": "running",
+                  "vpn": { "state": "connected", "verified": true, "verifiedAt": "2026-09-29T10:00:00Z", "country": "SE" } } }
+                """);
+        using var client = ClientFor(server);
+
+        var status = await client.MediaDownloadStatusAsync();
+
+        Assert.True(status.Status!.Vpn!.IsVerified);
+        Assert.Equal("2026-09-29T10:00:00Z", status.Status.Vpn.VerifiedAt);
+        Assert.False(status.VpnDisabled);
+        Assert.False(StatusJsonVpn().IsVerified); // the older sample above has no "verified"
+
+        static MediaDownloadVpn StatusJsonVpn() =>
+            System.Text.Json.JsonSerializer.Deserialize<MediaDownloadStatus>(StatusJson, SentinelClient.JsonOptions)!.Status!.Vpn!;
+    }
+
+    [Fact]
+    public async Task A_disabled_vpn_decodes_with_null_addresses()
+    {
+        using var server = new FakeServer().OnGet("/api/media/downloads/status", """
+            { "enabled": true, "canDownload": true,
+              "status": { "enabled": true, "services": "stopped", "idleMinutes": 5,
+                          "vpn": { "state": "disabled", "required": false, "verified": false, "verifiedAt": null,
+                                   "ip": null, "location": null, "country": null, "provider": null,
+                                   "checkedAt": null, "error": null } } }
+            """);
+        using var client = ClientFor(server);
+
+        var status = await client.MediaDownloadStatusAsync();
+
+        Assert.True(status.VpnDisabled);
+        var vpn = status.Status!.Vpn!;
+        Assert.True(vpn.IsDisabled);
+        Assert.False(vpn.Required);
+        Assert.False(vpn.IsVerified);
+        Assert.Null(vpn.VerifiedAt);
+        Assert.Null(vpn.Ip);
+        Assert.Null(vpn.Country);
+        Assert.Equal(MediaDownloadText.VpnTone.Disabled, MediaDownloadText.VpnLook(status.Status)!.Tone);
+    }
+
+    [Fact]
+    public async Task Vpn_test_posts_and_decodes_success_and_failure()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads/vpn/test", """
+            { "ok": true, "message": "Working. The sites see 185.195.233.76 in Stockholm, SE, not your home address.",
+              "status": { "enabled": true, "services": "running", "idleMinutes": 5,
+                          "vpn": { "state": "connected", "required": true, "verified": true,
+                                   "verifiedAt": "2026-09-29T10:00:00Z", "ip": "185.195.233.76",
+                                   "location": "Stockholm, SE", "country": "SE" } } }
+            """);
+        using var client = ClientFor(server);
+
+        var test = await client.TestMediaDownloadVpnAsync();
+
+        Assert.Equal("POST /api/media/downloads/vpn/test", server.Requests.Single());
+        Assert.True(test.Succeeded);
+        Assert.StartsWith("Working.", test.Message);
+        Assert.Equal("VPN · SE", MediaDownloadText.VpnLook(test.Status)!.Short);
+    }
+
+    [Fact]
+    public async Task A_failed_vpn_test_is_data_not_an_exception()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads/vpn/test", """
+            { "ok": false, "message": "The sites would see your home address. Downloads are stopped.",
+              "status": { "services": "running", "vpn": { "state": "down", "error": "Same address as home." } } }
+            """);
+        using var client = ClientFor(server);
+
+        var test = await client.TestMediaDownloadVpnAsync();
+
+        Assert.False(test.Succeeded);
+        Assert.Equal("The sites would see your home address. Downloads are stopped.", test.Message);
+        Assert.Equal(MediaDownloadText.VpnTone.Problem, MediaDownloadText.VpnLook(test.Status)!.Tone);
+    }
+
+    [Fact]
+    public async Task A_minimal_vpn_test_answer_decodes()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads/vpn/test", "{}");
+        using var client = ClientFor(server);
+
+        var test = await client.TestMediaDownloadVpnAsync();
+
+        Assert.False(test.Succeeded);
+        Assert.Null(test.Message);
+        Assert.Null(test.Status);
+    }
+
+    // The VPN settings come through the schema-driven Settings window; the one field with a list
+    // of its own (Mullvad Location) has to decode its optionsSource and fetch it like any other.
+    [Fact]
+    public async Task The_mullvad_location_field_lists_its_options_through_the_settings_schema()
+    {
+        using var server = new FakeServer()
+            .OnGet("/api/settings/schema", """
+                [ { "key": "mediaDownloads", "title": "MOVIE DOWNLOADS", "endpoint": "/api/settings/media-downloads",
+                    "basic": false, "description": "", "fields": [
+                      { "name": "vpnProvider", "label": "VPN Provider", "type": "select", "tip": "",
+                        "options": [ { "value": "installed", "label": "The file installed on the server" },
+                                     { "value": "mullvad", "label": "Mullvad (account number)" },
+                                     { "value": "wireguard", "label": "Another WireGuard provider" } ] },
+                      { "name": "mullvadAccountNumber", "label": "Mullvad Account Number", "type": "password", "tip": "" },
+                      { "name": "mullvadLocation", "label": "Mullvad Location", "type": "text", "tip": "",
+                        "optionsSource": { "label": "Mullvad locations", "tip": "Lists every country and city...",
+                          "endpoint": "/api/settings/media-downloads/mullvad-locations",
+                          "emptyMessage": "Mullvad's server list came back empty.", "typeItMessage": "Type a country code." } },
+                      { "name": "useVpn", "label": "Use VPN For Movie Downloads", "type": "checkbox", "tip": "" } ] } ]
+                """)
+            .OnGet("/api/settings/media-downloads/mullvad-locations", """
+                { "options": [ { "value": "se", "label": "Sweden (any city)" }, { "value": "se-sto", "label": "Stockholm, Sweden" } ] }
+                """);
+        using var client = ClientFor(server);
+
+        var section = Assert.Single(await client.SettingsSchemaAsync());
+        var location = section.Fields.Single(field => field.Name == "mullvadLocation");
+        var options = await client.SettingsOptionsAsync(location.OptionsSource!);
+
+        Assert.Equal("text", location.Type);
+        Assert.Equal("/api/settings/media-downloads/mullvad-locations", location.OptionsSource!.Endpoint);
+        Assert.Equal(3, section.Fields.Single(field => field.Name == "vpnProvider").Options!.Count);
+        Assert.Equal(new[] { "se", "se-sto" }, options.Select(option => option.Value));
+        Assert.Equal("Stockholm, Sweden", options[1].Label);
+    }
+
     // ---------------------------------------------------------------- Lookup and show
 
     [Fact]

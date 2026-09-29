@@ -29,18 +29,26 @@
         <Border x:Name="VpnBar" DockPanel.Dock="Top" Background="{StaticResource CardBackground}"
                 BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="6" Padding="12,9"
                 Margin="0,0,0,14" Visibility="Collapsed">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Ellipse x:Name="VpnDot" Width="9" Height="9" VerticalAlignment="Center" Fill="{StaticResource SecondaryText}" />
-                <TextBlock Grid.Column="1" Text="VPN" FontWeight="SemiBold" Foreground="{StaticResource PrimaryText}"
-                           Margin="9,0,10,0" VerticalAlignment="Center" />
-                <TextBlock x:Name="VpnText" Grid.Column="2" Style="{StaticResource BodyText}" TextWrapping="Wrap"
-                           VerticalAlignment="Center" />
-            </Grid>
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Ellipse x:Name="VpnDot" Width="9" Height="9" VerticalAlignment="Center" Fill="{StaticResource SecondaryText}" />
+                    <TextBlock x:Name="VpnShortText" Grid.Column="1" Text="VPN" FontWeight="SemiBold"
+                               Foreground="{StaticResource PrimaryText}" Margin="9,0,10,0" VerticalAlignment="Center" />
+                    <TextBlock x:Name="VpnText" Grid.Column="2" Style="{StaticResource BodyText}" TextWrapping="Wrap"
+                               VerticalAlignment="Center" />
+                    <Button x:Name="VpnTestButton" Grid.Column="3" Content="Test" MinWidth="80" Margin="12,0,0,0"
+                            VerticalAlignment="Center" Click="OnTestVpnClicked"
+                            ToolTip="Connect if needed and check the sites see another address than your home's" />
+                </Grid>
+                <TextBlock x:Name="VpnTestResult" TextWrapping="Wrap" Margin="18,8,0,0" FontSize="12"
+                           Visibility="Collapsed" />
+            </StackPanel>
         </Border>
 
         <TextBlock x:Name="NoticeText" DockPanel.Dock="Bottom" Style="{StaticResource Caption}" TextWrapping="Wrap"

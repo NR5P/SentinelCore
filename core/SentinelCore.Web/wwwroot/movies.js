@@ -1805,7 +1805,7 @@ window.SentinelMovies = (function () {
     }
     if (services === "starting" || vpn.state === "connecting") return { tone: "busy", short: "VPN connecting", text: "Connecting&hellip;" };
     if (services === "failed" || vpn.state === "down") return { tone: "bad", short: "VPN problem", text: escapeHtml(vpn.error || "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).") };
-    if (services === "external") return { tone: "idle", short: "VPN external", text: "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used." };
+    if (services === "external") return { tone: "idle", short: "VPN idle", text: "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used." };
     return { tone: "idle", short: "VPN idle", text: "Off until someone searches or downloads, then it connects by itself. Press test to check it now." };
   }
 

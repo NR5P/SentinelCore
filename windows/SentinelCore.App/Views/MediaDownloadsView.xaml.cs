@@ -126,10 +126,7 @@ public partial class MediaDownloadsView : UserControl
     private static string Shape(MediaDownloadList list)
     {
         var rows = list.Active.Concat(list.Recent).Select(d => $"{d.Id}:{d.State}:{d.ItemId}");
-        var vpn = list.Status is { } status
-            ? $"{status.Services}:{status.Vpn?.State}:{status.Vpn?.Ip}:{status.Vpn?.Location}:{status.Vpn?.Error}"
-            : "";
-        return string.Join("|", rows) + "#" + vpn;
+        return string.Join("|", rows);
     }
 
     private void Render(MediaDownloadList list)
@@ -141,6 +138,7 @@ public partial class MediaDownloadsView : UserControl
             var n => $"{n} downloading",
         };
 
+        RenderVpn(list.Status);
         var shape = Shape(list);
         var now = DateTimeOffset.Now;
         if (shape == _shape)
@@ -154,7 +152,6 @@ public partial class MediaDownloadsView : UserControl
 
         _shape = shape;
         _rows.Clear();
-        RenderVpn(list.Status);
         ContentHost.Children.Clear();
 
         ContentHost.Children.Add(Heading("Downloading"));
@@ -176,23 +173,60 @@ public partial class MediaDownloadsView : UserControl
         }
     }
 
+    // The VPN line lives in the XAML, not in the rebuilt list, so it is redrawn on every poll and
+    // the Test button under the pointer is never replaced. The dot is only repainted when its
+    // tone changes, so a pulse runs smoothly across polls.
+    private MediaDownloadText.VpnTone? _vpnTone;
+
     private void RenderVpn(MediaDownloadServiceStatus? status)
     {
-        if (MediaDownloadText.VpnLine(status) is not { } line)
+        if (MediaDownloadText.VpnLook(status) is not { } look)
         {
             VpnBar.Visibility = Visibility.Collapsed;
             return;
         }
         VpnBar.Visibility = Visibility.Visible;
-        VpnText.Text = line.Text;
-        VpnText.Foreground = line.Tone == MediaDownloadText.VpnTone.Warn ? Palette.Amber : Palette.PrimaryText;
-        VpnDot.Fill = line.Tone switch
+        VpnShortText.Text = look.Short;
+        VpnShortText.Foreground = look.Tone == MediaDownloadText.VpnTone.Idle ? Palette.PrimaryText : VpnLight.Brush(look.Tone);
+        VpnText.Text = look.Text;
+        VpnText.Foreground = look.Tone is MediaDownloadText.VpnTone.Disabled or MediaDownloadText.VpnTone.Problem
+            ? VpnLight.Brush(look.Tone)
+            : Palette.PrimaryText;
+        if (_vpnTone != look.Tone)
         {
-            MediaDownloadText.VpnTone.On => Palette.Green,
-            MediaDownloadText.VpnTone.Busy => Palette.Cyan,
-            MediaDownloadText.VpnTone.Warn => Palette.Amber,
-            _ => Palette.SecondaryText,
-        };
+            _vpnTone = look.Tone;
+            VpnLight.Paint(VpnDot, look.Tone);
+        }
+    }
+
+    // Connects if needed and checks the sites see another address than home - up to a minute.
+    // The answer's message is the result either way, and its status redraws the line.
+    private async void OnTestVpnClicked(object sender, RoutedEventArgs e)
+    {
+        VpnTestButton.IsEnabled = false;
+        VpnTestButton.Content = "Testing…";
+        VpnTestResult.Foreground = Palette.SecondaryText;
+        VpnTestResult.Text = "Connecting if needed and checking what address the sites see. This can take up to a minute.";
+        VpnTestResult.Visibility = Visibility.Visible;
+        try
+        {
+            var test = await _model.Client.TestMediaDownloadVpnAsync();
+            VpnTestResult.Foreground = test.Succeeded ? Palette.Green : Palette.Red;
+            VpnTestResult.Text = string.IsNullOrWhiteSpace(test.Message)
+                ? test.Succeeded ? "The VPN works." : "The VPN test failed."
+                : test.Message;
+            if (test.Status is not null) RenderVpn(test.Status);
+        }
+        catch (Exception error)
+        {
+            VpnTestResult.Foreground = Palette.Red;
+            VpnTestResult.Text = AppModel.UserFacingMessage(error);
+        }
+        finally
+        {
+            VpnTestButton.IsEnabled = true;
+            VpnTestButton.Content = "Test";
+        }
     }
 
     private TextBlock Heading(string text) => new()

@@ -46,6 +46,16 @@ public sealed partial class SentinelClient
         }
     }
 
+    // Testing the VPN starts it and everything behind it when idle - up to about a minute.
+    private static readonly TimeSpan VpnTestTimeout = TimeSpan.FromSeconds(90);
+
+    /// <summary>
+    /// Starts the VPN if needed and checks that the sites see an address other than home. A failed
+    /// check is a 200 with ok false and the reason in the message, not an exception.
+    /// </summary>
+    public Task<MediaDownloadVpnTest> TestMediaDownloadVpnAsync(CancellationToken ct = default) =>
+        SlowSendAsync<MediaDownloadVpnTest, object>($"{DownloadsBase}/vpn/test", HttpMethod.Post, null, VpnTestTimeout, ct);
+
     // MARK: - Finding the title
 
     /// <summary>TMDB matches for what was typed. <paramref name="kind"/> is movie or show.</summary>
