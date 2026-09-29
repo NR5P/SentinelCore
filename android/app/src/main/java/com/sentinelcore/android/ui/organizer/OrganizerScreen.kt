@@ -54,6 +54,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -666,6 +667,7 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
     var naming by remember { mutableStateOf<Pair<String, String?>?>(null) } // (kind of naming, id)
     var nameText by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var automationsFor by remember { mutableStateOf<OrganizerItem?>(null) }
     val boards = engine.items(OrganizerKinds.BOARD).filter { (filter == null || it.spaceId == filter) && !it.bool("archived") }.sortedBy { it.sortPosition }
     val board = boards.firstOrNull { it.id == selectedId } ?: boards.firstOrNull()
 
@@ -749,9 +751,11 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
             Text(board.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             SpaceSelector(engine, board.spaceId) { engine.update(board.id, mapOf("spaceId" to it)) }
         }
-        Row(Modifier.padding(horizontal = 4.dp)) {
+        Row(Modifier.padding(horizontal = 4.dp).horizontalScroll(rememberScrollState())) {
             TextButton(onClick = { nameText = board.title; naming = "renameBoard" to board.id }) { Text("Rename") }
             TextButton(onClick = { nameText = ""; naming = "newColumn" to board.id }) { Text("Add column") }
+            // Rules that run on the server: "every morning, add a card", "moved to Done → done".
+            TextButton(onClick = { automationsFor = board }) { Text("⚡ Automations") }
             TextButton(onClick = { confirmDelete = true }) { Text("Delete board", color = SentinelRed) }
         }
         val columns = engine.children(board.id, OrganizerKinds.COLUMN).sortedBy { it.sortPosition }
@@ -791,6 +795,7 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
             dismissButton = { TextButton(onClick = { naming = null }) { Text("Cancel") } },
         )
     }
+    automationsFor?.let { BoardAutomationsDialog(engine, it) { automationsFor = null } }
     if (confirmDelete && board != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },

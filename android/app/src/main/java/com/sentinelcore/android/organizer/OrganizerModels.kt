@@ -142,7 +142,8 @@ data class OrganizerStatus(
     val maxAttachmentBytes: Long?,
 )
 
-data class OrganizerPerson(val username: String, val displayName: String?) {
+// hasEmail: whether a board automation can email them (the server never sends the address).
+data class OrganizerPerson(val username: String, val displayName: String?, val hasEmail: Boolean = true) {
     val label: String get() = displayName?.takeIf { it.isNotBlank() } ?: username
 }
 

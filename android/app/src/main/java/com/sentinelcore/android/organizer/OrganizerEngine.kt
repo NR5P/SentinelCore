@@ -998,7 +998,8 @@ class OrganizerEngine(
         val array = JSONObject(send("GET", "/api/organizer/people").text).optJSONArray("people") ?: return emptyList()
         return (0 until array.length()).map { i ->
             val json = array.getJSONObject(i)
-            OrganizerPerson(json.getString("username"), json.optString("displayName").takeIf { it.isNotEmpty() && it != "null" })
+            OrganizerPerson(json.getString("username"), json.optString("displayName").takeIf { it.isNotEmpty() && it != "null" },
+                json.optBoolean("hasEmail", true))
         }
     }
 
@@ -1017,6 +1018,9 @@ class OrganizerEngine(
         send("DELETE", "/api/organizer/spaces/${java.net.URLEncoder.encode(id, "UTF-8")}")
         sync()
     }
+
+    // Board automations: plain REST, never synced. See BoardAutomations.kt.
+    val automations = BoardAutomationClient { method, path, query, body -> send(method, path, query, body) }
 
     suspend fun calendarFeedPath(reset: Boolean = false): String {
         val response = if (reset) send("POST", "/api/organizer/calendar-feed/reset") else send("GET", "/api/organizer/calendar-feed")

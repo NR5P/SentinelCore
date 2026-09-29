@@ -179,7 +179,9 @@ public sealed record OrganizerStatus(
     int? ItemCount,
     long? MaxAttachmentBytes);
 
-public sealed record OrganizerPerson(string Username, string? DisplayName)
+// HasEmail: whether the account has an email address, so an automation's email step can say who
+// it can't reach. A server too old to say is taken as yes.
+public sealed record OrganizerPerson(string Username, string? DisplayName, bool HasEmail = true)
 {
     public string Label => string.IsNullOrWhiteSpace(DisplayName) ? Username : DisplayName;
 }

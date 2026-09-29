@@ -112,6 +112,11 @@ public sealed class BoardsPane : OrganizerPane
             menu.ContextMenu.IsOpen = true;
         };
         _boardActions.Children.Add(menu);
+        // Rules that run on the server: cards every morning, done when moved to Done.
+        var automations = Ui.Button("⚡ Automations", () => new BoardAutomationsWindow(Engine, current) { Owner = Window.GetWindow(this) }.ShowDialog(),
+            tooltip: "Rules that look after this board for you - they run on the server");
+        automations.Margin = new Thickness(8, 0, 0, 0);
+        _boardActions.Children.Add(automations);
 
         _columns.Children.Clear();
         foreach (var column in Columns(current.Id)) _columns.Children.Add(ColumnView(current, column));

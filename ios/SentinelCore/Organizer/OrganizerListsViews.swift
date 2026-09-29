@@ -476,6 +476,7 @@ struct OrganizerBoardsView: View {
     @State private var nameText = ""
     @State private var confirmingDelete = false
     @State private var targetedBoardId: String?
+    @State private var automating: OrganizerItem?
 
     private enum NamingTarget: Identifiable, Equatable {
         case newBoard, renameBoard(String), newColumn(String), renameColumn(String)
@@ -527,6 +528,10 @@ struct OrganizerBoardsView: View {
                     Text(board.title).font(.title3.bold())
                     SpaceTag(spaceId: board.spaceId)
                     Spacer()
+                    // Rules that run on the server - "every morning, add a card", "moved to Done, tick it".
+                    Button { automating = board } label: { Label("Automations", systemImage: "bolt") }
+                        .buttonStyle(.borderless)
+                        .help("Rules that look after this board for you")
                     Menu {
                         Button("Rename", systemImage: "pencil") { nameText = board.title; naming = .renameBoard(board.id) }
                         Menu("Share With") {
@@ -577,6 +582,13 @@ struct OrganizerBoardsView: View {
                 .environment(engine)
                 #if os(macOS)
                 .frame(minWidth: 480, minHeight: 620)
+                #endif
+        }
+        .sheet(item: $automating) { board in
+            BoardAutomationsView(board: board)
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 720, minHeight: 560)
                 #endif
         }
         .alert(namingTitle, isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {

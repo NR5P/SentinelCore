@@ -32,6 +32,16 @@
 				<string>public.data</string>
 			</array>
 		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.sentinelcore.client.organizer-rule-block</string>
+			<key>UTTypeDescription</key>
+			<string>Board automation block</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>

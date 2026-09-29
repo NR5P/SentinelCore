@@ -1017,7 +1017,7 @@ public final class OrganizerEngine {
 
     // MARK: - transport
 
-    private func send(_ method: String, _ path: String, query: [URLQueryItem] = [], body: Data? = nil, timeout: TimeInterval? = nil) async throws -> OrganizerHTTPResponse {
+    func send(_ method: String, _ path: String, query: [URLQueryItem] = [], body: Data? = nil, timeout: TimeInterval? = nil) async throws -> OrganizerHTTPResponse {
         guard let transport else { throw OrganizerError.offline }
         let response = try await transport.send(
             method: method, path: path, query: query, body: body,

@@ -1363,7 +1363,8 @@ public sealed class OrganizerEngine : IDisposable
     {
         var reply = OrganizerJson.Parse((await SendAsync("GET", "/api/organizer/people").ConfigureAwait(false)).Body);
         return (reply["people"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-            .Select(json => new OrganizerPerson(OrganizerJson.Text(json, "username") ?? "", OrganizerJson.Text(json, "displayName")))
+            .Select(json => new OrganizerPerson(OrganizerJson.Text(json, "username") ?? "", OrganizerJson.Text(json, "displayName"),
+                json["hasEmail"] is not JsonValue hasEmail || !hasEmail.TryGetValue<bool>(out var flag) || flag))
             .Where(person => person.Username.Length > 0)
             .ToList();
     }
@@ -1395,7 +1396,18 @@ public sealed class OrganizerEngine : IDisposable
         return OrganizerJson.Text(OrganizerJson.Parse(response.Body), "path") ?? throw new OrganizerServerException(500, null);
     }
 
+    /// <summary>Board automations - server-only REST, never synced. See BoardAutomations.cs.</summary>
+    public BoardAutomationsApi Automations => new((method, path, query, body) => RawSendAsync(method, path, query, body));
+
     // ---- transport -------------------------------------------------------------------------
+
+    /// <summary>Whatever the server answers, error or not, for callers that read their own errors;
+    /// throws only when there's no connection.</summary>
+    private Task<OrganizerResponse> RawSendAsync(string method, string path, IReadOnlyDictionary<string, string>? query, byte[]? body)
+    {
+        var transport = _transport ?? throw new OrganizerOfflineException();
+        return transport.SendAsync(method, path, query, body, body is null ? null : "application/json", null, CancellationToken.None);
+    }
 
     private async Task<OrganizerResponse> SendAsync(
         string method,

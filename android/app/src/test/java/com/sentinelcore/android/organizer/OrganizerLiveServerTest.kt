@@ -304,4 +304,59 @@ class OrganizerLiveServerTest {
         assertTrue(phone.holidays.value.sets.isEmpty())
         assertTrue(phone.holidaysBetween(september, september.plusMonths(1)).isEmpty())
     }
+
+    // The phone's automation builder against the real server: a refused save's reasons, the
+    // preview, a scheduled rule run by hand making a card that syncs down, on/off, history, delete.
+    @Test
+    fun `a board automation saves, runs and deletes`() = runBlocking {
+        val (phone, link) = device("phone")
+        start(phone, link)
+        val board = phone.create(OrganizerKinds.BOARD, mapOf("title" to unique("Chores"), "position" to 1.0), spaceId = phone.defaultSpaceId)
+        val todo = phone.create(OrganizerKinds.COLUMN, mapOf("title" to "To do", "position" to 1.0), parentId = board.id)
+        val done = phone.create(OrganizerKinds.COLUMN, mapOf("title" to "Done", "position" to 2.0), parentId = board.id)
+        phone.sync()
+
+        assertTrue(phone.automations.list(board.id).rules.isEmpty())
+        val context = RuleContext(todo.id, done.id, emptyList(), "America/Chicago")
+        val trigger = BoardAutomations.make(RuleZone.TRIGGER, "schedule", context)!!
+        val create = BoardAutomations.make(RuleZone.ACTIONS, "createCard", context)!!
+
+        // No title on the new card, and a step with no card before it: the server says why.
+        val refused = runCatching {
+            phone.automations.save(BoardAutomations.forSaving(AutomationRule(name = "Eggs", boardId = board.id, trigger = trigger,
+                actions = listOf(BoardAutomations.make(RuleZone.ACTIONS, "complete", context)!!, create)), "America/Chicago"))
+        }.exceptionOrNull()
+        assertNotNull(refused)
+        val reasons = BoardAutomationClient.errors(refused!!)
+        assertTrue(reasons.toString(), reasons.any { it.contains("Create a card") })
+        assertTrue(reasons.toString(), reasons.contains("The new card needs a title."))
+
+        val title = unique("pick up eggs")
+        val saved = phone.automations.save(BoardAutomations.forSaving(AutomationRule(name = " Eggs ", boardId = board.id, trigger = trigger,
+            actions = listOf(create.with("title", title), BoardAutomations.make(RuleZone.ACTIONS, "addLabel", context)!!.with("name", "shop"))), "America/Chicago"))
+        assertNotNull(saved.id)
+        assertEquals("Eggs", saved.name)
+        assertEquals("America/Chicago", saved.timeZone)
+        assertNotNull(saved.nextRunAt)
+        assertEquals(3, phone.automations.preview(trigger.schedule).size)
+
+        val run = phone.automations.run(saved.id!!)
+        assertTrue(run.message, run.ok)
+        phone.sync()
+        val card = phone.children(todo.id, OrganizerKinds.CARD).single()
+        assertEquals(title, card.title)
+        assertEquals("shop", (card.list("labels").single() as Map<*, *>)["name"])
+
+        val listed = phone.automations.list(board.id).rules.single()
+        assertEquals(true, listed.lastOk)
+        val off = phone.automations.save(listed.copy(enabled = false))
+        assertEquals(false, off.enabled)
+        assertEquals(false, phone.automations.list(board.id).rules.single().enabled)
+        assertTrue(phone.automations.runs(saved.id!!).first().ok)
+
+        phone.automations.delete(saved.id!!)
+        assertTrue(phone.automations.list(board.id).rules.isEmpty())
+        // The card it made stays.
+        assertNotNull(phone.item(card.id))
+    }
 }

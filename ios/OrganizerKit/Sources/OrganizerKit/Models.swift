@@ -182,7 +182,15 @@ struct KnownItems: Decodable {
 public struct OrganizerPerson: Codable, Hashable, Identifiable, Sendable {
     public var username: String
     public var displayName: String?
+    // Whether a board automation can email them - the server never sends the address itself.
+    public var hasEmail: Bool?
     public var id: String { username }
+
+    public init(username: String, displayName: String? = nil, hasEmail: Bool? = nil) {
+        self.username = username
+        self.displayName = displayName
+        self.hasEmail = hasEmail
+    }
     public var label: String { displayName?.isEmpty == false ? displayName! : username }
 }
 
