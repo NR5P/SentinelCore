@@ -6420,22 +6420,63 @@ body.hub-wall main {
   flex: none;
 }
 
-.mv-dl-vpn-on .mv-dl-vpn-dot {
+/* The VPN's five looks, shared by the Downloads card (.mv-dl-vpn-*) and the toolbar light
+   (.mv-vpn-*): on = green, busy = cyan pulsing, idle = grey, off = amber (turned off in
+   Settings), bad = red. */
+.mv-dl-vpn-on .mv-dl-vpn-dot,
+.mv-vpn-on .mv-vpn-dot {
   background: var(--green);
   box-shadow: 0 0 8px var(--green);
 }
 
-.mv-dl-vpn-busy .mv-dl-vpn-dot {
+.mv-dl-vpn-busy .mv-dl-vpn-dot,
+.mv-vpn-busy .mv-vpn-dot {
   background: var(--cyan);
   animation: mv-pulse 1.4s ease-in-out infinite;
 }
 
-.mv-dl-vpn-warn {
-  border-color: rgba(255, 181, 69, 0.45);
+.mv-dl-vpn-off,
+.mv-vpn-off {
+  border-color: rgba(255, 181, 69, 0.55);
 }
 
-.mv-dl-vpn-warn .mv-dl-vpn-dot {
-  background: var(--amber, #ffb545);
+.mv-dl-vpn-off .mv-dl-vpn-dot,
+.mv-vpn-off .mv-vpn-dot {
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber);
+}
+
+.mv-dl-vpn-bad,
+.mv-vpn-bad {
+  border-color: rgba(255, 77, 94, 0.55);
+}
+
+.mv-dl-vpn-bad .mv-dl-vpn-dot,
+.mv-vpn-bad .mv-vpn-dot {
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red);
+}
+
+.mv-vpn-light {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.mv-vpn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: none;
+}
+
+.mv-vpn-off .mv-vpn-light-text {
+  color: var(--amber);
+}
+
+.mv-vpn-bad .mv-vpn-light-text {
+  color: var(--red);
 }
 
 .mv-dl-vpn-label {

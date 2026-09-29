@@ -699,13 +699,13 @@ public static class SettingsSchema
             Fields =
             [
                 Check("enabled", "Enabled", "Show \"+ Add\" and Downloads on the Movies tab. Needs MOVIES & TV turned on and a movie (or TV) library on one of this server's own disks to save into."),
+                Check("useVpn", "Use VPN For Movie Downloads", "On (recommended): searching and downloading only ever go through your VPN, and nothing starts until the server has proven the sites see the VPN's address and not your home's. Off: they use your home internet connection directly, so the sites, the other people sharing and your internet provider all see your home address - the Movies tab shows an amber warning while it is off."),
                 Select("allowedUsers", "Who Can Add", "Who may search and start downloads. Managing the list of sites is always admins only.",
                     ("admins", "Admins only"), ("everyone", "Everyone who can sign in")),
                 Select("preferredQuality", "Preferred Quality", "Which releases are listed first. 1080p is the best fit for most TVs and phones; 4K files are three to five times the size.",
                     ("1080p", "1080p (HD)"), ("2160p", "2160p (4K)"), ("720p", "720p (smaller)"), (MediaDownloadsSettingsDto.QualityAny, "No preference")),
                 Number("seedMinutes", "Share Back For (minutes)", "How long a finished download keeps sharing before it is filed into the library and the torrent removed. 0 files it straight away. Private sites that require sharing back need this raised.", 0, 10080),
                 Number("idleMinutes", "Switch Off After (minutes)", "The VPN, qBittorrent and Prowlarr are stopped once nothing has been searched or downloaded for this long, and started again the next time someone does.", 1, 240),
-                Check("requireVpn", "Require The VPN", "Refuse to search or download unless the VPN is connected and the address the sites see is not this server's own. Leave on; turn off only if qBittorrent and Prowlarr are yours to run and already go through a VPN some other way."),
                 Check("manageServices", "Start And Stop The Services", "On: this server starts and stops the VPN, qBittorrent and Prowlarr that install-downloads.sh installed. Off: they are already running somewhere you look after, at the addresses below."),
                 Text("prowlarrUrl", "Prowlarr Address", "Where Prowlarr answers. install-downloads.sh puts it at http://10.250.0.2:9696, inside the VPN."),
                 Password("prowlarrApiKey", "Prowlarr API Key", "Leave blank when install-downloads.sh set Prowlarr up - the key is read from Prowlarr's own configuration. Otherwise paste it from Prowlarr -> Settings -> General."),

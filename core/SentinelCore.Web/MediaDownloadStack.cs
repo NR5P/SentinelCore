@@ -21,6 +21,8 @@ public sealed record MediaVpnStatus(
     // No tunnel is being watched: the services are stopped, or someone else runs them.
     public const string Off = "off";
     public const string Unknown = "unknown";
+    // Use VPN is turned off in Settings: downloads go over the home connection.
+    public const string Disabled = "disabled";
 
     public string? Location => string.Join(", ", new[] { City, Country }.Where(s => !string.IsNullOrWhiteSpace(s))) is { Length: > 0 } l ? l : null;
 }
@@ -45,6 +47,8 @@ public interface IMediaDownloadStack
     Task StartAsync(CancellationToken cancellationToken);
     Task StopAsync(CancellationToken cancellationToken);
     Task<MediaVpnStatus> VpnStatusAsync(CancellationToken cancellationToken);
+    // Tells the tunnel whether to use the VPN the next time it starts. True when that changed.
+    Task<bool> SetUseVpnAsync(bool useVpn, CancellationToken cancellationToken);
 }
 
 public sealed class SystemdMediaDownloadStack(AppSettingsFile settings, IConfiguration configuration, ILogger<SystemdMediaDownloadStack> logger) : IMediaDownloadStack
@@ -93,6 +97,31 @@ public sealed class SystemdMediaDownloadStack(AppSettingsFile settings, IConfigu
     }
 
     public Task<MediaVpnStatus> VpnStatusAsync(CancellationToken cancellationToken) => Task.FromResult(ReadStatus(StatusPath, DateTimeOffset.UtcNow));
+
+    // One word, "vpn" or "direct", that sentinelcore-vpn reads as root when the tunnel starts.
+    // Owned by this server's account; anything but "direct" means the VPN, so a damaged or
+    // missing file can only ever fail safe.
+    private string ModePath => configuration["MediaDownloads:NetworkModePath"] ?? "/var/lib/sentinelcore-downloads/network-mode";
+
+    public async Task<bool> SetUseVpnAsync(bool useVpn, CancellationToken cancellationToken)
+    {
+        if (!(await MediaDownloadManager.ReadOptionsAsync(settings, cancellationToken)).ManageServices) return false;
+        var wanted = useVpn ? "vpn" : "direct";
+        string current;
+        try { current = File.Exists(ModePath) ? (await File.ReadAllTextAsync(ModePath, cancellationToken)).Trim() : "vpn"; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { current = "vpn"; }
+        if (current == wanted) return false;
+        try
+        {
+            if (Path.GetDirectoryName(ModePath) is { } directory && !Directory.Exists(directory)) return false;
+            await File.WriteAllTextAsync(ModePath, wanted + "\n", cancellationToken);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException($"Could not switch the VPN {(useVpn ? "on" : "off")}: {ex.Message}");
+        }
+    }
 
     // The watcher writes ipinfo.io's answer as-is when the tunnel works, or { "error": "..." }
     // when it does not; the file's age says how current either is.

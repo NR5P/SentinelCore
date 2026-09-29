@@ -246,6 +246,14 @@ public static class MediaDownloadEndpoints
         enabled.MapDelete("/{id:guid}", async (Guid id, MediaDownloadManager manager, CancellationToken ct) =>
             await manager.CancelAsync(id, ct) ? Results.NoContent() : Results.NotFound(new { error = "That download is gone." }));
 
+        // "Test VPN": starts everything if needed (up to about a minute), proves the tunnel, and
+        // answers in words, with the status for the light.
+        enabled.MapPost("/vpn/test", async (MediaDownloadManager manager, CancellationToken ct) =>
+        {
+            var (ok, message) = await manager.TestVpnAsync(ct);
+            return Results.Ok(new { ok, message, status = await manager.StatusAsync(ct) });
+        });
+
         enabled.MapPost("/{id:guid}/retry", async (Guid id, MediaDownloadManager manager, CancellationToken ct) =>
             await manager.RetryAsync(id, ct) is { } download ? Results.Ok(DownloadDto(download)) : Results.NotFound(new { error = "That download is gone." }));
     }

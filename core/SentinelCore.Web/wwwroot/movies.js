@@ -1782,7 +1782,57 @@ window.SentinelMovies = (function () {
     const can = !!(dl.status && dl.status.canDownload);
     el("mv-add-btn").classList.toggle("hidden", !can);
     el("mv-downloads-tab").classList.toggle("hidden", !can);
+    drawVpnLight(dl.status && dl.status.status);
     if (can && !dl.list) pollDownloads(true);
+  }
+
+  // What the VPN light and the Downloads card say: a tone for the colour and a few words.
+  //   on    green  connected and proven to hide the home address
+  //   busy  cyan   coming up
+  //   idle  grey   switched off until needed (the normal resting state)
+  //   off   amber  Use VPN is turned off in Settings - downloads use the home connection
+  //   bad   red    not installed, failed, or not getting through
+  function vpnLook(status) {
+    const vpn = (status && status.vpn) || {};
+    const services = status && status.services;
+    if (vpn.state === "disabled") return { tone: "off", short: "VPN off", text: "Turned off in Settings &middot; searching and downloading use your <b>home</b> connection, so the sites see your home address." };
+    if (services === "notInstalled") return { tone: "bad", short: "VPN not set up", text: "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once." };
+    if (vpn.state === "connected") {
+      const where = `${vpn.location ? " &middot; " + escapeHtml(vpn.location) : ""}${vpn.ip ? ` &middot; <code>${escapeHtml(vpn.ip)}</code>` : ""}`;
+      return vpn.verified
+        ? { tone: "on", short: vpn.country ? `VPN · ${vpn.country}` : "VPN on", text: `Connected and verified${where} &middot; your home address is hidden` }
+        : { tone: "busy", short: "VPN checking", text: `Connected${where} &middot; checking it hides your home address&hellip;` };
+    }
+    if (services === "starting" || vpn.state === "connecting") return { tone: "busy", short: "VPN connecting", text: "Connecting&hellip;" };
+    if (services === "failed" || vpn.state === "down") return { tone: "bad", short: "VPN problem", text: escapeHtml(vpn.error || "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).") };
+    if (services === "external") return { tone: "idle", short: "VPN external", text: "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used." };
+    return { tone: "idle", short: "VPN idle", text: "Off until someone searches or downloads, then it connects by itself. Press test to check it now." };
+  }
+
+  function drawVpnLight(status) {
+    const light = el("mv-vpn-light");
+    const can = !!(dl.status && dl.status.canDownload);
+    light.classList.toggle("hidden", !can || !status);
+    if (!status) return;
+    const look = vpnLook(status);
+    light.className = `btn mv-vpn-light mv-vpn-${look.tone}${can ? "" : " hidden"}`;
+    light.querySelector(".mv-vpn-light-text").textContent = look.short;
+  }
+
+  async function testVpn(button) {
+    button.disabled = true;
+    button.classList.add("mv-working");
+    const label = button.querySelector("span:last-child");
+    if (label) label.textContent = "testing…";
+    const res = await request("/api/media/downloads/vpn/test", { method: "POST" });
+    button.disabled = false;
+    button.classList.remove("mv-working");
+    if (label) label.textContent = "test";
+    if (!res.ok) { showToast(res.error, false); return; }
+    showToast(res.data.message, !!res.data.ok);
+    if (dl.list) dl.list.status = res.data.status;
+    drawVpnLight(res.data.status);
+    if (route.name === "downloads") { el("mv-pane-downloads").dataset.shape = ""; drawDownloads(); }
   }
 
   function speedLabel(bytesPerSecond) {
@@ -1817,6 +1867,7 @@ window.SentinelMovies = (function () {
         dl.states[d.id] = d.state;
       }
       if (landed) homeData = null;
+      drawVpnLight(dl.list.status);
       if (visible && route.name === "downloads") drawDownloads();
       if (visible && route.name === "home") drawDownloadBanner();
     }
@@ -1854,30 +1905,12 @@ window.SentinelMovies = (function () {
 
   function vpnMarkup(status) {
     if (!status) return "";
-    const vpn = status.vpn || {};
-    const services = status.services;
-    let state = "off";
-    let text = "Off - starts by itself when someone searches or downloads.";
-    if (services === "notInstalled") {
-      state = "warn";
-      text = "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.";
-    } else if (vpn.state === "connected") {
-      state = "on";
-      text = `Connected${vpn.location ? " &middot; " + escapeHtml(vpn.location) : ""}${vpn.ip ? ` &middot; <code>${escapeHtml(vpn.ip)}</code>` : ""}`;
-    } else if (services === "starting" || vpn.state === "connecting") {
-      state = "busy";
-      text = "Connecting&hellip;";
-    } else if (services === "failed" || vpn.state === "down") {
-      state = "warn";
-      text = escapeHtml(vpn.error || "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).");
-    } else if (services === "external") {
-      state = vpn.state === "off" || vpn.state === "unknown" ? "off" : state;
-      text = vpn.required ? "qBittorrent and Prowlarr are run outside this server." : "qBittorrent and Prowlarr are run outside this server; the VPN is not checked.";
-    }
-    return `<div class="mv-dl-vpn mv-dl-vpn-${state}">
+    const look = vpnLook(status);
+    return `<div class="mv-dl-vpn mv-dl-vpn-${look.tone}">
       <span class="mv-dl-vpn-dot"></span>
       <span class="mv-dl-vpn-label">VPN</span>
-      <span class="mv-dl-vpn-text">${text}</span>
+      <span class="mv-dl-vpn-text">${look.text}</span>
+      <button type="button" class="mv-btn" data-act="dl-vpn-test" title="Connect now and prove the sites see the VPN's address, not your home's">${ICON.check}<span>test</span></button>
       ${dl.status && dl.status.canManageSites ? `<button type="button" class="mv-btn" data-act="dl-sites">${ICON.search}<span>sites</span></button>` : ""}
     </div>`;
   }
@@ -1913,7 +1946,8 @@ window.SentinelMovies = (function () {
   // replaced between a press and its release.
   function downloadsShape(data) {
     const rows = [...(data.active || []), ...(data.recent || [])].map((d) => `${d.id}:${d.state}:${d.itemId || ""}`);
-    const vpn = data.status ? `${data.status.services}:${(data.status.vpn || {}).state}:${(data.status.vpn || {}).ip}:${(data.status.vpn || {}).error}` : "";
+    const v = (data.status && data.status.vpn) || {};
+    const vpn = data.status ? `${data.status.services}:${v.state}:${v.ip}:${v.error}:${v.verified}` : "";
     return rows.join("|") + "#" + vpn;
   }
 
@@ -2007,6 +2041,9 @@ window.SentinelMovies = (function () {
             <input class="field-input" id="mv-add-episode" placeholder="Episode (blank = whole season)" inputmode="numeric" maxlength="3"></div>` : ""}
           <button type="button" class="mv-btn mv-btn-primary" data-mact="add-direct">${ICON.search}<span>search sites for &ldquo;${escapeHtml(add.q)}&rdquo;</span></button></div>`
       : "";
+    const vpnOff = dl.status && dl.status.status && dl.status.status.vpn && dl.status.status.vpn.state === "disabled"
+      ? `<div class="mv-note mv-note-warn">The VPN is turned off in Settings, so the sites and everyone sharing will see your home address.</div>`
+      : "";
     const noLibrary = dl.status && ((add.kind === "movie" && !dl.status.movieLibrary) || (add.kind === "show" && !dl.status.showLibrary))
       ? `<div class="mv-note mv-note-warn">There is no ${add.kind === "movie" ? "movie" : "TV"} library on the server's own disks to save into yet. Add one under &#9881; libraries${add.kind === "show" ? " (kind: TV Shows)" : ""} first.</div>`
       : "";
@@ -2014,7 +2051,7 @@ window.SentinelMovies = (function () {
         <button type="button" class="${add.kind === "movie" ? "active" : ""}" data-mact="add-kind" data-kind="movie" role="radio" aria-checked="${add.kind === "movie"}">Movie</button>
         <button type="button" class="${add.kind === "show" ? "active" : ""}" data-mact="add-kind" data-kind="show" role="radio" aria-checked="${add.kind === "show"}">TV show</button>
       </div>
-      ${noLibrary}
+      ${vpnOff}${noLibrary}
       <form class="mv-match-form" id="mv-add-form">
         <input class="field-input" id="mv-add-q" value="${escapeHtml(add.q)}" placeholder="${add.kind === "movie" ? "Movie title" : "Show title"}" autocomplete="off" autofocus>
         <button type="submit" class="mv-btn mv-btn-primary">${ICON.search}<span>find</span></button>
@@ -2439,6 +2476,7 @@ window.SentinelMovies = (function () {
         case "lib-delete": deleteLibrary(id); break;
         case "dl-add": openAdd(); break;
         case "dl-sites": openSites(); break;
+        case "dl-vpn-test": testVpn(target); break;
         case "dl-cancel": case "dl-retry": case "dl-remove": downloadAction(act, id, target); break;
         default: break;
       }

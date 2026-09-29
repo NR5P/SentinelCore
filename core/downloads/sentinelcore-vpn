@@ -31,7 +31,16 @@ TUN_IF=sctun0
 CONF_DIR=/etc/sentinelcore/vpn
 NETNS_ETC=/etc/netns/$NS
 STATUS_DIR=/run/sentinelcore-vpn
+# "vpn" or "direct", written by SentinelCore (Settings -> MOVIE DOWNLOADS -> Use VPN). Anything
+# but exactly "direct" - a missing, empty or damaged file - means the VPN.
+MODE_FILE=/var/lib/sentinelcore-downloads/network-mode
+FORWARD_SAVE=/run/sentinelcore-vpn-forward
+NFT_TABLE=sentinelcore_downloads
 SELF=$(readlink -f "$0")
+
+mode() {
+    [ "$(tr -d '[:space:]' < "$MODE_FILE" 2>/dev/null)" = direct ] && echo direct || echo vpn
+}
 
 die() { echo "sentinelcore-vpn: $*" >&2; exit 1; }
 log() { echo "sentinelcore-vpn: $*" >&2; }
@@ -91,13 +100,45 @@ teardown() {
     ip netns del "$NS" 2>/dev/null || true
     ip link del "$HOST_VETH" 2>/dev/null || true
     ip link del "$WG_IF" 2>/dev/null || true
+    nft delete table ip "$NFT_TABLE" 2>/dev/null || true
+    if [ -f "$FORWARD_SAVE" ]; then
+        sysctl -qw "net.ipv4.ip_forward=$(cat "$FORWARD_SAVE")" || true
+        rm -f "$FORWARD_SAVE"
+    fi
+}
+
+# Use VPN is off: the namespace reaches the internet through the host's own connection, NAT'd
+# on the way out. IP forwarding is switched on only for as long as this runs, and put back to
+# what it was by teardown.
+direct_up() {
+    [ -f "$FORWARD_SAVE" ] || cat /proc/sys/net/ipv4/ip_forward > "$FORWARD_SAVE"
+    sysctl -qw net.ipv4.ip_forward=1
+    nft -f - <<EOF
+table ip $NFT_TABLE {
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        ip saddr ${NS_ADDR%/*} oifname != "$HOST_VETH" masquerade
+    }
+}
+EOF
+    ip -n "$NS" route add default via "${HOST_ADDR%/*}"
+    # The host's own upstream DNS (systemd-resolved's stub at 127.0.0.53 is not reachable from
+    # inside the namespace).
+    local dns=()
+    while read -r server; do dns+=("$server"); done < <(sed -n -E 's/^nameserver[[:space:]]+([0-9a-fA-F:.]+).*/\1/p' /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null | grep -v -E '^(127\.|::1$)' | awk '!seen[$0]++' || true)
+    write_dns "${dns[@]}"
+    log "VPN turned off in Settings: namespace $NS uses the home connection"
 }
 
 prepare() {
     [ "$(id -u)" -eq 0 ] || die "prepare must run as root"
     local type
     type=$(config_type)
-    [ "$type" != none ] || die "no VPN configuration. Run: sudo $SELF set-config /path/to/provider.conf"
+    if [ "$(mode)" = vpn ]; then
+        [ "$type" != none ] || die "no VPN configuration. Run: sudo $SELF set-config /path/to/provider.conf"
+    else
+        type=direct
+    fi
     teardown
 
     ip netns add "$NS"
@@ -111,7 +152,9 @@ prepare() {
     write_nsswitch
     write_dns
 
-    if [ "$type" = wireguard ]; then
+    if [ "$type" = direct ]; then
+        direct_up
+    elif [ "$type" = wireguard ]; then
         command -v wg >/dev/null || die "wireguard-tools is not installed"
         ip link add "$WG_IF" type wireguard
         # Configured while still in the host namespace, so the endpoint's name is looked up with
@@ -148,6 +191,7 @@ prepare() {
 }
 
 run() {
+    [ "$(mode)" = direct ] && exec sleep infinity
     case "$(config_type)" in
         wireguard)
             # Nothing to supervise: the kernel runs WireGuard. The unit stays up while this does.
@@ -197,6 +241,10 @@ openvpn_up() {
 
 # Holds the unit in "starting" until the tunnel is up, so qBittorrent and Prowlarr start after it.
 wait_up() {
+    if [ "$(mode)" = direct ]; then
+        ip -n "$NS" route show default 2>/dev/null | grep -q "via ${HOST_ADDR%/*}" && exit 0
+        die "could not route namespace $NS through the home connection"
+    fi
     local dev
     [ "$(config_type)" = wireguard ] && dev=$WG_IF || dev=$TUN_IF
     for _ in $(seq 1 60); do

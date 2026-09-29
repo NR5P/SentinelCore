@@ -97,7 +97,9 @@ public sealed class MediaDownloadsSettingsDto
     // On: this server starts and stops the VPN, qBittorrent and Prowlarr that
     // install-downloads.sh installed as systemd services. Off: they are someone else's to run.
     public bool ManageServices { get; set; } = true;
-    public bool RequireVpn { get; set; } = true;
+    // On: everything the sites and peers see goes through the VPN, proven before any search or
+    // download. Off: the same services reach the internet over the home connection instead.
+    public bool UseVpn { get; set; } = true;
     public string AllowedUsers { get; set; } = "admins";
     public string ProwlarrUrl { get; set; } = "http://10.250.0.2:9696";
     public string ProwlarrApiKey { get; set; } = string.Empty;

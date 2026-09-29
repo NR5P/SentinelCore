@@ -74,6 +74,18 @@ public sealed class MediaDownloadManager(
             var state = await stack.StateAsync(cancellationToken);
             if (state == MediaDownloadServiceStates.NotInstalled)
                 throw new MediaDownloadException("The VPN and torrent services are not installed on this server yet. Run core/downloads/install-downloads.sh on it (see Settings -> MOVIE DOWNLOADS).");
+            // The tunnel script reads the mode when it starts, so switching the VPN on or off
+            // while everything is running means starting over.
+            if (await stack.SetUseVpnAsync(options.UseVpn, cancellationToken)
+                && state is MediaDownloadServiceStates.Running or MediaDownloadServiceStates.Starting)
+            {
+                logger.LogInformation("Movie downloads: VPN turned {State}; restarting the services", options.UseVpn ? "on" : "off");
+                _verified = null;
+                await stack.StopAsync(cancellationToken);
+                for (var i = 0; i < 30 && await stack.StateAsync(cancellationToken) is not (MediaDownloadServiceStates.Stopped or MediaDownloadServiceStates.Failed); i++)
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                state = MediaDownloadServiceStates.Stopped;
+            }
             if (state is MediaDownloadServiceStates.Stopped or MediaDownloadServiceStates.Failed) await stack.StartAsync(cancellationToken);
 
             var deadline = DateTimeOffset.UtcNow + StartTimeout;
@@ -98,16 +110,23 @@ public sealed class MediaDownloadManager(
     // Null when everything answers; otherwise what is still wrong.
     private async Task<string?> ProblemAsync(MediaDownloadsSettingsDto options, CancellationToken cancellationToken)
     {
-        if (options.RequireVpn)
+        if (options.UseVpn)
         {
             var vpn = await stack.VpnStatusAsync(cancellationToken);
             if (vpn.State != MediaVpnStatus.Connected)
-                return vpn.Error is { } error ? $"Waiting for the VPN: {error}" : "Waiting for the VPN to connect.";
-            if (await HomeIpAsync(cancellationToken) is { } home && home == vpn.Ip)
             {
+                _verified = null;
+                return vpn.Error is { } error ? $"Waiting for the VPN: {error}" : "Waiting for the VPN to connect.";
+            }
+            var home = await HomeIpAsync(cancellationToken);
+            if (home is not null && home == vpn.Ip)
+            {
+                _verified = null;
                 await stack.StopAsync(cancellationToken);
                 return "The VPN is not hiding this server's address, so downloads were stopped. Check the VPN configuration.";
             }
+            // Only "proven" when the home address was actually known to compare against.
+            if (home is not null) _verified = (DateTimeOffset.UtcNow, vpn.Ip!);
         }
         try { await qbittorrent.VersionAsync(cancellationToken); }
         catch (QbittorrentException ex) { return ex.Message; }
@@ -147,17 +166,43 @@ public sealed class MediaDownloadManager(
         };
     }
 
-    private static object VpnDto(MediaVpnStatus vpn, MediaDownloadsSettingsDto options) => new
+    // When the tunnel was last proven to hide the home address, and what the sites saw instead.
+    private (DateTimeOffset At, string Ip)? _verified;
+
+    private object VpnDto(MediaVpnStatus vpn, MediaDownloadsSettingsDto options)
     {
-        state = vpn.State,
-        required = options.RequireVpn,
-        ip = vpn.Ip,
-        location = vpn.Location,
-        country = vpn.Country,
-        provider = vpn.Org,
-        checkedAt = vpn.CheckedAt,
-        error = vpn.Error
-    };
+        var verified = options.UseVpn && vpn.State == MediaVpnStatus.Connected && _verified is { } v && v.Ip == vpn.Ip ? v.At : (DateTimeOffset?)null;
+        return new
+        {
+            // "disabled": Use VPN is off in Settings and downloads use the home connection.
+            state = options.UseVpn ? vpn.State : MediaVpnStatus.Disabled,
+            required = options.UseVpn,
+            // The address the sites see was compared with the home address and differs.
+            verified = verified is not null,
+            verifiedAt = verified,
+            ip = options.UseVpn ? vpn.Ip : null,
+            location = options.UseVpn ? vpn.Location : null,
+            country = options.UseVpn ? vpn.Country : null,
+            provider = options.UseVpn ? vpn.Org : null,
+            checkedAt = vpn.CheckedAt,
+            error = options.UseVpn ? vpn.Error : null
+        };
+    }
+
+    // "Test VPN": brings everything up and proves the tunnel, then says what the sites see.
+    public async Task<(bool Ok, string Message)> TestVpnAsync(CancellationToken cancellationToken)
+    {
+        var options = await OptionsAsync(cancellationToken);
+        try { await EnsureReadyAsync(cancellationToken); }
+        catch (Exception ex) when (ex is MediaDownloadException or InvalidOperationException) { return (false, ex.Message); }
+        if (!options.UseVpn)
+            return (true, "The VPN is turned off in Settings: searching and downloading use your home internet connection, so the sites see your home address.");
+        var vpn = await stack.VpnStatusAsync(cancellationToken);
+        var where = vpn.Location is { } location ? $" in {location}" : "";
+        return _verified is not null
+            ? (true, $"Working. The sites see {vpn.Ip}{where}, not your home address.")
+            : (true, $"Connected{where} ({vpn.Ip}), but your home address could not be looked up to compare it with.");
+    }
 
     // MARK: - Searching
 
@@ -381,7 +426,7 @@ public sealed class MediaDownloadManager(
         Touch();
 
         try { await EnsureReadyAsync(cancellationToken); }
-        catch (MediaDownloadException ex)
+        catch (Exception ex) when (ex is MediaDownloadException or InvalidOperationException)
         {
             foreach (var waiting in active.Where(d => d.Error != ex.Message))
             {

@@ -151,6 +151,8 @@ if [ ! -f "$PROWLARR_CONF" ]; then
 </Config>
 EOF
 fi
+# Settings -> MOVIE DOWNLOADS -> Use VPN writes this; the tunnel reads it when it starts.
+[ -f "$DATA/network-mode" ] || echo vpn > "$DATA/network-mode"
 chown -R "$APP_USER:$APP_USER" "$DATA"
 chmod 700 "$DATA/prowlarr"
 
@@ -176,6 +178,8 @@ fi
 if [ "$SKIP_TEST" -eq 0 ]; then
     say "Testing: starting the VPN, qBittorrent and Prowlarr"
     HOME_IP=$(curl -fsS --max-time 10 https://api.ipify.org || echo "?")
+    # Earlier failed attempts would otherwise still count as restarts below.
+    systemctl reset-failed "${UNITS[@]:1}" 2>/dev/null || true
     # Started as $APP_USER, the way SentinelCore will, which also proves the permission works.
     sudo -u "$APP_USER" systemctl --no-ask-password start sentinelcore-downloads.target \
         || die "could not start the services as $APP_USER - see: journalctl -u sentinelcore-vpn -n 50"
@@ -206,7 +210,11 @@ if [ "$SKIP_TEST" -eq 0 ]; then
     echo "  qBittorrent:         ${QB:-did not answer}"
     echo "  Prowlarr:            ${PR:-did not answer}"
     [ -n "$VPN_IP" ] || die "the VPN did not connect. Check the configuration file, then: journalctl -u sentinelcore-vpn -n 50"
-    [ "$VPN_IP" != "$HOME_IP" ] || die "traffic is NOT going through the VPN (same address as home). Do not use downloads until this is fixed."
+    if [ "$(tr -d '[:space:]' < "$DATA/network-mode")" = direct ]; then
+        echo "  Note: Use VPN is turned OFF in SentinelCore's settings, so this test used the home connection."
+    else
+        [ "$VPN_IP" != "$HOME_IP" ] || die "traffic is NOT going through the VPN (same address as home). Do not use downloads until this is fixed."
+    fi
     [ -n "$QB" ] || die "qBittorrent did not answer - see: journalctl -u sentinelcore-qbittorrent -n 50"
     [ -n "$PR" ] || die "Prowlarr did not answer - see: journalctl -u sentinelcore-prowlarr -n 50"
     echo "  Everything works, and the services are stopped again until they are needed."

@@ -47,11 +47,11 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private void WriteSettings(bool enabled, bool requireVpn = true) => File.WriteAllText(_settingsPath, $$"""
+    private void WriteSettings(bool enabled, bool useVpn = true) => File.WriteAllText(_settingsPath, $$"""
         {
           "Auth": { "Enabled": false },
           "Media": { "Enabled": true },
-          "MediaDownloads": { "Enabled": {{(enabled ? "true" : "false")}}, "RequireVpn": {{(requireVpn ? "true" : "false")}}, "ProwlarrApiKey": "test-key", "IdleMinutes": 1 }
+          "MediaDownloads": { "Enabled": {{(enabled ? "true" : "false")}}, "UseVpn": {{(useVpn ? "true" : "false")}}, "ProwlarrApiKey": "test-key", "IdleMinutes": 1 }
         }
         """);
 
@@ -210,6 +210,65 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task TestVpn_ProvesTheTunnelHidesTheHomeAddress_AndTheStatusSaysSo()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.195.233.76", "Stockholm", null, "SE", "Mullvad");
+
+        var before = await JsonAsync(await client.GetAsync("/api/media/downloads/status", Ct), HttpStatusCode.OK);
+        Assert.False(before.GetProperty("status").GetProperty("vpn").GetProperty("verified").GetBoolean());
+
+        var test = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.True(test.GetProperty("ok").GetBoolean());
+        Assert.Equal("Working. The sites see 185.195.233.76 in Stockholm, SE, not your home address.", test.GetProperty("message").GetString());
+        var vpn = test.GetProperty("status").GetProperty("vpn");
+        Assert.Equal("connected", vpn.GetProperty("state").GetString());
+        Assert.True(vpn.GetProperty("verified").GetBoolean());
+        Assert.True(_stack.Starts > 0);
+
+        // The tunnel drops: no longer proven, and the test says why.
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Down, Error: "The VPN is not reaching the internet (timed out)");
+        var down = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.False(down.GetProperty("ok").GetBoolean());
+        Assert.Contains("timed out", down.GetProperty("message").GetString());
+        Assert.False(down.GetProperty("status").GetProperty("vpn").GetProperty("verified").GetBoolean());
+    }
+
+    [Fact]
+    public async Task UseVpnOff_SearchesOverTheHomeConnection_RestartsTheServicesAndSaysSo()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await AddLibraryAsync(factory, MediaLibraryKinds.Movies, _moviesPath);
+        _prowlarr.Releases = [Release("Big.Buck.Bunny.2008.1080p.BluRay.x264", 20, "magnet:?xt=urn:btih:ffff")];
+        // Running with the VPN, as it was before the setting changed.
+        _stack.State = MediaDownloadServiceStates.Running;
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "203.0.113.9");
+        WriteSettings(enabled: true, useVpn: false);
+
+        var search = await SearchAsync(client, new { kind = "movie", title = "Big Buck Bunny", year = 2008 });
+
+        // The home address is not a leak when the VPN is meant to be off.
+        Assert.Equal("done", search.GetProperty("phase").GetString());
+        Assert.False(_stack.UseVpn);
+        Assert.Equal((1, 1), (_stack.Stops, _stack.Starts));
+        var vpn = (await JsonAsync(await client.GetAsync("/api/media/downloads/status", Ct), HttpStatusCode.OK)).GetProperty("status").GetProperty("vpn");
+        Assert.Equal("disabled", vpn.GetProperty("state").GetString());
+        Assert.False(vpn.GetProperty("required").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, vpn.GetProperty("ip").ValueKind);
+
+        var test = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Contains("turned off", test.GetProperty("message").GetString());
+
+        // Back on: restarted again, and the home address is refused once more.
+        WriteSettings(enabled: true, useVpn: true);
+        var refused = await SearchAsync(client, new { kind = "movie", title = "Big Buck Bunny", year = 2008 });
+        Assert.Equal("failed", refused.GetProperty("phase").GetString());
+        Assert.True(_stack.UseVpn);
+    }
+
+    [Fact]
     public async Task EpisodeSearch_AsksForTheEpisode_AndGrabNeedsATvLibrary()
     {
         using var factory = CreateFactory();
@@ -339,6 +398,13 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         public Task StartAsync(CancellationToken cancellationToken) { Starts++; State = MediaDownloadServiceStates.Running; return Task.CompletedTask; }
         public Task StopAsync(CancellationToken cancellationToken) { Stops++; State = MediaDownloadServiceStates.Stopped; return Task.CompletedTask; }
         public Task<MediaVpnStatus> VpnStatusAsync(CancellationToken cancellationToken) => Task.FromResult(Vpn);
+        public bool UseVpn = true;
+        public Task<bool> SetUseVpnAsync(bool useVpn, CancellationToken cancellationToken)
+        {
+            var changed = UseVpn != useVpn;
+            UseVpn = useVpn;
+            return Task.FromResult(changed);
+        }
     }
 
     private sealed record FakeTorrent(string Hash, string Tag, double Progress, long Size, long Downloaded, long Speed, long Eta, string State);
