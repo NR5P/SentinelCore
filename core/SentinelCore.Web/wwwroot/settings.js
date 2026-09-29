@@ -2677,6 +2677,20 @@ window.GateWatchSettings = (function () {
         };
       }
 
+      // Same key the inline script in index.html reads at page load.
+      const kioskToggle = document.getElementById("kiosk-mode-toggle");
+      if (kioskToggle) {
+        kioskToggle.checked = document.documentElement.classList.contains("kiosk");
+        kioskToggle.onchange = () => {
+          document.documentElement.classList.toggle("kiosk", kioskToggle.checked);
+          try {
+            localStorage.setItem("sentinelcore.kiosk", kioskToggle.checked ? "true" : "false");
+          } catch {
+            // Preference just won't persist; the toggle still works for this visit.
+          }
+        };
+      }
+
       // Searching matches field labels and tips, not just section titles, so "spider" finds the
       // advisor and "port" finds every section that binds one. Not persisted like the mode
       // toggle: a filter still applied on the next visit would be a page with settings missing.

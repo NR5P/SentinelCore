@@ -8746,3 +8746,51 @@ body.wx-noscroll {
 .mv-signin-foot > .mv-spacer {
   flex: 1;
 }
+
+/* Kiosk mode
+   A touch-first layout for wall screens, switched on by html.kiosk (see the inline script in
+   index.html). Chromium on a Raspberry Pi touchscreen reports a fine pointer that can hover, so
+   the (hover: none) fallbacks above never apply there: each tap moves a pretend mouse, pops a
+   hint, and leaves anything revealed on hover needing a second tap. Kiosk mode applies the
+   touch treatment regardless of what the browser claims. */
+html.kiosk [data-tip]::after {
+  display: none !important;
+}
+
+/* Controls that normally only appear on hover are always visible and tappable. */
+html.kiosk .live-tile-zoom,
+html.kiosk .live-tile-tier,
+html.kiosk .ptz-controls,
+html.kiosk .org-md-remove {
+  opacity: 1;
+}
+
+html.kiosk .mv-row-arrow:not(:disabled) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* No lift or zoom under a finger that has already let go. */
+html.kiosk .card:hover,
+html.kiosk .card:hover .card-image img {
+  transform: none;
+}
+
+/* Bigger tap targets. */
+html.kiosk .btn,
+html.kiosk .tab {
+  min-height: 40px;
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+html.kiosk .icon-btn {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+}
+
+html.kiosk .ptz-pad {
+  grid-template-columns: repeat(3, 40px);
+  grid-template-rows: repeat(3, 40px);
+}
