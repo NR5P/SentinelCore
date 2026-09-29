@@ -27,6 +27,8 @@ struct CameraEditView: View {
 
     @State private var isTesting = false
     @State private var isSaving = false
+    @State private var isDeleting = false
+    @State private var confirmingDelete = false
     @State private var probeResult: CameraProbeResult?
     @State private var errorMessage: String?
 
@@ -137,7 +139,25 @@ struct CameraEditView: View {
                         TriggerZoneEditorView(camera: camera)
                     }
                 }
+                Section {
+                    Button(role: .destructive) {
+                        confirmingDelete = true
+                    } label: {
+                        if isDeleting { ProgressView() } else { Label("Delete Camera", systemImage: "trash") }
+                    }
+                    .disabled(isDeleting)
+                    // The app-wide green tint otherwise wins over the destructive role on the Mac.
+                    .tint(SentinelTheme.red)
+                    .foregroundStyle(SentinelTheme.red)
+                }
             }
+        }
+        .confirmationDialog("Delete \(camera?.name ?? "camera")?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                Task { await deleteCamera() }
+            }
+        } message: {
+            Text("This removes the camera from SentinelCore on every device.")
         }
         .formStyle(.grouped)
         .navigationTitle(isNew ? "Add Camera" : "Edit Camera")
@@ -264,6 +284,20 @@ struct CameraEditView: View {
                 model.cameras.append(created)
             }
             SaveFeedback.hapticSuccess()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteCamera() async {
+        guard let camera else { return }
+        isDeleting = true
+        defer { isDeleting = false }
+        errorMessage = nil
+        do {
+            try await model.client.deleteCamera(id: camera.id)
+            model.cameras.removeAll { $0.id == camera.id }
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
