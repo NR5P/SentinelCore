@@ -760,6 +760,12 @@ final class SentinelClient {
         try await send("/api/media/downloads/\(id)/retry", method: "POST", body: Optional<String>.none)
     }
 
+    // Connects the VPN if it is idle and proves the sites see its address, not the home one. Can
+    // take up to about a minute, so the long-timeout session.
+    func testMediaDownloadsVpn() async throws -> MediaVpnTestResult {
+        try await mediaDownloadsRequest("/api/media/downloads/vpn/test", method: "POST", timeout: 90)
+    }
+
     // MARK: Sites (admin)
     // Prowlarr lives inside the VPN, so each of these may start it and wait up to ~25 s - past the
     // main session's 15 s - before answering 503 { starting: true }, thrown as
@@ -789,12 +795,13 @@ final class SentinelClient {
     }
 
     private func mediaDownloadsRequest<T: Decodable>(
-        _ path: String, method: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil
+        _ path: String, method: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil,
+        timeout: TimeInterval = 60
     ) async throws -> T {
         guard let url = url(path: path, query: query) else { throw ClientError.invalidServerAddress }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 60
+        request.timeoutInterval = timeout
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(body)

@@ -1,6 +1,15 @@
 package com.sentinelcore.android.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.draw.alpha
+import com.sentinelcore.android.data.MediaDownloadServices
+import com.sentinelcore.android.data.MediaVpnTestResult
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -383,6 +392,21 @@ fun MovieAddScreen(
     }
     Column(Modifier.fillMaxSize()) {
         DetailHeader(title, onBack = { if (!add.back()) onBack() })
+        MediaDownloadFormat.vpnOffNote(add.status)?.let { note ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SentinelAmber.copy(alpha = 0.14f))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(Modifier.size(8.dp).background(SentinelAmber, CircleShape))
+                Text(note, style = MaterialTheme.typography.bodySmall, color = SentinelAmber, fontWeight = FontWeight.SemiBold)
+            }
+        }
         when (add.stage) {
             AddStage.FIND -> AddFind(add, model)
             AddStage.SHOW -> AddShow(add)
@@ -769,16 +793,40 @@ fun MovieDownloadsScreen(
     var actionError by remember { mutableStateOf<String?>(null) }
     var busyIds by remember { mutableStateOf(setOf<String>()) }
     var confirmCancel by remember { mutableStateOf<MediaDownload?>(null) }
+    // Whatever was fetched last - status, the list, or a VPN test - decides the VPN line.
+    var vpnStatus by remember { mutableStateOf<MediaDownloadServices?>(null) }
+    var testing by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<MediaVpnTestResult?>(null) }
 
     suspend fun refresh() {
         runCatching { model.mediaDownloads() }
-            .onSuccess { list = it; loadError = null }
+            .onSuccess { fetched ->
+                list = fetched
+                fetched.status?.let { vpnStatus = it }
+                loadError = null
+            }
             .onFailure { loadError = it.message ?: "Could not load the downloads." }
     }
 
     LaunchedEffect(Unit) {
         status = runCatching { model.mediaDownloadStatus() }.getOrNull()
+        status?.status?.let { vpnStatus = it }
         refresh()
+    }
+
+    fun testVpn() {
+        if (testing) return
+        scope.launch {
+            testing = true
+            testResult = null
+            runCatching { model.testMediaDownloadVpn() }
+                .onSuccess { result ->
+                    testResult = result
+                    result.status?.let { vpnStatus = it }
+                }
+                .onFailure { testResult = MediaVpnTestResult(ok = false, message = it.message ?: "Could not test the VPN.") }
+            testing = false
+        }
     }
     // Follow the queue while anything is moving; the loop ends once nothing is.
     val hasActive = list?.active?.isNotEmpty() == true
@@ -811,7 +859,14 @@ fun MovieDownloadsScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                VpnLine(data?.status ?: status?.status, canManageSites = status?.canManageSites == true, onSites = onSites)
+                VpnLine(
+                    vpnStatus,
+                    canManageSites = status?.canManageSites == true,
+                    testing = testing,
+                    testResult = testResult,
+                    onTest = ::testVpn,
+                    onSites = onSites,
+                )
             }
             if (data == null) {
                 if (loadError != null) {
@@ -892,40 +947,115 @@ fun MovieDownloadsScreen(
 }
 
 @Composable
-private fun VpnLine(status: com.sentinelcore.android.data.MediaDownloadServices?, canManageSites: Boolean, onSites: () -> Unit) {
-    val line = MediaDownloadFormat.vpnLine(status)
-    if (line == null && !canManageSites) return
+internal fun vpnToneColor(tone: VpnTone): Color = when (tone) {
+    VpnTone.ON -> SentinelGreen
+    VpnTone.BUSY -> SentinelCyan
+    VpnTone.IDLE -> SentinelTextDim
+    VpnTone.OFF -> SentinelAmber
+    VpnTone.BAD -> SentinelRed
+}
+
+// The light's dot; it pulses while the VPN is coming up or being checked.
+@Composable
+private fun VpnDot(tone: VpnTone, size: androidx.compose.ui.unit.Dp = 10.dp) {
+    val color = vpnToneColor(tone)
+    val alpha = if (tone == VpnTone.BUSY) {
+        val pulse = rememberInfiniteTransition(label = "vpn-pulse")
+        pulse.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.3f,
+            animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+            label = "vpn-pulse-alpha",
+        ).value
+    } else 1f
+    Box(Modifier.size(size).alpha(alpha).background(color, CircleShape))
+}
+
+// The VPN light in the Movies top bar: dot + a few words; tapping it opens Downloads.
+@Composable
+internal fun VpnChip(status: MediaDownloadServices?, onClick: () -> Unit) {
+    val look = MediaDownloadFormat.vpnLook(status) ?: return
+    val color = vpnToneColor(look.tone)
+    Row(
+        Modifier
+            .padding(horizontal = 2.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(color.copy(alpha = 0.14f))
+            .clickable(onClickLabel = "Open Downloads", onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        VpnDot(look.tone, 8.dp)
+        Text(
+            look.short,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = if (look.tone == VpnTone.IDLE) SentinelTextDim else color,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun VpnLine(
+    status: MediaDownloadServices?,
+    canManageSites: Boolean,
+    testing: Boolean,
+    testResult: MediaVpnTestResult?,
+    onTest: () -> Unit,
+    onSites: () -> Unit,
+) {
+    val look = MediaDownloadFormat.vpnLook(status)
     Card(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (line != null) {
-                val (tone, text) = line
-                val color = when (tone) {
-                    VpnTone.ON -> SentinelGreen
-                    VpnTone.BUSY -> SentinelCyan
-                    VpnTone.WARN -> SentinelAmber
-                    VpnTone.OFF -> SentinelTextDim
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (look != null) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    VpnDot(look.tone)
+                    Text("VPN", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        look.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when (look.tone) {
+                            VpnTone.OFF, VpnTone.BAD -> vpnToneColor(look.tone)
+                            else -> Color.Unspecified
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
-                Box(Modifier.size(10.dp).background(color, CircleShape))
-                Text("VPN", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                Text(
-                    text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (tone == VpnTone.WARN) SentinelAmber else Color.Unspecified,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                Spacer(Modifier.weight(1f))
             }
-            if (canManageSites) {
-                TextButton(onClick = onSites) {
-                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Sites")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(onClick = onTest, enabled = !testing) {
+                    if (testing) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (testing) "Testing…" else "Test")
                 }
+                Spacer(Modifier.weight(1f))
+                if (canManageSites) {
+                    TextButton(onClick = onSites) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Sites")
+                    }
+                }
+            }
+            if (testing) {
+                Text(
+                    "Connecting and checking the address the sites see - this can take up to a minute.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SentinelTextDim,
+                )
+            } else if (testResult != null) {
+                Text(
+                    testResult.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (testResult.ok) SentinelGreen else SentinelRed,
+                )
             }
         }
     }

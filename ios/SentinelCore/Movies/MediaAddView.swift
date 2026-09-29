@@ -22,7 +22,7 @@ private struct MediaAddSheetModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.sheet(isPresented: $isPresented) {
-            MediaAddView(status: downloads.status) { download in
+            MediaAddView(status: downloads.status, vpnDisabled: downloads.vpnDisabled) { download in
                 downloads.noteStarted(download)
                 isPresented = false
                 onStarted(download)
@@ -42,6 +42,8 @@ private enum MediaAddRoute: Hashable {
 
 struct MediaAddView: View {
     let status: MediaDownloadsStatus?
+    // Use VPN is off in Settings: say so before anyone searches.
+    var vpnDisabled = false
     let onStarted: (MediaDownload) -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -63,6 +65,14 @@ struct MediaAddView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Form {
+                if vpnDisabled {
+                    Section {
+                        Label("The VPN is turned off in Settings, so the sites and everyone sharing will see your home address.",
+                              systemImage: "exclamationmark.shield.fill")
+                            .font(.callout)
+                            .foregroundStyle(SentinelTheme.amber)
+                    }
+                }
                 Section {
                     Picker("Kind", selection: $kind) {
                         Text("Movie").tag("movie")

@@ -592,6 +592,19 @@ class SentinelRepository(
         )
     }
 
+    // "Test VPN": starts everything if needed, so it can take up to a minute. ok false is a 200
+    // whose message says what is wrong; only a failed request throws.
+    suspend fun testMediaDownloadVpn(): MediaVpnTestResult = withContext(Dispatchers.IO) {
+        val (status, text) = requestWithStatus(MediaDownloadApi.VPN_TEST_PATH, method = "POST", body = null, readTimeoutMillis = 90_000)
+        if (status !in 200..299) {
+            throw SentinelApiException(
+                status,
+                parseServerError(text) ?: if (status == 401) "This server requires you to sign in." else "Server request failed (HTTP $status).",
+            )
+        }
+        parseMediaVpnTestResult(JSONObject(text))
+    }
+
     suspend fun mediaDownloadSites(): List<MediaDownloadSite> = withContext(Dispatchers.IO) {
         parseMediaDownloadSites(JSONArray(sitesRequest(MediaDownloadApi.SITES_PATH)))
     }

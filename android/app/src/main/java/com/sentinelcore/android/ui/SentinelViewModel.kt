@@ -835,6 +835,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun retryMediaDownload(id: String) = repository.retryMediaDownload(id)
 
+    suspend fun testMediaDownloadVpn() = repository.testMediaDownloadVpn()
+
     suspend fun mediaDownloadSites() = repository.mediaDownloadSites()
 
     suspend fun mediaDownloadSiteCatalog(query: String) = repository.mediaDownloadSiteCatalog(query)

@@ -17,7 +17,8 @@ class MediaDownloadParsingTest {
         { "enabled": true, "canDownload": true, "canManageSites": true, "tmdbConfigured": true,
           "movieLibrary": true, "showLibrary": false,
           "status": { "enabled": true, "services": "running", "idleMinutes": 5,
-                      "vpn": { "state": "connected", "required": true, "ip": "185.65.134.1",
+                      "vpn": { "state": "connected", "required": true,
+                               "verified": true, "verifiedAt": "2026-09-29T10:00:05Z", "ip": "185.65.134.1",
                                "location": "Stockholm, SE", "country": "SE", "provider": "AS39351 31173 Services AB",
                                "checkedAt": "2026-09-29T10:00:00Z", "error": null } } }
     """.trimIndent()
@@ -322,17 +323,118 @@ class MediaDownloadParsingTest {
         assertEquals("2 downloads in progress", MediaDownloadFormat.bannerText(listOf(one, one)))
         assertNull(MediaDownloadFormat.bannerText(emptyList()))
 
-        val services = parseMediaDownloadStatus(JSONObject(statusJson)).status
-        assertEquals(VpnTone.ON to "Connected · Stockholm, SE · 185.65.134.1", MediaDownloadFormat.vpnLine(services))
-        assertEquals(VpnTone.OFF, MediaDownloadFormat.vpnLine(MediaDownloadServices())!!.first)
-        assertEquals(VpnTone.WARN, MediaDownloadFormat.vpnLine(MediaDownloadServices(services = "notInstalled"))!!.first)
-        assertEquals(VpnTone.BUSY, MediaDownloadFormat.vpnLine(MediaDownloadServices(services = "starting"))!!.first)
-        assertEquals(
-            VpnTone.WARN to "tunnel down",
-            MediaDownloadFormat.vpnLine(MediaDownloadServices(services = "failed", vpn = MediaDownloadVpn(state = "down", error = "tunnel down"))),
-        )
-        assertNull(MediaDownloadFormat.vpnLine(null))
         assertEquals(12, MediaDownloadFormat.wholeNumber(" 12 "))
         assertNull(MediaDownloadFormat.wholeNumber("1a"))
+    }
+
+    // The doc's "The VPN light" table, one look per row (plus the in-between cases).
+    @Test
+    fun `the VPN light follows the contract table`() {
+        val services = parseMediaDownloadStatus(JSONObject(statusJson)).status
+        assertEquals(
+            VpnLook(VpnTone.ON, "VPN · SE", "Connected and verified · Stockholm, SE · 185.65.134.1 · your home address is hidden"),
+            MediaDownloadFormat.vpnLook(services),
+        )
+        // Connected and verified without a country still reads as on.
+        val noCountry = MediaDownloadServices(services = "running", vpn = MediaDownloadVpn(state = "connected", verified = true))
+        assertEquals(VpnTone.ON, MediaDownloadFormat.vpnLook(noCountry)!!.tone)
+        assertEquals("VPN on", MediaDownloadFormat.vpnLook(noCountry)!!.short)
+        assertEquals("Connected and verified · your home address is hidden", MediaDownloadFormat.vpnLook(noCountry)!!.text)
+
+        // Connected but not yet verified: cyan, checking.
+        val unverified = services!!.copy(vpn = services.vpn.copy(verified = false))
+        val checking = MediaDownloadFormat.vpnLook(unverified)!!
+        assertEquals(VpnTone.BUSY, checking.tone)
+        assertEquals("VPN checking", checking.short)
+        assertEquals("Connected · Stockholm, SE · 185.65.134.1 · checking it hides your home address…", checking.text)
+
+        // Coming up: cyan, connecting.
+        assertEquals(
+            VpnLook(VpnTone.BUSY, "VPN connecting", "Connecting…"),
+            MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "starting", vpn = MediaDownloadVpn(state = "off"))),
+        )
+        assertEquals(VpnTone.BUSY, MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "running", vpn = MediaDownloadVpn(state = "connecting")))!!.tone)
+
+        // Idle: grey - the normal resting state, and qBittorrent/Prowlarr run elsewhere.
+        val idle = MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "stopped", vpn = MediaDownloadVpn(state = "off")))!!
+        assertEquals(VpnTone.IDLE, idle.tone)
+        assertEquals("VPN idle", idle.short)
+        assertTrue(idle.text.startsWith("Off until someone searches or downloads, then it connects by itself."))
+        assertEquals(VpnTone.IDLE, MediaDownloadFormat.vpnLook(MediaDownloadServices())!!.tone)
+        assertEquals(VpnTone.IDLE, MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "external"))!!.tone)
+
+        // Use VPN turned off in Settings: amber, and it wins over everything else.
+        val disabled = parseMediaDownloadStatus(
+            JSONObject(
+                """{ "canDownload": true, "status": { "enabled": true, "services": "running",
+                     "vpn": { "state": "disabled", "required": false, "verified": false, "verifiedAt": null,
+                              "ip": null, "location": null, "country": null, "provider": null, "error": null } } }""",
+            ),
+        )
+        val off = MediaDownloadFormat.vpnLook(disabled.status)!!
+        assertEquals(VpnTone.OFF, off.tone)
+        assertEquals("VPN off", off.short)
+        assertEquals(
+            "Turned off in Settings · searching and downloading use your home connection, so the sites see your home address.",
+            off.text,
+        )
+        assertEquals(
+            "The VPN is turned off in Settings, so the sites and everyone sharing will see your home address.",
+            MediaDownloadFormat.vpnOffNote(disabled),
+        )
+        assertNull(MediaDownloadFormat.vpnOffNote(parseMediaDownloadStatus(JSONObject(statusJson))))
+        assertNull(MediaDownloadFormat.vpnOffNote(null))
+
+        // Problems: red.
+        assertEquals(
+            VpnLook(VpnTone.BAD, "VPN problem", "tunnel down"),
+            MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "failed", vpn = MediaDownloadVpn(state = "down", error = "tunnel down"))),
+        )
+        assertEquals(VpnTone.BAD, MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "running", vpn = MediaDownloadVpn(state = "down")))!!.tone)
+        val notInstalled = MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "notInstalled"))!!
+        assertEquals(VpnTone.BAD, notInstalled.tone)
+        assertEquals("VPN not set up", notInstalled.short)
+
+        assertNull(MediaDownloadFormat.vpnLook(null))
+    }
+
+    @Test
+    fun `verified and disabled parse, and missing verified reads as false`() {
+        val vpn = parseMediaDownloadStatus(JSONObject(statusJson)).status!!.vpn
+        assertTrue(vpn.verified)
+        assertEquals("2026-09-29T10:00:05Z", vpn.verifiedAt)
+
+        val old = parseMediaDownloadVpn(JSONObject("""{ "state": "connected", "ip": "1.2.3.4" }"""))
+        assertFalse(old.verified)
+        assertNull(old.verifiedAt)
+
+        val disabled = parseMediaDownloadVpn(JSONObject("""{ "state": "disabled", "required": false, "ip": null, "error": null }"""))
+        assertEquals("disabled", disabled.state)
+        assertFalse(disabled.required)
+        assertNull(disabled.ip)
+        assertNull(disabled.location)
+    }
+
+    @Test
+    fun `the VPN test answer parses`() {
+        val result = parseMediaVpnTestResult(
+            JSONObject(
+                """{ "ok": true, "message": "Working. The sites see 185.195.233.76 in Stockholm, SE, not your home address.",
+                     "status": ${JSONObject(statusJson).getJSONObject("status")} }""",
+            ),
+        )
+        assertTrue(result.ok)
+        assertEquals("Working. The sites see 185.195.233.76 in Stockholm, SE, not your home address.", result.message)
+        assertEquals(VpnTone.ON, MediaDownloadFormat.vpnLook(result.status)!!.tone)
+
+        val failed = parseMediaVpnTestResult(JSONObject("""{ "ok": false, "message": "The tunnel did not come up." }"""))
+        assertFalse(failed.ok)
+        assertEquals("The tunnel did not come up.", failed.message)
+        assertNull(failed.status)
+
+        val bare = parseMediaVpnTestResult(JSONObject("{}"))
+        assertFalse(bare.ok)
+        assertEquals("The VPN test failed.", bare.message)
+        assertEquals("/api/media/downloads/vpn/test", MediaDownloadApi.VPN_TEST_PATH)
     }
 }

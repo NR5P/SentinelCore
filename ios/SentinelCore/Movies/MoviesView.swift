@@ -72,6 +72,13 @@ struct MoviesView: View {
         }
         .toolbar {
             if downloads.canDownload {
+                // The VPN light: green when it is proven to hide the home address, amber when
+                // it is turned off in Settings. Opens Downloads, where Test is.
+                if downloads.serviceStatus != nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        MediaVpnLight(downloads: downloads) { showingDownloads = true }
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         showingDownloads = true

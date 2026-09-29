@@ -27,15 +27,88 @@ struct MediaDownloadServiceStatus: Decodable, Hashable {
     var vpn: MediaDownloadVpn?
 }
 
+// `state` is connected | connecting | down | off | unknown | disabled. `disabled` means Use VPN is
+// off in Settings: downloads use the home connection and ip/location/country/provider/error are
+// null. `verified`: the address the sites see was compared with the home address and differs -
+// missing (an older server) counts as not verified.
 struct MediaDownloadVpn: Decodable, Hashable {
     var state: String?
     var required: Bool?
+    var verified: Bool?
+    var verifiedAt: String?
     var ip: String?
     var location: String?
     var country: String?
     var provider: String?
     var checkedAt: String?
     var error: String?
+}
+
+// POST /api/media/downloads/vpn/test - connects if needed and proves the sites see the VPN's
+// address. `message` is the result to show either way; `status` redraws the light.
+struct MediaVpnTestResult: Decodable {
+    var ok: Bool?
+    var message: String?
+    var status: MediaDownloadServiceStatus?
+}
+
+// MARK: - The VPN light
+
+// How the VPN looks everywhere it is shown: the light next to "+ Add" (`short`) and the line on
+// the Downloads screen (`text`). One function so the two can never disagree - the dashboard's
+// vpnLook in wwwroot/movies.js, and the table "The VPN light" in MOVIE_DOWNLOADS.md.
+struct MediaVpnLook: Equatable {
+    enum Tone: Equatable {
+        case on      // green: connected and proven to hide the home address
+        case busy    // cyan, pulsing: coming up, or connected but not yet checked
+        case idle    // grey: switched off until needed (the normal resting state)
+        case off     // amber: Use VPN is turned off in Settings
+        case bad     // red: not installed, failed, or not getting through
+    }
+
+    var tone: Tone
+    var short: String
+    var text: String
+
+    init(tone: Tone, short: String, text: String) {
+        self.tone = tone
+        self.short = short
+        self.text = text
+    }
+
+    init(_ status: MediaDownloadServiceStatus?) {
+        let vpn = status?.vpn
+        let services = status?.services
+        if vpn?.state == "disabled" {
+            self.init(tone: .off, short: "VPN off",
+                      text: "Turned off in Settings · searching and downloading use your home connection, so the sites see your home address.")
+        } else if services == "notInstalled" {
+            self.init(tone: .bad, short: "VPN not set up",
+                      text: "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.")
+        } else if vpn?.state == "connected" {
+            let place = [vpn?.location, vpn?.ip].compactMap { $0 }.filter { !$0.isEmpty }
+            let whereText = place.isEmpty ? "" : " · " + place.joined(separator: " · ")
+            if vpn?.verified == true {
+                let country = vpn?.country ?? ""
+                self.init(tone: .on, short: country.isEmpty ? "VPN on" : "VPN · \(country)",
+                          text: "Connected and verified\(whereText) · your home address is hidden")
+            } else {
+                self.init(tone: .busy, short: "VPN checking",
+                          text: "Connected\(whereText) · checking it hides your home address…")
+            }
+        } else if services == "starting" || vpn?.state == "connecting" {
+            self.init(tone: .busy, short: "VPN connecting", text: "Connecting…")
+        } else if services == "failed" || vpn?.state == "down" {
+            self.init(tone: .bad, short: "VPN problem",
+                      text: vpn?.error ?? "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).")
+        } else if services == "external" {
+            self.init(tone: .idle, short: "VPN idle",
+                      text: "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used.")
+        } else {
+            self.init(tone: .idle, short: "VPN idle",
+                      text: "Off until someone searches or downloads, then it connects by itself. Press Test to check it now.")
+        }
+    }
 }
 
 // MARK: - 1. Finding the title (TMDB)

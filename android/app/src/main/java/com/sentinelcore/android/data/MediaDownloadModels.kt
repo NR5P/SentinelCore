@@ -12,15 +12,27 @@ import java.net.URLEncoder
 // sample JSON.
 
 data class MediaDownloadVpn(
-    // "connected", "connecting", "down", "off" or "unknown".
+    // "connected", "connecting", "down", "off", "unknown", or "disabled" (Use VPN is off in
+    // Settings: downloads use the home connection and ip/location/country/provider/error are null).
     val state: String = "unknown",
+    // The useVpn setting.
     val required: Boolean = true,
+    // The address the sites see was compared with the server's own and differs. Missing = false.
+    val verified: Boolean = false,
+    val verifiedAt: String? = null,
     val ip: String? = null,
     val location: String? = null,
     val country: String? = null,
     val provider: String? = null,
     val checkedAt: String? = null,
     val error: String? = null,
+)
+
+// POST /api/media/downloads/vpn/test: whether the VPN works, in words, and the status after.
+data class MediaVpnTestResult(
+    val ok: Boolean,
+    val message: String,
+    val status: MediaDownloadServices? = null,
 )
 
 data class MediaDownloadServices(
@@ -281,6 +293,8 @@ internal fun parseMediaDownloadVpn(json: JSONObject?): MediaDownloadVpn {
         location = json.dlString("location"),
         country = json.dlString("country"),
         provider = json.dlString("provider"),
+        verified = json.optBoolean("verified", false),
+        verifiedAt = json.dlString("verifiedAt"),
         checkedAt = json.dlString("checkedAt"),
         error = json.dlString("error"),
     )
@@ -468,6 +482,15 @@ internal fun parseMediaSiteDefinition(json: JSONObject): MediaSiteDefinition = M
 internal fun parseMediaSiteCatalog(array: JSONArray?): List<MediaSiteDefinition> = array.dlObjects(::parseMediaSiteDefinition)
 
 // A sites route's 503 body: { error, starting: true } while the VPN comes up.
+internal fun parseMediaVpnTestResult(json: JSONObject): MediaVpnTestResult {
+    val ok = json.optBoolean("ok", false)
+    return MediaVpnTestResult(
+        ok = ok,
+        message = json.dlString("message") ?: if (ok) "The VPN is working." else "The VPN test failed.",
+        status = parseMediaDownloadServices(json.dlObject("status")),
+    )
+}
+
 internal fun parseMediaDownloadsStarting(body: String): MediaDownloadsStartingException? {
     val json = runCatching { JSONObject(body) }.getOrNull() ?: return null
     if (!json.optBoolean("starting")) return null
@@ -481,6 +504,7 @@ internal object MediaDownloadApi {
     const val DOWNLOADS_PATH = "/api/media/downloads"
     const val SEARCH_PATH = "/api/media/downloads/search"
     const val SITES_PATH = "/api/media/downloads/sites"
+    const val VPN_TEST_PATH = "/api/media/downloads/vpn/test"
 
     private fun segment(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
     private fun query(value: String): String = URLEncoder.encode(value, "UTF-8")
@@ -534,7 +558,11 @@ internal object MediaDownloadApi {
 
 // ---------------- Wording ----------------
 
-enum class VpnTone { ON, BUSY, OFF, WARN }
+// ON green (connected and verified), BUSY cyan pulsing (coming up / checking), IDLE grey (off
+// until needed - the normal resting state), OFF amber (Use VPN turned off in Settings), BAD red.
+enum class VpnTone { ON, BUSY, IDLE, OFF, BAD }
+
+data class VpnLook(val tone: VpnTone, val short: String, val text: String)
 
 internal object MediaDownloadFormat {
     private val ACTIVE = setOf("queued", "downloading", "seeding", "importing")
@@ -587,25 +615,65 @@ internal object MediaDownloadFormat {
         return "Downloading ${first.title}${first.subtitle?.let { " $it" }.orEmpty()} · $pct%"
     }
 
-    // The VPN line on the Downloads screen, worded as the web's vpnMarkup.
-    fun vpnLine(status: MediaDownloadServices?): Pair<VpnTone, String>? {
+    // The VPN light (Movies top bar) and the Downloads screen's VPN line - the doc's "The VPN
+    // light" table, in the order the web's vpnLook checks it. `short` is the chip, `text` the line.
+    fun vpnLook(status: MediaDownloadServices?): VpnLook? {
         status ?: return null
         val vpn = status.vpn
         val services = status.services
-        return when {
-            services == "notInstalled" -> VpnTone.WARN to
-                "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once."
-            vpn.state == "connected" -> VpnTone.ON to
-                listOfNotNull("Connected", vpn.location, vpn.ip).joinToString(" · ")
-            services == "starting" || vpn.state == "connecting" -> VpnTone.BUSY to "Connecting…"
-            services == "failed" || vpn.state == "down" -> VpnTone.WARN to
-                (vpn.error ?: "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).")
-            services == "external" -> VpnTone.OFF to
-                if (vpn.required) "qBittorrent and Prowlarr are run outside this server."
-                else "qBittorrent and Prowlarr are run outside this server; the VPN is not checked."
-            else -> VpnTone.OFF to "Off - starts by itself when someone searches or downloads."
+        if (vpn.state == "disabled") {
+            return VpnLook(
+                VpnTone.OFF,
+                "VPN off",
+                "Turned off in Settings · searching and downloading use your home connection, so the sites see your home address.",
+            )
         }
+        if (services == "notInstalled") {
+            return VpnLook(
+                VpnTone.BAD,
+                "VPN not set up",
+                "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.",
+            )
+        }
+        if (vpn.state == "connected") {
+            val where = listOfNotNull(vpn.location, vpn.ip).joinToString("") { " · $it" }
+            return if (vpn.verified) {
+                VpnLook(
+                    VpnTone.ON,
+                    vpn.country?.let { "VPN · $it" } ?: "VPN on",
+                    "Connected and verified$where · your home address is hidden",
+                )
+            } else {
+                VpnLook(VpnTone.BUSY, "VPN checking", "Connected$where · checking it hides your home address…")
+            }
+        }
+        if (services == "starting" || vpn.state == "connecting") return VpnLook(VpnTone.BUSY, "VPN connecting", "Connecting…")
+        if (services == "failed" || vpn.state == "down") {
+            return VpnLook(
+                VpnTone.BAD,
+                "VPN problem",
+                vpn.error ?: "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).",
+            )
+        }
+        if (services == "external") {
+            return VpnLook(
+                VpnTone.IDLE,
+                "VPN idle",
+                "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used.",
+            )
+        }
+        return VpnLook(
+            VpnTone.IDLE,
+            "VPN idle",
+            "Off until someone searches or downloads, then it connects by itself. Press Test to check it now.",
+        )
     }
+
+    // The amber note at the top of Add while Use VPN is off in Settings.
+    fun vpnOffNote(status: MediaDownloadStatus?): String? =
+        if (status?.status?.vpn?.state == "disabled") {
+            "The VPN is turned off in Settings, so the sites and everyone sharing will see your home address."
+        } else null
 
     // The season the picker opens on: the first real season with an aired episode the library
     // lacks, else the first listed.

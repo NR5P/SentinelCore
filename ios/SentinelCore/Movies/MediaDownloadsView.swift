@@ -22,8 +22,16 @@ final class MediaDownloadsTracker: ObservableObject {
     var canManageSites: Bool { status?.canManageSites == true }
     var active: [MediaDownload] { list?.active ?? [] }
     var recent: [MediaDownload] { list?.recent ?? [] }
-    // The live service state: the queue's copy is fresher than the one from /status.
-    var serviceStatus: MediaDownloadServiceStatus? { list?.status ?? status?.status }
+    // The VPN and services as last heard - from /status, a queue poll or a VPN test, whichever
+    // answered most recently. Drives the light and the Downloads screen's VPN line.
+    @Published private(set) var serviceStatus: MediaDownloadServiceStatus?
+    var vpnLook: MediaVpnLook { MediaVpnLook(serviceStatus) }
+    var vpnDisabled: Bool { serviceStatus?.vpn?.state == "disabled" }
+
+    // A VPN test's answer: show the fresh state straight away.
+    func apply(_ service: MediaDownloadServiceStatus?) {
+        if let service { serviceStatus = service }
+    }
 
     // Runs while the Movies tab's root is on screen (the banner on Home): reads the status, then
     // follows the queue every 2.5 s while something is downloading. The Downloads screen, which
@@ -41,7 +49,9 @@ final class MediaDownloadsTracker: ObservableObject {
 
     func refreshStatus(client: SentinelClient) async {
         do {
-            status = try await client.mediaDownloadsStatus()
+            let fresh = try await client.mediaDownloadsStatus()
+            status = fresh
+            if let service = fresh.status { serviceStatus = service }
         } catch {
             if Self.isCancellation(error) { return }
             // 404 is a server from before downloads; anything else hides "+ Add" until next time.
@@ -59,6 +69,7 @@ final class MediaDownloadsTracker: ObservableObject {
                 states[id] = state
             }
             list = fresh
+            if let service = fresh.status { serviceStatus = service }
             listError = nil
             if didLand { landed += 1 }
         } catch {
@@ -80,6 +91,7 @@ final class MediaDownloadsTracker: ObservableObject {
     func reset() {
         status = nil
         list = nil
+        serviceStatus = nil
         listError = nil
         states = [:]
     }
@@ -148,9 +160,9 @@ struct MediaDownloadsView: View {
 
     var body: some View {
         List {
-            if let service = downloads.serviceStatus {
+            if downloads.serviceStatus != nil {
                 Section {
-                    MediaVpnStatusRow(status: service)
+                    MediaVpnStatusRow(downloads: downloads)
                     if downloads.canManageSites {
                         NavigationLink {
                             MediaDownloadSitesView()
@@ -374,44 +386,124 @@ struct MediaChip: View {
     }
 }
 
-// "VPN · Connected · Stockholm, SE · 185.65.134.1", in the dashboard's words.
-struct MediaVpnStatusRow: View {
-    let status: MediaDownloadServiceStatus
+// MARK: - The VPN light
+
+extension MediaVpnLook.Tone {
+    var color: Color {
+        switch self {
+        case .on: SentinelTheme.green
+        case .busy: SentinelTheme.cyan
+        case .idle: .gray
+        case .off: SentinelTheme.amber
+        case .bad: SentinelTheme.red
+        }
+    }
+}
+
+// The coloured dot; it pulses while the VPN is coming up or being checked.
+struct MediaVpnDot: View {
+    let tone: MediaVpnLook.Tone
+    var size: CGFloat = 9
 
     var body: some View {
-        let (color, text) = describe()
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Circle().fill(color).frame(width: 9, height: 9)
-            Text("VPN").font(.subheadline.weight(.semibold))
-            Text(text)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
+        Circle()
+            .fill(tone.color)
+            .frame(width: size, height: size)
+            .phaseAnimator(tone == .busy ? [1.0, 0.3] : [1.0]) { dot, opacity in
+                dot.opacity(opacity)
+            } animation: { _ in .easeInOut(duration: 0.8) }
+            .accessibilityHidden(true)
+    }
+}
+
+// The small capsule next to "+ Add": "VPN · SE", "VPN idle", "VPN off"... Opens the Downloads
+// screen, where the long wording and the Test button are.
+struct MediaVpnLight: View {
+    @ObservedObject var downloads: MediaDownloadsTracker
+    let open: () -> Void
+
+    var body: some View {
+        let look = downloads.vpnLook
+        Button(action: open) {
+            HStack(spacing: 6) {
+                MediaVpnDot(tone: look.tone, size: 8)
+                Text(look.short)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(look.tone.color.opacity(0.16), in: Capsule())
+            .overlay(Capsule().stroke(look.tone.color.opacity(0.45), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(look.text)
+        .accessibilityLabel(look.short)
+        .accessibilityHint(look.text)
+    }
+}
+
+// The Downloads screen's VPN line: the dot, the long wording, and Test, which connects now and
+// proves the sites see the VPN's address rather than the home one.
+struct MediaVpnStatusRow: View {
+    @ObservedObject var downloads: MediaDownloadsTracker
+    @EnvironmentObject private var model: AppModel
+    @State private var testing = false
+    @State private var result: (ok: Bool, message: String)?
+
+    var body: some View {
+        let look = downloads.vpnLook
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                MediaVpnDot(tone: look.tone)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("VPN").font(.subheadline.weight(.semibold))
+                    Text(look.text)
+                        .font(.subheadline)
+                        .foregroundStyle(look.tone == .off || look.tone == .bad ? AnyShapeStyle(look.tone.color) : AnyShapeStyle(.secondary))
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    Task { await test() }
+                } label: {
+                    if testing {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Testing…")
+                        }
+                    } else {
+                        Label("Test", systemImage: "checkmark.shield")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(testing)
+                .help("Connect now and prove the sites see the VPN's address, not your home's")
+            }
+            if let result {
+                Label(result.message, systemImage: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(result.ok ? SentinelTheme.green : SentinelTheme.red)
+                    .textSelection(.enabled)
+            }
         }
     }
 
-    private func describe() -> (Color, String) {
-        let vpn = status.vpn
-        let services = status.services
-        if services == "notInstalled" {
-            return (.orange, "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.")
+    private func test() async {
+        testing = true
+        result = nil
+        defer { testing = false }
+        do {
+            let answer = try await model.client.testMediaDownloadsVpn()
+            downloads.apply(answer.status)
+            let ok = answer.ok == true
+            result = (ok, answer.message ?? (ok ? "The VPN works." : "The VPN test failed."))
+        } catch {
+            if MediaDownloadsTracker.isCancellation(error) { return }
+            result = (false, error.localizedDescription)
         }
-        if vpn?.state == "connected" {
-            let parts = ["Connected", vpn?.location, vpn?.ip].compactMap { $0 }.filter { !$0.isEmpty }
-            return (SentinelTheme.green, parts.joined(separator: " · "))
-        }
-        if services == "starting" || vpn?.state == "connecting" {
-            return (SentinelTheme.cyan, "Connecting…")
-        }
-        if services == "failed" || vpn?.state == "down" {
-            return (.orange, vpn?.error ?? "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).")
-        }
-        if services == "external" {
-            return (.gray, vpn?.required == false
-                ? "qBittorrent and Prowlarr are run outside this server; the VPN is not checked."
-                : "qBittorrent and Prowlarr are run outside this server.")
-        }
-        return (.gray, "Off - starts by itself when someone searches or downloads.")
     }
 }
 

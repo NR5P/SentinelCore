@@ -81,6 +81,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sentinelcore.android.data.MediaApi
 import com.sentinelcore.android.data.MediaDownloadList
+import com.sentinelcore.android.data.MediaDownloadServices
 import com.sentinelcore.android.data.MediaDownloadStatus
 import com.sentinelcore.android.data.MediaHome
 import com.sentinelcore.android.data.MediaItemSummary
@@ -161,11 +162,14 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
     // hides "+ Add", Downloads and the banner. `downloads` feeds the Home banner.
     var downloadStatus by mutableStateOf<MediaDownloadStatus?>(null)
     var downloads by mutableStateOf<MediaDownloadList?>(null)
+    // What the VPN light shows: from whichever of status / the queue was fetched last.
+    var vpnStatus by mutableStateOf<MediaDownloadServices?>(null)
     private val downloadStates = mutableMapOf<String, String>()
 
     fun loadDownloads() {
         viewModelScope.launch {
             downloadStatus = runCatching { app.mediaDownloadStatus() }.getOrNull()
+            vpnStatus = downloadStatus?.status
             if (downloadStatus?.canDownload == true) pollDownloads() else downloads = null
         }
     }
@@ -181,6 +185,7 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
             downloadStates[download.id] = download.state
         }
         downloads = list
+        list.status?.let { vpnStatus = it }
         if (landed) loadHome()
     }
 
@@ -307,11 +312,17 @@ fun MoviesScreen(
                     }
                 }
                 if (canDownload) {
+                    // The VPN light doubles as the way into Downloads, which keeps the bar from
+                    // overflowing on a phone; without a status to show, the plain icon stands in.
+                    if (browse.vpnStatus != null) {
+                        VpnChip(browse.vpnStatus, onClick = onDownloads)
+                    } else {
+                        IconButton(onClick = onDownloads) {
+                            Icon(Icons.Default.Download, contentDescription = "Downloads")
+                        }
+                    }
                     IconButton(onClick = onAddDownload) {
                         Icon(Icons.Default.Add, contentDescription = "Add a movie or show")
-                    }
-                    IconButton(onClick = onDownloads) {
-                        Icon(Icons.Default.Download, contentDescription = "Downloads")
                     }
                 }
                 IconButton(onClick = {
