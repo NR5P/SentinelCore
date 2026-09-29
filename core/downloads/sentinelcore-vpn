@@ -68,7 +68,14 @@ write_nsswitch() {
 
 # The values of one [Interface] key in a WireGuard file, one per line.
 wg_values() {
-    sed -n -E "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//Ip" "$CONF_DIR/vpn.conf" | tr ',' '\n' | tr -d '[:space:]' | grep -v '^$' || true
+    sed -n -E "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//Ip" "$CONF_DIR/vpn.conf" | tr ',' '\n' | tr -d ' \t\r' | grep -v '^$' || true
+}
+
+# The file minus wg-quick's own keys (Address, DNS, MTU, PostUp...), which `wg setconf` refuses.
+# Done here rather than with `wg-quick strip`: Ubuntu's AppArmor profile only lets wg-quick read
+# /etc/wireguard, so it cannot open our file even as root.
+wg_setconf_lines() {
+    grep -iE '^[[:space:]]*(\[(Interface|Peer)\][[:space:]]*$|(PrivateKey|ListenPort|FwMark|PublicKey|PresharedKey|AllowedIPs|Endpoint|PersistentKeepalive)[[:space:]]*=)' "$CONF_DIR/vpn.conf" | tr -d '\r'
 }
 
 mask_to_bits() {
@@ -109,7 +116,14 @@ prepare() {
         ip link add "$WG_IF" type wireguard
         # Configured while still in the host namespace, so the endpoint's name is looked up with
         # the host's DNS - inside, nothing resolves until the tunnel is up.
-        wg setconf "$WG_IF" <(wg-quick strip "$CONF_DIR/vpn.conf")
+        local stripped
+        stripped=$(umask 077; mktemp /run/sentinelcore-vpn-wg.XXXXXX)
+        wg_setconf_lines > "$stripped"
+        if ! wg setconf "$WG_IF" "$stripped"; then
+            rm -f "$stripped"
+            die "wg rejected the WireGuard configuration"
+        fi
+        rm -f "$stripped"
         ip link set "$WG_IF" netns "$NS"
         local address has_v6=0
         for address in $(wg_values Address); do
@@ -184,10 +198,23 @@ wait_up() {
     local dev
     [ "$(config_type)" = wireguard ] && dev=$WG_IF || dev=$TUN_IF
     for _ in $(seq 1 60); do
-        if ip -n "$NS" route show default 2>/dev/null | grep -q "dev $dev"; then exit 0; fi
+        if ip -n "$NS" route show default 2>/dev/null | grep -q "dev $dev"; then break; fi
         sleep 1
     done
-    die "the VPN did not come up within a minute - check the configuration and 'journalctl -u sentinelcore-vpn'"
+    ip -n "$NS" route show default 2>/dev/null | grep -q "dev $dev" \
+        || die "the VPN did not come up within a minute - check the configuration and 'journalctl -u sentinelcore-vpn'"
+    [ "$dev" = "$WG_IF" ] || exit 0
+    # A WireGuard interface is "up" the moment it exists; only a handshake proves the server
+    # accepted the key. Any packet into the tunnel starts one.
+    for _ in $(seq 1 20); do
+        ip netns exec "$NS" ping -c1 -W1 1.1.1.1 >/dev/null 2>&1 || true
+        if ip netns exec "$NS" wg show "$WG_IF" latest-handshakes 2>/dev/null | awk '$2 > 0 { found = 1 } END { exit !found }'; then
+            log "WireGuard handshake with the server succeeded"
+            exit 0
+        fi
+        sleep 1
+    done
+    die "the WireGuard server never answered - the key may not be registered with the provider, or the server is down"
 }
 
 # Runs as the app user inside the namespace. Writes what the internet sees this tunnel as, for

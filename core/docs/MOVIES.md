@@ -12,6 +12,9 @@ Every route needs a signed-in user (session cookie, same as the rest of the API)
 **404** `{ "error": "Movies & TV is turned off in Settings." }` when the section is disabled.
 Errors are `{ "error": "…" }` or `{ "errors": ["…"] }`.
 
+Adding titles by downloading them ("+ Add", torrents through a VPN) is its own contract:
+`core/docs/MOVIE_DOWNLOADS.md`.
+
 Item ids are stable across rescans: a movie or episode id is derived from its library and relative
 path, a show id from its library and normalized title. Progress therefore survives a rescan and a
 backup restore.
