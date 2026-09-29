@@ -307,8 +307,9 @@ Only alerts analysed *after* you turn this on are encoded; older events stay tex
 
 ## 3c. The WEATHER tab — forecast, radar and warnings
 
-The weather where the server is: what it's doing now, the radar, the next two days hour by hour,
-and the seven-day forecast, with any watches, warnings and advisories in force across the top.
+The weather where the server is: what it's doing now, a zoomable radar map with the storms on it
+tracked, the next two days hour by hour, the seven-day forecast, and the severe-weather outlook,
+with any watches, warnings and advisories in force across the top.
 Everything comes from the US National Weather Service (weather.gov), which is free and needs no
 account or key — so the tab covers the United States and its territories, and says so plainly if
 the location is somewhere else.
@@ -317,27 +318,60 @@ the location is somewhere else.
 to follow the sun): type a town and press Find, or enter the latitude and longitude yourself. Until
 then the tab offers to take you there. Nothing is fetched until somebody opens the tab, and nothing
 runs while it's closed. While it's open, the server asks weather.gov for the forecast every ten
-minutes and for a fresh radar frame every two, and keeps one copy so several open dashboards share
-it rather than each asking. The coordinates go to weather.gov to ask for the forecast — that is the
-only thing that leaves your network, and only while the tab is open.
+minutes and for fresh radar and storm tracks every two, and keeps one copy so several open
+dashboards share it rather than each asking. The coordinates go to weather.gov to ask for the
+forecast. The map also fetches map pictures (from the NWS's map server and Esri's basemap), the
+storm-tracking and warning-outline feeds (republished by the Iowa Environmental Mesonet) and the
+Storm Prediction Center's outlook — those ask for the area on screen, not for your address. All of
+it goes through the server, and only while the tab is open.
 
 What's on it, top to bottom:
 
 - **Watches, warnings and advisories** for the location, worst first: red for severe and extreme,
   amber for moderate, blue for the rest. Click one for the full text and what to do.
+- **A storm banner** when it matters: home is inside a warning outline (with the hail size, wind
+  speed and tornado wording the warning carries), or a tracked storm's path passes within ten miles
+  of home — with roughly when it arrives and how close it passes. Click a storm to see it on the map.
 - **NOW** — the nearest NWS observation station's latest report: temperature, what it feels like
-  when wind chill or heat index apply, humidity, dew point, wind and gusts, pressure, visibility,
-  and today's sunrise and sunset. The station is usually an airport a few miles away — its name is
-  under the panel — so a degree or two of difference from the porch is normal. If the nearest
-  station hasn't reported, the next one over is used.
-- **RADAR** — the loop of the last hour or so from the radar station nearest you, or the
-  whole-country picture with **national**; **still** shows the latest frame alone. Click the
-  picture to see it full size. It refreshes on its own every two minutes.
-- **The next 48 hours** — a strip you can scroll sideways: temperature, conditions and the chance
-  of rain for each hour, with a marker where each new day starts. Hover an hour for the wind and
-  humidity.
-- **The 7-day forecast** — a card per day with the high and low, conditions, chance of rain and
-  wind. Click a day for the NWS's written forecast for the day and the night.
+  when wind chill or heat index apply, today's high and low, humidity, dew point (with how muggy
+  that is), wind and gusts, pressure and which way the barometer is heading, visibility, sunrise,
+  sunset, hours of daylight and the moon's phase. Above the details, one line on what's next —
+  when rain (or snow, or storms) is likely to start or stop in the next twelve hours. The station
+  is usually an airport a few miles away — its name is under the panel — so a degree or two of
+  difference from the porch is normal. If the nearest station hasn't reported, the next one over
+  is used.
+- **RADAR** — a map you can drag, scroll or pinch to zoom from the whole country down to street
+  level, with home marked by a pulsing cyan pin. **◎** shows where the device you're holding is
+  (a blue dot — the browser asks permission first, and only over HTTPS); **⌂** flies back to home;
+  **⛶** goes full screen (Esc to leave). **Play** runs the last hour or so as a loop; the slider
+  steps through it by hand, and the clock in the corner turns amber on an older frame. Layers:
+  - *national* — **Reflectivity** (rain, snow and hail everywhere), **Precip type** (rain vs snow
+    vs ice), **Echo tops** (how tall the storms are — 40,000 ft and up is a strong thunderstorm).
+  - *one radar's own products* — **Reflectivity (hi-res)** (the sharpest look at a storm's shape),
+    **Velocity** (wind toward the radar in green, away in red — bright green against bright red is
+    rotation), **Hail / rain / snow** (what the radar thinks each echo is), **Rain last hour** and
+    **Storm total rain**. These default to the radar nearest home; pick another in the **radar**
+    list or click a radar dot on the map.
+  - *on top* — **storm tracks** (each storm the radars are tracking, coloured by threat: grey
+    ordinary, yellow strong, orange severe hail, red rotating, magenta tornado vortex signature,
+    with a dashed line to where it will be in 15, 30, 45 and 60 minutes — click one for its hail
+    odds and size, storm top, VIL, speed and distance), **warnings** (the actual warning outlines,
+    click for hail, wind and tornado details), and **SPC outlook** (today's severe risk areas).
+  The colour key and a short explanation of the chosen layer are under the map. Your choices are
+  remembered in this browser.
+- **STORMS NEAR HOME** — the storms within 100 miles, the ones headed your way first.
+- **SEVERE OUTLOOK** — the Storm Prediction Center's risk for home today and the next two days on
+  its 1-to-5 scale, and today's odds of a tornado, large hail and damaging wind nearby.
+- **RAIN & SNOW AHEAD** — how much rain (and snow and ice, when there is any) the NWS expects in the
+  next 24 hours and 7 days, and the best chance of thunder.
+- **The next 48 hours** — a chart of temperature, feels-like and chance of rain, over a strip you
+  can scroll sideways with each hour's conditions and wind. Hover an hour for gusts, humidity,
+  cloud cover and expected rain.
+- **The 7-day forecast** — a card per day with the high and low (and a bar showing where that sits
+  in the week's range), conditions, chance of rain and wind. Click a day for the NWS's written
+  forecast for the day and the night.
+- **FORECASTER DISCUSSION** — the local NWS office's own notes on why the forecast says what it
+  does and how sure they are. Click to open.
 
 Times are shown in the location's own time zone, so it reads right even from a phone two zones
 away. If a station is down or weather.gov has a bad minute, the parts that did answer stay on

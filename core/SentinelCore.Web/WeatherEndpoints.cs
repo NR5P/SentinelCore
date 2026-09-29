@@ -1,6 +1,6 @@
 namespace SentinelCore.Web;
 
-// The Weather tab's two endpoints. Both need a login like the rest of /api, and neither needs an
+// The Weather tab's endpoints. All need a login like the rest of /api, and neither needs an
 // admin: the weather here is something everyone in the house can see, the same as the cameras.
 public static class WeatherEndpoints
 {
@@ -31,6 +31,67 @@ public static class WeatherEndpoints
             http.Response.Headers.CacheControl = "private, max-age=60";
             return Results.File(image.Bytes, "image/gif");
         })
+        .RequireAuthorization();
+
+        // The extras under the main report: precipitation totals, hour-by-hour feels-like and
+        // gusts, the barometer's trend, the forecasters' discussion and the SPC severe outlook.
+        app.MapGet("/api/weather/details", async (WeatherService weather, WeatherMapService map, CancellationToken ct) =>
+        {
+            var details = await weather.GetDetailsAsync(ct);
+            if (details.State != WeatherReportState.Ok) return Results.Ok(details);
+            var severe = await map.GetSevereOutlookAsync(ct);
+            return Results.Ok(new WeatherDetails
+            {
+                State = details.State,
+                Totals = details.Totals,
+                Hours = details.Hours,
+                Pressure = details.Pressure,
+                Discussion = details.Discussion,
+                Severe = severe,
+                FetchedAt = details.FetchedAt,
+                Problems = details.Problems
+            });
+        })
+        .RequireAuthorization();
+
+        // The radar map: home, the radar sites, the layers and the frame times each can play.
+        // `station` picks whose per-radar layers to list (default: the one nearest home).
+        app.MapGet("/api/weather/map", async (string? station, WeatherMapService map, CancellationToken ct) =>
+            Results.Ok(await map.GetMapInfoAsync(station, ct)))
+        .RequireAuthorization();
+
+        // One map tile - basemap ("base", "labels") or a radar layer - proxied and cached.
+        app.MapGet("/api/weather/map/tile/{layer}/{z:int}/{x:int}/{y:int}", async (
+            string layer, int z, int x, int y, string? station, string? time,
+            WeatherMapService map, HttpContext http, CancellationToken ct) =>
+        {
+            var tile = await map.GetTileAsync(layer, z, x, y, station, time, ct);
+            if (tile.Bytes is null) return Results.Json(new { error = tile.Problem }, statusCode: tile.Status);
+
+            // A dated frame never changes; the latest one does every couple of minutes, and the
+            // basemap hardly ever.
+            http.Response.Headers.CacheControl = layer is "base" or "labels" ? "private, max-age=604800"
+                : string.IsNullOrEmpty(time) ? "private, max-age=60"
+                : "private, max-age=21600";
+            return Results.File(tile.Bytes, tile.ContentType);
+        })
+        .RequireAuthorization();
+
+        app.MapGet("/api/weather/map/legend/{layer}", async (
+            string layer, string? station, WeatherMapService map, HttpContext http, CancellationToken ct) =>
+        {
+            var legend = await map.GetLegendAsync(layer, station, ct);
+            if (legend.Bytes is null) return Results.Json(new { error = legend.Problem }, statusCode: legend.Status);
+            http.Response.Headers.CacheControl = "private, max-age=86400";
+            return Results.File(legend.Bytes, "image/png");
+        })
+        .RequireAuthorization();
+
+        // Storm cells, warning outlines and today's outlook for the part of the map on screen.
+        app.MapGet("/api/weather/storms", async (
+            double? west, double? south, double? east, double? north,
+            WeatherMapService map, CancellationToken ct) =>
+            Results.Ok(await map.GetStormsAsync(west, south, east, north, ct)))
         .RequireAuthorization();
 
         // The "send test alert" button on WEATHER ALERTS: a sample tornado warning through every

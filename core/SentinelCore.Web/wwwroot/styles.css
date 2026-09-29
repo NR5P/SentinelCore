@@ -7209,14 +7209,14 @@ body.hub-wall main {
 
 .wx-top {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.4fr);
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 2.2fr);
   /* The radar is taller than the conditions panel; don't stretch the latter to match it. */
   align-items: start;
   gap: 16px;
   margin-bottom: 18px;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1000px) {
   .wx-top {
     grid-template-columns: 1fr;
   }
@@ -7337,20 +7337,6 @@ body.hub-wall main {
   height: 16px;
   background: var(--border-bright);
   margin: 0 4px;
-}
-
-.wx-radar-frame {
-  background: #000;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.wx-radar-img {
-  display: block;
-  width: 100%;
-  height: auto;
-  cursor: zoom-in;
 }
 
 .wx-radar-note {
@@ -7523,6 +7509,755 @@ body.hub-wall main {
 
 .wx-notice p {
   margin: 0 0 12px;
+}
+
+/* ---- Weather: radar map ---- */
+
+.wx-map-wrap {
+  position: relative;
+}
+
+.wx-map {
+  height: 520px;
+  background: #0b0f14;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+}
+
+.wx-radar.wx-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.wx-radar.wx-fullscreen .wx-map-wrap {
+  flex: 1;
+  min-height: 300px;
+}
+
+.wx-radar.wx-fullscreen .wx-map {
+  height: 100%;
+}
+
+body.wx-noscroll {
+  overflow: hidden;
+}
+
+.wx-map-time {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 800;
+  padding: 4px 10px;
+  background: rgba(5, 7, 10, 0.82);
+  border: 1px solid var(--border-bright);
+  border-radius: 3px;
+  color: var(--green);
+  font-size: 12px;
+  letter-spacing: 1px;
+  pointer-events: none;
+}
+
+.wx-map-time-old {
+  color: var(--amber);
+  border-color: rgba(255, 181, 69, 0.5);
+}
+
+.wx-layer-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.wx-layer-group-name {
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+
+.wx-timeline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.wx-timeline #wx-frame {
+  flex: 1;
+  min-width: 140px;
+  accent-color: var(--green);
+}
+
+.wx-opacity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.wx-opacity input {
+  width: 90px;
+  accent-color: var(--cyan);
+}
+
+.wx-map-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.wx-station-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wx-station-pick select {
+  max-width: 260px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-bright);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.wx-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.wx-toggle input {
+  accent-color: var(--green);
+}
+
+.wx-legend {
+  margin-top: 10px;
+}
+
+.wx-legend img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 3px;
+}
+
+.wx-legend img:not([src]) {
+  display: none;
+}
+
+/* Leaflet, restyled to match the dashboard. */
+.wx-map .leaflet-bar a {
+  background: rgba(11, 15, 20, 0.92);
+  color: var(--green);
+  border-bottom-color: var(--border);
+  font-family: var(--mono);
+}
+
+.wx-map .leaflet-bar a:hover {
+  background: rgba(57, 255, 156, 0.15);
+  color: var(--green);
+}
+
+.wx-map .leaflet-bar {
+  border: 1px solid var(--border-bright);
+  box-shadow: none;
+}
+
+.wx-map .wx-map-buttons a {
+  font-size: 16px;
+}
+
+.wx-map .wx-map-buttons a.wx-on,
+.wx-map .wx-map-buttons a.wx-on:hover {
+  color: #fff;
+  background: #2f8cff;
+}
+
+.wx-map .leaflet-control-attribution {
+  background: rgba(5, 7, 10, 0.75);
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.wx-map .leaflet-control-attribution a {
+  color: var(--text-dim);
+}
+
+.wx-map .leaflet-popup-content-wrapper,
+.wx-map .leaflet-popup-tip {
+  background: rgba(11, 15, 20, 0.96);
+  color: var(--text);
+  border: 1px solid var(--border-bright);
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.6);
+}
+
+.wx-map .leaflet-popup-close-button {
+  color: var(--text-dim);
+}
+
+.wx-map .leaflet-tooltip {
+  background: rgba(11, 15, 20, 0.94);
+  color: var(--text);
+  border: 1px solid var(--border-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+  box-shadow: none;
+}
+
+.wx-map .leaflet-tooltip-top::before {
+  border-top-color: var(--border-bright);
+}
+
+.wx-radar-tiles {
+  /* The radar is data, not a photo: keep its bins crisp when zoomed past its resolution. */
+  image-rendering: pixelated;
+}
+
+.wx-popup {
+  font-family: var(--mono);
+  font-size: 11px;
+  min-width: min(220px, 55vw);
+}
+
+.wx-popup-title {
+  color: var(--cyan);
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.wx-popup-badge {
+  color: var(--red);
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+
+.wx-popup dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  margin: 0;
+}
+
+.wx-popup dt {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding-top: 1px;
+}
+
+.wx-popup dd {
+  margin: 0;
+}
+
+/* Home: a cyan pin with a pulsing ring, readable over any radar colour. */
+.wx-home-icon,
+.wx-me-icon,
+.wx-cell-icon {
+  background: none;
+  border: none;
+}
+
+.wx-home-pin {
+  position: relative;
+  width: 0;
+  height: 0;
+}
+
+.wx-home-dot {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #04121a;
+  border: 3px solid var(--cyan);
+  color: var(--cyan);
+  font-size: 15px;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 0 0 2px #000, 0 0 14px rgba(75, 231, 255, 0.9);
+}
+
+.wx-home-pulse {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--cyan);
+  animation: wx-pulse 2s ease-out infinite;
+}
+
+.wx-home-label {
+  position: absolute;
+  left: 18px;
+  top: -9px;
+  white-space: nowrap;
+  padding: 1px 6px;
+  background: rgba(4, 18, 26, 0.9);
+  border: 1px solid var(--cyan);
+  border-radius: 3px;
+  color: var(--cyan);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+}
+
+@keyframes wx-pulse {
+  from { transform: scale(1); opacity: 0.9; }
+  to { transform: scale(3.2); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wx-home-pulse { animation: none; opacity: 0; }
+}
+
+/* This device: the familiar blue dot. */
+.wx-me-dot {
+  position: relative;
+  left: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #2f8cff;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px #000, 0 0 12px rgba(47, 140, 255, 0.9);
+}
+
+.wx-me-label {
+  position: absolute;
+  left: 16px;
+  top: -3px;
+  padding: 0 5px;
+  background: rgba(10, 20, 40, 0.9);
+  border: 1px solid #2f8cff;
+  border-radius: 3px;
+  color: #9cc9ff;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+}
+
+.wx-me-accuracy {
+  stroke: #2f8cff;
+  stroke-width: 1;
+  fill: #2f8cff;
+  fill-opacity: 0.12;
+}
+
+/* Radar sites. */
+.wx-site {
+  stroke: #9fb3c8;
+  stroke-width: 1.5;
+  fill: #0b0f14;
+  fill-opacity: 0.9;
+}
+
+.wx-site-on {
+  stroke: var(--green);
+  stroke-width: 2.5;
+  fill: var(--green);
+  fill-opacity: 0.35;
+}
+
+/* Storm cells: colour by threat, with an arrow for the direction of travel. */
+.wx-cell-marker {
+  position: relative;
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #000;
+  background: #cfd8dc;
+  color: #000;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 12px;
+  text-align: center;
+}
+
+.wx-cell-marker.wx-threat-0 { left: -5px; top: -5px; width: 10px; height: 10px; border-width: 1.5px; }
+.wx-cell-marker.wx-threat-1 { background: #ffd54f; }
+.wx-cell-marker.wx-threat-2 { background: #ff9800; }
+.wx-cell-marker.wx-threat-3 { background: #ff4d5e; color: #fff; }
+.wx-cell-marker.wx-threat-4 { background: #ff00e5; color: #fff; box-shadow: 0 0 10px #ff00e5; }
+
+.wx-cell-incoming {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.wx-cell-arrow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 12px;
+  margin: -6px 0 0 -17px;
+  color: #fff;
+  font-size: 10px;
+  line-height: 12px;
+  text-align: right;
+  text-shadow: 0 0 2px #000, 0 0 2px #000;
+  /* The glyph points east; a heading of 0 is north. */
+  rotate: -90deg;
+  transform-origin: 50% 50%;
+  pointer-events: none;
+}
+
+.wx-track {
+  stroke: #cfd8dc;
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+  fill: none;
+}
+
+.wx-track-1 { stroke: #ffd54f; }
+.wx-track-2 { stroke: #ff9800; }
+.wx-track-3 { stroke: #ff4d5e; }
+.wx-track-4 { stroke: #ff00e5; }
+
+.wx-track-incoming {
+  stroke-width: 3;
+}
+
+.wx-track-dot {
+  stroke: #000;
+  stroke-width: 1;
+  fill: #fff;
+  fill-opacity: 1;
+}
+
+/* ---- Weather: banner, cards, chart ---- */
+
+.wx-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  border-radius: 5px;
+  border: 1px solid var(--amber);
+  background: rgba(255, 181, 69, 0.1);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.wx-banner-severe {
+  border-color: var(--red);
+  background: rgba(255, 77, 94, 0.12);
+  box-shadow: 0 0 14px rgba(255, 77, 94, 0.25);
+}
+
+.wx-banner-icon {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.wx-banner-line b {
+  color: var(--amber);
+  font-weight: normal;
+  letter-spacing: 0.5px;
+}
+
+.wx-banner-severe .wx-banner-line b {
+  color: var(--red);
+}
+
+.wx-banner-line[data-cell-id] {
+  cursor: pointer;
+}
+
+.wx-banner-line[data-cell-id]:hover {
+  text-decoration: underline;
+}
+
+.wx-next {
+  margin: -4px 0 12px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--cyan);
+  background: rgba(75, 231, 255, 0.06);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wx-now-hilo {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  letter-spacing: 1px;
+}
+
+.wx-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+  align-items: start;
+}
+
+.wx-card .wx-panel-title {
+  margin-bottom: 10px;
+}
+
+.wx-details-tight {
+  grid-template-columns: auto 1fr;
+}
+
+.wx-cells {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wx-cell-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wx-cell-row:hover {
+  border-color: var(--border-bright);
+  background: rgba(57, 255, 156, 0.05);
+}
+
+.wx-cell-dot {
+  flex: 0 0 10px;
+  height: 10px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: #cfd8dc;
+}
+
+.wx-cell-row.wx-threat-1 .wx-cell-dot { background: #ffd54f; }
+.wx-cell-row.wx-threat-2 .wx-cell-dot { background: #ff9800; }
+.wx-cell-row.wx-threat-3 .wx-cell-dot { background: #ff4d5e; }
+.wx-cell-row.wx-threat-4 .wx-cell-dot { background: #ff00e5; }
+
+.wx-cell-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wx-cell-name {
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.wx-cell-eta {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(255, 181, 69, 0.18);
+  color: var(--amber);
+  font-size: 11px;
+}
+
+.wx-cell-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.wx-risk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.wx-risk-day {
+  min-width: 80px;
+}
+
+.wx-risk {
+  display: inline-block;
+  min-width: 48px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #000;
+  background: #c1e9c1;
+}
+
+.wx-risk-none { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.wx-risk-tstm { background: #c1e9c1; }
+.wx-risk-mrgl { background: #66a366; }
+.wx-risk-slgt { background: #ffe066; }
+.wx-risk-enh { background: #ffa366; }
+.wx-risk-mdt { background: #e06666; color: #fff; }
+.wx-risk-high { background: #ee99ee; }
+
+.wx-hazards {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.wx-hazard b {
+  margin-left: 6px;
+  color: var(--text);
+  font-weight: normal;
+}
+
+.wx-sig {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(255, 77, 94, 0.2);
+  color: var(--red);
+  text-transform: none;
+}
+
+.wx-legend-inline {
+  margin-left: 14px;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-shadow: none;
+}
+
+.wx-key {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin: 0 5px 2px 10px;
+  vertical-align: middle;
+}
+
+.wx-key-temp { background: var(--amber); }
+.wx-key-feels { background: repeating-linear-gradient(90deg, #ff8a65 0 4px, transparent 4px 7px); }
+.wx-key-pop { height: 8px; background: rgba(75, 231, 255, 0.45); }
+
+.wx-hourly-chart {
+  overflow-x: auto;
+  margin-bottom: 8px;
+  scrollbar-width: thin;
+}
+
+.wx-chart {
+  display: block;
+  font-family: var(--mono);
+}
+
+.wx-chart-base { stroke: var(--border-bright); stroke-width: 1; }
+.wx-chart-day { stroke: var(--border-bright); stroke-width: 1; stroke-dasharray: 3 3; }
+.wx-chart-bar { fill: rgba(75, 231, 255, 0.35); }
+.wx-chart-line { fill: none; stroke: var(--amber); stroke-width: 2.5; stroke-linejoin: round; }
+.wx-chart-feels { fill: none; stroke: #ff8a65; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.wx-chart-temp { fill: var(--amber); font-size: 11px; text-anchor: middle; }
+.wx-chart-pop { fill: var(--cyan); font-size: 9px; text-anchor: middle; }
+.wx-chart-hour { fill: var(--text-dim); font-size: 10px; text-anchor: middle; }
+.wx-chart-dayname { fill: var(--cyan); font-size: 10px; letter-spacing: 1px; }
+
+.wx-hour-wind {
+  color: var(--text-dim);
+  font-size: 10px;
+  height: 14px;
+  white-space: nowrap;
+}
+
+.wx-range {
+  position: relative;
+  height: 4px;
+  margin: 6px 0 2px;
+  border-radius: 2px;
+  background: rgba(106, 148, 130, 0.2);
+}
+
+.wx-range span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--cyan), var(--amber));
+}
+
+.wx-discussion summary {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 10px;
+}
+
+.wx-discussion summary::-webkit-details-marker {
+  display: none;
+}
+
+.wx-discussion summary::before {
+  content: "▸ ";
+}
+
+.wx-discussion[open] summary::before {
+  content: "▾ ";
+}
+
+.wx-discussion-text {
+  max-height: 480px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+@media (max-width: 600px) {
+  .wx-map {
+    height: 380px;
+  }
 }
 
 .alarm-tile-flags {

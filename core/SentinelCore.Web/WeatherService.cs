@@ -229,6 +229,256 @@ public sealed class WeatherService(
         }
     }
 
+    // The extras under the main report, asked for separately so the report itself (which the
+    // Apple TV reads too) stays as quick as it was: how much rain, snow and ice is on the way,
+    // the odds of thunder, hour-by-hour feels-like, gusts and cloud from the forecast grid, which
+    // way the barometer is heading, and the forecasters' own discussion. Every part is optional -
+    // a missing grid still leaves the discussion, and the other way round.
+    public async Task<WeatherDetails> GetDetailsAsync(CancellationToken ct)
+    {
+        var (_, coordinate) = await ReadLocationAsync(ct);
+        if (coordinate is null) return new WeatherDetails { State = WeatherReportState.Unconfigured };
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            ForgetIfLocationChanged(coordinate);
+            var now = _clock.GetUtcNow();
+
+            var point = await CachedAsync("point", PointTtl, c => FetchPointAsync(coordinate, c), ct);
+            if (point.Value is null) return new WeatherDetails { State = WeatherReportState.Unreachable };
+            if (!point.Value.Supported) return new WeatherDetails { State = WeatherReportState.Unsupported };
+            var info = point.Value;
+
+            var problems = new List<string>();
+
+            GridSet? grid = null;
+            if (info.GridUrl is not null)
+            {
+                var fetched = await CachedAsync("grid", ForecastTtl, c => FetchGridAsync(info.GridUrl, c), ct);
+                grid = fetched.Value;
+                if (fetched.Problem is not null && grid is null) problems.Add($"Rain and snow totals unavailable: {fetched.Problem}.");
+            }
+
+            WeatherPressureTrend? pressure = null;
+            var current = await CachedAsync("current", ObservationTtl, c => FetchCurrentAsync(info.StationsUrl, c), ct);
+            if (current.Value is not null)
+            {
+                var station = current.Value.Station;
+                var trend = await CachedAsync($"pressure:{station}", ObservationTtl, c => FetchPressureTrendAsync(station, c), ct);
+                pressure = trend.Value?.Trend;
+            }
+
+            WeatherDiscussion? discussion = null;
+            if (!string.IsNullOrWhiteSpace(info.ForecastOffice))
+            {
+                var fetched = await CachedAsync("discussion", DiscussionTtl, c => FetchDiscussionAsync(info.ForecastOffice, c), ct);
+                discussion = fetched.Value;
+            }
+
+            return new WeatherDetails
+            {
+                State = WeatherReportState.Ok,
+                Totals = grid is null ? null : Totals(grid, now),
+                Hours = grid is null ? [] : HourDetails(grid, now),
+                Pressure = pressure,
+                Discussion = discussion,
+                FetchedAt = now,
+                Problems = problems
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public static readonly TimeSpan DiscussionTtl = TimeSpan.FromMinutes(30);
+
+    private async Task<GridSet> FetchGridAsync(string url, CancellationToken ct)
+    {
+        using var document = await GetJsonAsync(url, ct);
+        var properties = document.RootElement.GetProperty("properties");
+
+        List<GridValue> Series(string name)
+        {
+            var values = new List<GridValue>();
+            if (!properties.TryGetProperty(name, out var series) || series.ValueKind != JsonValueKind.Object) return values;
+            var unit = Str(series, "uom");
+            if (!series.TryGetProperty("values", out var list) || list.ValueKind != JsonValueKind.Array) return values;
+            foreach (var entry in list.EnumerateArray())
+            {
+                var value = Num(entry, "value");
+                var span = ParseValidTime(Str(entry, "validTime"));
+                if (value is null || span is null) continue;
+                values.Add(new GridValue(span.Value.Start, span.Value.End, value.Value, unit));
+            }
+            return values;
+        }
+
+        return new GridSet(
+            Rain: Series("quantitativePrecipitation"),
+            Snow: Series("snowfallAmount"),
+            Ice: Series("iceAccumulation"),
+            Thunder: Series("probabilityOfThunder"),
+            FeelsLike: Series("apparentTemperature"),
+            Gust: Series("windGust"),
+            Sky: Series("skyCover"));
+    }
+
+    // "2026-09-29T04:00:00+00:00/PT2H" → the start and the end. The NWS grid gives every value as
+    // a start and an ISO 8601 duration it holds for.
+    public static (DateTimeOffset Start, DateTimeOffset End)? ParseValidTime(string? validTime)
+    {
+        if (string.IsNullOrWhiteSpace(validTime)) return null;
+        var slash = validTime.IndexOf('/');
+        if (slash < 0) return null;
+        if (!DateTimeOffset.TryParse(validTime[..slash], CultureInfo.InvariantCulture, DateTimeStyles.None, out var start)) return null;
+        try
+        {
+            var duration = System.Xml.XmlConvert.ToTimeSpan(validTime[(slash + 1)..]);
+            return duration <= TimeSpan.Zero ? null : (start, start + duration);
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
+    // The part of an amount that falls inside [from, to), assuming it falls evenly over its span.
+    public static double AmountBetween(IEnumerable<GridValue> values, DateTimeOffset from, DateTimeOffset to)
+    {
+        double total = 0;
+        foreach (var value in values)
+        {
+            var start = value.Start > from ? value.Start : from;
+            var end = value.End < to ? value.End : to;
+            if (end <= start) continue;
+            total += value.Value * (end - start).TotalSeconds / (value.End - value.Start).TotalSeconds;
+        }
+        return total;
+    }
+
+    private static double? ValueAt(IEnumerable<GridValue> values, DateTimeOffset at) =>
+        values.FirstOrDefault(v => v.Start <= at && at < v.End)?.Value;
+
+    private static double MaxBetween(IEnumerable<GridValue> values, DateTimeOffset from, DateTimeOffset to) =>
+        values.Where(v => v.End > from && v.Start < to).Select(v => v.Value).DefaultIfEmpty(0).Max();
+
+    public static WeatherPrecipTotals Totals(GridSet grid, DateTimeOffset now)
+    {
+        double Inches(List<GridValue> series, TimeSpan window) =>
+            Math.Round(ToInches(AmountBetween(series, now, now + window), series.FirstOrDefault()?.Unit), 2);
+
+        return new WeatherPrecipTotals
+        {
+            RainNext24HoursInches = Inches(grid.Rain, TimeSpan.FromHours(24)),
+            RainNext7DaysInches = Inches(grid.Rain, TimeSpan.FromDays(7)),
+            SnowNext24HoursInches = Inches(grid.Snow, TimeSpan.FromHours(24)),
+            SnowNext7DaysInches = Inches(grid.Snow, TimeSpan.FromDays(7)),
+            IceNext7DaysInches = Inches(grid.Ice, TimeSpan.FromDays(7)),
+            ThunderChanceNext24Hours = (int)Math.Round(MaxBetween(grid.Thunder, now, now + TimeSpan.FromHours(24))),
+            ThunderChanceNext7Days = (int)Math.Round(MaxBetween(grid.Thunder, now, now + TimeSpan.FromDays(7)))
+        };
+    }
+
+    // One entry per hour for the hourly chart, lined up with the hourly forecast's hours.
+    public static IReadOnlyList<WeatherHourDetail> HourDetails(GridSet grid, DateTimeOffset now)
+    {
+        var first = new DateTimeOffset(now.UtcDateTime.Date.AddHours(now.UtcDateTime.Hour), TimeSpan.Zero);
+        var hours = new List<WeatherHourDetail>();
+        for (var i = 0; i < MaximumHourlyPeriods; i++)
+        {
+            var start = first.AddHours(i);
+            var end = start.AddHours(1);
+            var feels = ValueAt(grid.FeelsLike, start);
+            var gust = ValueAt(grid.Gust, start);
+            var sky = ValueAt(grid.Sky, start);
+            hours.Add(new WeatherHourDetail
+            {
+                StartTime = start,
+                FeelsLikeF = RoundInt(ToFahrenheit(feels, grid.FeelsLike.FirstOrDefault()?.Unit)),
+                GustMph = RoundInt(ToMph(gust, grid.Gust.FirstOrDefault()?.Unit)),
+                SkyCoverPercent = RoundInt(sky),
+                RainInches = Math.Round(ToInches(AmountBetween(grid.Rain, start, end), grid.Rain.FirstOrDefault()?.Unit), 2),
+                SnowInches = Math.Round(ToInches(AmountBetween(grid.Snow, start, end), grid.Snow.FirstOrDefault()?.Unit), 1)
+            });
+        }
+        return hours;
+    }
+
+    public static double ToInches(double value, string? unit) =>
+        unit is not null && (unit.EndsWith(":in", StringComparison.Ordinal) || unit.EndsWith("inch", StringComparison.Ordinal))
+            ? value
+            : value / 25.4;
+
+    // The barometer over the last three hours. Falling fast (more than 0.06 inHg in three hours)
+    // is the classic sign of a storm system coming in.
+    private async Task<PressureSet> FetchPressureTrendAsync(string station, CancellationToken ct)
+    {
+        var since = _clock.GetUtcNow() - TimeSpan.FromHours(4);
+        var start = Uri.EscapeDataString(since.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
+        using var document = await GetJsonAsync($"{ApiBaseUrl}/stations/{Uri.EscapeDataString(station)}/observations?start={start}", ct);
+        var readings = new List<(DateTimeOffset At, double Pascals)>();
+        if (document.RootElement.TryGetProperty("features", out var features) && features.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var feature in features.EnumerateArray())
+            {
+                if (!feature.TryGetProperty("properties", out var properties)) continue;
+                var at = Time(properties, "timestamp");
+                var pressure = Quantity(properties, "barometricPressure").Value ?? Quantity(properties, "seaLevelPressure").Value;
+                if (at is not null && pressure is not null) readings.Add((at.Value, pressure.Value));
+            }
+        }
+        return new PressureSet(PressureTrend(readings));
+    }
+
+    public static WeatherPressureTrend? PressureTrend(IReadOnlyList<(DateTimeOffset At, double Pascals)> readings)
+    {
+        if (readings.Count < 2) return null;
+        var ordered = readings.OrderBy(r => r.At).ToList();
+        var latest = ordered[^1];
+        var target = latest.At - TimeSpan.FromHours(3);
+        var earlier = ordered.Take(ordered.Count - 1).OrderBy(r => Math.Abs((r.At - target).TotalMinutes)).First();
+        var hours = (latest.At - earlier.At).TotalHours;
+        if (hours < 1) return null;
+
+        // Scaled to a three-hour change, the unit forecasters use for a pressure tendency.
+        var change = (ToInchesOfMercury(latest.Pascals)!.Value - ToInchesOfMercury(earlier.Pascals)!.Value) * 3 / hours;
+        var trend = change switch
+        {
+            <= -0.06 => "falling fast",
+            <= -0.02 => "falling",
+            >= 0.06 => "rising fast",
+            >= 0.02 => "rising",
+            _ => "steady"
+        };
+        return new WeatherPressureTrend { ChangeInHgPer3Hours = Math.Round(change, 2), Trend = trend };
+    }
+
+    // The Area Forecast Discussion: the forecasters' own reasoning behind the forecast, in plain
+    // (if jargon-heavy) prose, reissued a few times a day by the local office.
+    private async Task<WeatherDiscussion> FetchDiscussionAsync(string office, CancellationToken ct)
+    {
+        string? productUrl;
+        using (var list = await GetJsonAsync($"{ApiBaseUrl}/products/types/AFD/locations/{Uri.EscapeDataString(office)}", ct))
+        {
+            productUrl = list.RootElement.TryGetProperty("@graph", out var graph) && graph.ValueKind == JsonValueKind.Array && graph.GetArrayLength() > 0
+                ? Str(graph[0], "@id")
+                : null;
+        }
+        if (productUrl is null || !productUrl.StartsWith(ApiBaseUrl + "/", StringComparison.Ordinal))
+            throw new WeatherUpstreamException("the forecast office has no discussion on file");
+
+        using var product = await GetJsonAsync(productUrl, ct);
+        return new WeatherDiscussion
+        {
+            Office = office,
+            IssuedAt = Time(product.RootElement, "issuanceTime"),
+            Text = Str(product.RootElement, "productText") ?? ""
+        };
+    }
+
     private async Task<(LocationOptions Options, GeoCoordinate? Coordinate)> ReadLocationAsync(CancellationToken ct)
     {
         var options = await settings.GetSectionAsync<LocationOptions>(LocationOptions.SectionName, ct) ?? new LocationOptions();
@@ -314,6 +564,7 @@ public sealed class WeatherService(
             ForecastUrl = Str(properties, "forecast") ?? throw new WeatherUpstreamException("the National Weather Service point answer had no forecast link"),
             HourlyUrl = Str(properties, "forecastHourly") ?? throw new WeatherUpstreamException("the National Weather Service point answer had no hourly forecast link"),
             StationsUrl = Str(properties, "observationStations") ?? throw new WeatherUpstreamException("the National Weather Service point answer had no stations link"),
+            GridUrl = Str(properties, "forecastGridData"),
             City = Str(relative, "city"),
             State = Str(relative, "state"),
             TimeZone = Str(properties, "timeZone"),
@@ -696,6 +947,7 @@ public sealed class WeatherService(
         public string ForecastUrl { get; init; } = "";
         public string HourlyUrl { get; init; } = "";
         public string StationsUrl { get; init; } = "";
+        public string? GridUrl { get; init; }
         public string? City { get; init; }
         public string? State { get; init; }
         public string? TimeZone { get; init; }
@@ -708,7 +960,21 @@ public sealed class WeatherService(
     private sealed record ForecastSet(List<WeatherPeriod> Periods, DateTimeOffset? UpdatedAt);
 
     private sealed record HourlySet(List<WeatherHour> Periods);
+
+    private sealed record PressureSet(WeatherPressureTrend? Trend);
 }
+
+// The forecast grid's time series the details use, each value holding over [Start, End).
+public sealed record GridValue(DateTimeOffset Start, DateTimeOffset End, double Value, string? Unit);
+
+public sealed record GridSet(
+    List<GridValue> Rain,
+    List<GridValue> Snow,
+    List<GridValue> Ice,
+    List<GridValue> Thunder,
+    List<GridValue> FeelsLike,
+    List<GridValue> Gust,
+    List<GridValue> Sky);
 
 // A non-2xx from the NWS, or an answer missing the part we needed. Its message is written to be
 // shown on the tab as the reason a section is missing.
@@ -837,4 +1103,50 @@ public sealed class WeatherSun
 public sealed class WeatherRadar
 {
     public string Station { get; init; } = "";
+}
+
+public sealed class WeatherDetails
+{
+    public string State { get; init; } = WeatherReportState.Ok;
+    public WeatherPrecipTotals? Totals { get; init; }
+    public IReadOnlyList<WeatherHourDetail> Hours { get; init; } = [];
+    public WeatherPressureTrend? Pressure { get; init; }
+    public WeatherDiscussion? Discussion { get; init; }
+    public WeatherSevereOutlook? Severe { get; init; }
+    public DateTimeOffset FetchedAt { get; init; }
+    public IReadOnlyList<string> Problems { get; init; } = [];
+}
+
+public sealed class WeatherPrecipTotals
+{
+    public double RainNext24HoursInches { get; init; }
+    public double RainNext7DaysInches { get; init; }
+    public double SnowNext24HoursInches { get; init; }
+    public double SnowNext7DaysInches { get; init; }
+    public double IceNext7DaysInches { get; init; }
+    public int ThunderChanceNext24Hours { get; init; }
+    public int ThunderChanceNext7Days { get; init; }
+}
+
+public sealed class WeatherHourDetail
+{
+    public DateTimeOffset StartTime { get; init; }
+    public int? FeelsLikeF { get; init; }
+    public int? GustMph { get; init; }
+    public int? SkyCoverPercent { get; init; }
+    public double RainInches { get; init; }
+    public double SnowInches { get; init; }
+}
+
+public sealed class WeatherPressureTrend
+{
+    public double ChangeInHgPer3Hours { get; init; }
+    public string Trend { get; init; } = "steady";
+}
+
+public sealed class WeatherDiscussion
+{
+    public string Office { get; init; } = "";
+    public DateTimeOffset? IssuedAt { get; init; }
+    public string Text { get; init; } = "";
 }

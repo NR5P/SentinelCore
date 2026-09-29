@@ -380,6 +380,8 @@ builder.Services.AddHttpClient(nameof(LocationLookupEndpoints), client => client
 // route out tells the tab so promptly rather than leaving it on "loading".
 builder.Services.AddHttpClient(nameof(WeatherService), client => client.Timeout = TimeSpan.FromSeconds(12));
 builder.Services.AddSingleton<WeatherService>();
+builder.Services.AddHttpClient(nameof(WeatherMapService), client => client.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddSingleton<WeatherMapService>();
 // WEATHER ALERTS: the same NWS client, polled by a worker that tells the owner about new watches
 // and warnings. What it has already sent lives beside the other web-host data, so a restart
 // doesn't repeat the warning that is still up.

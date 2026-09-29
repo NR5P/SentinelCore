@@ -74,4 +74,35 @@ public sealed class WeatherEndpointsTests : IDisposable
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Theory]
+    [InlineData("/api/weather/map/tile/../../etc/5/1/1")]
+    [InlineData("/api/weather/map/tile/nope/5/1/1")]
+    [InlineData("/api/weather/map/tile/reflectivity/5/99/1")]
+    [InlineData("/api/weather/map/tile/velocity/5/1/1?station=not-a-station")]
+    [InlineData("/api/weather/map/legend/nope")]
+    public async Task MapProxy_RefusesAnythingItWasNotBuiltFor(string url)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(url, ct);
+
+        Assert.True(response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound, $"{url} answered {(int)response.StatusCode}");
+    }
+
+    [Fact]
+    public async Task Details_WithNoLocation_SaysSoWithoutTouchingTheNetwork()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/api/weather/details", ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var details = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+        Assert.Equal("unconfigured", details.GetProperty("state").GetString());
+    }
 }
