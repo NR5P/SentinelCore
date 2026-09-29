@@ -812,6 +812,40 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun discoverMediaNetworkComputers(): List<MediaDiscoveredComputer> = repository.discoverMediaNetworkComputers()
 
+    // Movie downloads ("+ Add" on the Movies tab) - core/docs/MOVIE_DOWNLOADS.md. Null status
+    // means the feature is off or the server predates it.
+    suspend fun mediaDownloadStatus(): com.sentinelcore.android.data.MediaDownloadStatus? = repository.mediaDownloadStatus()
+
+    suspend fun mediaDownloadLookup(query: String, kind: String) = repository.mediaDownloadLookup(query, kind)
+
+    suspend fun mediaDownloadShow(tmdbId: Long) = repository.mediaDownloadShow(tmdbId)
+
+    suspend fun startMediaReleaseSearch(input: com.sentinelcore.android.data.MediaReleaseSearchInput) =
+        repository.startMediaReleaseSearch(input)
+
+    suspend fun mediaReleaseSearch(id: String) = repository.mediaReleaseSearch(id)
+
+    suspend fun startMediaDownload(searchId: String, releaseId: String) = repository.startMediaDownload(searchId, releaseId)
+
+    suspend fun mediaDownloads() = repository.mediaDownloads()
+
+    suspend fun mediaDownload(id: String) = repository.mediaDownload(id)
+
+    suspend fun deleteMediaDownload(id: String) = repository.deleteMediaDownload(id)
+
+    suspend fun retryMediaDownload(id: String) = repository.retryMediaDownload(id)
+
+    suspend fun mediaDownloadSites() = repository.mediaDownloadSites()
+
+    suspend fun mediaDownloadSiteCatalog(query: String) = repository.mediaDownloadSiteCatalog(query)
+
+    suspend fun addMediaDownloadSite(definition: String, fields: org.json.JSONObject) =
+        repository.addMediaDownloadSite(definition, fields)
+
+    suspend fun setMediaDownloadSiteEnabled(id: String, enabled: Boolean) = repository.setMediaDownloadSiteEnabled(id, enabled)
+
+    suspend fun deleteMediaDownloadSite(id: String) = repository.deleteMediaDownloadSite(id)
+
     // A live tile was dragged onto another one. Applied on screen immediately and saved in the
     // background: the arrangement is what the person just asked for, and a round trip to the
     // server is no reason to make them watch a tile snap back before it moves. A failed save is

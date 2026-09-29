@@ -30,7 +30,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -78,6 +80,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sentinelcore.android.data.MediaApi
+import com.sentinelcore.android.data.MediaDownloadList
+import com.sentinelcore.android.data.MediaDownloadStatus
 import com.sentinelcore.android.data.MediaHome
 import com.sentinelcore.android.data.MediaItemSummary
 import com.sentinelcore.android.ui.SentinelUiState
@@ -152,6 +156,33 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
     var surprising by mutableStateOf(false)
     private val grids = mutableMapOf<String, LibraryGrid>()
     val filters = mutableMapOf<String, LibraryFilter>()
+
+    // Movie downloads: null status means the feature is off (or the server predates it), which
+    // hides "+ Add", Downloads and the banner. `downloads` feeds the Home banner.
+    var downloadStatus by mutableStateOf<MediaDownloadStatus?>(null)
+    var downloads by mutableStateOf<MediaDownloadList?>(null)
+    private val downloadStates = mutableMapOf<String, String>()
+
+    fun loadDownloads() {
+        viewModelScope.launch {
+            downloadStatus = runCatching { app.mediaDownloadStatus() }.getOrNull()
+            if (downloadStatus?.canDownload == true) pollDownloads() else downloads = null
+        }
+    }
+
+    // One look at the queue. A download that has just become "done" is now in the library, so
+    // Home reloads to show it under Recently Added.
+    suspend fun pollDownloads() {
+        val list = runCatching { app.mediaDownloads() }.getOrNull() ?: return
+        var landed = false
+        for (download in list.active + list.recent) {
+            val before = downloadStates[download.id]
+            if (before != null && before != download.state && download.isDone) landed = true
+            downloadStates[download.id] = download.state
+        }
+        downloads = list
+        if (landed) loadHome()
+    }
 
     fun grid(kind: String?): LibraryGrid = grids.getOrPut(kind ?: "all") { LibraryGrid() }
 
@@ -245,14 +276,21 @@ fun MoviesScreen(
     onPlay: (String, Double?) -> Unit,
     // Settings -> Movies & TV libraries, offered to an admin when there are no libraries yet.
     onManageLibraries: () -> Unit = {},
+    // Movie downloads: "+ Add" and the Downloads queue, offered only when the server allows it.
+    onAddDownload: () -> Unit = {},
+    onDownloads: () -> Unit = {},
 ) {
     val browse: MoviesBrowseModel = viewModel { MoviesBrowseModel(model) }
+    val canDownload = browse.downloadStatus?.canDownload == true
     var paneIndex by rememberSaveable { mutableIntStateOf(0) }
     val pane = MoviesPane.entries[paneIndex]
     var query by rememberSaveable { mutableStateOf("") }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var refreshTick by remember { mutableIntStateOf(0) }
     val isAdmin = state.authStatus?.role?.equals("Admin", ignoreCase = true) != false
+
+    // Whether downloads are on is asked each time the tab comes into view and on Refresh.
+    LaunchedEffect(refreshTick) { browse.loadDownloads() }
 
     // Tapping a shelf or poster: a show opens its page; a movie or episode its own.
     val open: (MediaItemSummary) -> Unit = { onItem(it.id) }
@@ -266,6 +304,14 @@ fun MoviesScreen(
                 if (pane == MoviesPane.HOME && query.isBlank()) {
                     IconButton(onClick = { browse.surprise(open) }, enabled = !browse.surprising) {
                         Icon(Icons.Default.Shuffle, contentDescription = "Surprise me")
+                    }
+                }
+                if (canDownload) {
+                    IconButton(onClick = onAddDownload) {
+                        Icon(Icons.Default.Add, contentDescription = "Add a movie or show")
+                    }
+                    IconButton(onClick = onDownloads) {
+                        Icon(Icons.Default.Download, contentDescription = "Downloads")
                     }
                 }
                 IconButton(onClick = {
@@ -306,6 +352,7 @@ fun MoviesScreen(
                 onManageLibraries = onManageLibraries,
                 onItem = open,
                 onPlay = onPlay,
+                onDownloads = onDownloads,
             )
             else -> LibraryGridPane(
                 browse = browse,
@@ -330,9 +377,20 @@ private fun MoviesHome(
     onManageLibraries: () -> Unit,
     onItem: (MediaItemSummary) -> Unit,
     onPlay: (String, Double?) -> Unit,
+    onDownloads: () -> Unit,
 ) {
     LaunchedEffect(refreshTick) { browse.loadHome() }
     val home = browse.home
+    // Follow the queue while something is downloading, for the banner (and to reload Home when
+    // a download lands in the library).
+    val activeDownloads = browse.downloads?.active.orEmpty()
+    val downloading = browse.downloadStatus?.canDownload == true && activeDownloads.isNotEmpty()
+    LaunchedEffect(downloading) {
+        while (downloading) {
+            delay(2_500)
+            browse.pollDownloads()
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         when {
@@ -349,6 +407,9 @@ private fun MoviesHome(
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 if (browse.homeLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = SentinelGreen) }
+                if (downloading) {
+                    item { DownloadBanner(activeDownloads, onClick = onDownloads, modifier = Modifier.padding(top = 8.dp)) }
+                }
                 browse.homeError?.let { error -> item { Text(error, color = SentinelRed, modifier = Modifier.padding(horizontal = 16.dp)) } }
                 home.featured?.let { featured ->
                     item { HeroBanner(model, featured, onItem = onItem, onPlay = onPlay) }

@@ -108,7 +108,13 @@ import com.sentinelcore.android.ui.screens.KnownFaceEditScreen
 import com.sentinelcore.android.ui.screens.LiveCamerasScreen
 import com.sentinelcore.android.ui.screens.MOVIE_DETAIL_ROUTE
 import com.sentinelcore.android.ui.screens.MOVIE_PLAYER_ROUTE
+import com.sentinelcore.android.ui.screens.MOVIE_ADD_ROUTE
+import com.sentinelcore.android.ui.screens.MOVIE_DOWNLOADS_ROUTE
+import com.sentinelcore.android.ui.screens.MOVIE_DOWNLOAD_SITES_ROUTE
+import com.sentinelcore.android.ui.screens.MovieAddScreen
 import com.sentinelcore.android.ui.screens.MovieDetailScreen
+import com.sentinelcore.android.ui.screens.MovieDownloadSitesScreen
+import com.sentinelcore.android.ui.screens.MovieDownloadsScreen
 import com.sentinelcore.android.ui.screens.MoviePlayerScreen
 import com.sentinelcore.android.ui.screens.MoviesScreen
 import com.sentinelcore.android.ui.weather.WeatherScreen
@@ -520,7 +526,35 @@ private fun SentinelNavHost(
                 onItem = { navController.navigate(movieDetailRoute(it)) },
                 onPlay = { id, start -> navController.navigate(moviePlayerRoute(id, start)) },
                 onManageLibraries = { navController.navigate(MEDIA_LIBRARIES_ROUTE) { launchSingleTop = true } },
+                onAddDownload = { navController.navigate(MOVIE_ADD_ROUTE) { launchSingleTop = true } },
+                onDownloads = { navController.navigate(MOVIE_DOWNLOADS_ROUTE) { launchSingleTop = true } },
             )
+        }
+        // Movie downloads (core/docs/MOVIE_DOWNLOADS.md). A started download replaces the Add
+        // screen with the queue, so Back from there returns to Movies.
+        composable(MOVIE_ADD_ROUTE) {
+            MovieAddScreen(
+                model = model,
+                onBack = { navController.popBackStack() },
+                onDownloadStarted = {
+                    navController.navigate(MOVIE_DOWNLOADS_ROUTE) {
+                        popUpTo(MOVIE_ADD_ROUTE) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
+        composable(MOVIE_DOWNLOADS_ROUTE) {
+            MovieDownloadsScreen(
+                model = model,
+                onBack = { navController.popBackStack() },
+                onAdd = { navController.navigate(MOVIE_ADD_ROUTE) { launchSingleTop = true } },
+                onSites = { navController.navigate(MOVIE_DOWNLOAD_SITES_ROUTE) { launchSingleTop = true } },
+                onOpenItem = { navController.navigate(movieDetailRoute(it)) },
+            )
+        }
+        composable(MOVIE_DOWNLOAD_SITES_ROUTE) {
+            MovieDownloadSitesScreen(model = model, onBack = { navController.popBackStack() })
         }
         composable(
             route = MOVIE_DETAIL_ROUTE,

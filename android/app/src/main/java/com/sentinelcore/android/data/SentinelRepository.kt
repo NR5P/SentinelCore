@@ -521,6 +521,101 @@ class SentinelRepository(
         parseMediaDiscoveredComputers(JSONArray(body))
     }
 
+    // ---------------- Movie downloads (core/docs/MOVIE_DOWNLOADS.md) ----------------
+
+    // Null when the feature is not there to use: a 404 (turned off, Movies & TV off, or a server
+    // older than downloads) hides "+ Add" rather than showing an error.
+    suspend fun mediaDownloadStatus(): MediaDownloadStatus? = withContext(Dispatchers.IO) {
+        val (status, body) = requestWithStatus(MediaDownloadApi.STATUS_PATH, method = "GET", body = null)
+        when {
+            status in 200..299 -> runCatching { parseMediaDownloadStatus(JSONObject(body)) }.getOrNull()
+            status == 404 -> null
+            else -> throw SentinelApiException(status, parseServerError(body) ?: "Server request failed (HTTP $status).")
+        }
+    }
+
+    suspend fun mediaDownloadLookup(query: String, kind: String): MediaLookup = withContext(Dispatchers.IO) {
+        parseMediaLookup(JSONObject(request(MediaDownloadApi.lookupPath(query, kind))))
+    }
+
+    suspend fun mediaDownloadShow(tmdbId: Long): MediaDownloadShow = withContext(Dispatchers.IO) {
+        parseMediaDownloadShow(JSONObject(request(MediaDownloadApi.showPath(tmdbId))))
+    }
+
+    // 202 with the search to poll. The first search after idle starts the VPN, so the answer can
+    // take a while; the server itself answers quickly and does the waiting in the search.
+    suspend fun startMediaReleaseSearch(input: MediaReleaseSearchInput): MediaReleaseSearch = withContext(Dispatchers.IO) {
+        parseMediaReleaseSearch(JSONObject(request(MediaDownloadApi.SEARCH_PATH, method = "POST", body = input.toJson().toString())))
+    }
+
+    // A 404 once the search has expired (30 minutes) throws with the server's message.
+    suspend fun mediaReleaseSearch(id: String): MediaReleaseSearch = withContext(Dispatchers.IO) {
+        parseMediaReleaseSearch(JSONObject(request(MediaDownloadApi.searchPath(id))))
+    }
+
+    // 201. A 400 (no library of the right kind, or the search expired) throws with its message.
+    suspend fun startMediaDownload(searchId: String, releaseId: String, libraryId: String? = null): MediaDownload =
+        withContext(Dispatchers.IO) {
+            val body = MediaDownloadApi.grabBody(searchId, releaseId, libraryId).toString()
+            parseMediaDownload(JSONObject(request(MediaDownloadApi.DOWNLOADS_PATH, method = "POST", body = body)))
+        }
+
+    suspend fun mediaDownloads(): MediaDownloadList = withContext(Dispatchers.IO) {
+        parseMediaDownloadList(JSONObject(request(MediaDownloadApi.DOWNLOADS_PATH)))
+    }
+
+    suspend fun mediaDownload(id: String): MediaDownload = withContext(Dispatchers.IO) {
+        parseMediaDownload(JSONObject(request(MediaDownloadApi.downloadPath(id))))
+    }
+
+    // Cancels an active download (its files are deleted) or removes a finished one from the list.
+    suspend fun deleteMediaDownload(id: String): Unit = withContext(Dispatchers.IO) {
+        request(MediaDownloadApi.downloadPath(id), method = "DELETE")
+        Unit
+    }
+
+    // The answer is the requeued download; an older or odd body is not worth failing over.
+    suspend fun retryMediaDownload(id: String): MediaDownload? = withContext(Dispatchers.IO) {
+        val text = request(MediaDownloadApi.retryPath(id), method = "POST")
+        runCatching { parseMediaDownload(JSONObject(text)) }.getOrNull()?.takeIf { it.id.isNotBlank() }
+    }
+
+    // The sites routes (Admin) start the VPN services; while they come up the answer is a 503
+    // { starting: true }, thrown as MediaDownloadsStartingException so the screen can retry.
+    private fun sitesRequest(path: String, method: String = "GET", body: String? = null): String {
+        val (status, text) = requestWithStatus(path, method = method, body = body, readTimeoutMillis = 60_000)
+        if (status in 200..299) return text
+        if (status == 503) parseMediaDownloadsStarting(text)?.let { throw it }
+        throw SentinelApiException(
+            status,
+            parseServerError(text) ?: if (status == 401) "This server requires you to sign in." else "Server request failed (HTTP $status).",
+        )
+    }
+
+    suspend fun mediaDownloadSites(): List<MediaDownloadSite> = withContext(Dispatchers.IO) {
+        parseMediaDownloadSites(JSONArray(sitesRequest(MediaDownloadApi.SITES_PATH)))
+    }
+
+    suspend fun mediaDownloadSiteCatalog(query: String): List<MediaSiteDefinition> = withContext(Dispatchers.IO) {
+        parseMediaSiteCatalog(JSONArray(sitesRequest(MediaDownloadApi.catalogPath(query))))
+    }
+
+    // Prowlarr tests the site first; a failure is a 400 whose message says why.
+    suspend fun addMediaDownloadSite(definition: String, fields: JSONObject): MediaDownloadSite = withContext(Dispatchers.IO) {
+        val text = sitesRequest(MediaDownloadApi.SITES_PATH, method = "POST", body = MediaDownloadApi.addSiteBody(definition, fields).toString())
+        runCatching { parseMediaDownloadSite(JSONObject(text)) }.getOrElse { MediaDownloadSite(id = "", name = definition) }
+    }
+
+    suspend fun setMediaDownloadSiteEnabled(id: String, enabled: Boolean): Unit = withContext(Dispatchers.IO) {
+        sitesRequest(MediaDownloadApi.sitePath(id), method = "PUT", body = JSONObject().put("enabled", enabled).toString())
+        Unit
+    }
+
+    suspend fun deleteMediaDownloadSite(id: String): Unit = withContext(Dispatchers.IO) {
+        sitesRequest(MediaDownloadApi.sitePath(id), method = "DELETE")
+        Unit
+    }
+
     // Whether the server has a valid licence file, which is what decides the UNLICENSED watermark
     // over camera images and live video. Readable by any signed-in account, not just an Admin,
     // precisely so this app can ask - see the note on the endpoint in LicenseEndpoints.cs.
@@ -1356,16 +1451,27 @@ class SentinelRepository(
     // Artwork for the Movies tab: downsampled on decode to about maxWidth pixels, since TMDB
     // posters and backdrops arrive far larger than any tile draws them. Cached under its own key
     // per width, so a poster in a grid and the same poster on a detail screen don't collide.
+    //
+    // Movie downloads hand out TMDB's own poster URLs (https://image.tmdb.org/...) rather than
+    // server paths; those are fetched as they are, without the session cookie.
     suspend fun loadImage(path: String, maxWidth: Int): Bitmap? = withContext(Dispatchers.IO) {
-        val urlString = absoluteUrl(path) ?: return@withContext null
+        val external = path.startsWith("https://", ignoreCase = true) || path.startsWith("http://", ignoreCase = true)
+        val urlString = if (external) path else absoluteUrl(path) ?: return@withContext null
         val key = "$urlString#w$maxWidth"
         imageCache.get(key)?.let { return@withContext it }
 
-        val connection = openConnection(URL(urlString))
+        val connection = if (external) {
+            (URL(urlString).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 30_000
+            }
+        } else {
+            openConnection(URL(urlString))
+        }
         try {
             connection.requestMethod = "GET"
             connection.connect()
-            storeCookies(connection)
+            if (!external) storeCookies(connection)
             if (connection.responseCode !in 200..299) return@withContext null
             val bytes = connection.inputStream.use { it.readBytes() }
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
