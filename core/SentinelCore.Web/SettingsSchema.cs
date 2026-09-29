@@ -701,7 +701,7 @@ public static class SettingsSchema
             Title = "MOVIE DOWNLOADS",
             Group = SettingsGroups.Automation,
             Endpoint = "/api/settings/media-downloads",
-            Basic = false,
+            Basic = true,
             DtoType = typeof(MediaDownloadsSettingsDto),
             Description = "Off by default. Adds \"+ Add\" to the Movies tab: search for a movie or TV episodes, pick one of the torrents your sites offer, and it downloads and appears in the library by itself. The searching and downloading are done by Prowlarr and qBittorrent, which only ever reach the internet through your VPN - if the VPN drops they are cut off rather than falling back to your home connection. On Linux, run core/downloads/install-downloads.sh on this server once with your VPN provider's WireGuard (.conf) or OpenVPN (.ovpn) file; this server then starts the VPN and both programs when someone searches or downloads, and stops them again when nothing has needed them for a few minutes. Torrent sites are added on the Movies tab under Downloads -> Sites. What you download is your responsibility: only download what you have the right to.",
             Fields =
