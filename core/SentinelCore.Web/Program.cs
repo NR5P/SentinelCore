@@ -240,6 +240,19 @@ builder.Services.AddSingleton<MediaScanner>();
 builder.Services.AddSingleton(sp => new MediaHlsManager(
     sp.GetRequiredService<IConfiguration>(), camerasRoot, sp.GetRequiredService<ILogger<MediaHlsManager>>()));
 builder.Services.AddHostedService<MediaScanWorker>();
+// "+ Add" on the Movies tab (MediaDownload*.cs, core/docs/MOVIE_DOWNLOADS.md): Prowlarr and
+// qBittorrent inside a VPN-only network namespace, started and stopped on demand.
+builder.Services.AddSingleton(new MediaDownloadStore(camerasRoot));
+builder.Services.AddHttpClient(QbittorrentClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
+// Redirects are followed by hand: a release's download link may redirect to a magnet link.
+builder.Services.AddHttpClient(ProwlarrClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(120))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+builder.Services.AddHttpClient(MediaDownloadManager.HomeIpClientName, client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddSingleton<QbittorrentClient>();
+builder.Services.AddSingleton<ProwlarrClient>();
+builder.Services.AddSingleton<IMediaDownloadStack, SystemdMediaDownloadStack>();
+builder.Services.AddSingleton<MediaDownloadManager>();
+builder.Services.AddHostedService<MediaDownloadWorker>();
 
 // Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
 // the data directory rather than /tmp - a bundle with everyone's attachments can be gigabytes.
@@ -559,6 +572,7 @@ app.MapCameraGroupEndpoints();
 app.MapLiveOrderEndpoints();
 app.MapOrganizerEndpoints();
 app.MapMediaEndpoints();
+app.MapMediaDownloadEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();

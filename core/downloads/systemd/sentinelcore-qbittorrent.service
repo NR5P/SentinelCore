@@ -1,0 +1,20 @@
+[Unit]
+Description=SentinelCore downloads: qBittorrent (inside the VPN)
+PartOf=sentinelcore-downloads.target
+# No VPN, no qBittorrent: stopping or losing the tunnel stops this too.
+BindsTo=sentinelcore-vpn.service
+After=sentinelcore-vpn.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+NetworkNamespacePath=/run/netns/scvpn
+BindReadOnlyPaths=/etc/netns/scvpn/resolv.conf:/etc/resolv.conf /etc/netns/scvpn/nsswitch.conf:/etc/nsswitch.conf
+Environment=HOME=/var/lib/sentinelcore-downloads/qbittorrent
+ExecStart=/usr/bin/qbittorrent-nox --confirm-legal-notice --profile=/var/lib/sentinelcore-downloads/qbittorrent --webui-port=8080
+UMask=0002
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+SyslogIdentifier=sentinelcore-qbittorrent

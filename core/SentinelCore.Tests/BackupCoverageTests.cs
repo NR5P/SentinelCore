@@ -102,6 +102,7 @@ public sealed class BackupCoverageTests : IDisposable
             ["AlarmEvents"] = "the alarm's log of arms, disarms and triggers; history",
             ["MediaItems"] = "the movie catalog; a rescan of the library folders rebuilds it with the same ids",
             ["MediaState"] = "the media scanner's runtime memory",
+            ["MediaDownloads"] = "the movie download queue and its history; what it fetched is in the library itself",
         };
 
         var root = RepositoryCoreDirectory();

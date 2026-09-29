@@ -1,0 +1,19 @@
+[Unit]
+Description=SentinelCore downloads: VPN check (what the internet sees the tunnel as)
+PartOf=sentinelcore-downloads.target
+BindsTo=sentinelcore-vpn.service
+After=sentinelcore-vpn.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+NetworkNamespacePath=/run/netns/scvpn
+BindReadOnlyPaths=/etc/netns/scvpn/resolv.conf:/etc/resolv.conf /etc/netns/scvpn/nsswitch.conf:/etc/nsswitch.conf
+# /run/sentinelcore-vpn/status.json - removed when this stops, which SentinelCore reads as "off".
+RuntimeDirectory=sentinelcore-vpn
+RuntimeDirectoryMode=0755
+ExecStart=/usr/local/lib/sentinelcore-downloads/sentinelcore-vpn watch
+Restart=on-failure
+RestartSec=10
+SyslogIdentifier=sentinelcore-vpn-watch

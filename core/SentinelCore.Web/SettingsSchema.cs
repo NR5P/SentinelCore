@@ -689,6 +689,33 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "mediaDownloads",
+            Title = "MOVIE DOWNLOADS",
+            Group = SettingsGroups.Automation,
+            Endpoint = "/api/settings/media-downloads",
+            Basic = false,
+            DtoType = typeof(MediaDownloadsSettingsDto),
+            Description = "Off by default. Adds \"+ Add\" to the Movies tab: search for a movie or TV episodes, pick one of the torrents your sites offer, and it downloads and appears in the library by itself. The searching and downloading are done by Prowlarr and qBittorrent, which only ever reach the internet through your VPN - if the VPN drops they are cut off rather than falling back to your home connection. On Linux, run core/downloads/install-downloads.sh on this server once with your VPN provider's WireGuard (.conf) or OpenVPN (.ovpn) file; this server then starts the VPN and both programs when someone searches or downloads, and stops them again when nothing has needed them for a few minutes. Torrent sites are added on the Movies tab under Downloads -> Sites. What you download is your responsibility: only download what you have the right to.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show \"+ Add\" and Downloads on the Movies tab. Needs MOVIES & TV turned on and a movie (or TV) library on one of this server's own disks to save into."),
+                Select("allowedUsers", "Who Can Add", "Who may search and start downloads. Managing the list of sites is always admins only.",
+                    ("admins", "Admins only"), ("everyone", "Everyone who can sign in")),
+                Select("preferredQuality", "Preferred Quality", "Which releases are listed first. 1080p is the best fit for most TVs and phones; 4K files are three to five times the size.",
+                    ("1080p", "1080p (HD)"), ("2160p", "2160p (4K)"), ("720p", "720p (smaller)"), (MediaDownloadsSettingsDto.QualityAny, "No preference")),
+                Number("seedMinutes", "Share Back For (minutes)", "How long a finished download keeps sharing before it is filed into the library and the torrent removed. 0 files it straight away. Private sites that require sharing back need this raised.", 0, 10080),
+                Number("idleMinutes", "Switch Off After (minutes)", "The VPN, qBittorrent and Prowlarr are stopped once nothing has been searched or downloaded for this long, and started again the next time someone does.", 1, 240),
+                Check("requireVpn", "Require The VPN", "Refuse to search or download unless the VPN is connected and the address the sites see is not this server's own. Leave on; turn off only if qBittorrent and Prowlarr are yours to run and already go through a VPN some other way."),
+                Check("manageServices", "Start And Stop The Services", "On: this server starts and stops the VPN, qBittorrent and Prowlarr that install-downloads.sh installed. Off: they are already running somewhere you look after, at the addresses below."),
+                Text("prowlarrUrl", "Prowlarr Address", "Where Prowlarr answers. install-downloads.sh puts it at http://10.250.0.2:9696, inside the VPN."),
+                Password("prowlarrApiKey", "Prowlarr API Key", "Leave blank when install-downloads.sh set Prowlarr up - the key is read from Prowlarr's own configuration. Otherwise paste it from Prowlarr -> Settings -> General."),
+                Text("qbittorrentUrl", "qBittorrent Address", "Where qBittorrent's Web UI answers. install-downloads.sh puts it at http://10.250.0.2:8080, inside the VPN. It must run on this same machine: finished files are moved, not copied over the network."),
+                Text("qbittorrentUsername", "qBittorrent Username", "Leave blank when install-downloads.sh set qBittorrent up (it lets this server in without one)."),
+                Password("qbittorrentPassword", "qBittorrent Password", "Only needed with a username.")
+            ]
+        },
+        new()
+        {
             Key = "packageTheftWatch",
             Title = "PACKAGE THEFT WATCH",
             Group = SettingsGroups.Ai,

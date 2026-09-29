@@ -1,0 +1,17 @@
+[Unit]
+Description=SentinelCore downloads: Prowlarr (torrent sites, inside the VPN)
+PartOf=sentinelcore-downloads.target
+BindsTo=sentinelcore-vpn.service
+After=sentinelcore-vpn.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+NetworkNamespacePath=/run/netns/scvpn
+BindReadOnlyPaths=/etc/netns/scvpn/resolv.conf:/etc/resolv.conf /etc/netns/scvpn/nsswitch.conf:/etc/nsswitch.conf
+ExecStart=/opt/sentinelcore-prowlarr/Prowlarr -nobrowser -data=/var/lib/sentinelcore-downloads/prowlarr
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+SyslogIdentifier=sentinelcore-prowlarr

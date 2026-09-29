@@ -1,0 +1,265 @@
+#!/bin/bash
+# The VPN tunnel behind SentinelCore's movie downloads (core/docs/MOVIE_DOWNLOADS.md).
+#
+# Builds a network namespace, "scvpn", whose only way to the internet is the VPN, for
+# qBittorrent and Prowlarr to run in:
+#
+#   host  scvpn0 10.250.0.1/30 ---- veth ---- scvpn1 10.250.0.2/30  namespace scvpn
+#                                                scwg0 / sctun0 (the VPN) = default route
+#
+# The VPN interface is created in the host namespace and then moved in, so its encrypted
+# packets leave through the host's normal connection while everything *inside* the namespace
+# can only use the tunnel. If the tunnel goes, the namespace simply has no route out: nothing
+# ever falls back to the home connection. The host reaches qBittorrent and Prowlarr over the
+# veth pair; nothing else on the LAN can.
+#
+# Installed to /usr/local/lib/sentinelcore-downloads/ by install-downloads.sh and run by the
+# sentinelcore-vpn and sentinelcore-vpn-watch units. Commands:
+#   prepare | run | wait | teardown      the sentinelcore-vpn.service lifecycle (root)
+#   openvpn-up ...                       OpenVPN's --up hook (root)
+#   watch                                the tunnel check, run inside the namespace
+#   set-config FILE [--user U --pass P]  install a provider's .conf or .ovpn (root)
+set -euo pipefail
+
+NS=scvpn
+HOST_VETH=scvpn0
+NS_VETH=scvpn1
+HOST_ADDR=10.250.0.1/30
+NS_ADDR=10.250.0.2/30
+WG_IF=scwg0
+TUN_IF=sctun0
+CONF_DIR=/etc/sentinelcore/vpn
+NETNS_ETC=/etc/netns/$NS
+STATUS_DIR=/run/sentinelcore-vpn
+SELF=$(readlink -f "$0")
+
+die() { echo "sentinelcore-vpn: $*" >&2; exit 1; }
+log() { echo "sentinelcore-vpn: $*" >&2; }
+
+config_type() {
+    if [ -f "$CONF_DIR/vpn.conf" ]; then echo wireguard
+    elif [ -f "$CONF_DIR/vpn.ovpn" ]; then echo openvpn
+    else echo none
+    fi
+}
+
+# Written in place, never replaced: the units bind-mount this file over /etc/resolv.conf when
+# they start, and a bind mount follows the file it was given, not its name.
+write_dns() {
+    mkdir -p "$NETNS_ETC"
+    local servers=("$@")
+    [ ${#servers[@]} -gt 0 ] || servers=(1.1.1.1 9.9.9.9)
+    : > "$NETNS_ETC/resolv.conf"
+    for server in "${servers[@]}"; do echo "nameserver $server" >> "$NETNS_ETC/resolv.conf"; done
+    chmod 644 "$NETNS_ETC/resolv.conf"
+}
+
+# Only plain DNS inside the namespace: no mDNS, no systemd-resolved over D-Bus, either of which
+# would answer from the host's side of the tunnel.
+write_nsswitch() {
+    mkdir -p "$NETNS_ETC"
+    if [ -f /etc/nsswitch.conf ]; then
+        sed -E 's/^hosts:.*/hosts:          files dns/' /etc/nsswitch.conf > "$NETNS_ETC/nsswitch.conf"
+    else
+        echo "hosts:          files dns" > "$NETNS_ETC/nsswitch.conf"
+    fi
+    chmod 644 "$NETNS_ETC/nsswitch.conf"
+}
+
+# The values of one [Interface] key in a WireGuard file, one per line.
+wg_values() {
+    sed -n -E "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//Ip" "$CONF_DIR/vpn.conf" | tr ',' '\n' | tr -d '[:space:]' | grep -v '^$' || true
+}
+
+mask_to_bits() {
+    local bits=0 octet
+    IFS=. read -r -a octets <<< "$1"
+    for octet in "${octets[@]}"; do
+        while [ "$octet" -gt 0 ]; do bits=$((bits + (octet & 1))); octet=$((octet >> 1)); done
+    done
+    echo "$bits"
+}
+
+teardown() {
+    ip netns del "$NS" 2>/dev/null || true
+    ip link del "$HOST_VETH" 2>/dev/null || true
+    ip link del "$WG_IF" 2>/dev/null || true
+}
+
+prepare() {
+    [ "$(id -u)" -eq 0 ] || die "prepare must run as root"
+    local type
+    type=$(config_type)
+    [ "$type" != none ] || die "no VPN configuration. Run: sudo $SELF set-config /path/to/provider.conf"
+    teardown
+
+    ip netns add "$NS"
+    ip -n "$NS" link set lo up
+    ip link add "$HOST_VETH" type veth peer name "$NS_VETH"
+    ip link set "$NS_VETH" netns "$NS"
+    ip addr add "$HOST_ADDR" dev "$HOST_VETH"
+    ip link set "$HOST_VETH" up
+    ip -n "$NS" addr add "$NS_ADDR" dev "$NS_VETH"
+    ip -n "$NS" link set "$NS_VETH" up
+    write_nsswitch
+    write_dns
+
+    if [ "$type" = wireguard ]; then
+        command -v wg >/dev/null || die "wireguard-tools is not installed"
+        ip link add "$WG_IF" type wireguard
+        # Configured while still in the host namespace, so the endpoint's name is looked up with
+        # the host's DNS - inside, nothing resolves until the tunnel is up.
+        wg setconf "$WG_IF" <(wg-quick strip "$CONF_DIR/vpn.conf")
+        ip link set "$WG_IF" netns "$NS"
+        local address has_v6=0
+        for address in $(wg_values Address); do
+            if [[ "$address" == *:* ]]; then
+                ip -n "$NS" -6 addr add "$address" dev "$WG_IF" && has_v6=1 || log "could not add $address"
+            else
+                ip -n "$NS" addr add "$address" dev "$WG_IF"
+            fi
+        done
+        local mtu
+        mtu=$(wg_values MTU | head -1)
+        ip -n "$NS" link set "$WG_IF" mtu "${mtu:-1420}" up
+        ip -n "$NS" route add default dev "$WG_IF"
+        [ "$has_v6" -eq 1 ] && ip -n "$NS" -6 route add default dev "$WG_IF" || true
+        local dns=()
+        while read -r server; do dns+=("$server"); done < <(wg_values DNS | grep -E '^[0-9a-fA-F:.]+$' || true)
+        write_dns "${dns[@]}"
+        log "WireGuard tunnel up in namespace $NS"
+    fi
+}
+
+run() {
+    case "$(config_type)" in
+        wireguard)
+            # Nothing to supervise: the kernel runs WireGuard. The unit stays up while this does.
+            exec sleep infinity
+            ;;
+        openvpn)
+            local auth=()
+            [ -f "$CONF_DIR/auth.txt" ] && auth=(--auth-user-pass "$CONF_DIR/auth.txt")
+            # The tunnel device is configured by openvpn-up inside the namespace, never here, and
+            # none of the provider's routes are applied to the host.
+            exec openvpn --config "$CONF_DIR/vpn.ovpn" --cd "$CONF_DIR" \
+                --dev "$TUN_IF" --dev-type tun --disable-dco \
+                --route-noexec --ifconfig-noexec \
+                --pull-filter ignore block-outside-dns \
+                --script-security 2 --up "$SELF openvpn-up" --up-restart \
+                "${auth[@]}" --auth-nocache --verb 3
+            ;;
+        *) die "no VPN configuration" ;;
+    esac
+}
+
+openvpn_up() {
+    local dev=${dev:-$TUN_IF} mtu=${tun_mtu:-1500}
+    if ! ip -n "$NS" link show "$dev" >/dev/null 2>&1; then
+        ip link set "$dev" netns "$NS"
+    fi
+    ip -n "$NS" link set "$dev" mtu "$mtu" up
+    ip -n "$NS" addr flush dev "$dev"
+    if [ -n "${ifconfig_netmask:-}" ]; then
+        ip -n "$NS" addr add "$ifconfig_local/$(mask_to_bits "$ifconfig_netmask")" dev "$dev"
+    else
+        ip -n "$NS" addr add "$ifconfig_local" peer "$ifconfig_remote" dev "$dev"
+    fi
+    ip -n "$NS" route replace default dev "$dev"
+    if [ -n "${ifconfig_ipv6_local:-}" ]; then
+        ip -n "$NS" -6 addr add "$ifconfig_ipv6_local/${ifconfig_ipv6_netbits:-64}" dev "$dev" 2>/dev/null || true
+        ip -n "$NS" -6 route replace default dev "$dev" 2>/dev/null || true
+    fi
+    local dns=() i=1 option
+    while option_var="foreign_option_$i"; option=${!option_var:-}; [ -n "$option" ]; do
+        [[ "$option" =~ ^dhcp-option\ DNS6?\ ([0-9a-fA-F:.]+)$ ]] && dns+=("${BASH_REMATCH[1]}")
+        i=$((i + 1))
+    done
+    write_dns "${dns[@]}"
+    log "OpenVPN tunnel up in namespace $NS"
+}
+
+# Holds the unit in "starting" until the tunnel is up, so qBittorrent and Prowlarr start after it.
+wait_up() {
+    local dev
+    [ "$(config_type)" = wireguard ] && dev=$WG_IF || dev=$TUN_IF
+    for _ in $(seq 1 60); do
+        if ip -n "$NS" route show default 2>/dev/null | grep -q "dev $dev"; then exit 0; fi
+        sleep 1
+    done
+    die "the VPN did not come up within a minute - check the configuration and 'journalctl -u sentinelcore-vpn'"
+}
+
+# Runs as the app user inside the namespace. Writes what the internet sees this tunnel as, for
+# SentinelCore to show and to compare with the home address; its age says whether it is current.
+watch() {
+    local out error
+    mkdir -p "$STATUS_DIR"
+    printf '{"error":"Checking the VPN...","connecting":true}' > "$STATUS_DIR/status.json.tmp"
+    mv -f "$STATUS_DIR/status.json.tmp" "$STATUS_DIR/status.json"
+    while true; do
+        if out=$(curl -fsS --max-time 15 https://ipinfo.io/json 2>&1) || out=$(curl -fsS --max-time 15 https://am.i.mullvad.net/json 2>&1); then
+            printf '%s' "$out" > "$STATUS_DIR/status.json.tmp"
+        else
+            error=$(printf '%s' "$out" | tr -cd '[:alnum:] .,:()/-' | head -c 200)
+            printf '{"error":"The VPN is not reaching the internet (%s)"}' "$error" > "$STATUS_DIR/status.json.tmp"
+        fi
+        mv -f "$STATUS_DIR/status.json.tmp" "$STATUS_DIR/status.json"
+        sleep 45
+    done
+}
+
+set_config() {
+    [ "$(id -u)" -eq 0 ] || die "set-config must run as root (sudo)"
+    local file=${1:-} user="" pass=""
+    [ -n "$file" ] && [ -f "$file" ] || die "usage: set-config FILE [--user USERNAME --pass PASSWORD]"
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --user) user=$2; shift 2 ;;
+            --pass) pass=$2; shift 2 ;;
+            *) die "unknown option $1" ;;
+        esac
+    done
+    mkdir -p "$CONF_DIR"
+    chmod 700 "$CONF_DIR"
+    if grep -qi '^\[Interface\]' "$file"; then
+        grep -qi '^[[:space:]]*PrivateKey' "$file" || die "$file has no PrivateKey - download the full WireGuard configuration from your provider"
+        install -m 600 "$file" "$CONF_DIR/vpn.conf"
+        rm -f "$CONF_DIR/vpn.ovpn" "$CONF_DIR/auth.txt"
+        echo "Installed WireGuard configuration."
+    elif grep -qiE '^[[:space:]]*(remote|client)([[:space:]]|$)' "$file"; then
+        install -m 600 "$file" "$CONF_DIR/vpn.ovpn"
+        rm -f "$CONF_DIR/vpn.conf"
+        # Certificates and keys a provider ships as separate files sit beside the .ovpn.
+        local source_dir
+        source_dir=$(dirname "$(readlink -f "$file")")
+        for extra in $(sed -n -E 's/^[[:space:]]*(ca|cert|key|tls-auth|tls-crypt|crl-verify)[[:space:]]+([^[:space:]<]+).*/\2/p' "$file"); do
+            [ -f "$source_dir/$extra" ] && install -m 600 "$source_dir/$extra" "$CONF_DIR/$(basename "$extra")"
+        done
+        if [ -n "$user" ]; then
+            printf '%s\n%s\n' "$user" "$pass" > "$CONF_DIR/auth.txt"
+            chmod 600 "$CONF_DIR/auth.txt"
+        elif grep -qiE '^[[:space:]]*auth-user-pass[[:space:]]*$' "$file" && [ ! -f "$CONF_DIR/auth.txt" ]; then
+            echo "Note: this provider signs in with a username and password. Run again with --user and --pass (the VPN/service credentials from your provider's site, not your website login)."
+        fi
+        echo "Installed OpenVPN configuration."
+    else
+        die "$file is neither a WireGuard (.conf with [Interface]) nor an OpenVPN (.ovpn) configuration"
+    fi
+    if systemctl is-active --quiet sentinelcore-vpn.service; then
+        systemctl restart sentinelcore-downloads.target
+        echo "Restarted the tunnel with the new configuration."
+    fi
+}
+
+case "${1:-}" in
+    prepare) prepare ;;
+    run) run ;;
+    wait) wait_up ;;
+    teardown) teardown ;;
+    openvpn-up) openvpn_up ;;
+    watch) watch ;;
+    set-config) shift; set_config "$@" ;;
+    *) echo "usage: $0 prepare|run|wait|teardown|watch|set-config FILE" >&2; exit 2 ;;
+esac

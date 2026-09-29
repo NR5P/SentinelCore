@@ -57,7 +57,8 @@ public sealed record SettingsSnapshot(
     WeatherAlertsSettingsDto? WeatherAlerts = null,
     AlarmSettingsDto? Alarm = null,
     FamilyFilesSettingsDto? FamilyFiles = null,
-    MediaSettingsDto? Media = null);
+    MediaSettingsDto? Media = null,
+    MediaDownloadsSettingsDto? MediaDownloads = null);
 
 public static class SettingsEndpoints
 {
@@ -184,6 +185,23 @@ public static class SettingsEndpoints
         {
             dto.TmdbApiKey = dto.TmdbApiKey?.Trim() ?? string.Empty;
             return await SaveSectionAsync(dto, appSettings, MediaSettingsDto.SectionName, ct);
+        });
+
+        settings.MapPut("/media-downloads", async (MediaDownloadsSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            dto.ProwlarrUrl = dto.ProwlarrUrl?.Trim() ?? string.Empty;
+            dto.QbittorrentUrl = dto.QbittorrentUrl?.Trim() ?? string.Empty;
+            dto.ProwlarrApiKey = dto.ProwlarrApiKey?.Trim() ?? string.Empty;
+            dto.QbittorrentUsername = dto.QbittorrentUsername?.Trim() ?? string.Empty;
+            return await SaveSectionAsync(dto, appSettings, MediaDownloadsSettingsDto.SectionName, ct, extra =>
+            {
+                if (dto.AllowedUsers is not ("admins" or "everyone")) extra.Add("Who Can Add must be admins or everyone.");
+                if (dto.PreferredQuality is not ("720p" or "1080p" or "2160p" or MediaDownloadsSettingsDto.QualityAny))
+                    extra.Add("Preferred Quality must be 720p, 1080p, 2160p or any.");
+                foreach (var (label, url) in new[] { ("Prowlarr Address", dto.ProwlarrUrl), ("qBittorrent Address", dto.QbittorrentUrl) })
+                    if (url.Length > 0 && (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")))
+                        extra.Add($"{label} must be a web address like http://10.250.0.2:8080.");
+            });
         });
 
         settings.MapPut("/auto-export", async (AutoExportSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
@@ -570,7 +588,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<WeatherAlertsSettingsDto>(WeatherAlertOptions.SectionName, cancellationToken),
         await settings.GetSectionAsync<AlarmSettingsDto>(AlarmSettingsDto.SectionName, cancellationToken),
         await settings.GetSectionAsync<FamilyFilesSettingsDto>(FamilyFilesSettingsDto.SectionName, cancellationToken),
-        await settings.GetSectionAsync<MediaSettingsDto>(MediaSettingsDto.SectionName, cancellationToken));
+        await settings.GetSectionAsync<MediaSettingsDto>(MediaSettingsDto.SectionName, cancellationToken),
+        await settings.GetSectionAsync<MediaDownloadsSettingsDto>(MediaDownloadsSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -621,6 +640,7 @@ public static class SettingsEndpoints
         Alarm = snapshot.Alarm ?? new(),
         FamilyFiles = snapshot.FamilyFiles ?? new(),
         Media = snapshot.Media ?? new(),
+        MediaDownloads = snapshot.MediaDownloads ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -705,6 +725,7 @@ public static class SettingsEndpoints
         if (snapshot.Alarm is not null) await settings.MergeSectionAsync(AlarmSettingsDto.SectionName, snapshot.Alarm, cancellationToken);
         if (snapshot.FamilyFiles is not null) await settings.MergeSectionAsync(FamilyFilesSettingsDto.SectionName, snapshot.FamilyFiles, cancellationToken);
         if (snapshot.Media is not null) await MergeUnmaskedAsync(snapshot.Media, MediaSettingsDto.SectionName, settings, cancellationToken);
+        if (snapshot.MediaDownloads is not null) await MergeUnmaskedAsync(snapshot.MediaDownloads, MediaDownloadsSettingsDto.SectionName, settings, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

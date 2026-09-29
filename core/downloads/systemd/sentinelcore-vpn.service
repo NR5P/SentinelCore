@@ -1,0 +1,18 @@
+[Unit]
+Description=SentinelCore downloads: VPN tunnel (network namespace scvpn)
+PartOf=sentinelcore-downloads.target
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/lib/sentinelcore-downloads/sentinelcore-vpn prepare
+ExecStart=/usr/local/lib/sentinelcore-downloads/sentinelcore-vpn run
+# Holds the unit in "activating" until the tunnel is the namespace's route out, so nothing that
+# comes After= this starts before the VPN is up.
+ExecStartPost=/usr/local/lib/sentinelcore-downloads/sentinelcore-vpn wait
+ExecStopPost=/usr/local/lib/sentinelcore-downloads/sentinelcore-vpn teardown
+TimeoutStartSec=90
+Restart=on-failure
+RestartSec=15
+SyslogIdentifier=sentinelcore-vpn

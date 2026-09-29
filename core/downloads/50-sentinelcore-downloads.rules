@@ -1,0 +1,9 @@
+// Lets the SentinelCore service account start and stop the movie-download units - and nothing
+// else - without a password. Installed to /etc/polkit-1/rules.d/ by install-downloads.sh.
+polkit.addRule(function(action, subject) {
+    if (action.id != "org.freedesktop.systemd1.manage-units" || subject.user != "__APP_USER__") return;
+    var units = ["sentinelcore-downloads.target", "sentinelcore-vpn.service", "sentinelcore-vpn-watch.service",
+                 "sentinelcore-qbittorrent.service", "sentinelcore-prowlarr.service"];
+    var verbs = ["start", "stop", "restart", "reset-failed"];
+    if (units.indexOf(action.lookup("unit")) >= 0 && verbs.indexOf(action.lookup("verb")) >= 0) return polkit.Result.YES;
+});
