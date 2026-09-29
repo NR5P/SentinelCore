@@ -307,6 +307,7 @@
         <div class="toolbar-label">MOVIES &amp; TV</div>
         <div class="toolbar-actions">
           <span id="mv-scan-state" class="event-count hidden" data-tip-below data-tip-right data-tip="A library scan is running. Playback keeps working while it does."></span>
+          <button id="mv-add-btn" class="btn btn-on hidden" data-tip-below data-tip-right data-tip="Find a movie or TV episodes on your torrent sites and download them into the library, through the VPN.">+ add</button>
           <button id="mv-libraries-btn" class="btn hidden" data-tip-below data-tip-right data-tip="The folders this library is built from: add, rescan, edit or remove them.">&#9881; libraries</button>
         </div>
       </div>
@@ -315,6 +316,7 @@
           <button class="tab active" data-mv-pane="home">home</button>
           <button class="tab" data-mv-pane="movies">movies</button>
           <button class="tab" data-mv-pane="shows">tv shows</button>
+          <button class="tab hidden" id="mv-downloads-tab" data-mv-pane="downloads">downloads</button>
         </nav>
         <button id="mv-surprise-btn" class="btn" data-act="surprise" data-tip-below data-tip-right data-tip="Open something at random, from the movies or shows you are looking at. Unwatched titles come first.">surprise me</button>
       </div>
@@ -323,6 +325,7 @@
       <div id="mv-pane-shows" class="tab-pane mv-pane hidden"></div>
       <div id="mv-pane-detail" class="tab-pane mv-pane hidden"></div>
       <div id="mv-pane-libraries" class="tab-pane mv-pane hidden"></div>
+      <div id="mv-pane-downloads" class="tab-pane mv-pane hidden"></div>
     </section>
 
     <section id="view-weather" class="view hidden">

@@ -13,7 +13,7 @@ window.SentinelMovies = (function () {
   const UP_NEXT_SECONDS = 10;
   const CHROME_IDLE_MS = 3000;
   const HEVC_PROBE = 'video/mp4; codecs="hvc1.1.6.L120.B0"';
-  const PANES = ["home", "movies", "shows", "detail", "libraries"];
+  const PANES = ["home", "movies", "shows", "detail", "libraries", "downloads"];
   const SORT_ORDER = { title: "asc", added: "desc", year: "desc", rating: "desc", plays: "desc" };
   const PHASES = { files: "finding files", metadata: "fetching details", probing: "reading file info", idle: "idle" };
 
@@ -359,6 +359,7 @@ window.SentinelMovies = (function () {
       case "movies": return { name: "movies" };
       case "shows": return { name: "shows" };
       case "libraries": return { name: "libraries" };
+      case "downloads": return { name: "downloads" };
       case "item": return parts[1] ? { name: "detail", id: decodeURIComponent(parts[1]) } : { name: "home" };
       default: return { name: "home" };
     }
@@ -395,7 +396,7 @@ window.SentinelMovies = (function () {
     route = r;
     if (r.name === "home" || r.name === "movies" || r.name === "shows") lastList = r.name;
     for (const p of PANES) el(`mv-pane-${p}`).classList.toggle("hidden", p !== r.name);
-    el("mv-surprise-btn").classList.toggle("hidden", r.name === "libraries");
+    el("mv-surprise-btn").classList.toggle("hidden", r.name === "libraries" || r.name === "downloads");
     for (const button of document.querySelectorAll("#mv-subtabs [data-mv-pane]")) {
       button.classList.toggle("active", button.dataset.mvPane === (r.name === "detail" ? lastList : r.name));
     }
@@ -406,6 +407,7 @@ window.SentinelMovies = (function () {
     else if (r.name === "movies" || r.name === "shows") await renderBrowse(r.name, token);
     else if (r.name === "detail") await renderDetail(r.id, token, previous.name !== "detail" || previous.id !== r.id);
     else if (r.name === "libraries") renderLibraries();
+    else if (r.name === "downloads") await renderDownloads(token);
   }
 
   function restoreScroll(name) {
@@ -536,6 +538,7 @@ window.SentinelMovies = (function () {
     wireImages(pane);
     wireRows(pane, rowScroll);
     if (homeData.featured) fillHeroDetails(homeData.featured.id, token);
+    drawDownloadBanner();
   }
 
   function playTarget(item) {
@@ -1763,6 +1766,599 @@ window.SentinelMovies = (function () {
     window.addEventListener("pagehide", () => { if (player.open) reportProgress(true); });
   }
 
+  // ---- downloads (+ add) ----------------------------------------------------------------------
+
+  // "+ add": find a title on TMDB, pick a release from the household's torrent sites, and the
+  // server downloads it through the VPN and files it into the library (core/docs/MOVIE_DOWNLOADS.md).
+  // The Downloads pane follows the queue and, for admins, manages the sites.
+  const dl = { status: null, list: null, timer: null, states: {}, sites: null, sitesTimer: null };
+  const add = { stage: "find", kind: "movie", q: "", results: null, tmdb: true, show: null, season: null, search: null, others: false, timer: null, back: "find" };
+  const DL_POLL_MS = 2500;
+  const STATE_WORDS = { queued: "waiting", downloading: "downloading", seeding: "sharing back", importing: "adding to library", done: "ready", failed: "failed", canceled: "canceled" };
+
+  async function refreshDownloadStatus() {
+    const res = await request("/api/media/downloads/status");
+    dl.status = res.ok ? res.data : null;
+    const can = !!(dl.status && dl.status.canDownload);
+    el("mv-add-btn").classList.toggle("hidden", !can);
+    el("mv-downloads-tab").classList.toggle("hidden", !can);
+    if (can && !dl.list) pollDownloads(true);
+  }
+
+  function speedLabel(bytesPerSecond) {
+    const b = Number(bytesPerSecond) || 0;
+    if (b <= 0) return "";
+    if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB/s`;
+    return `${Math.max(1, Math.round(b / 1e3))} KB/s`;
+  }
+
+  function etaLabel(seconds) {
+    const s = Number(seconds);
+    if (!isFinite(s) || s <= 0) return "";
+    if (s < 90) return "about a minute left";
+    if (s < 3600) return `${Math.round(s / 60)} min left`;
+    return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min left`;
+  }
+
+  // Follows the queue while anything is moving, and says so when something lands in the library.
+  async function pollDownloads(quiet) {
+    clearTimeout(dl.timer);
+    const res = await request("/api/media/downloads");
+    if (res.ok && res.data) {
+      dl.list = res.data;
+      let landed = false;
+      for (const d of [...(dl.list.active || []), ...(dl.list.recent || [])]) {
+        const before = dl.states[d.id];
+        if (before && before !== d.state && d.state === "done") {
+          landed = true;
+          if (!quiet) showToast(`${d.title}${d.subtitle ? " " + d.subtitle : ""} is in the library`, true);
+        }
+        if (before && before !== d.state && d.state === "failed" && !quiet) showToast(`${d.title}: ${d.error || "download failed"}`, false);
+        dl.states[d.id] = d.state;
+      }
+      if (landed) homeData = null;
+      if (visible && route.name === "downloads") drawDownloads();
+      if (visible && route.name === "home") drawDownloadBanner();
+    }
+    const busy = dl.list && (dl.list.active || []).length > 0;
+    if (visible && (busy || route.name === "downloads")) dl.timer = setTimeout(() => pollDownloads(false), DL_POLL_MS);
+  }
+
+  function drawDownloadBanner() {
+    const pane = el("mv-pane-home");
+    let banner = el("mv-dl-banner");
+    const active = (dl.list && dl.list.active) || [];
+    if (!active.length) { if (banner) banner.remove(); return; }
+    if (!banner) {
+      banner = document.createElement("button");
+      banner.type = "button";
+      banner.id = "mv-dl-banner";
+      banner.className = "mv-dl-banner";
+      banner.dataset.mvPane = "downloads";
+      pane.prepend(banner);
+    }
+    const first = active[0];
+    const pct = Math.round((Number(first.progress) || 0) * 100);
+    banner.innerHTML = `<span class="mv-pulse"></span><span>${active.length === 1
+      ? `Downloading ${escapeHtml(first.title)}${first.subtitle ? " " + escapeHtml(first.subtitle) : ""} &middot; ${pct}%`
+      : `${active.length} downloads in progress`}</span><span class="mv-dl-banner-go">downloads ${ICON.right}</span>`;
+  }
+
+  async function renderDownloads(token) {
+    const pane = el("mv-pane-downloads");
+    if (!dl.list) pane.innerHTML = loadingMarkup();
+    await pollDownloads(true);
+    if (token !== routeToken) return;
+    if (!dl.list) pane.innerHTML = errorMarkup("Could not load the downloads.");
+  }
+
+  function vpnMarkup(status) {
+    if (!status) return "";
+    const vpn = status.vpn || {};
+    const services = status.services;
+    let state = "off";
+    let text = "Off - starts by itself when someone searches or downloads.";
+    if (services === "notInstalled") {
+      state = "warn";
+      text = "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.";
+    } else if (vpn.state === "connected") {
+      state = "on";
+      text = `Connected${vpn.location ? " &middot; " + escapeHtml(vpn.location) : ""}${vpn.ip ? ` &middot; <code>${escapeHtml(vpn.ip)}</code>` : ""}`;
+    } else if (services === "starting" || vpn.state === "connecting") {
+      state = "busy";
+      text = "Connecting&hellip;";
+    } else if (services === "failed" || vpn.state === "down") {
+      state = "warn";
+      text = escapeHtml(vpn.error || "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).");
+    } else if (services === "external") {
+      state = vpn.state === "off" || vpn.state === "unknown" ? "off" : state;
+      text = vpn.required ? "qBittorrent and Prowlarr are run outside this server." : "qBittorrent and Prowlarr are run outside this server; the VPN is not checked.";
+    }
+    return `<div class="mv-dl-vpn mv-dl-vpn-${state}">
+      <span class="mv-dl-vpn-dot"></span>
+      <span class="mv-dl-vpn-label">VPN</span>
+      <span class="mv-dl-vpn-text">${text}</span>
+      ${dl.status && dl.status.canManageSites ? `<button type="button" class="mv-btn" data-act="dl-sites">${ICON.search}<span>sites</span></button>` : ""}
+    </div>`;
+  }
+
+  function downloadRow(d) {
+    const pct = Math.round((Number(d.progress) || 0) * 1000) / 10;
+    const active = ["queued", "downloading", "seeding", "importing"].includes(d.state);
+    const facts = active
+      ? [d.state === "downloading" ? `${pct}%` : STATE_WORDS[d.state], d.state === "downloading" ? speedLabel(d.speedBytesPerSecond) : "",
+         d.state === "downloading" ? etaLabel(d.etaSeconds) : "", sizeLabel(d.sizeBytes), d.state === "downloading" && d.peers ? plural(d.peers, "peer") : ""]
+      : [STATE_WORDS[d.state] || d.state, sizeLabel(d.sizeBytes), d.requestedBy ? `by ${d.requestedBy}` : "", ago(d.finishedAt || d.createdAt)];
+    const actions = [];
+    if (d.state === "done" && d.itemId) actions.push(`<button type="button" class="mv-btn mv-btn-primary" data-act="open" data-id="${escapeHtml(d.itemId)}">${ICON.play}<span>open</span></button>`);
+    if (d.state === "failed") actions.push(`<button type="button" class="mv-btn" data-act="dl-retry" data-id="${escapeHtml(d.id)}">${ICON.restart}<span>retry</span></button>`);
+    actions.push(active
+      ? `<button type="button" class="mv-btn mv-btn-quiet" data-act="dl-cancel" data-id="${escapeHtml(d.id)}">cancel</button>`
+      : `<button type="button" class="mv-icon-btn" data-act="dl-remove" data-id="${escapeHtml(d.id)}" aria-label="Remove from the list" title="Remove from the list">${ICON.close}</button>`);
+    return `<div class="mv-dl mv-dl-${escapeHtml(d.state)}" data-dl-id="${escapeHtml(d.id)}">
+      ${art(d.posterUrl, "mv-poster mv-dl-poster", d.title, "")}
+      <div class="mv-dl-body">
+        <div class="mv-dl-title">${escapeHtml(d.title)}${d.year ? ` <span class="mv-match-year-tag">${escapeHtml(d.year)}</span>` : ""}${d.subtitle ? ` <span class="mv-lib-kind">${escapeHtml(d.subtitle)}</span>` : ""}</div>
+        <div class="mv-dl-release" title="${escapeHtml(d.releaseTitle)}">${escapeHtml(d.releaseTitle)}${d.site ? ` &middot; ${escapeHtml(d.site)}` : ""}</div>
+        ${active ? `<div class="mv-dl-bar"><span style="width:${d.state === "downloading" ? pct : d.state === "queued" ? 0 : 100}%"></span></div>` : ""}
+        <div class="mv-dl-facts">${facts.filter(Boolean).map(escapeHtml).join('<span class="mv-dot">&middot;</span>')}</div>
+        <div class="${d.state === "failed" ? "mv-lib-error" : "mv-dl-note"}${d.error ? "" : " hidden"}">${escapeHtml(d.error || "")}</div>
+      </div>
+      <div class="mv-lib-actions">${actions.join("")}</div>
+    </div>`;
+  }
+
+  // What decides the pane's layout: which downloads, in which state, with which buttons. While
+  // it stays the same, a poll only patches the numbers, so nothing under the pointer is
+  // replaced between a press and its release.
+  function downloadsShape(data) {
+    const rows = [...(data.active || []), ...(data.recent || [])].map((d) => `${d.id}:${d.state}:${d.itemId || ""}`);
+    const vpn = data.status ? `${data.status.services}:${(data.status.vpn || {}).state}:${(data.status.vpn || {}).ip}:${(data.status.vpn || {}).error}` : "";
+    return rows.join("|") + "#" + vpn;
+  }
+
+  function drawDownloads() {
+    const pane = el("mv-pane-downloads");
+    const data = dl.list || {};
+    const shape = downloadsShape(data);
+    if (pane.dataset.shape === shape && pane.firstChild) {
+      const scratch = document.createElement("div");
+      for (const d of data.active || []) {
+        const row = pane.querySelector(`[data-dl-id="${CSS.escape(d.id)}"]`);
+        if (!row) continue;
+        scratch.innerHTML = downloadRow(d);
+        for (const part of [".mv-dl-bar", ".mv-dl-facts", ".mv-dl-note"]) {
+          const now = row.querySelector(part);
+          const next = scratch.querySelector(part);
+          if (now && next && now.outerHTML !== next.outerHTML) now.replaceWith(next);
+        }
+      }
+      return;
+    }
+    pane.dataset.shape = shape;
+    const active = data.active || [];
+    const recent = data.recent || [];
+    pane.innerHTML = `${vpnMarkup(data.status)}
+      <div class="mv-dl-head"><h3 class="mv-section-title">Downloading</h3>
+        <button type="button" class="mv-btn mv-btn-primary" data-act="dl-add">${ICON.plus}<span>add a movie or show</span></button></div>
+      ${active.length ? `<div class="mv-dl-list">${active.map(downloadRow).join("")}</div>`
+        : `<div class="mv-empty"><div>Nothing downloading. Press <b>add</b> to find a movie or TV episodes.</div></div>`}
+      ${recent.length ? `<h3 class="mv-section-title">Recent</h3><div class="mv-dl-list">${recent.map(downloadRow).join("")}</div>` : ""}`;
+    wireImages(pane);
+  }
+
+  async function downloadAction(act, id, button) {
+    if (act === "dl-cancel" && !confirm("Cancel this download? What has downloaded so far is deleted.")) return;
+    if (button) button.disabled = true;
+    const res = act === "dl-retry"
+      ? await request(`/api/media/downloads/${enc(id)}/retry`, { method: "POST" })
+      : await request(`/api/media/downloads/${enc(id)}`, { method: "DELETE" });
+    if (!res.ok) { if (button) button.disabled = false; showToast(res.error, false); return; }
+    pollDownloads(true);
+  }
+
+  // -- the add dialog: find -> (seasons) -> releases
+
+  function openAdd() {
+    Object.assign(add, { stage: "find", results: add.q ? add.results : null, show: null, season: null, search: null, others: false });
+    drawAdd();
+    if (add.q && !add.results) lookup();
+  }
+
+  function stopAddPoll() {
+    clearTimeout(add.timer);
+    add.timer = null;
+  }
+
+  function drawAdd() {
+    const title = add.stage === "releases" ? "Pick a download" : add.stage === "show" ? (add.show ? add.show.title : "TV show") : "Add a movie or show";
+    let body = "";
+    if (add.stage === "find") body = addFindMarkup();
+    else if (add.stage === "show") body = addShowMarkup();
+    else body = addReleasesMarkup();
+    const panel = el("mv-modal-panel");
+    const open = !el("mv-modal").classList.contains("hidden") && panel.querySelector(".mv-add");
+    const html = `${modalHeader(title)}<div class="mv-add">${body}</div>`;
+    if (open) { panel.innerHTML = html; wireImages(panel); }
+    else openModal(html, stopAddPoll);
+    const input = el("mv-add-q");
+    if (input && add.stage === "find" && document.activeElement !== input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
+
+  function addFindMarkup() {
+    const tmdbMissing = dl.status && dl.status.tmdbConfigured === false;
+    let results = "";
+    if (add.results === "loading") results = loadingMarkup("searching");
+    else if (typeof add.results === "string") results = `<div class="mv-empty mv-error">${escapeHtml(add.results)}</div>`;
+    else if (Array.isArray(add.results)) {
+      results = add.results.length
+        ? add.results.map((r, i) => `<button type="button" class="mv-match" data-mact="add-pick" data-i="${i}">
+            ${art(r.posterUrl, "mv-poster mv-match-poster", r.title, "")}
+            <span class="mv-match-text">
+              <span class="mv-match-title">${escapeHtml(r.title)}${r.year ? ` <span class="mv-match-year-tag">${escapeHtml(r.year)}</span>` : ""}${r.inLibrary ? ` <span class="mv-lib-kind mv-have">in library</span>` : ""}</span>
+              <span class="mv-match-overview">${escapeHtml(r.overview || "No description.")}</span>
+            </span>
+          </button>`).join("")
+        : `<div class="mv-empty">Nothing on TMDB called that. Try fewer words.</div>`;
+    }
+    const direct = (tmdbMissing || !add.tmdb) && add.q
+      ? `<div class="mv-note">${tmdbMissing ? "No TMDB key, so there are no posters or episode lists - the sites are searched for exactly what you type." : ""}
+          ${add.kind === "show" ? `<div class="mv-add-direct"><input class="field-input" id="mv-add-season" placeholder="Season" inputmode="numeric" maxlength="2">
+            <input class="field-input" id="mv-add-episode" placeholder="Episode (blank = whole season)" inputmode="numeric" maxlength="3"></div>` : ""}
+          <button type="button" class="mv-btn mv-btn-primary" data-mact="add-direct">${ICON.search}<span>search sites for &ldquo;${escapeHtml(add.q)}&rdquo;</span></button></div>`
+      : "";
+    const noLibrary = dl.status && ((add.kind === "movie" && !dl.status.movieLibrary) || (add.kind === "show" && !dl.status.showLibrary))
+      ? `<div class="mv-note mv-note-warn">There is no ${add.kind === "movie" ? "movie" : "TV"} library on the server's own disks to save into yet. Add one under &#9881; libraries${add.kind === "show" ? " (kind: TV Shows)" : ""} first.</div>`
+      : "";
+    return `<div class="mv-seg" role="radiogroup">
+        <button type="button" class="${add.kind === "movie" ? "active" : ""}" data-mact="add-kind" data-kind="movie" role="radio" aria-checked="${add.kind === "movie"}">Movie</button>
+        <button type="button" class="${add.kind === "show" ? "active" : ""}" data-mact="add-kind" data-kind="show" role="radio" aria-checked="${add.kind === "show"}">TV show</button>
+      </div>
+      ${noLibrary}
+      <form class="mv-match-form" id="mv-add-form">
+        <input class="field-input" id="mv-add-q" value="${escapeHtml(add.q)}" placeholder="${add.kind === "movie" ? "Movie title" : "Show title"}" autocomplete="off" autofocus>
+        <button type="submit" class="mv-btn mv-btn-primary">${ICON.search}<span>find</span></button>
+      </form>
+      ${direct}
+      <div class="mv-match-results">${results}</div>`;
+  }
+
+  async function lookup() {
+    const q = add.q.trim();
+    if (!q) return;
+    add.results = "loading";
+    drawAdd();
+    const res = await request(`/api/media/downloads/lookup?${new URLSearchParams({ q, kind: add.kind })}`);
+    if (add.stage !== "find" || add.q.trim() !== q) return;
+    if (!res.ok) { add.results = res.error; drawAdd(); return; }
+    add.tmdb = !!res.data.tmdbConfigured;
+    add.results = add.tmdb ? (res.data.results || []) : [];
+    drawAdd();
+  }
+
+  async function pickResult(i) {
+    const r = Array.isArray(add.results) ? add.results[i] : null;
+    if (!r) return;
+    if (r.kind === "movie") {
+      startReleaseSearch({ kind: "movie", title: r.title, year: r.year, tmdbId: r.tmdbId, posterPath: r.posterPath }, "find");
+      return;
+    }
+    add.stage = "show";
+    add.show = { title: r.title, year: r.year, tmdbId: r.tmdbId, posterPath: r.posterPath, posterUrl: r.posterUrl, loading: true };
+    drawAdd();
+    const res = await request(`/api/media/downloads/show/${enc(r.tmdbId)}`);
+    if (add.stage !== "show" || !add.show || add.show.tmdbId !== r.tmdbId) return;
+    if (!res.ok) { add.show.error = res.error; add.show.loading = false; drawAdd(); return; }
+    add.show = { ...res.data, loading: false };
+    const seasons = add.show.seasons || [];
+    // Start on the first season with something missing that has aired.
+    const firstGap = seasons.find((s) => s.number > 0 && (s.episodes || []).some((e) => e.aired && !e.inLibrary));
+    add.season = (firstGap || seasons[0] || {}).number ?? null;
+    drawAdd();
+  }
+
+  function addShowMarkup() {
+    const show = add.show;
+    if (!show || show.loading) return loadingMarkup("loading seasons");
+    if (show.error) return `<div class="mv-empty mv-error">${escapeHtml(show.error)}</div><div class="mv-modal-foot"><button type="button" class="mv-btn" data-mact="add-back">back</button></div>`;
+    const seasons = show.seasons || [];
+    const season = seasons.find((s) => s.number === add.season);
+    const tabs = seasons.map((s) => `<button type="button" class="${s.number === add.season ? "active" : ""}" data-mact="add-season" data-n="${s.number}">${s.number === 0 ? "Specials" : "S" + s.number}${s.ownedCount === s.episodeCount && s.episodeCount ? " &#10003;" : ""}</button>`).join("");
+    const episodes = season ? (season.episodes || []).map((e) => `<div class="mv-add-ep${e.inLibrary ? " mv-add-ep-have" : ""}">
+        <span class="mv-add-ep-num">${e.number}</span>
+        <span class="mv-add-ep-name">${escapeHtml(e.name || `Episode ${e.number}`)}<span class="mv-add-ep-date">${e.airDate ? escapeHtml(fmtDate(e.airDate)) : ""}${e.inLibrary ? " &middot; in library" : ""}${e.aired === false ? " &middot; not out yet" : ""}</span></span>
+        <button type="button" class="mv-btn" data-mact="add-episode" data-n="${e.number}" ${e.aired === false ? "disabled" : ""}>get</button>
+      </div>`).join("") : "";
+    return `<button type="button" class="mv-link mv-add-back" data-mact="add-back">${ICON.back} results</button>
+      <div class="mv-add-seasons mv-seg">${tabs}</div>
+      ${season ? `<div class="mv-add-season-head"><span>${escapeHtml(season.name || "Season " + season.number)} &middot; ${plural(season.episodeCount, "episode")}${season.ownedCount ? ` &middot; ${season.ownedCount} in library` : ""}</span>
+        <button type="button" class="mv-btn mv-btn-primary" data-mact="add-whole-season">get the whole season</button></div>
+        <div class="mv-add-eps">${episodes}</div>` : `<div class="mv-empty">TMDB lists no seasons for this show.</div>`}`;
+  }
+
+  async function startReleaseSearch(input, back) {
+    stopAddPoll();
+    add.stage = "releases";
+    add.back = back;
+    add.others = false;
+    add.search = { phase: "connecting", message: "Connecting to the VPN...", input };
+    drawAdd();
+    const res = await request("/api/media/downloads/search", { method: "POST", body: input });
+    if (add.stage !== "releases") return;
+    if (!res.ok) { add.search = { phase: "failed", message: res.error, input }; drawAdd(); return; }
+    add.search = { ...res.data, input };
+    drawAdd();
+    pollSearch(res.data.id);
+  }
+
+  async function pollSearch(id) {
+    stopAddPoll();
+    add.timer = setTimeout(async () => {
+      const res = await request(`/api/media/downloads/search/${enc(id)}`);
+      if (add.stage !== "releases" || !add.search || add.search.id !== id) return;
+      if (!res.ok) { add.search = { ...add.search, phase: "failed", message: res.error }; drawAdd(); return; }
+      const changed = res.data.phase !== add.search.phase || res.data.message !== add.search.message;
+      add.search = { ...res.data, input: add.search.input };
+      if (changed || res.data.phase === "done") drawAdd();
+      if (res.data.phase !== "done" && res.data.phase !== "failed") pollSearch(id);
+    }, 1000);
+  }
+
+  function releaseMarkup(r, i, group) {
+    const chips = [r.quality, r.codec, r.source, r.hdr ? "HDR" : "", r.seasonPack ? "whole season" : ""]
+      .filter(Boolean).map((c) => `<span class="mv-lib-kind">${escapeHtml(c)}</span>`).join("");
+    const facts = [sizeLabel(r.sizeBytes), r.seeders != null ? `${r.seeders} sharing` : "", r.site || "", r.publishedAt ? ago(r.publishedAt) : ""]
+      .filter(Boolean).map(escapeHtml).join('<span class="mv-dot">&middot;</span>');
+    return `<div class="mv-rel${i === 0 && group === "results" ? " mv-rel-best" : ""}">
+      <div class="mv-rel-body">
+        <div class="mv-rel-chips">${i === 0 && group === "results" ? '<span class="mv-lib-kind mv-have">best match</span>' : ""}${chips}</div>
+        <div class="mv-rel-title" title="${escapeHtml(r.title)}">${escapeHtml(r.title)}</div>
+        <div class="mv-rel-facts">${facts}</div>
+        ${r.warning ? `<div class="mv-dl-note">${escapeHtml(r.warning)}</div>` : ""}
+      </div>
+      <button type="button" class="mv-btn ${i === 0 && group === "results" ? "mv-btn-primary" : ""}" data-mact="add-grab" data-release="${escapeHtml(r.id)}">download</button>
+    </div>`;
+  }
+
+  function addReleasesMarkup() {
+    const s = add.search || {};
+    const input = s.input || {};
+    const what = `${escapeHtml(input.title || "")}${input.year ? ` (${escapeHtml(input.year)})` : ""}${input.season != null ? ` &middot; ${input.episode != null ? `S${String(input.season).padStart(2, "0")}E${String(input.episode).padStart(2, "0")}` : `season ${escapeHtml(input.season)}`}` : ""}`;
+    const back = `<button type="button" class="mv-link mv-add-back" data-mact="add-back">${ICON.back} ${add.back === "show" ? "episodes" : "results"}</button>`;
+    if (s.phase === "connecting" || s.phase === "searching") {
+      return `${back}<div class="mv-add-what">${what}</div>
+        <div class="mv-empty"><span class="mv-spinner"></span><span>${escapeHtml(s.message || "Searching")}</span>
+        <div class="mv-add-hint">${s.phase === "connecting" ? "The first search after a while starts the VPN; it takes a few seconds." : "Asking each of your sites."}</div></div>`;
+    }
+    if (s.phase === "failed") {
+      return `${back}<div class="mv-add-what">${what}</div><div class="mv-empty mv-error">${escapeHtml(s.message || s.error || "The search failed.")}</div>
+        <div class="mv-modal-foot"><button type="button" class="mv-btn" data-mact="add-again">try again</button></div>`;
+    }
+    const results = s.results || [];
+    const others = s.others || [];
+    return `${back}<div class="mv-add-what">${what}</div>
+      ${results.length ? `<div class="mv-rel-list">${results.map((r, i) => releaseMarkup(r, i, "results")).join("")}</div>`
+        : `<div class="mv-empty">${others.length ? "None of the releases found are clearly this title with people sharing it." : escapeHtml(s.message || "Nothing found on your sites.")}</div>`}
+      ${others.length ? `<button type="button" class="mv-link mv-add-others" data-mact="add-others">${add.others ? "hide" : "show"} ${plural(others.length, "other result")}</button>
+        ${add.others ? `<div class="mv-rel-list mv-rel-others">${others.map((r, i) => releaseMarkup(r, i, "others")).join("")}</div>` : ""}` : ""}`;
+  }
+
+  async function grab(button, releaseId) {
+    if (!add.search || !add.search.id) return;
+    for (const b of document.querySelectorAll("#mv-modal-panel [data-mact='add-grab']")) b.disabled = true;
+    button.classList.add("mv-working");
+    const res = await request("/api/media/downloads", { method: "POST", body: { searchId: add.search.id, releaseId } });
+    if (!res.ok) {
+      for (const b of document.querySelectorAll("#mv-modal-panel [data-mact='add-grab']")) b.disabled = false;
+      button.classList.remove("mv-working");
+      showToast(res.error, false);
+      return;
+    }
+    const d = res.data || {};
+    dl.states[d.id] = d.state;
+    closeModal();
+    showToast(`Downloading ${d.title || ""}${d.subtitle ? " " + d.subtitle : ""}`, true);
+    go({ name: "downloads" });
+  }
+
+  function addModalClick(act, target) {
+    switch (act) {
+      case "add-kind":
+        if (add.kind === target.dataset.kind) return true;
+        add.kind = target.dataset.kind;
+        add.results = null;
+        drawAdd();
+        if (add.q) lookup();
+        return true;
+      case "add-pick": pickResult(Number(target.dataset.i)); return true;
+      case "add-season": add.season = Number(target.dataset.n); drawAdd(); return true;
+      case "add-whole-season":
+      case "add-episode": {
+        const show = add.show;
+        if (!show) return true;
+        startReleaseSearch({ kind: "show", title: show.title, year: show.year, tmdbId: show.tmdbId, posterPath: show.posterPath,
+          season: add.season, episode: act === "add-episode" ? Number(target.dataset.n) : null }, "show");
+        return true;
+      }
+      case "add-direct": {
+        const season = (el("mv-add-season") || {}).value;
+        const episode = (el("mv-add-episode") || {}).value;
+        startReleaseSearch({ kind: add.kind, title: add.q.trim(),
+          season: add.kind === "show" && /^\d+$/.test(season || "") ? Number(season) : null,
+          episode: add.kind === "show" && /^\d+$/.test(season || "") && /^\d+$/.test(episode || "") ? Number(episode) : null }, "find");
+        return true;
+      }
+      case "add-back":
+        stopAddPoll();
+        add.stage = add.stage === "releases" && add.back === "show" && add.show ? "show" : "find";
+        if (add.stage === "find") add.show = null;
+        drawAdd();
+        return true;
+      case "add-again": if (add.search && add.search.input) startReleaseSearch(add.search.input, add.back); return true;
+      case "add-others": add.others = !add.others; drawAdd(); return true;
+      case "add-grab": grab(target, target.dataset.release); return true;
+      default: return false;
+    }
+  }
+
+  // -- sites (admin)
+
+  function openSites() {
+    dl.sites = { view: "list", list: null, catalog: null, q: "", adding: null, message: null };
+    openModal(`${modalHeader("Torrent sites")}<div id="mv-sites-body"></div>`, () => { clearTimeout(dl.sitesTimer); dl.sites = null; });
+    loadSites();
+  }
+
+  // Prowlarr lives inside the VPN, so the first request may find it still starting: the server
+  // says so with a 503 { starting }, and this simply asks again.
+  async function sitesRequest(url, options, retry) {
+    const res = await request(url, options);
+    if (res.status === 503 && res.data && res.data.starting && dl.sites) {
+      dl.sites.message = res.error;
+      drawSites();
+      await new Promise((resolve) => { dl.sitesTimer = setTimeout(resolve, 3000); });
+      return dl.sites ? sitesRequest(url, options, retry) : res;
+    }
+    return res;
+  }
+
+  async function loadSites() {
+    if (!dl.sites) return;
+    dl.sites.message = "Connecting to the VPN...";
+    drawSites();
+    const res = await sitesRequest("/api/media/downloads/sites");
+    if (!dl.sites) return;
+    dl.sites.message = res.ok ? null : res.error;
+    dl.sites.list = res.ok ? res.data || [] : null;
+    drawSites();
+  }
+
+  async function loadCatalog() {
+    if (!dl.sites) return;
+    dl.sites.catalog = "loading";
+    drawSites();
+    const res = await sitesRequest(`/api/media/downloads/sites/catalog?${new URLSearchParams({ q: dl.sites.q })}`);
+    if (!dl.sites) return;
+    dl.sites.catalog = res.ok ? res.data || [] : res.error;
+    drawSites();
+  }
+
+  function drawSites() {
+    const body = el("mv-sites-body");
+    const s = dl.sites;
+    if (!body || !s) return;
+    if (s.view === "list") {
+      const list = s.list;
+      body.innerHTML = `<p class="mv-modal-intro">The sites searched when anyone adds a movie or show. Prowlarr keeps them working; everything goes through the VPN.</p>
+        ${s.message ? `<div class="mv-empty"><span class="mv-spinner"></span><span>${escapeHtml(s.message)}</span></div>` : ""}
+        ${Array.isArray(list) ? (list.length ? `<div class="mv-site-list">${list.map((site) => `<div class="mv-site">
+            <div class="mv-site-body"><div class="mv-dl-title">${escapeHtml(site.name)} <span class="mv-lib-kind">${escapeHtml(site.privacy || "")}</span></div>
+            ${site.description ? `<div class="mv-lib-meta">${escapeHtml(site.description)}</div>` : ""}</div>
+            <label class="mv-site-toggle"><input type="checkbox" data-mact="site-toggle" data-id="${escapeHtml(site.id)}" ${site.enabled ? "checked" : ""}> on</label>
+            <button type="button" class="mv-icon-btn" data-mact="site-remove" data-id="${escapeHtml(site.id)}" aria-label="Remove ${escapeHtml(site.name)}" title="Remove">${ICON.close}</button>
+          </div>`).join("")}</div>` : `<div class="mv-empty">No sites yet. Add one to start searching.</div>`) : ""}
+        <div class="mv-modal-foot"><button type="button" class="mv-btn mv-btn-primary" data-mact="site-catalog" ${Array.isArray(list) ? "" : "disabled"}>${ICON.plus}<span>add a site</span></button></div>`;
+      return;
+    }
+    if (s.view === "catalog") {
+      const c = s.catalog;
+      let results = "";
+      if (c === "loading") results = loadingMarkup(s.message || "loading the site list");
+      else if (typeof c === "string") results = `<div class="mv-empty mv-error">${escapeHtml(c)}</div>`;
+      else if (Array.isArray(c)) results = c.length ? c.map((d, i) => `<div class="mv-site">
+          <div class="mv-site-body"><div class="mv-dl-title">${escapeHtml(d.name)} <span class="mv-lib-kind">${escapeHtml(d.privacy || "")}</span>${d.language ? ` <span class="mv-lib-meta">${escapeHtml(d.language)}</span>` : ""}</div>
+          ${d.description ? `<div class="mv-lib-meta">${escapeHtml(d.description)}</div>` : ""}</div>
+          <button type="button" class="mv-btn" data-mact="site-pick" data-i="${i}">${d.needsSetup ? "set up" : "add"}</button>
+        </div>`).join("") : `<div class="mv-empty">No site by that name.</div>`;
+      body.innerHTML = `<button type="button" class="mv-link mv-add-back" data-mact="site-list">${ICON.back} your sites</button>
+        <form class="mv-match-form" id="mv-site-search"><input class="field-input" id="mv-site-q" value="${escapeHtml(s.q)}" placeholder="Site name" autocomplete="off" autofocus>
+          <button type="submit" class="mv-btn mv-btn-primary">${ICON.search}<span>find</span></button></form>
+        <div class="mv-match-results mv-site-list">${results}</div>`;
+      const q = el("mv-site-q");
+      if (q) q.focus();
+      return;
+    }
+    const d = s.adding;
+    const fields = (d.fields || []).map((f) => {
+      const name = `mv-sf-${f.name}`;
+      const help = f.help ? `<div class="mv-lib-meta mv-field-help">${escapeHtml(f.help)}</div>` : "";
+      if (f.type === "checkbox") return `<label class="mv-field mv-field-check"><input type="checkbox" id="${escapeHtml(name)}" ${f.value === true ? "checked" : ""}> <span>${escapeHtml(f.label)}</span></label>${help}`;
+      if (f.type === "select") return `<label class="mv-field"><span>${escapeHtml(f.label)}</span><select class="field-input" id="${escapeHtml(name)}">${(f.options || []).map((o) => `<option value="${escapeHtml(o.value)}" ${String(f.value) === String(o.value) ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}</select></label>${help}`;
+      return `<label class="mv-field"><span>${escapeHtml(f.label)}</span><input class="field-input" id="${escapeHtml(name)}" type="${f.type === "password" ? "password" : f.type === "number" ? "number" : "text"}" value="${escapeHtml(f.value ?? "")}" autocomplete="off"></label>${help}`;
+    }).join("");
+    body.innerHTML = `<button type="button" class="mv-link mv-add-back" data-mact="site-catalog">${ICON.back} all sites</button>
+      <form class="mv-form" id="mv-site-form"><div class="mv-dl-title">${escapeHtml(d.name)}</div>
+        ${d.description ? `<p class="mv-modal-intro">${escapeHtml(d.description)}</p>` : ""}
+        ${fields}
+        <ul class="field-errors" id="mv-site-errors"></ul>
+        <div class="mv-modal-foot"><button type="submit" class="mv-btn mv-btn-primary" id="mv-site-save">add site</button></div></form>`;
+  }
+
+  async function addSite(definition, fields, button) {
+    if (button) { button.disabled = true; button.classList.add("mv-working"); }
+    const res = await sitesRequest("/api/media/downloads/sites", { method: "POST", body: { definition: definition.definition, fields } });
+    if (button) { button.disabled = false; button.classList.remove("mv-working"); }
+    if (!dl.sites) return;
+    if (!res.ok) {
+      if (dl.sites.view === "form") showErrors(el("mv-site-errors"), res.error);
+      else showToast(res.error, false);
+      return;
+    }
+    showToast(`${definition.name} added`, true);
+    dl.sites.view = "list";
+    loadSites();
+  }
+
+  function submitSiteForm() {
+    const d = dl.sites && dl.sites.adding;
+    if (!d) return;
+    const fields = {};
+    for (const f of d.fields || []) {
+      const input = el(`mv-sf-${f.name}`);
+      if (!input) continue;
+      if (f.type === "checkbox") fields[f.name] = input.checked;
+      else if (f.type === "number") fields[f.name] = input.value === "" ? null : Number(input.value);
+      else if (f.type === "select") fields[f.name] = /^-?\d+$/.test(input.value) ? Number(input.value) : input.value;
+      else fields[f.name] = input.value;
+    }
+    addSite(d, fields, el("mv-site-save"));
+  }
+
+  function sitesModalClick(act, target) {
+    const s = dl.sites;
+    if (!s) return false;
+    switch (act) {
+      case "site-list": s.view = "list"; drawSites(); return true;
+      case "site-catalog": s.view = "catalog"; if (!Array.isArray(s.catalog)) loadCatalog(); else drawSites(); return true;
+      case "site-pick": {
+        const d = Array.isArray(s.catalog) ? s.catalog[Number(target.dataset.i)] : null;
+        if (!d) return true;
+        if (!d.needsSetup) { addSite(d, {}, target); return true; }
+        s.adding = d;
+        s.view = "form";
+        drawSites();
+        return true;
+      }
+      case "site-toggle": {
+        const enabled = target.checked;
+        target.disabled = true;
+        sitesRequest(`/api/media/downloads/sites/${enc(target.dataset.id)}`, { method: "PUT", body: { enabled } }).then((res) => {
+          target.disabled = false;
+          if (!res.ok) { target.checked = !enabled; showToast(res.error, false); }
+        });
+        return true;
+      }
+      case "site-remove":
+        if (!confirm("Remove this site? It is no longer searched.")) return true;
+        sitesRequest(`/api/media/downloads/sites/${enc(target.dataset.id)}`, { method: "DELETE" }).then((res) => {
+          if (!res.ok) showToast(res.error, false);
+          loadSites();
+        });
+        return true;
+      default: return false;
+    }
+  }
+
   // ---- event wiring ---------------------------------------------------------------------------
 
   function wireView() {
@@ -1841,9 +2437,13 @@ window.SentinelMovies = (function () {
         case "lib-add": openLibraryEditor(null); break;
         case "lib-edit": openLibraryEditor((libraries || []).find((l) => l.id === id) || null); break;
         case "lib-delete": deleteLibrary(id); break;
+        case "dl-add": openAdd(); break;
+        case "dl-sites": openSites(); break;
+        case "dl-cancel": case "dl-retry": case "dl-remove": downloadAction(act, id, target); break;
         default: break;
       }
     });
+    el("mv-add-btn").addEventListener("click", openAdd);
     view.addEventListener("input", (e) => {
       if (e.target.id === "mv-setup-path") el("mv-setup-hint").innerHTML = mountHint(e.target.value);
     });
@@ -1852,6 +2452,14 @@ window.SentinelMovies = (function () {
     const modal = el("mv-modal");
     modal.addEventListener("submit", (e) => {
       if (e.target.id === "mv-signin") { e.preventDefault(); submitSignIn(e.target); }
+      if (e.target.id === "mv-add-form") {
+        e.preventDefault();
+        add.q = el("mv-add-q").value.trim();
+        add.results = null;
+        lookup();
+      }
+      if (e.target.id === "mv-site-search" && dl.sites) { e.preventDefault(); dl.sites.q = el("mv-site-q").value.trim(); loadCatalog(); }
+      if (e.target.id === "mv-site-form") { e.preventDefault(); submitSiteForm(); }
     });
     modal.addEventListener("click", (e) => {
       if (e.target === modal) { closeModal(); return; }
@@ -1893,7 +2501,7 @@ window.SentinelMovies = (function () {
           break;
         }
         case "lib-save": submitLibraryForm(target); break;
-        default: break;
+        default: if (!addModalClick(target.dataset.mact, target)) sitesModalClick(target.dataset.mact, target); break;
       }
     });
   }
@@ -1904,6 +2512,7 @@ window.SentinelMovies = (function () {
     visible = true;
     const wanted = parseHash();
     refreshStatus();
+    refreshDownloadStatus();
     routeTo(wanted || route);
   }
 
@@ -1917,6 +2526,9 @@ window.SentinelMovies = (function () {
     closeModal();
     clearTimeout(statusTimer);
     statusTimer = null;
+    clearTimeout(dl.timer);
+    clearTimeout(dl.sitesTimer);
+    stopAddPoll();
   }
 
   wireView();
