@@ -45,8 +45,28 @@ mode() {
 die() { echo "sentinelcore-vpn: $*" >&2; exit 1; }
 log() { echo "sentinelcore-vpn: $*" >&2; }
 
+# Written by SentinelCore from Settings -> MOVIE DOWNLOADS -> VPN Provider (a Mullvad account or
+# another WireGuard provider's values). Preferred over the installed file when present. It is
+# owned by the app account, not root, so it is only used if every line is one of the handful a
+# WireGuard file needs - nothing in it can name a program, a script or another file.
+APP_WG=/var/lib/sentinelcore-downloads/vpn/wireguard.conf
+
+app_wg_ok() {
+    [ -f "$APP_WG" ] && [ ! -L "$APP_WG" ] || return 1
+    [ "$(stat -c %s "$APP_WG")" -lt 4096 ] || return 1
+    ! grep -vE '^[[:space:]]*(#.*)?$' "$APP_WG" | grep -qvE \
+        '^\[(Interface|Peer)\]$|^(PrivateKey|PublicKey|PresharedKey) = [A-Za-z0-9+/]{43}=$|^Address = [0-9a-fA-F.:/,]+$|^DNS = [0-9a-fA-F.:,]+$|^MTU = [0-9]{3,4}$|^AllowedIPs = [0-9a-fA-F.:/,]+$|^Endpoint = ([A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]):[0-9]{1,5}$|^PersistentKeepalive = [0-9]{1,5}$'
+}
+
+# The WireGuard file in use: SentinelCore's, when it has written a valid one.
+wg_conf() {
+    if app_wg_ok; then echo "$APP_WG"; else echo "$CONF_DIR/vpn.conf"; fi
+}
+
 config_type() {
-    if [ -f "$CONF_DIR/vpn.conf" ]; then echo wireguard
+    if [ -e "$APP_WG" ] && ! app_wg_ok; then echo refused
+    elif app_wg_ok; then echo wireguard
+    elif [ -f "$CONF_DIR/vpn.conf" ]; then echo wireguard
     elif [ -f "$CONF_DIR/vpn.ovpn" ]; then echo openvpn
     else echo none
     fi
@@ -77,14 +97,14 @@ write_nsswitch() {
 
 # The values of one [Interface] key in a WireGuard file, one per line.
 wg_values() {
-    sed -n -E "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//Ip" "$CONF_DIR/vpn.conf" | tr ',' '\n' | tr -d ' \t\r' | grep -v '^$' || true
+    sed -n -E "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//Ip" "$(wg_conf)" | tr ',' '\n' | tr -d ' \t\r' | grep -v '^$' || true
 }
 
 # The file minus wg-quick's own keys (Address, DNS, MTU, PostUp...), which `wg setconf` refuses.
 # Done here rather than with `wg-quick strip`: Ubuntu's AppArmor profiles only let wg-quick and wg
 # read /etc/wireguard, so neither can open our file even as root.
 wg_setconf_lines() {
-    grep -iE '^[[:space:]]*(\[(Interface|Peer)\][[:space:]]*$|(PrivateKey|ListenPort|FwMark|PublicKey|PresharedKey|AllowedIPs|Endpoint|PersistentKeepalive)[[:space:]]*=)' "$CONF_DIR/vpn.conf" | tr -d '\r'
+    grep -iE '^[[:space:]]*(\[(Interface|Peer)\][[:space:]]*$|(PrivateKey|ListenPort|FwMark|PublicKey|PresharedKey|AllowedIPs|Endpoint|PersistentKeepalive)[[:space:]]*=)' "$(wg_conf)" | tr -d '\r'
 }
 
 # The biggest tunnel MTU that fits the path to the VPN server. Many connections carry less than
@@ -157,7 +177,8 @@ prepare() {
     local type
     type=$(config_type)
     if [ "$(mode)" = vpn ]; then
-        [ "$type" != none ] || die "no VPN configuration. Run: sudo $SELF set-config /path/to/provider.conf"
+        [ "$type" != refused ] || die "refused $APP_WG: it holds something other than WireGuard settings. Save the VPN settings again in SentinelCore."
+        [ "$type" != none ] || die "no VPN configuration. Choose a VPN provider in SentinelCore under Settings -> MOVIE DOWNLOADS, or run: sudo $SELF set-config /path/to/provider.conf"
     else
         type=direct
     fi

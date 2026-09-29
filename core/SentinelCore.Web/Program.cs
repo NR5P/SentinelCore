@@ -248,6 +248,13 @@ builder.Services.AddHttpClient(QbittorrentClient.HttpClientName, client => clien
 builder.Services.AddHttpClient(ProwlarrClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(120))
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 builder.Services.AddHttpClient(MediaDownloadManager.HomeIpClientName, client => client.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHttpClient(MediaVpnConfig.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0");
+});
+builder.Services.AddSingleton(sp => new MediaVpnConfig(
+    sp.GetRequiredService<IHttpClientFactory>(), camerasRoot, sp.GetRequiredService<ILogger<MediaVpnConfig>>()));
 builder.Services.AddSingleton<QbittorrentClient>();
 builder.Services.AddSingleton<ProwlarrClient>();
 builder.Services.AddSingleton<IMediaDownloadStack, SystemdMediaDownloadStack>();

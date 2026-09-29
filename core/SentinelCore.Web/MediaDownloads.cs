@@ -100,6 +100,18 @@ public sealed class MediaDownloadsSettingsDto
     // On: everything the sites and peers see goes through the VPN, proven before any search or
     // download. Off: the same services reach the internet over the home connection instead.
     public bool UseVpn { get; set; } = true;
+    // Where the tunnel's WireGuard settings come from (MediaVpnConfig): the file
+    // install-downloads.sh installed, a Mullvad account (keys made and registered by this
+    // server), or any other WireGuard provider's values typed in.
+    public string VpnProvider { get; set; } = MediaVpnProviders.Installed;
+    public string MullvadAccountNumber { get; set; } = string.Empty;
+    // A Mullvad location code: a country ("se") or a city ("se-sto").
+    public string MullvadLocation { get; set; } = "se";
+    public string WireGuardPrivateKey { get; set; } = string.Empty;
+    public string WireGuardAddress { get; set; } = string.Empty;
+    public string WireGuardDns { get; set; } = string.Empty;
+    public string WireGuardServerPublicKey { get; set; } = string.Empty;
+    public string WireGuardServerEndpoint { get; set; } = string.Empty;
     public string AllowedUsers { get; set; } = "admins";
     public string ProwlarrUrl { get; set; } = "http://10.250.0.2:9696";
     public string ProwlarrApiKey { get; set; } = string.Empty;

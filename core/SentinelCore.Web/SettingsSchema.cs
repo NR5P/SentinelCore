@@ -290,6 +290,14 @@ public static class SettingsSchema
         "No known endpoints to suggest - type the address the provider gave you.",
         "Type the full address up to and including the version, e.g. https://api.example.com/v1/ - the same one the provider's own docs show in a curl example.");
 
+    // Mullvad's locations with a WireGuard server right now, from Mullvad's public server list.
+    private static readonly SettingsOptionsSourceSchema MullvadLocations = new(
+        "Mullvad locations",
+        "Lists every country and city where Mullvad has a WireGuard server right now, so you can pick one instead of looking up its code.",
+        "/api/settings/media-downloads/mullvad-locations",
+        "Mullvad's server list came back empty. Type a country code like se instead.",
+        "Type a country code (se, nl, ch, us) or a city code (se-sto, nl-ams).");
+
     private static SettingsFieldSchema Password(string name, string label, string tip) =>
         new() { Name = name, Label = label, Type = "password", Tip = tip };
 
@@ -699,6 +707,15 @@ public static class SettingsSchema
             Fields =
             [
                 Check("enabled", "Enabled", "Show \"+ Add\" and Downloads on the Movies tab. Needs MOVIES & TV turned on and a movie (or TV) library on one of this server's own disks to save into."),
+                Select("vpnProvider", "VPN Provider", "Where the VPN's settings come from. Mullvad needs only your account number: this server makes its own WireGuard key, registers it on your account as one device, and picks a server in the location below. Another WireGuard provider (ProtonVPN, IVPN, Surfshark, Windscribe, AirVPN...) takes five values from the WireGuard file its website gives you. The installed file is whatever install-downloads.sh was given - the only way to use an OpenVPN (.ovpn) provider such as NordVPN or PIA.",
+                    (MediaVpnProviders.Installed, "The file installed on the server"), (MediaVpnProviders.Mullvad, "Mullvad (account number)"), (MediaVpnProviders.WireGuard, "Another WireGuard provider")),
+                Password("mullvadAccountNumber", "Mullvad Account Number", "Mullvad only. The 16-digit number you sign in to mullvad.net with. Uses one of the account's five device slots; it shows on mullvad.net under Devices and can be removed there."),
+                Text("mullvadLocation", "Mullvad Location", "Mullvad only. A country code (se = any city in Sweden) or a city (se-sto = Stockholm). Nearby countries are faster; Sweden, the Netherlands and Switzerland are popular for downloads.", optionsSource: MullvadLocations),
+                Password("wireGuardPrivateKey", "WireGuard Private Key", "Another WireGuard provider only. The PrivateKey line of the WireGuard (.conf) file from your provider's website, under [Interface]."),
+                Text("wireGuardAddress", "WireGuard Address", "Another WireGuard provider only. The Address line under [Interface], e.g. 10.2.0.2/32 - several separated by commas."),
+                Text("wireGuardDns", "WireGuard DNS", "Another WireGuard provider only. The DNS line under [Interface], e.g. 10.2.0.1. Blank uses public DNS, still through the tunnel."),
+                Text("wireGuardServerPublicKey", "Server Public Key", "Another WireGuard provider only. The PublicKey line under [Peer]."),
+                Text("wireGuardServerEndpoint", "Server Endpoint", "Another WireGuard provider only. The Endpoint line under [Peer], e.g. 185.159.157.1:51820."),
                 Check("useVpn", "Use VPN For Movie Downloads", "On (recommended): searching and downloading only ever go through your VPN, and nothing starts until the server has proven the sites see the VPN's address and not your home's. Off: they use your home internet connection directly, so the sites, the other people sharing and your internet provider all see your home address - the Movies tab shows an amber warning while it is off."),
                 Select("allowedUsers", "Who Can Add", "Who may search and start downloads. Managing the list of sites is always admins only.",
                     ("admins", "Admins only"), ("everyone", "Everyone who can sign in")),

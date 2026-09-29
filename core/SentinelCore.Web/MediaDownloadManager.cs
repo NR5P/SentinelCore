@@ -31,6 +31,7 @@ public sealed class MediaDownloadManager(
     ProwlarrClient prowlarr,
     AppSettingsFile settings,
     IHttpClientFactory httpClientFactory,
+    MediaVpnConfig vpnConfig,
     IConfiguration configuration,
     ILogger<MediaDownloadManager> logger)
 {
@@ -74,18 +75,24 @@ public sealed class MediaDownloadManager(
             var state = await stack.StateAsync(cancellationToken);
             if (state == MediaDownloadServiceStates.NotInstalled)
                 throw new MediaDownloadException("The VPN and torrent services are not installed on this server yet. Run core/downloads/install-downloads.sh on it (see Settings -> MOVIE DOWNLOADS).");
-            // The tunnel script reads the mode when it starts, so switching the VPN on or off
-            // while everything is running means starting over.
-            if (await stack.SetUseVpnAsync(options.UseVpn, cancellationToken)
-                && state is MediaDownloadServiceStates.Running or MediaDownloadServiceStates.Starting)
+            // The tunnel script reads its settings when it starts, so a change of VPN (on/off, or
+            // another provider or location) while everything is running means starting over.
+            // Worked out only when something changed or the services are about to start - a
+            // Mullvad account is asked for a device once, not on every pass.
+            var running = state is MediaDownloadServiceStates.Running or MediaDownloadServiceStates.Starting;
+            var key = VpnSettingsKey(options);
+            if ((!running || key != _appliedVpnKey)
+                && await stack.ConfigureAsync(options.UseVpn, options.UseVpn ? await vpnConfig.BuildAsync(options, cancellationToken) : null, cancellationToken)
+                && running)
             {
-                logger.LogInformation("Movie downloads: VPN turned {State}; restarting the services", options.UseVpn ? "on" : "off");
+                logger.LogInformation("Movie downloads: VPN settings changed; restarting the services");
                 _verified = null;
                 await stack.StopAsync(cancellationToken);
                 for (var i = 0; i < 30 && await stack.StateAsync(cancellationToken) is not (MediaDownloadServiceStates.Stopped or MediaDownloadServiceStates.Failed); i++)
                     await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                 state = MediaDownloadServiceStates.Stopped;
             }
+            _appliedVpnKey = key;
             if (state is MediaDownloadServiceStates.Stopped or MediaDownloadServiceStates.Failed) await stack.StartAsync(cancellationToken);
 
             var deadline = DateTimeOffset.UtcNow + StartTimeout;
@@ -102,10 +109,22 @@ public sealed class MediaDownloadManager(
                 }
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
             }
+            if (options.UseVpn && options.VpnProvider == MediaVpnProviders.Mullvad
+                && await vpnConfig.ForgetMullvadDeviceIfGoneAsync(options, cancellationToken))
+            {
+                _appliedVpnKey = null;
+                lastProblem = "This server's key had been removed from your Mullvad account; a new one is registered on the next try.";
+            }
             throw new MediaDownloadException(lastProblem ?? "The download services did not come up.");
         }
         finally { _startLock.Release(); }
     }
+
+    private string? _appliedVpnKey;
+
+    private static string VpnSettingsKey(MediaDownloadsSettingsDto o) => string.Join("\u001f",
+        o.UseVpn, o.VpnProvider, o.MullvadAccountNumber, o.MullvadLocation, o.WireGuardPrivateKey, o.WireGuardAddress,
+        o.WireGuardDns, o.WireGuardServerPublicKey, o.WireGuardServerEndpoint);
 
     // Null when everything answers; otherwise what is still wrong.
     private async Task<string?> ProblemAsync(MediaDownloadsSettingsDto options, CancellationToken cancellationToken)

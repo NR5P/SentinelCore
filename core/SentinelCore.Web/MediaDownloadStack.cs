@@ -47,8 +47,9 @@ public interface IMediaDownloadStack
     Task StartAsync(CancellationToken cancellationToken);
     Task StopAsync(CancellationToken cancellationToken);
     Task<MediaVpnStatus> VpnStatusAsync(CancellationToken cancellationToken);
-    // Tells the tunnel whether to use the VPN the next time it starts. True when that changed.
-    Task<bool> SetUseVpnAsync(bool useVpn, CancellationToken cancellationToken);
+    // Tells the tunnel, for the next time it starts, whether to use the VPN and which WireGuard
+    // settings to use (null: the file install-downloads.sh installed). True when either changed.
+    Task<bool> ConfigureAsync(bool useVpn, string? wireGuardConfig, CancellationToken cancellationToken);
 }
 
 public sealed class SystemdMediaDownloadStack(AppSettingsFile settings, IConfiguration configuration, ILogger<SystemdMediaDownloadStack> logger) : IMediaDownloadStack
@@ -103,24 +104,45 @@ public sealed class SystemdMediaDownloadStack(AppSettingsFile settings, IConfigu
     // missing file can only ever fail safe.
     private string ModePath => configuration["MediaDownloads:NetworkModePath"] ?? "/var/lib/sentinelcore-downloads/network-mode";
 
-    public async Task<bool> SetUseVpnAsync(bool useVpn, CancellationToken cancellationToken)
+    // The WireGuard file Settings chose (Mullvad account, or another provider's values). Read by
+    // sentinelcore-vpn in preference to /etc/sentinelcore/vpn, after checking every line.
+    private string WireGuardPath => configuration["MediaDownloads:WireGuardConfigPath"] ?? "/var/lib/sentinelcore-downloads/vpn/wireguard.conf";
+
+    public async Task<bool> ConfigureAsync(bool useVpn, string? wireGuardConfig, CancellationToken cancellationToken)
     {
         if (!(await MediaDownloadManager.ReadOptionsAsync(settings, cancellationToken)).ManageServices) return false;
-        var wanted = useVpn ? "vpn" : "direct";
-        string current;
-        try { current = File.Exists(ModePath) ? (await File.ReadAllTextAsync(ModePath, cancellationToken)).Trim() : "vpn"; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { current = "vpn"; }
-        if (current == wanted) return false;
         try
         {
-            if (Path.GetDirectoryName(ModePath) is { } directory && !Directory.Exists(directory)) return false;
-            await File.WriteAllTextAsync(ModePath, wanted + "\n", cancellationToken);
-            return true;
+            var changed = await WriteIfChangedAsync(ModePath, useVpn ? "vpn\n" : "direct\n", cancellationToken);
+            changed |= await WriteIfChangedAsync(WireGuardPath, wireGuardConfig, cancellationToken);
+            return changed;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new InvalidOperationException($"Could not switch the VPN {(useVpn ? "on" : "off")}: {ex.Message}");
+            throw new InvalidOperationException($"Could not update the VPN settings for the tunnel: {ex.Message}. Run install-downloads.sh again.");
         }
+    }
+
+    // Null content deletes the file. Files are this account's own and only readable by it.
+    private static async Task<bool> WriteIfChangedAsync(string path, string? content, CancellationToken cancellationToken)
+    {
+        var exists = File.Exists(path);
+        if (content is null)
+        {
+            if (!exists) return false;
+            File.Delete(path);
+            return true;
+        }
+        if (exists && await File.ReadAllTextAsync(path, cancellationToken) == content) return false;
+        var directory = Path.GetDirectoryName(path)!;
+        // install-downloads.sh makes these folders; without them there is no tunnel to configure.
+        if (!Directory.Exists(Path.GetDirectoryName(directory)!)) return false;
+        Directory.CreateDirectory(directory);
+        var temporary = path + ".tmp";
+        await File.WriteAllTextAsync(temporary, content, cancellationToken);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        File.Move(temporary, path, overwrite: true);
+        return true;
     }
 
     // The watcher writes ipinfo.io's answer as-is when the tunnel works, or { "error": "..." }

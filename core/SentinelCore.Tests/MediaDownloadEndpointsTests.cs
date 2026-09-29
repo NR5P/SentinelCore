@@ -26,6 +26,7 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
     private readonly FakeStack _stack = new();
     private readonly FakeQbittorrent _qbittorrent = new();
     private readonly FakeProwlarr _prowlarr = new();
+    private readonly FakeMullvad _mullvad = new();
 
     public MediaDownloadEndpointsTests()
     {
@@ -65,6 +66,7 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                 services.AddHttpClient(QbittorrentClient.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => _qbittorrent);
                 services.AddHttpClient(ProwlarrClient.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => _prowlarr);
                 services.AddHttpClient(MediaDownloadManager.HomeIpClientName).ConfigurePrimaryHttpMessageHandler(() => new StaticHandler("203.0.113.9"));
+                services.AddHttpClient(MediaVpnConfig.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => _mullvad);
                 // The test drives the worker itself, one pass at a time.
                 var worker = services.First(s => s.ImplementationType == typeof(MediaDownloadWorker));
                 services.Remove(worker);
@@ -399,9 +401,11 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         public Task StopAsync(CancellationToken cancellationToken) { Stops++; State = MediaDownloadServiceStates.Stopped; return Task.CompletedTask; }
         public Task<MediaVpnStatus> VpnStatusAsync(CancellationToken cancellationToken) => Task.FromResult(Vpn);
         public bool UseVpn = true;
-        public Task<bool> SetUseVpnAsync(bool useVpn, CancellationToken cancellationToken)
+        public string? WireGuard;
+        public Task<bool> ConfigureAsync(bool useVpn, string? wireGuardConfig, CancellationToken cancellationToken)
         {
-            var changed = UseVpn != useVpn;
+            var changed = UseVpn != useVpn || WireGuard != wireGuardConfig;
+            WireGuard = wireGuardConfig;
             UseVpn = useVpn;
             return Task.FromResult(changed);
         }
@@ -508,6 +512,179 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
             }
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
+    }
+
+    // Mullvad's API as far as MediaVpnConfig uses it: sign in, register a device, the server list.
+    private sealed class FakeMullvad : HttpMessageHandler
+    {
+        public const string Account = "1234567812345678";
+        public readonly List<string> RegisteredKeys = [];
+        public bool Full;
+        public readonly HashSet<string> Removed = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/auth/v1/token")
+            {
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                return body.Contains(Account) ? Json("""{ "access_token": "tok", "expiry": "2030-01-01T00:00:00Z" }""") : Json("""{ "code": "INVALID_ACCOUNT" }""", HttpStatusCode.BadRequest);
+            }
+            if (path == "/accounts/v1/devices" && request.Method == HttpMethod.Post)
+            {
+                if (Full) return Json("""{ "code": "MAX_DEVICES_REACHED" }""", HttpStatusCode.BadRequest);
+                using var doc = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                RegisteredKeys.Add(doc.RootElement.GetProperty("pubkey").GetString()!);
+                var n = RegisteredKeys.Count;
+                return Json($$"""{ "id": "dev{{n}}", "name": "happy otter {{n}}", "ipv4_address": "10.64.0.{{n}}/32", "ipv6_address": "fc00:bbbb::{{n}}/128" }""", HttpStatusCode.Created);
+            }
+            if (path.StartsWith("/accounts/v1/devices/", StringComparison.Ordinal))
+                return Removed.Contains(path.Split('/').Last()) ? new HttpResponseMessage(HttpStatusCode.NotFound) : Json("{}");
+            if (path == "/public/relays/wireguard/v2")
+                return Json("""
+                    { "locations": { "se-sto": { "country": "Sweden", "city": "Stockholm" }, "se-got": { "country": "Sweden", "city": "Gothenburg" }, "nl-ams": { "country": "Netherlands", "city": "Amsterdam" } },
+                      "wireguard": { "relays": [
+                        { "hostname": "se-sto-wg-001", "location": "se-sto", "active": true, "owned": true, "ipv4_addr_in": "185.195.233.76", "public_key": "MkP/Jytkg51/Y/EostONjIN6YaFRpsAYiNKMX27/CAY=" },
+                        { "hostname": "se-got-wg-001", "location": "se-got", "active": false, "owned": true, "ipv4_addr_in": "185.213.154.1", "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
+                        { "hostname": "nl-ams-wg-001", "location": "nl-ams", "active": true, "owned": false, "ipv4_addr_in": "193.32.249.66", "public_key": "UrQiI9ISdPPzd4ARw1NHOPKKvKvxUhjwRjaI0JpJFgM=" } ] } }
+                    """);
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+    }
+
+    private void WriteVpnSettings(string extra) => File.WriteAllText(_settingsPath, $$"""
+        {
+          "Auth": { "Enabled": false },
+          "Media": { "Enabled": true },
+          "MediaDownloads": { "Enabled": true, "UseVpn": true, "ProwlarrApiKey": "test-key", "IdleMinutes": 1, {{extra}} }
+        }
+        """);
+
+    [Fact]
+    public async Task Mullvad_AccountNumberAlone_RegistersOneDevice_AndWritesTheTunnelsWireGuardFile()
+    {
+        WriteVpnSettings($$"""
+            "VpnProvider": "mullvad", "MullvadAccountNumber": "1234 5678 1234 5678", "MullvadLocation": "se"
+            """);
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.195.233.76", "Stockholm", null, "SE");
+
+        var test = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.True(test.GetProperty("ok").GetBoolean(), test.GetRawText());
+
+        // Only the active Swedish server qualifies; the key in the file is the one registered.
+        var config = _stack.WireGuard!;
+        Assert.Contains("Endpoint = 185.195.233.76:51820", config);
+        Assert.Contains("PublicKey = MkP/Jytkg51/Y/EostONjIN6YaFRpsAYiNKMX27/CAY=", config);
+        Assert.Contains("Address = 10.64.0.1/32,fc00:bbbb::1/128", config);
+        Assert.Contains("DNS = 10.64.0.1", config);
+        var privateKey = System.Text.RegularExpressions.Regex.Match(config, @"PrivateKey = (\S+)").Groups[1].Value;
+        var derived = Convert.ToBase64String(new Org.BouncyCastle.Crypto.Parameters.X25519PrivateKeyParameters(Convert.FromBase64String(privateKey)).GeneratePublicKey().GetEncoded());
+        Assert.Equal(Assert.Single(_mullvad.RegisteredKeys), derived);
+
+        // The services stop and start again later: same device, no new slot used.
+        _stack.State = MediaDownloadServiceStates.Stopped;
+        await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Single(_mullvad.RegisteredKeys);
+
+        // A new location picks a server there and restarts the tunnel, still with the same device.
+        WriteVpnSettings($$"""
+            "VpnProvider": "mullvad", "MullvadAccountNumber": "1234567812345678", "MullvadLocation": "nl-ams"
+            """);
+        var stops = _stack.Stops;
+        await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Contains("Endpoint = 193.32.249.66:51820", _stack.WireGuard);
+        Assert.Contains($"PrivateKey = {privateKey}", _stack.WireGuard);
+        Assert.Single(_mullvad.RegisteredKeys);
+        Assert.Equal(stops + 1, _stack.Stops);
+
+        // Removed on mullvad.net: noticed when the tunnel will not come up, and a new one is made.
+        _mullvad.Removed.Add("dev1");
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Down, Error: "The VPN is not reaching the internet (timed out)");
+        var failed = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Contains("removed from your Mullvad account", failed.GetProperty("message").GetString());
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "193.32.249.66");
+        await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Equal(2, _mullvad.RegisteredKeys.Count);
+    }
+
+    [Fact]
+    public async Task Mullvad_AFullAccountOrAWrongNumber_IsSaidPlainly()
+    {
+        WriteVpnSettings($$"""
+            "VpnProvider": "mullvad", "MullvadAccountNumber": "1234567812345678", "MullvadLocation": "se"
+            """);
+        _mullvad.Full = true;
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var full = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.False(full.GetProperty("ok").GetBoolean());
+        Assert.Contains("maximum of 5 devices", full.GetProperty("message").GetString());
+        Assert.Equal(0, _stack.Starts);
+
+        WriteVpnSettings($$"""
+            "VpnProvider": "mullvad", "MullvadAccountNumber": "9999888877776666", "MullvadLocation": "se"
+            """);
+        var wrong = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Contains("did not recognise that account number", wrong.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task OtherWireGuardProvider_FieldsBecomeTheTunnelsFile_AndBadValuesAreRefusedOnSave()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var bad = await client.PutAsJsonAsync("/api/settings/media-downloads", new
+        {
+            enabled = true, useVpn = true, vpnProvider = "wireguard", idleMinutes = 5, preferredQuality = "1080p", allowedUsers = "admins",
+            wireGuardPrivateKey = "not-a-key", wireGuardAddress = "10.2.0.2", wireGuardServerPublicKey = "", wireGuardServerEndpoint = "vpn.example.net"
+        }, Ct);
+        var errors = (await JsonAsync(bad, HttpStatusCode.BadRequest)).GetRawText();
+        Assert.Contains("WireGuard Private Key", errors);
+        Assert.Contains("WireGuard Address", errors);
+        Assert.Contains("Server Public Key", errors);
+        Assert.Contains("Server Endpoint", errors);
+
+        var good = await client.PutAsJsonAsync("/api/settings/media-downloads", new
+        {
+            enabled = true, useVpn = true, vpnProvider = "wireguard", idleMinutes = 5, preferredQuality = "1080p", allowedUsers = "admins",
+            prowlarrApiKey = "test-key", wireGuardPrivateKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", wireGuardAddress = "10.2.0.2/32",
+            wireGuardDns = "10.2.0.1", wireGuardServerPublicKey = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=", wireGuardServerEndpoint = "185.159.157.1:51820"
+        }, Ct);
+        await JsonAsync(good, HttpStatusCode.OK);
+
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.159.157.1");
+        await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Equal("""
+            [Interface]
+            PrivateKey = AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=
+            Address = 10.2.0.2/32
+            DNS = 10.2.0.1
+
+            [Peer]
+            PublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=
+            AllowedIPs = 0.0.0.0/0,::/0
+            Endpoint = 185.159.157.1:51820
+
+            """.ReplaceLineEndings("\n"), _stack.WireGuard);
+        Assert.Empty(_mullvad.RegisteredKeys);
+
+        // Back to the installed file: the tunnel is told to forget the typed-in one.
+        WriteSettings(enabled: true);
+        await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Null(_stack.WireGuard);
+    }
+
+    [Fact]
+    public async Task MullvadLocations_ListCountriesAndCitiesWithAnActiveServer()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var options = (await JsonAsync(await client.GetAsync("/api/settings/media-downloads/mullvad-locations", Ct), HttpStatusCode.OK)).GetProperty("options");
+        Assert.Equal(
+            [("nl", "Netherlands - any city"), ("nl-ams", "Netherlands - Amsterdam"), ("se", "Sweden - any city"), ("se-sto", "Sweden - Stockholm")],
+            options.EnumerateArray().Select(o => (o.GetProperty("value").GetString(), o.GetProperty("label").GetString())));
     }
 
     private sealed class StaticHandler(string body) : HttpMessageHandler

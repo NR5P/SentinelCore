@@ -187,14 +187,32 @@ public static class SettingsEndpoints
             return await SaveSectionAsync(dto, appSettings, MediaSettingsDto.SectionName, ct);
         });
 
+        // MOVIE DOWNLOADS -> Mullvad Location's list (SettingsOptionsSourceSchema contract).
+        settings.MapGet("/media-downloads/mullvad-locations", async (MediaVpnConfig vpn, CancellationToken ct) =>
+        {
+            try { return Results.Ok(new { options = await vpn.MullvadLocationsAsync(ct) }); }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+            {
+                return Results.Json(new { error = "Could not fetch Mullvad's server list: " + ex.Message }, statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
         settings.MapPut("/media-downloads", async (MediaDownloadsSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
         {
             dto.ProwlarrUrl = dto.ProwlarrUrl?.Trim() ?? string.Empty;
             dto.QbittorrentUrl = dto.QbittorrentUrl?.Trim() ?? string.Empty;
             dto.ProwlarrApiKey = dto.ProwlarrApiKey?.Trim() ?? string.Empty;
             dto.QbittorrentUsername = dto.QbittorrentUsername?.Trim() ?? string.Empty;
+            dto.VpnProvider = dto.VpnProvider?.Trim().ToLowerInvariant() ?? MediaVpnProviders.Installed;
+            dto.MullvadLocation = dto.MullvadLocation?.Trim().ToLowerInvariant() ?? "se";
+            dto.WireGuardAddress = dto.WireGuardAddress?.Trim() ?? string.Empty;
+            dto.WireGuardDns = dto.WireGuardDns?.Trim() ?? string.Empty;
+            dto.WireGuardServerPublicKey = dto.WireGuardServerPublicKey?.Trim() ?? string.Empty;
+            dto.WireGuardServerEndpoint = dto.WireGuardServerEndpoint?.Trim() ?? string.Empty;
+            // Secrets arrive masked when unchanged; judge them after SaveSectionAsync unmasks them.
             return await SaveSectionAsync(dto, appSettings, MediaDownloadsSettingsDto.SectionName, ct, extra =>
             {
+                extra.AddRange(MediaVpnConfig.Validate(dto));
                 if (dto.AllowedUsers is not ("admins" or "everyone")) extra.Add("Who Can Add must be admins or everyone.");
                 if (dto.PreferredQuality is not ("720p" or "1080p" or "2160p" or MediaDownloadsSettingsDto.QualityAny))
                     extra.Add("Preferred Quality must be 720p, 1080p, 2160p or any.");

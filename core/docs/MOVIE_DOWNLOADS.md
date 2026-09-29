@@ -66,13 +66,41 @@ here can check it.
 ## Settings section `mediaDownloads` (`PUT /api/settings/media-downloads`)
 
 ```json
-{ "enabled": false, "allowedUsers": "admins|everyone", "preferredQuality": "1080p|2160p|720p|any",
-  "seedMinutes": 0, "idleMinutes": 5, "requireVpn": true, "manageServices": true,
+{ "enabled": false, "useVpn": true,
+  "vpnProvider": "installed|mullvad|wireguard",
+  "mullvadAccountNumber": "", "mullvadLocation": "se",
+  "wireGuardPrivateKey": "", "wireGuardAddress": "", "wireGuardDns": "",
+  "wireGuardServerPublicKey": "", "wireGuardServerEndpoint": "",
+  "allowedUsers": "admins|everyone", "preferredQuality": "1080p|2160p|720p|any",
+  "seedMinutes": 0, "idleMinutes": 5, "manageServices": true,
   "prowlarrUrl": "http://10.250.0.2:9696", "prowlarrApiKey": "",
   "qbittorrentUrl": "http://10.250.0.2:8080", "qbittorrentUsername": "", "qbittorrentPassword": "" }
 ```
 
 A blank `prowlarrApiKey` is read from `/var/lib/sentinelcore-downloads/prowlarr/config.xml`.
+
+- **`useVpn`** (default on). Off: `sentinelcore-vpn` routes the namespace through the host's own
+  connection (nftables masquerade, `net.ipv4.ip_forward` on only while running, restored after)
+  instead of the tunnel, the home-address check is skipped and `vpn.state` is `disabled` so every
+  app shows an amber warning. SentinelCore passes the choice to the root side as one word in
+  `/var/lib/sentinelcore-downloads/network-mode`; anything but `direct` means the VPN.
+- **`vpnProvider`**: `installed` = the file `install-downloads.sh --vpn-config` put in
+  `/etc/sentinelcore/vpn` (WireGuard or OpenVPN; the only way to use OpenVPN). `mullvad` = only
+  the account number: the server makes an X25519 key, registers it once as a device
+  (`api.mullvad.net/accounts/v1/devices`), picks an active server in `mullvadLocation` (a country
+  `se` or city `se-sto`; owned servers first) and remembers all of it in
+  `<data>/media-downloads-mullvad.json` (0600), so restarts reuse the same device. If the tunnel
+  will not come up and the device is gone from the account, the next try registers a new one.
+  `wireguard` = the five values from any provider's WireGuard file. For both, SentinelCore writes
+  `/var/lib/sentinelcore-downloads/vpn/wireguard.conf`, which `sentinelcore-vpn` (root) uses only if
+  it is a regular file under 4 KB whose every line is a WireGuard key, address, DNS, MTU, allowed
+  IPs, endpoint or keepalive - no PostUp, no paths, no symlinks.
+- `GET /api/settings/media-downloads/mullvad-locations` (admin) → `{ "options": [ { "value": "se", "label": "Sweden - any city" }, { "value": "se-sto", "label": "Sweden - Stockholm" } ] }`
+  (the Mullvad Location field's options source).
+- The tunnel measures the path MTU to the VPN server when it starts (don't-fragment pings; tunnel
+  MTU = largest passing size - 80, else 1280) unless the WireGuard file sets `MTU`. Connections
+  such as T-Mobile Home Internet carry ~1440 bytes, where the usual 1420 passes the handshake and
+  DNS but hangs every TLS connection.
 
 ## API
 
@@ -90,12 +118,30 @@ Sites routes are admin only.
   "movieLibrary": true, "showLibrary": false,
   "status": { "enabled": true, "services": "running|starting|stopped|failed|notInstalled|external",
               "idleMinutes": 5,
-              "vpn": { "state": "connected|connecting|down|off|unknown", "required": true, "ip": "185.65.134.1",
+              "vpn": { "state": "connected|connecting|down|off|unknown|disabled", "required": true,
+                       "verified": true, "verifiedAt": "…", "ip": "185.65.134.1",
                        "location": "Stockholm, SE", "country": "SE", "provider": "AS39351 31173 Services AB",
                        "checkedAt": "…", "error": null } } }
 ```
 
 Show "+ Add" when `canDownload`. `services: stopped` with `vpn.state: off` is the normal idle state.
+`required` is the `useVpn` setting. `verified` means the address the sites see was compared with
+the server's own (api.ipify.org) and differs. `disabled` means Use VPN is off: `ip`, `location`,
+`country`, `provider` and `error` are null, and downloads use the home connection.
+
+**The VPN light** (every app shows it near "+ Add", and the same wording on the Downloads screen):
+
+| look | when | words |
+|---|---|---|
+| green | `connected` and `verified` | "VPN · SE" / "Connected and verified · Stockholm, SE · ip · your home address is hidden" |
+| cyan, pulsing | `connected` not yet verified, `connecting`, or `services: starting` | "Connecting…" / "checking it hides your home address…" |
+| grey | `off` / `unknown` (idle) or `services: external` | "VPN idle" / "Off until someone searches or downloads, then it connects by itself." |
+| amber | `disabled` | "VPN off" / "Turned off in Settings · searching and downloading use your home connection, so the sites see your home address." |
+| red | `services: notInstalled` or `failed`, or `vpn.state: down` | "VPN problem" / `vpn.error` or "not installed" |
+
+`POST /api/media/downloads/vpn/test` (anyone who can download) → `{ "ok": true, "message": "Working. The sites see 185.195.233.76 in Stockholm, SE, not your home address.", "status": {…as above} }`.
+Starts everything if needed, so it can take up to a minute; `ok: false` carries what is wrong in
+`message`. Show `message` as the result and redraw the light from `status`.
 
 ### 1. Find the title (TMDB)
 

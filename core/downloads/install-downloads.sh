@@ -3,10 +3,15 @@
 # qBittorrent and Prowlarr, confined to a network namespace whose only way out is your VPN, as
 # systemd units SentinelCore starts and stops by itself. No Docker. Run once, with sudo:
 #
+#   sudo ./install-downloads.sh
 #   sudo ./install-downloads.sh --vpn-config ~/Downloads/mullvad-se-sto.conf
 #   sudo ./install-downloads.sh --vpn-config ~/nordvpn/us1234.nordvpn.com.udp.ovpn --vpn-user X --vpn-pass Y
 #
-# The VPN file is what your provider's website gives you for "manual" or "router" setup:
+# With no VPN file, pick the VPN afterwards in SentinelCore (Settings -> MOVIE DOWNLOADS -> VPN
+# Provider): a Mullvad account number is all Mullvad needs, and other WireGuard providers take
+# five values from their config page. A file given here is the "installed" choice there, and the
+# only way to use an OpenVPN provider. It is what your provider's website gives you for "manual"
+# or "router" setup:
 #   WireGuard .conf - Mullvad, ProtonVPN, IVPN, Surfshark, Windscribe, AirVPN, ...
 #   OpenVPN .ovpn   - NordVPN, PIA, ExpressVPN, CyberGhost, and nearly everyone else
 #                     (--vpn-user/--vpn-pass are the provider's *service* credentials, which
@@ -42,7 +47,7 @@ while [ $# -gt 0 ]; do
         --user) APP_USER=$2; shift 2 ;;
         --skip-test) SKIP_TEST=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
-        -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
     esac
 done
@@ -66,8 +71,11 @@ if [ "$UNINSTALL" -eq 1 ]; then
 fi
 
 [ -n "$APP_USER" ] && id "$APP_USER" >/dev/null 2>&1 || die "say which account SentinelCore runs as with --user NAME"
-if [ -z "$VPN_CONFIG" ] && [ ! -f /etc/sentinelcore/vpn/vpn.conf ] && [ ! -f /etc/sentinelcore/vpn/vpn.ovpn ]; then
-    die "give your VPN provider's configuration file with --vpn-config FILE (WireGuard .conf or OpenVPN .ovpn)"
+if [ -z "$VPN_CONFIG" ] && [ ! -f /etc/sentinelcore/vpn/vpn.conf ] && [ ! -f /etc/sentinelcore/vpn/vpn.ovpn ] && [ ! -f "$DATA/vpn/wireguard.conf" ]; then
+    # Fine: Mullvad or another WireGuard provider can be chosen in SentinelCore's settings
+    # afterwards. There is just nothing to test the tunnel with yet.
+    echo "No VPN file given: choose the VPN in SentinelCore under Settings -> MOVIE DOWNLOADS -> VPN Provider afterwards."
+    SKIP_TEST=1
 fi
 [ -z "$VPN_CONFIG" ] || [ -f "$VPN_CONFIG" ] || die "$VPN_CONFIG does not exist"
 
@@ -153,6 +161,8 @@ EOF
 fi
 # Settings -> MOVIE DOWNLOADS -> Use VPN writes this; the tunnel reads it when it starts.
 [ -f "$DATA/network-mode" ] || echo vpn > "$DATA/network-mode"
+# ...and VPN Provider writes its WireGuard file here.
+install -d -m 700 "$DATA/vpn"
 chown -R "$APP_USER:$APP_USER" "$DATA"
 chmod 700 "$DATA/prowlarr"
 
