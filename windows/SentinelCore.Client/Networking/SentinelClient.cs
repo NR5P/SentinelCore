@@ -881,6 +881,11 @@ public sealed partial class SentinelClient : IDisposable
     /// </summary>
     public Uri? Url(string path, IEnumerable<KeyValuePair<string, string>>? query = null)
     {
+        // Movie downloads hand back TMDB posters as absolute https:// URLs rather than server
+        // paths; those are used as they are. The cookie container only ever sends the session
+        // cookie to the server's own host, so fetching them leaks nothing.
+        if (query is null && IsAbsoluteWebUrl(path, out var absolute)) return absolute;
+
         if (ServerAddress.Normalize(_activeServerUrl()) is not { } baseAddress) return null;
         if (!Uri.TryCreate(baseAddress, UriKind.Absolute, out var baseUri)) return null;
 
@@ -901,6 +906,17 @@ public sealed partial class SentinelClient : IDisposable
             }
         }
         return builder.Uri;
+    }
+
+    private static bool IsAbsoluteWebUrl(string path, out Uri? uri)
+    {
+        uri = null;
+        if (!path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            && !path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        return Uri.TryCreate(path, UriKind.Absolute, out uri);
     }
 
     /// <summary>
@@ -1067,7 +1083,12 @@ public sealed partial class SentinelClient : IDisposable
 
             var message = ExtractErrorMessage(data);
             if (response.StatusCode == HttpStatusCode.Unauthorized) throw new SentinelAuthenticationRequiredException();
-            throw new SentinelServerException((int)response.StatusCode, message) { NeedsLogin = ExtractNeedsLogin(data) };
+            var flags = ExtractErrorFlags(data);
+            throw new SentinelServerException((int)response.StatusCode, message)
+            {
+                NeedsLogin = flags?.NeedsLogin == true,
+                Starting = flags?.Starting == true,
+            };
         }
     }
 
@@ -1108,18 +1129,20 @@ public sealed partial class SentinelClient : IDisposable
         }
     }
 
-    // Only the Movies & TV network sign-in sends this: whether a different username or password
-    // would get past the failure, so the form stays open rather than reporting a dead end.
-    private static bool ExtractNeedsLogin(byte[] data)
+    // The two flags an error body can carry besides its message. needsLogin: only the Movies & TV
+    // network sign-in sends it - whether a different username or password would get past the
+    // failure, so the form stays open rather than reporting a dead end. starting: the movie-download
+    // site routes' 503 while the VPN comes up, so the caller asks again instead of giving up.
+    private static ApiError? ExtractErrorFlags(byte[] data)
     {
-        if (data.Length == 0) return false;
+        if (data.Length == 0) return null;
         try
         {
-            return JsonSerializer.Deserialize<ApiError>(data, JsonOptions)?.NeedsLogin == true;
+            return JsonSerializer.Deserialize<ApiError>(data, JsonOptions);
         }
         catch (JsonException)
         {
-            return false;
+            return null;
         }
     }
 
@@ -1223,4 +1246,10 @@ public sealed class SentinelServerException(int status, string? serverMessage)
 
     /// <summary>The error body said <c>needsLogin: true</c>: signing in (again) would fix it.</summary>
     public bool NeedsLogin { get; init; }
+
+    /// <summary>
+    /// The error body said <c>starting: true</c> (a movie-download site route's 503): the VPN and
+    /// its services are still coming up, and the same request will work in a few seconds.
+    /// </summary>
+    public bool Starting { get; init; }
 }

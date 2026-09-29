@@ -1,0 +1,314 @@
+using System.Globalization;
+using System.Text.Json;
+using SentinelCore.Client.Models;
+
+namespace SentinelCore.Client;
+
+/// <summary>
+/// The wording and small decisions of movie downloads - sizes, speeds, time left, the VPN line,
+/// a release's chips, which season to open on - as pure functions, so they can be checked without
+/// a window. They follow the web dashboard's Movies tab (core/SentinelCore.Web/wwwroot/movies.js,
+/// "downloads (+ add)") so every app says the same thing.
+/// </summary>
+public static class MediaDownloadText
+{
+    /// <summary>The states a download is still moving in.</summary>
+    public static bool IsActiveState(string? state) =>
+        state is "queued" or "downloading" or "seeding" or "importing";
+
+    /// <summary>A state in words: "sharing back" rather than "seeding".</summary>
+    public static string StateWord(string? state) => state switch
+    {
+        "queued" => "waiting",
+        "downloading" => "downloading",
+        "seeding" => "sharing back",
+        "importing" => "adding to library",
+        "done" => "ready",
+        "failed" => "failed",
+        "canceled" => "canceled",
+        null => "",
+        _ => state,
+    };
+
+    public static string Plural(long count, string word) => $"{count} {word}{(count == 1 ? "" : "s")}";
+
+    /// <summary>"6.4 GB", "400 MB"; "" for nothing or an unknown size.</summary>
+    public static string SizeLabel(long? bytes, CultureInfo? culture = null)
+    {
+        var b = bytes ?? 0;
+        if (b <= 0) return "";
+        culture ??= CultureInfo.CurrentCulture;
+        if (b >= 1_000_000_000) return $"{(b / 1e9).ToString("0.0", culture)} GB";
+        return $"{Math.Max(1, (long)Math.Round(b / 1e6, MidpointRounding.AwayFromZero))} MB";
+    }
+
+    /// <summary>"3.1 MB/s", "250 KB/s"; "" when nothing is moving.</summary>
+    public static string SpeedLabel(long? bytesPerSecond, CultureInfo? culture = null)
+    {
+        var b = bytesPerSecond ?? 0;
+        if (b <= 0) return "";
+        culture ??= CultureInfo.CurrentCulture;
+        if (b >= 1_000_000) return $"{(b / 1e6).ToString("0.0", culture)} MB/s";
+        return $"{Math.Max(1, (long)Math.Round(b / 1e3, MidpointRounding.AwayFromZero))} KB/s";
+    }
+
+    /// <summary>"about a minute left", "12 min left", "2 h 5 min left"; "" when unknown.</summary>
+    public static string EtaLabel(long? seconds)
+    {
+        var s = seconds ?? 0;
+        if (s <= 0) return "";
+        if (s < 90) return "about a minute left";
+        if (s < 3600) return $"{(long)Math.Round(s / 60d, MidpointRounding.AwayFromZero)} min left";
+        return $"{s / 3600} h {(long)Math.Round(s % 3600 / 60d, MidpointRounding.AwayFromZero)} min left";
+    }
+
+    /// <summary>Progress to one decimal place: "42%", "42.5%".</summary>
+    public static string PercentLabel(double? progress, CultureInfo? culture = null)
+    {
+        culture ??= CultureInfo.CurrentCulture;
+        var percent = Math.Round(Math.Clamp(progress ?? 0, 0, 1) * 1000, MidpointRounding.AwayFromZero) / 10;
+        return $"{percent.ToString("0.#", culture)}%";
+    }
+
+    /// <summary>How full the bar is: a download's own progress, empty while queued, full once past downloading.</summary>
+    public static double BarFraction(MediaDownload download) => download.State switch
+    {
+        "downloading" => Math.Clamp(download.Progress ?? 0, 0, 1),
+        "queued" => 0,
+        _ => 1,
+    };
+
+    /// <summary>"just now", "5 min ago", "3 h ago", "2 d ago", then the date - the web's wording.</summary>
+    public static string AgeLabel(DateTimeOffset? at, DateTimeOffset now, CultureInfo? culture = null)
+    {
+        if (at is not { } moment) return "";
+        var seconds = (now - moment).TotalSeconds;
+        if (seconds < 60) return "just now";
+        if (seconds < 3600) return $"{(long)Math.Round(seconds / 60, MidpointRounding.AwayFromZero)} min ago";
+        if (seconds < 86400) return $"{(long)Math.Round(seconds / 3600, MidpointRounding.AwayFromZero)} h ago";
+        if (seconds < 86400 * 7) return $"{(long)Math.Round(seconds / 86400, MidpointRounding.AwayFromZero)} d ago";
+        return moment.ToLocalTime().ToString("d MMM yyyy", culture ?? CultureInfo.CurrentCulture);
+    }
+
+    /// <summary>
+    /// The facts line under a download: while active the percentage (or the state), speed, time
+    /// left, size and peers; once finished the state, size, who asked and when.
+    /// </summary>
+    public static IReadOnlyList<string> DownloadFacts(MediaDownload d, DateTimeOffset now, CultureInfo? culture = null)
+    {
+        var downloading = d.State == "downloading";
+        var facts = d.IsActive
+            ? new[]
+            {
+                downloading ? PercentLabel(d.Progress, culture) : StateWord(d.State),
+                downloading ? SpeedLabel(d.SpeedBytesPerSecond, culture) : "",
+                downloading ? EtaLabel(d.EtaSeconds) : "",
+                SizeLabel(d.SizeBytes, culture),
+                downloading && d.Peers is > 0 ? Plural(d.Peers.Value, "peer") : "",
+            }
+            : new[]
+            {
+                StateWord(d.State),
+                SizeLabel(d.SizeBytes, culture),
+                string.IsNullOrWhiteSpace(d.RequestedBy) ? "" : $"by {d.RequestedBy}",
+                AgeLabel(d.FinishedAt ?? d.CreatedAt, now, culture),
+            };
+        return facts.Where(fact => fact.Length > 0).ToList();
+    }
+
+    /// <summary>A release's labels, in order: quality, codec, source, HDR, whole season.</summary>
+    public static IReadOnlyList<string> ReleaseChips(MediaRelease release)
+    {
+        var chips = new List<string>();
+        if (!string.IsNullOrWhiteSpace(release.Quality)) chips.Add(release.Quality!);
+        if (!string.IsNullOrWhiteSpace(release.Codec)) chips.Add(release.Codec!);
+        if (!string.IsNullOrWhiteSpace(release.Source)) chips.Add(release.Source!);
+        if (release.Hdr == true) chips.Add("HDR");
+        if (release.SeasonPack == true) chips.Add("whole season");
+        return chips;
+    }
+
+    /// <summary>The line under a release: size, how many are sharing it, the site, how old.</summary>
+    public static IReadOnlyList<string> ReleaseFacts(MediaRelease release, DateTimeOffset now, CultureInfo? culture = null)
+    {
+        var facts = new[]
+        {
+            SizeLabel(release.SizeBytes, culture),
+            release.Seeders is { } seeders ? $"{seeders} sharing" : "",
+            release.Site ?? "",
+            AgeLabel(release.PublishedAt, now, culture),
+        };
+        return facts.Where(fact => fact.Length > 0).ToList();
+    }
+
+    /// <summary>
+    /// The season a show opens on: the first real season (not specials) with an episode that is
+    /// out and not in the library yet, else the first season listed, else none.
+    /// </summary>
+    public static int? FirstSeasonToOffer(IReadOnlyList<MediaDownloadSeason> seasons)
+    {
+        var gap = seasons.FirstOrDefault(season =>
+            season.Number is > 0 && season.Episodes.Any(episode => episode.IsAired && !episode.IsInLibrary));
+        return (gap ?? seasons.FirstOrDefault())?.Number;
+    }
+
+    /// <summary>"S1", "Specials", with a tick once every episode is in the library.</summary>
+    public static string SeasonTabLabel(MediaDownloadSeason season)
+    {
+        var label = season.SeasonNumber == 0 ? "Specials" : $"S{season.SeasonNumber}";
+        var complete = season.EpisodeCount is > 0 && season.OwnedCount == season.EpisodeCount;
+        return complete ? $"{label} ✓" : label;
+    }
+
+    /// <summary>"Season 2 · 52 episodes · 10 in library".</summary>
+    public static string SeasonSummary(MediaDownloadSeason season)
+    {
+        var name = string.IsNullOrWhiteSpace(season.Name) ? $"Season {season.SeasonNumber}" : season.Name!;
+        var parts = new List<string> { name, Plural(season.EpisodeCount ?? season.Episodes.Count, "episode") };
+        if (season.OwnedCount is > 0) parts.Add($"{season.OwnedCount} in library");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>"1 Oct 2018 · in library", "· not out yet" - the small line under an episode's name.</summary>
+    public static string EpisodeDetail(MediaDownloadEpisode episode, CultureInfo? culture = null)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(episode.AirDate))
+        {
+            parts.Add(DateOnly.TryParseExact(episode.AirDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+                ? date.ToString("d MMM yyyy", culture ?? CultureInfo.CurrentCulture)
+                : episode.AirDate!);
+        }
+        if (episode.IsInLibrary) parts.Add("in library");
+        if (!episode.IsAired) parts.Add("not out yet");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>What a search is for: "Dune: Part Two (2024)", "Bluey (2018) · S02E05", "Bluey · season 2".</summary>
+    public static string SearchWhat(MediaDownloadSearchInput input)
+    {
+        var what = input.Year is { } year ? $"{input.Title} ({year})" : input.Title;
+        if (input.Season is not { } season) return what;
+        return input.Episode is { } episode
+            ? $"{what} · S{season:00}E{episode:00}"
+            : $"{what} · season {season}";
+    }
+
+    /// <summary>
+    /// The season and episode typed into the no-TMDB search: whole numbers only, and an episode
+    /// only counts alongside a season (the server refuses an episode on its own).
+    /// </summary>
+    public static (int? Season, int? Episode) ParseSeasonEpisode(string? seasonText, string? episodeText)
+    {
+        var season = WholeNumber(seasonText);
+        if (season is null) return (null, null);
+        return (season, WholeNumber(episodeText));
+    }
+
+    private static int? WholeNumber(string? text)
+    {
+        var trimmed = text?.Trim() ?? "";
+        if (trimmed.Length == 0 || !trimmed.All(char.IsAsciiDigit)) return null;
+        return int.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value : null;
+    }
+
+    /// <summary>A warning when there is no library on the server's own disks of the kind being added.</summary>
+    public static string? NoLibraryWarning(MediaDownloadStatus? status, bool show)
+    {
+        if (status is null) return null;
+        var missing = show ? status.ShowLibrary == false : status.MovieLibrary == false;
+        if (!missing) return null;
+        return show
+            ? "There is no TV library on the server's own disks to save into yet. Add one under Movies & TV libraries (kind: TV Shows) first."
+            : "There is no movie library on the server's own disks to save into yet. Add one under Movies & TV libraries first.";
+    }
+
+    /// <summary>
+    /// A site setup field's typed value as the server wants it: checkboxes true/false, numbers as
+    /// numbers (blank is null), select options that are whole numbers as numbers, the rest text.
+    /// </summary>
+    public static object? SiteFieldValue(string? type, string? text, bool isChecked = false)
+    {
+        switch (type)
+        {
+            case "checkbox":
+                return isChecked;
+            case "number":
+            {
+                var trimmed = text?.Trim() ?? "";
+                if (trimmed.Length == 0) return null;
+                if (long.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var whole)) return whole;
+                if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return number;
+                if (double.TryParse(trimmed, NumberStyles.Float, CultureInfo.CurrentCulture, out var local)) return local;
+                return trimmed;
+            }
+            case "select":
+            {
+                var value = text ?? "";
+                return value.Length > 0 && (value[0] == '-' ? value.Length > 1 && value[1..].All(char.IsAsciiDigit) : value.All(char.IsAsciiDigit))
+                       && long.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var option)
+                    ? option
+                    : value;
+            }
+            default:
+                return text ?? "";
+        }
+    }
+
+    /// <summary>A JSON value as the text a box shows: strings bare, numbers as written, nothing for null.</summary>
+    public static string JsonText(JsonElement? value) => value switch
+    {
+        null => "",
+        { ValueKind: JsonValueKind.String } element => element.GetString() ?? "",
+        { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } => "",
+        { } element => element.GetRawText(),
+    };
+
+    /// <summary>The colour the VPN line's dot takes.</summary>
+    public enum VpnTone
+    {
+        Off,
+        On,
+        Busy,
+        Warn,
+    }
+
+    /// <summary>
+    /// The VPN line at the top of Downloads: whether it is connected (and where), connecting,
+    /// broken, not installed, run elsewhere, or simply off until someone needs it. Null status, null line.
+    /// </summary>
+    public static (VpnTone Tone, string Text)? VpnLine(MediaDownloadServiceStatus? status)
+    {
+        if (status is null) return null;
+        var vpn = status.Vpn;
+        var vpnState = vpn?.State;
+        var services = status.Services;
+
+        if (services == "notInstalled")
+        {
+            return (VpnTone.Warn,
+                "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.");
+        }
+        if (vpnState == "connected")
+        {
+            var parts = new List<string> { "Connected" };
+            if (!string.IsNullOrWhiteSpace(vpn!.Location)) parts.Add(vpn.Location!);
+            if (!string.IsNullOrWhiteSpace(vpn.Ip)) parts.Add(vpn.Ip!);
+            return (VpnTone.On, string.Join(" · ", parts));
+        }
+        if (services == "starting" || vpnState == "connecting") return (VpnTone.Busy, "Connecting…");
+        if (services == "failed" || vpnState == "down")
+        {
+            return (VpnTone.Warn, string.IsNullOrWhiteSpace(vpn?.Error)
+                ? "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn)."
+                : vpn!.Error!);
+        }
+        if (services == "external")
+        {
+            return (VpnTone.Off, vpn?.Required == true
+                ? "qBittorrent and Prowlarr are run outside this server."
+                : "qBittorrent and Prowlarr are run outside this server; the VPN is not checked.");
+        }
+        return (VpnTone.Off, "Off - starts by itself when someone searches or downloads.");
+    }
+}

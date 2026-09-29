@@ -82,14 +82,64 @@ public partial class MoviesView : UserControl
             if (_loadedOnce) return;
             _loadedOnce = true;
             _ = ReloadAsync();
+            _ = RefreshDownloadStatusAsync();
         };
 
         // Back from a film: Continue watching has moved on. The grids keep their scroll and pages.
+        // Back from Downloads: the button's count has too.
         IsVisibleChanged += (_, _) =>
         {
-            if (IsVisible && _loadedOnce && IsHome) _ = ReloadAsync();
+            if (!IsVisible || !_loadedOnce) return;
+            if (IsHome) _ = ReloadAsync();
+            _ = RefreshDownloadStatusAsync();
         };
     }
+
+    // ---------------------------------------------------------------- Downloads (+ Add)
+
+    // The last /api/media/downloads/status answer. Off until it says otherwise, and on any failure:
+    // "+ Add" is an extra, so a server that can't answer simply doesn't offer it.
+    private MediaDownloadStatus _downloadStatus = MediaDownloadStatus.Off;
+
+    private async Task RefreshDownloadStatusAsync()
+    {
+        try
+        {
+            _downloadStatus = await _model.Client.MediaDownloadStatusAsync();
+        }
+        catch (Exception)
+        {
+            _downloadStatus = MediaDownloadStatus.Off;
+        }
+
+        var can = _downloadStatus.ShowsAddButton;
+        AddButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        DownloadsButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
+        DownloadsButton.Content = "Downloads";
+        if (!can) return;
+
+        // How many are on the way, so a download in progress is visible from the library itself.
+        try
+        {
+            var list = await _model.Client.MediaDownloadsAsync();
+            DownloadsButton.Content = list.Active.Count > 0 ? $"Downloads · {list.Active.Count}" : "Downloads";
+        }
+        catch (Exception)
+        {
+            // The button still opens the screen, which says what went wrong.
+        }
+    }
+
+    private void OnAddClicked(object sender, RoutedEventArgs e)
+    {
+        var window = new MediaDownloadAddWindow(_model, _downloadStatus) { Owner = Window.GetWindow(this) };
+        if (window.ShowDialog() == true) OpenDownloads();
+    }
+
+    private void OnDownloadsClicked(object sender, RoutedEventArgs e) => OpenDownloads();
+
+    private void OpenDownloads() =>
+        _navigator.Push(new MediaDownloadsView(_model, _navigator, _downloadStatus), "Downloads");
 
     private string Query => SearchBox.Text.Trim();
 

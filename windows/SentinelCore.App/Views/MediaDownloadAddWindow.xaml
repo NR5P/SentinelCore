@@ -1,0 +1,145 @@
+<Window x:Class="SentinelCore.App.Views.MediaDownloadAddWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource Dialog}"
+        WindowStartupLocation="CenterOwner"
+        Title="Add a movie or show" Height="680" Width="760" MinHeight="480" MinWidth="560">
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Style="{StaticResource DialogHeader}">
+            <StackPanel>
+                <TextBlock x:Name="HeadingText" Text="Add a movie or show" FontSize="17" FontWeight="SemiBold"
+                           Foreground="{StaticResource Green}" TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="IntroText" Style="{StaticResource Caption}" Margin="0,3,0,0" TextWrapping="Wrap"
+                           Text="Find it, pick a download, and the server fetches it through its VPN and files it into the library." />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Style="{StaticResource DialogFooter}">
+            <Grid>
+                <TextBlock x:Name="MessageText" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                           HorizontalAlignment="Left" MaxWidth="560" TextWrapping="Wrap" />
+                <Button Content="Close" HorizontalAlignment="Right" MinWidth="90" IsCancel="True" Click="OnCloseClicked" />
+            </Grid>
+        </Border>
+
+        <Grid Margin="18,14,18,0">
+            <!-- 1. Find the title -->
+            <DockPanel x:Name="FindPanel">
+                <StackPanel DockPanel.Dock="Top">
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="MovieKindButton" Content="Movie" MinWidth="90" Click="OnKindClicked" Tag="movie" />
+                        <Button x:Name="ShowKindButton" Content="TV show" MinWidth="90" Margin="6,0,0,0" Click="OnKindClicked" Tag="show" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="NoLibraryText" Foreground="{StaticResource Amber}" TextWrapping="Wrap"
+                               Margin="0,10,0,0" Visibility="Collapsed" />
+
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="QueryBox" Grid.Column="0" KeyDown="OnQueryKeyDown" TextChanged="OnQueryChanged"
+                                 ToolTip="The title to look for" />
+                        <Button x:Name="FindButton" Grid.Column="1" Content="Find" MinWidth="80" Margin="8,0,0,0"
+                                Style="{StaticResource PrimaryButton}" Click="OnFindClicked" />
+                    </Grid>
+
+                    <!-- No TMDB key (or TMDB says so): search the sites for exactly what was typed. -->
+                    <Border x:Name="DirectPanel" Margin="0,12,0,0" Padding="12,10" CornerRadius="6"
+                            Background="{StaticResource CardBackground}" BorderBrush="{StaticResource CardBorder}"
+                            BorderThickness="1" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock x:Name="DirectNote" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                       Text="No TMDB key, so there are no posters or episode lists - the sites are searched for exactly what you type." />
+                            <StackPanel x:Name="DirectEpisodeRow" Orientation="Horizontal" Margin="0,10,0,0">
+                                <TextBlock Text="Season" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                <TextBox x:Name="DirectSeasonBox" Width="60" Margin="8,0,0,0" MaxLength="2" />
+                                <TextBlock Text="Episode" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="16,0,0,0" />
+                                <TextBox x:Name="DirectEpisodeBox" Width="60" Margin="8,0,0,0" MaxLength="3"
+                                         ToolTip="Leave blank for the whole season" />
+                                <TextBlock Text="blank = whole season" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                                           Margin="8,0,0,0" />
+                            </StackPanel>
+                            <Button x:Name="DirectSearchButton" Margin="0,10,0,0" HorizontalAlignment="Left"
+                                    Style="{StaticResource PrimaryButton}" Click="OnDirectSearchClicked" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <Grid Margin="0,12,0,0">
+                    <ScrollViewer x:Name="ResultsScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="ResultsHost" Margin="0,0,0,12" />
+                    </ScrollViewer>
+                    <TextBlock x:Name="ResultsStatus" Style="{StaticResource Caption}" HorizontalAlignment="Center"
+                               VerticalAlignment="Top" Margin="0,24,0,0" TextWrapping="Wrap" TextAlignment="Center"
+                               MaxWidth="420" Visibility="Collapsed" />
+                </Grid>
+            </DockPanel>
+
+            <!-- 2. A show's seasons and episodes -->
+            <DockPanel x:Name="ShowPanel" Visibility="Collapsed">
+                <StackPanel DockPanel.Dock="Top">
+                    <Button Content="← Results" Style="{StaticResource LinkButton}" HorizontalAlignment="Left"
+                            Click="OnBackClicked" />
+                    <WrapPanel x:Name="SeasonTabs" Margin="0,8,0,0" />
+                    <Grid x:Name="SeasonHead" Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="SeasonSummaryText" Style="{StaticResource BodyText}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Button x:Name="WholeSeasonButton" Grid.Column="1" Content="Get whole season" Margin="8,0,0,0"
+                                Style="{StaticResource PrimaryButton}" Click="OnWholeSeasonClicked" />
+                    </Grid>
+                </StackPanel>
+                <Grid Margin="0,10,0,0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="EpisodesHost" Margin="0,0,0,12" />
+                    </ScrollViewer>
+                    <TextBlock x:Name="ShowStatus" Style="{StaticResource Caption}" HorizontalAlignment="Center"
+                               VerticalAlignment="Top" Margin="0,24,0,0" TextWrapping="Wrap" TextAlignment="Center"
+                               MaxWidth="420" Visibility="Collapsed" />
+                </Grid>
+            </DockPanel>
+
+            <!-- 3. Pick a release -->
+            <DockPanel x:Name="ReleasesPanel" Visibility="Collapsed">
+                <StackPanel DockPanel.Dock="Top">
+                    <Button x:Name="ReleasesBackButton" Content="← Results" Style="{StaticResource LinkButton}"
+                            HorizontalAlignment="Left" Click="OnBackClicked" />
+                    <TextBlock x:Name="WhatText" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource PrimaryText}"
+                               Margin="0,6,0,0" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+
+                <Grid Margin="0,10,0,0">
+                    <!-- Searching: the server's message under a moving bar. -->
+                    <StackPanel x:Name="SearchingPanel" VerticalAlignment="Top" HorizontalAlignment="Center"
+                                Margin="0,30,0,0" MaxWidth="420" Visibility="Collapsed">
+                        <ProgressBar IsIndeterminate="True" Height="4" Width="260" />
+                        <TextBlock x:Name="SearchMessage" Style="{StaticResource BodyText}" HorizontalAlignment="Center"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,12,0,0" />
+                        <TextBlock x:Name="SearchHint" Style="{StaticResource Caption}" HorizontalAlignment="Center"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,6,0,0" />
+                    </StackPanel>
+
+                    <!-- Failed: the reason and a way to try again. -->
+                    <StackPanel x:Name="FailedPanel" VerticalAlignment="Top" HorizontalAlignment="Center"
+                                Margin="0,30,0,0" MaxWidth="460" Visibility="Collapsed">
+                        <TextBlock x:Name="FailedMessage" Foreground="{StaticResource Red}" TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+                        <Button Content="Try again" HorizontalAlignment="Center" Margin="0,12,0,0" MinWidth="100"
+                                Click="OnTryAgainClicked" />
+                    </StackPanel>
+
+                    <ScrollViewer x:Name="ReleasesScroller" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                        <StackPanel x:Name="ReleasesHost" Margin="0,0,0,12" />
+                    </ScrollViewer>
+                </Grid>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</Window>

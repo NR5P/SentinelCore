@@ -99,6 +99,13 @@ public class WindowSmokeTests
                 ("MediaFolderPickerWindow (start path)", () => new MediaFolderPickerWindow(model, "smb://nas/Movies")),
                 ("MediaNetworkSignInWindow (new)", () => new MediaNetworkSignInWindow(model, null, "den-pc")),
                 ("MediaNetworkSignInWindow (saved)", () => new MediaNetworkSignInWindow(model, computer)),
+                ("MediaDownloadsView", () => new MediaDownloadsView(model, NullNavigator.Instance, null)),
+                ("MediaDownloadAddWindow (off)", () => new MediaDownloadAddWindow(model, null)),
+                ("MediaDownloadAddWindow (no TMDB)", () => new MediaDownloadAddWindow(model, new MediaDownloadStatus
+                {
+                    CanDownload = true, TmdbConfigured = false, MovieLibrary = false, ShowLibrary = true,
+                })),
+                ("MediaDownloadSitesWindow", () => new MediaDownloadSitesWindow(model)),
                 ("TextPromptWindow", () => new TextPromptWindow("Title", "Prompt?")),
                 ("ListPickerWindow", () => new ListPickerWindow("Pick", new[] { "One", "Two" })),
             };

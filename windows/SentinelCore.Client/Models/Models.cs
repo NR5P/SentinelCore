@@ -464,6 +464,9 @@ public sealed class ApiError
 
     /// <summary>Set by the Movies &amp; TV network sign-in when signing in again would fix the failure.</summary>
     public bool? NeedsLogin { get; init; }
+
+    /// <summary>Set by the movie-download site routes (503) while the VPN is still coming up: ask again shortly.</summary>
+    public bool? Starting { get; init; }
 }
 
 public sealed class LoginBody

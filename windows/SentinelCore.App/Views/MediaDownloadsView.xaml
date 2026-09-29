@@ -1,0 +1,53 @@
+<UserControl x:Class="SentinelCore.App.Views.MediaDownloadsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <DockPanel Margin="20,16,20,0">
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Downloads" Style="{StaticResource SectionTitle}" />
+                <TextBlock x:Name="StatusText" Style="{StaticResource Caption}" Text="Loading…" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="AddButton" Content="+ Add a movie or show" Style="{StaticResource PrimaryButton}"
+                        Click="OnAddClicked" />
+                <Button x:Name="SitesButton" Content="Sites…" Margin="8,0,0,0" Visibility="Collapsed"
+                        Click="OnSitesClicked" ToolTip="The torrent sites searched when anyone adds something" />
+                <Button Margin="8,0,0,0" Padding="10,6" Click="OnRefreshClicked" ToolTip="Refresh now">
+                    <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- The VPN line: connected (and where), connecting, broken, or off until someone needs it. -->
+        <Border x:Name="VpnBar" DockPanel.Dock="Top" Background="{StaticResource CardBackground}"
+                BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="6" Padding="12,9"
+                Margin="0,0,0,14" Visibility="Collapsed">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Ellipse x:Name="VpnDot" Width="9" Height="9" VerticalAlignment="Center" Fill="{StaticResource SecondaryText}" />
+                <TextBlock Grid.Column="1" Text="VPN" FontWeight="SemiBold" Foreground="{StaticResource PrimaryText}"
+                           Margin="9,0,10,0" VerticalAlignment="Center" />
+                <TextBlock x:Name="VpnText" Grid.Column="2" Style="{StaticResource BodyText}" TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <TextBlock x:Name="NoticeText" DockPanel.Dock="Bottom" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                   Margin="0,8,0,10" Visibility="Collapsed" />
+
+        <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="ContentHost" Margin="0,0,0,16" />
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

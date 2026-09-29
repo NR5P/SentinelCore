@@ -20,6 +20,12 @@
                 <Button x:Name="ShowsTab" Content="TV Shows" Margin="6,0,0,0" Click="OnTabClicked" Tag="show" />
                 <Button x:Name="SurpriseButton" Content="Surprise me" Margin="14,0,0,0" Click="OnSurpriseClicked"
                         ToolTip="Pick something to watch at random" />
+                <!-- Movie downloads: only while the server says this user may add (status.canDownload). -->
+                <Button x:Name="AddButton" Content="+ Add" Margin="14,0,0,0" Style="{StaticResource PrimaryButton}"
+                        Visibility="Collapsed" Click="OnAddClicked"
+                        ToolTip="Find a movie or TV episodes and download them into the library" />
+                <Button x:Name="DownloadsButton" Content="Downloads" Margin="6,0,0,0" Visibility="Collapsed"
+                        Click="OnDownloadsClicked" ToolTip="What is downloading, and what arrived recently" />
                 <TextBox x:Name="SearchBox" Width="220" Margin="14,0,0,0" TextChanged="OnSearchChanged"
                          ToolTip="Search titles" />
                 <Button Margin="8,0,0,0" Padding="10,6" Click="OnRefreshClicked" ToolTip="Refresh now">
