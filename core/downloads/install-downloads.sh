@@ -209,8 +209,11 @@ if [ "$SKIP_TEST" -eq 0 ]; then
     say "Testing: starting the VPN, qBittorrent and Prowlarr"
     HOME_IP=$(curl -fsS --max-time 10 https://api.ipify.org || echo "?")
     TEST_START=$(date '+%Y-%m-%d %H:%M:%S')
-    # Earlier failed attempts would otherwise still count as restarts below.
+    # Earlier failed attempts can still count as restarts (reset-failed does not always clear
+    # the counter), so only restarts during this test count.
     systemctl reset-failed "${UNITS[@]:1}" 2>/dev/null || true
+    RESTARTS_BEFORE=$(systemctl show -p NRestarts --value sentinelcore-vpn.service)
+    RESTARTS_BEFORE=${RESTARTS_BEFORE:-0}
     # Started as $APP_USER, the way SentinelCore will, which also proves the permission works.
     sudo -u "$APP_USER" systemctl --no-ask-password start sentinelcore-downloads.target \
         || die "could not start the services as $APP_USER - see: journalctl -u sentinelcore-vpn -n 50"
@@ -218,7 +221,7 @@ if [ "$SKIP_TEST" -eq 0 ]; then
     for _ in $(seq 1 45); do
         # A tunnel that failed to start is retried by systemd, so it shows as restarting rather
         # than failed; either way there is no point waiting out the full minute and a half.
-        if systemctl is-failed --quiet sentinelcore-vpn.service || [ "$(systemctl show -p NRestarts --value sentinelcore-vpn.service)" != "0" ]; then break; fi
+        if systemctl is-failed --quiet sentinelcore-vpn.service || [ "$(systemctl show -p NRestarts --value sentinelcore-vpn.service)" -gt "$RESTARTS_BEFORE" ]; then break; fi
         if [ -f /run/sentinelcore-vpn/status.json ] && VPN_IP=$(grep -o '"ip": *"[^"]*"' /run/sentinelcore-vpn/status.json | sed 's/.*"\([^"]*\)"$/\1/') && [ -n "$VPN_IP" ]; then break; fi
         sleep 2
     done
