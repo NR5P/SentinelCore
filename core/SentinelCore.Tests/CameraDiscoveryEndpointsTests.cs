@@ -76,7 +76,7 @@ public sealed class CameraDiscoveryEndpointsTests : IDisposable
         // IP, whose behavior (instant "no route" vs a silently dropped packet) depends on the
         // network the test happens to run on.
         //
-        // The 6s ceiling is a regression guard on its own right: before the TCP pre-check this PR
+        // The 20s ceiling is a regression guard on its own right: before the TCP pre-check this PR
         // adds, an unreachable host meant up to seven sequential ffprobe process spawns at 8s
         // each - the better part of a minute for testing a typo'd IP, the single most common
         // thing a user will actually do with this feature.
@@ -90,7 +90,9 @@ public sealed class CameraDiscoveryEndpointsTests : IDisposable
         stopwatch.Stop();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(6),
+        // 20s rather than the few seconds it takes on an idle machine: the media box runs this suite
+        // alongside the AI, recordings and go2rtc, and took 7.9s and 10.9s there on 2026-09-29.
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(20),
             $"Probing an unreachable address took {stopwatch.Elapsed} - the fast-fail path likely regressed.");
 
         var body = await response.Content.ReadAsStringAsync(ct);
