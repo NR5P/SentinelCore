@@ -706,6 +706,127 @@ final class SentinelClient {
         url(path: "/api/media/items/\(showId)/seasons/\(season)/poster")
     }
 
+    // MARK: - Movie downloads (see core/docs/MOVIE_DOWNLOADS.md)
+
+    // Answers while the feature is off, so the Movies tab can decide whether to show "+ Add". An
+    // older server answers 404, which the caller reads as off.
+    func mediaDownloadsStatus() async throws -> MediaDownloadsStatus {
+        try await get("/api/media/downloads/status")
+    }
+
+    // kind is "movie" or "show".
+    func mediaDownloadLookup(query: String, kind: String) async throws -> MediaDownloadLookup {
+        try await get("/api/media/downloads/lookup", query: [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "kind", value: kind),
+        ])
+    }
+
+    // One request to TMDB per season, so the long-timeout session.
+    func mediaDownloadShow(tmdbId: Int) async throws -> MediaDownloadShow {
+        try await mediaDownloadsRequest("/api/media/downloads/show/\(tmdbId)", method: "GET")
+    }
+
+    // Answers 202 straight away; the search itself runs on the server. Poll mediaDownloadSearch.
+    func startMediaDownloadSearch(_ input: MediaDownloadSearchInput) async throws -> MediaDownloadSearch {
+        try await send("/api/media/downloads/search", method: "POST", body: input)
+    }
+
+    func mediaDownloadSearch(id: String) async throws -> MediaDownloadSearch {
+        try await get("/api/media/downloads/search/\(id)")
+    }
+
+    func mediaDownloads() async throws -> MediaDownloadList {
+        try await get("/api/media/downloads")
+    }
+
+    // The server fetches the torrent through the VPN before it answers, so the long timeout.
+    func startMediaDownload(searchId: String, releaseId: String, libraryId: String? = nil) async throws -> MediaDownload {
+        try await mediaDownloadsRequest(
+            "/api/media/downloads", method: "POST",
+            body: MediaDownloadGrabInput(searchId: searchId, releaseId: releaseId, libraryId: libraryId))
+    }
+
+    func mediaDownload(id: String) async throws -> MediaDownload {
+        try await get("/api/media/downloads/\(id)")
+    }
+
+    // Cancels an active download (its files are deleted) or removes a finished one from the list.
+    func deleteMediaDownload(id: String) async throws {
+        let _: EmptyResponse = try await send("/api/media/downloads/\(id)", method: "DELETE", body: Optional<String>.none)
+    }
+
+    func retryMediaDownload(id: String) async throws -> MediaDownload {
+        try await send("/api/media/downloads/\(id)/retry", method: "POST", body: Optional<String>.none)
+    }
+
+    // MARK: Sites (admin)
+    // Prowlarr lives inside the VPN, so each of these may start it and wait up to ~25 s - past the
+    // main session's 15 s - before answering 503 { starting: true }, thrown as
+    // MediaDownloadsStartingError for the screen to show and try again.
+
+    func mediaDownloadSites() async throws -> [MediaDownloadSite] {
+        try await mediaDownloadsRequest("/api/media/downloads/sites", method: "GET")
+    }
+
+    func mediaDownloadSiteCatalog(query: String) async throws -> [MediaDownloadSiteDefinition] {
+        try await mediaDownloadsRequest(
+            "/api/media/downloads/sites/catalog", method: "GET",
+            query: [URLQueryItem(name: "q", value: query)])
+    }
+
+    func addMediaDownloadSite(_ input: MediaDownloadSiteInput) async throws -> MediaDownloadSite {
+        try await mediaDownloadsRequest("/api/media/downloads/sites", method: "POST", body: input)
+    }
+
+    func setMediaDownloadSiteEnabled(id: Int, enabled: Bool) async throws {
+        let _: EmptyResponse = try await mediaDownloadsRequest(
+            "/api/media/downloads/sites/\(id)", method: "PUT", body: MediaDownloadSiteUpdate(enabled: enabled))
+    }
+
+    func deleteMediaDownloadSite(id: Int) async throws {
+        let _: EmptyResponse = try await mediaDownloadsRequest("/api/media/downloads/sites/\(id)", method: "DELETE")
+    }
+
+    private func mediaDownloadsRequest<T: Decodable>(
+        _ path: String, method: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil
+    ) async throws -> T {
+        guard let url = url(path: path, query: query) else { throw ClientError.invalidServerAddress }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 60
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(body)
+        }
+        let started = ContinuousClock.now
+        model.log("\(method) \(url.absoluteString)")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await organizerSession.data(for: request)
+        } catch {
+            model.log("\(method) failed after \(elapsed(from: started)): \(describe(error))", level: .error)
+            throw error
+        }
+        if let http = response as? HTTPURLResponse {
+            model.log("\(method) \(http.statusCode) in \(elapsed(from: started))")
+            if http.statusCode == 503,
+               let busy = try? JSONDecoder.sentinel.decode(MediaDownloadsBusy.self, from: data),
+               busy.starting == true {
+                throw MediaDownloadsStartingError(message: busy.error ?? "Connecting to the VPN... try again in a moment.")
+            }
+        }
+        let valid = try validated(data, response)
+        if T.self == EmptyResponse.self { return EmptyResponse() as! T }
+        do {
+            return try JSONDecoder.sentinel.decode(T.self, from: valid)
+        } catch {
+            model.log("Could not decode \(url.absoluteString): \(error)", level: .error)
+            throw error
+        }
+    }
+
     // MARK: - Weather
 
     // Always 200 with a `state` - "no location set", "outside the NWS's coverage" and "couldn't
@@ -1224,6 +1345,13 @@ struct ManualRecordingStopped: Decodable {
     let status: String?
     let detail: String
     let seconds: Int?
+}
+
+// A movie-downloads sites route answered 503 { starting: true }: the VPN is still coming up.
+// Not a failure - show the message and ask again in a few seconds.
+struct MediaDownloadsStartingError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 enum ClientError: LocalizedError {

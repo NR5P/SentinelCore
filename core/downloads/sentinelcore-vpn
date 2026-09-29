@@ -72,8 +72,8 @@ wg_values() {
 }
 
 # The file minus wg-quick's own keys (Address, DNS, MTU, PostUp...), which `wg setconf` refuses.
-# Done here rather than with `wg-quick strip`: Ubuntu's AppArmor profile only lets wg-quick read
-# /etc/wireguard, so it cannot open our file even as root.
+# Done here rather than with `wg-quick strip`: Ubuntu's AppArmor profiles only let wg-quick and wg
+# read /etc/wireguard, so neither can open our file even as root.
 wg_setconf_lines() {
     grep -iE '^[[:space:]]*(\[(Interface|Peer)\][[:space:]]*$|(PrivateKey|ListenPort|FwMark|PublicKey|PresharedKey|AllowedIPs|Endpoint|PersistentKeepalive)[[:space:]]*=)' "$CONF_DIR/vpn.conf" | tr -d '\r'
 }
@@ -116,8 +116,10 @@ prepare() {
         ip link add "$WG_IF" type wireguard
         # Configured while still in the host namespace, so the endpoint's name is looked up with
         # the host's DNS - inside, nothing resolves until the tunnel is up.
+        # Under /etc/wireguard because Ubuntu's AppArmor profile for wg reads nothing else.
         local stripped
-        stripped=$(umask 077; mktemp /run/sentinelcore-vpn-wg.XXXXXX)
+        install -d -m 700 /etc/wireguard
+        stripped=$(umask 077; mktemp /etc/wireguard/sentinelcore-scwg0.XXXXXX)
         wg_setconf_lines > "$stripped"
         if ! wg setconf "$WG_IF" "$stripped"; then
             rm -f "$stripped"

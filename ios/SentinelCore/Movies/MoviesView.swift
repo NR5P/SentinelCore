@@ -25,14 +25,21 @@ struct MoviesView: View {
     // under the iPhone's More tab this screen lives in a NavigationStack whose path only holds
     // AppSection values, where a NavigationLink(value: MediaRoute) would go nowhere.
     @State private var detailRoute: MediaRoute?
-    // Bumped whenever the player closes, so whatever is on screen re-reads progress.
+    // Bumped whenever the player closes, so whatever is on screen re-reads progress - and when a
+    // download reaches the library, so it shows up under Recently Added.
     @State private var refreshToken = 0
+    // Movie downloads ("+ Add"): only there when the server says this account may use them.
+    @StateObject private var downloads = MediaDownloadsTracker()
+    @State private var addingDownload = false
+    @State private var showingDownloads = false
 
     var body: some View {
         Group {
             switch pane {
             case .home:
-                MediaHomeView(isActive: isActive, refreshToken: refreshToken, play: { playing = $0 }, open: { detailRoute = $0 })
+                MediaHomeView(
+                    isActive: isActive, refreshToken: refreshToken, downloads: downloads,
+                    play: { playing = $0 }, open: { detailRoute = $0 }, openDownloads: { showingDownloads = true })
             case .movies:
                 MediaGridView(kind: "movie", refreshToken: refreshToken)
             case .shows:
@@ -60,7 +67,44 @@ struct MoviesView: View {
         .navigationDestination(item: $detailRoute) { route in
             MovieDetailView(route: route)
         }
+        .navigationDestination(isPresented: $showingDownloads) {
+            MediaDownloadsView(downloads: downloads)
+        }
+        .toolbar {
+            if downloads.canDownload {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingDownloads = true
+                    } label: {
+                        Label("Downloads", systemImage: "arrow.down.circle")
+                    }
+                    .help("Downloads in progress and recent ones")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        addingDownload = true
+                    } label: {
+                        Label("Add", systemImage: "plus")
+                    }
+                    .help("Find a movie or TV show and download it into the library")
+                }
+            }
+        }
+        .mediaAddSheet(isPresented: $addingDownload, downloads: downloads) { _ in
+            showingDownloads = true
+        }
+        .task(id: DownloadsKey(active: isActive, server: model.activeServerURL)) {
+            guard isActive, !model.activeServerURL.isEmpty else { return }
+            await downloads.run(client: model.client)
+        }
+        .onChange(of: model.activeServerURL) { _, _ in downloads.reset() }
+        .onChange(of: downloads.landed) { _, _ in refreshToken += 1 }
         .moviePlayer($playing, client: model.client) { refreshToken += 1 }
+    }
+
+    private struct DownloadsKey: Hashable {
+        var active: Bool
+        var server: String
     }
 }
 
@@ -93,8 +137,10 @@ extension EnvironmentValues {
 private struct MediaHomeView: View {
     let isActive: Bool
     let refreshToken: Int
+    @ObservedObject var downloads: MediaDownloadsTracker
     let play: (MoviePlayRequest) -> Void
     let open: (MediaRoute) -> Void
+    let openDownloads: () -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var home: MediaHome?
@@ -113,6 +159,7 @@ private struct MediaHomeView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28) {
+                MediaDownloadsBanner(downloads: downloads, open: openDownloads)
                 if let featured = home?.featured {
                     MediaHeroView(item: featured)
                         .padding(.horizontal)

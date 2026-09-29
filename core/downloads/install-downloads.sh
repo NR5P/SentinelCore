@@ -181,16 +181,24 @@ if [ "$SKIP_TEST" -eq 0 ]; then
         || die "could not start the services as $APP_USER - see: journalctl -u sentinelcore-vpn -n 50"
     VPN_IP=""
     for _ in $(seq 1 45); do
+        # A tunnel that failed to start is retried by systemd, so it shows as restarting rather
+        # than failed; either way there is no point waiting out the full minute and a half.
+        if systemctl is-failed --quiet sentinelcore-vpn.service || [ "$(systemctl show -p NRestarts --value sentinelcore-vpn.service)" != "0" ]; then break; fi
         if [ -f /run/sentinelcore-vpn/status.json ] && VPN_IP=$(grep -o '"ip": *"[^"]*"' /run/sentinelcore-vpn/status.json | sed 's/.*"\([^"]*\)"$/\1/') && [ -n "$VPN_IP" ]; then break; fi
         sleep 2
     done
-    QB=$(curl -fsS --max-time 5 http://10.250.0.2:8080/api/v2/app/version || true)
+    QB=""
     PR=""
-    for _ in $(seq 1 30); do
-        PR=$(curl -fsS --max-time 5 -H "X-Api-Key: $(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$PROWLARR_CONF")" http://10.250.0.2:9696/api/v1/system/status | grep -o '"version": *"[^"]*"' || true)
-        [ -n "$PR" ] && break
-        sleep 2
-    done
+    if [ -n "$VPN_IP" ]; then
+        QB=$(curl -fsS --max-time 5 http://10.250.0.2:8080/api/v2/app/version 2>/dev/null || true)
+        for _ in $(seq 1 30); do
+            PR=$(curl -fsS --max-time 5 -H "X-Api-Key: $(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$PROWLARR_CONF")" http://10.250.0.2:9696/api/v1/system/status 2>/dev/null | grep -o '"version": *"[^"]*"' || true)
+            [ -n "$PR" ] && break
+            sleep 2
+        done
+    else
+        journalctl -u sentinelcore-vpn -n 15 --no-pager
+    fi
     sudo -u "$APP_USER" systemctl --no-ask-password stop sentinelcore-downloads.target || true
 
     echo "  Home address:        $HOME_IP"
