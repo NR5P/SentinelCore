@@ -3,7 +3,7 @@
 polkit.addRule(function(action, subject) {
     if (action.id != "org.freedesktop.systemd1.manage-units" || subject.user != "__APP_USER__") return;
     var units = ["sentinelcore-downloads.target", "sentinelcore-vpn.service", "sentinelcore-vpn-watch.service",
-                 "sentinelcore-qbittorrent.service", "sentinelcore-prowlarr.service"];
+                 "sentinelcore-qbittorrent.service", "sentinelcore-prowlarr.service", "sentinelcore-flaresolverr.service"];
     var verbs = ["start", "stop", "restart", "reset-failed"];
     if (units.indexOf(action.lookup("unit")) >= 0 && verbs.indexOf(action.lookup("verb")) >= 0) return polkit.Result.YES;
 });

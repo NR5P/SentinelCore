@@ -30,7 +30,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 LIB=/usr/local/lib/sentinelcore-downloads
 DATA=/var/lib/sentinelcore-downloads
 PROWLARR_DIR=/opt/sentinelcore-prowlarr
-UNITS=(sentinelcore-downloads.target sentinelcore-vpn.service sentinelcore-vpn-watch.service sentinelcore-qbittorrent.service sentinelcore-prowlarr.service)
+FLARESOLVERR_DIR=/opt/sentinelcore-flaresolverr
+UNITS=(sentinelcore-downloads.target sentinelcore-vpn.service sentinelcore-vpn-watch.service sentinelcore-qbittorrent.service sentinelcore-prowlarr.service sentinelcore-flaresolverr.service)
 
 APP_USER=${SUDO_USER:-}
 VPN_CONFIG=""
@@ -66,7 +67,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
     [ -x "$LIB/sentinelcore-vpn" ] && "$LIB/sentinelcore-vpn" teardown || true
     rm -rf "$LIB" /etc/netns/scvpn
     systemctl daemon-reload
-    echo "Done. Kept: $DATA (Prowlarr's sites, qBittorrent's settings), $PROWLARR_DIR and /etc/sentinelcore/vpn."
+    echo "Done. Kept: $DATA (Prowlarr's sites, qBittorrent's settings), $PROWLARR_DIR, $FLARESOLVERR_DIR and /etc/sentinelcore/vpn."
     exit 0
 fi
 
@@ -82,7 +83,7 @@ fi
 say "Installing packages (WireGuard, OpenVPN, qBittorrent)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq wireguard-tools openvpn qbittorrent-nox curl sqlite3 iproute2 >/dev/null
+apt-get install -y -qq wireguard-tools openvpn qbittorrent-nox curl sqlite3 iproute2 xvfb >/dev/null
 # Prowlarr is a .NET program that needs ICU; the package name carries the version.
 ICU=$(apt-cache search --names-only '^libicu[0-9]+$' | awk '{print $1}' | sort -V | tail -1)
 [ -n "$ICU" ] && apt-get install -y -qq "$ICU" >/dev/null
@@ -108,8 +109,27 @@ fi
 # Prowlarr updates itself in place, so it must own its folder.
 chown -R "$APP_USER:$APP_USER" "$PROWLARR_DIR"
 
+say "Installing FlareSolverr (gets Prowlarr past Cloudflare checks)"
+# MIT-licensed (github.com/FlareSolverr/FlareSolverr). The Linux build bundles its own Chrome;
+# xvfb (installed above) gives that Chrome a virtual screen. x64 only - other machines skip it,
+# and sites behind Cloudflare simply fail to add there.
+if [ -x "$FLARESOLVERR_DIR/flaresolverr" ]; then
+    echo "Already installed in $FLARESOLVERR_DIR"
+elif [ "$(uname -m)" = x86_64 ]; then
+    TMP=$(mktemp -d)
+    curl -fsSL -o "$TMP/flaresolverr.tar.gz" "https://github.com/FlareSolverr/FlareSolverr/releases/latest/download/flaresolverr_linux_x64.tar.gz"
+    tar -xzf "$TMP/flaresolverr.tar.gz" -C "$TMP"
+    rm -rf "$FLARESOLVERR_DIR"
+    mv "$TMP/flaresolverr" "$FLARESOLVERR_DIR"
+    rm -rf "$TMP"
+    echo "Installed to $FLARESOLVERR_DIR"
+else
+    echo "Skipped: FlareSolverr has no build for $(uname -m)"
+fi
+[ -d "$FLARESOLVERR_DIR" ] && chown -R "$APP_USER:$APP_USER" "$FLARESOLVERR_DIR"
+
 say "Preparing settings for qBittorrent and Prowlarr"
-mkdir -p "$DATA/qbittorrent/qBittorrent/config" "$DATA/prowlarr"
+mkdir -p "$DATA/qbittorrent/qBittorrent/config" "$DATA/prowlarr" "$DATA/flaresolverr"
 QB_CONF="$DATA/qbittorrent/qBittorrent/config/qBittorrent.conf"
 if [ ! -f "$QB_CONF" ]; then
     # Web UI on the namespace's own address only, and no sign-in for the one address SentinelCore
@@ -211,6 +231,14 @@ if [ "$SKIP_TEST" -eq 0 ]; then
             [ -n "$PR" ] && break
             sleep 2
         done
+        FS=""
+        if [ -x "$FLARESOLVERR_DIR/flaresolverr" ]; then
+            for _ in $(seq 1 20); do
+                FS=$(curl -fsS --max-time 5 http://10.250.0.2:8191/ 2>/dev/null | grep -o '"version": *"[^"]*"' || true)
+                [ -n "$FS" ] && break
+                sleep 3
+            done
+        fi
     else
         journalctl -u sentinelcore-vpn -u sentinelcore-vpn-watch --since "$TEST_START" --no-pager | tail -20
         [ -f /run/sentinelcore-vpn/status.json ] && echo "  VPN check says: $(cat /run/sentinelcore-vpn/status.json)"
@@ -221,6 +249,7 @@ if [ "$SKIP_TEST" -eq 0 ]; then
     echo "  Address through VPN: ${VPN_IP:-none}"
     echo "  qBittorrent:         ${QB:-did not answer}"
     echo "  Prowlarr:            ${PR:-did not answer}"
+    echo "  FlareSolverr:        ${FS:-did not answer (only sites behind Cloudflare need it; see journalctl -u sentinelcore-flaresolverr)}"
     [ -n "$VPN_IP" ] || die "the VPN did not connect. Check the configuration file, then: journalctl -u sentinelcore-vpn -n 50"
     if [ "$(tr -d '[:space:]' < "$DATA/network-mode")" = direct ]; then
         echo "  Note: Use VPN is turned OFF in SentinelCore's settings, so this test used the home connection."

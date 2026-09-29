@@ -1,0 +1,25 @@
+[Unit]
+Description=SentinelCore downloads: FlareSolverr (gets Prowlarr past Cloudflare checks, inside the VPN)
+PartOf=sentinelcore-downloads.target
+BindsTo=sentinelcore-vpn.service
+After=sentinelcore-vpn.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+NetworkNamespacePath=/run/netns/scvpn
+BindReadOnlyPaths=/etc/netns/scvpn/resolv.conf:/etc/resolv.conf /etc/netns/scvpn/nsswitch.conf:/etc/nsswitch.conf
+WorkingDirectory=/var/lib/sentinelcore-downloads/flaresolverr
+Environment=HOME=/var/lib/sentinelcore-downloads/flaresolverr
+# Only on the namespace's own address: Prowlarr (same namespace) and SentinelCore (over the veth
+# pair) reach it; nothing on the VPN side can.
+Environment=HOST=10.250.0.2
+Environment=PORT=8191
+Environment=HEADLESS=true
+Environment=LOG_LEVEL=info
+ExecStart=/opt/sentinelcore-flaresolverr/flaresolverr
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+SyslogIdentifier=sentinelcore-flaresolverr

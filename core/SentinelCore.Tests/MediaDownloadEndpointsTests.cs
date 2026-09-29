@@ -398,6 +398,37 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task WithFlareSolverrRunning_SitesAreAddedThroughIt_ForCloudflareProtectedOnes()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1");
+        _prowlarr.FlareSolverrRunning = true;
+
+        await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads/sites", new { definition = "publicsite" }, Ct), HttpStatusCode.Created);
+
+        // The proxy is registered once, pointed at FlareSolverr's address inside the VPN...
+        Assert.Equal(["flaresolverr"], _prowlarr.Tags);
+        var proxy = JsonDocument.Parse(_prowlarr.PostedProxy!).RootElement;
+        Assert.Equal("FlareSolverr", proxy.GetProperty("name").GetString());
+        Assert.Equal(4, proxy.GetProperty("tags")[0].GetInt32());
+        Assert.Equal("http://10.250.0.2:8191/", proxy.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "host").GetProperty("value").GetString());
+        // ...and the site carries its tag, which is what makes Prowlarr use it on a Cloudflare check.
+        Assert.Equal(4, JsonDocument.Parse(_prowlarr.PostedIndexer!).RootElement.GetProperty("tags")[0].GetInt32());
+    }
+
+    [Fact]
+    public async Task WithoutFlareSolverr_SitesAreAddedWithoutTheTag()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1");
+        await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads/sites", new { definition = "publicsite" }, Ct), HttpStatusCode.Created);
+        Assert.Null(_prowlarr.PostedProxy);
+        Assert.Empty(_prowlarr.Tags);
+    }
+
+    [Fact]
     public async Task Settings_AreValidated_AndTheKeysMasked()
     {
         using var factory = CreateFactory();
@@ -507,11 +538,30 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         public byte[]? TorrentFile;
         public string? PostedIndexer;
         public bool EmptyForLeadingThe;
+        public bool FlareSolverrRunning;
+        public readonly List<string> Tags = [];
+        public string? PostedProxy;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
             if (uri.AbsolutePath == "/1/download") return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(TorrentFile!) };
+            if (uri.Port == 8191)
+                return FlareSolverrRunning ? Json("""{ "msg": "FlareSolverr is ready!", "version": "3.5.2" }""") : throw new HttpRequestException("connection refused");
+            if (uri.AbsolutePath == "/api/v1/tag" && request.Method == HttpMethod.Post)
+            {
+                Tags.Add("flaresolverr");
+                return Json("""{ "id": 4, "label": "flaresolverr" }""", HttpStatusCode.Created);
+            }
+            if (uri.AbsolutePath == "/api/v1/tag") return Json(Tags.Count == 0 ? "[]" : """[ { "id": 4, "label": "flaresolverr" } ]""");
+            if (uri.AbsolutePath == "/api/v1/indexerProxy/schema")
+                return Json("""[ { "implementation": "FlareSolverr", "name": "", "fields": [ { "name": "host", "value": "http://localhost:8191/" }, { "name": "requestTimeout", "value": 60 } ] } ]""");
+            if (uri.AbsolutePath == "/api/v1/indexerProxy" && request.Method == HttpMethod.Post)
+            {
+                PostedProxy = await request.Content!.ReadAsStringAsync(cancellationToken);
+                return Json("""{ "id": 1 }""", HttpStatusCode.Created);
+            }
+            if (uri.AbsolutePath == "/api/v1/indexerProxy") return Json(PostedProxy is null ? "[]" : """[ { "id": 1, "implementation": "FlareSolverr" } ]""");
             if (request.Headers.TryGetValues("X-Api-Key", out var keys) is false || keys.Single() != "test-key")
                 return new HttpResponseMessage(HttpStatusCode.Unauthorized);
             switch (uri.AbsolutePath)

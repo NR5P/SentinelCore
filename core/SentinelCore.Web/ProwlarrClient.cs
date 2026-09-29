@@ -139,6 +139,7 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
         body["enable"] = true;
         body["appProfileId"] = await AppProfileIdAsync(cancellationToken);
         body.Remove("id");
+        if (await EnsureFlareSolverrAsync(cancellationToken) is { } flareSolverrTag) body["tags"] = new JsonArray(flareSolverrTag);
         var urls = definition.Schema["indexerUrls"] is JsonArray list ? list.Select(u => u?.GetValue<string>()).OfType<string>().ToList() : [];
         if (body["fields"] is JsonArray fields)
             foreach (var field in fields.OfType<JsonObject>())
@@ -170,6 +171,76 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
     public async Task DeleteSiteAsync(int id, CancellationToken cancellationToken)
     {
         using var response = await SendAsync(HttpMethod.Delete, $"api/v1/indexer/{id}", null, cancellationToken);
+    }
+
+    // MARK: - FlareSolverr
+
+    private const string FlareSolverrTag = "flaresolverr";
+    private int? _flareSolverrTagId;
+
+    // Where FlareSolverr answers, from this server (the veth address) and from Prowlarr (same
+    // namespace, same address). install-downloads.sh runs it there; elsewhere it is simply absent.
+    private string FlareSolverrUrl => configuration["MediaDownloads:FlareSolverrUrl"] ?? "http://10.250.0.2:8191/";
+
+    // Makes sure Prowlarr routes sites through FlareSolverr when one of them answers with a
+    // Cloudflare check (Prowlarr only does so for sites carrying the proxy's tag, and only when it
+    // actually meets a challenge). Returns the tag to put on sites, or null when no FlareSolverr
+    // is running, in which case sites behind Cloudflare fail to add with Prowlarr's own message.
+    public async Task<int?> EnsureFlareSolverrAsync(CancellationToken cancellationToken)
+    {
+        if (_flareSolverrTagId is { } known) return known;
+        try
+        {
+            using var timer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timer.CancelAfter(TimeSpan.FromSeconds(5));
+            using var probe = await httpClientFactory.CreateClient(HttpClientName).GetAsync(FlareSolverrUrl, timer.Token);
+            if (!probe.IsSuccessStatusCode) return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException && !cancellationToken.IsCancellationRequested) { return null; }
+
+        var tagId = await TagIdAsync(FlareSolverrTag, cancellationToken);
+        using (var proxies = await GetJsonAsync("api/v1/indexerProxy", cancellationToken))
+        {
+            var existing = proxies.RootElement.EnumerateArray().FirstOrDefault(p => Str(p, "implementation") == "FlareSolverr");
+            if (existing.ValueKind == JsonValueKind.Undefined)
+            {
+                using var schemas = await GetJsonAsync("api/v1/indexerProxy/schema", cancellationToken);
+                var schema = schemas.RootElement.EnumerateArray().FirstOrDefault(p => Str(p, "implementation") == "FlareSolverr");
+                if (schema.ValueKind == JsonValueKind.Undefined) return null;
+                var body = JsonNode.Parse(schema.GetRawText())!.AsObject();
+                body["name"] = "FlareSolverr";
+                body["tags"] = new JsonArray(tagId);
+                body.Remove("id");
+                if (body["fields"] is JsonArray fields)
+                    foreach (var field in fields.OfType<JsonObject>())
+                        if (field["name"]?.GetValue<string>() == "host") field["value"] = FlareSolverrUrl;
+                using var created = await SendAsync(HttpMethod.Post, "api/v1/indexerProxy?forceSave=true", body, cancellationToken, TimeSpan.FromSeconds(90));
+            }
+        }
+
+        // Sites added before FlareSolverr was there get the tag too.
+        using (var sites = await GetJsonAsync("api/v1/indexer", cancellationToken))
+            foreach (var site in sites.RootElement.EnumerateArray())
+            {
+                var tags = site.TryGetProperty("tags", out var t) && t.ValueKind == JsonValueKind.Array ? t.EnumerateArray().Select(x => x.GetInt32()).ToList() : [];
+                if (tags.Contains(tagId)) continue;
+                var body = JsonNode.Parse(site.GetRawText())!.AsObject();
+                body["tags"] = new JsonArray([.. tags.Append(tagId).Select(x => (JsonNode)x)]);
+                using var updated = await SendAsync(HttpMethod.Put, $"api/v1/indexer/{Long(site, "id")}?forceSave=true", body, cancellationToken, TimeSpan.FromSeconds(90));
+            }
+
+        _flareSolverrTagId = tagId;
+        return tagId;
+    }
+
+    private async Task<int> TagIdAsync(string label, CancellationToken cancellationToken)
+    {
+        using (var tags = await GetJsonAsync("api/v1/tag", cancellationToken))
+            foreach (var tag in tags.RootElement.EnumerateArray())
+                if (string.Equals(Str(tag, "label"), label, StringComparison.OrdinalIgnoreCase) && Long(tag, "id") is { } id) return (int)id;
+        using var response = await SendAsync(HttpMethod.Post, "api/v1/tag", new JsonObject { ["label"] = label }, cancellationToken);
+        using var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return (int)(Long(created.RootElement, "id") ?? throw new ProwlarrException("Prowlarr did not create the FlareSolverr tag."));
     }
 
     private async Task<int> AppProfileIdAsync(CancellationToken cancellationToken)

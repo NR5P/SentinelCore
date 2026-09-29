@@ -15,6 +15,12 @@ What is downloaded is the household's responsibility; the server ships with no s
                                                                      default route = VPN tunnel only
 ```
 
+- **FlareSolverr** (MIT, a headless Chrome under Xvfb, `sentinelcore-flaresolverr.service`,
+  `10.250.0.2:8191`, also inside the namespace) gets Prowlarr past Cloudflare "are you human"
+  pages (1337x and others). SentinelCore registers it in Prowlarr as an indexer proxy tagged
+  `flaresolverr` and puts that tag on every site it adds; Prowlarr only routes a request through
+  it when it actually meets a Cloudflare check. Without it such sites fail to add with
+  "blocked by CloudFlare Protection".
 - **Prowlarr** keeps the site list and searches it. **qBittorrent** downloads. Both run inside a
   Linux network namespace whose only route out is the VPN interface (WireGuard `scwg0` or OpenVPN
   `sctun0`). The tunnel's encrypted packets leave through the host's normal connection; nothing

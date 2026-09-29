@@ -3,4 +3,4 @@ Description=SentinelCore movie downloads (VPN tunnel, qBittorrent, Prowlarr)
 # Never started at boot: SentinelCore starts this when someone searches or downloads and stops it
 # once nothing has needed it for Settings -> MOVIE DOWNLOADS -> Switch Off After. Every unit below
 # is PartOf this target, so stopping it stops all of them.
-Wants=sentinelcore-vpn.service sentinelcore-vpn-watch.service sentinelcore-qbittorrent.service sentinelcore-prowlarr.service
+Wants=sentinelcore-vpn.service sentinelcore-vpn-watch.service sentinelcore-qbittorrent.service sentinelcore-prowlarr.service sentinelcore-flaresolverr.service
