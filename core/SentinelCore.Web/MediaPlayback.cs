@@ -35,6 +35,10 @@ public static class MediaPlaybackPlanner
         if (item.Container is not null && DirectContainers.Contains(item.Container) && videoOk && audioOk && usesDefaultAudio && !hevcNeedsRetag)
             return new MediaPlaybackPlan(true, "copy", "copy", audioTrack?.Index, false, "the device plays this file as it is");
 
+        // A device that plays MP3 in a file still cannot take it inside fMP4 HLS segments: Apple's
+        // HLS carries AAC, AC-3 and E-AC-3 there, and AVPlayer answers "Cannot Open" to anything
+        // else (an XviD/MP3 .avi, the common old rip, hit this on 2026-09-29).
+        var audioCopiesIntoHls = audioOk && (audioTrack is null || audioCodec is "aac" or "ac3" or "eac3");
         var reason = !videoOk ? $"{item.VideoCodec ?? "the video"} needs converting to H.264"
             : !audioOk ? $"{audioTrack?.Codec ?? "the audio"} needs converting to AAC"
             : hevcNeedsRetag ? "HEVC must be retagged for this device"
@@ -43,7 +47,7 @@ public static class MediaPlaybackPlanner
         return new MediaPlaybackPlan(
             false,
             videoOk ? "copy" : "h264",
-            audioTrack is null ? "none" : audioOk ? "copy" : "aac",
+            audioTrack is null ? "none" : audioCopiesIntoHls ? "copy" : "aac",
             audioTrack?.Index,
             videoOk && videoCodec == "hevc",
             reason);

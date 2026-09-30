@@ -33,6 +33,16 @@ public sealed class MediaPlaybackTests
     }
 
     [Fact]
+    public void Mp3Audio_IsConvertedToAac_WhenTheFileGoesThroughHls()
+    {
+        // An XviD/MP3 .avi: Apple plays MP3 in a file but not inside fMP4 HLS segments.
+        var avi = MediaPlaybackPlanner.Plan(Item("avi", "mpeg4", "mp3"), AppleVideo, AppleAudio, null);
+        Assert.Equal(("h264", "aac"), (avi.VideoMode, avi.AudioMode));
+        var mp4 = MediaPlaybackPlanner.Plan(Item("mp4", "h264", "mp3"), AppleVideo, AppleAudio, null);
+        Assert.True(mp4.Direct);
+    }
+
+    [Fact]
     public void AnMkv_IsRemuxedNotReencoded()
     {
         var plan = MediaPlaybackPlanner.Plan(Item("mkv", "h264", "aac"), BrowserVideo, BrowserAudio, null);
