@@ -2070,7 +2070,19 @@ window.SentinelMovies = (function () {
     if (!res.ok) { add.results = res.error; drawAdd(); return; }
     add.tmdb = !!res.data.tmdbConfigured;
     add.results = add.tmdb ? (res.data.results || []) : [];
+    // No TMDB key: there are no posters to pick from, so Find searches the sites straight away
+    // rather than stopping at a second button.
+    if (!add.tmdb) { directSearch(); return; }
     drawAdd();
+  }
+
+  // The sites searched for exactly what was typed (plus a season and episode for TV, when given).
+  function directSearch() {
+    const season = (el("mv-add-season") || {}).value;
+    const episode = (el("mv-add-episode") || {}).value;
+    startReleaseSearch({ kind: add.kind, title: add.q.trim(),
+      season: add.kind === "show" && /^\d+$/.test(season || "") ? Number(season) : null,
+      episode: add.kind === "show" && /^\d+$/.test(season || "") && /^\d+$/.test(episode || "") ? Number(episode) : null }, "find");
   }
 
   async function pickResult(i) {
@@ -2217,14 +2229,7 @@ window.SentinelMovies = (function () {
           season: add.season, episode: act === "add-episode" ? Number(target.dataset.n) : null }, "show");
         return true;
       }
-      case "add-direct": {
-        const season = (el("mv-add-season") || {}).value;
-        const episode = (el("mv-add-episode") || {}).value;
-        startReleaseSearch({ kind: add.kind, title: add.q.trim(),
-          season: add.kind === "show" && /^\d+$/.test(season || "") ? Number(season) : null,
-          episode: add.kind === "show" && /^\d+$/.test(season || "") && /^\d+$/.test(episode || "") ? Number(episode) : null }, "find");
-        return true;
-      }
+      case "add-direct": directSearch(); return true;
       case "add-back":
         stopAddPoll();
         add.stage = add.stage === "releases" && add.back === "show" && add.show ? "show" : "find";
