@@ -144,7 +144,7 @@ struct MediaAddView: View {
             .onChange(of: kind) { _, _ in
                 results = nil
                 errorMessage = nil
-                if !searchedQuery.isEmpty, !trimmed.isEmpty { Task { await lookup() } }
+                if !searchedQuery.isEmpty, !trimmed.isEmpty { Task { await lookup(searchSitesWithoutTmdb: false) } }
             }
             .navigationDestination(for: MediaAddRoute.self) { route in
                 switch route {
@@ -197,7 +197,11 @@ struct MediaAddView: View {
         }
     }
 
-    private func lookup() async {
+    // Find (and Return in the title box). With no TMDB key there are no posters to pick from, so
+    // it searches the sites for the typed text straight away rather than stopping at the "Search
+    // Sites for …" button - the dashboard's lookup() -> directSearch(). Switching Movie / TV show
+    // re-runs the lookup without that, so flipping the picker never starts a search by itself.
+    private func lookup(searchSitesWithoutTmdb: Bool = true) async {
         let q = trimmed
         guard !q.isEmpty else { return }
         searching = true
@@ -209,6 +213,7 @@ struct MediaAddView: View {
             tmdbConfigured = found.tmdbConfigured != false
             results = tmdbConfigured ? (found.results ?? []) : []
             searchedQuery = q
+            if !tmdbConfigured, searchSitesWithoutTmdb { searchDirectly() }
         } catch {
             if MediaDownloadsTracker.isCancellation(error) { return }
             errorMessage = error.localizedDescription

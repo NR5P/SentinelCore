@@ -2060,7 +2060,7 @@ window.SentinelMovies = (function () {
       <div class="mv-match-results">${results}</div>`;
   }
 
-  async function lookup() {
+  async function lookup(searchSitesIfNoTmdb = true) {
     const q = add.q.trim();
     if (!q) return;
     add.results = "loading";
@@ -2072,7 +2072,7 @@ window.SentinelMovies = (function () {
     add.results = add.tmdb ? (res.data.results || []) : [];
     // No TMDB key: there are no posters to pick from, so Find searches the sites straight away
     // rather than stopping at a second button.
-    if (!add.tmdb) { directSearch(); return; }
+    if (!add.tmdb && searchSitesIfNoTmdb) { directSearch(); return; }
     drawAdd();
   }
 
@@ -2217,7 +2217,8 @@ window.SentinelMovies = (function () {
         add.kind = target.dataset.kind;
         add.results = null;
         drawAdd();
-        if (add.q) lookup();
+        // Flipping Movie / TV show re-checks TMDB but never starts a site search by itself.
+        if (add.q) lookup(false);
         return true;
       case "add-pick": pickResult(Number(target.dataset.i)); return true;
       case "add-season": add.season = Number(target.dataset.n); drawAdd(); return true;
