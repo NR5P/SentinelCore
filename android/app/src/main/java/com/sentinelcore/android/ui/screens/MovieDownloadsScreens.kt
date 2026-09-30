@@ -251,13 +251,16 @@ internal class MovieAddModel(private val app: SentinelViewModel) : ViewModel() {
         lookupJob = viewModelScope.launch {
             lookingUp = true
             lookupError = null
-            runCatching { app.mediaDownloadLookup(q, kind) }
-                .onSuccess {
-                    tmdb = it.tmdbConfigured
-                    results = it.results
-                }
+            val lookup = runCatching { app.mediaDownloadLookup(q, kind) }
                 .onFailure { lookupError = it.message ?: "Could not search." }
+                .getOrNull()
             lookingUp = false
+            if (lookup == null || stage != AddStage.FIND || submitted != q) return@launch
+            tmdb = lookup.tmdbConfigured
+            results = lookup.results
+            // No TMDB key: there are no posters to pick from, so Find searches the sites straight
+            // away rather than stopping at a second button (the web's lookup() does the same).
+            if (MediaDownloadFormat.searchSitesDirectly(lookup)) searchDirect()
         }
     }
 
@@ -298,11 +301,8 @@ internal class MovieAddModel(private val app: SentinelViewModel) : ViewModel() {
 
     // No TMDB: search the sites for exactly what was typed.
     fun searchDirect() {
-        val title = submitted.ifBlank { query.trim() }
-        if (title.isBlank()) return
-        val seasonNumber = if (kind == "show") MediaDownloadFormat.wholeNumber(seasonText) else null
-        val episodeNumber = if (seasonNumber != null) MediaDownloadFormat.wholeNumber(episodeText) else null
-        startSearch(MediaReleaseSearchInput(kind, title, season = seasonNumber, episode = episodeNumber), fromShow = false)
+        val input = MediaDownloadFormat.directSearchInput(kind, submitted.ifBlank { query.trim() }, seasonText, episodeText) ?: return
+        startSearch(input, fromShow = false)
     }
 
     fun searchAgain() {
@@ -456,7 +456,8 @@ private fun AddFind(add: MovieAddModel, model: SentinelViewModel) {
                     singleLine = true,
                     placeholder = { Text(if (add.kind == "movie") "Movie title" else "Show title") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { add.lookup() }),
+                    // The keyboard's action key does exactly what Find does, whichever one it shows.
+                    keyboardActions = KeyboardActions(onSearch = { add.lookup() }, onDone = { add.lookup() }, onGo = { add.lookup() }),
                 )
                 Button(onClick = { add.lookup() }, enabled = add.query.isNotBlank()) {
                     Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -465,7 +466,9 @@ private fun AddFind(add: MovieAddModel, model: SentinelViewModel) {
                 }
             }
         }
-        if (add.tmdbMissing && add.submitted.isNotBlank()) {
+        // Without TMDB, Find itself searches the sites; for TV the season / episode boxes have to
+        // be there before the first Find, and the explicit button is back once something was typed.
+        if (add.tmdbMissing && (add.submitted.isNotBlank() || add.kind == "show")) {
             item { DirectSearch(add) }
         }
         when {
@@ -515,10 +518,12 @@ private fun DirectSearch(add: MovieAddModel) {
                     )
                 }
             }
-            Button(onClick = { add.searchDirect() }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Search sites for “${add.submitted}”", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (add.submitted.isNotBlank()) {
+                Button(onClick = { add.searchDirect() }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Search sites for “${add.submitted}”", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }

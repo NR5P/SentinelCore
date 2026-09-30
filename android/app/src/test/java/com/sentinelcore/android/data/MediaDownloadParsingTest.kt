@@ -415,6 +415,33 @@ class MediaDownloadParsingTest {
         assertNull(disabled.location)
     }
 
+    // No TMDB key: Find goes straight to the site search, with the same input the
+    // "Search sites for …" button sends. With a key, Find stops at the TMDB results as before.
+    @Test
+    fun `without TMDB, Find searches the sites for the typed text`() {
+        val noKey = parseMediaLookup(JSONObject("""{ "tmdbConfigured": false, "results": [] }"""))
+        assertTrue(MediaDownloadFormat.searchSitesDirectly(noKey))
+        val withKey = parseMediaLookup(JSONObject("""{ "tmdbConfigured": true, "results": [] }"""))
+        assertFalse(MediaDownloadFormat.searchSitesDirectly(withKey))
+
+        assertEquals(
+            MediaReleaseSearchInput("movie", "Dune Part Two"),
+            MediaDownloadFormat.directSearchInput("movie", "  Dune Part Two ", "2", "5"),
+        )
+        assertEquals(
+            MediaReleaseSearchInput("show", "Bluey", season = 2, episode = 5),
+            MediaDownloadFormat.directSearchInput("show", "Bluey", "2", "5"),
+        )
+        // Season alone is the whole season; an episode without a season is ignored; junk is ignored.
+        assertEquals(
+            MediaReleaseSearchInput("show", "Bluey", season = 2),
+            MediaDownloadFormat.directSearchInput("show", "Bluey", "2", ""),
+        )
+        assertEquals(MediaReleaseSearchInput("show", "Bluey"), MediaDownloadFormat.directSearchInput("show", "Bluey", "", "5"))
+        assertEquals(MediaReleaseSearchInput("show", "Bluey"), MediaDownloadFormat.directSearchInput("show", "Bluey", "2a", "5"))
+        assertNull(MediaDownloadFormat.directSearchInput("movie", "   ", "", ""))
+    }
+
     @Test
     fun `the VPN test answer parses`() {
         val result = parseMediaVpnTestResult(

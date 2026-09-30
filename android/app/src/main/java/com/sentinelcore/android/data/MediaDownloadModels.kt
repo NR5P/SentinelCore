@@ -692,6 +692,20 @@ internal object MediaDownloadFormat {
         else -> privacy
     }
 
+    // A lookup that says there is no TMDB key has nothing to pick from, so Find goes straight on
+    // to searching the sites for the typed text (the web's lookup() -> directSearch()).
+    fun searchSitesDirectly(lookup: MediaLookup): Boolean = !lookup.tmdbConfigured
+
+    // What "Search sites for …" (and Find without TMDB) asks for: exactly the typed title, plus for
+    // TV a season when one is given and an episode only alongside a season. Null when nothing typed.
+    fun directSearchInput(kind: String, typed: String, seasonText: String, episodeText: String): MediaReleaseSearchInput? {
+        val title = typed.trim()
+        if (title.isEmpty()) return null
+        val season = if (kind == "show") wholeNumber(seasonText) else null
+        val episode = if (season != null) wholeNumber(episodeText) else null
+        return MediaReleaseSearchInput(kind, title, season = season, episode = episode)
+    }
+
     // Digits only, like the web's /^\d+$/ check on the season / episode boxes.
     fun wholeNumber(text: String): Int? = text.trim().takeIf { it.matches(Regex("^\\d+$")) }?.toIntOrNull()
 }
