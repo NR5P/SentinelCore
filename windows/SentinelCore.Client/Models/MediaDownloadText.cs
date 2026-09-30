@@ -205,6 +205,33 @@ public static class MediaDownloadText
         return (season, WholeNumber(episodeText));
     }
 
+    /// <summary>
+    /// Whether a lookup's answer means "search the sites straight away": the server has no TMDB
+    /// key, so there are no titles to pick from and stopping at a second button only made every
+    /// search look empty. Only an explicit false counts - an older server that doesn't say has TMDB.
+    /// </summary>
+    public static bool LookupSearchesSitesDirectly(MediaDownloadLookup lookup) => lookup.TmdbConfigured == false;
+
+    /// <summary>
+    /// The search the sites get for exactly what was typed: the kind, the text as the title, and
+    /// for TV the season and episode boxes when they hold whole numbers (an episode only with a
+    /// season). Null when nothing was typed.
+    /// </summary>
+    public static MediaDownloadSearchInput? DirectSearchInput(string kind, string? query, string? seasonText, string? episodeText)
+    {
+        var title = query?.Trim() ?? "";
+        if (title.Length == 0) return null;
+        var show = kind == "show";
+        var (season, episode) = show ? ParseSeasonEpisode(seasonText, episodeText) : (null, null);
+        return new MediaDownloadSearchInput
+        {
+            Kind = show ? "show" : "movie",
+            Title = title,
+            Season = season,
+            Episode = episode,
+        };
+    }
+
     private static int? WholeNumber(string? text)
     {
         var trimmed = text?.Trim() ?? "";

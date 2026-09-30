@@ -226,6 +226,49 @@ public class MediaDownloadTextTests
         Assert.Equal(expectedEpisode, e);
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(null, false)] // an older server that doesn't say has TMDB
+    public void Only_a_lookup_without_tmdb_searches_the_sites_straight_away(bool? tmdbConfigured, bool direct) =>
+        Assert.Equal(direct, MediaDownloadText.LookupSearchesSitesDirectly(new MediaDownloadLookup { TmdbConfigured = tmdbConfigured }));
+
+    [Fact]
+    public void A_direct_movie_search_is_the_typed_text_and_ignores_the_episode_boxes()
+    {
+        var input = MediaDownloadText.DirectSearchInput("movie", "  Dune Part Two ", "2", "5")!;
+
+        Assert.Equal("movie", input.Kind);
+        Assert.Equal("Dune Part Two", input.Title);
+        Assert.Null(input.Season);
+        Assert.Null(input.Episode);
+        Assert.Null(input.Year);
+        Assert.Null(input.TmdbId);
+    }
+
+    [Theory]
+    [InlineData("2", "5", 2, 5)]
+    [InlineData("2", "", 2, null)]   // a whole season
+    [InlineData("", "", null, null)] // the whole show, as typed
+    [InlineData("", "5", null, null)]
+    public void A_direct_show_search_takes_the_season_and_episode_when_given(
+        string season, string episode, int? expectedSeason, int? expectedEpisode)
+    {
+        var input = MediaDownloadText.DirectSearchInput("show", "Bluey", season, episode)!;
+
+        Assert.Equal("show", input.Kind);
+        Assert.Equal("Bluey", input.Title);
+        Assert.Equal(expectedSeason, input.Season);
+        Assert.Equal(expectedEpisode, input.Episode);
+    }
+
+    [Fact]
+    public void Nothing_typed_is_no_direct_search()
+    {
+        Assert.Null(MediaDownloadText.DirectSearchInput("movie", "   ", null, null));
+        Assert.Null(MediaDownloadText.DirectSearchInput("show", null, "1", "1"));
+    }
+
     [Fact]
     public void No_library_warning_only_when_the_server_says_there_is_none()
     {

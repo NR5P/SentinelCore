@@ -190,11 +190,16 @@ public partial class MediaDownloadAddWindow : Window
         try
         {
             var lookup = await _model.Client.LookupMediaDownloadAsync(query, kind);
-            if (generation != _lookupGeneration) return;
+            if (generation != _lookupGeneration || _stage != Stage.Find || Query != query) return;
             _tmdb = lookup.TmdbConfigured != false;
             _results = _tmdb ? lookup.Results : new List<MediaDownloadTitle>();
             UpdateDirect();
             RenderResults();
+
+            // No TMDB key: there are no titles to pick from, so Find (and Enter) searches the
+            // sites straight away rather than stopping at the "Search sites for" button - which
+            // stays for coming back from the results.
+            if (MediaDownloadText.LookupSearchesSitesDirectly(lookup)) SearchSitesDirectly();
         }
         catch (Exception error)
         {
@@ -313,19 +318,15 @@ public partial class MediaDownloadAddWindow : Window
         _ = OpenShowAsync(result);
     }
 
-    private void OnDirectSearchClicked(object sender, RoutedEventArgs e)
+    private void OnDirectSearchClicked(object sender, RoutedEventArgs e) => SearchSitesDirectly();
+
+    // The sites searched for exactly what was typed, plus a season and episode for TV when given.
+    private void SearchSitesDirectly()
     {
-        if (Query.Length == 0) return;
-        var (season, episode) = _kind == "show"
-            ? MediaDownloadText.ParseSeasonEpisode(DirectSeasonBox.Text, DirectEpisodeBox.Text)
-            : (null, null);
-        _ = StartSearchAsync(new MediaDownloadSearchInput
+        if (MediaDownloadText.DirectSearchInput(_kind, Query, DirectSeasonBox.Text, DirectEpisodeBox.Text) is { } input)
         {
-            Kind = _kind,
-            Title = Query,
-            Season = season,
-            Episode = episode,
-        }, Stage.Find);
+            _ = StartSearchAsync(input, Stage.Find);
+        }
     }
 
     // ---------------------------------------------------------------- 2. A show's episodes
