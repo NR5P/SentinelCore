@@ -45,3 +45,6 @@ appletv/build/
 windows/publish/
 
 __pycache__/
+
+# Demo-video working folder: a demo server's runtime data (databases, keys, logs) and rendered takes
+/video/
