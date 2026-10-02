@@ -147,10 +147,43 @@ final class SentinelClient {
         try await get("/api/weather")
     }
 
-    // A GIF from radar.weather.gov, proxied by the server. `kind` is "loop" or "still".
+    // A GIF from radar.weather.gov, proxied by the server. `kind` is "loop" or "still". The
+    // fallback when the server is too old for the radar map.
     func weatherRadar(scope: String, kind: String) async throws -> Data {
         let query = [URLQueryItem(name: "scope", value: scope), URLQueryItem(name: "kind", value: kind)]
         guard let url = url(path: "/api/weather/radar", query: query) else { throw ClientError.invalidServerAddress }
+        return try await performData(URLRequest(url: url))
+    }
+
+    // Precipitation totals, hour-by-hour feels-like and gusts, the barometer's trend, the
+    // forecasters' discussion and the SPC severe outlook.
+    func weatherDetails() async throws -> WeatherDetails {
+        try await get("/api/weather/details")
+    }
+
+    // The radar map's description: home, every radar site, the layers and their frame times.
+    // `station` picks whose per-radar layers to list (nil: the one nearest home).
+    func weatherMap(station: String?) async throws -> WeatherMapInfo {
+        try await get("/api/weather/map", query: station.map { [URLQueryItem(name: "station", value: $0)] } ?? [])
+    }
+
+    // Storm cells, warning outlines and today's SPC outlook inside a box of the map.
+    func weatherStorms(west: Double, south: Double, east: Double, north: Double) async throws -> WeatherStorms {
+        let format = { (value: Double) in String(format: "%.3f", value) }
+        return try await get("/api/weather/storms", query: [
+            URLQueryItem(name: "west", value: format(west)),
+            URLQueryItem(name: "south", value: format(south)),
+            URLQueryItem(name: "east", value: format(east)),
+            URLQueryItem(name: "north", value: format(north)),
+        ])
+    }
+
+    // A radar layer's colour key, a 500x30 PNG strip.
+    func weatherLegend(layer: String, station: String?) async throws -> Data {
+        guard let url = url(path: "/api/weather/map/legend/\(layer)",
+                            query: station.map { [URLQueryItem(name: "station", value: $0)] } ?? []) else {
+            throw ClientError.invalidServerAddress
+        }
         return try await performData(URLRequest(url: url))
     }
 
