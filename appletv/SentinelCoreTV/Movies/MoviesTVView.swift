@@ -5,7 +5,7 @@ import SwiftUI
 // See core/docs/MOVIES.md for the API.
 struct MoviesTVView: View {
     enum Pane: String, CaseIterable, Identifiable {
-        case home, movies, shows, search
+        case home, movies, shows, search, downloads
         var id: Self { self }
         var title: String {
             switch self {
@@ -13,6 +13,7 @@ struct MoviesTVView: View {
             case .movies: "Movies"
             case .shows: "TV Shows"
             case .search: "Search"
+            case .downloads: "Downloads"
             }
         }
     }
@@ -22,6 +23,9 @@ struct MoviesTVView: View {
     @State private var pane: Pane = .home
     @State private var playing: MoviePlayRequest?
     @State private var detailRoute: MediaRoute?
+    // Movie downloads: the Downloads pane is only there when the server says this account may
+    // use them (see MediaDownloadsTVView).
+    @StateObject private var downloads = MediaDownloadsTracker()
     #if DEBUG
     private struct DebugURL: Identifiable { let url: URL; var id: String { url.absoluteString } }
     @State private var debugURL: DebugURL?
@@ -32,7 +36,7 @@ struct MoviesTVView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             Picker("Show", selection: $pane) {
-                ForEach(Pane.allCases) { Text($0.title).tag($0) }
+                ForEach(Pane.allCases.filter { $0 != .downloads || downloads.canDownload }) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 1000)
@@ -40,14 +44,29 @@ struct MoviesTVView: View {
 
             switch pane {
             case .home:
-                MediaHomeTV(isActive: isActive, refreshToken: refreshToken, play: { playing = $0 }, open: { detailRoute = $0 })
+                MediaHomeTV(
+                    isActive: isActive, refreshToken: refreshToken, downloads: downloads,
+                    play: { playing = $0 }, open: { detailRoute = $0 }, openDownloads: { pane = .downloads })
             case .movies:
                 MediaGridTV(kind: "movie", refreshToken: refreshToken)
             case .shows:
                 MediaGridTV(kind: "show", refreshToken: refreshToken)
             case .search:
                 MediaSearchTV()
+            case .downloads:
+                MediaDownloadsTVView(downloads: downloads, open: { detailRoute = $0 })
             }
+        }
+        // Reads whether downloads are on, then follows the queue - always while the Downloads
+        // pane shows, otherwise only while something is downloading (the banner on Home).
+        .task(id: DownloadsKey(active: isActive, server: model.activeServerURL, following: pane == .downloads)) {
+            guard isActive, !model.activeServerURL.isEmpty else { return }
+            await downloads.run(client: model.client, following: pane == .downloads)
+        }
+        .onChange(of: model.activeServerURL) { _, _ in downloads.reset() }
+        .onChange(of: downloads.landed) { _, _ in refreshToken += 1 }
+        .onChange(of: downloads.canDownload) { _, can in
+            if pane == .downloads, !can { pane = .home }
         }
         .navigationDestination(for: MediaRoute.self) { route in
             MovieDetailTVView(route: route)
@@ -59,17 +78,25 @@ struct MoviesTVView: View {
             MoviePlayerTVView(request: request, client: model.client)
         }
         #if DEBUG
-        // Simulator testing without a remote: `-debugMediaItem <id>` opens a detail page and
-        // `-debugPlayItem <id>` starts playing it from the top.
+        // Simulator testing without a remote: `-debugMediaItem <id>` opens a detail page,
+        // `-debugPlayItem <id>` starts playing it from the top, and `-debugMoviesPane downloads`
+        // picks a pane.
         .task(id: model.activeServerURL) {
             guard !model.activeServerURL.isEmpty else { return }
             let defaults = UserDefaults.standard
             if let id = defaults.string(forKey: "debugMediaItem") { detailRoute = MediaRoute(id: id, title: "") }
             if let id = defaults.string(forKey: "debugPlayItem") { playing = MoviePlayRequest(itemId: id, start: 0) }
             if let raw = defaults.string(forKey: "debugPlayURL"), let url = URL(string: raw) { debugURL = DebugURL(url: url) }
+            if let raw = defaults.string(forKey: "debugMoviesPane"), let picked = Pane(rawValue: raw) { pane = picked }
         }
         .fullScreenCover(item: $debugURL) { DebugRawPlayerView(url: $0.url) }
         #endif
+    }
+
+    private struct DownloadsKey: Hashable {
+        var active: Bool
+        var server: String
+        var following: Bool
     }
 }
 
@@ -78,8 +105,10 @@ struct MoviesTVView: View {
 private struct MediaHomeTV: View {
     let isActive: Bool
     let refreshToken: Int
+    @ObservedObject var downloads: MediaDownloadsTracker
     let play: (MoviePlayRequest) -> Void
     let open: (MediaRoute) -> Void
+    let openDownloads: () -> Void
     @EnvironmentObject private var model: AppModel
     @State private var home: MediaHome?
     @State private var errorMessage: String?
@@ -98,16 +127,23 @@ private struct MediaHomeTV: View {
                 if let featured = home?.featured {
                     MediaHeroTV(item: featured)
                 }
-                if let home, !home.isEmpty {
-                    Button {
-                        Task { await surpriseMe() }
-                    } label: {
-                        Label("Surprise Me", systemImage: "shuffle")
+                let hasHome = home.map { !$0.isEmpty } ?? false
+                if hasHome || !downloads.active.isEmpty {
+                    HStack(spacing: 40) {
+                        if hasHome {
+                            Button {
+                                Task { await surpriseMe() }
+                            } label: {
+                                Label("Surprise Me", systemImage: "shuffle")
+                            }
+                            .disabled(surprising)
+                            // White like the detail page's buttons: left alone, a tinted tvOS button
+                            // draws its title in the tint and it vanishes into the green.
+                            .foregroundStyle(.white)
+                        }
+                        // "Downloading Bluey S02E05 · 42%" while anything is in the queue.
+                        MediaDownloadsBannerTV(downloads: downloads, open: openDownloads)
                     }
-                    .disabled(surprising)
-                    // White like the detail page's buttons: left alone, a tinted tvOS button draws
-                    // its title in the tint and it vanishes into the green.
-                    .foregroundStyle(.white)
                     .padding(.horizontal, 60)
                 }
                 if let items = home?.continueWatching, !items.isEmpty {
