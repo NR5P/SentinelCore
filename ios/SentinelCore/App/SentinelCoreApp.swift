@@ -49,6 +49,15 @@ struct SentinelCoreApp: App {
         }
         #if os(macOS)
         .defaultSize(width: 1180, height: 760)
+        .commands {
+            // The same sheet the Quick Add widget opens.
+            CommandGroup(after: .newItem) {
+                Button("Quick Add\u{2026}") {
+                    NotificationCenter.default.post(name: .sentinelQuickCapture, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+        }
         #endif
 
         #if os(macOS)

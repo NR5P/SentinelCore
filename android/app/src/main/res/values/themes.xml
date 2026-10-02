@@ -8,6 +8,17 @@
         <item name="android:windowLightStatusBar">true</item>
     </style>
 
+    <!-- Quick Add (ui/organizer/QuickCaptureActivity) floats over the home screen: no window of
+         its own, the Compose card and its scrim are all there is. -->
+    <style name="Theme.SentinelCore.QuickCapture" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
     <!-- The splash brand screen itself stays dark regardless of system appearance (the
          monochrome launcher icon is a white glyph, so it needs a dark backdrop) - only
          postSplashScreenTheme actually differs between the light/dark variants of this file. -->

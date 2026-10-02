@@ -107,6 +107,18 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/organizer_notes_widget" />
         </receiver>
+        <!-- Quick Add: say or type a reminder, note or event (widgets/QuickAddWidget). -->
+        <receiver
+            android:name=".widgets.QuickAddWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_quick_add_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quick_add_widget" />
+        </receiver>
 
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
@@ -142,6 +154,17 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
+
+        <!-- Quick Add over the home screen, from the Quick Add widget. Its own task, so finishing
+             it goes back to the home screen rather than into the app. -->
+        <activity
+            android:name=".ui.organizer.QuickCaptureActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.SentinelCore.QuickCapture"
+            android:windowSoftInputMode="adjustResize" />
 
         <!-- Lets ActivityResultContracts.TakePicture() write a captured photo to a content Uri
              this app can read back, for Known Face enrollment - the camera app itself can't

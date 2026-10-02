@@ -15,6 +15,14 @@ struct RootView: View {
     // the hub is on - before that the section doesn't exist to select.
     @AppStorage(DeviceWall.storageKey) private var wallDisplayRemembered = false
     @State private var openedWallDisplay = false
+    @State private var quickCapture: QuickCaptureRequest?
+
+    // Why Quick Add can't add anything yet, if it can't.
+    private var quickCaptureBlocked: String? {
+        if !model.isConfigured { return "Sentinel Core isn\u{2019}t connected to a server yet." }
+        if !organizerEnabled { return "The Organizer is turned off. It\u{2019}s in the dashboard\u{2019}s Settings, under Organizer." }
+        return nil
+    }
 
     // Whether the server has the Organizer on - its own answer when it has given one this
     // launch, otherwise what it said last time, so the section is there offline too.
@@ -88,8 +96,15 @@ struct RootView: View {
                let section = AppSection(rawValue: name) { selection = section }
         }
         #endif
+        // Quick Add, from the widget's microphone or keyboard button, or File > Quick Add on the Mac.
+        .quickCapture($quickCapture, engine: model.organizer, blocked: quickCaptureBlocked)
         // sentinelcore://organizer/<pane>, from tapping an Organizer widget on the Home Screen.
         .onOpenURL { url in
+            // sentinelcore://capture?mode=voice|type&kind=…, from the Quick Add widget.
+            if let request = QuickCaptureRequest(url: url) {
+                quickCapture = request
+                return
+            }
             // sentinelcore://alarm, from the Alarm widget.
             if url.scheme == "sentinelcore", url.host() == "alarm" {
                 selection = .alarm
