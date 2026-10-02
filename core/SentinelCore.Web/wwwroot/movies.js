@@ -1797,6 +1797,7 @@ window.SentinelMovies = (function () {
     const services = status && status.services;
     if (vpn.state === "disabled") return { tone: "off", short: "VPN off", text: "Turned off in Settings &middot; searching and downloading use your <b>home</b> connection, so the sites see your home address." };
     if (services === "notInstalled") return { tone: "bad", short: "VPN not set up", text: "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once." };
+    if (vpn.account && vpn.account.expired) return { tone: "bad", short: "VPN out of time", text: `Your Mullvad account ran out of time on ${paidDate(vpn.account.paidUntil)}. Add time at ${MULLVAD_LINK} and downloads work again.` };
     if (vpn.state === "connected") {
       const where = `${vpn.location ? " &middot; " + escapeHtml(vpn.location) : ""}${vpn.ip ? ` &middot; <code>${escapeHtml(vpn.ip)}</code>` : ""}`;
       return vpn.verified
@@ -1807,6 +1808,30 @@ window.SentinelMovies = (function () {
     if (services === "failed" || vpn.state === "down") return { tone: "bad", short: "VPN problem", text: escapeHtml(vpn.error || "The VPN or torrent services failed to start. Check the server's log (journalctl -u sentinelcore-vpn).") };
     if (services === "external") return { tone: "idle", short: "VPN idle", text: "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used." };
     return { tone: "idle", short: "VPN idle", text: "Off until someone searches or downloads, then it connects by itself. Press test to check it now." };
+  }
+
+  const MULLVAD_LINK = `<a href="https://mullvad.net/en/account" target="_blank" rel="noopener noreferrer">mullvad.net</a>`;
+
+  // "Oct 27", with the year when it is not this one.
+  function paidDate(iso, now = new Date()) {
+    const at = new Date(iso);
+    const text = at.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return at.getFullYear() === now.getFullYear() ? text : `${text}, ${at.getFullYear()}`;
+  }
+
+  // The line under the VPN on the Downloads screen saying how long the Mullvad account has left
+  // ("The account line" in MOVIE_DOWNLOADS.md). Null for any other VPN.
+  function accountLine(account, now = new Date()) {
+    if (!account || !account.paidUntil) return null;
+    const date = paidDate(account.paidUntil, now);
+    const days = Math.max(0, Number(account.daysLeft) || 0);
+    if (account.expired) return { tone: "bad", text: `Mullvad ran out on ${date} &middot; add time at ${MULLVAD_LINK}` };
+    if (account.runningOut) {
+      const when = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+      return { tone: "warn", text: `Mullvad runs out ${when} (${date}) &middot; add time at ${MULLVAD_LINK}` };
+    }
+    const left = days === 0 ? "less than a day left" : days === 1 ? "1 day left" : `${days} days left`;
+    return { tone: "plain", text: `Mullvad paid until ${date} &middot; ${left}` };
   }
 
   function drawVpnLight(status) {
@@ -1906,12 +1931,14 @@ window.SentinelMovies = (function () {
   function vpnMarkup(status) {
     if (!status) return "";
     const look = vpnLook(status);
+    const account = accountLine(status.vpn && status.vpn.account);
     return `<div class="mv-dl-vpn mv-dl-vpn-${look.tone}">
       <span class="mv-dl-vpn-dot"></span>
       <span class="mv-dl-vpn-label">VPN</span>
       <span class="mv-dl-vpn-text">${look.text}</span>
       <button type="button" class="mv-btn" data-act="dl-vpn-test" title="Connect now and prove the sites see the VPN's address, not your home's">${ICON.check}<span>test</span></button>
       ${dl.status && dl.status.canManageSites ? `<button type="button" class="mv-btn" data-act="dl-sites">${ICON.search}<span>sites</span></button>` : ""}
+      ${account ? `<div class="mv-dl-vpn-account mv-dl-vpn-account-${account.tone}">${account.text}</div>` : ""}
     </div>`;
   }
 
@@ -1947,7 +1974,8 @@ window.SentinelMovies = (function () {
   function downloadsShape(data) {
     const rows = [...(data.active || []), ...(data.recent || [])].map((d) => `${d.id}:${d.state}:${d.itemId || ""}`);
     const v = (data.status && data.status.vpn) || {};
-    const vpn = data.status ? `${data.status.services}:${v.state}:${v.ip}:${v.error}:${v.verified}` : "";
+    const a = v.account || {};
+    const vpn = data.status ? `${data.status.services}:${v.state}:${v.ip}:${v.error}:${v.verified}:${a.paidUntil}:${a.daysLeft}:${a.runningOut}:${a.expired}` : "";
     return rows.join("|") + "#" + vpn;
   }
 

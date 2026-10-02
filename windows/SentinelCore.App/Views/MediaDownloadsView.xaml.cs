@@ -192,6 +192,21 @@ public partial class MediaDownloadsView : UserControl
         VpnText.Foreground = look.Tone is MediaDownloadText.VpnTone.Disabled or MediaDownloadText.VpnTone.Problem
             ? VpnLight.Brush(look.Tone)
             : Palette.PrimaryText;
+        if (MediaDownloadText.AccountLine(status?.Vpn?.Account, DateTimeOffset.Now, TimeZoneInfo.Local) is { } account)
+        {
+            VpnAccountText.Text = account.Text;
+            VpnAccountText.Foreground = account.Tone switch
+            {
+                MediaDownloadText.AccountTone.RunningOut => Palette.Amber,
+                MediaDownloadText.AccountTone.Expired => Palette.Red,
+                _ => Palette.SecondaryText,
+            };
+            VpnAccountText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            VpnAccountText.Visibility = Visibility.Collapsed;
+        }
         if (_vpnTone != look.Tone)
         {
             _vpnTone = look.Tone;

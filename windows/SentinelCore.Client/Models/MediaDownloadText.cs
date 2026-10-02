@@ -306,7 +306,7 @@ public static class MediaDownloadText
         /// <summary>Amber: Use VPN is off in Settings - the home connection is used.</summary>
         Disabled,
 
-        /// <summary>Red: not installed, failed, or down.</summary>
+        /// <summary>Red: not installed, failed, down, or the VPN account out of time.</summary>
         Problem,
     }
 
@@ -318,10 +318,12 @@ public static class MediaDownloadText
 
     /// <summary>
     /// The look for a status, following the web's <c>vpnLook</c> in the table's order: disabled,
-    /// not installed, connected (verified or not), connecting, failed or down, external, idle.
-    /// Null for no status at all - there is then no light to draw.
+    /// not installed, account out of time, connected (verified or not), connecting, failed or
+    /// down, external, idle. Null for no status at all - there is then no light to draw.
+    /// <paramref name="now"/> and <paramref name="zone"/> (the device's clock and time zone when
+    /// left out) only date the out-of-time sentence.
     /// </summary>
-    public static VpnLookResult? VpnLook(MediaDownloadServiceStatus? status)
+    public static VpnLookResult? VpnLook(MediaDownloadServiceStatus? status, DateTimeOffset? now = null, TimeZoneInfo? zone = null)
     {
         if (status is null) return null;
         var vpn = status.Vpn;
@@ -337,6 +339,14 @@ public static class MediaDownloadText
         {
             return new VpnLookResult(VpnTone.Problem, "VPN not set up",
                 "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.");
+        }
+        if (vpn?.Account is { IsExpired: true } account)
+        {
+            var on = account.PaidUntil is { } until
+                ? $" on {AccountDate(until, now ?? DateTimeOffset.Now, zone ?? TimeZoneInfo.Local)}"
+                : "";
+            return new VpnLookResult(VpnTone.Problem, "VPN out of time",
+                $"Your Mullvad account ran out of time{on}. Add time at mullvad.net and downloads work again.");
         }
         if (state == "connected")
         {
@@ -363,6 +373,70 @@ public static class MediaDownloadText
         }
         return new VpnLookResult(VpnTone.Idle, "VPN idle",
             "Off until someone searches or downloads, then it connects by itself. Press Test to check it now.");
+    }
+
+    /// <summary>The account line's colour (core/docs/MOVIE_DOWNLOADS.md, "The account line").</summary>
+    public enum AccountTone
+    {
+        /// <summary>Secondary text: plenty of time left.</summary>
+        Plain,
+
+        /// <summary>Amber: 7 days or less left.</summary>
+        RunningOut,
+
+        /// <summary>Red: the paid time is used up.</summary>
+        Expired,
+    }
+
+    /// <summary>The account line under the VPN light: its words and colour.</summary>
+    public sealed record AccountLineResult(AccountTone Tone, string Text);
+
+    /// <summary>
+    /// The account line for <c>status.vpn.account</c> - "Mullvad paid until Oct 27 · 26 days
+    /// left", or a warning to add time when it runs out within the week or has run out. Null when
+    /// there is no account to show (not Mullvad, or an older server).
+    /// </summary>
+    public static AccountLineResult? AccountLine(MediaDownloadVpnAccount? account, DateTimeOffset now, TimeZoneInfo zone)
+    {
+        if (account is null) return null;
+        var date = account.PaidUntil is { } until ? AccountDate(until, now, zone) : null;
+        var days = Math.Max(0, account.DaysLeft ?? 0);
+
+        if (account.IsExpired)
+        {
+            return new AccountLineResult(AccountTone.Expired, date is null
+                ? "Mullvad ran out · add time at mullvad.net"
+                : $"Mullvad ran out on {date} · add time at mullvad.net");
+        }
+        if (account.IsRunningOut)
+        {
+            var when = days switch
+            {
+                0 => "today",
+                1 => "tomorrow",
+                _ => $"in {days} days",
+            };
+            var dated = date is null ? "" : $" ({date})";
+            return new AccountLineResult(AccountTone.RunningOut, $"Mullvad runs out {when}{dated} · add time at mullvad.net");
+        }
+        var left = days switch
+        {
+            0 => "less than a day left",
+            1 => "1 day left",
+            _ => $"{days} days left",
+        };
+        return new AccountLineResult(AccountTone.Plain, date is null
+            ? $"Mullvad paid · {left}"
+            : $"Mullvad paid until {date} · {left}");
+    }
+
+    /// <summary>"Oct 27" on the device's local date, with ", 2027" when it is not this year.</summary>
+    public static string AccountDate(DateTimeOffset at, DateTimeOffset now, TimeZoneInfo zone)
+    {
+        var local = TimeZoneInfo.ConvertTime(at, zone);
+        var today = TimeZoneInfo.ConvertTime(now, zone);
+        var text = local.ToString("MMM d", CultureInfo.InvariantCulture);
+        return local.Year == today.Year ? text : $"{text}, {local.Year.ToString(CultureInfo.InvariantCulture)}";
     }
 
     /// <summary>The note at the top of the Add window while Use VPN is off in Settings.</summary>

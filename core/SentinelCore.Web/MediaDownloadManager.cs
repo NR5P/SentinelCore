@@ -32,6 +32,7 @@ public sealed class MediaDownloadManager(
     AppSettingsFile settings,
     IHttpClientFactory httpClientFactory,
     MediaVpnConfig vpnConfig,
+    MullvadAccountWatch mullvadAccount,
     IConfiguration configuration,
     ILogger<MediaDownloadManager> logger)
 {
@@ -65,16 +66,28 @@ public sealed class MediaDownloadManager(
 
     // Brings the VPN, qBittorrent and Prowlarr up (if this server runs them) and waits until the
     // tunnel is proven and both answer. Throws with something a person can act on.
-    public async Task EnsureReadyAsync(CancellationToken cancellationToken)
+    // `fromWorker`: the background pass, which comes round every few seconds while a download
+    // waits - it asks Mullvad again at most every WorkerRecheckEvery, not on every pass.
+    public async Task EnsureReadyAsync(CancellationToken cancellationToken, bool fromWorker = false)
     {
         Touch();
         var options = await OptionsAsync(cancellationToken);
+        TimeSpan? recheck = fromWorker ? MullvadAccountWatch.WorkerRecheckEvery : null;
         await _startLock.WaitAsync(cancellationToken);
         try
         {
             var state = await stack.StateAsync(cancellationToken);
             if (state == MediaDownloadServiceStates.NotInstalled)
                 throw new MediaDownloadException("The VPN and torrent services are not installed on this server yet. Run core/downloads/install-downloads.sh on it (see Settings -> MOVIE DOWNLOADS).");
+            // Out of paid time, Mullvad ignores the key and the tunnel never comes up - say so
+            // instead of waiting a minute to report "the server never answered". An answer saying
+            // the time is up is checked again first: it may just have been added.
+            if (IsMullvad(options))
+            {
+                var account = await mullvadAccount.RefreshAsync(options, MullvadAccountWatch.RecheckEvery, cancellationToken);
+                if (account is not null && mullvadAccount.IsExpired(account)) account = await mullvadAccount.RefreshAsync(options, recheck, cancellationToken);
+                if (account is not null && mullvadAccount.IsExpired(account)) throw new MediaDownloadException(MullvadAccountWatch.OutOfTimeMessage(account));
+            }
             // The tunnel script reads its settings when it starts, so a change of VPN (on/off, or
             // another provider or location) while everything is running means starting over.
             // Worked out only when something changed or the services are about to start - a
@@ -109,11 +122,15 @@ public sealed class MediaDownloadManager(
                 }
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
             }
-            if (options.UseVpn && options.VpnProvider == MediaVpnProviders.Mullvad
-                && await vpnConfig.ForgetMullvadDeviceIfGoneAsync(options, cancellationToken))
+            if (IsMullvad(options))
             {
-                _appliedVpnKey = null;
-                lastProblem = "This server's key had been removed from your Mullvad account; a new one is registered on the next try.";
+                if (await mullvadAccount.RefreshAsync(options, recheck, cancellationToken) is { } account && mullvadAccount.IsExpired(account))
+                    throw new MediaDownloadException(MullvadAccountWatch.OutOfTimeMessage(account));
+                if (await vpnConfig.ForgetMullvadDeviceIfGoneAsync(options, cancellationToken))
+                {
+                    _appliedVpnKey = null;
+                    lastProblem = "This server's key had been removed from your Mullvad account; a new one is registered on the next try.";
+                }
             }
             throw new MediaDownloadException(lastProblem ?? "The download services did not come up.");
         }
@@ -121,6 +138,8 @@ public sealed class MediaDownloadManager(
     }
 
     private string? _appliedVpnKey;
+
+    private static bool IsMullvad(MediaDownloadsSettingsDto o) => o.UseVpn && o.VpnProvider == MediaVpnProviders.Mullvad;
 
     private static string VpnSettingsKey(MediaDownloadsSettingsDto o) => string.Join("\u001f",
         o.UseVpn, o.VpnProvider, o.MullvadAccountNumber, o.MullvadLocation, o.WireGuardPrivateKey, o.WireGuardAddress,
@@ -204,7 +223,9 @@ public sealed class MediaDownloadManager(
             country = options.UseVpn ? vpn.Country : null,
             provider = options.UseVpn ? vpn.Org : null,
             checkedAt = vpn.CheckedAt,
-            error = options.UseVpn ? vpn.Error : null
+            error = options.UseVpn ? vpn.Error : null,
+            // How long the Mullvad account has left; null for any other VPN or before the first look.
+            account = mullvadAccount.Dto(options)
         };
     }
 
@@ -218,9 +239,10 @@ public sealed class MediaDownloadManager(
             return (true, "The VPN is turned off in Settings: searching and downloading use your home internet connection, so the sites see your home address.");
         var vpn = await stack.VpnStatusAsync(cancellationToken);
         var where = vpn.Location is { } location ? $" in {location}" : "";
+        var paid = mullvadAccount.Current(options) is { } account ? $" Mullvad is paid until {MullvadAccountWatch.DateText(account.PaidUntil)}." : "";
         return _verified is not null
-            ? (true, $"Working. The sites see {vpn.Ip}{where}, not your home address.")
-            : (true, $"Connected{where} ({vpn.Ip}), but your home address could not be looked up to compare it with.");
+            ? (true, $"Working. The sites see {vpn.Ip}{where}, not your home address.{paid}")
+            : (true, $"Connected{where} ({vpn.Ip}), but your home address could not be looked up to compare it with.{paid}");
     }
 
     // MARK: - Searching
@@ -453,7 +475,7 @@ public sealed class MediaDownloadManager(
         }
         Touch();
 
-        try { await EnsureReadyAsync(cancellationToken); }
+        try { await EnsureReadyAsync(cancellationToken, fromWorker: true); }
         catch (Exception ex) when (ex is MediaDownloadException or InvalidOperationException)
         {
             foreach (var waiting in active.Where(d => d.Error != ex.Message))

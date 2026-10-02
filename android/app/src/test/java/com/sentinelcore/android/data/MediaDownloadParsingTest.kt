@@ -7,6 +7,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
+import java.time.ZoneId
 
 // Fed the sample JSON from core/docs/MOVIE_DOWNLOADS.md (and trimmed-down answers with fields
 // missing), so a drift between the contract and these parsers shows up here rather than as a
@@ -463,5 +465,88 @@ class MediaDownloadParsingTest {
         assertFalse(bare.ok)
         assertEquals("The VPN test failed.", bare.message)
         assertEquals("/api/media/downloads/vpn/test", MediaDownloadApi.VPN_TEST_PATH)
+    }
+
+    // Fixed clock and zone so the "Oct 27" dates do not depend on the machine running the tests.
+    private val now = Instant.parse("2026-10-01T15:00:00Z")
+    private val utc = ZoneId.of("UTC")
+
+    @Test
+    fun `the Mullvad account parses, and is null when absent or null`() {
+        val vpn = parseMediaDownloadVpn(
+            JSONObject(
+                """{ "state": "connected", "error": null,
+                     "account": { "provider": "mullvad", "paidUntil": "2026-10-27T12:02:43+00:00", "daysLeft": 26,
+                                  "runningOut": false, "expired": false, "checkedAt": "2026-10-01T15:00:00+00:00" } }""",
+            ),
+        )
+        assertEquals(
+            MediaVpnAccount("mullvad", "2026-10-27T12:02:43+00:00", 26, false, false, "2026-10-01T15:00:00+00:00"),
+            vpn.account,
+        )
+        assertNull(parseMediaDownloadVpn(JSONObject("""{ "state": "connected" }""")).account)
+        assertNull(parseMediaDownloadVpn(JSONObject("""{ "state": "connected", "account": null }""")).account)
+        assertNull(parseMediaDownloadStatus(JSONObject(statusJson)).status!!.vpn.account)
+    }
+
+    @Test
+    fun `an expired account turns the light red, after disabled and not installed`() {
+        val expired = MediaVpnAccount(paidUntil = "2026-10-27T12:02:43+00:00", expired = true)
+        val look = MediaDownloadFormat.vpnLook(
+            MediaDownloadServices(services = "running", vpn = MediaDownloadVpn(state = "connected", verified = true, account = expired)),
+            now,
+            utc,
+        )!!
+        assertEquals(
+            VpnLook(
+                VpnTone.BAD,
+                "VPN out of time",
+                "Your Mullvad account ran out of time on Oct 27. Add time at mullvad.net and downloads work again.",
+            ),
+            look,
+        )
+        assertEquals(
+            "VPN off",
+            MediaDownloadFormat.vpnLook(MediaDownloadServices(vpn = MediaDownloadVpn(state = "disabled", account = expired)), now, utc)!!.short,
+        )
+        assertEquals(
+            "VPN not set up",
+            MediaDownloadFormat.vpnLook(MediaDownloadServices(services = "notInstalled", vpn = MediaDownloadVpn(account = expired)), now, utc)!!.short,
+        )
+        // Paid time left leaves the light alone.
+        val paid = MediaVpnAccount(paidUntil = "2026-10-27T12:02:43+00:00", daysLeft = 26)
+        assertEquals(
+            VpnTone.ON,
+            MediaDownloadFormat.vpnLook(
+                MediaDownloadServices(services = "running", vpn = MediaDownloadVpn(state = "connected", verified = true, account = paid)),
+                now,
+                utc,
+            )!!.tone,
+        )
+    }
+
+    @Test
+    fun `the account line follows the contract table`() {
+        val until = "2026-10-27T12:02:43+00:00"
+        fun line(daysLeft: Int, runningOut: Boolean = false, expired: Boolean = false, paidUntil: String = until) =
+            MediaDownloadFormat.vpnAccountLine(MediaVpnAccount("mullvad", paidUntil, daysLeft, runningOut, expired), now, utc)
+
+        assertNull(MediaDownloadFormat.vpnAccountLine(null, now, utc))
+        assertEquals(VpnAccountLine(VpnTone.IDLE, "Mullvad paid until Oct 27 · 26 days left"), line(26))
+        assertEquals(VpnAccountLine(VpnTone.IDLE, "Mullvad paid until Oct 27 · 1 day left"), line(1))
+        assertEquals(VpnAccountLine(VpnTone.IDLE, "Mullvad paid until Oct 27 · less than a day left"), line(0))
+        assertEquals(VpnAccountLine(VpnTone.OFF, "Mullvad runs out in 5 days (Oct 27) · add time at mullvad.net"), line(5, runningOut = true))
+        assertEquals(VpnAccountLine(VpnTone.OFF, "Mullvad runs out tomorrow (Oct 27) · add time at mullvad.net"), line(1, runningOut = true))
+        assertEquals(VpnAccountLine(VpnTone.OFF, "Mullvad runs out today (Oct 27) · add time at mullvad.net"), line(0, runningOut = true))
+        assertEquals(VpnAccountLine(VpnTone.BAD, "Mullvad ran out on Oct 27 · add time at mullvad.net"), line(0, runningOut = true, expired = true))
+        // Another year gets the year; the date is the device's local one.
+        assertEquals(
+            VpnAccountLine(VpnTone.IDLE, "Mullvad paid until Oct 27, 2027 · 391 days left"),
+            line(391, paidUntil = "2027-10-27T12:02:43+00:00"),
+        )
+        assertEquals(
+            "Oct 28",
+            MediaDownloadFormat.accountDate("2026-10-27T23:30:00+00:00", now, ZoneId.of("Asia/Tokyo")),
+        )
     }
 }

@@ -70,6 +70,7 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                 // The test drives the worker itself, one pass at a time.
                 var worker = services.First(s => s.ImplementationType == typeof(MediaDownloadWorker));
                 services.Remove(worker);
+                services.Remove(services.First(s => s.ImplementationType == typeof(MullvadAccountWorker)));
             }));
 
     private async Task<Guid> AddLibraryAsync(WebApplicationFactory<WebProgram> factory, string kind, string path)
@@ -608,6 +609,8 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         public readonly List<string> RegisteredKeys = [];
         public bool Full;
         public readonly HashSet<string> Removed = [];
+        public DateTimeOffset PaidUntil = DateTimeOffset.UtcNow.AddDays(60);
+        public int Lookups;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -624,6 +627,11 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                 RegisteredKeys.Add(doc.RootElement.GetProperty("pubkey").GetString()!);
                 var n = RegisteredKeys.Count;
                 return Json($$"""{ "id": "dev{{n}}", "name": "happy otter {{n}}", "ipv4_address": "10.64.0.{{n}}/32", "ipv6_address": "fc00:bbbb::{{n}}/128" }""", HttpStatusCode.Created);
+            }
+            if (path == "/accounts/v1/accounts/me")
+            {
+                Lookups++;
+                return Json($$"""{ "id": "acc", "expiry": "{{PaidUntil.UtcDateTime:yyyy-MM-ddTHH:mm:ss}}+00:00", "max_devices": 5 }""");
             }
             if (path.StartsWith("/accounts/v1/devices/", StringComparison.Ordinal))
                 return Removed.Contains(path.Split('/').Last()) ? new HttpResponseMessage(HttpStatusCode.NotFound) : Json("{}");
@@ -694,6 +702,113 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "193.32.249.66");
         await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
         Assert.Equal(2, _mullvad.RegisteredKeys.Count);
+    }
+
+    [Fact]
+    public async Task Mullvad_PaidUntilShowsInTheStatus_AndAnAccountOutOfTimeSaysSoWithoutStarting()
+    {
+        WriteVpnSettings($$"""
+            "VpnProvider": "mullvad", "MullvadAccountNumber": "1234567812345678", "MullvadLocation": "se"
+            """);
+        _mullvad.PaidUntil = DateTimeOffset.UtcNow.AddDays(5).AddHours(1);
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.195.233.76", "Stockholm", null, "SE");
+
+        // Not looked up yet: no account to show.
+        var before = await JsonAsync(await client.GetAsync("/api/media/downloads/status", Ct), HttpStatusCode.OK);
+        Assert.Equal(JsonValueKind.Null, before.GetProperty("status").GetProperty("vpn").GetProperty("account").ValueKind);
+
+        var test = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.True(test.GetProperty("ok").GetBoolean(), test.GetRawText());
+        Assert.Contains("Mullvad is paid until", test.GetProperty("message").GetString());
+        var account = test.GetProperty("status").GetProperty("vpn").GetProperty("account");
+        Assert.Equal("mullvad", account.GetProperty("provider").GetString());
+        Assert.Equal(5, account.GetProperty("daysLeft").GetInt32());
+        Assert.True(account.GetProperty("runningOut").GetBoolean());
+        Assert.False(account.GetProperty("expired").GetBoolean());
+
+        // Starting again soon after reuses the answer rather than asking Mullvad each time.
+        _stack.State = MediaDownloadServiceStates.Stopped;
+        await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Equal(1, _mullvad.Lookups);
+
+        // Run out (Mullvad says so when asked again): refused up front with the reason, nothing started.
+        var stateFile = Path.Combine(_dataDirectory, "media-downloads-mullvad-account.json");
+        Assert.True(File.Exists(stateFile));
+        _mullvad.PaidUntil = DateTimeOffset.UtcNow.AddDays(-1);
+        _stack.State = MediaDownloadServiceStates.Stopped;
+        var starts = _stack.Starts;
+        // The tunnel stops answering, so the failed start asks Mullvad afresh.
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Down, Error: "the WireGuard server never answered");
+        var failed = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.False(failed.GetProperty("ok").GetBoolean());
+        Assert.Contains("ran out of time", failed.GetProperty("message").GetString());
+        Assert.Contains("mullvad.net", failed.GetProperty("message").GetString());
+        Assert.True(failed.GetProperty("status").GetProperty("vpn").GetProperty("account").GetProperty("expired").GetBoolean());
+
+        // Known to be out: the next try fails straight away without starting anything.
+        var startsAfter = _stack.Starts;
+        _stack.State = MediaDownloadServiceStates.Stopped;
+        var again = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Contains("ran out of time", again.GetProperty("message").GetString());
+        Assert.Equal(startsAfter, _stack.Starts);
+        Assert.True(startsAfter >= starts);
+
+        // Time added: it works again on the very next try.
+        _mullvad.PaidUntil = DateTimeOffset.UtcNow.AddDays(30);
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.195.233.76", "Stockholm", null, "SE");
+        var back = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.True(back.GetProperty("ok").GetBoolean(), back.GetRawText());
+        Assert.False(back.GetProperty("status").GetProperty("vpn").GetProperty("account").GetProperty("runningOut").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Mullvad_OutOfTime_AQueuedDownloadWaitsWithoutAskingMullvadEveryPass()
+    {
+        WriteVpnSettings($$"""
+            "VpnProvider": "mullvad", "MullvadAccountNumber": "1234567812345678", "MullvadLocation": "se"
+            """);
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await AddLibraryAsync(factory, MediaLibraryKinds.Movies, _moviesPath);
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.195.233.76", "Stockholm", null, "SE");
+        _prowlarr.Releases = [Release("Big.Buck.Bunny.2008.1080p.BluRay.x264-GRP", 50, "magnet:?xt=urn:btih:aaaa", "aaaa")];
+
+        var search = await SearchAsync(client, new { kind = "movie", title = "Big Buck Bunny", year = 2008 });
+        var release = search.GetProperty("results").EnumerateArray().First();
+        var queued = await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads",
+            new { searchId = search.GetProperty("id").GetString(), releaseId = release.GetProperty("id").GetString() }, Ct), HttpStatusCode.Created);
+        var id = Guid.Parse(queued.GetProperty("id").GetString()!);
+
+        // The account runs out before the download starts, and the server learns so.
+        _mullvad.PaidUntil = DateTimeOffset.UtcNow.AddDays(-1);
+        _stack.State = MediaDownloadServiceStates.Stopped;
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Down, Error: "the WireGuard server never answered");
+        var failed = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.Contains("ran out of time", failed.GetProperty("message").GetString());
+
+        // The worker comes round every 3 s while the download waits: it says why on the download,
+        // starts nothing, and does not ask Mullvad again on every pass.
+        var lookups = _mullvad.Lookups;
+        var starts = _stack.Starts;
+        var manager = factory.Services.GetRequiredService<MediaDownloadManager>();
+        for (var pass = 0; pass < 20; pass++) Assert.True(await manager.TickAsync(Ct));
+        Assert.Equal(lookups, _mullvad.Lookups);
+        Assert.Equal(starts, _stack.Starts);
+        Assert.Empty(_qbittorrent.Added);
+        var waiting = (await manager.GetAsync(id, Ct))!;
+        Assert.Equal(MediaDownloadStates.Queued, waiting.State);
+        Assert.Contains("ran out of time", waiting.Error);
+
+        // Someone trying again by hand still asks straight away, so added time is seen at once.
+        _mullvad.PaidUntil = DateTimeOffset.UtcNow.AddDays(30);
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.195.233.76", "Stockholm", null, "SE");
+        var back = await JsonAsync(await client.PostAsync("/api/media/downloads/vpn/test", null, Ct), HttpStatusCode.OK);
+        Assert.True(back.GetProperty("ok").GetBoolean(), back.GetRawText());
+        Assert.Equal(lookups + 1, _mullvad.Lookups);
+        await manager.TickAsync(Ct);
+        Assert.Single(_qbittorrent.Added);
     }
 
     [Fact]

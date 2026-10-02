@@ -1029,6 +1029,15 @@ private fun VpnLine(
                     )
                 }
             }
+            // How long the Mullvad account has paid for; nothing for other providers.
+            MediaDownloadFormat.vpnAccountLine(status?.vpn?.account)?.let { line ->
+                Text(
+                    line.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (line.tone == VpnTone.IDLE) FontWeight.Normal else FontWeight.SemiBold,
+                    color = vpnToneColor(line.tone),
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 OutlinedButton(onClick = onTest, enabled = !testing) {
                     if (testing) {

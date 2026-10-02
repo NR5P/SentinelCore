@@ -72,8 +72,35 @@ public sealed class MediaDownloadVpn
     public DateTimeOffset? CheckedAt { get; init; }
     public string? Error { get; init; }
 
+    /// <summary>The VPN account's paid time. Only a Mullvad VPN has one; null for every other provider and older servers.</summary>
+    public MediaDownloadVpnAccount? Account { get; init; }
+
     [JsonIgnore] public bool IsVerified => Verified == true;
     [JsonIgnore] public bool IsDisabled => State == "disabled";
+}
+
+/// <summary>
+/// How long the VPN account is paid for (status.vpn.account). The server checks it now and then;
+/// the Downloads screen shows it under the VPN light so it can be topped up before it runs out.
+/// </summary>
+public sealed class MediaDownloadVpnAccount
+{
+    /// <summary>mullvad - the only provider with an account check so far.</summary>
+    public string? Provider { get; init; }
+    public DateTimeOffset? PaidUntil { get; init; }
+
+    /// <summary>Whole days left, rounded down: 0 is less than a day.</summary>
+    public int? DaysLeft { get; init; }
+
+    /// <summary>7 days or less left.</summary>
+    public bool? RunningOut { get; init; }
+
+    /// <summary>The paid time is used up: the VPN no longer connects.</summary>
+    public bool? Expired { get; init; }
+    public DateTimeOffset? CheckedAt { get; init; }
+
+    [JsonIgnore] public bool IsExpired => Expired == true;
+    [JsonIgnore] public bool IsRunningOut => RunningOut == true;
 }
 
 /// <summary>

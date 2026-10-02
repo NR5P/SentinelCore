@@ -258,8 +258,12 @@ builder.Services.AddSingleton(sp => new MediaVpnConfig(
 builder.Services.AddSingleton<QbittorrentClient>();
 builder.Services.AddSingleton<ProwlarrClient>();
 builder.Services.AddSingleton<IMediaDownloadStack, SystemdMediaDownloadStack>();
+builder.Services.AddSingleton(sp => new MullvadAccountWatch(
+    sp.GetRequiredService<MediaVpnConfig>(), sp.GetRequiredService<IOwnerNotifier>(), camerasRoot,
+    sp.GetRequiredService<ILogger<MullvadAccountWatch>>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<MediaDownloadManager>();
 builder.Services.AddHostedService<MediaDownloadWorker>();
+builder.Services.AddHostedService<MullvadAccountWorker>();
 
 // Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
 // the data directory rather than /tmp - a bundle with everyone's attachments can be gigabytes.

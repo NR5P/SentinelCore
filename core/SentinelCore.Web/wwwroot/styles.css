@@ -6496,6 +6496,27 @@ body.hub-wall main {
   color: var(--green);
 }
 
+/* How long the Mullvad account has left, on its own line under the VPN's sentence. */
+.mv-dl-vpn-account {
+  flex-basis: 100%;
+  padding-left: 19px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.mv-dl-vpn-account a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.mv-dl-vpn-account-warn {
+  color: var(--amber);
+}
+
+.mv-dl-vpn-account-bad {
+  color: var(--red);
+}
+
 .mv-dl-head {
   display: flex;
   align-items: center;

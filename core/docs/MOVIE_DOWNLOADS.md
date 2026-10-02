@@ -127,13 +127,32 @@ Sites routes are admin only.
               "vpn": { "state": "connected|connecting|down|off|unknown|disabled", "required": true,
                        "verified": true, "verifiedAt": "…", "ip": "185.65.134.1",
                        "location": "Stockholm, SE", "country": "SE", "provider": "AS39351 31173 Services AB",
-                       "checkedAt": "…", "error": null } } }
+                       "checkedAt": "…", "error": null,
+                       "account": { "provider": "mullvad", "paidUntil": "2026-10-27T12:02:43+00:00", "daysLeft": 26,
+                                    "runningOut": false, "expired": false, "checkedAt": "…" } } } }
 ```
 
 Show "+ Add" when `canDownload`. `services: stopped` with `vpn.state: off` is the normal idle state.
 `required` is the `useVpn` setting. `verified` means the address the sites see was compared with
 the server's own (api.ipify.org) and differs. `disabled` means Use VPN is off: `ip`, `location`,
 `country`, `provider` and `error` are null, and downloads use the home connection.
+
+`vpn.account` is how long the VPN account has left - only for VPN Provider = Mullvad with Use VPN
+on, and null until the server has first asked Mullvad (`api.mullvad.net/accounts/v1/accounts/me`,
+`expiry`). `daysLeft` is whole days, rounded down; `runningOut` = a week or less left; `expired` =
+the time is used up, so Mullvad ignores the server's key and the tunnel cannot connect (the kill
+switch still holds: nothing goes over the home connection). The server asks every 12 hours (the
+answer is kept in `<data>/media-downloads-mullvad-account.json`), and again before starting the
+services whenever the last answer said `expired` or the tunnel failed to come up - so time added on
+mullvad.net counts on the very next try. The background pass that keeps a queued download waiting
+(every 3 s) re-asks at most every 5 minutes instead - each ask is two Mullvad API calls, and Mullvad
+rate-limits sign-ins - so a queued download resumes within 5 minutes of time being added. A search, download or Test VPN while out of time fails
+straight away with "Your Mullvad account ran out of time on Tuesday, October 27. Add time at
+mullvad.net, then try again." Test VPN's success message ends "Mullvad is paid until …".
+
+The owner is told (email, Telegram and push, like the webcam watchdog - `IOwnerNotifier`) once when
+a week or less is left ("Mullvad VPN runs out in 6 days") and once when it runs out ("Mullvad VPN
+has run out"); each once per paid-until date, so adding time sets both up again.
 
 **The VPN light** (every app shows it near "+ Add", and the same wording on the Downloads screen):
 
@@ -144,6 +163,16 @@ the server's own (api.ipify.org) and differs. `disabled` means Use VPN is off: `
 | grey | `off` / `unknown` (idle) or `services: external` | "VPN idle" / "Off until someone searches or downloads, then it connects by itself." |
 | amber | `disabled` | "VPN off" / "Turned off in Settings · searching and downloading use your home connection, so the sites see your home address." |
 | red | `services: notInstalled` or `failed`, or `vpn.state: down` | "VPN problem" / `vpn.error` or "not installed" |
+| red | `vpn.account.expired` (checked after `disabled` and `notInstalled`, before `connected`) | "VPN out of time" / "Your Mullvad account ran out of time on Oct 27. Add time at mullvad.net and downloads work again." |
+
+**The account line** (Downloads screen, under the light; nothing when `vpn.account` is null).
+Dates are the device's local date as "Oct 27", with ", 2027" added when not this year:
+
+| look | when | words |
+|---|---|---|
+| plain (secondary text) | otherwise | "Mullvad paid until Oct 27 · 26 days left" ("1 day left"; "less than a day left" at 0) |
+| amber | `runningOut` | "Mullvad runs out in 5 days (Oct 27) · add time at mullvad.net" ("runs out tomorrow", "runs out today" at 1 and 0) |
+| red | `expired` | "Mullvad ran out on Oct 27 · add time at mullvad.net" |
 
 `POST /api/media/downloads/vpn/test` (anyone who can download) → `{ "ok": true, "message": "Working. The sites see 185.195.233.76 in Stockholm, SE, not your home address.", "status": {…as above} }`.
 Starts everything if needed, so it can take up to a minute; `ok: false` carries what is wrong in

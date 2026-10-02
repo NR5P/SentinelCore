@@ -3,6 +3,11 @@ package com.sentinelcore.android.data
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 // Movie downloads - "+ Add" on the Movies tab. The contract is core/docs/MOVIE_DOWNLOADS.md: find a
 // title on TMDB, pick a release the household's torrent sites offer, and the server downloads it
@@ -26,6 +31,22 @@ data class MediaDownloadVpn(
     val provider: String? = null,
     val checkedAt: String? = null,
     val error: String? = null,
+    // The VPN provider's account, when the server can read it (Mullvad only); null otherwise and
+    // on older servers.
+    val account: MediaVpnAccount? = null,
+)
+
+// vpn.account: how long the Mullvad account has paid for.
+data class MediaVpnAccount(
+    val provider: String = "mullvad",
+    val paidUntil: String? = null,
+    // Whole days left, rounded down.
+    val daysLeft: Int = 0,
+    // 7 days or less left.
+    val runningOut: Boolean = false,
+    // The paid time is used up - the tunnel will not connect.
+    val expired: Boolean = false,
+    val checkedAt: String? = null,
 )
 
 // POST /api/media/downloads/vpn/test: whether the VPN works, in words, and the status after.
@@ -297,6 +318,19 @@ internal fun parseMediaDownloadVpn(json: JSONObject?): MediaDownloadVpn {
         verifiedAt = json.dlString("verifiedAt"),
         checkedAt = json.dlString("checkedAt"),
         error = json.dlString("error"),
+        account = parseMediaVpnAccount(json.dlObject("account")),
+    )
+}
+
+internal fun parseMediaVpnAccount(json: JSONObject?): MediaVpnAccount? {
+    json ?: return null
+    return MediaVpnAccount(
+        provider = json.dlString("provider") ?: "mullvad",
+        paidUntil = json.dlString("paidUntil"),
+        daysLeft = json.dlInt("daysLeft") ?: 0,
+        runningOut = json.optBoolean("runningOut", false),
+        expired = json.optBoolean("expired", false),
+        checkedAt = json.dlString("checkedAt"),
     )
 }
 
@@ -564,6 +598,9 @@ enum class VpnTone { ON, BUSY, IDLE, OFF, BAD }
 
 data class VpnLook(val tone: VpnTone, val short: String, val text: String)
 
+// The Downloads screen's account line under the light: IDLE plain, OFF amber, BAD red.
+data class VpnAccountLine(val tone: VpnTone, val text: String)
+
 internal object MediaDownloadFormat {
     private val ACTIVE = setOf("queued", "downloading", "seeding", "importing")
 
@@ -617,7 +654,11 @@ internal object MediaDownloadFormat {
 
     // The VPN light (Movies top bar) and the Downloads screen's VPN line - the doc's "The VPN
     // light" table, in the order the web's vpnLook checks it. `short` is the chip, `text` the line.
-    fun vpnLook(status: MediaDownloadServices?): VpnLook? {
+    fun vpnLook(
+        status: MediaDownloadServices?,
+        now: Instant = Instant.now(),
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): VpnLook? {
         status ?: return null
         val vpn = status.vpn
         val services = status.services
@@ -633,6 +674,14 @@ internal object MediaDownloadFormat {
                 VpnTone.BAD,
                 "VPN not set up",
                 "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.",
+            )
+        }
+        if (vpn.account?.expired == true) {
+            val on = accountDate(vpn.account.paidUntil, now, zone)?.let { " on $it" }.orEmpty()
+            return VpnLook(
+                VpnTone.BAD,
+                "VPN out of time",
+                "Your Mullvad account ran out of time$on. Add time at mullvad.net and downloads work again.",
             )
         }
         if (vpn.state == "connected") {
@@ -667,6 +716,39 @@ internal object MediaDownloadFormat {
             "VPN idle",
             "Off until someone searches or downloads, then it connects by itself. Press Test to check it now.",
         )
+    }
+
+    // The doc's "account line" table: plain while paid, amber when running out, red once out.
+    fun vpnAccountLine(
+        account: MediaVpnAccount?,
+        now: Instant = Instant.now(),
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): VpnAccountLine? {
+        account ?: return null
+        val date = accountDate(account.paidUntil, now, zone)
+        if (account.expired) {
+            return VpnAccountLine(VpnTone.BAD, "Mullvad ran out${date?.let { " on $it" }.orEmpty()} · add time at mullvad.net")
+        }
+        val days = maxOf(0, account.daysLeft)
+        if (account.runningOut) {
+            val left = when (days) {
+                0 -> "today"
+                1 -> "tomorrow"
+                else -> "in $days days"
+            }
+            return VpnAccountLine(VpnTone.OFF, "Mullvad runs out $left${date?.let { " ($it)" }.orEmpty()} · add time at mullvad.net")
+        }
+        val left = if (days == 0) "less than a day left" else "${plural(days, "day")} left"
+        return VpnAccountLine(VpnTone.IDLE, "Mullvad ${date?.let { "paid until $it" } ?: "paid"} · $left")
+    }
+
+    // paidUntil as the device's local date: "Oct 27", or "Oct 27, 2027" when not this year.
+    // Null when missing or unreadable.
+    fun accountDate(paidUntil: String?, now: Instant, zone: ZoneId): String? {
+        val text = paidUntil ?: return null
+        val date = runCatching { OffsetDateTime.parse(text).toInstant() }.getOrNull()?.atZone(zone)?.toLocalDate() ?: return null
+        val day = date.format(DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH))
+        return if (date.year == now.atZone(zone).year) day else "$day, ${date.year}"
     }
 
     // The amber note at the top of Add while Use VPN is off in Settings.

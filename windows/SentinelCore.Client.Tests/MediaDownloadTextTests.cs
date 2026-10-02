@@ -405,4 +405,107 @@ public class MediaDownloadTextTests
         Assert.Equal(MediaDownloadText.VpnTone.Problem, failed.Tone);
         Assert.Contains("journalctl -u sentinelcore-vpn", failed.Text);
     }
+
+    // ---------------------------------------------------------------- The VPN account
+
+    private static readonly DateTimeOffset AccountNow = new(2026, 10, 1, 15, 0, 0, TimeSpan.Zero);
+
+    private static MediaDownloadVpnAccount Account(int daysLeft, bool runningOut = false, bool expired = false,
+        string paidUntil = "2026-10-27T12:02:43+00:00") => new()
+    {
+        Provider = "mullvad",
+        PaidUntil = DateTimeOffset.Parse(paidUntil, System.Globalization.CultureInfo.InvariantCulture),
+        DaysLeft = daysLeft,
+        RunningOut = runningOut,
+        Expired = expired,
+    };
+
+    private static MediaDownloadText.AccountLineResult Line(MediaDownloadVpnAccount account) =>
+        MediaDownloadText.AccountLine(account, AccountNow, TimeZoneInfo.Utc)!;
+
+    [Fact]
+    public void An_expired_account_is_red_after_disabled_and_not_installed_but_before_connected()
+    {
+        var status = new MediaDownloadServiceStatus
+        {
+            Services = "running",
+            Vpn = new MediaDownloadVpn { State = "connected", Verified = true, Country = "SE", Account = Account(0, expired: true) },
+        };
+
+        var look = MediaDownloadText.VpnLook(status, AccountNow, TimeZoneInfo.Utc)!;
+        Assert.Equal(MediaDownloadText.VpnTone.Problem, look.Tone);
+        Assert.Equal("VPN out of time", look.Short);
+        Assert.Equal("Your Mullvad account ran out of time on Oct 27. Add time at mullvad.net and downloads work again.", look.Text);
+
+        var disabled = new MediaDownloadServiceStatus
+        {
+            Services = "running", Vpn = new MediaDownloadVpn { State = "disabled", Account = Account(0, expired: true) },
+        };
+        Assert.Equal("VPN off", MediaDownloadText.VpnLook(disabled, AccountNow, TimeZoneInfo.Utc)!.Short);
+
+        var notInstalled = new MediaDownloadServiceStatus
+        {
+            Services = "notInstalled", Vpn = new MediaDownloadVpn { State = "off", Account = Account(0, expired: true) },
+        };
+        Assert.Equal("VPN not set up", MediaDownloadText.VpnLook(notInstalled, AccountNow, TimeZoneInfo.Utc)!.Short);
+    }
+
+    [Fact]
+    public void An_account_with_time_left_leaves_the_light_alone()
+    {
+        var status = new MediaDownloadServiceStatus
+        {
+            Services = "running",
+            Vpn = new MediaDownloadVpn { State = "connected", Verified = true, Country = "SE", Account = Account(3, runningOut: true) },
+        };
+
+        Assert.Equal("VPN · SE", MediaDownloadText.VpnLook(status, AccountNow, TimeZoneInfo.Utc)!.Short);
+    }
+
+    [Fact]
+    public void No_account_no_line() => Assert.Null(MediaDownloadText.AccountLine(null, AccountNow, TimeZoneInfo.Utc));
+
+    [Fact]
+    public void Plenty_of_time_is_a_plain_line()
+    {
+        var line = Line(Account(26));
+        Assert.Equal(MediaDownloadText.AccountTone.Plain, line.Tone);
+        Assert.Equal("Mullvad paid until Oct 27 · 26 days left", line.Text);
+
+        Assert.Equal("Mullvad paid until Oct 27 · 1 day left", Line(Account(1)).Text);
+        Assert.Equal("Mullvad paid until Oct 27 · less than a day left", Line(Account(0)).Text);
+    }
+
+    [Fact]
+    public void Running_out_is_amber()
+    {
+        var line = Line(Account(5, runningOut: true));
+        Assert.Equal(MediaDownloadText.AccountTone.RunningOut, line.Tone);
+        Assert.Equal("Mullvad runs out in 5 days (Oct 27) · add time at mullvad.net", line.Text);
+
+        Assert.Equal("Mullvad runs out tomorrow (Oct 27) · add time at mullvad.net", Line(Account(1, runningOut: true)).Text);
+        Assert.Equal("Mullvad runs out today (Oct 27) · add time at mullvad.net", Line(Account(0, runningOut: true)).Text);
+    }
+
+    [Fact]
+    public void Expired_is_red()
+    {
+        var line = Line(Account(0, runningOut: true, expired: true));
+        Assert.Equal(MediaDownloadText.AccountTone.Expired, line.Tone);
+        Assert.Equal("Mullvad ran out on Oct 27 · add time at mullvad.net", line.Text);
+    }
+
+    [Fact]
+    public void The_date_is_local_and_says_the_year_when_not_this_one()
+    {
+        Assert.Equal("Mullvad paid until Oct 27, 2027 · 391 days left",
+            Line(Account(391, paidUntil: "2027-10-27T12:00:00+00:00")).Text);
+
+        // 02:00 UTC on Oct 28 is still the evening of Oct 27 in Chicago (UTC-5 in October).
+        var central = TimeZoneInfo.CreateCustomTimeZone("Test Central", TimeSpan.FromHours(-5), "Test Central", "Test Central");
+        Assert.Equal("Oct 27", MediaDownloadText.AccountDate(
+            new DateTimeOffset(2026, 10, 28, 2, 0, 0, TimeSpan.Zero), AccountNow, central));
+        Assert.Equal("Oct 28", MediaDownloadText.AccountDate(
+            new DateTimeOffset(2026, 10, 28, 2, 0, 0, TimeSpan.Zero), AccountNow, TimeZoneInfo.Utc));
+    }
 }

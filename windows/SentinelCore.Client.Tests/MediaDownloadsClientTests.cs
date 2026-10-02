@@ -154,6 +154,58 @@ public class MediaDownloadsClientTests
     }
 
     [Fact]
+    public async Task A_mullvad_account_decodes_and_absent_or_null_is_no_account()
+    {
+        using var server = new FakeServer().OnGet("/api/media/downloads/status", """
+            { "enabled": true, "canDownload": true,
+              "status": { "services": "running",
+                          "vpn": { "state": "connected", "verified": true, "error": null,
+                                   "account": { "provider": "mullvad", "paidUntil": "2026-10-27T12:02:43+00:00",
+                                                "daysLeft": 26, "runningOut": false, "expired": false,
+                                                "checkedAt": "2026-10-01T15:00:00+00:00" } } } }
+            """);
+        using var client = ClientFor(server);
+
+        var account = (await client.MediaDownloadStatusAsync()).Status!.Vpn!.Account!;
+
+        Assert.Equal("mullvad", account.Provider);
+        Assert.Equal(new DateTimeOffset(2026, 10, 27, 12, 2, 43, TimeSpan.Zero), account.PaidUntil);
+        Assert.Equal(26, account.DaysLeft);
+        Assert.False(account.IsRunningOut);
+        Assert.False(account.IsExpired);
+        Assert.Equal(new DateTimeOffset(2026, 10, 1, 15, 0, 0, TimeSpan.Zero), account.CheckedAt);
+
+        foreach (var vpn in new[] { """{ "state": "connected" }""", """{ "state": "connected", "account": null }""" })
+        {
+            using var other = new FakeServer().OnGet("/api/media/downloads/status",
+                $$"""{ "canDownload": true, "status": { "services": "running", "vpn": {{vpn}} } }""");
+            using var otherClient = ClientFor(other);
+
+            var status = await otherClient.MediaDownloadStatusAsync();
+
+            Assert.Null(status.Status!.Vpn!.Account);
+            Assert.Null(MediaDownloadText.AccountLine(status.Status.Vpn.Account, DateTimeOffset.Now, TimeZoneInfo.Local));
+        }
+    }
+
+    [Fact]
+    public async Task An_expired_account_in_a_vpn_test_turns_the_light_red()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads/vpn/test", """
+            { "ok": false, "message": "The VPN would not connect.",
+              "status": { "services": "running",
+                          "vpn": { "state": "down", "account": { "provider": "mullvad", "paidUntil": "2026-09-27T12:00:00+00:00",
+                                                                  "daysLeft": 0, "runningOut": true, "expired": true } } } }
+            """);
+        using var client = ClientFor(server);
+
+        var test = await client.TestMediaDownloadVpnAsync();
+
+        Assert.Equal("VPN out of time", MediaDownloadText.VpnLook(test.Status)!.Short);
+        Assert.True(test.Status!.Vpn!.Account!.IsExpired);
+    }
+
+    [Fact]
     public async Task Vpn_test_posts_and_decodes_success_and_failure()
     {
         using var server = new FakeServer().On("POST", "/api/media/downloads/vpn/test", """

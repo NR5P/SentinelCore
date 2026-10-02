@@ -400,6 +400,16 @@ extension MediaVpnLook.Tone {
     }
 }
 
+extension MediaVpnAccountLine.Tone {
+    var style: AnyShapeStyle {
+        switch self {
+        case .plain: AnyShapeStyle(.secondary)
+        case .warning: AnyShapeStyle(SentinelTheme.amber)
+        case .problem: AnyShapeStyle(SentinelTheme.red)
+        }
+    }
+}
+
 // The coloured dot; it pulses while the VPN is coming up or being checked.
 struct MediaVpnDot: View {
     let tone: MediaVpnLook.Tone
@@ -464,6 +474,13 @@ struct MediaVpnStatusRow: View {
                         .font(.subheadline)
                         .foregroundStyle(look.tone == .off || look.tone == .bad ? AnyShapeStyle(look.tone.color) : AnyShapeStyle(.secondary))
                         .textSelection(.enabled)
+                    // "Mullvad paid until Oct 27 · 26 days left"; amber when running out, red once out.
+                    if let account = MediaVpnAccountLine(downloads.serviceStatus?.vpn?.account) {
+                        Text(account.text)
+                            .font(.caption)
+                            .foregroundStyle(account.tone.style)
+                            .textSelection(.enabled)
+                    }
                 }
                 Spacer(minLength: 8)
                 Button {

@@ -40,8 +40,12 @@
                     <Ellipse x:Name="VpnDot" Width="9" Height="9" VerticalAlignment="Center" Fill="{StaticResource SecondaryText}" />
                     <TextBlock x:Name="VpnShortText" Grid.Column="1" Text="VPN" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryText}" Margin="9,0,10,0" VerticalAlignment="Center" />
-                    <TextBlock x:Name="VpnText" Grid.Column="2" Style="{StaticResource BodyText}" TextWrapping="Wrap"
-                               VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                        <TextBlock x:Name="VpnText" Style="{StaticResource BodyText}" TextWrapping="Wrap" />
+                        <!-- The VPN account's paid time (Mullvad only): plain, amber when it runs out this week, red once out. -->
+                        <TextBlock x:Name="VpnAccountText" TextWrapping="Wrap" FontSize="12" Margin="0,3,0,0"
+                                   Visibility="Collapsed" />
+                    </StackPanel>
                     <Button x:Name="VpnTestButton" Grid.Column="3" Content="Test" MinWidth="80" Margin="12,0,0,0"
                             VerticalAlignment="Center" Click="OnTestVpnClicked"
                             ToolTip="Connect if needed and check the sites see another address than your home's" />

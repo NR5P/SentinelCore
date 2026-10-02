@@ -45,6 +45,19 @@ struct MediaDownloadVpn: Decodable, Hashable {
     var provider: String?
     var checkedAt: String?
     var error: String?
+    var account: MediaVpnAccount?
+}
+
+// The VPN account's paid time. Only sent for Mullvad; null or missing (an
+// older server, another provider) shows nothing. `daysLeft` is whole days rounded down;
+// `runningOut` is 7 days or less; `expired` is time used up.
+struct MediaVpnAccount: Decodable, Hashable {
+    var provider: String?
+    var paidUntil: String?
+    var daysLeft: Int?
+    var runningOut: Bool?
+    var expired: Bool?
+    var checkedAt: String?
 }
 
 // POST /api/media/downloads/vpn/test - connects if needed and proves the sites see the VPN's
@@ -79,7 +92,7 @@ struct MediaVpnLook: Equatable {
         self.text = text
     }
 
-    init(_ status: MediaDownloadServiceStatus?) {
+    init(_ status: MediaDownloadServiceStatus?, now: Date = Date(), calendar: Calendar = .current) {
         let vpn = status?.vpn
         let services = status?.services
         if vpn?.state == "disabled" {
@@ -88,6 +101,10 @@ struct MediaVpnLook: Equatable {
         } else if services == "notInstalled" {
             self.init(tone: .bad, short: "VPN not set up",
                       text: "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once.")
+        } else if vpn?.account?.expired == true {
+            let day = mediaVpnAccountDay(vpn?.account?.paidUntil, now: now, calendar: calendar)
+            self.init(tone: .bad, short: "VPN out of time",
+                      text: "Your Mullvad account ran out of time\(day.map { " on \($0)" } ?? ""). Add time at mullvad.net and downloads work again.")
         } else if vpn?.state == "connected" {
             let place = [vpn?.location, vpn?.ip].compactMap { $0 }.filter { !$0.isEmpty }
             let whereText = place.isEmpty ? "" : " · " + place.joined(separator: " · ")
@@ -112,6 +129,54 @@ struct MediaVpnLook: Equatable {
                       text: "Off until someone searches or downloads, then it connects by itself. Press Test to check it now.")
         }
     }
+}
+
+// The Downloads screen's line under the light about the account's paid time - the table "The
+// account line" in MOVIE_DOWNLOADS.md. nil when the server sent no account.
+struct MediaVpnAccountLine: Equatable {
+    enum Tone: Equatable {
+        case plain    // secondary text: plenty of time left
+        case warning  // amber: 7 days or less
+        case problem  // red: out of time
+    }
+
+    var tone: Tone
+    var text: String
+
+    init(tone: Tone, text: String) {
+        self.tone = tone
+        self.text = text
+    }
+
+    init?(_ account: MediaVpnAccount?, now: Date = Date(), calendar: Calendar = .current) {
+        guard let account else { return nil }
+        let day = mediaVpnAccountDay(account.paidUntil, now: now, calendar: calendar)
+        let days = max(account.daysLeft ?? 0, 0)
+        if account.expired == true {
+            self.init(tone: .problem,
+                      text: "Mullvad ran out\(day.map { " on \($0)" } ?? "") · add time at mullvad.net")
+        } else if account.runningOut == true {
+            let when = days == 0 ? "today" : days == 1 ? "tomorrow" : "in \(days) days"
+            self.init(tone: .warning,
+                      text: "Mullvad runs out \(when)\(day.map { " (\($0))" } ?? "") · add time at mullvad.net")
+        } else {
+            let left = days == 0 ? "less than a day left" : days == 1 ? "1 day left" : "\(days) days left"
+            self.init(tone: .plain,
+                      text: day.map { "Mullvad paid until \($0) · \(left)" } ?? "Mullvad · \(left)")
+        }
+    }
+}
+
+// "Oct 27" in the device's time zone, or "Oct 27, 2027" when it is not this year.
+func mediaVpnAccountDay(_ value: String?, now: Date, calendar: Calendar) -> String? {
+    guard let date = mediaDownloadDate(value) else { return nil }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+    formatter.dateFormat = sameYear ? "MMM d" : "MMM d, yyyy"
+    return formatter.string(from: date)
 }
 
 // MARK: - 1. Finding the title (TMDB)

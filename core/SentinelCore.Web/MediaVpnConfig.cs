@@ -119,7 +119,7 @@ public sealed partial class MediaVpnConfig(IHttpClientFactory httpClientFactory,
             ?? throw new MediaDownloadException("Enter your Mullvad account number under Settings -> MOVIE DOWNLOADS.");
         var location = options.MullvadLocation.Trim().ToLowerInvariant();
         var state = ReadState();
-        var accountHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(account)));
+        var accountHash = AccountHash(account);
         var changed = false;
 
         try
@@ -163,6 +163,26 @@ public sealed partial class MediaVpnConfig(IHttpClientFactory httpClientFactory,
         }
         catch (Exception ex) when (ex is HttpRequestException or MediaDownloadException or IOException) { return false; }
     }
+
+    // When the account's paid time runs out ("expiry" on accounts/v1/accounts/me). Signing in still
+    // works on an account that has run out - that is how Mullvad's own app shows the date - so
+    // this answers either way. Throws MediaDownloadException for a wrong number,
+    // HttpRequestException when Mullvad cannot be reached.
+    public async Task<DateTimeOffset> MullvadPaidUntilAsync(string account, CancellationToken cancellationToken)
+    {
+        var token = await TokenAsync(account, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{MullvadApi}/accounts/v1/accounts/me");
+        request.Headers.Authorization = new("Bearer", token);
+        using var response = await Client().SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return DateTimeOffset.TryParse(Str(document.RootElement, "expiry"), System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal, out var expiry)
+            ? expiry
+            : throw new MediaDownloadException("Mullvad answered without the account's paid-until date.");
+    }
+
+    public static string AccountHash(string account) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(account)));
 
     private async Task<MullvadState> RegisterDeviceAsync(string account, string accountHash, CancellationToken cancellationToken)
     {
