@@ -2751,7 +2751,7 @@ window.SentinelAudio = (function () {
     words.userScrollAt = Date.now();
     for (const r of words.matches) r.classList.remove("au-tr-hit");
     row.classList.add("au-tr-hit");
-    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    row.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
     const count = el("au-tr-count");
     if (count) count.textContent = `${words.matchAt + 1} of ${words.matches.length}`;
   }

@@ -11766,6 +11766,10 @@ mark {
   flex-direction: column;
   background: var(--bg);
   overflow: hidden;
+  /* clip, not just hidden: the blurred backdrop reaches 80px past every edge, and a hidden
+     overflow can still be scrolled by code (a lyric line scrolled into view), which slid the
+     whole screen sideways and cut the cover off. */
+  overflow: clip;
   isolation: isolate;
   animation: au-rise 0.28s ease;
 }
