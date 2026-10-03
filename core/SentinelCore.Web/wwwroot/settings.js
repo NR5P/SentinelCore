@@ -296,6 +296,8 @@ window.GateWatchSettings = (function () {
     mqtt: "Publish events over MQTT with Home Assistant auto-discovery, optionally using this app as its own broker.",
     deviceHub: "Adds a DEVICE HUB tab for switching lights, plugs, and other MQTT devices on and off. Needs MQTT above turned on first.",
     media: "Adds a MOVIES tab: your own movies and TV shows, scanned from folders on the server, with artwork and descriptions from TMDB, playable here and in every app.",
+    music: "Adds a MUSIC tab: your own music from folders on the server or another computer, with cover art, lyrics, playlists, radio and stats, played here and in every app. The library folders are set up at the bottom of this section.",
+    podcasts: "Adds a PODCASTS tab: shows the server follows, downloads and keeps, with Up Next, transcripts, bookmarks and clips that follow each person to every device.",
     bugReports: "Email the developer when something breaks internally, using the Email account above.",
     loginAlerts: "Email and/or Telegram you when someone enters the wrong password for this dashboard.",
     triggerApi: "Let a doorbell, NVR, or script trigger a camera by fetching a web address.",
@@ -659,6 +661,12 @@ window.GateWatchSettings = (function () {
     // is not what someone typing an address into the phone app needs to know. The server is the
     // only side that can see what addresses this machine actually has, so it gets asked.
     if (schema.key === "server") body.appendChild(buildLocalAddressPanel(loaders));
+
+    // MUSIC and PODCASTS each grow a hand-built part under their fields (audio-extras.js): the
+    // music library folders and ListenBrainz, and the podcast download folder's picker, storage
+    // and OPML. Fetched when the section is first opened, like the other loaders.
+    if (schema.key === "music" && window.SentinelAudioExtras) window.SentinelAudioExtras.musicSettingsPanel(body, body, loaders);
+    if (schema.key === "podcasts" && window.SentinelAudioExtras) window.SentinelAudioExtras.podcastsSettingsPanel(body, body, loaders);
 
     const needsRestart = schema.fields.some(f => f.requiresRestart);
 
@@ -2578,6 +2586,8 @@ window.GateWatchSettings = (function () {
         showToast(`${label} saved`, true);
         // The Movies tab only exists while the section is on - show or hide it now.
         if (endpoint === "/api/settings/media") window.GateWatchAuth.checkMovies();
+        // Same for the Music and Podcasts tabs.
+        if ((endpoint === "/api/settings/music" || endpoint === "/api/settings/podcasts") && window.SentinelAudio) window.SentinelAudio.checkEnabled();
       }
     } catch {
       showFieldErrors(errorsEl, ["Network error while saving."]);

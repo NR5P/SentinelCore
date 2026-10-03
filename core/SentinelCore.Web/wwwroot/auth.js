@@ -105,6 +105,10 @@ window.GateWatchAuth = (function () {
     }
   }
 
+  function checkAudio() {
+    return window.SentinelAudio ? window.SentinelAudio.checkEnabled().catch(() => {}) : Promise.resolve();
+  }
+
   async function check() {
     try {
       const response = await fetch("/api/auth/status");
@@ -119,7 +123,10 @@ window.GateWatchAuth = (function () {
       // The Device Hub tab only exists when it's switched on in Settings. Unlike the two above
       // this isn't a role decision - a Viewer gets the tab too, they just can't add or edit
       // devices there - so it needs its own (non-admin) endpoint to ask.
-      if (payload.authenticated || !payload.enabled) await Promise.all([checkDeviceHub(), checkMovies()]);
+      // Music and Podcasts ask /api/audio/enabled themselves (audio-player.js), and also once
+      // more here, after sign-in is settled, so a page that loaded before the session existed
+      // still shows the tabs.
+      if (payload.authenticated || !payload.enabled) await Promise.all([checkDeviceHub(), checkMovies(), checkAudio()]);
       if (payload.authenticated) return;
 
       if (payload.enabled && !payload.configured) useFirstAdminMode();

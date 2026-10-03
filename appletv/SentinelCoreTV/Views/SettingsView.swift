@@ -16,6 +16,14 @@ struct SettingsView: View {
         if let page = UserDefaults.standard.string(forKey: "debugSettingsPage") {
             if page == "folderPicker" {
                 MediaFolderPickerView(path: .constant(""))
+            } else if page == "music" {
+                MusicSettingsTV()
+            } else if page == "podcasts" {
+                PodcastSettingsTV()
+            } else if page == "speaker" {
+                AudioPlaybackSettingsTV()
+            } else if page == "audioFolderPicker" {
+                AudioFolderPickerTV(path: .constant(""), noun: "music")
             } else {
                 MediaLibrariesAdminView()
             }
@@ -85,6 +93,10 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            // "Let others play here", this TV's playback preferences, and (admin) the server's
+            // MUSIC and PODCASTS settings with Music → Libraries and Podcasts → Download folder.
+            AudioSettingsGroup()
 
             Section("Push Notifications") {
                 LabeledContent("Permission", value: model.pushAuthorization.capitalized)

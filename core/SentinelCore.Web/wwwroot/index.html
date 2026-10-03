@@ -48,6 +48,8 @@
       <button class="tab" data-view="timeline" data-tip-below data-tip="Review saved trigger clips across a day, with Sentinel AI events marked on the time rail.">timeline</button>
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
       <button class="tab hidden" id="tab-movies" data-view="movies" data-tip-below data-tip="Your own movies and TV shows, scanned from folders on the server and played here and in every app. Watched state is per person. Only appears when Movies &amp; TV is turned on in Settings.">movies</button>
+      <button class="tab hidden" id="tab-music" data-view="music" data-tip-below data-tip="The household's own music, from folders on the server or another computer: albums, artists, playlists, radio, lyrics. Keeps playing while you look at other tabs. Only appears when Music is turned on in Settings.">music</button>
+      <button class="tab hidden" id="tab-podcasts" data-view="podcasts" data-tip-below data-tip="Podcasts the server downloads and keeps for you, with Up Next, transcripts, bookmarks and clips. Your place follows you to every device. Only appears when Podcasts are turned on in Settings.">podcasts</button>
       <button class="tab" data-view="cameras" data-tip-below data-tip-right data-tip="Add and edit your own cameras for live viewing and trigger zones.">cameras</button>
       <button class="tab hidden" id="tab-organizer" data-view="organizer" data-tip-below data-tip="Notes, calendar, reminders and boards - shared with the SentinelCore apps on every device, and kept on each one so they work with no signal.">organizer</button>
       <button class="tab" data-view="weather" data-tip-below data-tip-right data-tip="Current conditions, a zoomable radar map with storm tracking, the hourly and seven-day forecast and the severe-weather outlook for the location in Settings, from the US National Weather Service.">weather</button>
@@ -327,6 +329,63 @@
       <div id="mv-pane-detail" class="tab-pane mv-pane hidden"></div>
       <div id="mv-pane-libraries" class="tab-pane mv-pane hidden"></div>
       <div id="mv-pane-downloads" class="tab-pane mv-pane hidden"></div>
+    </section>
+
+    <section id="view-music" class="view hidden au-view">
+      <div class="toolbar">
+        <div class="toolbar-label">MUSIC</div>
+        <div class="toolbar-actions">
+          <span id="mu-scan-state" class="event-count au-scan-state hidden" data-tip-below data-tip-right data-tip="A library scan is running. Playing keeps working while it does."></span>
+          <button id="mu-add-btn" class="btn btn-on hidden" data-tip-below data-tip-right data-tip="Find an album on your torrent sites and download it into the music library, through the same VPN as Movies.">+ add</button>
+          <button id="mu-alarms-btn" class="btn" data-tip-below data-tip-right data-tip="Wake-up alarms: music or a podcast that fades up on a speaker at a set time.">alarms</button>
+          <button id="mu-libraries-btn" class="btn hidden" data-tip-below data-tip-right data-tip="The folders the music library is built from - in Settings → Music.">&#9881; libraries</button>
+        </div>
+      </div>
+      <div class="mv-bar au-navbar">
+        <nav class="tabs au-subtabs" id="mu-subtabs">
+          <button class="tab active" data-mu-nav="home">home</button>
+          <button class="tab" data-mu-nav="artists">artists</button>
+          <button class="tab" data-mu-nav="albums">albums</button>
+          <button class="tab" data-mu-nav="songs">songs</button>
+          <button class="tab" data-mu-nav="genres">genres</button>
+          <button class="tab" data-mu-nav="playlists">playlists</button>
+          <button class="tab" data-mu-nav="folders">folders</button>
+          <button class="tab" data-mu-nav="stats">stats</button>
+          <button class="tab hidden" data-mu-nav="downloads">downloads</button>
+        </nav>
+        <div class="au-nav-tools">
+          <label class="mv-search au-nav-search"><svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg><input type="search" class="field-input" id="mu-search" placeholder="Search music" autocomplete="off" aria-label="Search music"></label>
+          <button id="mu-shuffle-btn" class="btn" title="Shuffle the whole library">shuffle all</button>
+        </div>
+      </div>
+      <div id="mu-content" class="au-content"></div>
+    </section>
+
+    <section id="view-podcasts" class="view hidden au-view">
+      <div class="toolbar">
+        <div class="toolbar-label">PODCASTS</div>
+        <div class="toolbar-actions">
+          <button id="pc-fill-btn" class="btn" data-tip-below data-tip-right data-tip="Fill my drive: say how many minutes you have and unplayed episodes that fit are lined up.">fill my drive</button>
+          <button id="pc-briefing-btn" class="btn" data-tip-below data-tip-right data-tip="Morning Briefing: today's weather, calendar and reminders read out, then the news shows you picked.">briefing</button>
+          <button id="pc-alarms-btn" class="btn" data-tip-below data-tip-right data-tip="Wake-up alarms: music or a podcast that fades up on a speaker at a set time.">alarms</button>
+          <button id="pc-settings-btn" class="btn hidden" data-tip-below data-tip-right data-tip="Download folder, storage, transcripts and OPML - in Settings → Podcasts.">&#9881; settings</button>
+        </div>
+      </div>
+      <div class="mv-bar au-navbar">
+        <nav class="tabs au-subtabs" id="pc-subtabs">
+          <button class="tab active" data-pc-nav="home">listen now</button>
+          <button class="tab" data-pc-nav="upnext">up next</button>
+          <button class="tab" data-pc-nav="shows">shows</button>
+          <button class="tab" data-pc-nav="discover">discover</button>
+          <button class="tab" data-pc-nav="bookmarks">bookmarks</button>
+          <button class="tab" data-pc-nav="clips">clips</button>
+          <button class="tab" data-pc-nav="stats">stats</button>
+        </nav>
+        <div class="au-nav-tools">
+          <label class="mv-search au-nav-search"><svg class="mv-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg><input type="search" class="field-input" id="pc-search" placeholder="Search what was said" autocomplete="off" aria-label="Search every transcript"></label>
+        </div>
+      </div>
+      <div id="pc-content" class="au-content"></div>
     </section>
 
     <section id="view-weather" class="view hidden">
@@ -845,6 +904,18 @@
     <div class="zone-editor-panel files-modal-panel" id="files-modal-panel"></div>
   </div>
 
+  <!-- Music & Podcasts: the player that stays put across every tab (audio-player.js). The bar
+       sits at the bottom of the window; Now Playing covers the page when opened. -->
+  <div id="au-bar" class="au-bar hidden" role="region" aria-label="Audio player"></div>
+  <div id="au-np" class="au-np hidden" aria-hidden="true" role="dialog" aria-label="Now Playing"></div>
+  <div id="au-tap" class="au-tap hidden"></div>
+  <div id="au-announce" class="au-announce hidden" role="status" aria-live="polite"></div>
+  <div id="au-modal" class="lightbox hidden">
+    <div class="zone-editor-panel mv-modal-panel au-modal-panel" id="au-modal-panel"></div>
+  </div>
+  <div id="au-pop" class="au-pop hidden"></div>
+  <div id="au-menu" class="au-menu hidden" role="menu"></div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/hls.min.js"></script>
@@ -873,5 +944,9 @@
   <script src="organizer-automations.js"></script>
   <script src="movies.js"></script>
   <script src="files.js"></script>
+  <script src="audio-player.js"></script>
+  <script src="audio-extras.js"></script>
+  <script src="music.js"></script>
+  <script src="podcasts.js"></script>
 </body>
 </html>

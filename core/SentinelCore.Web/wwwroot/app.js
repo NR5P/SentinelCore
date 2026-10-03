@@ -522,6 +522,8 @@ const views = {
   accounts: document.getElementById("view-accounts"),
   organizer: document.getElementById("view-organizer"),
   movies: document.getElementById("view-movies"),
+  music: document.getElementById("view-music"),
+  podcasts: document.getElementById("view-podcasts"),
   weather: document.getElementById("view-weather"),
   files: document.getElementById("view-files")
 };
@@ -548,6 +550,10 @@ for (const tab of tabs) {
     if (currentView === "weather" && target !== "weather") window.SentinelWeather.hide();
     if (currentView === "alarm" && target !== "alarm") window.SentinelAlarm.stop();
     if (currentView === "files" && target !== "files") window.SentinelFiles.hide();
+    // Leaving Music or Podcasts only stops their polling - the player bar keeps playing on
+    // every tab, which is the point of it.
+    if (currentView === "music" && target !== "music") window.SentinelMusic.hide();
+    if (currentView === "podcasts" && target !== "podcasts") window.SentinelPodcasts.hide();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -576,6 +582,9 @@ for (const tab of tabs) {
     if (target === "weather") window.SentinelWeather.show();
     if (target === "alarm") window.SentinelAlarm.show();
     if (target === "files") window.SentinelFiles.show();
+    // Both read the rest of the hash themselves (#music/album/<id>, #podcasts/show/<id>, ...).
+    if (target === "music") window.SentinelMusic.show();
+    if (target === "podcasts") window.SentinelPodcasts.show();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;
       window.GateWatchTimeline.load();
@@ -613,6 +622,8 @@ function landOnHash() {
   // /#movies/item/<id> and the other Movies sub-routes all land on the Movies tab; movies.js
   // reads the part after the slash when its show() runs.
   if (wanted.startsWith("movies/")) wanted = "movies";
+  if (wanted.startsWith("music/")) wanted = "music";
+  if (wanted.startsWith("podcasts/")) wanted = "podcasts";
   const landing = wanted && Array.from(tabs).find((tab) => tab.dataset.view === wanted);
   if (landing) landing.click();
 }

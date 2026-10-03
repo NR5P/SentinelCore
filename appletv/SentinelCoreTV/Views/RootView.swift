@@ -5,6 +5,8 @@ struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection = .live
+    // Music & Podcasts: one player and speaker for the whole app, whichever tab is showing.
+    @ObservedObject private var audio = AudioCenter.shared
 
     private var organizerEnabled: Bool {
         model.organizer.status?.enabled ?? model.organizerLastKnownEnabled
@@ -27,7 +29,8 @@ struct RootView: View {
                         ForEach(AppSection.visibleCases(
                             deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled,
                             moviesEnabled: model.moviesEnabled, alarmEnabled: model.alarmEnabled,
-                            filesEnabled: model.familyFilesEnabled)) { section in
+                            filesEnabled: model.familyFilesEnabled, musicEnabled: audio.musicEnabled,
+                            podcastsEnabled: audio.podcastsEnabled)) { section in
                             NavigationStack {
                                 sectionView(section)
                                     .navigationDestination(item: $model.selectedEvent) { event in
@@ -45,6 +48,13 @@ struct RootView: View {
                            let section = AppSection(rawValue: name) { selection = section }
                     }
                     #endif
+                    // Now Playing covers everything, opened from either audio tab, a speaker
+                    // command or "Continue from…". Menu closes it; playback carries on.
+                    .fullScreenCover(isPresented: $audio.showNowPlaying) {
+                        NowPlayingTVView()
+                            .environmentObject(audio)
+                            .environmentObject(model)
+                    }
                 }
             }
         }
@@ -63,6 +73,11 @@ struct RootView: View {
             AlertTakeoverView(event: event)
         }
         .environment(model.organizer)
+        .environmentObject(audio)
+        // Music & Podcasts follow the connection: tabs, the speaker heartbeat, "Continue from…".
+        .task(id: "\(model.connectionState == .online)|\(model.activeServerURL)") {
+            await audio.connect(model: model)
+        }
         .onChange(of: model.organizer.status?.enabled) { _, enabled in
             if let enabled { model.organizerLastKnownEnabled = enabled }
         }
@@ -85,6 +100,8 @@ struct RootView: View {
         switch section {
         case .live: LiveCamerasView(isActive: selection == .live)
         case .movies: MoviesTVView(isActive: selection == .movies)
+        case .music: MusicTVView(isActive: selection == .music)
+        case .podcasts: PodcastsTVView(isActive: selection == .podcasts)
         case .events: AlertFeedView()
         case .weather: WeatherTVView(isActive: selection == .weather)
         case .devices: DeviceHubView(isActive: selection == .devices)
@@ -100,12 +117,14 @@ struct RootView: View {
 // motion - which put a camera that forwards to AI analysis on both, once with the description and
 // once with the clip. They are now one Events tab over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
-    case live, movies, events, weather, alarm, organizer, files, devices, settings
+    case live, movies, music, podcasts, events, weather, alarm, organizer, files, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
         case .live: "Live"
         case .movies: "Movies"
+        case .music: "Music"
+        case .podcasts: "Podcasts"
         case .events: "Events"
         case .weather: "Weather"
         case .alarm: "Alarm"
@@ -119,6 +138,8 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .live: "video.fill"
         case .movies: "film.stack"
+        case .music: "music.note"
+        case .podcasts: "antenna.radiowaves.left.and.right"
         case .events: "shield.lefthalf.filled"
         case .weather: "cloud.sun.fill"
         case .alarm: "lock.shield.fill"
@@ -133,10 +154,12 @@ enum AppSection: String, CaseIterable, Identifiable {
     // server-side; Movies, the Alarm and Files are off by default and only appear once switched on.
     // tvOS has no five-tab limit like the iPhone tab bar, so this is a plain filter.
     static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool, moviesEnabled: Bool = false,
-                             alarmEnabled: Bool = false, filesEnabled: Bool = false) -> [AppSection] {
+                             alarmEnabled: Bool = false, filesEnabled: Bool = false,
+                             musicEnabled: Bool = false, podcastsEnabled: Bool = false) -> [AppSection] {
         allCases.filter {
             ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled)
                 && ($0 != .movies || moviesEnabled)
+                && ($0 != .music || musicEnabled) && ($0 != .podcasts || podcastsEnabled)
                 && ($0 != .alarm || alarmEnabled) && ($0 != .files || filesEnabled)
         }
     }
