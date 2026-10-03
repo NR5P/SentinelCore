@@ -131,6 +131,10 @@ final class AudioAPI {
         try await get("/api/audio/browse", Self.q([("path", path)]))
     }
 
+    func audioMakeFolder(parent: String, name: String) async throws -> MediaBrowseListing {
+        try await send("POST", "/api/audio/browse/folder", MediaNewFolderInput(parent: parent, name: name))
+    }
+
     // MARK: Music (§4)
 
     func musicHome() async throws -> MusicHome { try await get("/api/music/home") }

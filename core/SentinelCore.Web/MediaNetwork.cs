@@ -326,6 +326,26 @@ public sealed class MediaNetworkFileSystem : IMediaFileSystem, IDisposable
         });
     }
 
+    // Makes the folder (its parent must already exist); a folder already there is fine. Throws
+    // UnauthorizedAccessException when the sign-in may not write there.
+    public void CreateDirectory(string path)
+    {
+        var parsed = Parse(path);
+        if (parsed.Rest.Length == 0) throw new IOException($"Choose a folder inside a shared folder on {parsed.Host}.");
+        WithConnection(parsed, connection =>
+        {
+            var status = connection.Store.CreateFile(out var handle, out _, parsed.SmbPath, AccessMask.GENERIC_READ | AccessMask.GENERIC_WRITE | AccessMask.SYNCHRONIZE,
+                FileAttributes.Directory, ShareAccess.Read | ShareAccess.Write, CreateDisposition.FILE_OPEN_IF, CreateOptions.FILE_DIRECTORY_FILE, null);
+            if (status == NTStatus.STATUS_ACCESS_DENIED)
+                throw new UnauthorizedAccessException($"{parsed.Host} does not allow making folders in {parsed.Parent()}.");
+            if (status == NTStatus.STATUS_OBJECT_NAME_COLLISION || status == NTStatus.STATUS_NOT_A_DIRECTORY)
+                throw new IOException($"There is already a file called {parsed.Rest[(parsed.Rest.LastIndexOf('/') + 1)..]} there.");
+            ThrowIfFailed(status, parsed, isDirectory: true);
+            connection.Store.CloseFile(handle);
+            return true;
+        });
+    }
+
     public Stream OpenRead(string path)
     {
         var parsed = Parse(path);

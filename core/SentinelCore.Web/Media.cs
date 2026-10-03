@@ -172,6 +172,13 @@ public sealed class MediaLibraryInput
     public string Path { get; set; } = string.Empty;
 }
 
+// POST /api/media/browse/folder (and /api/audio/browse/folder): the folder picker's "New folder".
+public sealed class MediaNewFolderInput
+{
+    public string? Parent { get; set; }
+    public string? Name { get; set; }
+}
+
 public sealed class MediaProgressInput
 {
     public double PositionSeconds { get; set; }

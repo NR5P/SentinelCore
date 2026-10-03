@@ -54,6 +54,7 @@ public partial class MediaFolderPickerWindow : Window
         InitializeComponent();
         if (_audio) Title = "Choose a folder";
         UpButton.IsEnabled = false;
+        NewFolderButton.IsEnabled = false;
         Loaded += async (_, _) => await BrowseAsync(_startPath);
     }
 
@@ -66,24 +67,14 @@ public partial class MediaFolderPickerWindow : Window
     {
         var generation = ++_generation;
         UseButton.IsEnabled = false;
+        NewFolderButton.IsEnabled = false;
         Message(string.IsNullOrWhiteSpace(path) ? "Loading…" : $"Opening {path}…");
         try
         {
             var listing = await _model.Client.MediaBrowseAsync(path, basePath: _basePath);
             if (generation != _generation) return;
-
-            _listing = listing;
-            if (listing.IsRoots)
-            {
-                _computers = listing.Computers;
-                _computersLoaded = true;
-            }
-            PathBox.Text = listing.Path;
-            UpButton.IsEnabled = listing.CanGoUp;
-            UseButton.IsEnabled = listing.CanPick;
+            Show(listing);
             Message("");
-            Render();
-            Scroller.ScrollToTop();
         }
         catch (Exception error)
         {
@@ -91,6 +82,56 @@ public partial class MediaFolderPickerWindow : Window
             // 404 here is "Movies & TV is turned off in Settings." - the server's own wording.
             Message(AppModel.UserFacingMessage(error));
             UseButton.IsEnabled = _listing?.CanPick == true;
+            NewFolderButton.IsEnabled = _listing?.CanCreateFolder == true;
+        }
+    }
+
+    /// <summary>Paints a page the server sent: a browse, or the new folder a create opened.</summary>
+    private void Show(MediaBrowseListing listing)
+    {
+        _listing = listing;
+        if (listing.IsRoots)
+        {
+            _computers = listing.Computers;
+            _computersLoaded = true;
+        }
+        PathBox.Text = listing.Path;
+        UpButton.IsEnabled = listing.CanGoUp;
+        UseButton.IsEnabled = listing.CanPick;
+        NewFolderButton.IsEnabled = listing.CanCreateFolder;
+        Render();
+        Scroller.ScrollToTop();
+    }
+
+    /// <summary>
+    /// Makes a folder inside the one on screen (POST …/browse/folder) and opens it, so a library
+    /// can live in a folder that doesn't exist yet. One that is already there just opens.
+    /// </summary>
+    private async Task CreateFolderAsync()
+    {
+        if (_listing is not { CanCreateFolder: true } parent) return;
+        var prompt = new TextPromptWindow("New folder", "Name of the new folder:") { Owner = this };
+        if (prompt.ShowDialog() != true) return;
+
+        var name = prompt.Value;
+        var generation = ++_generation;
+        UseButton.IsEnabled = false;
+        NewFolderButton.IsEnabled = false;
+        Message($"Making {name}…");
+        try
+        {
+            var listing = await _model.Client.CreateMediaFolderAsync(parent.Path, name, basePath: _basePath);
+            if (generation != _generation) return;
+            Show(listing);
+            Message($"Made {name}.");
+        }
+        catch (Exception error)
+        {
+            if (generation != _generation) return;
+            // 400 carries the server's reason: a bad name, or a folder it can't write to.
+            Message(AppModel.UserFacingMessage(error));
+            UseButton.IsEnabled = _listing?.CanPick == true;
+            NewFolderButton.IsEnabled = _listing?.CanCreateFolder == true;
         }
     }
 
@@ -449,6 +490,8 @@ public partial class MediaFolderPickerWindow : Window
         if (_listing?.Parent is not { } parent) return;
         await BrowseAsync(parent.Length == 0 ? null : parent);
     }
+
+    private async void OnNewFolderClicked(object sender, RoutedEventArgs e) => await CreateFolderAsync();
 
     private async void OnGoClicked(object sender, RoutedEventArgs e) => await BrowseAsync(PathBox.Text.Trim());
 

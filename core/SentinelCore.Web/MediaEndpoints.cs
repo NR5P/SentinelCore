@@ -124,7 +124,53 @@ public static class MediaEndpoints
         enabled.MapGet("/browse", async (string? path, MediaFiles files, CancellationToken ct) =>
             Results.Ok(await Task.Run(() => Browse(path, files), ct))).RequireAuthorization("AdminOnly");
 
+        enabled.MapPost("/browse/folder", async (MediaNewFolderInput input, MediaFiles files, CancellationToken ct) =>
+        {
+            var (path, error) = await Task.Run(() => CreateFolder(input, files), ct);
+            return error is not null
+                ? Results.BadRequest(new { errors = new[] { error } })
+                : Results.Ok(await Task.Run(() => Browse(path, files), ct));
+        }).RequireAuthorization("AdminOnly");
+
         MapNetwork(enabled);
+    }
+
+    // The picker's "New folder": makes `name` inside `parent` (a server folder or a folder on a
+    // share) and hands back its path, so a library can point at a folder that is not there yet.
+    // A folder already there is not an error - the picker just opens it.
+    public static (string Path, string? Error) CreateFolder(MediaNewFolderInput input, MediaFiles files)
+    {
+        var parent = input.Parent?.Trim() ?? "";
+        var name = input.Name?.Trim() ?? "";
+        if (parent.Length == 0) return ("", "Open the folder the new one goes in first.");
+        if (name.Length == 0) return ("", "Type a name for the new folder.");
+        if (name is "." or ".." || name.Length > 200 || name.EndsWith('.')
+            || name.IndexOfAny(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) >= 0 || name.Any(char.IsControl))
+            return ("", "Folder names cannot contain / \\ : * ? \" < > | or end with a dot.");
+
+        if (MediaNetworkPath.IsNetwork(parent))
+        {
+            if (!MediaNetworkPath.TryParse(parent, out var network)) return ("", "That network address is not complete.");
+            if (network.Share.Length == 0) return ("", $"Open one of {network.Host}'s shared folders first; new folders go inside a shared folder.");
+            var target = network.Child(name).ToString();
+            try { files.Network.CreateDirectory(target); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return ("", ex.Message); }
+            return (target, null);
+        }
+
+        if (!Path.IsPathRooted(parent)) return ("", "Open the folder the new one goes in first.");
+        string full;
+        try { full = Path.Combine(Path.GetFullPath(parent), name); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return ("", "That is not a folder path this server understands.");
+        }
+        if (!Directory.Exists(Path.GetDirectoryName(full))) return ("", $"{parent} does not exist on the server.");
+        if (File.Exists(full)) return ("", $"There is already a file called {name} there.");
+        try { Directory.CreateDirectory(full); }
+        catch (UnauthorizedAccessException) { return ("", $"The server is not allowed to make folders in {parent}."); }
+        catch (IOException ex) { return ("", $"The server could not make that folder: {ex.Message}"); }
+        return (full, null);
     }
 
     private static async Task<List<string>> ValidateLibraryAsync(MediaLibraryInput input, Guid? id, IMediaStore store, MediaFiles files, CancellationToken ct)

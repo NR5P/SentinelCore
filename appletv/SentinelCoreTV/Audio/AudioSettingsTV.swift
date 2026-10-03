@@ -478,6 +478,8 @@ struct AudioFolderPickerTV: View {
     @State private var errorMessage: String?
     @State private var openAfterSignIn: String?
     @State private var started = false
+    @State private var newFolderName = ""
+    @State private var newFolderError: String?
 
     var body: some View {
         List {
@@ -520,6 +522,21 @@ struct AudioFolderPickerTV: View {
                                 if let count = folder.videoCount, count > 0 { Text("\(count) files").font(.caption).foregroundStyle(.secondary) }
                             }
                         }
+                    }
+                }
+                if listing.canMakeFolder {
+                    // The library's folder may not exist yet: made here, then opened.
+                    Section {
+                        TextField("Name", text: $newFolderName, prompt: Text("Podcasts"))
+                            .autocorrectionDisabled()
+                            .onSubmit { Task { await makeFolder(in: listing.path) } }
+                        Button { Task { await makeFolder(in: listing.path) } } label: {
+                            Label("Create Folder Here", systemImage: "folder.badge.plus")
+                        }
+                        .disabled(newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if let newFolderError { Text(newFolderError).foregroundStyle(SentinelTheme.red) }
+                    } header: {
+                        Text("New Folder")
                     }
                 }
                 if listing.isRoots {
@@ -569,9 +586,22 @@ struct AudioFolderPickerTV: View {
             }
             listing = page
             errorMessage = nil
+            newFolderError = nil
         } catch {
             if fallBack, !target.isEmpty { await load(""); return }
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func makeFolder(in parent: String) async {
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let api = audio.api, !name.isEmpty else { return }
+        do {
+            listing = try await api.audioMakeFolder(parent: parent, name: name)
+            newFolderName = ""
+            newFolderError = nil
+        } catch {
+            newFolderError = error.localizedDescription
         }
     }
 }

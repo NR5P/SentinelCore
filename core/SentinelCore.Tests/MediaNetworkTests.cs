@@ -340,6 +340,20 @@ public sealed class MediaNetworkTests : IDisposable
         Assert.Equal($"smb://{server.Host}/Movies", films.GetProperty("parent").GetString());
         Assert.Equal("Share Film (2011)", films.GetProperty("folders")[0].GetProperty("name").GetString());
 
+        // "New folder" on a share makes it there and answers with its (empty) page.
+        using (var made = await client.PostAsJsonAsync("/api/media/browse/folder", new { parent = films.GetProperty("path").GetString(), name = "TV Shows" }, Ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, made.StatusCode);
+            var page = await made.Content.ReadFromJsonAsync<JsonElement>(Ct);
+            Assert.Equal($"smb://{server.Host}/Movies/Films/TV Shows", page.GetProperty("path").GetString());
+            Assert.Equal("network", page.GetProperty("kind").GetString());
+            Assert.True(Directory.Exists(Path.Combine(_shared, "Films", "TV Shows")));
+        }
+        // Not on the computer itself: folders go inside a shared folder.
+        using (var top = await client.PostAsJsonAsync("/api/media/browse/folder", new { parent = $"smb://{server.Host}", name = "Nope" }, Ct))
+            Assert.Equal(HttpStatusCode.BadRequest, top.StatusCode);
+        Directory.Delete(Path.Combine(_shared, "Films", "TV Shows"));
+
         // A share that is not there is refused with the computer's own words.
         using (var missing = await client.PostAsJsonAsync("/api/media/libraries", new { name = "Nope", kind = "movies", path = $"smb://{server.Host}/Nope" }, Ct))
         {

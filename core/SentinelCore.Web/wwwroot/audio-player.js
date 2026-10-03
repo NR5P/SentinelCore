@@ -552,6 +552,7 @@ window.SentinelAudio = (function () {
       </div>
       <div class="mv-folders" id="au-folders">${loadingMarkup()}</div>
       <div class="mv-modal-foot">
+        <button type="button" class="mv-btn mv-btn-quiet mv-foot-start" data-mact="fp-new" id="au-browse-new" disabled>+ New folder</button>
         <button type="button" class="mv-btn mv-btn-quiet" data-mact="close">Cancel</button>
         <button type="button" class="mv-btn mv-btn-primary" data-mact="fp-pick" id="au-browse-pick" disabled>Use this folder</button>
       </div>`, () => { const f = folderPick; folderPick = null; if (f && f.onCancel && !f.picked) f.onCancel(); });
@@ -586,6 +587,8 @@ window.SentinelAudio = (function () {
     folderPick.parent = data.parent == null ? null : data.parent;
     el("au-browse-input").value = folderPick.path;
     el("au-browse-pick").disabled = !folderPick.path || data.kind === "computer" || !!data.error;
+    // New folders go inside a folder: not on the starting page or a computer's list of shares.
+    el("au-browse-new").disabled = !folderPick.path || (data.kind !== "local" && data.kind !== "network") || !!data.error;
     const up = document.querySelector('#au-modal [data-mact="fp-up"]');
     if (up) up.disabled = !folderPick.path;
 
@@ -622,6 +625,34 @@ window.SentinelAudio = (function () {
     folderPick.listing = listing;
     list.innerHTML = listing;
     folderPick.computers = data.computers || folderPick.computers || [];
+  }
+
+  // "New folder": the library's folder may not exist yet (a Podcasts folder beside Music). The
+  // server makes it inside the open folder and the picker opens it.
+  function showNewFolder() {
+    const list = el("au-folders");
+    if (!list || !folderPick || el("au-newfolder")) return;
+    list.insertAdjacentHTML("afterbegin", `<form class="mv-form mv-newfolder" id="au-newfolder">
+        <div class="mv-newfolder-row">
+          <input class="field-input" id="au-newfolder-name" placeholder="New folder name, like Podcasts" spellcheck="false" autocomplete="off" aria-label="New folder name">
+          <button type="button" class="mv-btn mv-btn-quiet" data-mact="fp-new-cancel">Cancel</button>
+          <button type="submit" class="mv-btn mv-btn-primary">Create</button>
+        </div>
+        <ul class="field-errors" id="au-newfolder-errors"></ul>
+      </form>`);
+    el("au-newfolder-name").focus();
+  }
+
+  async function submitNewFolder(form) {
+    const name = el("au-newfolder-name").value.trim();
+    if (!name) { showErrors(el("au-newfolder-errors"), "Type a name for the new folder."); return; }
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    const res = await request("/api/audio/browse/folder", { method: "POST", body: { parent: folderPick.path, name } });
+    if (!el("au-newfolder")) return;
+    submit.disabled = false;
+    if (!res.ok) { showErrors(el("au-newfolder-errors"), res.error); return; }
+    loadFolder(res.data.path);
   }
 
   function signInMarkup(computer) {
@@ -701,6 +732,8 @@ window.SentinelAudio = (function () {
       case "fp-go": loadFolder(el("au-browse-input").value.trim()); return true;
       case "fp-up": if (folderPick) loadFolder(folderPick.parent || ""); return true;
       case "fp-net-add": showSignIn({}); return true;
+      case "fp-new": showNewFolder(); return true;
+      case "fp-new-cancel": el("au-newfolder")?.remove(); return true;
       case "fp-net-edit": showSignIn(((folderPick && folderPick.computers) || []).find((c) => c.id === target.dataset.id) || {}); return true;
       case "fp-net-back": loadFolder(""); return true;
       case "fp-net-find": findComputers(target); return true;
@@ -733,6 +766,7 @@ window.SentinelAudio = (function () {
     });
     modal.addEventListener("submit", (e) => {
       if (e.target.id === "au-signin") { e.preventDefault(); submitSignIn(e.target); return; }
+      if (e.target.id === "au-newfolder" && folderPick) { e.preventDefault(); submitNewFolder(e.target); return; }
       for (const fn of modalHandlers) if (fn("submit:" + e.target.id, e.target, e)) { e.preventDefault(); return; }
     });
   }

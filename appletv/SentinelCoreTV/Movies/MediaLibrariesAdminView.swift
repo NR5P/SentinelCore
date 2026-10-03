@@ -367,6 +367,9 @@ struct MediaFolderPickerView: View {
     @State private var discovered: [MediaDiscoveredComputer]?
     @State private var discovering = false
     @State private var openAfterSignIn: String?
+    @State private var newFolderName = ""
+    @State private var makingFolder = false
+    @State private var newFolderError: String?
 
     var body: some View {
         Form {
@@ -433,6 +436,10 @@ struct MediaFolderPickerView: View {
                             Text("\(count) video\(count == 1 ? "" : "s") directly in this folder.")
                         }
                     }
+                }
+
+                if listing.canMakeFolder {
+                    newFolderSection(listing)
                 }
 
                 Section {
@@ -543,6 +550,50 @@ struct MediaFolderPickerView: View {
         }
     }
 
+    // The library's folder may not exist yet (a TV Shows folder beside Movies): the server makes
+    // it inside the open folder and the picker opens it.
+    private func newFolderSection(_ listing: MediaBrowseListing) -> some View {
+        Section {
+            LibraryTextField(label: "Name", prompt: "TV Shows", text: $newFolderName)
+                .onSubmit { Task { await makeFolder(in: listing.path) } }
+            Button {
+                Task { await makeFolder(in: listing.path) }
+            } label: {
+                HStack {
+                    Label("Create Folder Here", systemImage: "folder.badge.plus")
+                    if makingFolder { Spacer(); ProgressView() }
+                }
+            }
+            .disabled(makingFolder || newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            #if !os(tvOS)
+            .buttonStyle(.borderless)
+            #endif
+            if let newFolderError {
+                Text(newFolderError).foregroundStyle(SentinelTheme.red)
+            }
+        } header: {
+            Text("New Folder")
+        } footer: {
+            Text("Makes a folder inside this one and opens it, for a library whose folder isn't there yet.")
+        }
+    }
+
+    private func makeFolder(in parent: String) async {
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !makingFolder else { return }
+        makingFolder = true
+        newFolderError = nil
+        defer { makingFolder = false }
+        do {
+            let page = try await model.client.mediaMakeFolder(parent: parent, name: name)
+            newFolderName = ""
+            listing = page
+            typedPath = page.path
+        } catch {
+            newFolderError = error.localizedDescription
+        }
+    }
+
     // Pushed with a NavigationLink, never .navigationDestination: this screen is itself pushed by
     // a NavigationLink, and on macOS a destination declared here hung the app at 100% CPU the
     // moment it was presented (even with a bare Text as the destination). It hands back where to
@@ -591,6 +642,7 @@ struct MediaFolderPickerView: View {
                 return
             }
             if let computers = page.computers { lastComputers = computers }
+            newFolderError = nil
             listing = page
             typedPath = page.path
         } catch {

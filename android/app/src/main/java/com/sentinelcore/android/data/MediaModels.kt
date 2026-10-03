@@ -288,6 +288,8 @@ data class MediaBrowseListing(
     val canGoUp: Boolean get() = parent != null
     // A computer is not a folder, and the starting page is not a place.
     val canUse: Boolean get() = path.isNotBlank() && kind != "computer" && kind != "roots" && error == null
+    // "New folder" needs a real folder to make it in: a disk folder or one inside a share.
+    val canMakeFolder: Boolean get() = path.isNotBlank() && (kind == "local" || kind == "network") && error == null
 }
 
 // GET /api/media/network/discover - a computer that advertises file sharing over mDNS.
@@ -772,6 +774,13 @@ internal object MediaApi {
     // No path (or a blank one) is the starting page.
     fun browsePath(path: String?, base: String = MEDIA_ROUTES): String =
         if (path.isNullOrBlank()) "$base/browse" else "$base/browse?path=${query(path)}"
+
+    // POST { parent, name }: makes the folder (an existing one is fine) and answers with its
+    // browse page, the same shape as browsePath.
+    fun browseFolderPath(base: String = MEDIA_ROUTES): String = "$base/browse/folder"
+
+    fun newFolderBody(parent: String, name: String): JSONObject =
+        JSONObject().put("parent", parent).put("name", name.trim())
 
     fun formatSeconds(seconds: Double): String =
         if (seconds % 1.0 == 0.0) seconds.toLong().toString() else "%.1f".format(java.util.Locale.ROOT, seconds)

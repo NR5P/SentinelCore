@@ -52,6 +52,15 @@ struct MediaBrowseListing: Decodable {
     var isRoots: Bool { kind == "roots" || path.isEmpty }
     // A computer is not a folder; one of its shared folders, or anything inside one, is.
     var isPickable: Bool { !path.isEmpty && kind != "computer" && error == nil }
+    // New folders go inside a folder: not on the starting page or a computer's list of shares.
+    var canMakeFolder: Bool { !path.isEmpty && (kind == "local" || kind == "network") && error == nil }
+}
+
+// POST /api/media/browse/folder (or /api/audio/browse/folder): "New Folder" in the picker. The
+// reply is the new folder's MediaBrowseListing; a folder already there is not an error.
+struct MediaNewFolderInput: Encodable {
+    var parent: String
+    var name: String
 }
 
 struct MediaBrowseFolder: Decodable, Identifiable, Hashable {

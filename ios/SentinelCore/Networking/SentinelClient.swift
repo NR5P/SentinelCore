@@ -575,6 +575,10 @@ final class SentinelClient {
         try await get("/api/media/browse", query: path.isEmpty ? [] : [URLQueryItem(name: "path", value: path)])
     }
 
+    func mediaMakeFolder(parent: String, name: String) async throws -> MediaBrowseListing {
+        try await send("/api/media/browse/folder", method: "POST", body: MediaNewFolderInput(parent: parent, name: name))
+    }
+
     func mediaNetworkComputers() async throws -> [MediaNetworkComputer] {
         try await get("/api/media/network")
     }

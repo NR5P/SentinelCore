@@ -76,6 +76,13 @@ Everywhere: `parent` is where "up" goes (`""` is the starting page, null only on
 the same count for that subfolder - null for network folders (it would cost a round trip each).
 Typed paths are accepted: `\\PC\Share\Folder` and `//PC/Share` are read as `smb://PC/Share/Folder`.
 
+`POST /api/media/browse/folder` body `{ "parent": "/mnt/movies", "name": "TV Shows" }` makes a
+folder for a library that does not exist yet → 200 with the new folder's browse page (the same
+shape as `GET /api/media/browse?path=` for it), so a picker opens it. A folder already there is not
+an error. `parent` is any local folder or a folder on a share (`smb://PC/Share/…`, not a computer
+or the starting page). Failure → 400 `{ "errors": [ "…" ] }` (a bad name, a parent that is gone, or
+a server/sign-in that may not write there). Every picker shows this as a "New folder" button.
+
 ## Folders on other computers (admin)
 
 The server reads shared folders (Windows file sharing, a Mac with File Sharing on, a NAS, Samba)

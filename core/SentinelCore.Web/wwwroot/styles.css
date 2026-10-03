@@ -9288,6 +9288,27 @@ body.wx-noscroll {
   padding: 14px;
 }
 
+/* The folder picker's "New folder": a name box above the list, and its button pushed to the
+   left of the footer away from Cancel / Use this folder. */
+.mv-newfolder {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(22, 53, 31, 0.6);
+}
+
+.mv-newfolder-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mv-newfolder-row > .field-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mv-modal-foot > .mv-foot-start {
+  margin-right: auto;
+}
+
 .mv-signin-title {
   font-size: 13px;
   color: var(--green);

@@ -96,7 +96,8 @@ The Music and Podcasts settings screens in each app show those fields plus a han
 `MOVIES.md` → Folder picker). There is one difference: each folder's `videoCount` and the
 response's `videoCount` count **audio files** (mp3, m4a, m4b, aac, flac, alac, ogg, oga, opus,
 wav, aif, aiff, wma, ape, wv, dsf, dff). `audioCount` carries the same number. Apps can reuse
-their Movies picker and point it at this route.
+their Movies picker and point it at this route. `POST /api/audio/browse/folder` is the same
+"New folder" call as `POST /api/media/browse/folder`, answering with an audio browse page.
 
 Network computers have the same routes under `/api/audio/network`:
 

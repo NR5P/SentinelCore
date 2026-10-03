@@ -55,17 +55,28 @@ public static class AudioEndpoints
         // The Movies picker, counting audio files instead of videos: `videoCount` keeps its name
         // so every app can reuse its Movies picker, and `audioCount` says the same thing plainly.
         enabled.MapGet("/browse", async (string? path, MediaFiles files, CancellationToken ct) =>
+            Results.Ok(await Task.Run(() => BrowseAudio(path, files), ct))).RequireAuthorization("AdminOnly");
+
+        enabled.MapPost("/browse/folder", async (MediaNewFolderInput input, MediaFiles files, CancellationToken ct) =>
         {
-            var result = await Task.Run(() => MediaEndpoints.Browse(path, files, AudioFileTypes.IsAudioFile), ct);
-            var node = JsonSerializer.SerializeToNode(result, WebJson)!.AsObject();
-            node["audioCount"] = node["videoCount"]?.DeepClone();
-            foreach (var folder in node["folders"] as JsonArray ?? [])
-                if (folder is JsonObject entry) entry["audioCount"] = entry["videoCount"]?.DeepClone();
-            return Results.Ok(node);
+            var (path, error) = await Task.Run(() => MediaEndpoints.CreateFolder(input, files), ct);
+            return error is not null
+                ? Results.BadRequest(new { errors = new[] { error } })
+                : Results.Ok(await Task.Run(() => BrowseAudio(path, files), ct));
         }).RequireAuthorization("AdminOnly");
 
         // The same saved sign-ins as Movies: a computer signed in to there already works here.
         MediaEndpoints.MapNetwork(enabled);
+    }
+
+    private static JsonObject BrowseAudio(string? path, MediaFiles files)
+    {
+        var result = MediaEndpoints.Browse(path, files, AudioFileTypes.IsAudioFile);
+        var node = JsonSerializer.SerializeToNode(result, WebJson)!.AsObject();
+        node["audioCount"] = node["videoCount"]?.DeepClone();
+        foreach (var folder in node["folders"] as JsonArray ?? [])
+            if (folder is JsonObject entry) entry["audioCount"] = entry["videoCount"]?.DeepClone();
+        return node;
     }
 
     // MARK: - Play where you left off

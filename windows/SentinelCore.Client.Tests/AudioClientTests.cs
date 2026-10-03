@@ -438,6 +438,22 @@ public class AudioClientTests
     }
 
     [Fact]
+    public async Task Audio_picker_new_folder_posts_under_api_audio()
+    {
+        using var server = new FakeServer().On("POST", "/api/audio/browse/folder",
+            """{"path":"/mnt/Podcasts","parent":"/mnt","kind":"local","folders":[],"videoCount":0}""");
+        using var client = ClientFor(server);
+
+        var listing = await client.CreateMediaFolderAsync("/mnt", "Podcasts", basePath: SentinelClient.AudioBase);
+
+        Assert.Equal("POST /api/audio/browse/folder", server.Requests.Single());
+        Assert.Contains("\"parent\":\"/mnt\"", server.Bodies[0]);
+        Assert.Contains("\"name\":\"Podcasts\"", server.Bodies[0]);
+        Assert.Equal("/mnt/Podcasts", listing.Path);
+        Assert.True(listing.CanPick);
+    }
+
+    [Fact]
     public void Art_paths_ask_for_a_size_within_the_contract_range()
     {
         Assert.Equal("/api/music/albums/a/art?size=1200", SentinelClient.ArtPath("/api/music/albums/a/art", 5000));

@@ -20,9 +20,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -108,6 +111,7 @@ fun MediaFolderPicker(
     var discoverError by remember { mutableStateOf<String?>(null) }
 
     var signIn by remember { mutableStateOf<SignInTarget?>(null) }
+    var newFolderOpen by remember { mutableStateOf(false) }
 
     fun load(path: String) {
         scope.launch {
@@ -192,6 +196,12 @@ fun MediaFolderPicker(
             TextButton(onClick = { load("") }, enabled = !loading && current?.isRoots != true) {
                 Icon(Icons.Filled.Home, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text("Start", modifier = Modifier.padding(start = 4.dp))
+            }
+            if (current?.canMakeFolder == true) {
+                TextButton(onClick = { newFolderOpen = true }, enabled = !loading) {
+                    Icon(Icons.Filled.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("New folder", modifier = Modifier.padding(start = 4.dp))
+                }
             }
             Spacer(Modifier.weight(1f))
             if (loading) CircularProgressIndicator(Modifier.size(18.dp).padding(end = 8.dp), strokeWidth = 2.dp)
@@ -345,6 +355,86 @@ fun MediaFolderPicker(
             ) { Text("Use this folder") }
         }
     }
+
+    if (newFolderOpen && current != null) {
+        NewFolderDialog(
+            parent = current.path,
+            onCreate = { name -> model.mediaCreateFolder(current.path, name, routeBase) },
+            onCreated = { result ->
+                newFolderOpen = false
+                // The answer is the new folder's own page, so the picker is now inside it.
+                listing = result
+                pathField = result.path
+                requestError = null
+            },
+            onDismiss = { newFolderOpen = false },
+        )
+    }
+}
+
+// POST {base}/browse/folder. The server refuses a bad name or a folder it can't write to with a
+// 400 whose message shows under the field; the dialog stays open so the name can be fixed.
+@Composable
+private fun NewFolderDialog(
+    parent: String,
+    onCreate: suspend (String) -> MediaBrowseListing,
+    onCreated: (MediaBrowseListing) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var name by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun create() {
+        if (busy || name.isBlank()) return
+        scope.launch {
+            busy = true
+            error = null
+            runCatching { onCreate(name.trim()) }
+                .onSuccess(onCreated)
+                .onFailure { error = it.message ?: "Could not make that folder." }
+            busy = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("New folder") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Inside $parent",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = SentinelTextDim,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it; error = null },
+                    label = { Text("Folder name") },
+                    placeholder = { Text("TV Shows") },
+                    singleLine = true,
+                    enabled = !busy,
+                    isError = error != null,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { create() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                error?.let { Text(it, color = SentinelRed, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { create() }, enabled = !busy && name.isNotBlank()) {
+                Text(if (busy) "Creating…" else "Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

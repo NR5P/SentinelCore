@@ -544,6 +544,35 @@ public sealed class AudioSharedTests : IDisposable
         Assert.Equal(1, movies.GetProperty("videoCount").GetInt32());
     }
 
+    [Fact]
+    public async Task NewFolder_MakesTheFolderAndOpensIt()
+    {
+        var folder = Path.Combine(_root, "Library");
+        Directory.CreateDirectory(folder);
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var made = await JsonAsync(await client.PostAsJsonAsync("/api/audio/browse/folder", new { parent = folder, name = " Podcasts " }, Ct), HttpStatusCode.OK);
+        Assert.Equal(Path.Combine(folder, "Podcasts"), made.GetProperty("path").GetString());
+        Assert.Equal(folder, made.GetProperty("parent").GetString());
+        Assert.Equal(0, made.GetProperty("audioCount").GetInt32());
+        Assert.True(Directory.Exists(Path.Combine(folder, "Podcasts")));
+
+        // Already there is fine: the picker just opens it.
+        await JsonAsync(await client.PostAsJsonAsync("/api/audio/browse/folder", new { parent = folder, name = "Podcasts" }, Ct), HttpStatusCode.OK);
+
+        // The Movies route does the same, for a TV folder.
+        File.WriteAllText(_settingsPath, """{ "Auth": { "Enabled": false }, "Media": { "Enabled": true } }""");
+        var tv = await JsonAsync(await client.PostAsJsonAsync("/api/media/browse/folder", new { parent = folder, name = "TV Shows" }, Ct), HttpStatusCode.OK);
+        Assert.Equal("local", tv.GetProperty("kind").GetString());
+        Assert.True(Directory.Exists(Path.Combine(folder, "TV Shows")));
+
+        foreach (var bad in new[] { "", "a/b", "..", "what?" })
+            await JsonAsync(await client.PostAsJsonAsync("/api/media/browse/folder", new { parent = folder, name = bad }, Ct), HttpStatusCode.BadRequest);
+        await JsonAsync(await client.PostAsJsonAsync("/api/media/browse/folder", new { parent = Path.Combine(folder, "Gone"), name = "X" }, Ct), HttpStatusCode.BadRequest);
+        await JsonAsync(await client.PostAsJsonAsync("/api/media/browse/folder", new { parent = "", name = "X" }, Ct), HttpStatusCode.BadRequest);
+    }
+
     // MARK: - Fakes
 
     private sealed class ManualClock(DateTimeOffset now) : TimeProvider

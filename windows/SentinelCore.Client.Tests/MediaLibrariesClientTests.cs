@@ -195,6 +195,54 @@ public class MediaLibrariesClientTests
         Assert.Empty(listing.Folders);
     }
 
+    [Fact]
+    public async Task New_folder_posts_parent_and_name_and_returns_the_new_folders_page()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/browse/folder", """
+            {"path":"/mnt/media/TV Shows","parent":"/mnt/media","kind":"local","folders":[],"videoCount":0}
+            """);
+        using var client = ClientFor(server);
+
+        var listing = await client.CreateMediaFolderAsync("/mnt/media", "  TV Shows ");
+
+        Assert.Equal("POST /api/media/browse/folder", server.Requests.Single());
+        Assert.Contains("\"parent\":\"/mnt/media\"", server.Bodies[0]);
+        Assert.Contains("\"name\":\"TV Shows\"", server.Bodies[0]);
+        Assert.Equal("/mnt/media/TV Shows", listing.Path);
+        Assert.Equal("/mnt/media", listing.Parent);
+        Assert.True(listing.CanPick);
+        Assert.True(listing.CanCreateFolder);
+        Assert.Empty(listing.Folders);
+    }
+
+    [Fact]
+    public async Task New_folder_failure_throws_the_servers_message()
+    {
+        using var server = new FakeServer().On(
+            "POST", "/api/media/browse/folder",
+            """{"errors":["A folder name can't contain / or \\."]}""",
+            HttpStatusCode.BadRequest);
+        using var client = ClientFor(server);
+
+        var error = await Assert.ThrowsAsync<SentinelServerException>(() =>
+            client.CreateMediaFolderAsync("smb://nas/Movies", "a/b"));
+
+        Assert.Equal(400, error.Status);
+        Assert.Equal("A folder name can't contain / or \\.", error.Message);
+    }
+
+    [Theory]
+    [InlineData("roots", "", null, false)]
+    [InlineData("computer", "smb://nas", null, false)]
+    [InlineData("local", "/mnt", null, true)]
+    [InlineData("network", "smb://nas/Movies", null, true)]
+    [InlineData("network", "smb://nas/Movies", "nas turned down the sign-in.", false)]
+    public void New_folder_is_offered_only_inside_a_folder_that_opened(string kind, string path, string? error, bool expected)
+    {
+        var listing = new MediaBrowseListing { Kind = kind, Path = path, Error = error };
+        Assert.Equal(expected, listing.CanCreateFolder);
+    }
+
     // ---------------------------------------------------------------- Network computers
 
     [Fact]

@@ -64,6 +64,18 @@ public sealed partial class SentinelClient
         return GetAsync<MediaBrowseListing>($"{basePath}/browse", query, ct);
     }
 
+    /// <summary>
+    /// Makes a folder called <paramref name="name"/> inside <paramref name="parent"/> and answers
+    /// with the picker page for the new folder - the same as browsing it. A folder already there is
+    /// not an error. A bad name or a folder that can't be written to throws
+    /// <see cref="SentinelServerException"/> (400) with the server's message.
+    /// </summary>
+    public Task<MediaBrowseListing> CreateMediaFolderAsync(
+        string parent, string name, CancellationToken ct = default, string basePath = MediaBase) =>
+        SendAsync<MediaBrowseListing, MediaCreateFolderInput>(
+            $"{basePath}/browse/folder", HttpMethod.Post,
+            new MediaCreateFolderInput { Parent = parent, Name = name.Trim() }, ct);
+
     // MARK: - Network computers
 
     public Task<List<MediaNetworkComputer>> MediaNetworkComputersAsync(CancellationToken ct = default, string basePath = MediaBase) =>

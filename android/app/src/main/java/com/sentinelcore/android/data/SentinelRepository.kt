@@ -489,6 +489,23 @@ class SentinelRepository(
         parseMediaBrowseListing(JSONObject(body))
     }
 
+    // A 400 carries the server's reason (bad name, read-only share, ...) as the message.
+    suspend fun mediaCreateFolder(parent: String, name: String, base: String = MediaApi.MEDIA_ROUTES): MediaBrowseListing = withContext(Dispatchers.IO) {
+        val (status, body) = requestWithStatus(
+            MediaApi.browseFolderPath(base),
+            method = "POST",
+            body = MediaApi.newFolderBody(parent, name).toString(),
+            readTimeoutMillis = 60_000,
+        )
+        if (status !in 200..299) {
+            throw SentinelApiException(
+                status,
+                parseServerError(body) ?: if (status == 401) "This server requires you to sign in." else "Could not make that folder (HTTP $status).",
+            )
+        }
+        parseMediaBrowseListing(JSONObject(body))
+    }
+
     suspend fun mediaNetworkComputers(base: String = MediaApi.MEDIA_ROUTES): List<MediaNetworkComputer> = withContext(Dispatchers.IO) {
         parseMediaNetworkComputers(JSONArray(request("$base/network")))
     }

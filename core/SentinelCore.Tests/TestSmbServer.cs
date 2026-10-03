@@ -83,6 +83,10 @@ public sealed class TestSmbServer : IDisposable
             fileStatus = FileStatus.FILE_DOES_NOT_EXIST;
             if (createDisposition is not (CreateDisposition.FILE_OPEN or CreateDisposition.FILE_OPEN_IF)) return NTStatus.STATUS_ACCESS_DENIED;
             var full = Full(path);
+            // The one write it allows: a new folder (the folder picker's "New folder").
+            if (createDisposition == CreateDisposition.FILE_OPEN_IF && (createOptions & CreateOptions.FILE_DIRECTORY_FILE) != 0
+                && !Directory.Exists(full) && !File.Exists(full) && Directory.Exists(System.IO.Path.GetDirectoryName(full)))
+                Directory.CreateDirectory(full);
             var isDirectory = Directory.Exists(full);
             if (!isDirectory && !File.Exists(full))
                 return Directory.Exists(System.IO.Path.GetDirectoryName(full)) ? NTStatus.STATUS_OBJECT_NAME_NOT_FOUND : NTStatus.STATUS_OBJECT_PATH_NOT_FOUND;

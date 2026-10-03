@@ -220,6 +220,21 @@ class MediaLibraryAdminParsingTest {
     }
 
     @Test
+    fun `new folder posts to the browse route of either picker and only inside a folder`() {
+        assertEquals("/api/media/browse/folder", MediaApi.browseFolderPath())
+        assertEquals("/api/audio/browse/folder", MediaApi.browseFolderPath(MediaApi.AUDIO_ROUTES))
+        val body = MediaApi.newFolderBody("smb://NAS/Media", "  TV Shows ")
+        assertEquals("smb://NAS/Media", body.getString("parent"))
+        assertEquals("TV Shows", body.getString("name"))
+
+        assertTrue(MediaBrowseListing(path = "/mnt/media", parent = "", kind = "local").canMakeFolder)
+        assertTrue(MediaBrowseListing(path = "smb://NAS/Media", parent = "smb://NAS", kind = "network").canMakeFolder)
+        assertFalse(MediaBrowseListing(path = "", parent = null, kind = "roots").canMakeFolder)
+        assertFalse(MediaBrowseListing(path = "smb://NAS", parent = "", kind = "computer").canMakeFolder)
+        assertFalse(MediaBrowseListing(path = "/mnt/gone", parent = "", kind = "local", error = "Not found.").canMakeFolder)
+    }
+
+    @Test
     fun `a default name follows the kind but a typed one does not`() {
         assertEquals("TV Shows", MediaLibraryForm.nameAfterKindChange("Movies", "shows"))
         assertEquals("Movies", MediaLibraryForm.nameAfterKindChange("TV Shows", "movies"))

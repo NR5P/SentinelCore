@@ -82,6 +82,20 @@ public sealed class MediaBrowseListing
 
     /// <summary>Whether "Use this folder" makes sense here.</summary>
     public bool CanPick => Path.Length > 0 && !IsRoots && !IsComputer && string.IsNullOrEmpty(Error);
+
+    /// <summary>
+    /// Whether "New folder" makes sense here: only inside a real folder (on the server or a shared
+    /// folder) that opened - never the starting page or a computer's list of shares.
+    /// </summary>
+    public bool CanCreateFolder => Path.Length > 0 && (Kind == "local" || Kind == "network") && string.IsNullOrEmpty(Error);
+}
+
+/// <summary>The body of POST /api/media/browse/folder (and /api/audio/browse/folder).</summary>
+public sealed class MediaCreateFolderInput
+{
+    /// <summary>The folder the picker is showing; the new folder is made inside it.</summary>
+    public string Parent { get; init; } = "";
+    public string Name { get; init; } = "";
 }
 
 /// <summary>A computer whose shared folders the server has a saved sign-in for. Never a password.</summary>

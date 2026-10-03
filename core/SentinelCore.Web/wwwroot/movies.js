@@ -1206,6 +1206,7 @@ window.SentinelMovies = (function () {
       </div>
       <div class="mv-folders" id="mv-folders">${loadingMarkup()}</div>
       <div class="mv-modal-foot">
+        <button type="button" class="mv-btn mv-btn-quiet mv-foot-start" data-mact="new-folder" id="mv-browse-new" disabled>+ New folder</button>
         <button type="button" class="mv-btn mv-btn-quiet" data-mact="cancel">Cancel</button>
         <button type="button" class="mv-btn mv-btn-primary" data-mact="pick" id="mv-browse-pick" disabled>Use this folder</button>
       </div>`, () => { const f = folderPick; folderPick = null; if (f && f.onCancel && !f.picked) f.onCancel(); });
@@ -1244,6 +1245,8 @@ window.SentinelMovies = (function () {
     el("mv-browse-input").value = folderPick.path;
     // A computer is not a folder; one of its shared folders (or anything inside one) is.
     el("mv-browse-pick").disabled = !folderPick.path || data.kind === "computer" || !!data.error;
+    // New folders go inside a folder: not on the starting page or a computer's list of shares.
+    el("mv-browse-new").disabled = !folderPick.path || (data.kind !== "local" && data.kind !== "network") || !!data.error;
     document.querySelector('#mv-modal [data-mact="up"]').disabled = !folderPick.path;
 
     if (data.error) {
@@ -1278,6 +1281,34 @@ window.SentinelMovies = (function () {
     folderPick.listing = listing;
     list.innerHTML = listing;
     folderPick.computers = data.computers || folderPick.computers || [];
+  }
+
+  // "New folder": the library's folder may not exist yet (a TV Shows folder beside Movies). The
+  // server makes it inside the open folder and the picker opens it, ready for "Use this folder".
+  function showNewFolder() {
+    const list = el("mv-folders");
+    if (!list || !folderPick || el("mv-newfolder")) return;
+    list.insertAdjacentHTML("afterbegin", `<form class="mv-form mv-newfolder" id="mv-newfolder">
+        <div class="mv-newfolder-row">
+          <input class="field-input" id="mv-newfolder-name" placeholder="New folder name, like TV Shows" spellcheck="false" autocomplete="off" aria-label="New folder name">
+          <button type="button" class="mv-btn mv-btn-quiet" data-mact="new-folder-cancel">Cancel</button>
+          <button type="submit" class="mv-btn mv-btn-primary">Create</button>
+        </div>
+        <ul class="field-errors" id="mv-newfolder-errors"></ul>
+      </form>`);
+    el("mv-newfolder-name").focus();
+  }
+
+  async function submitNewFolder(form, route) {
+    const name = el("mv-newfolder-name").value.trim();
+    if (!name) { showErrors(el("mv-newfolder-errors"), "Type a name for the new folder."); return; }
+    const submit = form.querySelector('[type="submit"]');
+    submit.disabled = true;
+    const res = await request(route, { method: "POST", body: { parent: folderPick.path, name } });
+    if (!el("mv-newfolder")) return;
+    submit.disabled = false;
+    if (!res.ok) { showErrors(el("mv-newfolder-errors"), res.error); return; }
+    return res.data.path;
   }
 
   // Signing in to a computer: its name or address, and an account on it. Blank username tries
@@ -2668,6 +2699,10 @@ window.SentinelMovies = (function () {
     const modal = el("mv-modal");
     modal.addEventListener("submit", (e) => {
       if (e.target.id === "mv-signin") { e.preventDefault(); submitSignIn(e.target); }
+      if (e.target.id === "mv-newfolder" && folderPick) {
+        e.preventDefault();
+        submitNewFolder(e.target, "/api/media/browse/folder").then((path) => { if (path) loadFolder(path); });
+      }
       if (e.target.id === "mv-add-form") {
         e.preventDefault();
         add.q = el("mv-add-q").value.trim();
@@ -2688,6 +2723,8 @@ window.SentinelMovies = (function () {
         case "folder": loadFolder(target.dataset.path); break;
         case "go": loadFolder(el("mv-browse-input").value.trim()); break;
         case "net-add": showSignIn({}); break;
+        case "new-folder": showNewFolder(); break;
+        case "new-folder-cancel": el("mv-newfolder")?.remove(); break;
         case "net-edit": showSignIn((folderPick && folderPick.computers || []).find((c) => c.id === target.dataset.id) || {}); break;
         case "net-back": loadFolder(""); break;
         case "net-find": findComputers(target); break;

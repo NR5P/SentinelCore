@@ -849,6 +849,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     suspend fun mediaBrowse(path: String?, base: String = MediaApi.MEDIA_ROUTES): MediaBrowseListing =
         repository.mediaBrowse(path, base)
 
+    suspend fun mediaCreateFolder(parent: String, name: String, base: String = MediaApi.MEDIA_ROUTES): MediaBrowseListing =
+        repository.mediaCreateFolder(parent, name, base)
+
     suspend fun mediaNetworkComputers(base: String = MediaApi.MEDIA_ROUTES): List<MediaNetworkComputer> =
         repository.mediaNetworkComputers(base)
 

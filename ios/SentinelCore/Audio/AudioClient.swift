@@ -138,6 +138,10 @@ extension SentinelClient {
         try await audioGet("/api/audio/browse", path.isEmpty ? [] : [URLQueryItem(name: "path", value: path)])
     }
 
+    func audioMakeFolder(parent: String, name: String) async throws -> MediaBrowseListing {
+        try await audioSend("POST", "/api/audio/browse/folder", MediaNewFolderInput(parent: parent, name: name))
+    }
+
     // MARK: - Music libraries (§2)
 
     func musicStatus() async throws -> MusicStatus { try await audioGet("/api/music/status") }
