@@ -10,6 +10,7 @@ struct MoviePlayerTVView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var controller: MoviePlaybackController
+    @State private var transportBar = TVTransportBar()
 
     init(request: MoviePlayRequest, client: SentinelClient) {
         _controller = StateObject(wrappedValue: MoviePlaybackController(client: client, request: request))
@@ -19,7 +20,7 @@ struct MoviePlayerTVView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             if let player = controller.player {
-                TVPlayerViewController(player: player, onClose: { dismiss() })
+                TVPlayerViewController(player: player, transportBar: transportBar)
                     .ignoresSafeArea()
             }
             if let message = controller.errorMessage {
@@ -61,9 +62,11 @@ struct MoviePlayerTVView: View {
                 controller.reportProgress(force: true)
             }
         }
-        // While the player is up it owns Menu (see TVPlayerViewController); this is only for the
-        // loading and error screens.
-        .onExitCommand { if controller.player == nil { dismiss() } }
+        // The embedded player doesn't take Menu itself - it lands here even with the transport bar
+        // up - so put the bar away first, the way the TV app does, and only then close.
+        .onExitCommand {
+            if !transportBar.hideIfVisible() { dismiss() }
+        }
     }
 }
 
@@ -73,10 +76,11 @@ struct MoviePlayerTVView: View {
 struct DebugRawPlayerView: View {
     let url: URL
     @State private var player: AVPlayer?
+    @State private var transportBar = TVTransportBar()
 
     var body: some View {
         ZStack {
-            if let player { TVPlayerViewController(player: player, onClose: {}).ignoresSafeArea() }
+            if let player { TVPlayerViewController(player: player, transportBar: transportBar).ignoresSafeArea() }
         }
         .onAppear {
             let player = AVPlayer(url: url)
@@ -87,92 +91,62 @@ struct DebugRawPlayerView: View {
 }
 #endif
 
-// Embedded AVPlayerViewController hands Menu straight up to SwiftUI, so a viewer who pressed Menu
-// to put the progress bar away got thrown out of the film. Menu and Up are caught on the player's
-// own view instead: with the transport bar showing they only hide it; Menu with it hidden closes.
+// Tracks whether the player's transport bar is on screen, and puts it away on Menu or Up.
+@MainActor
+final class TVTransportBar: NSObject, @preconcurrency AVPlayerViewControllerDelegate {
+    private(set) var isVisible = false
+    fileprivate weak var controller: AVPlayerViewController?
+
+    /// Hides the bar if it's showing; false when there was nothing to hide.
+    func hideIfVisible() -> Bool {
+        guard isVisible, let controller else { return false }
+        isVisible = false
+        // No API hides it. Toggling showsPlaybackControls or playbackControlsIncludeTransportBar
+        // brings it straight back; handing the player over again is what clears it, without a
+        // stall or losing the subtitle/audio picks (those live on the item).
+        let player = controller.player
+        controller.player = nil
+        controller.player = player
+        return true
+    }
+
+    @objc fileprivate func upPressed() {
+        _ = hideIfVisible()
+    }
+
+    func playerViewController(_ playerViewController: AVPlayerViewController,
+                              willTransitionToVisibilityOfTransportBar visible: Bool,
+                              with coordinator: any AVPlayerViewControllerAnimationCoordinator) {
+        isVisible = visible
+    }
+}
+
+extension TVTransportBar: @preconcurrency UIGestureRecognizerDelegate {
+    // Up only belongs to us while the bar is showing; otherwise the player keeps it.
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        isVisible
+    }
+}
+
 private struct TVPlayerViewController: UIViewControllerRepresentable {
     let player: AVPlayer
-    let onClose: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    let transportBar: TVTransportBar
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         controller.player = player
         // Switch the TV to the film's frame rate and dynamic range when "Match Content" is on.
         controller.appliesPreferredDisplayCriteriaAutomatically = true
-        controller.delegate = context.coordinator
-        context.coordinator.attach(to: controller)
-        context.coordinator.onClose = onClose
+        controller.delegate = transportBar
+        transportBar.controller = controller
+        let up = UITapGestureRecognizer(target: transportBar, action: #selector(TVTransportBar.upPressed))
+        up.allowedPressTypes = [NSNumber(value: UIPress.PressType.upArrow.rawValue)]
+        up.delegate = transportBar
+        controller.view.addGestureRecognizer(up)
         return controller
     }
 
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
         if controller.player !== player { controller.player = player }
-        context.coordinator.onClose = onClose
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, @preconcurrency AVPlayerViewControllerDelegate {
-        var onClose: () -> Void = {}
-        private weak var controller: AVPlayerViewController?
-        private var transportBarVisible = false
-        private var closed = false
-
-        func attach(to controller: AVPlayerViewController) {
-            self.controller = controller
-            let menu = UITapGestureRecognizer(target: self, action: #selector(menuPressed))
-            menu.allowedPressTypes = [NSNumber(value: UIPress.PressType.menu.rawValue)]
-            controller.view.addGestureRecognizer(menu)
-            let up = UITapGestureRecognizer(target: self, action: #selector(upPressed))
-            up.allowedPressTypes = [NSNumber(value: UIPress.PressType.upArrow.rawValue)]
-            // Only steal Up while the bar is showing; otherwise the player keeps it.
-            up.delegate = self
-            controller.view.addGestureRecognizer(up)
-        }
-
-        @objc private func menuPressed() {
-            if transportBarVisible { hideTransportBar() } else { close() }
-        }
-
-        @objc private func upPressed() {
-            hideTransportBar()
-        }
-
-        // No API hides the bar directly; turning the controls off and straight back on does, and
-        // the next click or swipe brings it back as usual.
-        private func hideTransportBar() {
-            guard let controller else { return }
-            transportBarVisible = false
-            controller.showsPlaybackControls = false
-            controller.showsPlaybackControls = true
-        }
-
-        private func close() {
-            guard !closed else { return }
-            closed = true
-            onClose()
-        }
-
-        func playerViewController(_ playerViewController: AVPlayerViewController,
-                                  willTransitionToVisibilityOfTransportBar visible: Bool,
-                                  with coordinator: any AVPlayerViewControllerAnimationCoordinator) {
-            transportBarVisible = visible
-        }
-
-        // In case the player's own Menu handling gets there first: it only asks once the bar is
-        // already away, so closing here agrees with menuPressed.
-        func playerViewControllerShouldDismiss(_ playerViewController: AVPlayerViewController) -> Bool {
-            close()
-            return false
-        }
-    }
-}
-
-extension TVPlayerViewController.Coordinator: @preconcurrency UIGestureRecognizerDelegate {
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        let isUp = (gestureRecognizer as? UITapGestureRecognizer)?.allowedPressTypes
-            .contains(NSNumber(value: UIPress.PressType.upArrow.rawValue)) ?? false
-        return isUp ? transportBarVisible : true
     }
 }
