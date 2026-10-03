@@ -37,6 +37,7 @@ struct RootView: View {
                                         AlertDetailView(event: event)
                                     }
                             }
+                            .formRowButtons(section == .settings)
                             .tabItem { Label(section.title, systemImage: section.icon) }
                             .tag(section)
                         }
@@ -46,6 +47,14 @@ struct RootView: View {
                     .onAppear {
                         if let name = UserDefaults.standard.string(forKey: "debugSection"),
                            let section = AppSection(rawValue: name) { selection = section }
+                        DebugFocusWalker.startIfRequested()
+                        // `-debugOpenEvent YES` opens the newest event's alert page (Watch Live) once events load.
+                        if UserDefaults.standard.bool(forKey: "debugOpenEvent") {
+                            Task {
+                                while model.events.isEmpty { try? await Task.sleep(for: .milliseconds(500)) }
+                                model.selectedEvent = model.events.first
+                            }
+                        }
                     }
                     #endif
                     // Now Playing covers everything, opened from either audio tab, a speaker
@@ -59,6 +68,7 @@ struct RootView: View {
             }
         }
         .tint(SentinelTheme.green)
+        .buttonStyle(FocusContrastButtonStyle())
         .task(id: model.serverURL) {
             // Connection setup may replace a certificate-rejected HTTPS URL with HTTP. Keep it
             // alive when that state change invalidates this view task; connect owns its own
@@ -110,6 +120,15 @@ struct RootView: View {
         case .files: FilesTVView()
         case .settings: SettingsView()
         }
+    }
+}
+
+private extension View {
+    // Settings (and the library admin it opens) is all Form rows, which already go white with a
+    // dark label on focus and keep the green and red their titles are drawn in - so they keep the
+    // platform's style rather than the app-wide FocusContrastButtonStyle.
+    @ViewBuilder func formRowButtons(_ enabled: Bool) -> some View {
+        if enabled { buttonStyle(.automatic) } else { self }
     }
 }
 

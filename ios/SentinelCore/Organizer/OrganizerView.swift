@@ -241,7 +241,7 @@ struct OrganizerCalendarView: View {
                 Label("New Event", systemImage: "plus")
                     .labelStyle(.iconOnly)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.sentinelProminent)
             .accessibilityLabel("New event")
         }
         .buttonStyle(.borderless)

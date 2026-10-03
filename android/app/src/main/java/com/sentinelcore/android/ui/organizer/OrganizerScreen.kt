@@ -208,7 +208,9 @@ fun OrganizerScreen(engine: OrganizerEngine, routes: OrganizerRoutes) {
                             1 -> routes.openReminder(null)
                             else -> routes.openNote(null)
                         }
-                    }, containerColor = SentinelGreen) {
+                    // Explicit dark content: with dynamic colour on, SentinelGreen isn't the scheme's
+                    // primary, so the default content colour fell back to a light grey on the mint.
+                    }, containerColor = SentinelGreen, contentColor = Color.Black) {
                         Icon(Icons.Default.Add, contentDescription = listOf("New event", "New reminder", "New note")[pane])
                     }
                 }

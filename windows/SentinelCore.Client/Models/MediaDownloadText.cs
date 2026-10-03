@@ -442,4 +442,46 @@ public static class MediaDownloadText
     /// <summary>The note at the top of the Add window while Use VPN is off in Settings.</summary>
     public const string VpnOffWarning =
         "The VPN is turned off in Settings, so the sites and everyone sharing will see your home address.";
+
+    // ---------------------------------------------------------------- Search offers a download
+
+    /// <summary>A kind that can be downloaded, and what the offer calls it.</summary>
+    public sealed record DownloadKind(string Kind, string Label);
+
+    /// <summary>
+    /// The kinds the library search's offer knows, in the order its "Search the sites for … as a"
+    /// buttons show them. Music gets a row here when it can be downloaded.
+    /// </summary>
+    public static IReadOnlyList<DownloadKind> DownloadKinds { get; } = new[]
+    {
+        new DownloadKind("movie", "Movie"),
+        new DownloadKind("show", "TV show"),
+    };
+
+    /// <summary>"Movie", "TV show"; null for a kind this app doesn't know (a newer server's).</summary>
+    public static string? KindLabel(string? kind) =>
+        DownloadKinds.FirstOrDefault(known => known.Kind == kind)?.Label;
+
+    /// <summary>The most TMDB matches the offer lists; past that, "+ Add" is the place to look.</summary>
+    public const int SearchOfferMaxResults = 6;
+
+    /// <summary>
+    /// Whether searching the library should offer a download instead of a bare "nothing matches":
+    /// at least 2 characters typed, the library found nothing, no genre / unwatched / My List
+    /// filter narrowed it (then the title may well be there), and this user may download.
+    /// </summary>
+    public static bool ShowsSearchOffer(string? query, int libraryItemCount, bool otherFilters, MediaDownloadStatus? status) =>
+        (query?.Trim().Length ?? 0) >= 2 && libraryItemCount == 0 && !otherFilters && status?.ShowsAddButton == true;
+
+    /// <summary>A kind=any lookup's rows for the offer: kinds this app knows, at most six, in the server's order.</summary>
+    public static IReadOnlyList<MediaDownloadTitle> SearchOfferResults(MediaDownloadLookup lookup) =>
+        lookup.Results.Where(result => KindLabel(result.Kind) is not null).Take(SearchOfferMaxResults).ToList();
+
+    public const string SearchOfferTitle = "Not in your library";
+
+    public static string SearchOfferLine(string query) => $"Want to download “{query.Trim()}”?";
+
+    public static string SearchOfferNothingOnTmdb(string query) => $"Nothing on TMDB called “{query.Trim()}”.";
+
+    public static string SearchOfferSitesLine(string query) => $"Search the sites for “{query.Trim()}” as a";
 }

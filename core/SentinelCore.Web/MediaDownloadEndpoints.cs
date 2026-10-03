@@ -52,34 +52,66 @@ public static class MediaDownloadEndpoints
 
     // MARK: - Finding the title (TMDB)
 
+    public const string LookupAnyKind = "any";
+
+    // One list from a TMDB search per kind: titles that are exactly what was typed first (so
+    // "bluey" puts the show above "Bluey: The Movie"), then the rest taking turns between kinds in
+    // TMDB's own order, which is already best guess first within each.
+    public static IEnumerable<(string Kind, TmdbClient.SearchResult Result)> MergeLookups(
+        string query, IReadOnlyList<string> kinds, IReadOnlyList<IReadOnlyList<TmdbClient.SearchResult>> found)
+    {
+        var turns = new List<(string Kind, TmdbClient.SearchResult Result)>();
+        var longest = found.Count == 0 ? 0 : found.Max(f => f.Count);
+        for (var i = 0; i < longest; i++)
+            for (var k = 0; k < kinds.Count; k++)
+                if (i < found[k].Count) turns.Add((kinds[k], found[k][i]));
+        var typed = TitleKey(query);
+        return turns.Where(t => TitleKey(t.Result.Title) == typed).Concat(turns.Where(t => TitleKey(t.Result.Title) != typed));
+    }
+
+    // "The Lord of the Rings: Fellowship & Co." -> "lordoftheringsfellowshipandco".
+    private static string TitleKey(string title)
+    {
+        var text = title.Trim().ToLowerInvariant().Replace("&", "and");
+        if (text.StartsWith("the ")) text = text[4..];
+        return new string(text.Where(char.IsLetterOrDigit).ToArray());
+    }
+
     private static void MapLookup(RouteGroupBuilder enabled)
     {
         enabled.MapGet("/lookup", async (string? q, string? kind, TmdbClient tmdb, IMediaStore store, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(q)) return Results.BadRequest(new { error = "Type a title to search for." });
             if (await tmdb.ApiKeyAsync(ct) is null) return Results.Ok(new { tmdbConfigured = false, results = Array.Empty<object>() });
-            var isShow = kind == MediaKinds.Show;
+            // `any` is what a library search that found nothing asks: every kind that can be
+            // downloaded, best guesses first. Music joins this list when there is music to download.
+            string[] kinds = kind == LookupAnyKind ? [MediaKinds.Movie, MediaKinds.Show]
+                : kind == MediaKinds.Show ? [MediaKinds.Show] : [MediaKinds.Movie];
             try
             {
-                var found = await tmdb.SearchAsync(isShow ? MediaKinds.Show : MediaKinds.Movie, q.Trim(), null, ct);
-                var owned = (await store.GetItemsAsync(new MediaQuery(Kinds: [isShow ? MediaKinds.Show : MediaKinds.Movie]), ct))
+                var query = q.Trim();
+                var found = await Task.WhenAll(kinds.Select(k => tmdb.SearchAsync(k, query, null, ct)));
+                var owned = (await store.GetItemsAsync(new MediaQuery(Kinds: kinds), ct))
                     .Where(i => i.TmdbId is not null)
-                    .GroupBy(i => i.TmdbId!.Value)
+                    .GroupBy(i => (i.Kind, i.TmdbId!.Value))
                     .ToDictionary(g => g.Key, g => g.First().Id);
+                var ranked = kinds.Length == 1
+                    ? found[0].Select(r => (Kind: kinds[0], Result: r))
+                    : MergeLookups(query, kinds, found);
                 return Results.Ok(new
                 {
                     tmdbConfigured = true,
-                    results = found.Take(20).Select(r => new
+                    results = ranked.Take(20).Select(x => new
                     {
-                        kind = isShow ? MediaKinds.Show : MediaKinds.Movie,
-                        tmdbId = r.TmdbId,
-                        title = r.Title,
-                        year = r.Year,
-                        overview = r.Overview,
-                        posterPath = r.PosterPath,
-                        posterUrl = r.PosterPath is null ? null : TmdbClient.ImageUrl(r.PosterPath, "w342"),
-                        inLibrary = owned.ContainsKey(r.TmdbId),
-                        itemId = owned.TryGetValue(r.TmdbId, out var id) ? id : (Guid?)null
+                        kind = x.Kind,
+                        tmdbId = x.Result.TmdbId,
+                        title = x.Result.Title,
+                        year = x.Result.Year,
+                        overview = x.Result.Overview,
+                        posterPath = x.Result.PosterPath,
+                        posterUrl = x.Result.PosterPath is null ? null : TmdbClient.ImageUrl(x.Result.PosterPath, "w342"),
+                        inLibrary = owned.ContainsKey((x.Kind, x.Result.TmdbId)),
+                        itemId = owned.TryGetValue((x.Kind, x.Result.TmdbId), out var id) ? id : (Guid?)null
                     })
                 });
             }

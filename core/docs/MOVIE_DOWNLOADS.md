@@ -185,6 +185,10 @@ Starts everything if needed, so it can take up to a minute; `ok: false` carries 
   "overview": "…", "posterPath": "/abc.jpg", "posterUrl": "https://image.tmdb.org/t/p/w342/abc.jpg",
   "inLibrary": false, "itemId": null } ] }`. With no TMDB key: `{ "tmdbConfigured": false, "results": [] }` -
   the app then searches the sites with the typed text directly (step 2 with just `title`).
+- `kind=any` searches every kind that can be downloaded (movie and show today; music joins when
+  there is music) and returns one list, each result carrying its own `kind`: titles that are
+  exactly what was typed first (ignoring case, punctuation, "&"/"and" and a leading "The"), then
+  the kinds taking turns in TMDB's order. Apps skip results whose `kind` they don't know.
 - `GET /api/media/downloads/show/{tmdbId}` → the show's seasons for picking:
   `{ "tmdbId", "title", "year", "overview", "posterPath", "posterUrl", "itemId",
   "seasons": [ { "number": 1, "name": "Season 1", "episodeCount": 52, "ownedCount": 10,
@@ -256,6 +260,35 @@ Download = { "id": "…", "kind": "movie|episode", "title": "Bluey", "year": 201
 "Looking for people sharing it..."). On `done`, `itemId` is the new movie (or the show) in the
 library - `GET /api/media/items/{itemId}` answers once the rescan has reached it (usually seconds;
 404 until then).
+
+### Search offers a download
+
+When searching the library finds nothing, the app offers to download what was typed instead of a
+bare "no results". Every app's library search does this (dashboard Movies / TV Shows search boxes;
+the Search pane on iPhone, Mac, Apple TV, Android and Windows).
+
+**When:** the trimmed search text is at least 2 characters, the library answered with no items, no
+other filter is on (genre, unwatched, my list), and `status.canDownload`. It appears by itself as
+soon as the empty result is on screen - no Enter needed - and follows the typing with the same
+pause the library search uses; an answer for older text is dropped.
+
+**What:**
+
+- Title **"Not in your library"**, line **"Want to download “dune 2”?"**.
+- With `tmdbConfigured`: `GET /lookup?q=<text>&kind=any` and up to **6** results, each a row with
+  the poster, title, year, a kind label (**Movie** / **TV show**) and an **In library** chip when
+  `inLibrary`. Tapping a row opens the "+ Add" flow already at that title: a movie goes straight to
+  the release search (step 2 with its `tmdbId`), a show to its season picker; an `inLibrary` row
+  opens the library item instead. While loading show "Looking it up…"; no results show "Nothing on
+  TMDB called “dune 2”."; a failed lookup shows its error in small text and keeps the buttons below.
+- Always (and the only thing without a TMDB key): **"Search the sites for “dune 2” as a"** with
+  the buttons **Movie** and **TV show**, which open "+ Add" at the release search for exactly that
+  text (step 2 with just `kind` and `title`), as Add's own "search sites for" does.
+- Closing "+ Add" goes back to the search, text and offer still there. Starting a download does
+  what "+ Add" does after a download starts on that app.
+
+The kind labels come from a small table in each app (`movie` -> Movie, `show` -> TV show); music
+gets a row and a button there when it can be downloaded.
 
 ### Sites (admin)
 

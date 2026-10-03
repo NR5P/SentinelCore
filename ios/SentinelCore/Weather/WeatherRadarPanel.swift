@@ -325,7 +325,7 @@ struct WeatherMapSelectionCard: View {
                     .font(.caption)
                     if case .site(let site) = selection, site.id != radar.station {
                         Button("Use This Radar") { Task { await radar.selectStation(site.id) } }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.sentinelProminent)
                             .controlSize(.small)
                     }
                 }

@@ -11,13 +11,25 @@ private enum MediaAddRoute: Hashable {
     case releases(MediaDownloadSearchInput)
 }
 
+// Where Add opens when a library search that found nothing offers a download: already at a picked
+// title, or at a site search for exactly what was typed (MOVIE_DOWNLOADS.md, "Search offers a
+// download"). The iPhone's twin is in MediaAddView.swift.
+struct MediaAddStart: Identifiable {
+    let kind: String
+    let title: String
+    var pick: MediaDownloadLookupResult?
+    let id = UUID()
+}
+
 struct MediaAddTVView: View {
     let status: MediaDownloadsStatus?
     // Use VPN is off in Settings: say so before anyone searches.
     var vpnDisabled = false
+    var start: MediaAddStart?
     let onStarted: (MediaDownload) -> Void
     @EnvironmentObject private var model: AppModel
     @State private var path: [MediaAddRoute] = []
+    @State private var startApplied = false
     @State private var kind = "movie"
     @State private var query = ""
     // The text the results are for, so switching Movie / TV show searches again.
@@ -91,6 +103,7 @@ struct MediaAddTVView: View {
                     }
                 }
             }
+            .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
             .navigationTitle("Add a Movie or Show")
             #if DEBUG
             // Simulator testing without a remote: `-debugMediaAddQuery <title>` types and finds
@@ -107,6 +120,24 @@ struct MediaAddTVView: View {
                 results = nil
                 errorMessage = nil
                 if !searchedQuery.isEmpty, !trimmed.isEmpty { Task { await lookup(searchSitesWithoutTmdb: false) } }
+            }
+            .onAppear {
+                guard let start, !startApplied else { return }
+                startApplied = true
+                kind = start.kind
+                query = start.title
+                if let picked = start.pick {
+                    pick(picked)
+                } else {
+                    path = [.releases(MediaDownloadSearchInput(kind: start.kind, title: start.title))]
+                }
+            }
+            .onChange(of: path) { _, newPath in
+                // Back from where a search offer opened Add: Find has never looked the typed text
+                // up, so it does now.
+                if newPath.isEmpty, results == nil, !searching, !trimmed.isEmpty {
+                    Task { await lookup(searchSitesWithoutTmdb: false) }
+                }
             }
             .navigationDestination(for: MediaAddRoute.self) { route in
                 switch route {
@@ -188,8 +219,10 @@ struct MediaAddTVView: View {
     }
 }
 
-private struct MediaLookupRowTV: View {
+struct MediaLookupRowTV: View {
     let result: MediaDownloadLookupResult
+    // The search offer mixes movies and shows, so its rows say which each is.
+    var showsKind = false
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -203,6 +236,9 @@ private struct MediaLookupRowTV: View {
                     if let year = result.year {
                         Text(String(year)).font(.caption).foregroundStyle(.secondary)
                     }
+                    if showsKind, let label = MediaSearchOfferTV.label(for: result.kind) {
+                        MediaChipTV(text: label)
+                    }
                     if result.inLibrary == true {
                         MediaChipTV(text: "In library", highlighted: true)
                     }
@@ -215,6 +251,100 @@ private struct MediaLookupRowTV: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Search offers a download
+
+// A library search that found nothing offers to download what was typed instead
+// (MOVIE_DOWNLOADS.md, "Search offers a download"). The iPhone's twin is MediaSearchOffer; here
+// each title is one big card for the remote.
+struct MediaSearchOfferTV: View {
+    let query: String
+    let tmdbConfigured: Bool
+    let start: (MediaAddStart) -> Void
+    @EnvironmentObject private var model: AppModel
+    @State private var results: [MediaDownloadLookupResult]?
+    @State private var tmdbAnswered = true
+    @State private var errorMessage: String?
+
+    // Music gets a row here when it can be downloaded.
+    static let kinds: [(kind: String, label: String)] = [("movie", "Movie"), ("show", "TV Show")]
+    private static let maxResults = 6
+
+    static func label(for kind: String?) -> String? { kinds.first { $0.kind == kind }?.label }
+
+    var body: some View {
+        VStack(spacing: 30) {
+            VStack(spacing: 8) {
+                Text("Not in your library").font(.title2.weight(.semibold))
+                Text("Want to download “\(query)”?").foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+            if tmdbConfigured, tmdbAnswered {
+                found
+            }
+            VStack(spacing: 16) {
+                Text("Search the sites for “\(query)” as a")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 30) {
+                    ForEach(Self.kinds, id: \.kind) { entry in
+                        Button(entry.label) { start(MediaAddStart(kind: entry.kind, title: query)) }
+                            // A tinted tvOS button draws its title in the tint; white keeps it readable.
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 1200)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 30)
+        .task(id: query) { await lookup() }
+    }
+
+    @ViewBuilder
+    private var found: some View {
+        if let errorMessage {
+            Text(errorMessage).font(.caption).foregroundStyle(SentinelTheme.red).multilineTextAlignment(.center)
+        } else if let results {
+            if results.isEmpty {
+                Text("Nothing on TMDB called “\(query)”.").foregroundStyle(.secondary)
+            }
+            VStack(spacing: 20) {
+                ForEach(results) { result in
+                    if result.inLibrary == true, let itemId = result.itemId {
+                        NavigationLink(value: MediaRoute(id: itemId, title: result.displayTitle)) {
+                            MediaLookupRowTV(result: result, showsKind: true).padding(.horizontal, 20)
+                        }
+                        .buttonStyle(.card)
+                    } else {
+                        Button {
+                            start(MediaAddStart(kind: result.kind ?? "movie", title: query, pick: result))
+                        } label: {
+                            MediaLookupRowTV(result: result, showsKind: true).padding(.horizontal, 20)
+                        }
+                        .buttonStyle(.card)
+                    }
+                }
+            }
+        } else {
+            HStack(spacing: 16) { ProgressView(); Text("Looking it up…").foregroundStyle(.secondary) }
+        }
+    }
+
+    private func lookup() async {
+        guard tmdbConfigured else { return }
+        results = nil
+        errorMessage = nil
+        do {
+            let found = try await model.client.mediaDownloadLookup(query: query, kind: "any")
+            tmdbAnswered = found.tmdbConfigured != false
+            results = Array((found.results ?? []).filter { Self.label(for: $0.kind) != nil }.prefix(Self.maxResults))
+        } catch {
+            if MediaDownloadsTracker.isCancellation(error) { return }
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -278,6 +408,7 @@ private struct MediaAddShowTVView: View {
                 }
             }
         }
+        .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
         .navigationTitle(result.displayTitle)
         .task {
             guard show == nil, let tmdbId = result.tmdbId else {
@@ -394,6 +525,7 @@ private struct MediaReleaseSearchTVView: View {
                 }
             }
         }
+        .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
         .navigationTitle("Pick a Download")
         .task(id: attempt) { await run() }
         .confirmationDialog(

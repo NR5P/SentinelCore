@@ -81,11 +81,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sentinelcore.android.data.MediaApi
+import com.sentinelcore.android.data.MediaDownloadFormat
 import com.sentinelcore.android.data.MediaDownloadList
 import com.sentinelcore.android.data.MediaDownloadServices
 import com.sentinelcore.android.data.MediaDownloadStatus
 import com.sentinelcore.android.data.MediaHome
 import com.sentinelcore.android.data.MediaItemSummary
+import com.sentinelcore.android.data.MediaLookupResult
 import com.sentinelcore.android.ui.SentinelUiState
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.components.EmptyState
@@ -134,7 +136,10 @@ internal data class LibraryFilter(
     val unwatched: Boolean = false,
     // Only this account's My List.
     val inList: Boolean = false,
-)
+) {
+    // Something other than the search text narrows the results (sort only reorders them).
+    val isFiltered: Boolean get() = genre != null || unwatched || inList
+}
 
 // One paged grid's worth of results. Replaced only when a response arrives, so coming back to the
 // tab from a detail screen refreshes progress without the grid blanking or losing its scroll.
@@ -145,6 +150,9 @@ internal class LibraryGrid {
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
     var loadedKey by mutableStateOf<String?>(null)
+    // The trimmed search text of the last answer when it found nothing with no filters on - what
+    // the download offer offers; null when the last answer had something (or a filter).
+    var emptyFor by mutableStateOf<String?>(null)
     var generation = 0
     var job: Job? = null
 }
@@ -166,6 +174,49 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
     // What the VPN light shows: from whichever of status / the queue was fetched last.
     var vpnStatus by mutableStateOf<MediaDownloadServices?>(null)
     private val downloadStates = mutableMapOf<String, String>()
+
+    // "Not in your library - want to download it?" under a search that found nothing: the TMDB
+    // lookup for `offerQuery`. Kept here so coming back from "+ Add" finds it as it was.
+    var offerQuery by mutableStateOf<String?>(null)
+        private set
+    var offerLoading by mutableStateOf(false)
+        private set
+    var offerResults by mutableStateOf<List<MediaLookupResult>?>(null)
+        private set
+    var offerError by mutableStateOf<String?>(null)
+        private set
+    var offerTmdb by mutableStateOf(true)
+        private set
+    private var offerJob: Job? = null
+
+    fun lookupOffer(text: String) {
+        val q = text.trim()
+        // Same text again (back from Add, or another pane): keep what is there, unless it failed.
+        if (q == offerQuery && offerError == null && (offerLoading || offerResults != null || !offerTmdb)) return
+        offerJob?.cancel()
+        offerQuery = q
+        offerResults = null
+        offerError = null
+        // No TMDB key: nothing to look up, only the site-search buttons.
+        offerTmdb = downloadStatus?.tmdbConfigured != false
+        if (!offerTmdb) {
+            offerLoading = false
+            return
+        }
+        offerLoading = true
+        offerJob = viewModelScope.launch {
+            val answer = runCatching { app.mediaDownloadLookup(q, "any") }
+            // An answer for older text is dropped; the newer lookup owns the spinner.
+            if (offerQuery != q) return@launch
+            answer
+                .onSuccess {
+                    offerTmdb = it.tmdbConfigured
+                    offerResults = MediaDownloadFormat.offerResults(it)
+                }
+                .onFailure { offerError = it.message ?: "Could not look it up." }
+            offerLoading = false
+        }
+    }
 
     fun loadDownloads() {
         viewModelScope.launch {
@@ -244,6 +295,7 @@ internal class MoviesBrowseModel(private val app: SentinelViewModel) : ViewModel
                 if (page.genres.isNotEmpty() || filter.genre == null) grid.genres = page.genres
                 grid.error = null
                 grid.loadedKey = key
+                grid.emptyFor = query.trim().takeIf { page.items.isEmpty() && !filter.isFiltered }
             }.onFailure {
                 if (generation == grid.generation) grid.error = it.message ?: "Could not load the library."
             }
@@ -285,6 +337,8 @@ fun MoviesScreen(
     // Movie downloads: "+ Add" and the Downloads queue, offered only when the server allows it.
     onAddDownload: () -> Unit = {},
     onDownloads: () -> Unit = {},
+    // A search that found nothing offers a download: "+ Add" opened at that title.
+    onAddDownloadAt: (MovieAddStart) -> Unit = {},
 ) {
     val browse: MoviesBrowseModel = viewModel { MoviesBrowseModel(model) }
     val canDownload = browse.downloadStatus?.canDownload == true
@@ -375,7 +429,10 @@ fun MoviesScreen(
                 kind = pane.kind,
                 query = query,
                 refreshTick = reloadKey,
+                canDownload = canDownload,
                 onItem = open,
+                onOpenId = onItem,
+                onAddDownloadAt = onAddDownloadAt,
             )
         }
     }
@@ -630,11 +687,27 @@ private fun LibraryGridPane(
     kind: String?,
     query: String,
     refreshTick: Int,
+    canDownload: Boolean,
     onItem: (MediaItemSummary) -> Unit,
+    onOpenId: (String) -> Unit,
+    onAddDownloadAt: (MovieAddStart) -> Unit,
 ) {
     val grid = browse.grid(kind)
     var filter by remember(kind) { mutableStateOf(browse.filter(kind)) }
     val gridState = rememberLazyGridState()
+
+    // The download offer follows what the library last answered (so it gets the library search's
+    // own pause) and stays up while the next answer loads, rather than blinking between letters.
+    val emptyFor = grid.emptyFor
+    val offering = emptyFor != null && MediaDownloadFormat.offersDownload(
+        typed = emptyFor,
+        libraryEmpty = grid.items.isEmpty() && grid.error == null,
+        filtered = filter.isFiltered,
+        canDownload = canDownload,
+    )
+    LaunchedEffect(offering, emptyFor) {
+        if (offering && emptyFor != null) browse.lookupOffer(emptyFor)
+    }
 
     // Debounced so typing doesn't fire a request per letter; filters apply at once.
     LaunchedEffect(kind, query, filter, refreshTick) {
@@ -674,6 +747,24 @@ private fun LibraryGridPane(
                     onRetry = { browse.reload(kind, query, filter) },
                     modifier = Modifier.align(Alignment.Center),
                 )
+                offering && emptyFor != null -> {
+                    // Only the lookup for the text on screen; a newer one shows its spinner.
+                    val current = browse.offerQuery == emptyFor
+                    DownloadOffer(
+                        model = model,
+                        typed = emptyFor,
+                        tmdb = browse.offerTmdb,
+                        loading = !current || browse.offerLoading,
+                        results = if (current) browse.offerResults else null,
+                        error = if (current) browse.offerError else null,
+                        onPick = { result ->
+                            val itemId = result.itemId
+                            if (result.inLibrary && itemId != null) onOpenId(itemId)
+                            else onAddDownloadAt(MovieAddStart.from(result))
+                        },
+                        onSearchSites = { kind -> onAddDownloadAt(MovieAddStart(kind, emptyFor)) },
+                    )
+                }
                 grid.items.isEmpty() && !grid.loading && grid.loadedKey != null -> EmptyState(
                     title = if (query.isNotBlank()) "No matches" else "Nothing here",
                     message = when {

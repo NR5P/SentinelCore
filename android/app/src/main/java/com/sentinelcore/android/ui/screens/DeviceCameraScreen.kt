@@ -34,6 +34,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -375,10 +376,15 @@ fun DeviceCameraScreen(
                         // dashboard camera first, leaving an empty one behind.
                         enabled = !isBusy && (publisher.isPublishing ||
                             (publisher.devices.isNotEmpty() && (effectiveTargetId != null || newName.isNotBlank()))),
-                        colors = ButtonDefaults.buttonColors(containerColor = if (publisher.isPublishing) SentinelRed else SentinelGreen),
+                        // Dark text on the mint, white on the red: dynamic colour's onPrimary has no
+                        // relation to either fill.
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (publisher.isPublishing) SentinelRed else SentinelGreen,
+                            contentColor = if (publisher.isPublishing) Color.White else Color.Black,
+                        ),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        if (isBusy) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White)
+                        if (isBusy) CircularProgressIndicator(Modifier.size(18.dp), color = LocalContentColor.current)
                         else Text(if (publisher.isPublishing) "Stop streaming" else "Start streaming")
                     }
                     if (publisher.status.isNotBlank()) {

@@ -719,6 +719,7 @@ window.SentinelMovies = (function () {
     }
     pane.querySelector('[data-f="count"]').textContent = s.total ? plural(s.total, key === "movies" ? "movie" : "show") : "";
     if (!items.length) {
+      if (offersDownload(s)) { showOffer(key, host, token); return; }
       const filtered = s.q || s.genre || s.unwatched || s.list;
       host.innerHTML = `<div class="mv-empty"><div class="mv-empty-title">${filtered ? `No ${s.noun} match` : `No ${s.noun} yet`}</div>
         <div>${filtered ? "Try a different search or clear the filters." : "Add a library of " + s.noun + " (the gear button up top) and they appear here once scanned."}</div></div>`;
@@ -733,6 +734,75 @@ window.SentinelMovies = (function () {
       </div>` : "";
     host.innerHTML = `<div class="mv-grid">${items.map(posterCard).join("")}</div>${pager}`;
     wireImages(host);
+  }
+
+  // ---- search offers a download ---------------------------------------------------------------
+
+  // A library search that finds nothing offers to download what was typed instead
+  // (MOVIE_DOWNLOADS.md, "Search offers a download"). Music gets a row here when it can be downloaded.
+  const OFFER_KINDS = { movie: "Movie", show: "TV show" };
+  const OFFER_MAX = 6;
+  const offer = { q: "", results: null, tmdb: true };
+
+  // Only the search narrowed it to nothing: with a genre or toggle on, the title may well be in
+  // the library and merely filtered out.
+  function offersDownload(s) {
+    return !!(dl.status && dl.status.canDownload) && s.q.length >= 2 && !s.genre && !s.unwatched && !s.list;
+  }
+
+  async function showOffer(key, host, token) {
+    const q = browse[key].q;
+    if (offer.q !== q) {
+      Object.assign(offer, { q, results: "loading", tmdb: dl.status.tmdbConfigured !== false });
+      if (offer.tmdb) {
+        host.innerHTML = offerMarkup();
+        const res = await request(`/api/media/downloads/lookup?${new URLSearchParams({ q, kind: "any" })}`);
+        if (offer.q !== q) return;
+        if (!res.ok) offer.results = res.error;
+        else {
+          offer.tmdb = !!res.data.tmdbConfigured;
+          offer.results = (res.data.results || []).filter((r) => OFFER_KINDS[r.kind]).slice(0, OFFER_MAX);
+        }
+      } else offer.results = [];
+    }
+    if (token !== routeToken || browse[key].q !== q) return;
+    host.innerHTML = offerMarkup();
+    wireImages(host);
+    // A failed lookup is asked again next time rather than remembered.
+    if (typeof offer.results === "string") offer.q = "";
+  }
+
+  function offerMarkup() {
+    const q = escapeHtml(offer.q);
+    let found = "";
+    if (offer.tmdb) {
+      if (offer.results === "loading") found = loadingMarkup("Looking it up");
+      else if (typeof offer.results === "string") found = `<div class="mv-offer-error">${escapeHtml(offer.results)}</div>`;
+      else if (!offer.results.length) found = `<div class="mv-offer-none">Nothing on TMDB called &ldquo;${q}&rdquo;.</div>`;
+      else found = `<div class="mv-offer-results">${offer.results.map((r, i) => `<button type="button" class="mv-match" data-act="offer-pick" data-i="${i}">
+          ${art(r.posterUrl, "mv-poster mv-match-poster", r.title, "")}
+          <span class="mv-match-text">
+            <span class="mv-match-title">${escapeHtml(r.title)}${r.year ? ` <span class="mv-match-year-tag">${escapeHtml(r.year)}</span>` : ""}</span>
+            <span class="mv-offer-chips"><span class="mv-lib-kind">${OFFER_KINDS[r.kind]}</span>${r.inLibrary ? `<span class="mv-lib-kind mv-have">In library</span>` : ""}</span>
+            <span class="mv-match-overview">${escapeHtml(r.overview || "No description.")}</span>
+          </span>
+        </button>`).join("")}</div>`;
+    }
+    return `<div class="mv-offer">
+      <div class="mv-empty-title">Not in your library</div>
+      <div class="mv-offer-ask">Want to download &ldquo;${q}&rdquo;?</div>
+      ${found}
+      <div class="mv-offer-direct"><span>Search the sites for &ldquo;${q}&rdquo; as a</span>
+        ${Object.entries(OFFER_KINDS).map(([kind, label]) => `<button type="button" class="mv-btn" data-act="offer-direct" data-kind="${kind}">${label}</button>`).join("")}
+      </div>
+    </div>`;
+  }
+
+  function pickOffer(i) {
+    const r = Array.isArray(offer.results) ? offer.results[i] : null;
+    if (!r) return;
+    if (r.inLibrary && r.itemId) { go({ name: "detail", id: r.itemId }); return; }
+    openAddAt({ kind: r.kind, title: offer.q, pick: r });
   }
 
   // ---- detail ---------------------------------------------------------------------------------
@@ -2042,9 +2112,20 @@ window.SentinelMovies = (function () {
   // -- the add dialog: find -> (seasons) -> releases
 
   function openAdd() {
-    Object.assign(add, { stage: "find", results: add.q ? add.results : null, show: null, season: null, search: null, others: false, already: null });
+    const seeded = add.seeded;
+    Object.assign(add, { stage: "find", results: add.q && !seeded ? add.results : null, show: null, season: null, search: null, others: false, already: null, seeded: false });
     drawAdd();
-    if (add.q && !add.results) lookup();
+    if (add.q && !add.results) lookup(!seeded);
+  }
+
+  // Opened from a library search's offer: already at the picked title, or at a site search for
+  // exactly what was typed. `seeded` marks that Find never looked anything up, so going back
+  // there looks the typed text up first.
+  function openAddAt(start) {
+    Object.assign(add, { stage: "find", kind: start.kind, q: start.title, results: start.pick ? [start.pick] : null,
+      show: null, season: null, search: null, others: false, already: null, seeded: true });
+    if (start.pick) pickResult(0);
+    else startReleaseSearch({ kind: start.kind, title: start.title }, "find");
   }
 
   function stopAddPoll() {
@@ -2314,6 +2395,13 @@ window.SentinelMovies = (function () {
         stopAddPoll();
         add.stage = add.stage === "releases" && add.back === "show" && add.show ? "show" : "find";
         if (add.stage === "find") add.show = null;
+        if (add.stage === "find" && add.seeded) {
+          add.seeded = false;
+          add.results = null;
+          drawAdd();
+          lookup(false);
+          return true;
+        }
         drawAdd();
         return true;
       case "add-again": if (add.search && add.search.input) startReleaseSearch(add.search.input, add.back); return true;
@@ -2563,6 +2651,8 @@ window.SentinelMovies = (function () {
         case "lib-edit": openLibraryEditor((libraries || []).find((l) => l.id === id) || null); break;
         case "lib-delete": deleteLibrary(id); break;
         case "dl-add": openAdd(); break;
+        case "offer-pick": pickOffer(Number(target.dataset.i)); break;
+        case "offer-direct": openAddAt({ kind: target.dataset.kind, title: offer.q }); break;
         case "dl-sites": openSites(); break;
         case "dl-vpn-test": testVpn(target); break;
         case "dl-cancel": case "dl-retry": case "dl-remove": downloadAction(act, id, target); break;

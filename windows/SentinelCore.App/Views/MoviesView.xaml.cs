@@ -17,7 +17,8 @@ namespace SentinelCore.App.Views;
 /// <remarks>
 /// The whole contract is core/docs/MOVIES.md. The section only exists while the server has Movies
 /// &amp; TV switched on (AppModel.MoviesEnabled). A card opens the detail page; a Continue
-/// watching card resumes straight away, which is what that row is for.
+/// watching card resumes straight away, which is what that row is for. A search that finds
+/// nothing offers to download the title instead, for someone who may (MOVIE_DOWNLOADS.md).
 /// </remarks>
 public partial class MoviesView : UserControl
 {
@@ -149,6 +150,7 @@ public partial class MoviesView : UserControl
         DownloadsButton.Visibility = can ? Visibility.Visible : Visibility.Collapsed;
         DownloadsButton.Content = "Downloads";
         DrawVpnLight(status.Status);
+        UpdateSearchOffer();
     }
 
     /// <summary>
@@ -171,9 +173,12 @@ public partial class MoviesView : UserControl
         VpnLight.Paint(VpnLightDot, look.Tone);
     }
 
-    private void OnAddClicked(object sender, RoutedEventArgs e)
+    private void OnAddClicked(object sender, RoutedEventArgs e) => OpenAdd(new MediaDownloadAddWindow(_model, _downloadStatus));
+
+    // Modal, so closing it leaves the screen - search text, offer and all - as it was.
+    private void OpenAdd(MediaDownloadAddWindow window)
     {
-        var window = new MediaDownloadAddWindow(_model, _downloadStatus) { Owner = Window.GetWindow(this) };
+        window.Owner = Window.GetWindow(this);
         if (window.ShowDialog() == true) OpenDownloads();
     }
 
@@ -181,6 +186,118 @@ public partial class MoviesView : UserControl
 
     private void OpenDownloads() =>
         _navigator.Push(new MediaDownloadsView(_model, _navigator, _downloadStatus), "Downloads");
+
+    // ---------------------------------------------------------------- Search offers a download
+
+    // What the library answered the last grid load with: the text it was for, how many titles,
+    // and whether a genre / unwatched / My List filter narrowed it. The offer follows this rather
+    // than the box, so text typed since (whose own reload is coming) never shows an offer early.
+    private sealed record GridAnswer(string Query, int Total, bool Filtered);
+
+    private GridAnswer? _gridAnswer;
+
+    // The text the offer on screen is for, and a counter that drops a lookup answer for older text.
+    private string? _offerQuery;
+    private int _offerGeneration;
+
+    /// <summary>
+    /// Shows the "Not in your library" offer when the last search found nothing and this user may
+    /// download (core/docs/MOVIE_DOWNLOADS.md, "Search offers a download"); hides it otherwise.
+    /// </summary>
+    private void UpdateSearchOffer()
+    {
+        var answer = _gridAnswer;
+        if (answer is null || !MediaDownloadText.ShowsSearchOffer(answer.Query, answer.Total, answer.Filtered, _downloadStatus))
+        {
+            HideSearchOffer();
+            return;
+        }
+        EmptyState.Visibility = Visibility.Collapsed;
+        OfferScroller.Visibility = Visibility.Visible;
+        // The same text again (a re-sort, back from Downloads): keep what is on screen.
+        if (_offerQuery != answer.Query) _ = ShowSearchOfferAsync(answer.Query);
+    }
+
+    private void HideSearchOffer()
+    {
+        OfferScroller.Visibility = Visibility.Collapsed;
+        _offerQuery = null;
+        _offerGeneration++;
+    }
+
+    private async Task ShowSearchOfferAsync(string query)
+    {
+        var generation = ++_offerGeneration;
+        _offerQuery = query;
+        OfferTitle.Text = MediaDownloadText.SearchOfferTitle;
+        OfferLine.Text = MediaDownloadText.SearchOfferLine(query);
+        OfferSitesLine.Text = MediaDownloadText.SearchOfferSitesLine(query);
+        OfferResultsHost.Children.Clear();
+
+        // One button per kind that can be downloaded, each opening "+ Add" at the site search.
+        OfferKindButtons.Children.Clear();
+        foreach (var kind in MediaDownloadText.DownloadKinds)
+        {
+            var button = new Button { Content = kind.Label, MinWidth = 90, Margin = new Thickness(0, 0, 6, 0) };
+            button.Click += (_, _) => OpenAdd(MediaDownloadAddWindow.AtSiteSearch(_model, _downloadStatus, kind.Kind, query));
+            OfferKindButtons.Children.Add(button);
+        }
+
+        // Without a TMDB key the site search is all there is.
+        if (!_downloadStatus.HasTmdb)
+        {
+            OfferLookupPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+        OfferLookupPanel.Visibility = Visibility.Visible;
+        SetOfferStatus(Palette.SecondaryText, "Looking it up…");
+        try
+        {
+            var lookup = await _model.Client.LookupAnyMediaDownloadAsync(query);
+            if (generation != _offerGeneration) return;
+            if (lookup.TmdbConfigured == false)
+            {
+                OfferLookupPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+            var rows = MediaDownloadText.SearchOfferResults(lookup);
+            if (rows.Count == 0)
+            {
+                SetOfferStatus(Palette.SecondaryText, MediaDownloadText.SearchOfferNothingOnTmdb(query));
+                return;
+            }
+            SetOfferStatus(Palette.SecondaryText, "");
+            foreach (var row in rows)
+            {
+                var tip = row.IsInLibrary ? "Open it in the library" : row.IsShow ? "Choose episodes" : "Find downloads";
+                OfferResultsHost.Children.Add(MediaDownloadAddWindow.TitleCard(this, row, () => PickOffer(row), tip, compact: true));
+            }
+        }
+        catch (Exception error)
+        {
+            // Small red text; the site-search buttons below still work.
+            if (generation != _offerGeneration) return;
+            SetOfferStatus(Palette.Red, AppModel.UserFacingMessage(error));
+        }
+    }
+
+    private void SetOfferStatus(Brush brush, string text)
+    {
+        OfferLookupStatus.Foreground = brush;
+        OfferLookupStatus.Text = text;
+        OfferLookupStatus.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // A title the library already has opens there; anything else opens "+ Add" at that title.
+    private void PickOffer(MediaDownloadTitle row)
+    {
+        if (row.IsInLibrary && row.ItemId is { Length: > 0 } itemId)
+        {
+            _navigator.Push(new MovieDetailView(_model, _navigator, itemId, onDeleted: () => _reloadOnReturn = true), row.DisplayTitle);
+            return;
+        }
+        OpenAdd(MediaDownloadAddWindow.AtTitle(_model, _downloadStatus, row));
+    }
 
     private string Query => SearchBox.Text.Trim();
 
@@ -193,8 +310,17 @@ public partial class MoviesView : UserControl
         var generation = ++_generation;
         FilterBar.Visibility = IsHome ? Visibility.Collapsed : Visibility.Visible;
         NoticeText.Visibility = Visibility.Collapsed;
-        if (IsHome) await LoadHomeAsync(generation);
-        else await LoadGridAsync(generation, reset: true);
+        if (IsHome)
+        {
+            // Search cleared: Home has no offer to make.
+            _gridAnswer = null;
+            HideSearchOffer();
+            await LoadHomeAsync(generation);
+        }
+        else
+        {
+            await LoadGridAsync(generation, reset: true);
+        }
     }
 
     private async Task LoadHomeAsync(int generation)
@@ -234,13 +360,15 @@ public partial class MoviesView : UserControl
         var sort = (SortPicker.SelectedItem as SortOption)?.Value ?? "title";
         var genre = GenrePicker.SelectedItem is string picked && picked != AllGenres ? picked : null;
         var offset = reset ? 0 : _items.Count;
+        var query = Query;
+        var unwatched = UnwatchedBox.IsChecked == true;
+        var inList = MyListBox.IsChecked == true;
 
         if (_loadMore is not null) _loadMore.IsEnabled = false;
         try
         {
             var page = await _model.Client.MediaItemsAsync(
-                kind, Query, genre, sort, _order, UnwatchedBox.IsChecked == true, offset, PageSize,
-                inList: MyListBox.IsChecked == true);
+                kind, query, genre, sort, _order, unwatched, offset, PageSize, inList: inList);
             if (generation != _generation) return;
 
             if (reset)
@@ -264,16 +392,24 @@ public partial class MoviesView : UserControl
             _loadMore.IsEnabled = true;
             CountText.Text = _total == 1 ? "1 title" : $"{_total} titles";
 
+            var filtered = unwatched || inList || genre is not null;
             if (_total == 0)
             {
-                ShowEmpty(Query.Length > 0 ? $"Nothing matches “{Query}”" : "Nothing here",
-                    UnwatchedBox.IsChecked == true || MyListBox.IsChecked == true || genre is not null
+                ShowEmpty(query.Length > 0 ? $"Nothing matches “{query}”" : "Nothing here",
+                    filtered
                         ? "Try another genre, or turn off Unwatched only and My List."
                         : "The server has not found any titles of this kind yet.");
             }
             else
             {
                 EmptyState.Visibility = Visibility.Collapsed;
+            }
+
+            // Nothing found for a search: the offer to download it takes the empty message's place.
+            if (reset)
+            {
+                _gridAnswer = new GridAnswer(query, _total, filtered);
+                UpdateSearchOffer();
             }
         }
         catch (Exception error)
@@ -316,6 +452,9 @@ public partial class MoviesView : UserControl
     {
         var message = AppModel.UserFacingMessage(error);
         StatusText.Text = "The library could not be loaded.";
+        // A library that didn't answer hasn't said the title is missing.
+        _gridAnswer = null;
+        HideSearchOffer();
         if (ContentHost.Children.Count == 0) ShowEmpty("Could not load the library", message);
         else Notice(message);
     }

@@ -335,6 +335,41 @@ public class MediaDownloadsClientTests
     }
 
     [Fact]
+    public async Task Lookup_any_sends_kind_any_and_skips_kinds_it_does_not_know()
+    {
+        using var server = new FakeServer().OnGet("/api/media/downloads/lookup", """
+            { "tmdbConfigured": true, "results": [
+              { "kind": "show", "tmdbId": 1, "title": "Dune: Prophecy", "year": 2024 },
+              { "kind": "music", "tmdbId": 2, "title": "Dune (Soundtrack)" },
+              { "kind": "movie", "tmdbId": 3, "title": "Dune", "year": 2021, "inLibrary": true, "itemId": "m1" },
+              { "tmdbId": 4, "title": "No kind" } ] }
+            """);
+        using var client = ClientFor(server);
+
+        var lookup = await client.LookupAnyMediaDownloadAsync(" dune ");
+
+        Assert.Equal("GET /api/media/downloads/lookup?q=dune&kind=any", server.Requests.Single());
+        Assert.True(lookup.TmdbConfigured);
+        Assert.Equal(new long?[] { 1, 3 }, lookup.Results.Select(result => result.TmdbId));
+        Assert.True(lookup.Results[0].IsShow);
+        Assert.True(lookup.Results[1].IsInLibrary);
+        Assert.Equal("m1", lookup.Results[1].ItemId);
+    }
+
+    [Fact]
+    public async Task Lookup_any_without_tmdb_says_so()
+    {
+        using var server = new FakeServer().OnGet(
+            "/api/media/downloads/lookup", """{ "tmdbConfigured": false, "results": [] }""");
+        using var client = ClientFor(server);
+
+        var lookup = await client.LookupAnyMediaDownloadAsync("dune");
+
+        Assert.False(lookup.TmdbConfigured);
+        Assert.Empty(lookup.Results);
+    }
+
+    [Fact]
     public async Task Show_decodes_seasons_and_episodes()
     {
         using var server = new FakeServer().OnGet("/api/media/downloads/show/82728", """

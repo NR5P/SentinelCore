@@ -112,6 +112,9 @@ import com.sentinelcore.android.ui.screens.MOVIE_ADD_ROUTE
 import com.sentinelcore.android.ui.screens.MOVIE_DOWNLOADS_ROUTE
 import com.sentinelcore.android.ui.screens.MOVIE_DOWNLOAD_SITES_ROUTE
 import com.sentinelcore.android.ui.screens.MovieAddScreen
+import com.sentinelcore.android.ui.screens.movieAddArguments
+import com.sentinelcore.android.ui.screens.movieAddRoute
+import com.sentinelcore.android.ui.screens.movieAddStart
 import com.sentinelcore.android.ui.screens.MovieDetailScreen
 import com.sentinelcore.android.ui.screens.MovieDownloadSitesScreen
 import com.sentinelcore.android.ui.screens.MovieDownloadsScreen
@@ -595,15 +598,18 @@ private fun SentinelNavHost(
                 onItem = { navController.navigate(movieDetailRoute(it)) },
                 onPlay = { id, start -> navController.navigate(moviePlayerRoute(id, start)) },
                 onManageLibraries = { navController.navigate(MEDIA_LIBRARIES_ROUTE) { launchSingleTop = true } },
-                onAddDownload = { navController.navigate(MOVIE_ADD_ROUTE) { launchSingleTop = true } },
+                onAddDownload = { navController.navigate(movieAddRoute()) { launchSingleTop = true } },
                 onDownloads = { navController.navigate(MOVIE_DOWNLOADS_ROUTE) { launchSingleTop = true } },
+                onAddDownloadAt = { navController.navigate(movieAddRoute(it)) { launchSingleTop = true } },
             )
         }
         // Movie downloads (core/docs/MOVIE_DOWNLOADS.md). A started download replaces the Add
-        // screen with the queue, so Back from there returns to Movies.
-        composable(MOVIE_ADD_ROUTE) {
+        // screen with the queue, so Back from there returns to Movies. The search's download
+        // offer opens Add at a title (see movieAddRoute); closing it returns to the search.
+        composable(MOVIE_ADD_ROUTE, arguments = movieAddArguments) { entry ->
             MovieAddScreen(
                 model = model,
+                start = movieAddStart(entry.arguments),
                 onBack = { navController.popBackStack() },
                 onDownloadStarted = {
                     navController.navigate(MOVIE_DOWNLOADS_ROUTE) {
@@ -617,7 +623,7 @@ private fun SentinelNavHost(
             MovieDownloadsScreen(
                 model = model,
                 onBack = { navController.popBackStack() },
-                onAdd = { navController.navigate(MOVIE_ADD_ROUTE) { launchSingleTop = true } },
+                onAdd = { navController.navigate(movieAddRoute()) { launchSingleTop = true } },
                 onSites = { navController.navigate(MOVIE_DOWNLOAD_SITES_ROUTE) { launchSingleTop = true } },
                 onOpenItem = { navController.navigate(movieDetailRoute(it)) },
             )

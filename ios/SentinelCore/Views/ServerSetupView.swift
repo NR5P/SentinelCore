@@ -25,7 +25,7 @@ struct ServerSetupView: View {
                 Button("Connect") {
                     connect()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.sentinelProminent)
                 .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .sentinelCard()

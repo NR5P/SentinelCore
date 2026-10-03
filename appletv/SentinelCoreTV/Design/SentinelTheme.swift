@@ -41,6 +41,46 @@ extension View {
     func sentinelCard() -> some View { modifier(SentinelCard()) }
 }
 
+// The label colour for a standard (non-card) tvOS button or Menu. Left alone, a button under the
+// app's green tint draws its title in the tint - a blank green pill - and a title forced white
+// vanishes the moment focus turns the pill white. So: light until focused, dark once it is.
+// Goes INSIDE the label (or on the Menu's label): \.isFocused reads the nearest focusable
+// ancestor, so on the Button itself, or on a container around several, it never turns true.
+struct FocusContrastForeground: ViewModifier {
+    @Environment(\.isFocused) private var isFocused
+    var unfocused: Color
+
+    func body(content: Content) -> some View {
+        content.foregroundStyle(isFocused ? Color.black : unfocused)
+    }
+}
+
+extension View {
+    /// `unfocused` is `.white` over artwork or video; `.primary` on the app's own surfaces, so
+    /// it still reads in light mode.
+    func focusContrastForeground(unfocused: Color = .primary) -> some View {
+        modifier(FocusContrastForeground(unfocused: unfocused))
+    }
+}
+
+// The app-wide default button style (set in RootView): the platform's own button, with the label
+// coloured by FocusContrastForeground. Under the green tint a focused tvOS button fills with the
+// bright mint and keeps a pale label - Surprise Me, the library's filter buttons and the movie
+// page's Play / Mark as Watched were all close to blank under the remote. A label that sets its
+// own colour still wins; one forced white needs focusContrastForeground(unfocused: .white).
+// Lists and Forms put .automatic back: their rows already go white with a dark label on focus,
+// and keep the green and red their titles are drawn in. Menus aren't buttons, so a Menu label
+// carries focusContrastForeground itself.
+struct FocusContrastButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button(role: configuration.role, action: configuration.trigger) {
+            configuration.label
+                .focusContrastForeground(unfocused: configuration.role == .destructive ? SentinelTheme.red : .primary)
+        }
+        .buttonStyle(.automatic)
+    }
+}
+
 extension Color {
     init(light: Color, dark: Color) {
         self.init(UIColor { $0.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light) })

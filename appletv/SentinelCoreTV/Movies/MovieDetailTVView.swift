@@ -157,12 +157,14 @@ struct MovieDetailTVView: View {
                         Label(
                             "\(next.canResume ? "Resume" : "Play") \(next.episodeCode ?? next.title)",
                             systemImage: "play.fill")
+                        .focusContrastForeground(unfocused: .white)
                     }
                     if next.canResume {
                         Button {
                             playing = MoviePlayRequest(itemId: next.id, start: 0)
                         } label: {
                             Label("Start Over", systemImage: "backward.end.fill")
+                                .focusContrastForeground(unfocused: .white)
                         }
                     }
                 }
@@ -171,12 +173,14 @@ struct MovieDetailTVView: View {
                     playing = MoviePlayRequest(itemId: item.id, start: nil, overview: detail.overview)
                 } label: {
                     Label(item.canResume ? "Resume" : "Play", systemImage: "play.fill")
+                        .focusContrastForeground(unfocused: .white)
                 }
                 if item.canResume {
                     Button {
                         playing = MoviePlayRequest(itemId: item.id, start: 0, overview: detail.overview)
                     } label: {
                         Label("Start Over", systemImage: "backward.end.fill")
+                            .focusContrastForeground(unfocused: .white)
                     }
                 }
             }
@@ -184,6 +188,7 @@ struct MovieDetailTVView: View {
                 Task { await setWatched(!item.isWatched, on: item.id) }
             } label: {
                 Label(item.isWatched ? "Mark as Unwatched" : "Mark as Watched", systemImage: item.isWatched ? "eye.slash" : "checkmark")
+                    .focusContrastForeground(unfocused: .white)
             }
             .disabled(working)
             // Episodes are never on My List; the server saves an episode's show instead.
@@ -192,6 +197,7 @@ struct MovieDetailTVView: View {
                     Task { await toggleMyList() }
                 } label: {
                     Label("My List", systemImage: item.isInList ? "checkmark" : "plus")
+                        .focusContrastForeground(unfocused: .white)
                 }
                 .accessibilityLabel(item.isInList ? "Remove from My List" : "Add to My List")
             }
@@ -229,6 +235,7 @@ struct MovieDetailTVView: View {
                             }
                         } label: {
                             Label(selected?.title ?? "Season", systemImage: "list.number")
+                                .focusContrastForeground(unfocused: .white)
                         }
                     }
                 } else if let selected {
@@ -240,6 +247,7 @@ struct MovieDetailTVView: View {
                         Task { await setSeasonWatched(!allWatched, season: selected.number, showId: detail.id) }
                     } label: {
                         Label(allWatched ? "Mark Season Unwatched" : "Mark Season Watched", systemImage: allWatched ? "eye.slash" : "checkmark")
+                            .focusContrastForeground(unfocused: .white)
                     }
                     .disabled(working)
                 }

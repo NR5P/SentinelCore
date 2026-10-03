@@ -25,7 +25,7 @@ struct LoginView: View {
                 Button(signingIn ? "Connecting…" : "Sign In") {
                     Task { await signIn() }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.sentinelProminent)
                 .disabled(signingIn || username.isEmpty || password.isEmpty)
             }
             .sentinelCard()

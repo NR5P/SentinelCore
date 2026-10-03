@@ -4958,6 +4958,57 @@ body.hub-wall main {
   color: var(--red);
 }
 
+/* A library search that found nothing, offering to download it instead. */
+.mv-offer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 36px 20px 48px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.mv-offer .mv-empty {
+  padding: 16px 0;
+}
+
+.mv-offer-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.mv-offer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mv-offer-none,
+.mv-offer-error {
+  padding: 8px 0;
+}
+
+.mv-offer-error {
+  color: var(--red);
+  font-size: 12px;
+}
+
+.mv-offer-direct {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .mv-spinner {
   display: inline-block;
   width: 22px;

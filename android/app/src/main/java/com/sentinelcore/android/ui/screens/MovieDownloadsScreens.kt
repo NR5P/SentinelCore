@@ -1,6 +1,10 @@
 package com.sentinelcore.android.ui.screens
 
+import android.net.Uri
+import android.os.Bundle
 import androidx.activity.compose.BackHandler
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -131,9 +135,59 @@ import java.time.format.FormatStyle
 // release on the household's torrent sites; Downloads follows the queue; Sites (admin) manages
 // which sites are searched. The server does the downloading, through a VPN.
 
-const val MOVIE_ADD_ROUTE = "movies/add"
+// Every part after "?" is optional: plain "movies/add" is the "+ Add" button's Find screen.
+const val MOVIE_ADD_ROUTE = "movies/add?kind={kind}&title={title}&tmdbId={tmdbId}&year={year}&poster={poster}"
 const val MOVIE_DOWNLOADS_ROUTE = "movies/downloads"
 const val MOVIE_DOWNLOAD_SITES_ROUTE = "movies/downloads/sites"
+
+// Where "+ Add" opens when the library search's offer starts it ("Search offers a download"): a
+// picked TMDB title (a movie goes to its release search, a show to its seasons), or - without a
+// tmdbId - a site search for exactly `title`.
+data class MovieAddStart(
+    val kind: String,
+    val title: String,
+    val tmdbId: Long? = null,
+    val year: Int? = null,
+    val posterPath: String? = null,
+) {
+    companion object {
+        fun from(result: MediaLookupResult) =
+            MovieAddStart(result.kind, result.title, result.tmdbId, result.year, result.posterPath)
+    }
+}
+
+fun movieAddRoute(start: MovieAddStart? = null): String {
+    if (start == null) return "movies/add"
+    val parts = listOfNotNull(
+        "kind=${Uri.encode(start.kind)}",
+        "title=${Uri.encode(start.title)}",
+        start.tmdbId?.let { "tmdbId=$it" },
+        start.year?.let { "year=$it" },
+        start.posterPath?.let { "poster=${Uri.encode(it)}" },
+    )
+    return "movies/add?" + parts.joinToString("&")
+}
+
+// All strings, so a missing one is simply null rather than a made-up -1.
+val movieAddArguments = listOf("kind", "title", "tmdbId", "year", "poster").map { name ->
+    navArgument(name) {
+        type = NavType.StringType
+        nullable = true
+        defaultValue = null
+    }
+}
+
+fun movieAddStart(arguments: Bundle?): MovieAddStart? {
+    val kind = arguments?.getString("kind") ?: return null
+    val title = arguments.getString("title")?.takeIf { it.isNotBlank() } ?: return null
+    return MovieAddStart(
+        kind = kind,
+        title = title,
+        tmdbId = arguments.getString("tmdbId")?.toLongOrNull(),
+        year = arguments.getString("year")?.toIntOrNull(),
+        posterPath = arguments.getString("poster"),
+    )
+}
 
 private const val DOWNLOAD_POLL_MS = 2_500L
 private const val SEARCH_POLL_MS = 1_000L
@@ -181,7 +235,8 @@ private fun airDateLabel(date: String?): String? = date?.let {
 internal enum class AddStage { FIND, SHOW, RELEASES }
 
 // Kept on the Add screen's back-stack entry, so a rotation keeps the search and its poll.
-internal class MovieAddModel(private val app: SentinelViewModel) : ViewModel() {
+// `start` (from the library search's offer) opens it past Find, at that title.
+internal class MovieAddModel(private val app: SentinelViewModel, start: MovieAddStart? = null) : ViewModel() {
     var status by mutableStateOf<MediaDownloadStatus?>(null)
     var stage by mutableStateOf(AddStage.FIND)
         private set
@@ -233,8 +288,27 @@ internal class MovieAddModel(private val app: SentinelViewModel) : ViewModel() {
     private var showJob: Job? = null
     private var searchJob: Job? = null
 
+    // The stage Back closes the screen from: Find normally; when opened at a title, wherever that
+    // landed, so Back returns to the library search rather than to an empty Find.
+    val firstStage: AddStage = when {
+        start == null -> AddStage.FIND
+        start.tmdbId != null && start.kind == "show" -> AddStage.SHOW
+        else -> AddStage.RELEASES
+    }
+
     init {
         viewModelScope.launch { status = runCatching { app.mediaDownloadStatus() }.getOrNull() }
+        if (start != null) {
+            kind = start.kind
+            query = start.title
+            submitted = start.title
+            if (start.tmdbId != null) {
+                pick(MediaLookupResult(start.kind, start.tmdbId, start.title, start.year, posterPath = start.posterPath))
+            } else {
+                // Exactly the typed text, like Add's own "Search sites for".
+                startSearch(MediaReleaseSearchInput(start.kind, start.title), fromShow = false)
+            }
+        }
     }
 
     val tmdbMissing: Boolean get() = status?.tmdbConfigured == false || !tmdb
@@ -348,6 +422,7 @@ internal class MovieAddModel(private val app: SentinelViewModel) : ViewModel() {
 
     // Back one stage; false when already on the first.
     fun back(): Boolean {
+        if (stage == firstStage) return false
         return when (stage) {
             AddStage.FIND -> false
             AddStage.SHOW -> {
@@ -397,9 +472,12 @@ fun MovieAddScreen(
     onBack: () -> Unit,
     // The download was accepted: close this screen and show the queue.
     onDownloadStarted: () -> Unit,
+    // Null for "+ Add"'s Find; the library search's offer passes the title to open at.
+    start: MovieAddStart? = null,
 ) {
-    val add: MovieAddModel = viewModel { MovieAddModel(model) }
-    BackHandler(enabled = add.stage != AddStage.FIND) { add.back() }
+    val add: MovieAddModel = viewModel { MovieAddModel(model, start) }
+    BackHandler(enabled = add.stage != add.firstStage) { add.back() }
+    val back = { if (!add.back()) onBack() }
 
     val title = when (add.stage) {
         AddStage.FIND -> "Add a movie or show"
@@ -407,7 +485,7 @@ fun MovieAddScreen(
         AddStage.RELEASES -> "Pick a download"
     }
     Column(Modifier.fillMaxSize()) {
-        DetailHeader(title, onBack = { if (!add.back()) onBack() })
+        DetailHeader(title, onBack = back)
         MediaDownloadFormat.vpnOffNote(add.status)?.let { note ->
             Row(
                 Modifier
@@ -425,8 +503,8 @@ fun MovieAddScreen(
         }
         when (add.stage) {
             AddStage.FIND -> AddFind(add, model)
-            AddStage.SHOW -> AddShow(add)
-            AddStage.RELEASES -> AddReleases(add, onDownloadStarted)
+            AddStage.SHOW -> AddShow(add, back)
+            AddStage.RELEASES -> AddReleases(add, back, onDownloadStarted)
         }
     }
 }
@@ -442,11 +520,12 @@ private fun AddFind(add: MovieAddModel, model: SentinelViewModel) {
     ) {
         item {
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf("movie" to "Movie", "show" to "TV show").forEachIndexed { index, (value, label) ->
+                val kinds = MediaDownloadFormat.DOWNLOAD_KINDS
+                kinds.forEachIndexed { index, (value, label) ->
                     SegmentedButton(
                         selected = add.kind == value,
                         onClick = { add.chooseKind(value) },
-                        shape = SegmentedButtonDefaults.itemShape(index, 2),
+                        shape = SegmentedButtonDefaults.itemShape(index, kinds.size),
                     ) { Text(label) }
                 }
             }
@@ -545,8 +624,9 @@ private fun DirectSearch(add: MovieAddModel) {
     }
 }
 
+// `showKind` labels the row Movie / TV show, for lists that mix the two (the search offer).
 @Composable
-private fun LookupRow(model: SentinelViewModel, result: MediaLookupResult, onClick: () -> Unit) {
+private fun LookupRow(model: SentinelViewModel, result: MediaLookupResult, onClick: () -> Unit, showKind: Boolean = false) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -568,7 +648,13 @@ private fun LookupRow(model: SentinelViewModel, result: MediaLookupResult, onCli
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
-            if (result.inLibrary) DownloadTag("In library", SentinelGreen)
+            val kindLabel = if (showKind) MediaDownloadFormat.kindLabel(result.kind) else null
+            if (kindLabel != null || result.inLibrary) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    kindLabel?.let { DownloadTag(it, SentinelCyan) }
+                    if (result.inLibrary) DownloadTag("In library", SentinelGreen)
+                }
+            }
             Text(
                 result.overview ?: "No description.",
                 style = MaterialTheme.typography.bodySmall,
@@ -580,23 +666,87 @@ private fun LookupRow(model: SentinelViewModel, result: MediaLookupResult, onCli
     }
 }
 
+// ---------------- Search offers a download ----------------
+
+// What the Movies search shows instead of "No matches" when the library has nothing for the typed
+// text (MOVIE_DOWNLOADS.md, "Search offers a download"). `results` are the kind=any TMDB matches,
+// null until they arrive; with no TMDB key (`tmdb` false) only the site-search buttons show.
 @Composable
-private fun AddShow(add: MovieAddModel) {
+internal fun DownloadOffer(
+    model: SentinelViewModel,
+    typed: String,
+    tmdb: Boolean,
+    loading: Boolean,
+    results: List<MediaLookupResult>?,
+    error: String?,
+    onPick: (MediaLookupResult) -> Unit,
+    onSearchSites: (kind: String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Not in your library", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Want to download “$typed”?", color = SentinelTextDim)
+            }
+        }
+        if (tmdb) {
+            when {
+                loading -> item { BusyLine("Looking it up…") }
+                // A failed lookup still leaves the site search below.
+                error != null -> item { Text(error, style = MaterialTheme.typography.bodySmall, color = SentinelRed) }
+                results != null && results.isEmpty() -> item {
+                    Text("Nothing on TMDB called “$typed”.", color = SentinelTextDim)
+                }
+            }
+            if (!loading) {
+                itemsIndexed(results.orEmpty(), key = { index, r -> "${r.kind}-${r.tmdbId}-$index" }) { _, result ->
+                    LookupRow(model, result, onClick = { onPick(result) }, showKind = true)
+                }
+            }
+        }
+        item {
+            Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Search the sites for “$typed” as a", style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MediaDownloadFormat.DOWNLOAD_KINDS.forEach { (kind, label) ->
+                        OutlinedButton(onClick = { onSearchSites(kind) }) {
+                            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(label)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+// `back` closes the screen when this is where it opened (the library search's offer).
+private fun AddShow(add: MovieAddModel, back: () -> Unit) {
     val show = add.show
     when {
         add.showLoading || (show == null && add.showError == null) -> BusyLine("Loading seasons…")
         add.showError != null -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(add.showError.orEmpty(), color = SentinelRed)
-            OutlinedButton(onClick = { add.back() }) { Text("Back") }
+            OutlinedButton(onClick = back) { Text("Back") }
         }
         show != null -> {
             val season = show.seasons.firstOrNull { it.number == add.season }
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-                item {
-                    TextButton(onClick = { add.back() }, modifier = Modifier.padding(horizontal = 4.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Results")
+                // No Find results to go back to when the offer opened the show directly.
+                if (add.stage != add.firstStage) {
+                    item {
+                        TextButton(onClick = back, modifier = Modifier.padding(horizontal = 4.dp)) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Results")
+                        }
                     }
                 }
                 item {
@@ -678,7 +828,7 @@ private fun AddShow(add: MovieAddModel) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddReleases(add: MovieAddModel, onDownloadStarted: () -> Unit) {
+private fun AddReleases(add: MovieAddModel, back: () -> Unit, onDownloadStarted: () -> Unit) {
     val search = add.search
     val input = add.searchInput
     add.duplicate?.let { (release, duplicate) ->
@@ -703,12 +853,18 @@ private fun AddReleases(add: MovieAddModel, onDownloadStarted: () -> Unit) {
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item {
-            TextButton(onClick = { add.back() }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(add.backLabel)
+        // Opened straight at this search by the library search's offer: nothing behind it but the
+        // header's arrow back to the search.
+        if (add.stage != add.firstStage) {
+            item {
+                TextButton(onClick = back) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(add.backLabel)
+                }
             }
+        } else {
+            item { Spacer(Modifier.height(4.dp)) }
         }
         input?.let { item { Text(it.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) } }
 

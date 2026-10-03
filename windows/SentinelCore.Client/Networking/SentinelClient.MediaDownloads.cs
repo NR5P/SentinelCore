@@ -58,7 +58,7 @@ public sealed partial class SentinelClient
 
     // MARK: - Finding the title
 
-    /// <summary>TMDB matches for what was typed. <paramref name="kind"/> is movie or show.</summary>
+    /// <summary>TMDB matches for what was typed. <paramref name="kind"/> is movie, show or any.</summary>
     public Task<MediaDownloadLookup> LookupMediaDownloadAsync(string query, string kind, CancellationToken ct = default) =>
         GetAsync<MediaDownloadLookup>(
             $"{DownloadsBase}/lookup",
@@ -68,6 +68,21 @@ public sealed partial class SentinelClient
                 new KeyValuePair<string, string>("kind", kind),
             },
             ct);
+
+    /// <summary>
+    /// TMDB matches of every kind that can be downloaded, in one list (kind=any) - what the library
+    /// search offers when it finds nothing. Results of a kind this app doesn't know (music, once a
+    /// newer server can fetch it) are dropped here, so nothing downstream has to.
+    /// </summary>
+    public async Task<MediaDownloadLookup> LookupAnyMediaDownloadAsync(string query, CancellationToken ct = default)
+    {
+        var lookup = await LookupMediaDownloadAsync(query, "any", ct).ConfigureAwait(false);
+        return new MediaDownloadLookup
+        {
+            TmdbConfigured = lookup.TmdbConfigured,
+            Results = lookup.Results.Where(result => MediaDownloadText.KindLabel(result.Kind) is not null).ToList(),
+        };
+    }
 
     /// <summary>A show's seasons and episodes, each marked with whether the library has it.</summary>
     public Task<MediaDownloadShow> MediaDownloadShowAsync(long tmdbId, CancellationToken ct = default) =>

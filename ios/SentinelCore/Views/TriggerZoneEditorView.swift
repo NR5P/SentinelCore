@@ -263,7 +263,7 @@ struct TriggerZoneEditorView: View {
                 )
                 .overlay(alignment: .bottom) {
                     Button("Retry") { Task { await load() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.sentinelProminent)
                         .padding(.bottom, 32)
                 }
             }

@@ -49,7 +49,9 @@ struct FilesTrashView: View {
                             Button { Task { await restore(batch, file: file) } } label: {
                                 Label("Put Back", systemImage: "arrow.uturn.backward")
                             }
-                            .tint(SentinelTheme.green)
+                            // greenDim: a swipe action's label is always white, and white on the
+                            // bright dark-mode green barely shows.
+                            .tint(SentinelTheme.greenDim)
                         }
                         .contextMenu {
                             Button { Task { await restore(batch, file: file) } } label: {
