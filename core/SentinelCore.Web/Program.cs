@@ -264,6 +264,38 @@ builder.Services.AddSingleton(sp => new MullvadAccountWatch(
 builder.Services.AddSingleton<MediaDownloadManager>();
 builder.Services.AddHostedService<MediaDownloadWorker>();
 builder.Services.AddHostedService<MullvadAccountWorker>();
+// ---- Podcasts (Podcast*.cs, core/docs/MUSIC_AND_PODCASTS.md §5-6) ----
+// Feeds are fetched with redirects followed by hand (so a permanent move updates the stored
+// address) and gzip/brotli accepted; episode files and the audio relay follow redirects and take
+// as long as they take.
+builder.Services.AddSingleton<IPodcastStore>(new SqlitePodcastStore(camerasRoot));
+builder.Services.AddSingleton(sp => new PodcastLocations(camerasRoot, sp.GetRequiredService<AppSettingsFile>()));
+builder.Services.AddHttpClient(PodcastHttp.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (Podcasts)");
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+    AutomaticDecompression = System.Net.DecompressionMethods.All
+});
+builder.Services.AddHttpClient(PodcastDownloadManager.HttpClientName, client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (Podcasts)");
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 10 });
+builder.Services.AddHttpClient(PodcastDirectory.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton<PodcastHttp>();
+builder.Services.AddSingleton<PodcastDirectory>();
+builder.Services.AddSingleton<PodcastAudioProcessor>();
+builder.Services.AddSingleton<PodcastDownloadManager>();
+builder.Services.AddSingleton<IPodcastWhisperRunner, WhisperCppRunner>();
+builder.Services.AddSingleton<PodcastTranscriber>();
+builder.Services.AddSingleton<IPodcastNotifier, PodcastPushNotifier>();
+builder.Services.AddSingleton<PodcastService>();
+builder.Services.AddSingleton<IPodcastAudioSource, PodcastAudioSource>();
+builder.Services.AddHostedService<PodcastWorker>();
+// ---- end Podcasts ----
 
 // Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
 // the data directory rather than /tmp - a bundle with everyone's attachments can be gigabytes.
@@ -584,6 +616,7 @@ app.MapLiveOrderEndpoints();
 app.MapOrganizerEndpoints();
 app.MapMediaEndpoints();
 app.MapMediaDownloadEndpoints();
+app.MapPodcastEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();

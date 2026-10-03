@@ -54,6 +54,7 @@ public sealed class BackupService(
     IMediaStore media,
     MediaScanner mediaScanner,
     MediaNetworkComputerStore mediaComputers,
+    IPodcastAudioSource podcasts,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
     IHostEnvironment environment,
@@ -97,7 +98,8 @@ public sealed class BackupService(
             await familyDrives.GetAllAsync(ct),
             new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct), mediaComputers.All(),
                 await media.AllPlaysAsync(ct), await media.AllWatchlistAsync(ct)),
-            warnings.Count > 0 ? warnings : null);
+            warnings.Count > 0 ? warnings : null,
+            Podcasts: await podcasts.ExportAsync(ct));
     }
 
     // The full bundle: the document plus every file it points at, optionally encrypted.
@@ -456,6 +458,12 @@ public sealed class BackupService(
             }
         }
 
+        // Podcasts: same ids (from the feed address and each episode's guid), so the first refresh
+        // of a restored show lands on the episodes the progress and bookmarks point at.
+        var podcastItemsRestored = document.Podcasts is { } podcastBackup
+            ? await podcasts.RestoreAsync(podcastBackup, ct)
+            : 0;
+
         // Written last among the stores because it's the one part that can still fail after
         // validation passed (the main app stopping mid-restore). Everything above has landed by
         // then, so it's reported as a note on a restore that otherwise worked, not as a failure
@@ -511,6 +519,7 @@ public sealed class BackupService(
             familyDrivesRestored,
             mediaLibrariesRestored,
             mediaProgressRestored,
+            podcastItemsRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,
             automationRulesRestored = hubCounts?.RulesRestored ?? 0,
             schedulesRestored = hubCounts?.SchedulesRestored ?? 0,

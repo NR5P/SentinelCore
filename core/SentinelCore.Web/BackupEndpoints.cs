@@ -81,7 +81,10 @@ public sealed record BackupDocument(
     MediaBackup? Media = null,
     // What couldn't be included when this file was written, in words - e.g. the main app wasn't
     // running. Informational; restore ignores it.
-    IReadOnlyList<string>? Warnings = null);
+    IReadOnlyList<string>? Warnings = null,
+    // Added without a schema bump (MUSIC_AND_PODCASTS.md §10); older files simply lack it. Shows,
+    // everyone's subscriptions, progress, Up Next and bookmarks - see PodcastBackup.
+    PodcastBackup? Podcasts = null);
 
 public sealed record AlarmBackup(IReadOnlyList<AlarmSensor> Sensors, AlarmConfig Config);
 
