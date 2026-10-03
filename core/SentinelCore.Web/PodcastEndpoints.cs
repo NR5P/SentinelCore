@@ -673,20 +673,57 @@ public static class PodcastEndpoints
             var hits = await store.SearchTranscriptsAsync(q, 50, ct);
             var episodes = (await store.GetEpisodesAsync(hits.Select(h => h.EpisodeId), ct)).ToDictionary(e => e.Id);
             var shows = (await store.GetShowsAsync(ct)).ToDictionary(s => s.Id);
-            return Results.Ok(hits.Where(h => episodes.ContainsKey(h.EpisodeId)).Select(hit =>
+            var words = SearchWords(q);
+            var results = new List<object>();
+            foreach (var hit in hits.Where(h => episodes.ContainsKey(h.EpisodeId)))
             {
                 var episode = episodes[hit.EpisodeId];
-                return new
+                results.Add(new
                 {
                     episodeId = episode.Id,
                     episodeTitle = episode.Title,
                     podcastId = episode.PodcastId,
                     podcastTitle = shows.GetValueOrDefault(episode.PodcastId)?.Title,
-                    startSeconds = Math.Round(episode.Timeline.ToFile(hit.StartSeconds), 1),
+                    startSeconds = Math.Round(episode.Timeline.ToFile(await PreciseStartAsync(store, hit, words, ct)), 1),
                     snippet = hit.Snippet
-                };
-            }));
+                });
+            }
+            return Results.Ok(results);
         });
+    }
+
+    // The index holds a few segments per row, so a hit says where that block starts. Playing from
+    // there can be half a minute early; this finds the segment inside the block that actually has
+    // the words (the first one with most of them), so tapping a result lands on them.
+    private static async Task<double> PreciseStartAsync(IPodcastStore store, PodcastTranscriptHit hit, IReadOnlyList<string> words, CancellationToken ct)
+    {
+        if (words.Count == 0 || await store.GetTranscriptAsync(hit.EpisodeId, ct) is not { } transcript) return hit.StartSeconds;
+        var best = hit.StartSeconds;
+        var bestScore = 0;
+        foreach (var segment in transcript.Segments.Where(s => s.Start >= hit.StartSeconds - 0.01).Take(40))
+        {
+            var text = SearchWords(segment.Text);
+            var score = words.Select((word, index) => index == words.Count - 1
+                ? text.Any(t => t.StartsWith(word, StringComparison.Ordinal))
+                : text.Contains(word)).Count(found => found);
+            if (score > bestScore)
+            {
+                (best, bestScore) = (segment.Start, score);
+                if (score == words.Count) break;
+            }
+        }
+        return best;
+    }
+
+    private static List<string> SearchWords(string text)
+    {
+        var folded = new System.Text.StringBuilder(text.Length);
+        foreach (var c in text.Normalize(System.Text.NormalizationForm.FormD))
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.NonSpacingMark) continue;
+            folded.Append(char.IsLetterOrDigit(c) || c == '\'' ? char.ToLowerInvariant(c) : ' ');
+        }
+        return folded.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
     }
 
     // MARK: - Bookmarks

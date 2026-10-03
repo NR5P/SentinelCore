@@ -227,6 +227,9 @@ public sealed class PodcastEndpointsTests : IDisposable
         var hits = await GetAsync(client, "/api/podcasts/transcripts/search?q=sourdough");
         Assert.Equal(id1, hits[0].GetProperty("episodeId").GetString());
         Assert.Equal("Show", hits[0].GetProperty("podcastTitle").GetString());
+        // Both lines share one search block that starts at 0; a hit plays from the line with the words.
+        var feeding = await GetAsync(client, "/api/podcasts/transcripts/search?q=feeding%20ever");
+        Assert.Equal(10, feeding[0].GetProperty("startSeconds").GetDouble());
         using (var transcribe = await client.PostAsync($"/api/podcasts/episodes/{id1}/transcribe", null, Ct))
             Assert.Contains("turned off", (await JsonAsync(transcribe, HttpStatusCode.BadRequest)).GetProperty("error").GetString());
 
