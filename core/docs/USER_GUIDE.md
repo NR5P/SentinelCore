@@ -15,6 +15,8 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 3c. [The WEATHER tab — forecast, radar and warnings](#3c-the-weather-tab--forecast-radar-and-warnings)
 4. [The LIVE tab — viewing your own cameras](#4-the-live-tab--viewing-your-own-cameras)
 4c. [The MOVIES tab — your own movies and TV shows](#4c-the-movies-tab--your-own-movies-and-tv-shows)
+4d. [The MUSIC tab — the household's own music](#4d-the-music-tab--the-households-own-music)
+4e. [The PODCASTS tab — shows the server downloads for you](#4e-the-podcasts-tab--shows-the-server-downloads-for-you)
 5. [The CAMERAS tab — adding your own cameras](#5-the-cameras-tab--adding-your-own-cameras)
 5a. [Pan/Tilt/Zoom (PTZ) — moving cameras that support it](#5a-pantiltzoom-ptz--moving-cameras-that-support-it)
 5b. [Gate/door open check — a safety check independent of motion alerts](#5b-gatedoor-open-check--a-safety-check-independent-of-motion-alerts)
@@ -27,6 +29,7 @@ rebuilding the software itself, see [DEPLOYMENT.md](DEPLOYMENT.md) instead.
 6b. [Multi-frame analysis — reducing false positives from a single frame](#6b-multi-frame-analysis--reducing-false-positives-from-a-single-frame)
 6c. [One arrival, not four alerts — repeat triggers from one camera](#6c-one-arrival-not-four-alerts--repeat-triggers-from-one-camera)
 6d. [The FILES tab — the family file library, its backup drives, and the nightly duplicate check](#6d-the-files-tab--the-family-file-library-its-backup-drives-and-the-nightly-duplicate-check)
+6e. [The ORGANIZER tab — notes, calendar, reminders and boards](#6e-the-organizer-tab--notes-calendar-reminders-and-boards)
 7. [The SETTINGS tab](#7-the-settings-tab)
 7a. [System health — how hard the server is working](#7a-system-health--how-hard-the-server-is-working)
 8. [Vision analysis backend — local, cloud, or both](#8-vision-analysis-backend--local-cloud-or-both)
@@ -86,8 +89,10 @@ seriously — that's a different thing entirely, and means the port is more expo
 
 Across the top you'll see a status indicator ("LINK ESTABLISHED" / "LINK LOST") showing
 whether the dashboard can currently reach its own backend, and a row of tabs: **events**,
-**timeline**, **live**, **cameras**, **organizer**, **weather**, **automations**, **device hub**
-(only when the Device Hub is switched on), **docs**, **settings** and **accounts**.
+**timeline**, **live**, **movies**, **music**, **podcasts**, **cameras**, **organizer**,
+**weather**, **files**, **automations**, **alarm**, **device hub**, **docs**, **settings** and
+**accounts**. The ones that are their own feature (movies, music, podcasts, organizer, files,
+alarm and device hub) only appear while that feature is switched on in SETTINGS.
 
 The very first time you open the dashboard, it asks you to **create the admin account** - a
 username and a password of at least 8 characters. Until that account exists the server does
@@ -160,6 +165,52 @@ automatically switches to a full-screen live view of the camera that triggered �
 leave what you're doing and go find the right camera. If you're watching something else (Apple
 TV+, another app), you still get a normal system notification banner, just not the automatic
 full-screen switch — tvOS doesn't allow one app to draw over another app's video.
+
+**Mac and Windows.** The iPhone app also runs on the Mac, with the same screens. There is a
+Windows app too, which signs in to the same server the same way. On the Mac, a camera can be
+deleted from **Settings → Cameras → Manage Cameras** with the trash button on its row, by
+right-clicking it and choosing **Delete Camera…**, or with the red **Delete Camera** button in
+Edit Camera (which the iPhone and iPad have as well); each asks first.
+
+**The newer tabs are in every app.** Movies, Music, Podcasts, the Organizer and Weather appear in
+the apps as they do on the dashboard (each only while it's switched on), Apple TV included:
+
+- **Weather** shows the same sections as the dashboard's — alerts, now, a radar map you can zoom
+  with storm tracks, warnings, the SPC outlook and radar sites as overlays and a **Play** loop, storms
+  near home, the severe outlook, rain and snow ahead, the hours ahead, the multi-day forecast and the
+  forecaster's discussion. The location is set in Settings, not on the tab. See
+  [section 3c](#3c-the-weather-tab--forecast-radar-and-warnings).
+- **Board automations** are built on iPhone, Mac, Android and Windows the same way as on the
+  dashboard: **⚡ Automations** on an open board, then **Build a rule** or a recipe, placing blocks
+  into WHEN / ONLY IF / THEN (on Android, tap a block to add it). See
+  [section 6ac](#6ac-board-automations--cards-that-add-and-move-themselves).
+- **Movies** has **+ Add**, Downloads, deleting a movie and the "not in your library" offer on every
+  app; the Apple TV can't manage torrent sites. See [section 4c](#4c-the-movies-tab--your-own-movies-and-tv-shows).
+
+**Quick Add (iPhone, Mac, Android).** A **Quick Add** widget for the Home Screen (and on iPhone the
+Lock Screen; on the Mac the desktop or Notification Center) takes a reminder, note or event in one
+go: **Say it** with the microphone, or **Type it…**. The medium size has **Reminder**, **Note** and
+**Event** buttons to choose the kind yourself; otherwise it's worked out from your words, by fixed
+rules on the device, not an AI:
+
+- *Note* — "note to self the wifi password is on the router", "jot down …", "note: …".
+- *Event* — "put dentist on my calendar Friday from 2 to 3pm", "schedule lunch with Sam tomorrow at
+  noon for 90 minutes", "add a meeting with Bob next Tuesday 11 to 1pm", "new event family reunion
+  October 10".
+- *Reminder* — "remind me tomorrow at 5 to call mom", "todo: renew passport friday", "add pay the
+  water bill to my reminders", and anything that isn't clearly a note or an event.
+
+You see what it understood (and can switch the kind) before pressing **Add Reminder**, **Add Note**
+or **Add Event**. An event with a start time but no end lasts an hour; a day with no time makes an
+all-day event, or a reminder due that day. It goes into your Personal space (Family when login is
+off). The app must already be connected to the server with the Organizer on and synced once. On the
+Mac, **File → Quick Add…** (⇧⌘N) opens the same thing.
+
+**Siri and voice.** On iPhone, iPad and Mac you can say, for example, "Add a reminder to Sentinel
+Core", "Remind me in Sentinel Core", "Make a note in Sentinel Core", "Add an event to my Sentinel Core
+calendar" or "What's due in Sentinel Core", and use the same actions in Shortcuts. On Android, press
+and hold the app icon for **Voice reminder** and **Voice note**. The Reminders screen in the apps
+has a mic button too ([section 6e](#6e-the-organizer-tab--notes-calendar-reminders-and-boards)).
 
 Push notifications (a phone/TV alert even when the app itself isn't open) are configured
 separately — see [docs/PUSH_NOTIFICATIONS.md](PUSH_NOTIFICATIONS.md).
@@ -454,14 +505,32 @@ A family movie and TV library, like Jellyfin or Plex, built into the dashboard a
 ratings and cast from TMDB (The Movie Database), and plays the films back to whatever device
 you're on. The tab only appears once **Settings → MOVIES & TV → Enabled** is turned on.
 
-**What's on it.** **Home** has a featured title across the top, then rows for *Continue watching*
-(anything half-watched, plus the next episode of a show you're following), recently added movies
-and shows, and new episodes — hover a row for its arrows, or swipe it on a phone. **Movies** and
-**TV Shows** are poster grids with a search box, a genre filter, sorting (title, recently added,
-year, rating) and an **unwatched** toggle. Click any poster for its page: the description, cast,
-the file's quality (e.g. `1080p · HEVC · EAC3 5.1 · 1.4 GB`), **Play** or **Resume**, **Start
-over**, and **Mark watched**. A show's page lists its seasons and episodes, and **Play S1 · E3**
-always points at the next one to watch.
+**What's on it.** **Home** has a featured title across the top, then these rows, each hidden
+while it's empty — hover a row for its arrows, or swipe it on a phone:
+
+- *Continue watching* — anything half-watched, plus the next episode of a show you're following.
+- *My List* — what you've saved with the **My List** button on a movie's or show's page. Each
+  person has their own.
+- *Recently added movies*, *Recently added shows* and *New episodes*.
+- *Most played* — what the whole household presses Play on most.
+- *Top rated* — TMDB rating 7 or more that you haven't watched (needs the TMDB key).
+- Three genre rows, a different three each day.
+- *Watch again* — things you've finished.
+
+**Movies** and **TV Shows** are poster grids with a search box, a genre filter, sorting (title,
+recently added, year, rating, most played), an **unwatched** toggle and a **my list** toggle.
+**surprise me** opens something at random from what you're looking at, unwatched titles first.
+Click any poster for its page: the description, cast, the file's quality (e.g.
+`1080p · HEVC · EAC3 5.1 · 1.4 GB`), **Play** or **Resume**, **Start over**, **Mark watched** and
+**My List**. A show's page lists its seasons and episodes, and **Play S1 · E3** always points at
+the next one to watch.
+
+**Deleting a movie (admins).** A movie's page has a **Delete** button, in the dashboard and in
+every app. It asks first, then deletes the file from the server's disk for everyone — if the
+film had a folder to itself the whole folder goes, otherwise the video and the files named after
+it (subtitles, poster) — and forgets its watched state and plays. It can't be undone. It's only
+offered for movies on the server's own disks, not for TV shows or episodes, and not for a film on
+another computer's share.
 
 **Adding a library (admins).** The first time, the tab asks for one: give it a name, choose
 **Movies** or **TV Shows**, and pick the folder with **browse** (the number beside each folder
@@ -478,25 +547,30 @@ How to lay out the folders:
 - A `poster.jpg`, `folder.jpg` or `fanart.jpg` next to the files beats TMDB's artwork, and
   `.srt` / `.vtt` subtitle files with the same name as the video are picked up.
 
-**Movies on another computer.** The server can only scan folders it can see, so a share on a
-Windows PC has to be mounted on the server first (the dashboard prints these exact lines if you
-type a `\\PC\Share` path). On the Linux server:
+**Making a folder that isn't there yet.** **+ New folder** in the picker makes a folder inside
+the one you're looking at (on the server or on another computer's share) and opens it, so a
+new *TV Shows* library doesn't need a trip to the server first. Every app's picker has it, and
+so do the Music and Podcasts pickers.
 
-```
-sudo mkdir -p /mnt/movies
-sudo mount -t cifs //PC/Movies /mnt/movies -o username=YOUR-WINDOWS-USER,uid=1000
-```
+**Movies on another computer.** The server reads shared folders itself — Windows file sharing,
+a Mac with File Sharing turned on, a NAS — so there's nothing to mount, on Linux, Windows or a
+Mac. In the folder picker, under **Network computers**:
 
-To mount it at every boot, put the Windows username and password in a file only root can read
-(`/etc/smb-movies` with `username=…` and `password=…` lines, `sudo chmod 600 /etc/smb-movies`),
-then add this line to `/etc/fstab`:
+- **Find computers** lists the Macs and NAS boxes that announce themselves on your network.
+  Windows PCs don't, so for one of those use **+ Add a computer** and type the PC's name or
+  address.
+- Signing in takes an account *on that computer* — for a Windows PC, the Windows account (a
+  Microsoft account works: its email and password). Leave the username blank to try as a guest,
+  the way Explorer and Finder do. The sign-in is saved, so you only do it once per computer, and
+  **sign-in** beside a computer changes it.
+- Then open the computer, pick its shared folder and the folder inside it, and **Use this
+  folder**. Typing a path such as `\\PC\Movies\Films` into the path box works too.
 
-```
-//PC/Movies  /mnt/movies  cifs  credentials=/etc/smb-movies,uid=1000,nofail  0  0
-```
-
-Then add `/mnt/movies` (or a folder inside it) as the library. `nofail` keeps the server booting
-normally when the PC is switched off; the library just shows nothing new until it's back.
+Libraries on another computer play and scan like any other; while that computer is switched
+off the library simply shows nothing new until it's back. Two things only work for movies on the
+server's own disks: deleting a movie, and downloading into the library (below). Music and
+Podcasts use the same saved sign-ins, so a computer you signed in to for Movies already works
+there.
 
 **The TMDB key.** Titles, artwork and descriptions come from TMDB, which needs a free API key:
 make an account at themoviedb.org, then *Settings → API → request a key (Personal use)*, and
@@ -513,9 +587,238 @@ for this (the libraries page warns when it isn't). In the player: **space** play
 **← / →** jump 10 seconds, **F** is full screen, **Esc** closes. At the end of an episode the
 next one starts after a 10-second countdown, which you can cancel.
 
+Two kinds of file are handled for you. An old `.avi` with MP3 sound has its sound converted to
+AAC, because Apple devices refuse MP3 inside the converted stream. And some files — usually
+downloads — have their frames stamped in the wrong order, which makes the picture jerk back and
+forth on Apple devices; the server spots those when it scans them and always sends them through
+ffmpeg with the order put right, rather than playing the file as it is.
+
 **Watched state is per person.** Everyone who signs in has their own resume points, watched
 ticks and *Continue watching* row, and they follow you between the dashboard and the apps. A
 film counts as watched once you're past about 92% of it (the credits don't have to finish).
+
+### Downloading a movie or show
+
+Off by default. With **Settings → MOVIE DOWNLOADS** on, the MOVIES tab gains **+ add** and a
+**downloads** pane: search for a film or a show's episodes, pick one of the torrents your sites
+offer, and the server downloads it and files it into the library, where it turns up under
+*Recently added* like anything else. The server comes with no sites — which ones to add, and
+what you download, is the household's responsibility. Who may search and download is a setting
+(**Who Can Add**: admins only, or everyone who can sign in); managing the sites is always
+admins only. It needs a movie (or TV) library on the server's own disks to save into.
+
+**Setting it up (once, on a Linux server).** The searching and downloading are done by two free
+programs, Prowlarr and qBittorrent, kept in a compartment of the server whose only way out to the
+internet is your VPN. An admin runs `core/downloads/install-downloads.sh` on the server once to
+install them (see [MOVIE_DOWNLOADS.md](MOVIE_DOWNLOADS.md)). Then choose the VPN under **VPN
+Provider** in Settings:
+
+- **Mullvad** — type only your 16-digit account number. The server makes its own key, registers
+  it as one device on your account (it shows on mullvad.net under Devices), and picks a server in
+  the **Mullvad Location** you choose — a country such as `se`, or a city such as `se-sto`.
+- **Another WireGuard provider** (ProtonVPN, IVPN, Surfshark, Windscribe, AirVPN…) — copy five
+  lines from the WireGuard file its website gives you: the private key, address and DNS from
+  `[Interface]`, and the public key and endpoint from `[Peer]`.
+- **The file installed on the server** — whatever file the installer was given; the only way to
+  use an OpenVPN provider such as NordVPN or PIA.
+
+The VPN and both programs are off until someone searches or downloads, start by themselves
+(the first search after a while takes a few extra seconds), and switch off again once nothing
+has needed them for a few minutes (**Switch Off After**). If the VPN drops, the downloads are cut
+off rather than falling back to your home connection.
+
+**Adding something.** Press **+ add**, choose **Movie** or **TV show**, type a title and press
+**find**. With a TMDB key you pick the right title from posters first — a movie goes straight
+to the search, a show opens its seasons so you can **get the whole season** or **get** one
+episode (episodes you already have are marked **in library**, ones not aired yet **not out
+yet**). Without a key the sites are simply searched
+for exactly what you typed. The list that comes back is best first: releases that really are
+that title with people sharing them, your **Preferred Quality** first, with warnings such as a
+copy filmed in a cinema; anything less certain is folded away under **show N other results**. A
+title starting with "The", "A" or "An" is also searched without it, since some sites only find it
+that way. Press **download** on the one you want.
+
+**Already have it?** If the film is already in the library, the app says *You already have …*,
+shows the size and quality of the copy you have, and offers **Replace it**, **Keep both** or
+**Cancel**. Replace deletes the old copy only once the new one has downloaded and is being filed.
+A copy on another computer's share can't be replaced from here, so only Keep both is offered.
+
+**A search that finds nothing.** When the Movies or TV Shows search box finds nothing in the
+library (and no other filter is on), the tab says *Not in your library — want to download …?*
+straight away. With a TMDB key it lists up to six matching movies and shows; picking one opens
+**+ add** already at that title (or opens it in the library, if it's marked *In library*). The
+**Search the sites for … as a Movie / TV show** buttons are always there, and are all there is
+without a key. The same offer appears in every app's search.
+
+**Watching it arrive.** The **downloads** pane lists what is downloading, with progress, speed
+and time left, and what finished recently, with **open**, **retry**, **cancel** and remove. While
+anything downloads, a banner across the top of Home says so (*Downloading Dune · 42%*) and opens
+the pane. When a download finishes it is moved into the library — `Movies/Dune (2021)/…`, or into
+the show's own folder and season — with an English subtitle when there is one, and the library is
+rescanned.
+
+**The VPN light.** Next to **+ add**, and on the downloads pane, a light says whether downloads
+are hiding your home address:
+
+| Light | Means |
+|---|---|
+| green **VPN · SE** | Connected, and checked: the sites see the VPN's address, not yours. |
+| pulsing **VPN connecting** / **VPN checking** | Starting up, or connected and still being checked. Nothing is searched until the check passes. |
+| grey **VPN idle** | The normal resting state — off until someone searches or downloads. |
+| amber **VPN off** | **Use VPN For Movie Downloads** is switched off in Settings, so searching and downloading use your home connection and the sites see your home address. |
+| red **VPN problem** / **VPN not set up** / **VPN out of time** | Something is wrong, and the light says what. |
+
+**test** on the downloads pane connects now and proves the sites see the VPN's address rather
+than yours; it can take up to a minute. With Mullvad, a line under the light shows how long the
+account is paid for (*Mullvad paid until Oct 27 · 26 days left*). It turns amber when a week or
+less is left and red once it has run out, and the server tells you on your alert channels (email,
+Telegram, push) once when a week or less is left and again when it runs out. Out of time, downloads simply stop —
+nothing goes over your home connection instead — and work again as soon as time is added on
+mullvad.net.
+
+**Sites (admins).** **sites** on the downloads pane lists the torrent sites in use, where each can
+be switched off or removed, and adds new ones from a catalog. Most public sites add with one press
+of **add** — the site's address is filled in for you; one that needs a login says **set up** and
+asks for it. Sites behind a Cloudflare "are you human" check (1337x and others) work too: the
+server gets past the check by itself. Adding sites is done from the dashboard, iPhone, Mac,
+Android or Windows; the Apple TV can search, download and watch the queue, but not manage sites.
+
+## 4d. The MUSIC tab — the household's own music
+
+The household's own music files, on the dashboard and in every app including Apple TV. The server
+reads each file's tags and cover art, can look up missing album covers and lyrics online, and
+streams every track in a format the device can play (converting it on the fly when it can't). The
+tab appears once **Settings → MUSIC → Enabled** is on. Everyone who signs in has their own plays,
+loves, ratings, playlists and mixes.
+
+**Adding your music (admins).** Under **Settings → MUSIC**, the **Libraries** block has **Add a
+music folder**: give it a name and **choose…** a folder, on the server or shared from another
+computer — the same picker as Movies, with **+ New folder**, and the same computer sign-ins
+(see [section 4c](#4c-the-movies-tab--your-own-movies-and-tv-shows)). **⚙ libraries** on the tab
+takes you there. Each library can be scanned, edited or removed; removing one keeps everyone's
+history and playlists in case the folder comes back. Files with no tags still work — the title is
+taken from the file name, the album from its folder and the artist from the folder above. Cover
+art comes from the file, then a `cover.jpg` / `folder.jpg` in the album folder, then (if allowed)
+online; lyrics from a `.lrc` file beside the track, then the file, then (if allowed) online.
+
+**What's on it.** **home**, **artists**, **albums**, **songs**, **genres**, **playlists**,
+**folders** and **stats**, a **Search music** box (it matches the start of words in titles, artists
+and albums) and **shuffle all**.
+
+- **Home** has **Shuffle all**, **Loved mix** and **Discover mix**, then rows: *Pinned* playlists,
+  *Recently played*, *Made for you* (daily mixes built from the genres you play most), *Recently
+  added*, *Heavy rotation* (your most played albums this month), *On this day* (what you played on
+  this date in an earlier year), *Forgotten favorites* (songs you loved or played a lot but not for
+  three months), *Discover in your library* (albums you've never played), *Loved songs* and
+  *Decades*.
+- **Radio** on an album, artist or genre, or **Start radio** on a song, plays an endless mix of
+  similar music from your own library, learning from what you love, rate, play and skip.
+- A song's **⋯** menu: **Play next**, **Add to queue**, **Add to playlist…**, **Start radio**,
+  **Love**, **Rate…**, **Go to album**, **Go to artist** and **Download file**.
+- **Playlists**: **New playlist** or **New smart playlist** (rules on things like genre, year,
+  rating, play count, loved, when it was added or last played, or file format, matching all or any,
+  with a sort and a limit — it keeps itself up to date).
+  A playlist can be **Shared** with the household, and a shared one **Collaborative**, so everyone
+  can add, remove and reorder songs. Playlists can be pinned to Home, duplicated and exported as
+  M3U.
+- **folders** browses the libraries the way they sit on disk, with **Play folder** and **Shuffle**.
+- **stats** is your listening by week, month, year or all time — top artists, albums, songs and
+  genres, when you listen, your longest streak — and, for a year, *Your <year> Wrapped*.
+
+**Getting an album (+ add).** With [movie downloads](#downloading-a-movie-or-show) switched on and
+a music library on the server's own disks, the MUSIC tab has **+ add** too: search for an album (artist and
+album, e.g. *fleetwood mac rumours*), pick a release, and it downloads through the same VPN and sites as movies and
+lands under *Recently added*. There's no separate setting; it follows **Settings → MOVIE
+DOWNLOADS** (including **Who Can Add**).
+
+### The player (Music and Podcasts)
+
+Music and podcasts share one player, and it keeps playing while you look at other tabs. The bar at
+the bottom has shuffle, previous, play/pause, next and repeat (and, for an episode, back 15 and
+forward 30 seconds), **Love**, lyrics or transcript, the queue, **Play on…** and volume. Click the
+artwork for **Now Playing**, full screen, with *Up next*, *Lyrics* (synced lyrics scroll along and
+a line can be clicked to jump there) and *Info* for a song, or *Up next*, *Chapters*, *Transcript*
+and *Info* for an episode, plus:
+
+- **Speed** from 0.5× to 3×, without the voices going squeaky. For podcasts it's remembered per
+  show, on every device.
+- **sleep** — stop after 5 minutes to 1½ hours, or at the end of the track or episode, fading out
+  over the last ten seconds.
+- **Player settings**: crossfade, **Sound Check** (evens out the volume between songs, using the
+  files' ReplayGain tags), streaming quality, the default podcast speed, and this browser's name.
+- Keys: space plays and pauses, ← / → seek, ↑ / ↓ volume, N and P next and previous, L loves, B
+  bookmarks an episode, Q opens the queue, Esc closes.
+
+**Picking up where you left off.** Your queue, place and speed follow you between devices: when
+you were last playing on another device, a banner says *Playing on Kitchen iPad* (or *Paused on…*)
+with **Continue here**.
+
+**Speakers.** Any device can offer itself as a speaker for the household — a kiosk on the wall,
+the Apple TV, an app left open — with **Let others play here** in the player settings (the apps
+have it in their own Settings). **Play on…** then lists every speaker, with **This browser** first:
+pick one to send what you're playing there, and change each one's volume from your phone. A
+speaker that also has **Allow announcements** on can be spoken to: type something into **Announce
+on a speaker** and press **say**. Two switches in **Settings → MUSIC** use the speakers: **Pause
+Speakers When The Alarm Goes Off** (when the home alarm goes off, every speaker is paused and the
+ones that allow announcements say so) and **Announce Camera Alerts On Speakers** (a person or
+vehicle alert is read out, at most once a minute per camera).
+
+**Wake-up alarms.** **alarms** on either tab: a time, a name, which days (none means just once), a
+speaker, what to play — a playlist, an album, an artist, a mix, shuffle all, the Morning Briefing,
+or a podcast's newest episode — a volume and how long to fade up over. **Morning Briefing** reads
+out the date, the weather, your calendar and reminders for today, then plays the newest episode of
+each show you've put in the briefing; it can be played here or on a speaker as well as from an
+alarm. If an alarm can't play — its speaker is switched off, say — you get a push saying so.
+
+**In the apps.** The iPhone, iPad, Mac and Android apps can download songs and episodes to listen
+offline, and play to the lock screen and system media controls — CarPlay on the iPhone, Android
+Auto on Android. Windows and the Apple TV stream only. The Apple TV can be a speaker.
+
+## 4e. The PODCASTS tab — shows the server downloads for you
+
+A podcast app for the whole household, on the dashboard and in every app. The server checks the
+feeds, downloads new episodes onto its own disk and keeps them even after a show drops them from
+its feed, so the apps play them from your server. The tab appears once **Settings → PODCASTS →
+Enabled** is on. Everyone has their own shows, Up Next, progress and bookmarks; your place in an
+episode follows you between devices.
+
+**Finding shows.** **discover** searches Apple's podcast directory (the country is a setting),
+shows the top charts by genre and a *Recommended for the household* row, and takes an RSS feed
+address pasted in. You can look at a show before you **follow** it. **Import OPML** / **Export
+OPML** moves your shows to and from another podcast app.
+
+**Listening.** **listen now** has **Play Up Next**, **Fill my drive** and **Morning briefing**,
+then *Up next*, *Continue listening*, *New episodes*, *Short on time? Under 20 minutes*,
+*Downloaded*, *Your shows* and *Bookmarks*, and how much time speed, trimmed silences and skipped
+intros have saved you. **up next** is your queue — drag to reorder; a finished episode drops off by
+itself. **Fill my drive** picks unplayed episodes that fit the time you have (10 minutes to two
+hours) and adds them to Up Next or plays them. A show's page filters its episodes (all, unplayed,
+in progress, downloaded, bookmarked), and its **Your settings** holds your speed, how many seconds
+of intro and outro to skip, **Notify me** when a new episode arrives, **Auto-queue** new episodes,
+and whether it's **In my Morning Briefing**.
+
+**Household settings (admins).** Per show: **Download new episodes**, how many to keep, **Voice
+boost** (evens out the loudness so quiet voices are clearer), **Trim silence** (pauses over a
+second are cut to 0.3 seconds when the episode downloads, so it's genuinely shorter) and
+**Transcribe new episodes**. Downloads that everyone has finished, and the oldest ones once the
+**Storage Limit** is reached, are removed by themselves (the episode stays listed and still plays
+from the publisher).
+
+**Transcripts.** Many shows publish their own; with **Write Transcripts** on in Settings (it needs
+whisper.cpp on the server, and an hour-long episode can take 10–30 minutes on a small machine),
+the server writes the rest, and **transcribe** on an episode asks for one. On an episode's page
+the transcript follows playback and a line can be pressed to play from there. The **Search what
+was said** box at the top of the tab searches every transcript at once; pressing a result plays
+that episode from the line where the words were said.
+
+**Bookmarks and clips.** Press **bookmark** in the player (or B) to mark a moment, with a note;
+the surrounding words from the transcript are saved with it. **bookmarks** lists them, and
+**Save to a note in the Organizer** turns one into a note. **clip** cuts 5 seconds to 3 minutes
+of an episode into a sound file you can download or share.
+
+**stats** and **alarms** are the same as on the MUSIC tab. In the apps: downloads for offline
+listening on iPhone, iPad, Mac and Android; the search across every transcript and **Fill my
+drive** aren't on the Apple TV, and Windows has no search across every transcript.
 
 ## 5. The CAMERAS tab — adding your own cameras
 
@@ -1417,6 +1720,83 @@ remove-duplicates, and how long the trash keeps things. The library is deliberat
 the backup file in [section 7](#7-the-settings-tab): it can be far bigger than everything else put
 together, and the drives are its backup.
 
+## 6e. The ORGANIZER tab — notes, calendar, reminders and boards
+
+The household's notes, calendar, reminders and Trello-style boards, on the dashboard and in every
+app. Everything is kept on the server, and each device also keeps its own copy, so the Organizer
+works with no signal and catches up when it's back. The label in the tab's corner says where it
+stands: *synced*, *syncing…*, or *offline - N changes waiting*. In the apps, **Keep offline**
+(Off / Light / Everything) sets how much a device keeps. Turning **Settings → ORGANIZER →
+Enabled** off hides it everywhere but deletes nothing.
+
+**Spaces.** Everything belongs to a space. **Family** is everyone with an account; **Personal**
+is just you; and **groups** are only the people you choose — press **groups** → **+ new group**,
+give it a name and a colour, tick the people, **create**. Anyone in a group can change who's in
+it, and **delete group** deletes everything in it for everyone. With login off there is only
+Family. The chips along the top (**everything**, then one per space) filter every view, and
+something new goes into the space you're looking at (Personal when you're on *everything*).
+
+**Notes.** **+ note** or **+ checklist**, and a **search notes** box that matches titles and text.
+Notes are plain Markdown — headings, lists, quotes, **bold** and *italic*, links. A checklist is
+just lines starting `- [ ]`: type one and Enter continues the list, or press **☑ checklist** to
+turn every line into one. In the tick-off view, **+ add an item** adds to it and **clear checked**
+tidies it up, and the note list shows how many are done. **pin** keeps a note at the top.
+Pictures and files can be added, dropped or pasted in (up to **Largest Attachment (MB)**, 50 by
+default). If two people rewrite the same note at once, the newer one wins and the other is kept as
+*(conflicted copy)*, so nothing is lost.
+
+**Calendar.** A month at a time, with the chosen day's events listed underneath. **+ event** (or
+double-click a day): all day or a time, repeats (every day, week, month or year, until a date), an
+alert from *at the time* to a day before, location, notes and files. Changing one date of a
+repeating event asks whether you mean only this one or all of them. Reminders with a due date show
+on the calendar too. **holidays** adds read-only holiday calendars — US federal holidays, US
+observances, Christian, Orthodox Christian, Jewish, Islamic, Hindu festivals, and Lunar New Year
+and Chinese festivals; none are on until you tick them, and the choice follows your login to the
+apps. **subscribe** gives a private link that Apple, Google or Outlook calendar can subscribe to,
+so your Organizer events (and the holidays you chose) show there as well; **reset link** stops the
+old link working. It's one way — calendars from elsewhere can't be brought in. For a calendar
+service on the internet to reach the link, the server must be reachable from outside (Internet
+Exposed Mode).
+
+**Reminders.** Type one in the box at the top and press Enter, with a date and time if you like.
+They're sorted into *Overdue*, *Today*, *Upcoming* and *No date*. Open one for repeats, priority
+(! to !!!), **flagged**, an alert, notes, steps and files. Ticking off a repeating reminder moves
+it to its next date, counted from the date it was due rather than from today. The apps alert you
+when a reminder or event is due, from their own copy, so the alert comes even with the phone
+offline; the dashboard itself doesn't. The **mic** button (dashboard over HTTPS in Chrome, Edge or
+Safari, and the iPhone, Mac and Android apps) lets you say it — "walk the dog tomorrow at 1" —
+and fills in the title, date and time for you to check before pressing Enter. It's worked out on
+the device by fixed rules, not by an AI, and nothing is sent anywhere.
+
+**Apple Reminders inbox (iPhone and Mac).** Under the app's Settings → **Apple Reminders**, turn
+on **Bring In Apple Reminders** and pick a list (or **Create a "Sentinel Core" List**) and which
+space they go into. Anything that lands in that Apple Reminders list — including "Hey Siri, remind
+me…" if you make it your default list in Apple's Reminders — is moved into the Organizer and
+removed from Apple's. Reminders that alert by location stay in Apple Reminders. It's set per
+device.
+
+**Boards.** **+ board** starts one with *To do*, *Doing* and *Done* columns; add, rename, reorder
+and delete columns, and **+ add a card** to each. Drag cards between columns, or onto another
+board's tab to move them there. A card has a due date, labels, people (with login on), a Markdown
+description, a checklist, links, files (the first picture becomes its cover) and **comments** —
+only the person who wrote a comment can edit it. **⚡ automations** makes a board look after
+itself; see [section 6ac](#6ac-board-automations--cards-that-add-and-move-themselves).
+
+**A new server.** When an app (or a browser) that already holds Organizer data connects to a
+server that doesn't have it — a replacement server, say — it asks what to do: **upload** this
+device's copy (anything already on the server is kept, and the newer edit wins), **use the
+server's copy** (this device's copy is thrown away), or **Not now**, which keeps this device's
+copy and pauses syncing with that server without asking again. To answer later: on the dashboard,
+click the *sync paused - decide…* label; on iPhone and Mac, Settings → **Organizer on This Device**
+→ **Decide About This Server…** (or *Sync Paused - Decide…* in the Organizer, as on Apple TV); on
+Android, Settings → **Organizer on this phone** → **Decide about this server**; on Windows, the
+**Decide** button on the banner in the Organizer.
+
+**Elsewhere.** The Apple TV shows the Organizer and lets you tick off reminders and cards; making
+and editing things is done on the other apps. Voice, Siri and the Quick Add widget are in
+[section 2a](#2a-the-ios-android-and-apple-tv-apps). The whole Organizer, attachments included, is
+in the server backup.
+
 ## 7. The SETTINGS tab
 
 Every section below saves independently and applies live — no restart needed, except where
@@ -1441,15 +1821,25 @@ without having switched to advanced still finds it.
 **Basic and advanced.** There's a switch at the top right of this tab. **Basic** — the default —
 shows only the settings most people actually change: Alert Intake & History, Email, Daily
 Summary, Telegram Alerts, Discord Alerts, Push Notifications, Server Outage Alerts, Internet Outage
-Alerts, Weather Alerts, Quiet Hours, Schedules, Location, Trigger API, AI-Confirmed Triggers, Spider Web &
-Insect Advisor, Login Alerts, Bug Reports, System Health, Apple HomeKit, Nightly Auto Export, Backup, Login and
-License. **Advanced** adds everything else: the AI tuning knobs, image processing,
+Alerts, Weather Alerts, Quiet Hours, Schedules, Location, Alarm, Organizer, Movies & TV, Movie
+Downloads, Music, Podcasts, Trigger API, AI-Confirmed Triggers, Spider Web & Insect Advisor, Login
+Alerts, Bug Reports, System Health, Apple HomeKit, Nightly Auto Export, Family Files, Backup, Login
+and License. **Advanced** adds everything else: the AI tuning knobs, image processing,
 self-monitoring thresholds, webhooks, MQTT, known vehicles, known faces, multi-frame analysis,
 and prompt profiles.
 
 Nothing is ever lost or reset by switching — advanced settings keep working exactly as
 configured while hidden, and the choice is remembered on that device only, so a phone can stay
 simple while a desktop shows everything. A search overrides the switch either way.
+
+**Kiosk mode.** Beside the basic/advanced switch is a **kiosk** switch, for a touch screen on
+the wall (a Raspberry Pi running Chromium, say). Some of those browsers tell the page they have a
+mouse, so every tap pops up a hover hint and anything that normally only appears when you hover
+— the zoom and PTZ controls on a live tile, the arrows on a Movies row — needs a second tap.
+Kiosk mode turns the hints off, shows those controls all the time, and makes buttons, tabs and
+the PTZ pad bigger to tap. It's remembered on that device only. Instead of the switch you can
+add `?kiosk=1` to the kiosk's start address (`http://192.168.1.50:3320/?kiosk=1`), which turns it
+on and remembers it; `?kiosk=0` turns it off again.
 
 **Send a test.** Email and Telegram each have a button that sends one message right now, so you
 can find out whether an SMTP app password or a bot token is right without waiting for something
@@ -1641,6 +2031,32 @@ The full list below covers both modes:
   it. See DEPLOYMENT.md, *Nightly Auto Export*.
 - **Family Files** — the switches for the FILES tab's shared library, its nightly backup to your
   own drives and the duplicate check. See [section 6d](#6d-the-files-tab--the-family-file-library-its-backup-drives-and-the-nightly-duplicate-check).
+- **Organizer** — shows or hides the ORGANIZER tab everywhere (hiding it deletes nothing), and
+  the largest picture or file anyone can attach. See
+  [section 6e](#6e-the-organizer-tab--notes-calendar-reminders-and-boards).
+- **Movies & TV** — shows or hides the MOVIES tab, the TMDB key, and how often the library
+  folders are checked for new files (0 turns the periodic check off), with **scan now**. See
+  [section 4c](#4c-the-movies-tab--your-own-movies-and-tv-shows).
+- **Movie Downloads** — **off by default.** Adds **+ add** and Downloads to the MOVIES tab (and
+  **+ add** for albums to the MUSIC tab): which
+  VPN to use (the file installed on the server, a Mullvad account number, or the five values from
+  any other WireGuard provider's file), **Use VPN For Movie Downloads**, who can add (admins only,
+  or everyone who can sign in), the preferred quality, how long a finished download keeps sharing
+  back, and how long the VPN and download programs stay on after the last search. The rest
+  (service addresses and keys) only matters if you run your own Prowlarr and qBittorrent. See
+  [Downloading a movie or show](#downloading-a-movie-or-show).
+- **Music** — shows or hides the MUSIC tab, how often the music folders are rescanned, whether
+  missing album covers and lyrics may be looked up online (only the artist, album and title
+  leave the server), the quality used when a track has to be converted for a device, and two
+  speaker switches: **Pause Speakers When The Alarm Goes Off** and **Announce Camera Alerts On
+  Speakers**. The music folders themselves are added here too, in its **Libraries** block, beside
+  your own ListenBrainz connection. See [section 4d](#4d-the-music-tab--the-households-own-music).
+- **Podcasts** — shows or hides the PODCASTS tab, where downloaded episodes are kept, how often
+  feeds are checked, the starting choices for newly followed shows (download new episodes, how
+  many to keep), when played downloads are removed, a storage limit, which country's Apple
+  Podcasts directory to search, and transcripts (**Write Transcripts**, off by default, with the
+  whisper.cpp program and model to use). **refresh now** checks every feed straight away. See
+  [section 4e](#4e-the-podcasts-tab--shows-the-server-downloads-for-you).
 - **Login** — an optional username/password gate for this dashboard, off by default. See
   [section 2](#2-opening-the-dashboard).
 - **Login Alerts** — tells you when someone fails to sign in to the dashboard, which is the one
@@ -2411,6 +2827,13 @@ persistent issue doesn't flood the inbox.
 - `SentinelCore.Web/data/family-files/` — the FILES tab: `library/` (the files themselves, unless
   **Library Folder** points elsewhere), `trash/`, `drives.json` (the backup drives, passwords
   included), `index.json` (cached checksums) and `state.json` (last backup and duplicate results)
+- `SentinelCore.Web/data/media.db` — the MOVIES tab's libraries, catalog, everyone's watched
+  state, plays and My Lists (the films themselves stay in your own folders), with
+  `media-downloads.db` beside it for the download history
+- `SentinelCore.Web/data/music.db`, `podcasts.db` and `audio.db` — the MUSIC and PODCASTS tabs:
+  libraries and everyone's plays, loves and playlists; shows, episodes, progress, Up Next and
+  bookmarks; and the speakers, wake-up alarms and what each device was last playing. Downloaded
+  episodes go in `SentinelCore.Web/data/podcasts/` unless **Download Folder** points elsewhere
 - Recorded clips live alongside the trigger event data
 - `homekit-bridge/persist/` — HomeKit pairing keys and this bridge's identity, if you're using
   HomeKit. Deleting it unpairs every iPhone and forces re-pairing with a new code, so it's

@@ -84,7 +84,7 @@ them, and each is saved with `PUT /api/settings/music` or `PUT /api/settings/pod
 
 The Music and Podcasts settings screens in each app show those fields plus a hand-built part:
 
-- **Music → Libraries:** the list of library folders (§2), with Add (folder picker), Rename,
+- **Settings → MUSIC, library folders:** the list of library folders (§2), with Add (folder picker), Rename,
   Remove, Scan, and the scan status.
 - **Podcasts → Download folder:** the `downloadFolder` field with a "Choose…" button that opens
   the folder picker, plus a storage line from `/api/podcasts/status` (§9). There is also
@@ -360,6 +360,8 @@ itself, with HTTP range support, so the URL can go straight into a player or a d
 `?mix=daily-1` →
 `{ "name": "Dreams Radio", "tracks": [Track] }`.
 
+- The web dashboard starts radio from a track, album, artist or genre only; `playlist` and
+  `decade` seeds are part of the contract but nothing on the web asks for them.
 - The seed comes first (for a track), then a household-library radio. The radio scores tracks by
   shared artist, genre and decade, the user's loves and ratings, and how often the user plays a
   track versus skips it. A pinch of randomness is added.
@@ -550,7 +552,8 @@ Episode = {
 - `GET /api/podcasts/{id}/episodes?sort=newest|oldest&filter=all|unplayed|downloaded|inProgress|bookmarked&q=&season=&offset=&limit=`
   → `{ "items": [Episode], "total": N, "seasons": [1,2,3] }`.
 - `POST /api/podcasts/{id}/played` with body `{ "played": true, "before": "…"? }` marks every
-  episode (or every one published before `before`) played or unplayed → 204.
+  episode (or every one published before `before`) played or unplayed → 204. The web dashboard
+  only marks a whole show; it never sends `before`.
 - OPML:
   - `GET /api/podcasts/opml` returns `text/x-opml` with the current user's subscriptions (as a
     download).
@@ -838,11 +841,12 @@ Every app gets two new tabs: **Music** and **Podcasts**. Both use one shared **p
   (follows playback; tapping seeks; search inside it).
 - Sound Check (ReplayGain: volume = 10^(gain/20), clamped to 1.0, album gain when playing an
   album in order).
-- AirPlay/Cast route pickers where the platform has them.
+- AirPlay/Cast route pickers where the platform has them (not the web dashboard, whose "Play on…"
+  button is the speaker picker below).
 - Lock-screen / system media controls with artwork. On iPhone this also makes CarPlay's Now
   Playing work. On Android, a MediaSession service is browsable by Android Auto.
 - Background playback.
-- Offline downloads (phone, tablet, Mac and Android).
+- Offline downloads (phone, tablet, Mac and Android; not the web dashboard).
 - Reporting via `played`, `progress` and `now-playing`.
 - A "Continue from <device>" banner.
 - A "Play on…" speaker picker.

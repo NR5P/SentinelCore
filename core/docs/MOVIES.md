@@ -93,7 +93,9 @@ those files through a loopback relay inside the server.
 
 Sign-ins are saved per computer (host, plus port if any) in `media-network.json` beside
 `media.db`, and go into backups with the libraries. With no saved sign-in the server tries a
-guest sign-in, as Explorer and Finder do.
+guest sign-in, as Explorer and Finder do. Music uses the same saved sign-ins (the same routes
+answer under `/api/audio/network`), and its picker (`/api/audio/browse`, `/api/audio/browse/folder`)
+is this one counting audio files instead of videos - see MUSIC_AND_PODCASTS.md.
 
 ```json
 NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "username": "sam",
@@ -251,6 +253,10 @@ Response:
   has been produced, request a new playback with a new `start`. The master playlist carries the
   text subtitles as HLS subtitle renditions, so AVPlayer, Media3 and hls.js show them in their own
   subtitle menus. Sessions die three minutes after the last segment request.
+- In HLS the audio is copied only when it is AAC, AC-3 or E-AC-3. Anything else - MP3 included,
+  even when the device listed `mp3` (AVPlayer plays MP3 in a file but answers "Cannot Open" to it
+  inside fMP4 segments; an XviD/MP3 `.avi` is the usual case) - is converted to AAC, and `audio`
+  says `aac`.
 - Files whose frames are stamped in decode order (B-frames, but every timestamp is the decode time;
   a torrent Rambo (2008) and E.T. (1982) came like this) are never direct-played: played as they
   are, the frames show out of order and the picture wiggles back and forth. The probe finds them by

@@ -28,13 +28,15 @@ address. Use HTTPS before exposing a server beyond the local network.
 
 | Package | What's in it |
 | --- | --- |
-| `ui/` | The Compose app shell (`SentinelApp`, `SentinelViewModel`), screens, the Organizer UI (`ui/organizer`), the Files library UI (`ui/files`), theme, tab bar customization. |
+| `ui/` | The Compose app shell (`SentinelApp`, `SentinelViewModel`), screens (`ui/screens`, including Movies & TV and its downloads and library admin), the Organizer UI (`ui/organizer`, with Quick Add's `QuickCaptureActivity` and the board automations builder), the Files library UI (`ui/files`), `ui/music`, `ui/podcasts` and the player screens they share (`ui/audio`), `ui/weather`, theme, tab bar customization. |
 | `data/`, `net/` | The API client and models; server discovery over mDNS. The Files library's wire format and path helpers are in `data/FamilyFilesModels.kt`, its picked-file naming in `data/FamilyUploadNaming.kt`. |
-| `organizer/` | The Organizer's on-device store and sync engine (`OrganizerEngine`, kept once per process by `OrganizerRuntime`), local alarms, holidays, and the voice and share entry points (`VoiceCapture`, `VoicePhrase`). |
-| `widgets/` | Home-screen widgets and the background sync that keeps them current (WorkManager, plus the server's silent push). |
+| `organizer/` | The Organizer's on-device store and sync engine (`OrganizerEngine`, kept once per process by `OrganizerRuntime`), local alarms, holidays, board automations, note checklists, and the voice and share entry points (`VoiceCapture`, `VoicePhrase`, `QuickCapture`). |
+| `audio/` | The Music & Podcasts player: `AudioPlaybackService` (a Media3 `MediaLibraryService` in the foreground, which also gives the media notification, lock screen, Bluetooth buttons and Android Auto's library through `AutoBrowse`), offline downloads (`AudioDownloads`, a WorkManager foreground job), the equalizer, and the API client. |
+| `widgets/` | Home-screen widgets (Calendar, Reminders, Notes, Alarm, Quick Add) and the background sync that keeps them current (WorkManager, plus the server's silent push). |
 | `push/` | Firebase Cloud Messaging: security alerts, and the silent "Organizer changed" push. |
 | `publish/` | This phone as one of the dashboard's cameras (foreground service, WebRTC). |
 | `res/xml/shortcuts.xml` | The launcher shortcuts and the Google Assistant App Action. |
+| `res/xml/automotive_app_desc.xml` | Declares the app to Android Auto as a media app. |
 
 Tests are in `app/src/test`: plain JVM unit tests, plus Organizer tests that run against real
 loopback servers when started through `scripts/with-organizer-servers.sh` (see BUILDING.md §5).
@@ -59,8 +61,13 @@ apps; protocol in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md
   local alarms, restored after a reboot, so they fire with no signal. Exact timing needs the
   "Alarms & reminders" permission; without it alerts arrive within a few minutes.
 - Home-screen widgets for Calendar, Reminders and Notes.
+- Note checklists, and a no-code automations builder per board (the rules run on the server).
 
 **Getting things into the Organizer without opening the app**
+- **Quick Add widget:** say or type "take out the trash at 7am tomorrow" and it becomes a
+  reminder, note or event (`organizer/QuickCapture.kt`, tested against
+  `core/docs/quick-capture-cases.json` like the Apple version). The widget opens
+  `QuickCaptureActivity` as a small dialog over the home screen; the app itself never opens.
 - **"Voice reminder" and "Voice note"**: long-press the app icon (or drag them onto the home
   screen), tap and speak. Dates in what you say are understood ("call mom tomorrow at 5"), using
   the same rules and test cases as the Apple apps (`core/docs/voice-phrase-cases.json`).
@@ -74,7 +81,21 @@ apps; protocol in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md
 shown when the server has Movies & TV on: Home shelves, paged Movies and TV Shows grids with
 search, sort, genre and unwatched filters, detail pages with seasons and episodes, and a
 full-screen Media3 player that resumes where anyone in the family left off (direct MP4 or the
-server's HLS remux, with subtitles) and rolls on to the next episode.
+server's HLS remux, with subtitles) and rolls on to the next episode. With movie downloads on
+([`core/docs/MOVIE_DOWNLOADS.md`](../core/docs/MOVIE_DOWNLOADS.md)): "+ Add" to search the
+household's sites (an empty library search offers it too), a Downloads screen with the VPN light,
+and an "already have it" prompt. An admin can delete a movie (not one on a network share) and
+manage the libraries (`MediaLibrariesScreen.kt`), including network shares and a New folder
+button in the folder picker (`MediaFolderPicker.kt`).
+
+**Music and Podcasts** (each shown when the server has it on; contract in
+[`core/docs/MUSIC_AND_PODCASTS.md`](../core/docs/MUSIC_AND_PODCASTS.md)): the music library,
+playlists and downloads; podcasts with Listen Now, a Library and Discover; one shared player with a
+mini player, Now Playing, an equalizer, the media notification and lock screen, Bluetooth buttons,
+and Android Auto.
+
+**Weather:** the dashboard's Weather tab (`ui/weather`) - alerts, conditions, a zoomable radar map,
+hourly and seven-day forecasts - all through the server, for the location set in its Settings.
 
 **Other:** Alarm (arm/disarm with a PIN, sensors, batteries, a home-screen widget), Device Hub (lights, gates, locks, sensors, and a full-screen wall display of big
 tap-to-switch tiles for a tablet on a wall), the admin screens, optional dashboard login,
@@ -102,4 +123,7 @@ FileProvider serves.
   background sync runs with no Activity. Two engines on one database would overwrite each other.
 - **The Organizer is only "connected" when the app connected it.** A background `syncOnce`
   borrowing a transport doesn't count (see BUILDING.md §8).
+- **Three foreground-service types** are declared in the manifest: `camera|microphone`
+  (publishing), `mediaPlayback` (the player) and `dataSync` (audio downloads). A new kind of
+  long-running work needs its own type and `FOREGROUND_SERVICE_*` permission (BUILDING.md §5).
 - Push setup (Firebase project, service account, `fid`): [`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md).

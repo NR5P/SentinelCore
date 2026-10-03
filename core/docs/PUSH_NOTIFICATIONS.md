@@ -1,9 +1,10 @@
 # Real push notifications
 
 Sentinel Core can send event alerts through Apple Push Notification service (APNs)
-and Firebase Cloud Messaging (FCM). Delivery originates from the Core service, so
-the mobile app does not need to be open or connected to the local network when the
-alert is sent.
+and Firebase Cloud Messaging (FCM). Delivery originates from the Core services - the alert
+pipeline for camera alerts, the web dashboard for the alarm, weather alerts, board automations,
+new podcast episodes and the Organizer's background sync - so the mobile app does not need to
+be open or connected to the local network when the alert is sent.
 
 Notification taps open the matching event when the device can reach Sentinel Core.
 Event details and images remain local; a device away from the LAN will still receive
@@ -44,11 +45,17 @@ the token belongs to that license, signs the request with the real credentials, 
 What to know:
 
 - **A valid license is required.** Core sends the `.lic` file's contents with every relay call
-  (base64, in an `X-Sentinel-License` header). No license, or an invalid one, and the relay
-  answers 401; Core logs one warning and delivers nothing until a license is installed
-  (Settings → LICENSE). Direct providers, if configured, are unaffected.
+  (base64, in an `X-Sentinel-License` header). With no license, or one that doesn't verify, Core
+  doesn't call the relay at all: it logs one warning and delivers nothing through it until a
+  license is installed (Settings → LICENSE - no restart needed, the file is re-read on every
+  push). Direct providers, if configured, are unaffected.
+- **A license can be cut off.** If the relay's operator blocks a license (leaked or refunded -
+  see [PUSH_RELAY.md](PUSH_RELAY.md)), every relay call answers 403 and Core logs
+  `The push relay rejected a ... push: HTTP 403` with the relay's explanation. Core doesn't retry a
+  403, and the devices registered under that license are dropped on the relay's side.
 - **Only alert text crosses the relay** - the notification's title, body, camera name, event
-  type and event id. Never images, video, or anything about your cameras beyond their names. The
+  type, event id and, for a board automation, the Organizer item id. Never images, video, or
+  anything about your cameras beyond their names. The
   relay logs who pushed to which platform and whether it succeeded; it does not log the text.
 - **Your devices are yours.** A token registered under your license can only be pushed to by
   your license. Someone with a copy of your license file could push to your own devices and
@@ -59,6 +66,12 @@ What to know:
 - **`ApnsSandbox`** tells the relay which Apple environment your tokens belong to. Leave it
   `false` for apps from the App Store or TestFlight. Set `true` only for an app installed from
   Xcode or the command line - those register sandbox tokens (see the note under Apple setup).
+- **Background (silent) pushes never go through the relay.** When the Organizer changes, the
+  dashboard sends a silent push (at most one a minute) so the iPhone and Android widgets and the
+  apps' offline copy refresh without the app being opened. A relay would show one of those as a
+  blank alert, so they are only sent on a platform that pushes direct, and never to the Apple TV.
+  On the relay, widgets and the offline copy catch up the next time the app syncs; no alert is
+  affected.
 - **Registrations are kept in step automatically.** The dashboard forwards each device
   registration to the relay as it happens, Core re-registers a token the relay says it doesn't
   know before retrying, and a background sweep re-confirms every device at startup and every

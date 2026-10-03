@@ -9,13 +9,43 @@ Legend: **[you]** needs your accounts or a password · **[script]** one command 
 The procedure for each release (bump, archive, upload, deploy) and the pitfalls hit so far are
 in [`BUILDING.md`](BUILDING.md) §6. This file is the one-time setup behind it.
 
-## Where things stand (2026-09-23)
+## Where things stand (2026-10-03)
 
 | | Status |
 | --- | --- |
-| iOS + macOS | App Store Connect record "Sentinel Core" (id 6814252066). Internal TestFlight is live; latest upload is build 7. The daily-use iPhone and Mac run TestFlight builds. |
+| iOS + macOS | App Store Connect record "Sentinel Core" (id 6814252066). Internal TestFlight is live; the build number is at 17 (commit 4386dd7). The daily-use iPhone and Mac run TestFlight builds. |
 | tvOS | No App Store Connect record yet; the Apple TV runs a locally installed build. |
-| Android | Play Console app "Sentinel Core" (package `com.sentinelcore.android`), internal testing track active with tester list "testersSentinelCore". Uploads are manual (no service account yet). Store listing not filled in, so Play shows it as unreviewed. |
+| Android | Play Console app "Sentinel Core" (package `com.sentinelcore.android`), internal testing track active with tester list "testersSentinelCore". Uploads are manual (no `playServiceAccountJson` in `keystore.properties` yet). Store listing not filled in, so Play shows it as unreviewed. |
+| Windows | No store. Each build is a self-contained zip (BUILDING.md §6.5). |
+
+### Build history
+
+`scripts/bump-build.sh` moves every platform together, so one number names a release everywhere.
+The bump commit is the one to look up.
+
+| Build | Date | Commit | What it carried |
+| --- | --- | --- | --- |
+| 2 | 2026-09-20 | 03bd420 | first TestFlight and Play internal uploads |
+| 3 | 2026-09-23 | f6024ee | card comments |
+| 4 | 2026-09-23 | a228f65 | card comments as a feed |
+| 5 | 2026-09-23 | 69e2098 | Organizer widgets + silent-push sync, Siri and Android voice shortcuts, Reminders inbox, card dragging (iOS rejected: ITMS-90626) |
+| 6 | 2026-09-23 | c5e3806 | share extension, a stalled-sync fix (iOS rejected: ITMS-90626) |
+| 7 | 2026-09-23 | 6a12840 | "Siri" removed from an intent description |
+| 8 | 2026-09-24 | 8893aa4 | board automations, nightly auto export, login required |
+| 9 | 2026-09-26 | 7f76500 | Weather, home alarm, Family Files, Movies & TV, voice reminders |
+| 10 | 2026-09-26 | 003f9d4 | note checklists |
+| 11 | 2026-09-26 | 37bcd56 | network-share movie libraries, weather-alert re-send fix |
+| 12 | 2026-09-29 | 9e9cb1f | native board-automation builders, camera delete on the Mac, Apple TV Weather tab, web radar map, kiosk mode |
+| 13 | 2026-09-29 | 4f41d96 | Weather tab on iPhone, Mac, Android and Windows |
+| 14 | 2026-09-29 | e36c7c1 | movie downloads ("+ Add") |
+| 15 | 2026-10-02 | db32677 | Quick Add widget (iPhone, Mac, Android), the first Mac widget extension |
+| 16 | 2026-10-02 | f213169 | delete a movie, and "already have it" before a download |
+| 17 | 2026-10-03 | 4386dd7 | Music & Podcasts, an empty movie search offers a download, more Siri wordings, Quick Add calendar events, the Mac's Choose Folder freeze fixed |
+
+Pushed after 17 and not in any build yet: 48cb49c (New folder in the library folder pickers).
+
+The table records what each build number contains, not which stores received it. TestFlight
+shows what Apple accepted; Play Console's internal track shows the Android uploads.
 | Server push | Direct APNs on production (`Apple.UseSandbox: false`) plus Firebase; the relay for customer installs. |
 | Privacy policy | Live at https://nr5p.com/privacy. |
 
@@ -76,8 +106,9 @@ Also keep every extension's build number equal to the app's, which Apple require
 `scripts/bump-build.sh` does this; a newly added extension target needs its number brought in
 line once. (It was caught before an upload here, so what Apple's rejection says is unconfirmed.)
 
-New extension targets (the widgets, the share extension) need no manual setup in the developer
-portal. The first `release.sh` after adding one registers its App ID and profile through
+New extension targets (the iOS widgets, the share extension, and since build 15 the Mac widget
+extension `com.sentinelcore.client.macwidgets`) need no manual setup in the developer portal. The
+first `release.sh` after adding one registers its App ID and profile through
 `-allowProvisioningUpdates`.
 
 **Your own devices after this:** a TestFlight build registers *production* APNs tokens, so a
@@ -183,7 +214,20 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
   > deleted by the server's administrator inside the app (Settings → Manage Accounts).
 - **App privacy label (Apple) / Data safety (Google):** no data collected by the developer; the
   app sends the device's push token and login to the user's own server; no tracking; no
-  third-party SDKs that collect data (Firebase Messaging is delivery only).
+  third-party SDKs that collect data (Firebase Messaging is delivery only). Things a reviewer may
+  ask about, all of which stay between the device and the user's own server or the platform:
+  - the microphone and speech recognition (the Reminders mic button and Quick Add on Apple, the
+    system recognizer on Android). On Apple the usage string says speech may be sent to Apple to
+    be recognized;
+  - weather, radar, music, podcasts, movies and file uploads all come through the user's server;
+  - one exception on Android: the movie-download search shows TMDB poster images, which the app
+    fetches straight from `image.tmdb.org`, without the session cookie.
+- **Permissions to justify:** iOS declares background audio (Music & Podcasts) besides
+  remote-notification and background fetch. Android declares foreground services of type
+  `camera|microphone` (this phone as a camera), `mediaPlayback` (the music and podcast player,
+  including Android Auto) and `dataSync` (offline downloads). Play Console's App content page
+  asks for a description of each foreground-service type an app uses, so expect to fill that in
+  with the rest of the *Set up your app* checklist.
 - **Screenshots:** iPhone 6.9", iPad 13", Mac, Apple TV; Android phone + 7" and 10" tablets;
   Play also wants a 512×512 icon and a 1024×500 feature graphic. `branding/` has the icon
   master.
@@ -193,6 +237,9 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
 ```bash
 scripts/bump-build.sh && git commit -am "Build N" && ios/scripts/release.sh && appletv/scripts/release.sh && android/release.sh
 ```
+
+Until the tvOS record exists, leave `appletv/scripts/release.sh` out and install the Apple TV build
+locally (BUILDING.md §4). Add the build to the table at the top.
 
 Testers on both stores update automatically: TestFlight installs new builds in the background,
 Play auto-updates like any store app (usually within a day; a tester can force it from the Play

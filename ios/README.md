@@ -24,17 +24,23 @@ their push until the TestFlight build is reinstalled. BUILDING.md §3 has more.
 
 | Folder / target | What it is |
 | --- | --- |
-| `SentinelCore/` (target `SentinelCore`) | The app, for iOS and macOS. Subfolders: `App` (model, lifecycle, push, background refresh), `Views`, `Live` (video players), `Organizer`, `Files` (the shared file library and its backup drives), `Publish` (this device as a camera), `Networking`, `Models`, `Design`. |
-| `SentinelCoreWidgets/` (iOS only) | Calendar, Reminders and Notes widgets. They read a snapshot the app writes to the App Group, and ticking a reminder off on a widget leaves an action for the app to apply. |
+| `SentinelCore/` (target `SentinelCore`) | The app, for iOS and macOS. Subfolders: `App` (model, lifecycle, push, background refresh), `Views`, `Live` (video players), `Organizer`, `Files` (the shared file library and its backup drives), `Movies` (Movies & TV, downloads and library admin), `Music`, `Podcasts` and `Audio` (the player and everything the two share), `Weather`, `Publish` (this device as a camera), `Networking`, `Models`, `Design`. |
+| `SentinelCoreWidgets/` (iOS only) | Calendar, Reminders, Notes and Alarm widgets, plus Quick Add. They read a snapshot the app writes to the App Group, and ticking a reminder off on a widget leaves an action for the app to apply. |
+| `SentinelCoreMacWidgets/` (macOS only) | The Mac's widget extension, holding just Quick Add. Sandboxed, no App Group. |
+| `SentinelCoreQuickAdd/` | The Quick Add widget, compiled by both widget targets. Its buttons are `sentinelcore://capture?mode=voice\|type` links that open the app's Quick Add sheet. |
 | `SentinelCoreShare/` (iOS only) | The share extension: "Sentinel Core" in the share sheet saves text or a link as an Organizer note. |
-| `OrganizerKit/` (Swift package) | The Organizer's on-device store and sync engine, calendar maths, voice-phrase parsing, the Apple Reminders mapping, and the widget snapshot. Shared with the Apple TV app and tested with `swift test`. |
+| `OrganizerKit/` (Swift package) | The Organizer's on-device store and sync engine, calendar maths, voice-phrase and Quick Add parsing, note checklists, board automations, the Apple Reminders mapping, and the widget snapshots. Shared with the Apple TV app and tested with `swift test`. |
 | `scripts/release.sh` | Archive and upload to TestFlight (iOS, macOS or both). |
-| `Info.plist`, `SentinelCoreWidgets-Info.plist`, `SentinelCoreShare-Info.plist` | One per target. The app's plist is shared by iOS and macOS; keys only one platform reads, such as `NSServices` (Mac), are ignored by the other. |
+| `Info.plist`, `SentinelCoreWidgets-Info.plist`, `SentinelCoreMacWidgets-Info.plist`, `SentinelCoreShare-Info.plist` | One per target. The app's plist is shared by iOS and macOS; keys only one platform reads, such as `NSServices` (Mac) or `UIBackgroundModes` (iOS), are ignored by the other. |
 
 Folders are synchronized groups: new files join their target without editing the project.
 Entitlements: `SentinelCore-iOS.entitlements` (push, App Group) and `SentinelCore.entitlements`
 (macOS sandbox: network, camera, microphone, user-selected files read and write - the write half
-is for saving a copy of a Files download - Calendars/Reminders, push).
+is for saving a copy of a Files download - Calendars/Reminders, push). Usage strings, background
+modes and the extension-embedding gotcha are in BUILDING.md §3.
+
+The only Swift package besides OrganizerKit is [stasel/WebRTC](https://github.com/stasel/WebRTC),
+for streaming this device as a camera.
 
 ## Features
 
@@ -60,11 +66,14 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
   copy, so they fire with no signal.
 - Kept current in the background by the server's silent push and by background refresh, which
   also keep the widgets up to date.
+- Note checklists (tick-off lists kept as plain Markdown), and a no-code automations builder for
+  each board (`Organizer/BoardAutomationsView.swift`; the rules run on the server).
 
 **Getting things into the Organizer without opening the app**
 - **Siri and Shortcuts** (`Organizer/OrganizerIntents.swift`): "Add a reminder in Sentinel Core",
-  "Take a note in Sentinel Core", "Add an event in Sentinel Core", "What's due in Sentinel Core".
-  They also appear in Shortcuts, Spotlight and on the Action button. Spoken dates are parsed by
+  "Take a note in Sentinel Core", "Add an event in Sentinel Core", "What's due in Sentinel Core",
+  each with variants ("Add a reminder to…", "Create a note in…", "Add to my Sentinel Core
+  calendar"). They also appear in Shortcuts, Spotlight and on the Action button. Spoken dates are parsed by
   `OrganizerKit/VoicePhrase.swift` ("call mom tomorrow at 5"). Apple doesn't let an app take over
   plain "remind me to…", so every phrase names the app.
 - **Apple Reminders inbox** (Settings → Apple Reminders, per device): reminders added to a chosen
@@ -72,6 +81,12 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
   With that list set as the Reminders default, plain "Hey Siri, remind me…" ends up here too.
   Reminders that alert by location, or repeat in a way the Organizer can't express, stay in
   Apple Reminders.
+- **Quick Add** (`Organizer/QuickCaptureSheet.swift`): say or type "take out the trash at 7am
+  tomorrow" or "put lunch on my calendar Friday from 2 to 3pm" and it becomes a reminder, note or
+  event, parsed by `OrganizerKit/QuickCapture.swift` with no AI. Opened from the Quick Add widget
+  (Home Screen, Lock Screen and the Mac's desktop), or File → Quick Add… (⇧⌘N) on the Mac.
+- **The microphone button on the Reminders list** (`Organizer/OrganizerVoice.swift`): the
+  system recognizer and the same phrase rules as Siri.
 - **Share to Sentinel Core:** the share sheet on iPhone/iPad; on the Mac, select text or a link
   and use Services → New Sentinel Core Note.
 - None of these puts anything in Family by default. They wait until the device has synced and
@@ -82,6 +97,20 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
   recently added shelves, poster grids with sort/genre/unwatched filters, search, detail pages
   with seasons and episodes, and playback with resume and progress synced to every device
   (full-screen AVPlayerViewController on iOS, a sheet on the Mac). See `core/docs/MOVIES.md`.
+  When movie downloads are on: "+ Add" to search the household's sites (and a search that finds
+  nothing offers to), a Downloads screen with the VPN light, and an "already have it" prompt. An
+  admin can delete a movie (not one on a network share), and manage the libraries (`Movies/MediaLibrariesAdminView.swift`),
+  including network shares (`smb://PC/Movies`) and a New folder button in the folder picker. See
+  `core/docs/MOVIE_DOWNLOADS.md`.
+- **Music and Podcasts** (each when switched on server-side; `Music/`, `Podcasts/`, `Audio/`): the
+  music library by artist, album, song, genre, playlist and folder; podcasts with Listen Now, a
+  Library and Discover. One shared player (`Audio/AudioPlayer.swift`) with a mini player under
+  every tab, a Now Playing screen, gapless queues, Sound Check, a sleep timer, the lock screen,
+  Control Center and CarPlay Now Playing card, and background audio. Contract:
+  [`core/docs/MUSIC_AND_PODCASTS.md`](../core/docs/MUSIC_AND_PODCASTS.md).
+- **Weather** (`Weather/`): the dashboard's Weather tab - alerts, conditions, a zoomable radar map
+  with storm tracking, hourly and seven-day forecasts - all through the server's `/api/weather`,
+  for the location set in the server's Settings.
 - Device Hub: lights, gates, locks and sensors over MQTT, with a full-screen wall display of big
   tap-to-switch tiles for an iPad mounted on a wall (remembered, so the app reopens onto it).
 - Alarm: arm and disarm the house, see every sensor's state and battery, and (admins) set it up. An Alarm widget (Home and Lock Screen) and "Arm the Sentinel Core alarm" / "Is Sentinel Core armed" shortcuts.
@@ -105,6 +134,10 @@ apps. Details are in [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC
 - **Siri shortcut text may not contain the word "Siri".** App Store Connect rejects the iPhone
   build (ITMS-90626) after a successful-looking upload. See BUILDING.md §3.
 - **Extensions' build numbers must match the app's.** `scripts/bump-build.sh` keeps them in step.
+- **A macOS-only embed needs `platformFilters = (macos, );`** in `project.pbxproj`, plural. The
+  singular form is ignored and the iOS Simulator build fails (BUILDING.md §3).
+- **Build the Mac and iOS targets one at a time.** Two overlapping `xcodebuild`s fight over the
+  Swift package cache.
 - **Swift 6 strict concurrency is on.** A `@MainActor` closure handed to a framework that calls it
   on another queue traps at runtime, as EventKit's did (BUILDING.md §3).
 - **The Mac, first launch after installing a new build:** the first local-network request fails

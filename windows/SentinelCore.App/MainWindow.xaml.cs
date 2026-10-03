@@ -137,8 +137,8 @@ public partial class MainWindow : Window, INavigator
         // last is remembered, so it's there offline too.
         if (_organizer is { Enabled: true }) sections.Add(new SectionItem(AppSection.Organizer, "Organizer", "\uE8BF"));
 
-        // Family Files and the Device Hub are off by default and only appear once switched on
-        // server-side, so the list is filtered rather than fixed.
+        // Family Files (on by default) and the Device Hub (off by default) can each be switched
+        // off server-side, so the list is filtered rather than fixed.
         if (_model.FamilyFilesEnabled) sections.Add(new SectionItem(AppSection.Files, "Files", ""));
         if (_model.DeviceHubEnabled) sections.Add(new SectionItem(AppSection.Devices, "Device Hub", ""));
         sections.Add(new SectionItem(AppSection.Settings, "Settings", ""));

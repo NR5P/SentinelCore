@@ -6,7 +6,9 @@ Native Windows client, written in C# on WPF (.NET 8). The Windows counterpart to
 ## Build and run
 
 Needs the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Nothing else — no Visual
-Studio, no workloads.
+Studio, no workloads. The app targets `net8.0-windows10.0.19041.0` so the music player can use the
+Windows media keys and flyout; the Windows SDK projections that needs come down as a NuGet package
+on the first restore.
 
 ```bash
 dotnet run --project SentinelCore.App
@@ -30,7 +32,7 @@ with scratch data:
 
 Without it they are skipped, not failed.
 
-286 tests. The client library is exercised end to end against a real loopback HTTP server rather
+577 tests. The client library is exercised end to end against a real loopback HTTP server rather
 than a mocked handler — status codes, cookies, error-body shapes and all — because half of what that
 layer does is precisely the part a mock replaces.
 
@@ -43,7 +45,7 @@ that runs it. To produce a folder that needs nothing at all:
 ./publish.ps1
 ```
 
-That writes a self-contained x64 build to `publish/`. It is larger (~150 MB) and it is the version
+That runs the tests, then writes a self-contained x64 build to `publish/`. It is larger (~175 MB) and it is the version
 worth handing to someone who should not have to install a runtime first.
 
 ## What it does
@@ -63,7 +65,12 @@ worth handing to someone who should not have to install a runtime first.
   unwatched filters, a detail page with Resume / Start over and season episode lists, and a
   full-window player in WebView2 (`Live/movie.html`: direct MP4 or HLS through hls.js, subtitles,
   "Up next" for the next episode). Progress is saved to the server, so it resumes on any device.
-  The API is [`core/docs/MOVIES.md`](../core/docs/MOVIES.md).
+  The API is [`core/docs/MOVIES.md`](../core/docs/MOVIES.md). With movie downloads on, "+ Add"
+  searches the household's sites (an empty search offers it too), Downloads shows what's coming
+  with the VPN light, and an admin gets the Sites window
+  ([`core/docs/MOVIE_DOWNLOADS.md`](../core/docs/MOVIE_DOWNLOADS.md)). An admin can delete a movie
+  from its page, and Settings → Movies & TV libraries manages the libraries, network shares
+  included, with a New folder button in the folder picker.
 - **Music** and **Podcasts** — two sections, each shown only while the server has it on
   (`/api/audio/enabled`). Music: Home rows, Artists / Albums / Songs / Genres / Playlists / Folders,
   search, album and artist pages, love and star ratings, playlists (smart ones from rules), radio
@@ -81,6 +88,10 @@ worth handing to someone who should not have to install a runtime first.
   [`core/docs/MUSIC_AND_PODCASTS.md`](../core/docs/MUSIC_AND_PODCASTS.md); the queue, lyrics,
   transcript, Sound Check, sleep timer and speaker loop are unit-tested in
   `SentinelCore.Client/Audio/`.
+- **Weather** — the dashboard's Weather tab: alerts, conditions, storms heading for home, the
+  severe outlook, rain and snow totals, the hourly chart and the seven-day forecast, beside the
+  dashboard's zoomable radar map in WebView2 (`Live/RadarMapHost.xaml`, `Live/radar.html`). All
+  of it comes through the server, for the location set in its Settings.
 - **This PC as a camera** — the PC's webcam becomes one of the dashboard's cameras (Settings → Cameras, or the
   button at the top of Live). The dashboard's own publish page runs in WebView2 with this session's cookie, and
   the app holds the PC out of sleep while it streams and resumes on the next launch. See
@@ -90,8 +101,9 @@ worth handing to someone who should not have to install a runtime first.
   links on anything. It is kept on this PC as well as the server, so all of it works with no
   connection, and a PC keeps the whole thing by default — the copy that refills a server that had
   to be rebuilt (Settings → Organizer). Reminder and event alerts come from that copy, so they fire
-  with the server down. The engine is `SentinelCore.Client/Organizer/`; the protocol every client
-  speaks is [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md).
+  with the server down. Notes can hold tick-off checklists, and each board has a no-code
+  automations builder (`Organizer/BoardAutomationsWindow.cs`; the rules run on the server). The
+  engine is `SentinelCore.Client/Organizer/`; the protocol every client speaks is [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md).
 - **Files** — the household's shared file library, once it is switched on in Settings. Browse
   folder by folder or search the whole library; add files with a dialog or by dropping them on the
   list (a dropped folder keeps its structure); double-click to open a file (it is fetched into
@@ -136,8 +148,8 @@ notifications at once.
 | Project | What's in it |
 | --- | --- |
 | `SentinelCore.Client` | Models, the API client, mDNS discovery, credential and preference storage, and `AppModel` — all of it UI-framework-free and testable without a window. `Models/FamilyFiles.cs` and `Networking/SentinelClient.FamilyFiles.cs` are the Files library and its backup drives. |
-| `SentinelCore.App` | The WPF application: theme, views, dialogs, tray icon, and the WebView2 live player. The Files section is `Views/FilesView.xaml`, with `FilesDrivesWindow`, `FilesDriveEditWindow` and `FilesTrashWindow` beside it. |
-| `SentinelCore.Client.Tests` | 250 tests over the client library, including the DNS-SD parser, the connect/fallback sequence and the Files transfers. |
+| `SentinelCore.App` | The WPF application: theme, views, dialogs, tray icon, and the WebView2 pages it embeds (`Live/player.html` for live video, `Live/movie.html`, `Live/radar.html`, `Audio/audio.html` for the music player). The Files section is `Views/FilesView.xaml`, with `FilesDrivesWindow`, `FilesDriveEditWindow` and `FilesTrashWindow` beside it; Music and Podcasts are `Views/Audio/`. |
+| `SentinelCore.Client.Tests` | 541 tests over the client library, including the DNS-SD parser, the connect/fallback sequence, the Files transfers, weather, movies and downloads, board automations and the music player's logic. On a Mac, 8 of them (the DPAPI credential tests) fail because DPAPI is Windows-only. |
 | `SentinelCore.App.Tests` | 36 tests over the presentation layer — row wording, badges, converters, relative time, and a smoke test that builds every screen. |
 
 ## Where things are kept

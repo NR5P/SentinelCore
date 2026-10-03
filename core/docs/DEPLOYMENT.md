@@ -91,9 +91,15 @@ you'd rather do it by hand.
   Settings. See the User Guide's
   [Vision analysis backend](USER_GUIDE.md#8-vision-analysis-backend--local-cloud-or-both)
   section.
-- **ffmpeg**, installed and on `PATH` — required by the Web project for the Cameras/Live/
-  Events tabs (it shells out to ffmpeg for HLS streaming, snapshot capture, and clip
-  extraction)
+- **ffmpeg** (with `ffprobe` beside it), installed and on `PATH` — required by the Web project
+  for the Cameras/Live/Events tabs (it shells out to ffmpeg for HLS streaming, snapshot capture,
+  and clip extraction), and by Movies & TV, Music and Podcasts (see
+  [section 6a](#6a-what-the-media-files-and-home-features-need-on-the-server)). The distro
+  package is enough: Ubuntu 26.04's ffmpeg 8.0 is what the reference box runs.
+- Optional: **whisper.cpp** (`whisper-cli`) and a `ggml-*.bin` model, only if you want the
+  server to write podcast transcripts (off by default)
+- Optional, Linux only: the **movie downloads** stack (a VPN, Prowlarr, qBittorrent), installed
+  by its own script - see [section 8d](#8d-movie-downloads-linux-optional)
 - **git**
 - Optional but useful: `sqlite3` (to query the databases directly), `openssl` (to generate a
   random API key), `curl` (for health checks)
@@ -163,13 +169,22 @@ dotnet build-server shutdown
 dotnet build -c Release
 ```
 
+If it comes straight back, build without the build servers and parallel nodes, which has always
+got past it:
+
+```bash
+dotnet build -c Release --disable-build-servers -m:1
+```
+
+`scripts/deploy.sh` does both of these retries for you (see [section 9](#9-the-deploy-script)).
+
 ## 5. Running the tests
 
 ```bash
 dotnet test
 ```
 
-About 1,360 tests, roughly two minutes. Worth running before every deploy: it's the one thing
+About 1,950 tests, a few minutes. Worth running before every deploy: it's the one thing
 standing between a bad change and the live alert pipeline.
 
 Occasionally the test host aborts partway ("Test process crashed with exit code 133/134") with no
@@ -296,6 +311,10 @@ fine if you have the RAM to spare and a problem if you don't.
   stream URL actually carries video. Left unset, it's derived from `FfmpegPath` (swapping `ffmpeg`
   for `ffprobe` in the same location), which is correct for the overwhelming majority of installs
   since the two ship side by side. Only set this if `ffprobe` lives somewhere `ffmpeg` doesn't.
+- `FfprobePath` (top level, also not shown above) is the same override for Movies & TV, Music and
+  Podcasts, which use `ffprobe` to read video, audio and tag details while scanning. Left unset
+  it is derived from `FfmpegPath` the same way. It is a separate key from
+  `CameraDiscovery:FfprobePath`; set both if `ffprobe` really does live apart from `ffmpeg`.
 
 #### PTZ sections (both omitted above — code defaults are the intended setup)
 
@@ -338,7 +357,138 @@ moves your camera on its own by default, which is not something to discover from
   ~100 MB RF-DETR the `fastlocal` backend uses, downloaded once on first use. A default install
   never pays for it.
 
-Also do not expose port 3320 to the internet — there's no login on the dashboard.
+Also do not expose port 3320 to the internet. It trusts the local network (it is where the first
+admin account is created, and where `Auth:Enabled: false` turns the login off entirely); reach
+the dashboard from outside through Internet Exposed Mode
+([section 14b](#14b-internet-exposed-mode-optional)) instead.
+
+## 6a. What the media, files and home features need on the server
+
+Movies & TV, Music, Podcasts, movie downloads, the home alarm, Family Files, Weather and weather
+alerts are all switched on and configured from the dashboard's Settings and their own tabs - no
+hand-editing and no restart. Their settings are stored in the main app's `appsettings.json` like
+everything else, under `Media`, `Music`, `Podcasts`, `MediaDownloads`, `Alarm`, `FamilyFiles`,
+`WeatherAlerts` and `Location`. This section is only what the *server* has to provide for them.
+How to use them is in [USER_GUIDE.md](USER_GUIDE.md); the API contracts are
+[MOVIES.md](MOVIES.md), [MOVIE_DOWNLOADS.md](MOVIE_DOWNLOADS.md) and
+[MUSIC_AND_PODCASTS.md](MUSIC_AND_PODCASTS.md).
+
+**Which are on out of the box.** Movies & TV, Music, Podcasts, the Alarm and Family Files are on
+by default; each tab just shows an empty "add a library / add a sensor" state until there is
+something in it. Movie downloads and Weather Alerts are off until you turn them on.
+
+**Decide where the big folders go before anyone uses them.** Apart from the media libraries
+themselves, everything below lives in the dashboard's data folder (`<data>` -
+`CamerasDataDirectory`, `SentinelCore.Web/data/` by default) unless you point it elsewhere, and
+on a small system disk the first two rows fill it quickly. Changing
+either folder later does not move what is already there.
+
+| What | Default location | Moved by |
+|---|---|---|
+| Downloaded podcast episodes (capped at 50 GB by default) | `<data>/podcasts/` | Settings → PODCASTS → Download Folder, Storage Limit |
+| The Family Files library | `<data>/family-files/library/` | Settings → FAMILY FILES → Library Folder |
+| Movie, TV and music libraries | Wherever you point each library | The Movies tab / Music → Libraries |
+| Movie HLS sessions, extracted subtitles, TMDB artwork | `<data>/media-hls/`, `media-subs/`, `media-art/` | - (caches; HLS sessions are wiped at startup) |
+| Music covers, tracks converted for a device | `<data>/music-art/`, `<data>/audio-cache/` | - (caches) |
+| Catalogs and per-person history | `media.db`, `media-downloads.db`, `music.db`, `podcasts.db`, `audio.db`, `alarm.db` in `<data>/` | - |
+
+The services run as `APP_USER` (`media` by default, see section 8), so every library folder must
+be readable by that account - and writable where you want a movie's **Delete** button to work or
+downloads to be filed into it.
+
+### Movies & TV
+
+- **ffmpeg** plays anything a device can't take as it is. An MP4 the device decodes is served
+  directly; anything else is remuxed to HLS on the fly, with MP3 audio converted to AAC (Apple
+  players refuse MP3 inside HLS) and video re-encoded with `libx264` when the device can't decode
+  it. A remux finishes in a minute or two; a re-encode runs at roughly real time and is the
+  heaviest thing this feature asks of the CPU.
+- **Files stamped in decode order** (the "picture wiggles back and forth" fault some downloads
+  have) are found by the scan and copied through ffmpeg's `dts2pts` bitstream filter, or
+  re-encoded to H.264 when this ffmpeg's `dts2pts` doesn't handle the codec. Ubuntu 26.04's
+  ffmpeg 8.0 handles H.264 only; HEVC needs 8.1. `ffmpeg -h bsf=dts2pts` shows what yours
+  handles - the server asks the same thing once at startup.
+- Without ffmpeg the library still scans and browses, `GET /api/media/status` reports
+  `ffmpegAvailable: false`, and playback of a file that needs converting answers 503.
+- **TMDB API key** (optional, free from themoviedb.org): Settings → MOVIES & TV → TMDB API Key.
+  Either the v3 key or the v4 read-access token works. Without it titles come from file names
+  and only artwork sitting beside the files is shown.
+- **Folders on other computers** (Windows file sharing, a Mac with File Sharing on, a NAS) are
+  read by the server itself over SMB 2/3 - nothing is mounted, no root, the same on Linux,
+  Windows and macOS. Library paths look like `smb://192.168.1.20/Movies`. The server needs
+  outbound TCP 445 to that computer; finding computers on the network uses mDNS (`_smb._tcp`),
+  which Windows PCs don't advertise, so type those by name or address. Sign-ins are kept in
+  `<data>/media-network.json` and go into backups. A share is read-only to SentinelCore: it can't
+  receive downloads and a movie on one can't be deleted from the apps.
+
+### Music
+
+- ffmpeg converts a track to AAC (Settings → MUSIC → Converted Quality, 256 kbps by default) only
+  for a device that can't play the original. Tags and cover art are read in-process; `ffprobe` is
+  only the fallback for files the tag reader can't open.
+- **Find Missing Album Covers** (MusicBrainz + Cover Art Archive) and **Find Missing Lyrics**
+  (LRCLIB) are on by default and send only artist/album/title details out. Turn them off on a
+  server with no internet access.
+- Music libraries on other computers use the same SMB sign-ins as Movies & TV.
+
+### Podcasts
+
+- The server fetches each followed feed itself (every 60 minutes by default) and searches Apple's
+  podcast directory (`itunes.apple.com`), so it needs outbound HTTPS. A show nobody follows is
+  never checked.
+- **Voice boost** and **trim silence** run through ffmpeg (`highpass`, `acompressor`,
+  `dynaudnorm`, `silencedetect`, `atrim` and `concat` - all in a stock build). Trim silence uses
+  `atrim` + `concat` rather than `aselect` because ffmpeg 8.0's `aselect` lets every audio frame
+  through, which produced "trimmed" episodes as long as the original.
+- **Transcripts** (off by default) need whisper.cpp on this machine. On a Mac:
+  `brew install whisper-cpp`; on Linux build it from github.com/ggerganov/whisper.cpp. Then set
+  Settings → PODCASTS → Whisper Command (`whisper-cli` if it's on `PATH`, otherwise a full path),
+  Whisper Model (the full path to a model from huggingface.co/ggerganov/whisper.cpp;
+  `ggml-base.en.bin` is a good start) and Whisper Threads (default 4). Expect an hour-long
+  episode to take 10-30 minutes on a CPU, and the rest of the server to slow down while it runs.
+  Shows that publish their own transcripts need none of this.
+
+### Weather and weather alerts
+
+- Set the server's position under Settings → LOCATION first. The forecast comes from the US
+  National Weather Service, so only locations inside the US get one; elsewhere the tab says so.
+- The server talks to `api.weather.gov` (with its own identifying `User-Agent`, which the NWS
+  requires - nothing to configure) and proxies the radar map from the NWS map server
+  (`opengeo.ncep.noaa.gov`), the Storm Prediction Center, the Iowa Environmental Mesonet and
+  Esri's basemap, so browsers and apps only ever talk to this server. Nothing is fetched unless
+  someone has the tab open or a morning briefing reads the weather out.
+- **Weather Alerts** (Settings → WEATHER ALERTS, off by default) has the server ask the NWS every
+  5 minutes and send new watches and warnings through the same channels as the outage alerts
+  (email, Telegram, push). **send test alert** checks the channels without waiting for a storm.
+
+### The home alarm
+
+- It hears its sensors over MQTT, so `Mqtt:Enabled` and `DeviceHub:Enabled` must both be on, and
+  the sensors must be Device Hub devices - Zigbee door, window, motion, leak and smoke sensors
+  published by Zigbee2MQTT to the same broker are the intended setup. Sirens are Device Hub
+  switches.
+- Set `Mqtt:Username`/`Mqtt:Password` once the alarm is in use (see
+  [section 14](#14-firewall)): with an anonymous broker, anything on the LAN can publish to the
+  topics the alarm listens on.
+- The PIN, delays and zones are set on the ALARM tab; the PIN hash is in `alarm.db` and the backup.
+
+### Family Files
+
+- Each backup drive is either a **folder** - a USB disk or network share mounted on this machine,
+  which must be mounted and writable by `APP_USER` when the nightly pass runs - or another
+  computer over **SFTP**. Add as many as you like on the FILES tab.
+- The nightly backup and duplicate check run at 04:00 by default (Settings → FAMILY FILES →
+  Hour/Minute, in the Schedules time zone); deleted files and retired duplicates wait 30 days in
+  `<data>/family-files/trash/`. The largest single upload is 4096 MB by default (Largest File).
+- The library is **not** in the backup file (it can be far bigger than everything else); the
+  drives are its backup, and **bring files back** on the FILES tab rebuilds it from any one of
+  them.
+
+### Kiosk mode
+
+A per-device browser setting, nothing on the server: add `?kiosk=1` to a wall display's start URL
+(or tick the kiosk switch in its Settings) and that browser hides hint tooltips, shows hover-only
+buttons and enlarges tap targets. `?kiosk=0` turns it off.
 
 ## 7. Running interactively (no systemd)
 
@@ -569,6 +719,97 @@ What differs from Linux:
 instead of `systemctl` automatically, so `git pull && ./scripts/deploy.sh` works unchanged on
 either platform.
 
+### 8d. Movie downloads (Linux, optional)
+
+Only needed for "+ Add" on the Movies and Music tabs (Settings → MOVIE DOWNLOADS, off by default).
+Prowlarr (searches the torrent sites) and qBittorrent (downloads) run as systemd units inside a
+network namespace, `scvpn`, whose only route out is a VPN tunnel - if the VPN drops they have no
+route at all rather than falling back to the home connection. No Docker. The design is in
+[MOVIE_DOWNLOADS.md](MOVIE_DOWNLOADS.md); this is the install.
+
+It needs a systemd Linux with `apt` (Debian/Ubuntu), `sudo` once, and usually your VPN provider's
+WireGuard `.conf` or OpenVPN `.ovpn` file (the "manual" or "router" setup file from its website).
+From the checkout:
+
+```bash
+sudo ./downloads/install-downloads.sh --vpn-config ~/Downloads/mullvad-se-sto.conf
+sudo ./downloads/install-downloads.sh --vpn-config us1234.nordvpn.com.udp.ovpn --vpn-user SERVICE_USER --vpn-pass SERVICE_PASS
+sudo ./downloads/install-downloads.sh        # no file: choose the VPN in Settings afterwards
+```
+
+`--vpn-user`/`--vpn-pass` are an OpenVPN provider's *service* credentials, not your website
+login. `--user NAME` names the account SentinelCore runs as (default: whoever ran `sudo`, which
+must be the same `APP_USER` the services run as). The script is not in the prebuilt release
+.zip - it lives in `core/downloads/` of the repository.
+
+What it installs:
+
+| | Where |
+|---|---|
+| Packages | `wireguard-tools openvpn qbittorrent-nox curl sqlite3 iproute2 xvfb` and the current `libicu` |
+| Prowlarr (updates itself, so owned by `APP_USER`) | `/opt/sentinelcore-prowlarr` |
+| FlareSolverr (gets past Cloudflare checks; x86_64 only - elsewhere it's skipped and sites behind Cloudflare fail to add) | `/opt/sentinelcore-flaresolverr` |
+| qBittorrent and Prowlarr settings, Prowlarr's site list, the VPN choice from Settings | `/var/lib/sentinelcore-downloads/` |
+| The VPN file given with `--vpn-config` (root only) | `/etc/sentinelcore/vpn/` |
+| The tunnel helper | `/usr/local/lib/sentinelcore-downloads/sentinelcore-vpn` |
+| Units | `sentinelcore-downloads.target` plus `sentinelcore-vpn`, `-vpn-watch`, `-qbittorrent`, `-prowlarr`, `-flaresolverr` |
+| Permission for `APP_USER` to start/stop/restart exactly those six units, nothing else | `/etc/polkit-1/rules.d/50-sentinelcore-downloads.rules` |
+
+With a VPN file it then **tests itself**: starts everything as `APP_USER` (which also proves the
+polkit rule works), waits for the tunnel, checks qBittorrent, Prowlarr and FlareSolverr answer,
+prints your home address next to the address seen through the VPN, fails if they're the same,
+and stops everything again. `--skip-test` skips that; it's skipped anyway when no VPN file was
+given.
+
+After that nothing runs until it's needed. The target is never started at boot: SentinelCore
+starts it when someone searches, downloads or manages sites, and stops it once nothing has needed
+it for Settings → MOVIE DOWNLOADS → Switch Off After (5 minutes by default). Downloads left
+unfinished by a restart resume by themselves.
+
+**Choosing the VPN.** Settings → MOVIE DOWNLOADS → VPN Provider: the file installed above, a
+**Mullvad account number** (the server makes its own WireGuard key, registers it as one of the
+account's devices via `api.mullvad.net`, and picks a server in the chosen location), or **another
+WireGuard provider's** five values. OpenVPN providers only work as the installed file. With
+Mullvad, the owner is warned through the usual alert channels a week before the account runs out
+and again when it has. To swap the installed file later:
+`sudo /usr/local/lib/sentinelcore-downloads/sentinelcore-vpn set-config NEWFILE`
+(add `--user U --pass P` for OpenVPN).
+
+**Use VPN For Movie Downloads** is on by default. Off, the same services use the home connection
+directly and every app shows an amber warning while it stays off.
+
+Things that bite on a real network:
+
+- **Ubuntu's AppArmor** only lets `wg` and `wg-quick` read `/etc/wireguard`, even as root. The
+  helper strips the WireGuard file itself and hands `wg setconf` a short-lived copy under
+  `/etc/wireguard/` for that reason - leave that directory alone.
+- **MTU.** The tunnel measures the path to the VPN server when it starts and sizes itself to fit,
+  unless the WireGuard file sets `MTU`. Connections that carry less than the usual 1500 bytes
+  (T-Mobile Home Internet carries about 1440) otherwise pass the handshake and DNS and then hang
+  every TLS connection. If you set `MTU` in the file yourself, you've turned that off.
+- **Firewall.** Nothing to open. Prowlarr (`10.250.0.2:9696`), qBittorrent (`:8080`) and
+  FlareSolverr (`:8191`) are only reachable from this host, over the namespace's private link.
+
+Downloads are filed only into libraries on this server's own disks (not `smb://` shares), and the
+files are written as `APP_USER`.
+
+Checking on it:
+
+```bash
+cat /run/sentinelcore-vpn/status.json      # what the 45-second tunnel check last saw
+journalctl -u sentinelcore-vpn -u sentinelcore-vpn-watch -n 50 --no-pager
+journalctl -u sentinelcore-qbittorrent -u sentinelcore-prowlarr -u sentinelcore-flaresolverr -n 50 --no-pager
+```
+
+SentinelCore refuses to search or download unless that status says connected **and** its address
+differs from the server's own. `sudo ./downloads/install-downloads.sh --uninstall` removes the
+units, the polkit rule and the namespace, and keeps `/var/lib/sentinelcore-downloads`, the two
+`/opt` folders and `/etc/sentinelcore/vpn`.
+
+On Windows, macOS, or with a Prowlarr and qBittorrent you already run behind a VPN: turn **Start
+And Stop The Services** off and point the two addresses at yours. They must run on this same
+machine - finished files are moved, not copied over the network.
+
 ## 9. The deploy script
 
 `scripts/deploy.sh` automates build → test → restart for whichever service(s) changed:
@@ -592,6 +833,12 @@ It runs (in order): a check that it will be able to restart the services at all,
 build-server shutdown` (safety, see section 4), `dotnet build -c Release`, `dotnet test` (set
 `SKIP_TESTS=1` to skip — not recommended), then the systemd restart(s), then a status +
 health-check summary. If the build or tests fail, it stops before touching the running services.
+
+A failed build is tried up to three times. The .NET SDK on the reference box sometimes dies with
+`Internal CLR error (0x80131506)` before compiling anything, so a retry is safe; the second and
+third attempts shut the build servers down again and build with `--disable-build-servers -m:1`,
+which is what always got past it by hand. Three failures in a row is a real build error: the
+script prints `ERROR: the build failed three times. Nothing was restarted.` and exits.
 
 It needs `sudo` for the `systemctl restart` calls — either enter your password each time it
 prompts, or see the next section to make that passwordless.
@@ -767,6 +1014,13 @@ sudo systemctl restart sentinelcore
 sudo systemctl restart sentinelcore-web
 ```
 
+If you installed movie downloads ([section 8d](#8d-movie-downloads-linux-optional)) and the
+update touched `core/downloads/` (`git diff ORIG_HEAD --stat -- downloads` right after the
+pull shows whether it did), re-run `sudo ./downloads/install-downloads.sh` too. `deploy.sh` never touches
+that side: the tunnel helper, units and polkit rule are copies under `/usr/local/lib`,
+`/etc/systemd/system` and `/etc/polkit-1`, so a pull alone leaves the old ones running. A re-run
+keeps your VPN choice, sites and qBittorrent settings.
+
 Configuration changes to `appsettings.json` (most of them — see the note in
 [USER_GUIDE.md § Settings](USER_GUIDE.md#7-the-settings-tab) about the handful of fields that
 need a restart) take effect live without any of the above; a restart is only needed after
@@ -862,6 +1116,22 @@ Camera discovery (Test Connection / Discover Cameras on the CAMERAS tab) needs n
 at all — it's outbound only, from this host to a camera, so `ufw`'s default incoming-only rules
 don't affect it. Nothing listens for a reply on an open port; it only runs when you click one of
 those two buttons, never in the background.
+
+The media, files and home features ([section 6a](#6a-what-the-media-files-and-home-features-need-on-the-server))
+need **no inbound rules either** - every app reaches them over the dashboard's own ports. What
+they need is outbound access, worth knowing on a network that filters it:
+
+| Feature | Connects out to |
+|---|---|
+| Movies & TV | `api.themoviedb.org`, `image.tmdb.org` (only with a TMDB key); TCP 445 to computers whose shares are libraries |
+| Music | `musicbrainz.org`, `coverartarchive.org`, `lrclib.net` (each switchable off); `api.listenbrainz.org` for anyone who connects ListenBrainz |
+| Podcasts | Each followed show's feed and media host; `itunes.apple.com` for search and charts |
+| Weather | `api.weather.gov`, `radar.weather.gov`, `opengeo.ncep.noaa.gov`, `www.spc.noaa.gov`, `mesonet.agron.iastate.edu`, `server.arcgisonline.com` |
+| Movie downloads | `api.ipify.org` (the home-address check) and, with Mullvad, `api.mullvad.net`; everything else goes through the VPN tunnel |
+| Family Files, Nightly Auto Export | The SFTP servers you configure (TCP 22 unless you set another port) |
+
+The movie-download services' own ports are covered in
+[section 8d](#8d-movie-downloads-linux-optional): don't open them.
 
 ## 14a. HTTPS (on by default, no setup required)
 
@@ -1092,9 +1362,21 @@ unaffected either way.
 ## 15. Troubleshooting
 
 **Build fails with `Fatal error. Internal CLR error. (0x80131506)`.** Known MSBuild
-build-server flakiness. Run `dotnet build-server shutdown` and retry. If that alone doesn't
-clear it, find and kill any stale `MSBuild.dll` / `VBCSCompiler` processes by PID
+build-server flakiness. Run `dotnet build-server shutdown` and retry, then
+`dotnet build -c Release --disable-build-servers -m:1` (`deploy.sh` already does both). If that
+doesn't clear it, find and kill any stale `MSBuild.dll` / `VBCSCompiler` processes by PID
 (`ps aux | grep -E "MSBuild|VBCSCompiler"`) and retry again.
+
+**Movies play but some won't convert, or `ffmpegAvailable` is false.** Check
+`journalctl -u sentinelcore-web` for the ffmpeg error, and that `FfmpegPath`/`FfprobePath` point
+at a working pair (section 6). A movie whose picture jumps back and forth is a file stamped in
+decode order: see [section 6a](#movies--tv) for what this ffmpeg can repair on the fly.
+
+**Movie downloads say the VPN isn't connected.** `cat /run/sentinelcore-vpn/status.json` and
+`journalctl -u sentinelcore-vpn -n 50`; [section 8d](#8d-movie-downloads-linux-optional) lists
+the usual causes (an expired Mullvad account, AppArmor, MTU). Re-running
+`sudo ./downloads/install-downloads.sh` repeats the self-test without changing anything you've
+set up.
 
 **Service won't bind its port ("Address already in use").** Something else — often a leftover
 test/scratch instance, or the service already running — is holding that port. Find it with
@@ -1136,9 +1418,15 @@ sudo rm /etc/systemd/system/sentinelcore-web.service
 sudo systemctl daemon-reload
 ```
 
+If you installed movie downloads, remove them first with
+`sudo ./downloads/install-downloads.sh --uninstall` (see
+[section 8d](#8d-movie-downloads-linux-optional) for what that keeps).
+
 This does not delete the repo, its data (`data/`, `cameras.db`, `triggers.db`, images,
-clips), or the sudoers rule from [section 10](#10-passwordless-restarts-optional) — remove
-those separately if you want them gone too.
+clips - and, under `SentinelCore.Web/data/` unless you moved them, the Family Files library and
+downloaded podcast episodes), your movie and music folders, or the sudoers rule from
+[section 10](#10-passwordless-restarts-optional) — remove those separately if you want them gone
+too.
 
 ## 17. Prebuilt release packages (no SDK required)
 
@@ -1282,6 +1570,12 @@ The full backup is one `.zip` (or, with a passphrase, an encrypted `.scbackup`) 
 - the main service's Device Hub devices, automation rules and schedules;
 - every Organizer note, event, reminder, board, card and comment, **with the attached files**,
   plus each person's calendar-feed link and Organizer preferences, and every board automation;
+- the home alarm's sensors and settings (including the PIN hash) and the Family Files backup
+  drives (with their SFTP passwords);
+- the Movies & TV libraries, saved sign-ins to other computers' shares, and everyone's watched
+  progress, My List and play history; the Music libraries, plays, loves, ratings and playlists;
+  podcast subscriptions, per-show settings, progress, Up Next queues and bookmarks; wake-up
+  alarms and ListenBrainz connections;
 - known faces **with their reference photos**, and the licence file;
 - this server's HTTPS certificate authority (`certs/ca.crt` + `ca.key`) and HomeKit pairing,
   which are only put back when you tick *This is a replacement server* while restoring.
@@ -1300,6 +1594,9 @@ What is still **not** in any backup, deliberately:
 | Not in the backup | Why, and what it means after a machine loss |
 |---|---|
 | Events, captured images, recorded video, review marks | History, not configuration, and far too large. Back up `SentinelCore/data/` separately if you want to keep it. |
+| The Family Files library itself | Far bigger than everything else. Its backup drives are its backup: after restoring, use **bring files back** on the FILES tab. |
+| Movie, TV and music files; downloaded podcast episodes; transcripts | Your media folders are yours to back up. Catalogs, artwork and covers are rebuilt by a rescan; episodes are downloaded again when wanted. |
+| Movie download history, the alarm's event log | History, not configuration. |
 | Login sessions | Everyone signs in again. A restored session would be a live login handed to another machine. |
 | Push registrations | Each phone re-registers the next time the app connects. |
 | A schedule's next-due time, a gate's last seen state | Worked out afresh on the restored install, so nothing fires for things that "should" have happened while it was down. |

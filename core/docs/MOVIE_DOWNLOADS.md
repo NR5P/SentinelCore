@@ -44,6 +44,9 @@ What is downloaded is the household's responsibility; the server ships with no s
     the library already has the show.
 - Only libraries on the server's own disks can receive downloads (not `smb://` ones).
 
+The Music tab's "+ Add" for albums runs on this same stack, settings and sites
+(`MusicDownload*.cs`, contract in MUSIC_AND_PODCASTS.md).
+
 Code: `MediaDownload*.cs`, `QbittorrentClient.cs`, `ProwlarrClient.cs`, `MediaReleaseRanker.cs`
 in `SentinelCore.Web`; the installer, VPN helper and units in `core/downloads/`.
 
@@ -58,7 +61,8 @@ WireGuard `.conf` (Mullvad, ProtonVPN, IVPN, Surfshark, Windscribe, AirVPN) or O
 (NordVPN, PIA, ExpressVPN, ...). It installs `wireguard-tools openvpn qbittorrent-nox`, Prowlarr to
 `/opt/sentinelcore-prowlarr`, data to `/var/lib/sentinelcore-downloads`, the helper to
 `/usr/local/lib/sentinelcore-downloads/sentinelcore-vpn`, the VPN config to
-`/etc/sentinelcore/vpn/` (root only), five systemd units and
+`/etc/sentinelcore/vpn/` (root only), six systemd units (`sentinelcore-downloads.target` and the
+`-vpn`, `-vpn-watch`, `-qbittorrent`, `-prowlarr` and `-flaresolverr` services) and
 `/etc/polkit-1/rules.d/50-sentinelcore-downloads.rules`, then starts everything once, prints the
 home and VPN addresses and stops it again. Changing VPN later:
 `sudo /usr/local/lib/sentinelcore-downloads/sentinelcore-vpn set-config NEWFILE`.
@@ -66,8 +70,8 @@ home and VPN addresses and stops it again. Changing VPN later:
 
 Elsewhere (Windows, macOS, a qBittorrent you already run): turn **Start And Stop The Services**
 off and point the two addresses at your own Prowlarr and qBittorrent, which must run on the same
-machine as SentinelCore and already be behind a VPN; turn **Require The VPN** off only if nothing
-here can check it.
+machine as SentinelCore and already be behind a VPN; turn **Use VPN For Movie Downloads** (`useVpn`)
+off only if nothing here can check it.
 
 ## Settings section `mediaDownloads` (`PUT /api/settings/media-downloads`)
 
@@ -158,12 +162,17 @@ has run out"); each once per paid-until date, so adding time sets both up again.
 
 | look | when | words |
 |---|---|---|
-| green | `connected` and `verified` | "VPN · SE" / "Connected and verified · Stockholm, SE · ip · your home address is hidden" |
-| cyan, pulsing | `connected` not yet verified, `connecting`, or `services: starting` | "Connecting…" / "checking it hides your home address…" |
-| grey | `off` / `unknown` (idle) or `services: external` | "VPN idle" / "Off until someone searches or downloads, then it connects by itself." |
 | amber | `disabled` | "VPN off" / "Turned off in Settings · searching and downloading use your home connection, so the sites see your home address." |
-| red | `services: notInstalled` or `failed`, or `vpn.state: down` | "VPN problem" / `vpn.error` or "not installed" |
-| red | `vpn.account.expired` (checked after `disabled` and `notInstalled`, before `connected`) | "VPN out of time" / "Your Mullvad account ran out of time on Oct 27. Add time at mullvad.net and downloads work again." |
+| red | `services: notInstalled` | "VPN not set up" / "The VPN and torrent services are not installed on the server yet. Run core/downloads/install-downloads.sh on it once." |
+| red | `vpn.account.expired` | "VPN out of time" / "Your Mullvad account ran out of time on Oct 27. Add time at mullvad.net and downloads work again." |
+| green | `connected` and `verified` | "VPN · SE" ("VPN on" with no country) / "Connected and verified · Stockholm, SE · ip · your home address is hidden" |
+| cyan, pulsing | `connected`, not yet `verified` | "VPN checking" / "Connected · Stockholm, SE · ip · checking it hides your home address…" |
+| cyan, pulsing | `connecting`, or `services: starting` | "VPN connecting" / "Connecting…" |
+| red | `services: failed`, or `vpn.state: down` | "VPN problem" / `vpn.error`, else "The VPN or torrent services failed to start…" |
+| grey | `services: external` | "VPN idle" / "qBittorrent and Prowlarr are run outside this server; the VPN is checked when they are used." |
+| grey | otherwise (`off` / `unknown`, the normal idle state) | "VPN idle" / "Off until someone searches or downloads, then it connects by itself." |
+
+Rows are checked top to bottom; the first that matches wins.
 
 **The account line** (Downloads screen, under the light; nothing when `vpn.account` is null).
 Dates are the device's local date as "Oct 27", with ", 2027" added when not this year:
@@ -210,7 +219,9 @@ Then poll `GET /api/media/downloads/search/{id}` every second until `phase` is `
 ```
 
 `message` is what to show under the spinner (or the failure). The first search after idle takes
-10-30 s while the VPN and services start. `results` are the releases that are what was asked for
+10-30 s while the VPN and services start. A title starting with "The", "A" or "An" is also searched without it
+(some sites find nothing for "The Addams Family" but plenty for "Addams Family"); results are
+still matched against the full title. `results` are the releases that are what was asked for
 and have people sharing them, best first; `others` are the rest (different title/year/episode,
 nobody sharing) - show them collapsed. Searches expire after 30 minutes (404).
 
@@ -240,7 +251,9 @@ Release = { "id": "r1", "title": "Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.H.264-F
   Offer Replace only when `canReplace` (false for a copy on another computer's share). Episodes
   never ask; the show picker already marks owned episodes.
 - `GET /api/media/downloads` → `{ "status": {…as above}, "active": [ Download ], "recent": [ Download ] }`.
-  Poll every 2-3 s while `active` is not empty. `recent` is the last 30 finished.
+  Poll every 2-3 s while `active` is not empty. `recent` is the last 30 finished. Album downloads
+  (the Music tab's "+ Add", same queue, VPN and sites - MUSIC_AND_PODCASTS.md "Getting music") are
+  left out; they have their own list under `/api/music/downloads`.
 - `GET /api/media/downloads/{id}` → Download.
 - `DELETE /api/media/downloads/{id}` → 204. Cancels an active download (its files are deleted) or
   removes a finished one from the history.

@@ -147,7 +147,7 @@ Unknown fields must be preserved and round-tripped, so an older client never era
 |---|---|
 | **note** | `title`, `body` (Markdown, with `- [ ]` checklists), `pinned`, `color`, `tags[]`, `archived`, `links` |
 | **event** | `title`, `notes`, `location`, `start`, `end`, `allDay`, `timeZone` (IANA), `recurrence`, `exdates[]`, `seriesId` + `originalStart`, `alerts`, `color`, `links` |
-| **reminder** | `title`, `notes`, `due`, `allDay`, `recurrence`, `priority` (0 none, 1 low, 2 medium, 3 high), `flagged`, `completed`, `completedAt`, `alerts`, `links`, `position` |
+| **reminder** | `title`, `notes`, `due`, `allDay`, `recurrence`, `priority` (0 none, 1 low, 2 medium, 3 high), `flagged`, `completed`, `completedAt`, `alerts`, `links`, `position`, `appleReminderId` |
 | **board** | `title`, `color`, `archived`, `position` |
 | **column** | `title`, `position` |
 | **card** | `title`, `description` (Markdown), `position`, `labels[{name,color}]`, `due`, `completed`, `checklist[{id,text,done}]`, `assignees[]` (usernames), `cover` (attachment id), `links` |
@@ -162,6 +162,7 @@ Details for events:
 
 Details for reminders:
 - **Completing a repeating reminder** moves `due` to the next occurrence and leaves `completed` false.
+- **Imported from Apple Reminders.** The iPhone/iPad/Mac app can empty a chosen Apple Reminders list into the Organizer (a per-device setting). Such a reminder carries `appleReminderId` (EventKit's external identifier) and its id is `apple-` plus the first 16 bytes of that identifier's SHA-256 in hex, so two devices importing the same iCloud reminder make one item, and a deleted import is never brought back. Other clients just round-trip the field.
 
 ## Holiday calendars
 
@@ -178,11 +179,23 @@ People can add holiday calendars to the calendar: US federal holidays, US observ
 
 ## Board automations
 
-Rules that change boards on their own ("every morning at 7, create *pick up eggs* in New items"; "when a card is moved into Done, mark it done") run **on the server**, in `SentinelCore.Web/OrganizerAutomationEngine.cs`. They are built in the web dashboard, stored in `organizer-automations.db` (and the server backup), and are **not items**: they never sync, and clients need nothing new to support them.
+Rules that change boards on their own ("every morning at 7, create *pick up eggs* in New items"; "when a card is moved into Done, mark it done") run **on the server**, in `SentinelCore.Web/OrganizerAutomationEngine.cs`. They are built in the web dashboard or from a board's Automations button in the iPhone/iPad/Mac, Android and Windows apps (all through the endpoints below), stored in `organizer-automations.db` (and the server backup), and are **not items**: they never sync, and clients need nothing new to support them.
 
 What a rule does reaches devices as ordinary changes from `ApplyChangesAsync`, made as the person who last saved the rule. Their clocks end in `-automation` (for example `1790000000000-0000-automation`), and the server sends the usual silent push. Clients must not special-case that device id. It exists so the engine can tell its own changes from people's.
 
 Endpoints, under `/api/organizer`: `GET /automations?boardId=`, `POST /automations`, `PUT` and `DELETE /automations/{id}`, `POST /automations/{id}/run` (scheduled rules only), `GET /automations/{id}/runs`, and `POST /automations/preview` (body: a schedule; answers the next three run times).
+
+## Shared parsing rules
+
+Some things are not protocol but must behave the same on every surface, so their examples live in shared case files that each port's tests read. Change a port and its case file together.
+
+| file | what | read by |
+|---|---|---|
+| `core/docs/note-checklist-cases.json` | Note checklists: a checklist item is a plain Markdown line `- [ ] milk` / `- [x] milk` in `body`; what progress, adding, removing, clearing ticked items, making a checklist and Enter on an item do to the text. | web (`note-checklist.test.js`), `OrganizerKit` `NoteChecklistTests`, Android `NoteChecklistTest`, Windows `NoteChecklistTests` |
+| `core/docs/voice-phrase-cases.json` | A spoken reminder split into `title` and `due` (the Reminders microphone button). | web (`voice-phrase.test.js`), `OrganizerKit` `VoicePhraseTests`, Android `VoicePhraseTest` |
+| `core/docs/quick-capture-cases.json` | A Quick Add widget line ("put dentist on my calendar Friday from 2 to 3pm") becoming a reminder, note or event, with its `due` or `start`/`end`. | `OrganizerKit` `QuickCaptureTests`, Android `QuickCaptureTest` |
+
+Siri (App Intents on iPhone/iPad/Mac), Android voice shortcuts, the Quick Add widget and the share extension all create ordinary items in the device's local copy, which then sync like any other edit. Siri, the voice shortcuts and the Apple Reminders import refuse to add anything until the device has synced once and knows the person's spaces; before that the default space would be `family`, where everyone sees it.
 
 ## Alerts
 

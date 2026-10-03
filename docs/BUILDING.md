@@ -14,6 +14,8 @@ guide is how to build it and ship it, and the things that have gone wrong doing 
 | HomeKit sidecar | `core/homekit-bridge` | Node 22 | systemd service `sentinelcore-homekit` |
 | iPhone, iPad and Mac app | `ios/` | Swift 6 / SwiftUI | TestFlight → App Store (`com.sentinelcore.client`) |
 | &nbsp;&nbsp;Home Screen widgets | `ios/SentinelCoreWidgets` | WidgetKit | inside the iPhone app |
+| &nbsp;&nbsp;Mac widgets | `ios/SentinelCoreMacWidgets` | WidgetKit | inside the Mac app |
+| &nbsp;&nbsp;Quick Add widget source | `ios/SentinelCoreQuickAdd` | WidgetKit | compiled into both widget extensions |
 | &nbsp;&nbsp;Share extension | `ios/SentinelCoreShare` | UIKit + SwiftUI | inside the iPhone app |
 | &nbsp;&nbsp;Organizer engine | `ios/OrganizerKit` | Swift package | linked by the app, widgets, share extension and Apple TV app |
 | Apple TV app | `appletv/` | Swift / SwiftUI | TestFlight (`com.sentinelcore.client.tv`) |
@@ -24,8 +26,18 @@ Shared contracts that more than one part implements:
 
 - [`core/docs/ORGANIZER_SYNC.md`](../core/docs/ORGANIZER_SYNC.md) is the Organizer's sync protocol,
   implemented by the server, the dashboard and all four apps.
-- [`core/docs/voice-phrase-cases.json`](../core/docs/voice-phrase-cases.json) holds the spoken-reminder examples (read by the iPhone, Android and dashboard tests)
-  ("call mom tomorrow at 5") that the Apple and Android phrase parsers are both tested against.
+- [`core/docs/voice-phrase-cases.json`](../core/docs/voice-phrase-cases.json) holds the
+  spoken-reminder examples ("call mom tomorrow at 5") that the OrganizerKit, Android and dashboard
+  phrase parsers are all tested against.
+- [`core/docs/quick-capture-cases.json`](../core/docs/quick-capture-cases.json) does the same for
+  Quick Add ("put X on my calendar Friday from 2 to 3pm"), read by the OrganizerKit and Android
+  tests.
+- [`core/docs/note-checklist-cases.json`](../core/docs/note-checklist-cases.json) pins the
+  Markdown that note checklists read and write, read by the OrganizerKit, Android, Windows and
+  dashboard tests.
+- [`core/docs/MOVIES.md`](../core/docs/MOVIES.md), [`MOVIE_DOWNLOADS.md`](../core/docs/MOVIE_DOWNLOADS.md)
+  and [`MUSIC_AND_PODCASTS.md`](../core/docs/MUSIC_AND_PODCASTS.md) are the API contracts the apps
+  build their Movies & TV, "+ Add" and Music & Podcasts screens against.
 - [`core/docs/PUSH_NOTIFICATIONS.md`](../core/docs/PUSH_NOTIFICATIONS.md) covers the push providers
   (APNs, FCM, relay).
 
@@ -72,7 +84,7 @@ The short version for developers:
 ```bash
 cd core
 dotnet build -c Release        # all projects; the services run the Release output
-dotnet test                    # ~1,360 tests, about two minutes
+dotnet test                    # ~1,950 tests, several minutes
 ```
 
 - `dotnet test` occasionally aborts the test host partway ("Test process crashed with exit
@@ -102,23 +114,52 @@ cd core/homekit-bridge && npm test      # node_modules is committed; no install 
 
 ## 3. iPhone, iPad and Mac (`ios/`)
 
-One Xcode project, `ios/SentinelCore.xcodeproj`, with three targets. The `SentinelCore` scheme
-builds all three:
+One Xcode project, `ios/SentinelCore.xcodeproj`, with four targets. The `SentinelCore` scheme
+builds the app plus whichever extensions belong to the platform being built:
 
 | Target | Platforms | Bundle id | What it is |
 | --- | --- | --- | --- |
 | `SentinelCore` | iOS 17+, macOS 14+ | `com.sentinelcore.client` | the app |
-| `SentinelCoreWidgets` | iOS only | `com.sentinelcore.client.widgets` | Calendar, Reminders and Notes Home Screen widgets |
+| `SentinelCoreWidgets` | iOS only | `com.sentinelcore.client.widgets` | Calendar, Reminders, Notes, Alarm and Quick Add widgets |
 | `SentinelCoreShare` | iOS only | `com.sentinelcore.client.share` | "Sentinel Core" in the share sheet |
+| `SentinelCoreMacWidgets` | macOS only | `com.sentinelcore.client.macwidgets` | the Quick Add widget on the Mac (the first Mac extension) |
 
 The folders are Xcode *synchronized groups*: a new `.swift` file dropped into `ios/SentinelCore/`
-(or either extension's folder) is part of that target automatically, so there's no project file
-to edit.
+(or an extension's folder) is part of that target automatically, so there's no project file
+to edit. `ios/SentinelCoreQuickAdd/` is the one shared folder: both widget targets compile it, so
+the Quick Add widget is written once for iPhone and Mac.
 
-The app, the widgets and the share extension share an App Group, `group.com.sentinelcore.client`.
+The app, the iOS widgets and the share extension share an App Group, `group.com.sentinelcore.client`.
 The widgets read an Organizer snapshot the app writes there, and the share extension leaves
 shared text there for the app to turn into a note. The Mac app has no App Group, which is why
-the Mac gets a Services menu item instead of a share extension.
+the Mac gets a Services menu item instead of a share extension. The Mac widget extension is
+sandboxed with no App Group either: Quick Add reads nothing from the app, and each of its buttons
+is a `sentinelcore://capture?…` link that the app opens onto its Quick Add sheet (also File →
+Quick Add…, ⇧⌘N, on the Mac).
+
+**Embedding a platform-only extension.** In `project.pbxproj`, the iOS extensions are embedded
+with `platformFilter = ios;`, but a macOS-only embed needs the plural form,
+`platformFilters = (macos, );`, on both its build file and its target dependency. The singular
+`platformFilter = macos;` is silently ignored, and the iOS Simulator build then fails with
+"contains embedded content built for macOS". Build for the simulator after touching an embed.
+
+### Capabilities and permission strings
+
+Both platforms share `ios/Info.plist`; keys one platform doesn't read are ignored there.
+
+- **Usage strings:** camera and microphone (this device as a camera; the microphone also for the
+  Reminders mic button and Quick Add), speech recognition (the same two), local network,
+  Reminders (the Apple Reminders inbox). A new prompt needs its string here or the app crashes
+  when it asks.
+- **Background modes (iOS):** `remote-notification` and `fetch` for the Organizer's silent push
+  and background refresh (`BGTaskSchedulerPermittedIdentifiers` lists
+  `com.sentinelcore.client.organizer-refresh`), and `audio` so Music and Podcasts keep playing
+  with the screen locked.
+- **URL scheme:** `sentinelcore://`, used by the widgets.
+- **Mac sandbox** (`SentinelCore/SentinelCore.entitlements`): network client and server, camera,
+  audio input, calendars, push, and user-selected files read *and write*. The write half is for
+  saving a copy of a Family Files file.
+- **iOS** (`SentinelCore/SentinelCore-iOS.entitlements`): push and the App Group.
 
 ### Build
 
@@ -134,7 +175,16 @@ xcodebuild -project ios/SentinelCore.xcodeproj -scheme SentinelCore -configurati
 # a simulator (use `xcrun simctl list devices available` for ids)
 xcodebuild -project ios/SentinelCore.xcodeproj -scheme SentinelCore -configuration Debug \
   -destination 'id=<simulator-udid>' build
+
+# any simulator, as a compile check of the iOS-only code and the extension embeds
+xcodebuild -project ios/SentinelCore.xcodeproj -scheme SentinelCore -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
+
+Run the Mac and iOS builds one after the other, not at once: two `xcodebuild`s of this project
+fight over the shared Swift package cache and one fails with "Could not resolve package
+dependencies". The Mac build never compiles `#if os(iOS)` code or the iOS extensions, and the iOS
+builds never compile the Mac widget extension, so a change to either needs both.
 
 Swift 6 strict concurrency is on, so concurrency mistakes are compile errors. Two runtime traps
 the compiler doesn't catch:
@@ -152,7 +202,7 @@ The app targets have no test target; the logic lives in `ios/OrganizerKit`, whic
 
 ```bash
 swift test --package-path ios/OrganizerKit                         # unit tests; live-server tests skip
-scripts/with-organizer-servers.sh swift test --package-path ios/OrganizerKit   # everything (~77 tests)
+scripts/with-organizer-servers.sh swift test --package-path ios/OrganizerKit   # everything (~102 tests, 9 live)
 ```
 
 `with-organizer-servers.sh` starts two throwaway servers on loopback (ports 8911 and 8912, or
@@ -181,7 +231,9 @@ For a Swift model or wire-format change, a quick decode check needs no simulator
 
 ### Siri shortcuts (App Intents): rules App Store Connect enforces
 
-The app's Siri phrases are in `ios/SentinelCore/Organizer/OrganizerIntents.swift`.
+The app's Siri phrases are all in the `AppShortcutsProvider` in
+`ios/SentinelCore/Organizer/OrganizerIntents.swift`, including the alarm's, whose intents live in
+`ios/SentinelCore/Views/AlarmIntents.swift`.
 
 - **No intent title, description or dialog may contain the word "Siri".** App Store Connect
   rejects the whole iPhone build during processing with **ITMS-90626 Invalid Siri Support**. The
@@ -194,6 +246,9 @@ The app's Siri phrases are in `ios/SentinelCore/Organizer/OrganizerIntents.swift
 
 - Every App Shortcut phrase must contain `\(.applicationName)`. Siri matches the display name,
   "Sentinel Core".
+- Siri matches phrases closely. A wording that isn't listed doesn't reach the app at all: "Add a
+  reminder *to* Sentinel Core" went to Apple Reminders while only "…*in* Sentinel Core" was listed.
+  List the to/in/create/make variants people actually say.
 - Siri can't be driven from a script. To exercise an intent's `perform()` in the simulator, use a
   temporary launch-argument hook in `SentinelCoreApp.init` that constructs the intent and calls
   `perform()`, and remove it before committing.
@@ -202,7 +257,9 @@ The app's Siri phrases are in `ios/SentinelCore/Organizer/OrganizerIntents.swift
 
 `ios/SentinelCore/Organizer/OrganizerVoice.swift` listens with the system recognizer
 (`SFSpeechRecognizer`) and runs the words through the same `VoicePhrase` rules as the Siri
-intent - no model, no server, so it is instant and works offline. Two things to know:
+intent - no model, no server, so it is instant and works offline. The Quick Add sheet
+(`QuickCaptureSheet.swift`) listens with the same `SpeechCapture` and parses with OrganizerKit's
+`QuickCapture`, which also decides between reminder, note and event. Two things to know:
 
 - **The iOS Simulator can't run the recognizer.** `recognitionTask` fails at once with "Failed
   to initialize recognizer", which the sheet shows under "Didn't catch that". Only the
@@ -243,6 +300,25 @@ The three signing overrides are required for a compile check. Without them the b
 "Provisioning profile … doesn't include signing certificate", which is a certificate mismatch on
 the build machine and says nothing about the code.
 
+`appletv/Info.plist` declares the `audio` background mode, for Music and Podcasts.
+
+**Driving the simulator without a remote.** The tvOS simulator takes no touch input, and Xcode 27
+ships no Simulator.app to send arrow keys to, so Debug builds read launch arguments instead
+(`#if DEBUG` code, with the full list greppable as `forKey: "debug`):
+
+```bash
+xcrun simctl spawn <udid> defaults write com.sentinelcore.client.tv serverURL http://127.0.0.1:<port>
+xcrun simctl launch <udid> com.sentinelcore.client.tv -debugSection weather
+```
+
+- `-debugSection <live|movies|music|podcasts|events|weather|alarm|organizer|files|devices|settings>`
+  opens a tab (`Views/RootView.swift`).
+- `-debugFocusWalk 8` waits 8 seconds, then moves focus through every control on screen, logging
+  each step as `FOCUSWALK` (`App/DebugFocusWalker.swift`); screenshot each step to check focused
+  states.
+- `-debugMediaItem <id>`, `-debugPlayItem <id>`, `-debugMoviesPane downloads` and the `debugMusic…`
+  and `debugPodcast…` keys open a specific page or start playback.
+
 Release: `appletv/scripts/release.sh` (TestFlight, once the tvOS App Store Connect record
 exists). Until then the Apple TV runs a locally installed build: build Release for
 `generic/platform=tvOS`, then `xcrun devicectl device install app --device <tv-id>
@@ -260,12 +336,28 @@ cd android
 ```
 
 - Gradle prints only "BUILD SUCCESSFUL". For the counts, add up
-  `app/build/test-results/testDebugUnitTest/*.xml` (about 127 tests, 9 of them live-server).
+  `app/build/test-results/testDebugUnitTest/*.xml` (about 297 tests, 10 of them live-server).
 - **The live Organizer tests silently skip when Gradle reuses a cached result.** When the servers
   script is involved, pass `--rerun --no-configuration-cache` and check the XML for
   `skipped="0"`.
-- The voice-phrase test reads `core/docs/voice-phrase-cases.json` by walking up from the module
-  directory, so run it from inside the repository.
+- The voice-phrase, Quick Add and note-checklist tests read their cases from `core/docs/` by
+  walking up from the module directory, so run them from inside the repository.
+
+### Services and permissions in the manifest
+
+`app/src/main/AndroidManifest.xml` declares three foreground-service types, each with its
+`FOREGROUND_SERVICE_*` permission:
+
+| Type | What runs as it |
+| --- | --- |
+| `camera\|microphone` | this phone as a camera (`publish/`) |
+| `mediaPlayback` | the Music & Podcasts player, `audio/AudioPlaybackService`, a Media3 `MediaLibraryService` that also serves Android Auto's browsable library (`audio/AutoBrowse`, `res/xml/automotive_app_desc.xml`) |
+| `dataSync` | offline music and podcast downloads, a WorkManager foreground job (`SystemForegroundService`, merged into the manifest with `tools:node="merge"`) |
+
+`MODIFY_AUDIO_SETTINGS` is for the Equalizer screen. The widgets are five Glance receivers
+(`widgets/`): Calendar, Reminders, Notes, Alarm, and Quick Add, which opens
+`ui/organizer/QuickCaptureActivity` as a dialog over the home screen in its own task, without
+opening the app.
 
 ### Emulator
 
@@ -303,12 +395,13 @@ Store accounts, app records, tester lists and review preparation are in
 ```bash
 scripts/bump-build.sh                  # +1 on every Apple target and Android's versionCode
 scripts/bump-build.sh --version 0.2.0  # also change the user-visible version
-git commit -am "Bump build number to N" && git push
+git commit -am "Build N" && git push
 ```
 
-Every store upload needs a higher build number than the last. The script rewrites *every*
-`CURRENT_PROJECT_VERSION` in both Xcode projects, which matters: **Apple requires an extension's
-build number to equal its app's**. A new extension target
+Every store upload needs a higher build number than the last (build 17 as of 2026-10-03). The
+script takes the highest number in either Xcode project or Android's `versionCode`, adds one, and
+rewrites *every* `CURRENT_PROJECT_VERSION` in both Xcode projects, which matters: **Apple
+requires an extension's build number to equal its app's**. A new extension target
 copied from another starts with that target's number and must be brought in line once. After
 that, the script keeps it there. Commit before releasing so every build traces to a commit.
 
@@ -321,7 +414,10 @@ ios/scripts/release.sh macos
 ```
 
 It archives in Release and uploads with `-allowProvisioningUpdates`, which creates missing
-distribution certificates, App IDs and profiles, including one for a new extension's bundle id.
+distribution certificates, App IDs and profiles, including one for a new extension's bundle id
+(the Mac widget extension went through that way with build 15, with no manual setup). Run it
+with the Mac unlocked: the upload needs Xcode's account token, and at the lock screen it fails
+with "missing Xcode-Token". Unlock and run it again.
 
 **"Upload succeeded" only means the upload reached Apple.** App Store Connect then processes
 the build for 5–15 minutes and may still reject it. When that happens:
@@ -396,6 +492,22 @@ and push relay where present) and prints health checks. Details are in DEPLOYMEN
   Organizer-change pushes serves an Android phone that has push enabled, that phone needs build
   5 or later.
 
+### 6.5 Windows → a self-contained zip
+
+There is no store for the Windows app. On Windows, `windows/publish.ps1` runs the tests and then
+writes a self-contained x64 build to `windows/publish/`. A Mac can build the same folder (without
+the tests, which need Windows for the WPF half):
+
+```bash
+dotnet publish windows/SentinelCore.App/SentinelCore.App.csproj -c Release -r win-x64 \
+  --self-contained true -p:DebugType=none -p:SatelliteResourceLanguages=en \
+  -p:EnableWindowsTargeting=true -o <scratch>/SentinelCore-Windows
+```
+
+That's about 175 MB unpacked. Zip it from that scratch folder with `zip -qr -X` (the build 9 zip,
+made another way, came out full of macOS `._` files) and name it after the build
+(`SentinelCore-Windows-x64-buildN.zip`).
+
 ---
 
 ## 7. What to run before calling a change good
@@ -405,12 +517,13 @@ and push relay where present) and prints health checks. Details are in DEPLOYMEN
 | Server C# | `cd core && dotnet test` |
 | Dashboard JS | `node --check` on the file; exercise it against a loopback server |
 | `ios/OrganizerKit` | `scripts/with-organizer-servers.sh swift test --package-path ios/OrganizerKit`, then build the Mac, iOS **and tvOS** apps (all three link it) |
-| iPhone/Mac app | the Mac and iOS builds from §3; the iOS build also compiles both extensions |
+| iPhone/Mac app | the Mac and iOS builds from §3, one after the other; the iOS build also compiles the widgets and share extension, the Mac build the Mac widget extension |
+| An extension embed or `ios/SentinelCoreQuickAdd` | both of the above plus the `generic/platform=iOS Simulator` build |
 | An App Intent | the iOS build, then the `grep -ic siri` check from §3 |
 | Android | `./gradlew assembleDebug testDebugUnitTest` |
 | Windows | `dotnet build windows/SentinelCore.Windows.sln -p:EnableWindowsTargeting=true` and `dotnet test windows/SentinelCore.Client.Tests -p:EnableWindowsTargeting=true` (see below) |
 | The sync protocol | all of the above, plus the live suites several times. One passing run of a live suite proves little. |
-| Anything shared between platforms (phrase parsing, shared notes) | both implementations' tests; they read the same fixture |
+| Anything shared between platforms (voice phrases, Quick Add, note checklists) | every implementation's tests; they read the same fixture in `core/docs/` |
 
 **Windows from a Mac:** `EnableWindowsTargeting=true` pulls the Windows Desktop reference packs,
 so the whole solution, XAML included, compiles on a Mac. `dotnet test` there runs only

@@ -32,6 +32,10 @@ xcodebuild -project appletv/SentinelCoreTV.xcodeproj -scheme SentinelCoreTV -con
 appletv/scripts/release.sh      # archive + upload to TestFlight, once the tvOS App Store Connect record exists
 ```
 
+The simulator takes no touch input, so Debug builds accept launch arguments such as
+`-debugSection weather` and `-debugFocusWalk 8` to open a tab or step focus through every control
+(list in BUILDING.md §4).
+
 The Organizer engine comes from `../ios/OrganizerKit` (linked by relative path). Any change there
 must still build here, and its tests run with `swift test --package-path ios/OrganizerKit`.
 
@@ -50,6 +54,16 @@ server deliberately never sends it the silent Organizer pushes.
   Continue Watching and recently added shelves, poster grids, search, full-screen detail pages
   with seasons and episodes, and the system player (info panel, subtitle menu, Match Content)
   with resume, progress reporting and automatic next episode. See `core/docs/MOVIES.md`.
+  With movie downloads on, it also has "+ Add" (an empty search offers it too) and a Downloads
+  pane with the VPN light. An admin can delete a movie from its page, and manage the libraries in
+  Settings (`Movies/MediaLibrariesAdminView.swift`, kept identical to the iPhone's)
+- Music and Podcasts (each when switched on server-side; `Music/`, `Podcasts/`, `Audio/`), with
+  a Now Playing screen, speakers, wake-up alarms and stats, playing in the background. See
+  `core/docs/MUSIC_AND_PODCASTS.md`
+- Weather (`Weather/`): alerts, conditions, location details, a radar map and the forecast, all
+  through the server
+- Alarm and Device Hub, control-only: arm and disarm, switch devices. Setting them up stays on
+  the phones, computers and dashboard
 - The Organizer, mostly for viewing: calendar, reminders (which can be checked off), notes and
   boards, synced with the other apps through the shared `OrganizerKit` engine
 - Files, read-only (`SentinelCoreTV/Files/`): a Files tab whenever the server has Family Files

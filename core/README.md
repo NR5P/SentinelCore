@@ -1,10 +1,12 @@
 # SentinelCore
 
-A .NET 10 ASP.NET Core service that receives camera alert images over HTTP (including from Blue Iris, still fully supported), queues them, asks a local Ollama vision model configurable questions, stores structured JSON results, and optionally posts completed analyses to a webhook. `SentinelCore.Web` layers a dashboard, live camera viewing, PTZ control, HomeKit, trigger zones, and account management on top of the same event store.
+A .NET 10 ASP.NET Core service that receives camera alert images over HTTP (including from Blue Iris, still fully supported), queues them, asks a local Ollama vision model configurable questions, stores structured JSON results, and optionally posts completed analyses to a webhook. `SentinelCore.Web` layers a dashboard, live camera viewing, PTZ control, HomeKit, trigger zones, and account management on top of the same event store - and, beside the cameras, the household features every app shares: the Organizer, Device Hub and home alarm, Weather, Family Files, Movies & TV (with optional downloads), and Music & Podcasts.
 
 **Full documentation:**
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — using the dashboard, trigger zones, prompt profiles, Telegram bot, and understanding why an alert did or didn't fire
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — building, configuring, and running this from scratch on a new box, or updating an existing install, without any assistant's help
+- [docs/ORGANIZER_SYNC.md](docs/ORGANIZER_SYNC.md), [docs/MOVIES.md](docs/MOVIES.md), [docs/MOVIE_DOWNLOADS.md](docs/MOVIE_DOWNLOADS.md), [docs/MUSIC_AND_PODCASTS.md](docs/MUSIC_AND_PODCASTS.md) — the API contracts the apps build against for those features
+- [docs/PUSH_NOTIFICATIONS.md](docs/PUSH_NOTIFICATIONS.md), [docs/PUSH_RELAY.md](docs/PUSH_RELAY.md) — push providers and the relay
 
 The rest of this file is a shorter, more code-oriented overview of the main app specifically.
 
@@ -315,7 +317,7 @@ Runs on port 3320 (port 332 itself is a privileged port on Linux and would need 
 
 ### Settings
 
-The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `SentinelCore.Web/appsettings.json`) - Bridge, Ollama tuning, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Discord alerts, Blue Iris, self-monitoring, quiet hours, the webhook, and the Device Hub. Each section validates and saves independently.
+The Settings tab edits the main app's `appsettings.json` directly (via `MainAppSettingsPath` in `SentinelCore.Web/appsettings.json`) - Bridge, Ollama tuning, cloud vision and vision routing, image processing, prompt profiles (including full add/edit/delete of the AI prompts and questions per camera profile), email, daily digest, Telegram alerts/chat, Discord alerts, Blue Iris, self-monitoring, outage and weather alerts, location, schedules, quiet hours, the webhook, MQTT and the Device Hub, push notifications, login, the Organizer, the alarm, Movies & TV, movie downloads, Music, Podcasts, Family Files, nightly auto export, and more - `SettingsSchema.cs` is the full list, served as `GET /api/settings/schema`, from which the dashboard and the iPhone/Mac, Android and Windows apps all draw their Settings screens. Each section validates and saves independently.
 
 Everything shown is picked up live via `IOptionsMonitor<T>` - .NET's built-in file-watch reload on `appsettings.json` - so saving a change takes effect within a couple seconds, no restart. Two things are deliberately left out of the UI because they can't be: `Bridge:QueueCapacity` and `Bridge:DataDirectory` size an in-memory queue and open a SQLite connection once at startup, so changing them always needs a restart regardless of how the value is stored. A few `*BaseUrl`/`*TimeoutSeconds` fields are similarly baked into an HTTP client at startup and are also left out rather than half-supported.
 
@@ -329,6 +331,86 @@ reachable from the dashboard and every app. It is mirrored nightly to any number
 - a folder or mounted share on the server, or another computer over SFTP - and a nightly pass
 retires files with identical contents to a trash folder that keeps them for 30 days. See
 `docs/USER_GUIDE.md` section 6d; the code is `SentinelCore.Web/FamilyFiles*.cs`.
+
+### Login
+
+The dashboard login is required from the first launch: a missing `Auth:Enabled` means on. Until
+the first Admin account exists, the only thing the API does is create it (`POST /api/auth/enable`,
+from the local network only, never the Internet Exposed port), which is what the dashboard's first
+screen asks for; an app signing in before then gets a 409 telling the person to finish setup in a
+browser. An admin can turn the login off in Settings, which writes an explicit `false` and makes
+every request a synthetic admin (`AuthGateMiddleware`) - except on the Internet Exposed port, which
+always requires a login. `publish-release.sh` writes `Auth:Enabled=true` into the bundles it builds;
+the repository's own `SentinelCore/appsettings.json` has `false` for development.
+
+### Organizer
+
+On by default (`Organizer:Enabled`, `MaxAttachmentMegabytes` 50). Shared notes, calendar events,
+reminders and boards, kept in `organizer.db` with attachment bytes under `organizer-blobs/`, and
+synced to every app, which keeps its own offline copy. [docs/ORGANIZER_SYNC.md](docs/ORGANIZER_SYNC.md)
+is the protocol, plus holiday calendars, the private `.ics` calendar feed, and board automations
+(rules and scheduled cards run by `OrganizerAutomationEngine`, stored in
+`organizer-automations.db`). After a change the server sends the apps a content-free silent push so
+widgets stay current - only when it pushes directly, never through the relay.
+
+### Weather
+
+The WEATHER tab reads the National Weather Service (`api.weather.gov`, US only) for the point set
+under **Settings -> Location** (`Location:Latitude`/`Longitude`, also what "when it gets dark"
+schedules use). The forecast is only fetched while someone is looking at it. The radar map's tiles
+(NOAA/NWS WMS layers, Iowa Environmental Mesonet storm cells, an Esri basemap) are fetched and
+proxied by the server under `/api/weather/map/*`, so the apps only ever talk to this server.
+`WeatherAlerts` (off by default; `CheckIntervalMinutes` 5, `MinimumLevel` `watch`, a switch per
+kind of alert) sends watches and warnings through the owner channels - email, Telegram and push.
+
+### Movies & TV, and downloads
+
+A Jellyfin-style library (`Media:Enabled`, on by default; `TmdbApiKey` for artwork and
+descriptions; `RescanHours` 12) over local folders and shared folders on other computers, read
+over SMB in-process, played direct or through an ffmpeg HLS remux/transcode. The API is
+[docs/MOVIES.md](docs/MOVIES.md). **"+ Add"** (`MediaDownloads`, off by default) searches torrent
+sites through Prowlarr and downloads with qBittorrent, both inside a Linux network namespace whose
+only way out is a VPN; it needs the one-time `core/downloads/install-downloads.sh`. See
+[docs/MOVIE_DOWNLOADS.md](docs/MOVIE_DOWNLOADS.md).
+
+### Music & Podcasts
+
+Two tabs on every app, with a shared player (`Music`, `Podcasts` sections, both on by default).
+Music scans music libraries into `music.db`, can fetch missing covers (MusicBrainz / Cover Art
+Archive) and lyrics (LRCLIB), and converts to AAC for devices that need it. Podcasts subscribes to
+feeds, downloads episodes (to `<data>/podcasts` unless `DownloadFolder` says otherwise, within
+`KeepEpisodes`, `DeletePlayedAfterDays` and `MaxStorageGb`), can trim silence, and - when
+`TranscriptsEnabled` and a whisper.cpp model are set - transcribes episodes on this machine. What
+both share (`audio.db`): play where you left off, speakers that play on another device, wake-up
+alarms, a spoken morning briefing, listening stats and per-person ListenBrainz scrobbling. Albums
+can be added through the movie-downloads stack. The contract is
+[docs/MUSIC_AND_PODCASTS.md](docs/MUSIC_AND_PODCASTS.md).
+
+### Backups and nightly auto export
+
+`GET /api/backup/export` is the configuration as one JSON document (schema 7: settings, cameras,
+accounts, the Organizer, Device Hub data, the alarm, media libraries and progress, and the rest);
+`POST /api/backup/bundle` is the full backup, a zip of that document plus the files it only points
+at (Organizer attachments, known-face photos, the license, the HTTPS certificate authority and the
+HomeKit identity), optionally encrypted with a passphrase (AES-256-GCM); `POST /api/backup/import`
+restores either. `AutoExport` (off by default) writes the full backup nightly (03:00 by default)
+to a folder or over SFTP, checks it restores before delivering it, keeps the last `KeepCount` (14),
+and tells the owner when a night fails. See `BackupBundle.cs` and `AutoExport.cs`.
+
+### Kiosk mode
+
+For a touch screen on a wall: `?kiosk=1` in the dashboard's URL, or the **kiosk** switch, hides the
+hover hints, shows controls that normally appear only on hover, and makes things bigger to tap.
+Remembered per browser (`?kiosk=0` turns it off). A kiosk can also be a speaker for Music &
+Podcasts.
+
+### This device as a camera
+
+A phone, tablet, Mac or PC can stream its own camera into the system (the iPhone/Mac, Android and
+Windows apps, or the publisher page in a browser). The device sends a WebRTC offer to
+`POST /api/cameras/{id}/publish` (admin only) and its video goes into the go2rtc sidecar, after
+which it is a camera like any other: live view, trigger zones, clips and AI review. See
+`CameraPublishEndpoints.cs`.
 
 ### Rebooting the machine
 
@@ -345,7 +427,7 @@ offered: nothing in software can turn a machine back on.
 
 ## Device Hub
 
-Off by default. When `DeviceHub:Enabled` is on (and `Mqtt:Enabled` with it), a **DEVICE HUB** tab appears in the dashboard and in the iOS/macOS, Apple TV, and Android apps, for switching lights, plugs, fans, covers, and locks on the same MQTT broker the alert pipeline already publishes to. This is the only part of the app that *subscribes* to MQTT rather than only publishing: `MqttDeviceBus` runs its own client (separate from `MqttPublisher`, so device traffic can't disturb alert publishing), tracks each device's state, and sends commands. `MqttDeviceDiscovery` finds devices two ways - by reading the Home Assistant discovery configs that Zigbee2MQTT/Tasmota/ESPHome/Shelly publish, and by sweeping topics that look like a switch - and offers them as candidates the user chooses to add.
+Off by default. When `DeviceHub:Enabled` is on (and `Mqtt:Enabled` with it), a **DEVICE HUB** tab appears in the dashboard and in the iOS/macOS, Apple TV, Android and Windows apps, for switching lights, plugs, fans, covers, and locks on the same MQTT broker the alert pipeline already publishes to. This is the only part of the app that *subscribes* to MQTT rather than only publishing: `MqttDeviceBus` runs its own client (separate from `MqttPublisher`, so device traffic can't disturb alert publishing), tracks each device's state, and sends commands. `MqttDeviceDiscovery` finds devices two ways - by reading the Home Assistant discovery configs that Zigbee2MQTT/Tasmota/ESPHome/Shelly publish, and by sweeping topics that look like a switch - and offers them as candidates the user chooses to add.
 
 Devices are stored in `devices.db` as raw topics and payloads rather than per-vendor integrations, so anything that speaks MQTT is describable. `DeviceTopics` holds all the payload building and parsing, deliberately connection-free so every vendor quirk is testable without a broker.
 
@@ -390,6 +472,10 @@ The dashboard writes separately, under `SentinelCore.Web/data/` (`CamerasDataDir
 - `data/thumbnails/`: card-sized copies of event snapshots, made on demand so the Events tab doesn't send a 5 MP frame to paint a 320px card. Pure cache — every file is rebuilt from its original on the next request, so deleting the directory costs nothing but a few hundred milliseconds per card
 - `data/hls/<cameraId>/`, `data/go2rtc/`, `data/keys/`, `data/scheduled-recordings/`: live-view segments, the go2rtc config, data-protection keys, and scheduled recording output
 - `data/triggers.db`, `cameras.db`, `accounts.db`, `live-order.db`, `gate-checks.db`, `recordings.db`
+- `data/organizer.db`, `organizer-automations.db`, `organizer-blobs/`, `alarm.db`: the Organizer, its board automations and attachment bytes, and the home alarm
+- `data/media.db`, `media-network.json`, `media-downloads.db`, `media-art/`, `media-subs/`, `media-hls/`: Movies & TV (see [docs/MOVIES.md](docs/MOVIES.md#data)) and downloads
+- `data/music.db`, `podcasts.db`, `audio.db`, `music-art/`, `podcasts/`: Music & Podcasts, with downloaded episodes under `podcasts/` unless `Podcasts:DownloadFolder` points elsewhere
+- `data/family-files/`: the Family Files library (unless moved), its trash and index
 
 Three retention passes run, and they cover different data (plus one deletion that isn't a pass at all — see `TriggerConfirmation:DiscardRejectedClips` below):
 
