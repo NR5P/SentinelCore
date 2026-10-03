@@ -627,7 +627,7 @@ struct CardCommentsSection: View {
                 if composing || !empty {
                     HStack(spacing: 12) {
                         Button("Post") { post() }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.sentinelProminent)
                             .disabled(empty)
                             .keyboardShortcut(.return, modifiers: .command)
                         if !empty {
@@ -658,7 +658,7 @@ struct CardCommentsSection: View {
                             engine.editComment(comment.id, body: editText)
                             editingId = nil
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.sentinelProminent)
                         .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         Button("Cancel") { editingId = nil }
                             .buttonStyle(.borderless)

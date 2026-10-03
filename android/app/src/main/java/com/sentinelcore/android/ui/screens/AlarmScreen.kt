@@ -328,7 +328,12 @@ private fun ModeButton(label: String, mode: String, status: AlarmStatus, modifie
         onClick = onClick,
         enabled = !selected || status.isTriggered,
         modifier = modifier,
-        colors = if (selected) ButtonDefaults.buttonColors(containerColor = SentinelGreen, contentColor = Color.Black) else ButtonDefaults.buttonColors(),
+        // The current mode is disabled (nothing to switch to) unless the alarm is going off, so the
+        // disabled colours need the green too - otherwise the mode in force reads as greyed out.
+        colors = if (selected) ButtonDefaults.buttonColors(
+            containerColor = SentinelGreen, contentColor = Color.Black,
+            disabledContainerColor = SentinelGreen, disabledContentColor = Color.Black,
+        ) else ButtonDefaults.buttonColors(),
     ) { Text(label) }
 }
 

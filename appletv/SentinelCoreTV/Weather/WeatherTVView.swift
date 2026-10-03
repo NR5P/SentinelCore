@@ -637,13 +637,12 @@ private struct WeatherRadarControls: View {
 // Under the app's green tint a plain tvOS button draws its label in the tint too - a blank green
 // pill - and a white label vanishes once focus turns the pill white. So: white, dark when focused.
 private struct ControlLabel<Content: View>: View {
-    @Environment(\.isFocused) private var isFocused
     let content: Content
 
     init(_ content: Content) { self.content = content }
 
     var body: some View {
-        content.foregroundStyle(isFocused ? Color.black : Color.white)
+        content.focusContrastForeground(unfocused: .white)
     }
 }
 

@@ -69,7 +69,7 @@ struct VoiceReminderSheet: View {
                         }
                         Button("Add") { add(phrase) }
                             .keyboardShortcut(.defaultAction)
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.sentinelProminent)
                             .tint(SentinelTheme.green)
                     }
                 } else {

@@ -114,7 +114,6 @@ struct MediaDownloadsBannerTV: View {
         if !active.isEmpty {
             Button(action: open) {
                 HStack(spacing: 14) {
-                    // White, not green: the button itself is the green.
                     Image(systemName: "arrow.down.circle.fill")
                         .symbolEffect(.pulse)
                     if active.count == 1, let first = active.first {
@@ -129,8 +128,6 @@ struct MediaDownloadsBannerTV: View {
                     }
                 }
             }
-            // White for the same reason as Surprise Me: a tinted title vanishes into the green.
-            .foregroundStyle(.white)
         }
     }
 }
@@ -180,6 +177,7 @@ struct MediaDownloadsTVView: View {
                 }
             }
         }
+        .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
         .padding(.horizontal, 60)
         #if DEBUG
         // Simulator testing without a remote: `-debugMediaAddQuery <title>` opens Add and finds it

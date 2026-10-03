@@ -102,9 +102,9 @@ struct AlarmView: View {
         } label: {
             Label(label, systemImage: systemImage)
                 .frame(minWidth: 200)
-                // The current mode's button is filled green and disabled; without this the
-                // disabled label is dimmed to the same green and vanishes.
-                .foregroundStyle(selected ? Color.black : Color.primary)
+                // No label colour of its own: the current mode's button is filled green and
+                // disabled, and FocusContrastButtonStyle's light label reads on that dimmed fill
+                // where the black this used to force did not.
         }
         .tint(selected ? SentinelTheme.green : nil)
         .disabled(selected && !status.isTriggered)

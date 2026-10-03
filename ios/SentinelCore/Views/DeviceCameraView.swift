@@ -182,7 +182,7 @@ struct DeviceCameraView: View {
                     Spacer()
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.sentinelProminent)
             .tint(publisher.isPublishing ? SentinelTheme.red : SentinelTheme.green)
             // No camera means nothing to start - and starting would still create the dashboard
             // camera first, leaving an empty one behind. The iOS Simulator is the usual way to hit this.

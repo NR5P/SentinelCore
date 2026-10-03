@@ -34,7 +34,7 @@ struct MoviePlayerView: View {
                         Text(message)
                     } actions: {
                         Button("Close") { dismiss() }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.sentinelProminent)
                     }
                 } else if controller.isLoading {
                     ProgressView()

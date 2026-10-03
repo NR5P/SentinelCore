@@ -187,7 +187,7 @@ struct MovieDetailView: View {
                         .labelStyle(.titleAndIcon)
                         .frame(minWidth: compact ? 0 : 120)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.sentinelProminent)
                 if target.canResume {
                     Button {
                         playing = MoviePlayRequest(itemId: target.id, start: 0, overview: item.isShow ? nil : detail.overview)

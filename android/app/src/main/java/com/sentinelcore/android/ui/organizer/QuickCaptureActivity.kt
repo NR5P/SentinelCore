@@ -251,7 +251,7 @@ private fun QuickCaptureDialog(listenFirst: Boolean, preset: QuickCapture.Kind?,
                     Button(
                         onClick = add,
                         enabled = canAdd,
-                        colors = ButtonDefaults.buttonColors(containerColor = SentinelGreen, contentColor = MaterialTheme.colorScheme.surface),
+                        colors = ButtonDefaults.buttonColors(containerColor = SentinelGreen, contentColor = Color.Black),
                     ) { Text("Add ${kind.label}") }
                 }
             }

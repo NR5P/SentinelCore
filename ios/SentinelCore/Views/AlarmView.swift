@@ -269,6 +269,9 @@ struct AlarmView: View {
             Label(label, systemImage: systemImage)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
+                // Prominent labels are drawn white: unreadable on the pale grey of an unselected
+                // mode in light mode and on the bright green of the selected one in dark mode.
+                .foregroundStyle(selected ? SentinelProminentButtonStyle.ink : Color.primary)
         }
         .buttonStyle(.borderedProminent)
         .tint(selected ? (mode == "disarmed" ? SentinelTheme.greenDim : SentinelTheme.green) : Color.secondary.opacity(0.35))

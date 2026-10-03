@@ -99,7 +99,7 @@ struct DeviceDiscoveryView: View {
                         Button("Review") { reviewing = HubDeviceInput(candidate: candidate) }
                             .buttonStyle(.bordered)
                         Button("Add") { Task { await add(candidate) } }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.sentinelProminent)
                     }
                 }
             }
