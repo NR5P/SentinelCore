@@ -264,6 +264,35 @@ builder.Services.AddSingleton(sp => new MullvadAccountWatch(
 builder.Services.AddSingleton<MediaDownloadManager>();
 builder.Services.AddHostedService<MediaDownloadWorker>();
 builder.Services.AddHostedService<MullvadAccountWorker>();
+// --- Music (Music*.cs, core/docs/MUSIC_AND_PODCASTS.md sections 2-4) ---
+// music.db beside media.db; covers taken out of files or fetched from the Cover Art Archive in
+// music-art/, tracks converted for devices that cannot play the original in audio-cache/.
+builder.Services.AddSingleton<IMusicStore>(new SqliteMusicStore(camerasRoot));
+builder.Services.AddSingleton(new MusicArtCache(Path.Combine(camerasRoot, "music-art")));
+builder.Services.AddHttpClient(MusicCoverArtClient.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    // MusicBrainz turns away clients that don't say who they are.
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore-Music/1.0 (self-hosted home server; https://github.com/)");
+});
+builder.Services.AddHttpClient(MusicLyricsService.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore-Music/1.0 (self-hosted home server; https://github.com/)");
+});
+builder.Services.AddSingleton<MusicCoverArtClient>();
+builder.Services.AddSingleton<MusicLyricsService>();
+builder.Services.AddSingleton<MusicCatalogCache>();
+builder.Services.AddSingleton<MusicScanner>();
+builder.Services.AddSingleton(sp => new MusicTranscoder(
+    sp.GetRequiredService<MediaFiles>(), Path.Combine(camerasRoot, "audio-cache"),
+    sp.GetRequiredService<IConfiguration>()["FfmpegPath"] ?? "ffmpeg", sp.GetRequiredService<ILogger<MusicTranscoder>>()));
+// TEMPORARY until the shared audio half (AudioListenBrainz) is merged: see MusicTemporaryListenBrainz.cs.
+builder.Services.AddSingleton<IListenBrainzSubmitter, MusicTemporaryListenBrainz>();
+builder.Services.AddSingleton<MusicService>();
+builder.Services.AddSingleton<IMusicAudioSource>(sp => sp.GetRequiredService<MusicService>());
+builder.Services.AddHostedService<MusicScanWorker>();
+// --- end Music ---
 
 // Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
 // the data directory rather than /tmp - a bundle with everyone's attachments can be gigabytes.
@@ -584,6 +613,7 @@ app.MapLiveOrderEndpoints();
 app.MapOrganizerEndpoints();
 app.MapMediaEndpoints();
 app.MapMediaDownloadEndpoints();
+app.MapMusicEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();

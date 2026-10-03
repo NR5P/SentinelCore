@@ -54,6 +54,7 @@ public sealed class BackupService(
     IMediaStore media,
     MediaScanner mediaScanner,
     MediaNetworkComputerStore mediaComputers,
+    IMusicAudioSource music,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
     IHostEnvironment environment,
@@ -97,7 +98,8 @@ public sealed class BackupService(
             await familyDrives.GetAllAsync(ct),
             new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct), mediaComputers.All(),
                 await media.AllPlaysAsync(ct), await media.AllWatchlistAsync(ct)),
-            warnings.Count > 0 ? warnings : null);
+            warnings.Count > 0 ? warnings : null,
+            Music: await music.ExportAsync(ct));
     }
 
     // The full bundle: the document plus every file it points at, optionally encrypted.
@@ -456,6 +458,13 @@ public sealed class BackupService(
             }
         }
 
+        // Music: libraries keep their ids and the rescan lands on the same track ids, so plays,
+        // loves, ratings and playlists point at the right tracks again. Newest edit wins.
+        var musicRowsRestored = document.Music is { } musicBackup ? await music.RestoreAsync(musicBackup, ct) : 0;
+        if (document.Music?.Libraries is { Count: > 0 } musicLibraries
+            && musicLibraries.Any(l => !MediaNetworkPath.IsNetwork(l.Path) && !Directory.Exists(l.Path)))
+            notes.Add("Some music library folders don't exist on this machine yet. Mount them at the same paths (or edit the library) and they will be scanned.");
+
         // Written last among the stores because it's the one part that can still fail after
         // validation passed (the main app stopping mid-restore). Everything above has landed by
         // then, so it's reported as a note on a restore that otherwise worked, not as a failure
@@ -511,6 +520,7 @@ public sealed class BackupService(
             familyDrivesRestored,
             mediaLibrariesRestored,
             mediaProgressRestored,
+            musicRowsRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,
             automationRulesRestored = hubCounts?.RulesRestored ?? 0,
             schedulesRestored = hubCounts?.SchedulesRestored ?? 0,

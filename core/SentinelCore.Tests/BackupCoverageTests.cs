@@ -82,6 +82,14 @@ public sealed class BackupCoverageTests : IDisposable
             ["MediaProgress"] = "Media.Progress",
             ["MediaPlays"] = "Media.Plays",
             ["MediaWatchlist"] = "Media.Watchlist",
+            // Music.
+            ["MusicLibraries"] = "Music.Libraries",
+            ["MusicPlays"] = "Music.Plays",
+            ["MusicLoves"] = "Music.Loves",
+            ["MusicRatings"] = "Music.Ratings",
+            ["MusicPlaylists"] = "Music.Playlists",
+            ["MusicPlaylistEntries"] = "Music.Playlists",
+            ["MusicPlaylistPins"] = "Music.Pins",
         };
 
         // Excluded on purpose, each for a reason recorded in BackupEndpoints:
@@ -103,6 +111,10 @@ public sealed class BackupCoverageTests : IDisposable
             ["MediaItems"] = "the movie catalog; a rescan of the library folders rebuilds it with the same ids",
             ["MediaState"] = "the media scanner's runtime memory",
             ["MediaDownloads"] = "the movie download queue and its history; what it fetched is in the library itself",
+            // Music.
+            ["MusicTracks"] = "the music catalog; a rescan of the library folders rebuilds it with the same ids",
+            ["MusicArt"] = "where each album's cover was found; worked out again by a rescan",
+            ["MusicLyrics"] = "lyrics fetched from LRCLIB; fetched again on first request",
         };
 
         var root = RepositoryCoreDirectory();

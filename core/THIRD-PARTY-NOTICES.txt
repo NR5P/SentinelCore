@@ -86,6 +86,10 @@ SMBLibrary                       LGPL-3.0-or-later. Used unmodified as the separ
                                  SMBLibrary.dll, which may be replaced with any compatible
                                  build. Source: https://github.com/TalAloni/SMBLibrary
 
+TagLibSharp                      LGPL-2.1. Used unmodified as the separate TagLibSharp.dll,
+                                 which may be replaced with any compatible build.
+                                 Source: https://github.com/mono/taglib-sharp
+
 
 -------------------------------------------------------------------------------
 HomeKit bridge (Node.js sidecar)
