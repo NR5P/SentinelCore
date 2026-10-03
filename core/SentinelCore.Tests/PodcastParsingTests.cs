@@ -367,12 +367,18 @@ public sealed class PodcastParsingTests
     }
 
     [Fact]
-    public void TheTrimFilter_SelectsAroundTheCuts()
+    public void TheTrimFilter_KeepsTheStretchesBetweenTheCuts()
     {
         Assert.Null(PodcastAudioProcessor.FilterFor([], voiceBoost: false));
-        var filter = PodcastAudioProcessor.FilterFor([new PodcastCut(2.15, 4.85)], voiceBoost: true)!;
-        Assert.Contains("aselect='not(between(t,2.15,4.85))'", filter);
-        Assert.EndsWith(PodcastAudioProcessor.VoiceBoostFilter, filter);
+        Assert.Equal($"[0:a:0]anull,{PodcastAudioProcessor.VoiceBoostFilter}[out]", PodcastAudioProcessor.FilterFor([], voiceBoost: true));
+        var filter = PodcastAudioProcessor.FilterFor([new PodcastCut(2.15, 4.85), new PodcastCut(7.15, 8.85)], voiceBoost: true)!;
+        Assert.StartsWith("[0:a:0]asplit=3[s0][s1][s2];", filter);
+        Assert.Contains("[s0]atrim=start=0:end=2.15,asetpts=PTS-STARTPTS[k0];", filter);
+        Assert.Contains("[s1]atrim=start=4.85:end=7.15,asetpts=PTS-STARTPTS[k1];", filter);
+        Assert.Contains("[s2]atrim=start=8.85,asetpts=PTS-STARTPTS[k2];", filter);
+        Assert.EndsWith($"[k0][k1][k2]concat=n=3:v=0:a=1,{PodcastAudioProcessor.VoiceBoostFilter}[out]", filter);
+        // A cut right at the start leaves nothing before it.
+        Assert.StartsWith("[0:a:0]asplit=1[s0];[s0]atrim=start=3,", PodcastAudioProcessor.FilterFor([new PodcastCut(0, 3)], voiceBoost: false));
     }
 
     [Fact]

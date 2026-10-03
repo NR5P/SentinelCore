@@ -179,20 +179,38 @@ public sealed partial class PodcastAudioProcessor
         return cuts;
     }
 
-    // The audio filter for a download: drop the cut stretches (in small frames, so the cuts land
-    // within a few milliseconds of the map), restamp what is left, then the voice boost.
+    // The filter graph for a download (input [0:a:0], output [out]): keep the stretches between
+    // the cuts with atrim, join them with concat, then the voice boost. Sample-accurate, so the
+    // file lines up with the cut map. Not aselect: ffmpeg 8.0 (Ubuntu 26.04's) passes every frame
+    // through aselect on audio, so a "trimmed" episode came out exactly as long as the original.
     public static string? FilterFor(IReadOnlyList<PodcastCut> cuts, bool voiceBoost)
     {
-        var parts = new List<string>();
-        if (cuts.Count > 0)
+        if (cuts.Count == 0 && !voiceBoost) return null;
+        var boost = voiceBoost ? "," + VoiceBoostFilter : "";
+        if (cuts.Count == 0) return $"[0:a:0]anull{boost}[out]";
+
+        // What survives: before the first cut, between cuts, and after the last.
+        var keep = new List<(double Start, double? End)>();
+        var from = 0.0;
+        foreach (var cut in cuts)
         {
-            var terms = string.Join("+", cuts.Select(c => $"between(t,{Format(c.Start)},{Format(c.End)})"));
-            parts.Add("asetnsamples=n=256:p=0");
-            parts.Add($"aselect='not({terms})'");
-            parts.Add("asetpts=N/SR/TB");
+            if (cut.Start > from) keep.Add((from, cut.Start));
+            from = Math.Max(from, cut.End);
         }
-        if (voiceBoost) parts.Add(VoiceBoostFilter);
-        return parts.Count == 0 ? null : string.Join(",", parts);
+        keep.Add((from, null));
+
+        var graph = new StringBuilder();
+        graph.Append($"[0:a:0]asplit={keep.Count}");
+        for (var i = 0; i < keep.Count; i++) graph.Append($"[s{i}]");
+        graph.Append(';');
+        for (var i = 0; i < keep.Count; i++)
+        {
+            var (start, end) = keep[i];
+            graph.Append($"[s{i}]atrim=start={Format(start)}{(end is { } e ? $":end={Format(e)}" : "")},asetpts=PTS-STARTPTS[k{i}];");
+        }
+        for (var i = 0; i < keep.Count; i++) graph.Append($"[k{i}]");
+        graph.Append($"concat=n={keep.Count}:v=0:a=1{boost}[out]");
+        return graph.ToString();
     }
 
     private static string Format(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
@@ -202,13 +220,25 @@ public sealed partial class PodcastAudioProcessor
     public async Task<bool> ProcessAsync(string input, string output, IReadOnlyList<PodcastCut> cuts, bool voiceBoost, CancellationToken cancellationToken)
     {
         var filter = FilterFor(cuts, voiceBoost);
-        var args = new List<string> { "-hide_banner", "-nostats", "-loglevel", "error", "-y", "-i", input, "-map", "0:a:0", "-vn" };
-        if (filter is not null) args.AddRange(["-af", filter]);
-        args.AddRange(["-c:a", "aac", "-b:a", "128k", "-map_metadata", "0", "-map_chapters", "-1", "-movflags", "+faststart", "-f", "mp4", output]);
-        var result = await PodcastProcess.RunAsync(_ffmpegPath, args, TimeSpan.FromHours(2), cancellationToken, ProcessPriorityClass.BelowNormal);
-        if (result.ExitCode == 0 && File.Exists(output)) return true;
-        _logger.LogWarning("Podcast post-processing failed for {Path}: {Error}", input, PodcastProcess.Tail(result.Stderr));
-        return false;
+        // An hour-long episode can have hundreds of cuts: the graph goes in a file, not on the
+        // command line.
+        var script = filter is null ? null : output + ".filter";
+        if (script is not null) await File.WriteAllTextAsync(script, filter, cancellationToken);
+        try
+        {
+            var args = new List<string> { "-hide_banner", "-nostats", "-loglevel", "error", "-y", "-i", input };
+            if (script is not null) args.AddRange(["-filter_complex_script", script, "-map", "[out]"]);
+            else args.AddRange(["-map", "0:a:0"]);
+            args.AddRange(["-vn", "-c:a", "aac", "-b:a", "128k", "-map_metadata", "0", "-map_chapters", "-1", "-movflags", "+faststart", "-f", "mp4", output]);
+            var result = await PodcastProcess.RunAsync(_ffmpegPath, args, TimeSpan.FromHours(2), cancellationToken, ProcessPriorityClass.BelowNormal);
+            if (result.ExitCode == 0 && File.Exists(output)) return true;
+            _logger.LogWarning("Podcast post-processing failed for {Path}: {Error}", input, PodcastProcess.Tail(result.Stderr));
+            return false;
+        }
+        finally
+        {
+            if (script is not null) try { File.Delete(script); } catch (IOException) { }
+        }
     }
 
     public async Task<bool> ToWavAsync(string input, string output, CancellationToken cancellationToken)
