@@ -610,7 +610,8 @@ public static class MediaEndpoints
                 : MediaPlaybackPlanner.Plan(item,
                     MediaPlaybackPlanner.ParseCodecs(video, "h264"),
                     MediaPlaybackPlanner.ParseCodecs(audio, "aac", "mp3"),
-                    audioTrack);
+                    audioTrack,
+                    item.TimestampsInDecodeOrder ? await scanner.TimestampRebuildCodecsAsync(ct) : null);
 
             var (next, nextTitle) = view.NextAfter(item);
             var subtitleOffset = plan.Direct ? 0 : startSeconds;

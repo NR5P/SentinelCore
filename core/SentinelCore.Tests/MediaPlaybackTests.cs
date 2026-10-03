@@ -73,6 +73,76 @@ public sealed class MediaPlaybackTests
         Assert.True(MediaPlaybackPlanner.Plan(Item("mp4", "hevc", "aac", tag: "hvc1"), AppleVideo, AppleAudio, null).Direct);
     }
 
+    // Rambo (2008), a torrent MP4: B-frames, but every frame stamped in decode order, so AVPlayer
+    // showed them out of order and the picture wiggled back and forth.
+    [Fact]
+    public void FramesStampedInDecodeOrder_AreNeverDirectPlayed_AndGetTheirStampsRebuilt()
+    {
+        var item = Item("mp4", "hevc", "aac", tag: "hvc1");
+        item.TimestampsInDecodeOrder = true;
+
+        var copied = MediaPlaybackPlanner.Plan(item, AppleVideo, AppleAudio, null, new HashSet<string> { "h264", "hevc" });
+        Assert.False(copied.Direct);
+        Assert.True(copied.RebuildTimestamps);
+        Assert.Equal("copy", copied.VideoMode);
+        var copyArgs = MediaPlaybackPlanner.BuildFfmpegArguments(item, copied, 0, "/tmp/session");
+        Assert.Equal("dts2pts", copyArgs[copyArgs.IndexOf("-bsf:v") + 1]);
+        Assert.Contains("hvc1", copyArgs);
+
+        // ffmpeg 8.0 (the media box) has dts2pts for H.264 only: HEVC is re-encoded instead.
+        var encoded = MediaPlaybackPlanner.Plan(item, AppleVideo, AppleAudio, null, new HashSet<string> { "h264" });
+        Assert.False(encoded.Direct);
+        Assert.Equal("h264", encoded.VideoMode);
+        var encodeArgs = MediaPlaybackPlanner.BuildFfmpegArguments(item, encoded, 0, "/tmp/session");
+        Assert.Equal("libx264", encodeArgs[encodeArgs.IndexOf("-c:v") + 1]);
+        Assert.DoesNotContain("-bsf:v", encodeArgs);
+
+        Assert.Equal("h264", MediaPlaybackPlanner.Plan(item, AppleVideo, AppleAudio, null).VideoMode);
+    }
+
+    [Fact]
+    public void CorrectlyStampedFiles_AreLeftAlone()
+    {
+        var plan = MediaPlaybackPlanner.Plan(Item("mkv", "hevc", "eac3"), AppleVideo, AppleAudio, null, new HashSet<string> { "hevc" });
+        Assert.False(plan.RebuildTimestamps);
+        Assert.DoesNotContain("-bsf:v", MediaPlaybackPlanner.BuildFfmpegArguments(Item("mkv", "hevc", "eac3"), plan, 0, "/tmp/session"));
+        Assert.True(MediaPlaybackPlanner.Plan(Item("mp4", "hevc", "aac", tag: "hvc1"), AppleVideo, AppleAudio, null, new HashSet<string> { "hevc" }).Direct);
+    }
+
+    [Fact]
+    public void FrameStamps_RunningBackwards_AsTheDecoderShowsThem_MeanDecodeOrderStamping()
+    {
+        string Csv(IEnumerable<long> pts) => string.Join("\n", pts.Select(p => $"{p},"));
+        var inOrder = Enumerable.Range(0, 240).Select(i => i * 50050L);
+        // Shown 0 1 2 3 but stamped with their decode slots 0 3 1 2 (I P B B), as Rambo was.
+        var scrambled = Enumerable.Range(0, 60).SelectMany(g => new long[] { g * 4, g * 4 + 3, g * 4 + 1, g * 4 + 2 }).Select(n => n * 50050L);
+        // E.T. (1982) in a quiet scene: the same fault, but the encoder only used a few B-frames.
+        var quietScene = inOrder.Select((pts, i) => i % 60 == 30 ? pts + 120_000 : pts);
+
+        Assert.False(MediaProbe.ShownOutOfOrder(Csv(inOrder)));
+        Assert.True(MediaProbe.ShownOutOfOrder(Csv(scrambled)));
+        Assert.True(MediaProbe.ShownOutOfOrder(Csv(quietScene)));
+        Assert.False(MediaProbe.ShownOutOfOrder(Csv(inOrder.Select((pts, i) => i == 100 ? pts + 120_000 : pts))), "one stray step is not proof");
+        Assert.False(MediaProbe.ShownOutOfOrder(Csv(scrambled.Take(20))), "too few frames to tell");
+        Assert.False(MediaProbe.ShownOutOfOrder(string.Concat(Enumerable.Repeat("N/A,\n", 240))), "AVI frames carry no stamps");
+    }
+
+    [Fact]
+    public void BFrames_ComeFromTheFirstRealVideoStream()
+    {
+        using var withB = JsonDocument.Parse("""{"streams":[{"codec_type":"video","has_b_frames":2},{"codec_type":"audio"}]}""");
+        using var withoutB = JsonDocument.Parse("""{"streams":[{"codec_type":"video","has_b_frames":0}]}""");
+        Assert.True(MediaProbe.HasBFrames(withB.RootElement));
+        Assert.False(MediaProbe.HasBFrames(withoutB.RootElement));
+    }
+
+    [Fact]
+    public void Dts2ptsCodecs_AreReadFromFfmpegsHelp()
+    {
+        Assert.Equal(["h264", "hevc"], MediaPlaybackPlanner.ParseBsfCodecs("Bit stream filter dts2pts\n    Supported codecs: h264 hevc\n\nExiting with exit code 0\n").Order());
+        Assert.Empty(MediaPlaybackPlanner.ParseBsfCodecs("Unknown bitstream filter 'dts2pts'.\n"));
+    }
+
     [Fact]
     public void ChoosingANonDefaultAudioTrack_GoesThroughHls()
     {

@@ -238,6 +238,15 @@ Response:
   has been produced, request a new playback with a new `start`. The master playlist carries the
   text subtitles as HLS subtitle renditions, so AVPlayer, Media3 and hls.js show them in their own
   subtitle menus. Sessions die three minutes after the last segment request.
+- Files whose frames are stamped in decode order (B-frames, but every timestamp is the decode time;
+  a torrent Rambo (2008) and E.T. (1982) came like this) are never direct-played: played as they
+  are, the frames show out of order and the picture wiggles back and forth. The probe finds them by
+  decoding ten seconds a third and two thirds of the way in. They go through HLS with the video
+  copied and `-bsf:v dts2pts` rebuilding the timestamps when this ffmpeg's dts2pts handles the
+  codec (H.264 in ffmpeg 8.0; HEVC as well from 8.1), and re-encoded to H.264 otherwise. `reason`
+  says "stamped out of order". To mend a file for good, losslessly:
+  `ffmpeg -i in.mp4 -map 0 -c copy -bsf:v dts2pts -tag:v hvc1 -movflags +faststart out.mp4`
+  (`-tag:v hvc1` for HEVC only).
 - Progress reporting: `POST /api/media/items/{id}/progress` body
   `{ "positionSeconds": 1234.5, "durationSeconds": 6120 }` every 10 seconds while playing, on
   pause, and when the player closes. At 92% or more the server marks the item watched and clears
