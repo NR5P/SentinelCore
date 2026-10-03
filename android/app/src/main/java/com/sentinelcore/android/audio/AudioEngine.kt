@@ -128,7 +128,8 @@ class AudioEngine(private val runtime: AudioRuntime) {
 
     // ---- what the reporting tracks about the entry playing now ----
     private class Tracked(val item: AudioItem, val startedAt: Instant) {
-        var listenedSeconds = 0.0
+        // Media-position progress, not wall-clock time, so stalls never over-count (§4).
+        val meter = ListenMeter()
         var lastPositionSeconds = 0.0
         var durationSeconds = item.durationSeconds
     }
@@ -218,6 +219,17 @@ class AudioEngine(private val runtime: AudioRuntime) {
             }
 
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                // Credit listening up to where playback left off, then restart counting from
+                // where it lands, so a seek (or the jump to the next track) is never counted.
+                tracked?.let { current ->
+                    val now = SystemClock.elapsedRealtime()
+                    if (uidOf(oldPosition.mediaItem) == current.item.uid) {
+                        current.meter.sample(oldPosition.positionMs / 1000.0, (now - lastTick) / 1000.0, player.playbackParameters.speed.toDouble())
+                        current.lastPositionSeconds = oldPosition.positionMs / 1000.0
+                        lastTick = now
+                    }
+                    if (uidOf(newPosition.mediaItem) == current.item.uid) current.meter.rebase(newPosition.positionMs / 1000.0)
+                }
                 if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                     updateProgress()
                     scheduleNowPlaying()
@@ -705,7 +717,9 @@ class AudioEngine(private val runtime: AudioRuntime) {
             return
         }
         if (tracked?.item?.uid == item.uid) return
-        tracked = Tracked(item, Instant.now())
+        tracked = Tracked(item, Instant.now()).also { fresh ->
+            if (uidOf(player.currentMediaItem) == item.uid) fresh.meter.rebase(player.currentPosition / 1000.0)
+        }
         lastTick = SystemClock.elapsedRealtime()
         gainVolume = soundCheckVolume(item)
         applyVolume()
@@ -747,11 +761,13 @@ class AudioEngine(private val runtime: AudioRuntime) {
             val duration = done.durationSeconds.takeIf { it > 0 } ?: item.durationSeconds
             val position = if (completed) duration else done.lastPositionSeconds
             sendProgress(item, position, duration)
-        } else if (done.listenedSeconds >= 1.0) {
+        } else {
+            val listened = done.meter.total(done.durationSeconds, reachedEnd = completed)
+            if (listened < 1.0) return
             val body = JSONObject()
-                .put("secondsListened", Math.round(done.listenedSeconds * 10) / 10.0)
+                .put("secondsListened", Math.round(listened * 10) / 10.0)
                 .put("completed", completed)
-                .put("skipped", PlayReporting.isSkip(done.listenedSeconds, completed, skipped))
+                .put("skipped", PlayReporting.isSkip(listened, completed, skipped))
                 .put("playedAt", done.startedAt.toString())
                 .put("deviceName", runtime.deviceName)
             scope.launch { runtime.reports.send("POST", "/api/music/tracks/${AudioApi.seg(item.id)}/played", body) }
@@ -845,11 +861,10 @@ class AudioEngine(private val runtime: AudioRuntime) {
         // Once the player has moved on, its position belongs to the next entry: keep the last one
         // the ticker saw for this one.
         val stillPlayingThis = target === tracked && uidOf(player.currentMediaItem) == current.item.uid
-        if (player.isPlaying && target === tracked) {
-            current.listenedSeconds += (now - lastTick).coerceIn(0, 5_000) / 1000.0
-        }
         if (stillPlayingThis) {
-            current.lastPositionSeconds = player.currentPosition / 1000.0
+            val position = player.currentPosition / 1000.0
+            current.meter.sample(position, (now - lastTick) / 1000.0, player.playbackParameters.speed.toDouble())
+            current.lastPositionSeconds = position
             player.duration.takeIf { it != C.TIME_UNSET && it > 0 }?.let { current.durationSeconds = it / 1000.0 }
         }
         lastTick = now
