@@ -471,7 +471,7 @@ private struct MediaAddShowView: View {
                                 .foregroundStyle(.secondary)
                             Spacer()
                             Button("Get Whole Season") { search(input(episode: nil)) }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.sentinelProminent)
                         }
                     }
                 }
@@ -691,7 +691,7 @@ private struct MediaReleaseSearchView: View {
                 Group {
                     if best {
                         Button("Download") { Task { await grab(release) } }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.sentinelProminent)
                     } else {
                         Button("Download") { Task { await grab(release) } }
                             .buttonStyle(.bordered)

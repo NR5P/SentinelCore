@@ -137,9 +137,6 @@ private struct MediaHomeTV: View {
                                 Label("Surprise Me", systemImage: "shuffle")
                             }
                             .disabled(surprising)
-                            // White like the detail page's buttons: left alone, a tinted tvOS button
-                            // draws its title in the tint and it vanishes into the green.
-                            .foregroundStyle(.white)
                         }
                         // "Downloading Bluey S02E05 · 42%" while anything is in the queue.
                         MediaDownloadsBannerTV(downloads: downloads, open: openDownloads)
@@ -521,6 +518,7 @@ private struct MediaGridTV: View {
                 }
             } label: {
                 Label(sort.title, systemImage: "arrow.up.arrow.down")
+                    .focusContrastForeground()
             }
             Menu {
                 Picker("Genre", selection: $genre) {
@@ -529,6 +527,7 @@ private struct MediaGridTV: View {
                 }
             } label: {
                 Label(genre ?? "All Genres", systemImage: "line.3.horizontal.decrease")
+                    .focusContrastForeground()
             }
             Button {
                 unwatchedOnly.toggle()

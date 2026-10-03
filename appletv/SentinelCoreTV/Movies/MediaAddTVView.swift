@@ -103,6 +103,7 @@ struct MediaAddTVView: View {
                     }
                 }
             }
+            .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
             .navigationTitle("Add a Movie or Show")
             #if DEBUG
             // Simulator testing without a remote: `-debugMediaAddQuery <title>` types and finds
@@ -407,6 +408,7 @@ private struct MediaAddShowTVView: View {
                 }
             }
         }
+        .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
         .navigationTitle(result.displayTitle)
         .task {
             guard show == nil, let tmdbId = result.tmdbId else {
@@ -523,6 +525,7 @@ private struct MediaReleaseSearchTVView: View {
                 }
             }
         }
+        .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
         .navigationTitle("Pick a Download")
         .task(id: attempt) { await run() }
         .confirmationDialog(

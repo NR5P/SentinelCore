@@ -181,7 +181,9 @@ struct DeviceHubView: View {
                                 } label: {
                                     Label("Edit", systemImage: "pencil")
                                 }
-                                .tint(SentinelTheme.cyan)
+                                // System blue: a swipe action's label is always white, and white on
+                                // the bright dark-mode cyan barely shows.
+                                .tint(.blue)
                             }
                         }
                     }
@@ -449,7 +451,7 @@ private struct DeviceRow: View {
     private var controls: some View {
         if device.isMomentary {
             Button("Press") { onAction("press") }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.sentinelProminent)
                 .disabled(!device.enabled)
                 .accessibilityLabel("Press \(device.name)")
         } else if device.isCoverLike {

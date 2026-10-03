@@ -52,6 +52,8 @@ public static partial class MediaProbe
             using var document = JsonDocument.Parse(output);
             var sidecars = await Task.Run(() => FindSidecarSubtitles(files.For(item.Path), item.Path), cancellationToken);
             Apply(item, document.RootElement, sidecars);
+            item.TimestampsInDecodeOrder = HasBFrames(document.RootElement)
+                && await TimestampsInDecodeOrderAsync(item, files, ffprobePath, logger, cancellationToken);
             item.ProbeError = null;
             return true;
         }
@@ -60,6 +62,50 @@ public static partial class MediaProbe
             item.ProbeError = $"ffprobe returned something unexpected: {ex.Message}";
             return false;
         }
+    }
+
+    // The decoder hands frames out in the order they are shown, so a correctly stamped file's
+    // frame timestamps only ever rise. Decodes ten seconds a third and two thirds of the way in
+    // (a few seconds' work, once per file): two places, because how many B-frames an encoder
+    // uses follows the action - E.T. (1982) has 1 bad step in 240 frames at 30 minutes and
+    // 97 at 10 minutes.
+    private static async Task<bool> TimestampsInDecodeOrderAsync(MediaItem item, MediaFiles files, string ffprobePath, ILogger logger, CancellationToken cancellationToken)
+    {
+        var duration = item.DurationSeconds is { } known and > 60 ? known : 0;
+        var intervals = string.Join(",", new[] { duration / 3, duration * 2 / 3 }.Distinct()
+            .Select(from => $"{from.ToString("0", System.Globalization.CultureInfo.InvariantCulture)}%+10"));
+        var args = new[] { "-v", "error", "-select_streams", "v:0", "-read_intervals", intervals, "-show_entries", "frame=pts", "-of", "csv=p=0", files.FfmpegInput(item.Path) };
+        var output = await FfmpegProcess.RunCapturingStdoutAsync(
+            ffprobePath, args, TimeSpan.FromSeconds(90), logger, $"frame-order probe of {Path.GetFileName(item.Path)}",
+            ProcessPriorityClass.BelowNormal, cancellationToken);
+        return output is not null && ShownOutOfOrder(System.Text.Encoding.UTF8.GetString(output));
+    }
+
+    // Pure: ffprobe's "frame=pts" CSV, in the order the decoder showed the frames -> are their
+    // stamps out of order? A correctly stamped file has no backward step at all; three are
+    // proof (Rambo had ~45% of them). Frames without stamps (AVI) prove nothing - and the
+    // second window starts later than the first ends, so the jump between them goes forward.
+    public static bool ShownOutOfOrder(string frameCsv)
+    {
+        long? previous = null;
+        int count = 0, backwards = 0;
+        foreach (var line in frameCsv.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!long.TryParse(line.TrimEnd(','), out var pts)) continue;
+            if (pts < previous) backwards++;
+            previous = pts;
+            count++;
+        }
+        return count >= 50 && backwards >= 3;
+    }
+
+    public static bool HasBFrames(JsonElement root)
+    {
+        if (!root.TryGetProperty("streams", out var streams)) return false;
+        foreach (var stream in streams.EnumerateArray())
+            if (String(stream, "codec_type") == "video" && !IsAttachedPicture(stream))
+                return Int(stream, "has_b_frames") is > 0;
+        return false;
     }
 
     // Pure: ffprobe's JSON in, the item's file facts out. Separated so MediaProbeTests can feed

@@ -78,6 +78,20 @@ public sealed partial class MediaScanner : IDisposable
         return ok;
     }
 
+    // Which codecs ffmpeg's dts2pts filter handles here (see MediaPlaybackPlanner.Plan). Asked once
+    // per process; an older ffmpeg without the filter just answers nothing.
+    public async Task<IReadOnlySet<string>> TimestampRebuildCodecsAsync(CancellationToken cancellationToken)
+    {
+        if (_timestampRebuildCodecs is { } known) return known;
+        var output = await FfmpegProcess.RunCapturingStdoutAsync(
+            _ffmpegPath, ["-hide_banner", "-h", "bsf=dts2pts"], TimeSpan.FromSeconds(10), _logger, "dts2pts check", null, cancellationToken);
+        var codecs = MediaPlaybackPlanner.ParseBsfCodecs(output is null ? "" : System.Text.Encoding.UTF8.GetString(output));
+        _timestampRebuildCodecs = codecs;
+        return codecs;
+    }
+
+    private IReadOnlySet<string>? _timestampRebuildCodecs;
+
     // Starts a scan in the background. False when one is already running.
     public bool TryStartScan(Guid? libraryId)
     {

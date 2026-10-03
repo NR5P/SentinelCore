@@ -445,7 +445,8 @@ struct MediaTileBadge: View {
         if item.isWatched {
             Image(systemName: "checkmark.circle.fill")
                 .font(.body)
-                .foregroundStyle(.white, SentinelTheme.green)
+                // A dark tick: white on the bright dark-mode green barely shows.
+                .foregroundStyle(.black, SentinelTheme.green)
                 .shadow(radius: 3)
                 .padding(5)
                 .accessibilityLabel("Watched")

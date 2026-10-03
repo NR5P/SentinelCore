@@ -233,6 +233,7 @@ private struct RemindersTV: View {
                 }
             }
         }
+        .buttonStyle(.automatic) // rows, not the app-wide FocusContrastButtonStyle
         .overlay(alignment: .bottomLeading) {
             Text("Select a reminder to tick it off.").font(.caption).foregroundStyle(.secondary).padding()
         }

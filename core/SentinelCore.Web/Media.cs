@@ -90,6 +90,10 @@ public sealed class MediaItem
     public string? VideoCodec { get; set; }
     public string? VideoProfile { get; set; }
     public string? VideoTag { get; set; }
+    // The video has B-frames but the file stamps its frames in decode order, so a player that
+    // believes the timestamps (AVPlayer does) shows them out of order: the picture wiggles back
+    // and forth. A torrent MP4 of Rambo (2008) came like this.
+    public bool TimestampsInDecodeOrder { get; set; }
     public string? PixelFormat { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }

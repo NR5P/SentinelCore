@@ -29,6 +29,8 @@
     <SolidColorBrush x:Key="SidebarBackground" Color="#0E1215" />
     <SolidColorBrush x:Key="CardBackground" Color="#1B2126" />
     <SolidColorBrush x:Key="CardHoverBackground" Color="#232B31" />
+    <!-- Laid over a hovered button's own background, so its label keeps the contrast it was designed with. -->
+    <SolidColorBrush x:Key="HoverWash" Color="#14FFFFFF" />
     <SolidColorBrush x:Key="CardBorder" Color="#2A333A" />
     <SolidColorBrush x:Key="PrimaryText" Color="#ECF1F4" />
     <SolidColorBrush x:Key="SecondaryText" Color="#93A2AD" />
@@ -182,16 +184,23 @@
                             BorderThickness="{TemplateBinding BorderThickness}"
                             CornerRadius="6"
                             SnapsToDevicePixels="True">
-                        <!-- Follows the button's own content alignment rather than forcing centre:
-                             a left-aligned button (the settings section list, any link button) was
-                             silently centred by a hard-coded value here. -->
-                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                          Margin="{TemplateBinding Padding}" />
+                        <Grid>
+                            <!-- Hover lightens whatever the button's own background is, rather than
+                                 swapping in the card-hover grey: that swap left PrimaryButton's dark
+                                 label on a dark grey (about 1.3:1) - unreadable under the mouse. -->
+                            <Border x:Name="HoverWash" Background="{StaticResource HoverWash}"
+                                    CornerRadius="5" Visibility="Collapsed" />
+                            <!-- Follows the button's own content alignment rather than forcing centre:
+                                 a left-aligned button (the settings section list, any link button) was
+                                 silently centred by a hard-coded value here. -->
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Shell" Property="Background" Value="{StaticResource CardHoverBackground}" />
+                            <Setter TargetName="HoverWash" Property="Visibility" Value="Visible" />
                             <Setter TargetName="Shell" Property="BorderBrush" Value="{StaticResource GreenDim}" />
                         </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">

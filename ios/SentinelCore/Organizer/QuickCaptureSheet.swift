@@ -133,7 +133,7 @@ struct QuickCaptureSheet: View {
                     Text(added == nil ? "Add \(Self.name(kind))" : "Added").frame(minWidth: 120)
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.sentinelProminent)
                 .tint(SentinelTheme.green)
                 .disabled(!canAdd)
             }

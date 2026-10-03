@@ -40,6 +40,35 @@ extension View {
     func sentinelCard() -> some View { modifier(SentinelCard()) }
 }
 
+// .borderedProminent under the app's green tint, with a label that can be read. The system draws
+// a prominent label white, and in dark mode the fill is the bright mint - white on it is about
+// 1.3:1, the Save / Play / Add buttons all but blank. Dark ink on the mint, as the web dashboard's
+// primary buttons do; white stays on light mode's deep green. A disabled button keeps the
+// system's own greyed label, since its fill isn't the mint any more.
+struct SentinelProminentButtonStyle: PrimitiveButtonStyle {
+    static let ink = Color(light: .white, dark: .black)
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button(role: configuration.role, action: configuration.trigger) {
+            InkedLabel(label: configuration.label)
+        }
+        .buttonStyle(.sentinelProminent)
+    }
+
+    private struct InkedLabel: View {
+        @Environment(\.isEnabled) private var isEnabled
+        let label: Configuration.Label
+
+        var body: some View {
+            if isEnabled { label.foregroundStyle(SentinelProminentButtonStyle.ink) } else { label }
+        }
+    }
+}
+
+extension PrimitiveButtonStyle where Self == SentinelProminentButtonStyle {
+    static var sentinelProminent: SentinelProminentButtonStyle { .init() }
+}
+
 // A text box that looks like one. Inside a grouped Form, SwiftUI's TextField draws no border of
 // its own, so an empty field is a blank gap under its label with nothing about it to say it can
 // be typed in - which is exactly the "where am I supposed to tap?" that the Location section's
