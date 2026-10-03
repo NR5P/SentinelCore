@@ -117,7 +117,7 @@ struct SpeakerControlView: View {
                         Button("\(Int(level * 100))%") { act { try await audio.send("volume", to: speaker, volume: level) } }
                     }
                 } label: {
-                    Label("Volume", systemImage: "speaker.wave.2")
+                    Label("Volume", systemImage: "speaker.wave.2").focusContrastForeground()
                 }
                 Button(role: .destructive) { act { try await audio.send("stop", to: speaker) } } label: {
                     Label("Stop", systemImage: "stop.fill")

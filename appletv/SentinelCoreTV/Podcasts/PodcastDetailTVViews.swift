@@ -47,7 +47,7 @@ struct PodcastShowTVView: View {
                     }
                     .focusable()
                     .onTapGesture { expanded.toggle() }
-                    HStack(spacing: 24) {
+                    TVButtonRow {
                         AudioButton("Play Latest", systemImage: "play.fill") { playLatest() }
                         if podcast.subscribed == true {
                             AudioButton("Unfollow", systemImage: "minus.circle") { Task { await setFollowing(false) } }
@@ -75,11 +75,11 @@ struct PodcastShowTVView: View {
                     mySettingsSection(podcast)
                 }
                 Section {
-                    HStack(spacing: 30) {
+                    TVButtonRow(spacing: 30) {
                         Menu {
                             Picker("Show", selection: $filter) { ForEach(Self.filters, id: \.0) { Text($0.1).tag($0.0) } }
                         } label: {
-                            Label(Self.filters.first { $0.0 == filter }?.1 ?? "All", systemImage: "line.3.horizontal.decrease")
+                            Label(Self.filters.first { $0.0 == filter }?.1 ?? "All", systemImage: "line.3.horizontal.decrease").audioFocusLabel()
                         }
                         Menu {
                             Picker("Order", selection: $sort) {
@@ -87,7 +87,7 @@ struct PodcastShowTVView: View {
                                 Text("Oldest First").tag("oldest")
                             }
                         } label: {
-                            Label(sort == "oldest" ? "Oldest First" : "Newest First", systemImage: "arrow.up.arrow.down")
+                            Label(sort == "oldest" ? "Oldest First" : "Newest First", systemImage: "arrow.up.arrow.down").audioFocusLabel()
                         }
                         if seasons.count > 1 {
                             Menu {
@@ -96,11 +96,10 @@ struct PodcastShowTVView: View {
                                     ForEach(seasons, id: \.self) { Text("Season \($0)").tag(Optional($0)) }
                                 }
                             } label: {
-                                Label(season.map { "Season \($0)" } ?? "All Seasons", systemImage: "square.stack")
+                                Label(season.map { "Season \($0)" } ?? "All Seasons", systemImage: "square.stack").audioFocusLabel()
                             }
                         }
-                        Spacer()
-                        Text("\(total) episodes").font(.caption).foregroundStyle(.secondary)
+                        Text("\(total) episodes").font(.caption).foregroundStyle(.secondary).padding(.leading, 20)
                     }
                     ForEach(Array(episodes.enumerated()), id: \.element.id) { offset, episode in
                         EpisodeRow(episode: episode) { play(from: offset) }
@@ -131,21 +130,21 @@ struct PodcastShowTVView: View {
                     Button(AudioFormat.speed(speed)) { update { $0.playbackSpeed = speed } }
                 }
             } label: {
-                LabeledContent("Playback Speed", value: mine.playbackSpeed.map(AudioFormat.speed) ?? "Default")
+                LabeledContent("Playback Speed", value: mine.playbackSpeed.map(AudioFormat.speed) ?? "Default").focusContrastForeground()
             }
             Menu {
                 ForEach(skipChoices, id: \.self) { seconds in
                     Button(seconds == 0 ? "Off" : "\(seconds) seconds") { update { $0.skipIntroSeconds = seconds } }
                 }
             } label: {
-                LabeledContent("Skip Intro", value: (mine.skipIntroSeconds ?? 0) == 0 ? "Off" : "\(mine.skipIntroSeconds!) s")
+                LabeledContent("Skip Intro", value: (mine.skipIntroSeconds ?? 0) == 0 ? "Off" : "\(mine.skipIntroSeconds!) s").focusContrastForeground()
             }
             Menu {
                 ForEach(skipChoices, id: \.self) { seconds in
                     Button(seconds == 0 ? "Off" : "\(seconds) seconds") { update { $0.skipOutroSeconds = seconds } }
                 }
             } label: {
-                LabeledContent("Skip Outro", value: (mine.skipOutroSeconds ?? 0) == 0 ? "Off" : "\(mine.skipOutroSeconds!) s")
+                LabeledContent("Skip Outro", value: (mine.skipOutroSeconds ?? 0) == 0 ? "Off" : "\(mine.skipOutroSeconds!) s").focusContrastForeground()
             }
             Toggle("In Morning Briefing", isOn: Binding(get: { mine.inBriefing == true }, set: { on in update { $0.inBriefing = on } }))
             Toggle("Add New Episodes to Up Next", isOn: Binding(get: { mine.autoQueue == true }, set: { on in update { $0.autoQueue = on } }))
@@ -249,7 +248,7 @@ struct EpisodeTVView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    HStack(spacing: 24) {
+                    TVButtonRow {
                         AudioButton(episode.resumePosition > 0 ? "Resume" : "Play", systemImage: "play.fill") {
                             audio.play(episodes: [episode], context: PlayContext(type: "podcast", id: episode.podcastId, name: episode.podcastTitle))
                         }
@@ -354,7 +353,9 @@ struct DiscoverTVView: View {
             LazyVStack(alignment: .leading, spacing: 40) {
                 if let results {
                     if results.isEmpty {
-                        Text("No shows found for “\(query)”.").foregroundStyle(.secondary).padding(.horizontal, 60)
+                        Text(Self.feedURL(query.trimmingCharacters(in: .whitespaces)) != nil
+                             ? "Couldn't read a podcast feed at “\(query)”."
+                             : "No shows found for “\(query)”.").foregroundStyle(.secondary).padding(.horizontal, 60)
                     } else {
                         showGrid("Results", results)
                     }
@@ -380,7 +381,7 @@ struct DiscoverTVView: View {
             .padding(.vertical, 20)
         }
         .scrollClipDisabled()
-        .searchable(text: $query, prompt: "Search Apple Podcasts directory")
+        .searchable(text: $query, prompt: "Search Apple Podcasts, or type a feed address")
         .overlay { if searching, results == nil { ProgressView() } }
         .task {
             guard let api = audio.api else { return }
@@ -399,8 +400,32 @@ struct DiscoverTVView: View {
             guard !Task.isCancelled, let api = audio.api else { return }
             searching = true
             defer { searching = false }
+            // A feed address typed (or dictated from the iPhone keyboard) instead of a name: read
+            // that feed and offer it as the one result, so a show that isn't in the Apple
+            // directory - a private or self-hosted feed - can be followed from the TV too.
+            if let feed = Self.feedURL(trimmed) {
+                if let preview = try? await api.preview(feedUrl: feed, itunesId: nil) {
+                    let p = preview.podcast
+                    results = [DirectoryShow(itunesId: nil, title: p.title, author: p.author, artUrl: p.artUrl,
+                                             feedUrl: p.feedUrl ?? feed, genre: p.categories?.first,
+                                             episodeCount: p.episodeCount ?? preview.episodes?.count,
+                                             podcastId: p.id.isEmpty ? nil : p.id, subscribed: p.subscribed)]
+                } else {
+                    results = []
+                }
+                return
+            }
             if let found = try? await api.directorySearch(trimmed) { results = found }
         }
+    }
+
+    // "http(s)://…", "feeds.example.com/show.xml" or "example.com/rss" - something with a dot and
+    // no spaces that isn't plain words. Returns the address to read, with a scheme.
+    static func feedURL(_ text: String) -> String? {
+        let lower = text.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") { return text }
+        guard !text.contains(" "), text.contains("."), text.contains("/") else { return nil }
+        return "https://" + text
     }
 
     private func showGrid(_ title: String?, _ shows: [DirectoryShow]) -> some View {

@@ -446,7 +446,7 @@ private struct SongListTV: View {
                     Menu {
                         Picker("Sort", selection: $sort) { ForEach(Self.sorts, id: \.0) { Text($0.1).tag($0.0) } }
                     } label: {
-                        Label(Self.sorts.first { $0.0 == sort }?.1 ?? "Title", systemImage: "arrow.up.arrow.down")
+                        Label(Self.sorts.first { $0.0 == sort }?.1 ?? "Title", systemImage: "arrow.up.arrow.down").audioFocusLabel()
                     }
                     Spacer()
                     if total > 0 { Text("\(total) songs").font(.caption).foregroundStyle(.secondary) }
@@ -505,7 +505,7 @@ private struct GenreGridTV: View {
                 ForEach(genres) { genre in
                     AudioSquareTile(title: genre.name, subtitle: genre.albumCount.map { "\($0) albums" }, route: .genre(genre.name)) {
                         ZStack(alignment: .bottomLeading) {
-                            ArtMosaic(paths: genre.artUrls ?? [], title: genre.name)
+                            ArtMosaic(paths: genre.artUrls ?? [], title: "")
                             LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .center)
                             Text(genre.name).font(.title3.bold()).foregroundStyle(.white).padding(14)
                         }

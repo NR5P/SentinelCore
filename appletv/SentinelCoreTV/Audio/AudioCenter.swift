@@ -251,6 +251,9 @@ final class AudioCenter: ObservableObject {
             player.load(entries, startAt: min(command.index ?? 0, entries.count - 1), position: command.positionSeconds ?? 0,
                         shuffle: command.shuffle ?? false, context: command.context, autoplay: true)
             continueOffer = nil
+            // Music sent here from a phone, or a wake-up alarm, shows what's playing (and how to
+            // stop it) instead of playing behind whatever screen the TV was left on.
+            showNowPlaying = true
         } catch {
             speakerError = error.localizedDescription
         }

@@ -130,6 +130,27 @@ struct AudioRowButtonStyle: ButtonStyle {
     }
 }
 
+// Several buttons side by side inside a List row. A tvOS List turns a row into ONE focusable cell,
+// and selecting that cell fires every button in it - "Play Latest" also unfollowed the show,
+// marked everything played and refreshed it. Inside a horizontal scroll view each button is its
+// own focus target again, as it would be outside a List.
+struct TVButtonRow<Content: View>: View {
+    var spacing: CGFloat = 24
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: spacing) { content() }
+                .padding(.vertical, 14)
+                .padding(.horizontal, 6)
+        }
+        .scrollClipDisabled()
+        .focusSection()
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+    }
+}
+
 // A standard button whose title stays readable under the green tint when focused.
 struct AudioButton: View {
     let title: String
@@ -285,7 +306,8 @@ struct MixTile: View {
     var body: some View {
         AudioSquareTile(title: mix.name, subtitle: mix.description, size: size, action: play) {
             ZStack(alignment: .bottomLeading) {
-                ArtMosaic(paths: mix.artUrls ?? [], title: mix.name)
+                // No title on the no-artwork card: the name is drawn over it just below.
+                ArtMosaic(paths: mix.artUrls ?? [], title: "")
                 LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .bottom, endPoint: .center)
                 Text(mix.name)
                     .font(.headline)

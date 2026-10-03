@@ -58,6 +58,9 @@ final class AudioPlayer: ObservableObject {
     @Published private(set) var duration: Double = 0
     @Published private(set) var shuffle = false
     @Published private(set) var repeatMode: RepeatMode = .off
+    // Repeat is a music setting: a podcast episode never loops (repeat-one would replay it
+    // forever, repeat-all would restart a finished show), whatever was last chosen in Music.
+    private var loopMode: RepeatMode { current?.episode != nil ? .off : repeatMode }
     @Published private(set) var speed: Double = 1
     @Published private(set) var context: PlayContext?
     @Published private(set) var sleepTimer: SleepTimer?
@@ -259,7 +262,7 @@ final class AudioPlayer: ObservableObject {
         finishCurrent(completed: false)
         if index + 1 < queue.count {
             index += 1
-        } else if repeatMode != .off {
+        } else if loopMode != .off {
             index = 0
         } else {
             player.pause()
@@ -472,8 +475,8 @@ final class AudioPlayer: ObservableObject {
             player.remove(item)
             itemEntries.removeValue(forKey: ObjectIdentifier(item))
         }
-        guard repeatMode != .one, sleepTimer != .endOfItem else { return }
-        let nextIndex: Int? = index + 1 < queue.count ? index + 1 : (repeatMode == .all && !queue.isEmpty ? 0 : nil)
+        guard loopMode != .one, sleepTimer != .endOfItem else { return }
+        let nextIndex: Int? = index + 1 < queue.count ? index + 1 : (loopMode == .all && !queue.isEmpty ? 0 : nil)
         guard let nextIndex, let item = makeItem(queue[nextIndex]) else { return }
         if player.canInsert(item, after: currentItem) { player.insert(item, after: currentItem) }
     }
@@ -551,11 +554,16 @@ final class AudioPlayer: ObservableObject {
             }
             return
         }
-        if repeatMode == .one {
+        if loopMode == .one {
             startCurrent(at: 0, autoplay: true)
-        } else if index + 1 >= queue.count, repeatMode == .off {
-            // The end of the queue: stay on the last item, stopped.
+        } else if index + 1 >= queue.count, loopMode == .off {
+            // The end of the queue: stay on the last item, stopped. Pause the player too: with
+            // its last item gone AVQueuePlayer keeps rate 1 and sits in "waiting to play", which
+            // read back as playing - a spinning play button and a speaker reporting "playing"
+            // forever. resume() restarts the item when there's none.
+            player.pause()
             isPlaying = false
+            isBuffering = false
             position = duration
             updateNowPlayingInfo()
             reportNowPlaying(force: true)

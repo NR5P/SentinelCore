@@ -57,6 +57,8 @@ struct RootView: View {
                         }
                     }
                     #endif
+                    // An announcement spoken while Now Playing is closed still shows its words.
+                    .overlay { SpokenLineOverlay(hidden: audio.showNowPlaying) }
                     // Now Playing covers everything, opened from either audio tab, a speaker
                     // command or "Continue from…". Menu closes it; playback carries on.
                     .fullScreenCover(isPresented: $audio.showNowPlaying) {

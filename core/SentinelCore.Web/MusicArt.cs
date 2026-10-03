@@ -50,10 +50,20 @@ public sealed class MusicArtCache(string root)
             using var image = await Image.LoadAsync(stream, cancellationToken);
             if (image.Width <= bucket && image.Height <= bucket) return original;
             image.Mutate(context => context.Resize(new ResizeOptions { Size = new Size(bucket, bucket), Mode = ResizeMode.Max }));
-            var temporary = sized + ".tmp";
-            await image.SaveAsJpegAsync(temporary, new JpegEncoder { Quality = 85 }, cancellationToken);
-            File.Move(temporary, sized, overwrite: true);
-            return sized;
+            // A temporary name of its own: an album page asks for the same new size several times
+            // at once (every track row shows the cover), and two requests writing one shared .tmp
+            // collided ("being used by another process" -> 500).
+            var temporary = $"{sized}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                await image.SaveAsJpegAsync(temporary, new JpegEncoder { Quality = 85 }, cancellationToken);
+                if (!File.Exists(sized)) File.Move(temporary, sized, overwrite: true);
+            }
+            finally
+            {
+                try { File.Delete(temporary); } catch (IOException) { }
+            }
+            return File.Exists(sized) ? sized : original;
         }
         catch (Exception ex) when (ex is ImageFormatException or UnknownImageFormatException or InvalidImageContentException or IOException or NotSupportedException)
         {

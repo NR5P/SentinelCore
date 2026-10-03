@@ -137,10 +137,10 @@ private struct WakeAlarmEditView: View {
             Section("Time") {
                 Menu {
                     ForEach(0..<24, id: \.self) { h in Button(String(format: "%02d", h)) { hour = h } }
-                } label: { LabeledContent("Hour", value: String(format: "%02d", hour)) }
+                } label: { LabeledContent("Hour", value: String(format: "%02d", hour)).focusContrastForeground() }
                 Menu {
                     ForEach(Array(stride(from: 0, to: 60, by: 5)), id: \.self) { m in Button(String(format: ":%02d", m)) { minute = m } }
-                } label: { LabeledContent("Minute", value: String(format: ":%02d", minute)) }
+                } label: { LabeledContent("Minute", value: String(format: ":%02d", minute)).focusContrastForeground() }
                 Text("Goes off at \(WakeAlarmText.time(String(format: "%02d:%02d", hour, minute))), the server's time zone.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -175,22 +175,22 @@ private struct WakeAlarmEditView: View {
                         }
                     }
                 } label: {
-                    LabeledContent("Source", value: WakeAlarmText.source(source))
+                    LabeledContent("Source", value: WakeAlarmText.source(source)).focusContrastForeground()
                 }
                 Menu {
                     Button("This Apple TV (\(AudioPrefs.speakerName))") { speakerId = AudioPrefs.deviceId }
                     ForEach(speakers) { s in Button("\(s.name)\(s.online == true ? "" : " (offline)")") { speakerId = s.deviceId } }
                 } label: {
-                    LabeledContent("Speaker", value: speakerName)
+                    LabeledContent("Speaker", value: speakerName).focusContrastForeground()
                 }
                 Menu {
                     ForEach([0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0], id: \.self) { v in Button("\(Int(v * 100))%") { volume = v } }
-                } label: { LabeledContent("Volume", value: "\(Int(volume * 100))%") }
+                } label: { LabeledContent("Volume", value: "\(Int(volume * 100))%").focusContrastForeground() }
                 Menu {
                     ForEach([0.0, 30, 60, 120, 300, 600], id: \.self) { s in
                         Button(s == 0 ? "No fade" : (s < 60 ? "\(Int(s)) seconds" : "\(Int(s / 60)) minutes")) { ramp = s }
                     }
-                } label: { LabeledContent("Fade In", value: ramp == 0 ? "None" : (ramp < 60 ? "\(Int(ramp)) s" : "\(Int(ramp / 60)) min")) }
+                } label: { LabeledContent("Fade In", value: ramp == 0 ? "None" : (ramp < 60 ? "\(Int(ramp)) s" : "\(Int(ramp / 60)) min")).focusContrastForeground() }
             }
             Section {
                 Button {

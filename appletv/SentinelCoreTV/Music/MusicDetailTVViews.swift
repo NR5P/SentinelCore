@@ -274,7 +274,7 @@ struct LovedTracksTVView: View {
     var body: some View {
         List {
             Section {
-                HStack(spacing: 24) {
+                TVButtonRow {
                     AudioButton("Play", systemImage: "play.fill") { play(0, shuffle: false) }
                     AudioButton("Shuffle", systemImage: "shuffle") { play(0, shuffle: true) }
                     AudioButton("Loved Mix", systemImage: "dot.radiowaves.left.and.right") {

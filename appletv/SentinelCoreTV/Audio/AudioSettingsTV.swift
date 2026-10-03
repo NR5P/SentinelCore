@@ -78,7 +78,7 @@ struct AudioPlaybackSettingsTV: View {
                         }
                     }
                 } label: {
-                    LabeledContent("Podcast Speed", value: AudioFormat.speed(podcastSpeed))
+                    LabeledContent("Podcast Speed", value: AudioFormat.speed(podcastSpeed)).focusContrastForeground()
                 }
             } header: {
                 Text("Playback")
@@ -377,7 +377,7 @@ struct SchemaSectionEditor: View {
                     Button(option.label) { text[field.name] = option.value }
                 }
             } label: {
-                LabeledContent(field.label, value: field.options?.first { $0.value == text[field.name] }?.label ?? text[field.name] ?? "")
+                LabeledContent(field.label, value: field.options?.first { $0.value == text[field.name] }?.label ?? text[field.name] ?? "").focusContrastForeground()
             }
         case "password":
             SecureField(field.label, text: binding(field.name))

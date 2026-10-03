@@ -425,7 +425,11 @@ struct MediaVpnStatusTV: View {
             result = (ok, answer.message ?? (ok ? "The VPN works." : "The VPN test failed."))
         } catch {
             if MediaDownloadsTracker.isCancellation(error) { return }
-            result = (false, error.localizedDescription)
+            if (error as? URLError)?.code == .timedOut {
+                result = (false, "No answer after 90 seconds - the server couldn't reach the VPN or the download services. Check they're running on the server.")
+            } else {
+                result = (false, error.localizedDescription)
+            }
         }
     }
 }

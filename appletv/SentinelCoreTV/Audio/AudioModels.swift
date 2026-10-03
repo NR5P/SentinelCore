@@ -921,7 +921,9 @@ enum AudioFormat {
 
     static func bytes(_ value: Int64?) -> String? {
         guard let value, value > 0 else { return nil }
-        return ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+        // Binary, like the server: a podcast storage limit is set in GB = 1024³ bytes, and
+        // `.file` (1000³) turned a 50 GB limit into "53.7 GB".
+        return ByteCountFormatter.string(fromByteCount: value, countStyle: .binary)
     }
 
     static func speed(_ value: Double) -> String {

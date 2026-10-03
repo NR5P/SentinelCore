@@ -705,6 +705,23 @@ private struct AmbientWakeStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
 
+// The same card over the rest of the app (RootView), for an announcement that arrives while Now
+// Playing isn't open - "someone is at the front door" said with nothing on screen to show it.
+struct SpokenLineOverlay: View {
+    @ObservedObject private var player = AudioCenter.shared.player
+    let hidden: Bool
+
+    var body: some View {
+        ZStack {
+            if !hidden, let line = player.spokenLine {
+                SpokenLineCard(text: line)
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: player.spokenLine)
+        .allowsHitTesting(false)
+    }
+}
+
 // An announcement or the Morning Briefing being read out.
 private struct SpokenLineCard: View {
     let text: String

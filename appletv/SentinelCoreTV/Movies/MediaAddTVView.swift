@@ -637,8 +637,17 @@ private struct MediaReleaseSearchTVView: View {
         do {
             var current = try await model.client.startMediaDownloadSearch(input)
             search = current
+            let started = Date()
             while !current.isFinished {
                 guard let id = current.id else { throw ClientError.invalidResponse }
+                // A VPN or download service that never answers left this spinning forever
+                // ("it takes a few seconds"); give up with something to act on instead.
+                if Date().timeIntervalSince(started) > 150 {
+                    failure = current.phase == "searching"
+                        ? "The sites haven't answered in over two minutes. Try again, or check Prowlarr on the server."
+                        : "Still couldn't connect to the VPN after two minutes. Check the VPN and download services on the server (Downloads → Test VPN), then try again."
+                    return
+                }
                 try await Task.sleep(for: .seconds(1))
                 current = try await model.client.mediaDownloadSearch(id: id)
                 search = current
