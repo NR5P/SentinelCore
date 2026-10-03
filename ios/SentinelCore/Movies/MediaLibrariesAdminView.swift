@@ -200,7 +200,6 @@ struct MediaLibraryEditView: View {
     @State private var errorMessage: String?
     @State private var notice: String?
     @State private var confirmingRemove = false
-    @State private var picking = false
 
     init(existing: MediaLibrary?, onChange: @escaping () -> Void) {
         self.existing = existing
@@ -237,8 +236,11 @@ struct MediaLibraryEditView: View {
 
             Section {
                 LibraryTextField(label: "Folder", prompt: "/mnt/movies or smb://PC/Movies", text: $path, monospaced: true)
-                Button {
-                    picking = true
+                // A NavigationLink handed a binding. Both alternatives hung the Mac app at 100% CPU
+                // mid-push, the picker never appearing: .navigationDestination on this screen
+                // (itself pushed by a NavigationLink), and a link given the path plus a callback.
+                NavigationLink {
+                    MediaFolderPickerView(path: $path)
                 } label: {
                     Label("Choose Folder…", systemImage: "folder")
                 }
@@ -292,11 +294,6 @@ struct MediaLibraryEditView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .navigationDestination(isPresented: $picking) {
-            MediaFolderPickerView(startPath: path.trimmingCharacters(in: .whitespacesAndNewlines)) { picked in
-                path = picked
-            }
-        }
         .confirmationDialog("Remove \(existing?.name ?? "this library")?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove Library", role: .destructive) {
                 Task { await remove() }
@@ -359,8 +356,8 @@ struct MediaFolderPickerView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
-    let startPath: String
-    var onPick: (String) -> Void
+    /// The library's folder box: read once to open the picker there, written by Use This Folder.
+    @Binding var path: String
 
     @State private var listing: MediaBrowseListing?
     @State private var typedPath = ""
@@ -369,12 +366,7 @@ struct MediaFolderPickerView: View {
     @State private var started = false
     @State private var discovered: [MediaDiscoveredComputer]?
     @State private var discovering = false
-    @State private var signIn: SignInTarget?
-
-    struct SignInTarget: Hashable {
-        var host: String
-        var computer: MediaNetworkComputer?
-    }
+    @State private var openAfterSignIn: String?
 
     var body: some View {
         Form {
@@ -413,8 +405,8 @@ struct MediaFolderPickerView: View {
                     Section {
                         Text(error).foregroundStyle(SentinelTheme.red)
                         if listing.needsLogin == true, let host = listing.host {
-                            Button {
-                                signIn = SignInTarget(host: host, computer: savedComputer(for: host))
+                            NavigationLink {
+                                signInView(host: host, computer: savedComputer(for: host))
                             } label: {
                                 Label("Sign In to \(host)", systemImage: "person.badge.key")
                             }
@@ -445,7 +437,7 @@ struct MediaFolderPickerView: View {
 
                 Section {
                     Button {
-                        onPick(listing.path)
+                        path = listing.path
                         dismiss()
                     } label: {
                         Label("Use This Folder", systemImage: "checkmark.circle")
@@ -467,17 +459,15 @@ struct MediaFolderPickerView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .navigationDestination(item: $signIn) { target in
-            MediaNetworkSignInView(host: target.host, computer: target.computer) { computerPath in
-                Task { await load(computerPath) }
-            } onForget: {
-                Task { await load("") }
-            }
+        .onChange(of: openAfterSignIn) { _, next in
+            guard let next else { return }
+            openAfterSignIn = nil
+            Task { await load(next) }
         }
         .task {
             guard !started else { return }
             started = true
-            await load(startPath, fallBackToRoots: true)
+            await load(path.trimmingCharacters(in: .whitespacesAndNewlines), fallBackToRoots: true)
         }
     }
 
@@ -502,8 +492,8 @@ struct MediaFolderPickerView: View {
                         }
                         .contentShape(Rectangle())
                     }
-                    Button {
-                        signIn = SignInTarget(host: computer.host, computer: computer)
+                    NavigationLink {
+                        signInView(host: computer.host, computer: computer)
                     } label: {
                         Image(systemName: "person.badge.key")
                     }
@@ -513,8 +503,8 @@ struct MediaFolderPickerView: View {
                 .buttonStyle(.borderless)
                 #endif
             }
-            Button {
-                signIn = SignInTarget(host: "", computer: nil)
+            NavigationLink {
+                signInView(host: "", computer: nil)
             } label: {
                 Label("Add a Computer…", systemImage: "plus")
             }
@@ -551,6 +541,14 @@ struct MediaFolderPickerView: View {
         } footer: {
             Text("Folders shared from a Windows PC, a Mac with File Sharing on, or a NAS. The server reads them over the network itself - nothing to mount.")
         }
+    }
+
+    // Pushed with a NavigationLink, never .navigationDestination: this screen is itself pushed by
+    // a NavigationLink, and on macOS a destination declared here hung the app at 100% CPU the
+    // moment it was presented (even with a bare Text as the destination). It hands back where to
+    // go next through a binding for the same reason Choose Folder… takes one.
+    private func signInView(host: String, computer: MediaNetworkComputer?) -> some View {
+        MediaNetworkSignInView(host: host, computer: computer, openAfter: $openAfterSignIn)
     }
 
     private func folderButton(_ folder: MediaBrowseFolder) -> some View {
@@ -622,8 +620,9 @@ struct MediaNetworkSignInView: View {
     @Environment(\.dismiss) private var dismiss
 
     let computer: MediaNetworkComputer?
-    var onSignedIn: (String) -> Void
-    var onForget: () -> Void
+    /// What the folder picker opens once this screen closes: the computer after signing in, the
+    /// starting page ("") after forgetting it.
+    @Binding var openAfter: String?
 
     @State private var host: String
     @State private var displayName: String
@@ -633,10 +632,9 @@ struct MediaNetworkSignInView: View {
     @State private var errorMessage: String?
     @State private var confirmingForget = false
 
-    init(host: String, computer: MediaNetworkComputer?, onSignedIn: @escaping (String) -> Void, onForget: @escaping () -> Void) {
+    init(host: String, computer: MediaNetworkComputer?, openAfter: Binding<String?>) {
         self.computer = computer
-        self.onSignedIn = onSignedIn
-        self.onForget = onForget
+        _openAfter = openAfter
         _host = State(initialValue: computer?.host ?? host)
         _displayName = State(initialValue: computer.map { $0.name == $0.host ? "" : $0.name } ?? "")
         _username = State(initialValue: computer?.username ?? "")
@@ -707,8 +705,8 @@ struct MediaNetworkSignInView: View {
             domain: nil)
         do {
             let result = try await model.client.saveMediaNetworkComputer(id: computer?.id, input)
+            openAfter = result.computer.path
             dismiss()
-            onSignedIn(result.computer.path)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -718,8 +716,8 @@ struct MediaNetworkSignInView: View {
         guard let computer else { return }
         do {
             try await model.client.deleteMediaNetworkComputer(id: computer.id)
+            openAfter = ""
             dismiss()
-            onForget()
         } catch {
             errorMessage = error.localizedDescription
         }
