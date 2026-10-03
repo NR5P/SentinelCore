@@ -6,7 +6,12 @@ import SwiftUI
 // picture.
 struct MovieDetailTVView: View {
     let route: MediaRoute
+    // The movie was deleted and this page closed: the shelves behind it should re-read.
+    var onDeleted: () -> Void = {}
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingDelete = false
+    @State private var deleteError: String?
     @State private var detail: MediaItemDetail?
     @State private var errorMessage: String?
     @State private var seasonNumber: Int?
@@ -49,6 +54,17 @@ struct MovieDetailTVView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(listError ?? "")
+        }
+        .alert("Delete \(detail?.summary.title ?? route.title)?", isPresented: $confirmingDelete) {
+            Button("Delete", role: .destructive) { Task { await deleteMovie() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The movie's file is deleted from the server's disk for everyone. This can't be undone.")
+        }
+        .alert("Couldn't Delete", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteError ?? "")
         }
     }
 
@@ -178,6 +194,14 @@ struct MovieDetailTVView: View {
                     Label("My List", systemImage: item.isInList ? "checkmark" : "plus")
                 }
                 .accessibilityLabel(item.isInList ? "Remove from My List" : "Add to My List")
+            }
+            if detail.canDelete == true {
+                Button(role: .destructive) {
+                    confirmingDelete = true
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .disabled(working)
             }
             if item.canResume, let remaining = item.remainingLabel {
                 Text(remaining).font(.caption).foregroundStyle(.white.opacity(0.7))
@@ -310,6 +334,19 @@ struct MovieDetailTVView: View {
             detail?.summary.inList = current
             if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
             listError = error.localizedDescription
+        }
+    }
+
+    private func deleteMovie() async {
+        working = true
+        defer { working = false }
+        do {
+            try await model.client.deleteMediaItem(id: route.id)
+            onDeleted()
+            dismiss()
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            deleteError = error.localizedDescription
         }
     }
 

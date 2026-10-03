@@ -380,6 +380,11 @@ struct MediaSeason: Codable, Identifiable, Hashable {
 
 // An ItemSummary plus the long-form fields. The summary half decodes as a MediaItemSummary from
 // the same object, so every helper above works on a detail too - and so the two never drift.
+extension Notification.Name {
+    // A movie page deleted its movie (object: the item id); the shelves behind it re-read.
+    static let mediaItemDeleted = Notification.Name("SentinelCore.mediaItemDeleted")
+}
+
 struct MediaItemDetail: Decodable, Identifiable {
     var summary: MediaItemSummary
     var overview: String?
@@ -392,11 +397,13 @@ struct MediaItemDetail: Decodable, Identifiable {
     var audioTracks: [MediaAudioTrack]?
     var subtitles: [MediaSubtitle]?
     var seasons: [MediaSeason]?
+    // This account may delete the movie from the server's disk (admins, movies on its own disks).
+    var canDelete: Bool?
 
     var id: String { summary.id }
 
     private enum CodingKeys: String, CodingKey {
-        case overview, tagline, releaseDate, cast, tmdbId, tmdbUrl, file, audioTracks, subtitles, seasons
+        case overview, tagline, releaseDate, cast, tmdbId, tmdbUrl, file, audioTracks, subtitles, seasons, canDelete
     }
 
     init(from decoder: Decoder) throws {
@@ -412,6 +419,7 @@ struct MediaItemDetail: Decodable, Identifiable {
         audioTracks = try container.decodeIfPresent([MediaAudioTrack].self, forKey: .audioTracks)
         subtitles = try container.decodeIfPresent([MediaSubtitle].self, forKey: .subtitles)
         seasons = try container.decodeIfPresent([MediaSeason].self, forKey: .seasons)
+        canDelete = try container.decodeIfPresent(Bool.self, forKey: .canDelete)
     }
 
     var seasonList: [MediaSeason] { (seasons ?? []).sorted { $0.number < $1.number } }

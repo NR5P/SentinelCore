@@ -91,15 +91,38 @@ public sealed partial class SentinelClient
     /// <summary>
     /// Downloads one release of a search (201). No library means the first of the right kind on the
     /// server's own disks; 400 with a sentence when there is none, or the search has expired.
+    /// A movie the library already has, sent with no <paramref name="replace"/>, throws
+    /// <see cref="MediaAlreadyInLibraryException"/>: ask, then call again with true (replace the old
+    /// copy) or false (keep both).
     /// </summary>
-    public Task<MediaDownload> StartMediaDownloadAsync(
-        string searchId, string releaseId, string? libraryId = null, CancellationToken ct = default) =>
-        SlowSendAsync<MediaDownload, MediaDownloadGrabInput>(
-            DownloadsBase,
-            HttpMethod.Post,
-            new MediaDownloadGrabInput { SearchId = searchId, ReleaseId = releaseId, LibraryId = libraryId },
-            DownloadSlowTimeout,
-            ct);
+    public async Task<MediaDownload> StartMediaDownloadAsync(
+        string searchId, string releaseId, string? libraryId = null, bool? replace = null, CancellationToken ct = default)
+    {
+        try
+        {
+            return await SlowSendAsync<MediaDownload, MediaDownloadGrabInput>(
+                DownloadsBase,
+                HttpMethod.Post,
+                new MediaDownloadGrabInput { SearchId = searchId, ReleaseId = releaseId, LibraryId = libraryId, Replace = replace },
+                DownloadSlowTimeout,
+                ct).ConfigureAwait(false);
+        }
+        catch (SentinelServerException error) when (error.Status == 409 && error.Code == "alreadyInLibrary")
+        {
+            MediaDownloadExisting? existing = null;
+            if (error.Body is { Length: > 0 } body)
+            {
+                try
+                {
+                    existing = System.Text.Json.JsonSerializer.Deserialize<MediaDownloadConflictBody>(body, JsonOptions)?.Existing;
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                }
+            }
+            throw new MediaAlreadyInLibraryException(error.Message, existing ?? new MediaDownloadExisting(), error);
+        }
+    }
 
     public Task<MediaDownload> MediaDownloadAsync(string id, CancellationToken ct = default) =>
         GetAsync<MediaDownload>($"{DownloadsBase}/{Uri.EscapeDataString(id)}", ct: ct);
@@ -166,4 +189,14 @@ public sealed partial class SentinelClient
         var data = await ExecuteAndValidateAsync(request, limit.Token, _organizerHttp).ConfigureAwait(false);
         return expectBody ? Deserialize<TResult>(data, path) : default!;
     }
+}
+
+/// <summary>
+/// POST /api/media/downloads' 409 "alreadyInLibrary": the movie is already in the library and the
+/// request said neither replace nor keep both. The message is the server's ("You already have Dune (2021).").
+/// </summary>
+public sealed class MediaAlreadyInLibraryException(string message, MediaDownloadExisting existing, Exception? inner = null)
+    : Exception(message, inner)
+{
+    public MediaDownloadExisting Existing { get; } = existing;
 }

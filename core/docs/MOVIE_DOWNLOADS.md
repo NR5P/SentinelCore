@@ -224,6 +224,17 @@ Release = { "id": "r1", "title": "Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.H.264-F
 - `POST /api/media/downloads` body `{ "searchId": "…", "releaseId": "r1", "libraryId": null }` → **201** Download.
   `libraryId` is optional (first local library of the right kind). 400 `{ error }` when there is no
   such library ("Add one (kind: TV shows) under Movies -> Libraries") or the search expired.
+- **A movie already in the library** (same TMDB id, or same title and year when either has no
+  TMDB id): without `replace` the server queues nothing and answers **409**
+  ```json
+  { "error": "You already have Dune (2021).", "code": "alreadyInLibrary",
+    "existing": { "itemId": "…", "title": "Dune", "year": 2021, "sizeBytes": 4200000000, "height": 720, "canReplace": true } }
+  ```
+  The app asks "Replace the copy you have?" and sends the same body again with `"replace": true`
+  (the old copy's files are deleted once the new one has downloaded and is being filed - see
+  `DELETE /api/media/items/{id}` in MOVIES.md for what goes) or `"replace": false` (keep both).
+  Offer Replace only when `canReplace` (false for a copy on another computer's share). Episodes
+  never ask; the show picker already marks owned episodes.
 - `GET /api/media/downloads` → `{ "status": {…as above}, "active": [ Download ], "recent": [ Download ] }`.
   Poll every 2-3 s while `active` is not empty. `recent` is the last 30 finished.
 - `GET /api/media/downloads/{id}` → Download.
@@ -237,7 +248,7 @@ Download = { "id": "…", "kind": "movie|episode", "title": "Bluey", "year": 201
              "posterUrl": "https://image.tmdb.org/…", "releaseTitle": "…", "site": "TheSite",
              "sizeBytes": 400000000, "state": "queued|downloading|seeding|importing|done|failed|canceled",
              "progress": 0.42, "downloadedBytes": 168000000, "speedBytesPerSecond": 3100000, "etaSeconds": 75,
-             "peers": 14, "error": null, "libraryId": "…", "itemId": "…|null", "requestedBy": "sam",
+             "peers": 14, "error": null, "libraryId": "…", "itemId": "…|null", "replacesItemId": "…|null", "requestedBy": "sam",
              "createdAt": "…", "completedAt": "…|null", "finishedAt": "…|null" }
 ```
 

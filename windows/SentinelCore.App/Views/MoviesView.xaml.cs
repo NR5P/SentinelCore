@@ -56,6 +56,10 @@ public partial class MoviesView : UserControl
     private bool _suppressFilterEvents = true;
     private bool _loadedOnce;
 
+    // A movie opened from here was deleted: reload whatever grid is showing when this comes back,
+    // not just Home, so its poster is gone.
+    private bool _reloadOnReturn;
+
     public MoviesView(AppModel model, INavigator? navigator = null)
     {
         _model = model;
@@ -90,7 +94,11 @@ public partial class MoviesView : UserControl
         IsVisibleChanged += (_, _) =>
         {
             if (!IsVisible || !_loadedOnce) return;
-            if (IsHome) _ = ReloadAsync();
+            if (IsHome || _reloadOnReturn)
+            {
+                _reloadOnReturn = false;
+                _ = ReloadAsync();
+            }
             _ = RefreshDownloadStatusAsync();
         };
     }
@@ -481,7 +489,7 @@ public partial class MoviesView : UserControl
     private void Open(MediaItemSummary item)
     {
         var title = item.IsEpisode && !string.IsNullOrWhiteSpace(item.ShowTitle) ? $"{item.ShowTitle} · {item.EpisodeLabel}" : item.Title;
-        _navigator.Push(new MovieDetailView(_model, _navigator, item.Id), title);
+        _navigator.Push(new MovieDetailView(_model, _navigator, item.Id, onDeleted: () => _reloadOnReturn = true), title);
     }
 
     // Scoped to the tab and genre on screen, so Surprise me on TV Shows picks a show. A 404 means

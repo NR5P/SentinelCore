@@ -69,10 +69,10 @@ struct MoviesTVView: View {
             if pane == .downloads, !can { pane = .home }
         }
         .navigationDestination(for: MediaRoute.self) { route in
-            MovieDetailTVView(route: route)
+            MovieDetailTVView(route: route, onDeleted: { refreshToken += 1 })
         }
         .navigationDestination(item: $detailRoute) { route in
-            MovieDetailTVView(route: route)
+            MovieDetailTVView(route: route, onDeleted: { refreshToken += 1 })
         }
         .fullScreenCover(item: $playing, onDismiss: { refreshToken += 1 }) { request in
             MoviePlayerTVView(request: request, client: model.client)

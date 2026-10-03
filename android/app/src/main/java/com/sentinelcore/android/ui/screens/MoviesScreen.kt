@@ -57,6 +57,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -292,10 +293,13 @@ fun MoviesScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var refreshTick by remember { mutableIntStateOf(0) }
+    // A title deleted from its page counts as a Refresh, so its poster does not linger.
+    val libraryVersion by model.mediaLibraryVersion.collectAsState()
+    val reloadKey = refreshTick + libraryVersion
     val isAdmin = state.authStatus?.role?.equals("Admin", ignoreCase = true) != false
 
     // Whether downloads are on is asked each time the tab comes into view and on Refresh.
-    LaunchedEffect(refreshTick) { browse.loadDownloads() }
+    LaunchedEffect(reloadKey) { browse.loadDownloads() }
 
     // Tapping a shelf or poster: a show opens its page; a movie or episode its own.
     val open: (MediaItemSummary) -> Unit = { onItem(it.id) }
@@ -359,7 +363,7 @@ fun MoviesScreen(
                 browse = browse,
                 model = model,
                 isAdmin = isAdmin,
-                refreshTick = refreshTick,
+                refreshTick = reloadKey,
                 onManageLibraries = onManageLibraries,
                 onItem = open,
                 onPlay = onPlay,
@@ -370,7 +374,7 @@ fun MoviesScreen(
                 model = model,
                 kind = pane.kind,
                 query = query,
-                refreshTick = refreshTick,
+                refreshTick = reloadKey,
                 onItem = open,
             )
         }

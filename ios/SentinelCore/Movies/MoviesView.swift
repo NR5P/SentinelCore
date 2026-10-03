@@ -106,6 +106,7 @@ struct MoviesView: View {
         }
         .onChange(of: model.activeServerURL) { _, _ in downloads.reset() }
         .onChange(of: downloads.landed) { _, _ in refreshToken += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: .mediaItemDeleted)) { _ in refreshToken += 1 }
         .moviePlayer($playing, client: model.client) { refreshToken += 1 }
     }
 

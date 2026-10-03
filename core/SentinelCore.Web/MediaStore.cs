@@ -22,6 +22,7 @@ public interface IMediaStore
     Task DeleteLibraryAsync(Guid id, CancellationToken cancellationToken);
 
     Task<MediaItem?> GetItemAsync(Guid id, CancellationToken cancellationToken);
+    Task DeleteItemAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyList<MediaItem>> GetItemsAsync(MediaQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<MediaItem>> GetItemsAsync(IEnumerable<Guid> ids, CancellationToken cancellationToken);
     Task UpsertItemsAsync(IEnumerable<MediaItem> items, CancellationToken cancellationToken);
@@ -242,6 +243,28 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
     }
 
     // MARK: - Items
+
+    // Forgets one title and everything people did with it (its files are the caller's to delete).
+    public async Task DeleteItemAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var transaction = _connection.BeginTransaction();
+            using var command = _connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                DELETE FROM MediaProgress WHERE ItemId IN (SELECT Id FROM MediaItems WHERE Id = $id OR ParentId = $id);
+                DELETE FROM MediaPlays WHERE ItemId IN (SELECT Id FROM MediaItems WHERE Id = $id OR ParentId = $id);
+                DELETE FROM MediaWatchlist WHERE ItemId IN (SELECT Id FROM MediaItems WHERE Id = $id OR ParentId = $id);
+                DELETE FROM MediaItems WHERE Id = $id OR ParentId = $id;
+                """;
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            transaction.Commit();
+        }
+        finally { _lock.Release(); }
+    }
 
     public async Task<MediaItem?> GetItemAsync(Guid id, CancellationToken cancellationToken)
     {

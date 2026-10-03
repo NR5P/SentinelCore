@@ -803,6 +803,7 @@ window.SentinelMovies = (function () {
       out.push(`<button type="button" class="mv-btn mv-btn-quiet" data-act="fix-match">Fix match&hellip;</button>`);
       out.push(`<button type="button" class="mv-btn mv-btn-quiet" data-act="refresh-meta">Refresh metadata</button>`);
     }
+    if (item.canDelete) out.push(`<button type="button" class="mv-btn mv-danger" data-act="delete-item">Delete</button>`);
     return out.join("");
   }
 
@@ -992,6 +993,25 @@ window.SentinelMovies = (function () {
     detail = res.data || detail;
     drawDetail();
     showToast("Metadata refreshed", true);
+  }
+
+  // Deletes the movie's files on the server for everyone, then goes back to a list refetched
+  // without it (home is cached, so it is dropped; the grids reload on every visit anyway).
+  async function deleteItem(button) {
+    if (!detail) return;
+    const item = detail;
+    if (!confirm(`Delete ${item.title}? The movie's file is deleted from the server's disk for everyone. This can't be undone.`)) return;
+    button.disabled = true;
+    button.classList.add("mv-working");
+    const res = await request(`/api/media/items/${enc(item.id)}`, { method: "DELETE" });
+    button.disabled = false;
+    button.classList.remove("mv-working");
+    if (!res.ok) { showToast(res.error, false); return; }
+    homeData = null;
+    if (detail === item) detail = null;
+    showToast(`${item.title} deleted`, true);
+    if (route.name === "detail" && route.id === item.id) goBack();
+    else refreshCurrent();
   }
 
   // ---- modal ----------------------------------------------------------------------------------
@@ -1958,7 +1978,7 @@ window.SentinelMovies = (function () {
     return `<div class="mv-dl mv-dl-${escapeHtml(d.state)}" data-dl-id="${escapeHtml(d.id)}">
       ${art(d.posterUrl, "mv-poster mv-dl-poster", d.title, "")}
       <div class="mv-dl-body">
-        <div class="mv-dl-title">${escapeHtml(d.title)}${d.year ? ` <span class="mv-match-year-tag">${escapeHtml(d.year)}</span>` : ""}${d.subtitle ? ` <span class="mv-lib-kind">${escapeHtml(d.subtitle)}</span>` : ""}</div>
+        <div class="mv-dl-title">${escapeHtml(d.title)}${d.year ? ` <span class="mv-match-year-tag">${escapeHtml(d.year)}</span>` : ""}${d.subtitle ? ` <span class="mv-lib-kind">${escapeHtml(d.subtitle)}</span>` : ""}${d.replacesItemId && active ? ` <span class="mv-lib-kind">Replaces the copy you have</span>` : ""}</div>
         <div class="mv-dl-release" title="${escapeHtml(d.releaseTitle)}">${escapeHtml(d.releaseTitle)}${d.site ? ` &middot; ${escapeHtml(d.site)}` : ""}</div>
         ${active ? `<div class="mv-dl-bar"><span style="width:${d.state === "downloading" ? pct : d.state === "queued" ? 0 : 100}%"></span></div>` : ""}
         <div class="mv-dl-facts">${facts.filter(Boolean).map(escapeHtml).join('<span class="mv-dot">&middot;</span>')}</div>
@@ -2022,7 +2042,7 @@ window.SentinelMovies = (function () {
   // -- the add dialog: find -> (seasons) -> releases
 
   function openAdd() {
-    Object.assign(add, { stage: "find", results: add.q ? add.results : null, show: null, season: null, search: null, others: false });
+    Object.assign(add, { stage: "find", results: add.q ? add.results : null, show: null, season: null, search: null, others: false, already: null });
     drawAdd();
     if (add.q && !add.results) lookup();
   }
@@ -2033,10 +2053,11 @@ window.SentinelMovies = (function () {
   }
 
   function drawAdd() {
-    const title = add.stage === "releases" ? "Pick a download" : add.stage === "show" ? (add.show ? add.show.title : "TV show") : "Add a movie or show";
+    const title = add.stage === "already" ? alreadyTitle() : add.stage === "releases" ? "Pick a download" : add.stage === "show" ? (add.show ? add.show.title : "TV show") : "Add a movie or show";
     let body = "";
     if (add.stage === "find") body = addFindMarkup();
     else if (add.stage === "show") body = addShowMarkup();
+    else if (add.stage === "already") body = addAlreadyMarkup();
     else body = addReleasesMarkup();
     const panel = el("mv-modal-panel");
     const open = !el("mv-modal").classList.contains("hidden") && panel.querySelector(".mv-add");
@@ -2220,13 +2241,43 @@ window.SentinelMovies = (function () {
         ${add.others ? `<div class="mv-rel-list mv-rel-others">${others.map((r, i) => releaseMarkup(r, i, "others")).join("")}</div>` : ""}` : ""}`;
   }
 
-  async function grab(button, releaseId) {
+  // The movie is already in the library: the server queued nothing, so ask, then send the same
+  // body again with replace true (the old copy goes once the new one lands) or false (keep both).
+  function alreadyTitle() {
+    const e = (add.already && add.already.existing) || {};
+    return e.title ? `You already have ${e.title}${e.year ? ` (${e.year})` : ""}` : (add.already && add.already.error) || "Already in the library";
+  }
+
+  function addAlreadyMarkup() {
+    const e = add.already.existing || {};
+    const copy = [e.height ? `${e.height}p` : "", sizeLabel(e.sizeBytes)].filter(Boolean).join(", ");
+    return `<p class="mv-modal-intro">${copy ? `The copy you have: ${escapeHtml(copy)}.` : "It is already in the library."}
+        ${e.canReplace ? "Replace it and the old copy's files are deleted once the new one has downloaded."
+          : "The copy you have is on another computer's share, so it can't be replaced from here."}</p>
+      <div class="mv-modal-foot">
+        <button type="button" class="mv-btn mv-btn-quiet" data-mact="add-already-cancel">Cancel</button>
+        <button type="button" class="mv-btn${e.canReplace ? "" : " mv-btn-primary"}" data-mact="add-replace" data-replace="false">Keep both</button>
+        ${e.canReplace ? `<button type="button" class="mv-btn mv-btn-primary" data-mact="add-replace" data-replace="true">Replace it</button>` : ""}
+      </div>`;
+  }
+
+  async function grab(button, releaseId, replace) {
     if (!add.search || !add.search.id) return;
-    for (const b of document.querySelectorAll("#mv-modal-panel [data-mact='add-grab']")) b.disabled = true;
+    const buttons = "#mv-modal-panel [data-mact='add-grab'], #mv-modal-panel [data-mact='add-replace']";
+    for (const b of document.querySelectorAll(buttons)) b.disabled = true;
     button.classList.add("mv-working");
-    const res = await request("/api/media/downloads", { method: "POST", body: { searchId: add.search.id, releaseId } });
+    const body = { searchId: add.search.id, releaseId };
+    if (replace !== undefined) body.replace = replace;
+    const res = await request("/api/media/downloads", { method: "POST", body });
+    if (res.status === 409 && res.data && res.data.code === "alreadyInLibrary" && replace === undefined) {
+      if (el("mv-modal").classList.contains("hidden")) return;
+      add.stage = "already";
+      add.already = { releaseId, error: res.error, existing: res.data.existing || {} };
+      drawAdd();
+      return;
+    }
     if (!res.ok) {
-      for (const b of document.querySelectorAll("#mv-modal-panel [data-mact='add-grab']")) b.disabled = false;
+      for (const b of document.querySelectorAll(buttons)) b.disabled = false;
       button.classList.remove("mv-working");
       showToast(res.error, false);
       return;
@@ -2268,6 +2319,8 @@ window.SentinelMovies = (function () {
       case "add-again": if (add.search && add.search.input) startReleaseSearch(add.search.input, add.back); return true;
       case "add-others": add.others = !add.others; drawAdd(); return true;
       case "add-grab": grab(target, target.dataset.release); return true;
+      case "add-replace": if (add.already) grab(target, add.already.releaseId, target.dataset.replace === "true"); return true;
+      case "add-already-cancel": add.stage = "releases"; add.already = null; drawAdd(); return true;
       default: return false;
     }
   }
@@ -2458,6 +2511,7 @@ window.SentinelMovies = (function () {
         case "season-watched": if (detail) setWatched(detail.id, target.dataset.value === "true", target.dataset.n); break;
         case "fix-match": openFixMatch(); break;
         case "refresh-meta": refreshMetadata(target); break;
+        case "delete-item": deleteItem(target); break;
         case "list": setInList(target); break;
         case "surprise": surprise(target); break;
         case "unwatched": {

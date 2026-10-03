@@ -408,6 +408,7 @@ private struct MediaReleaseSearchView: View {
     @State private var showOthers = false
     @State private var grabbing: String?
     @State private var grabError: String?
+    @State private var alreadyHave: MediaReplaceQuestion?
 
     var body: some View {
         List {
@@ -455,6 +456,15 @@ private struct MediaReleaseSearchView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(grabError ?? "")
+        }
+        .alert(alreadyHave?.duplicate.errorDescription ?? "", isPresented: Binding(get: { alreadyHave != nil }, set: { if !$0 { alreadyHave = nil } }), presenting: alreadyHave) { question in
+            if question.duplicate.canReplace {
+                Button("Replace It", role: .destructive) { Task { await grab(question.release, replace: true) } }
+            }
+            Button("Keep Both") { Task { await grab(question.release, replace: false) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { question in
+            Text(question.message)
         }
     }
 
@@ -554,13 +564,16 @@ private struct MediaReleaseSearchView: View {
         }
     }
 
-    private func grab(_ release: MediaRelease) async {
+    // `replace` nil the first time; a movie already in the library comes back as a question.
+    private func grab(_ release: MediaRelease, replace: Bool? = nil) async {
         guard let searchId = search?.id, let releaseId = release.id else { return }
         grabbing = releaseId
         defer { grabbing = nil }
         do {
-            let download = try await model.client.startMediaDownload(searchId: searchId, releaseId: releaseId)
+            let download = try await model.client.startMediaDownload(searchId: searchId, releaseId: releaseId, replace: replace)
             onStarted(download)
+        } catch let duplicate as MediaAlreadyInLibrary {
+            alreadyHave = MediaReplaceQuestion(release: release, duplicate: duplicate)
         } catch {
             if MediaDownloadsTracker.isCancellation(error) { return }
             grabError = error.localizedDescription

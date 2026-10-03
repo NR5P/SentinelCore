@@ -349,6 +349,46 @@ public class MediaClientTests
         Assert.Equal("Mike O'Donnell", movieDetail.Cast.Single().Character);
         Assert.True(movieDetail.AudioTracks!.Single().IsDefault);
         Assert.Equal(17638, movieDetail.TmdbId);
+        // Neither body says canDelete, as an older server wouldn't: no Delete button.
+        Assert.False(movieDetail.CanDelete);
+        Assert.False(showDetail.CanDelete);
+    }
+
+    [Fact]
+    public async Task CanDelete_decodes_from_the_detail()
+    {
+        using var server = new FakeServer()
+            .OnGet("/api/media/items/m1", """{"id":"m1","kind":"movie","title":"Dune","genres":[],"cast":[],"canDelete":true}""")
+            .OnGet("/api/media/items/m2", """{"id":"m2","kind":"movie","title":"Heat","genres":[],"cast":[],"canDelete":false}""");
+        using var client = ClientFor(server);
+
+        Assert.True((await client.MediaItemAsync("m1")).CanDelete);
+        Assert.False((await client.MediaItemAsync("m2")).CanDelete);
+    }
+
+    [Fact]
+    public async Task Delete_hits_the_item_path()
+    {
+        using var server = new FakeServer().On("DELETE", "/api/media/items/m1", "", HttpStatusCode.NoContent);
+        using var client = ClientFor(server);
+
+        await client.DeleteMediaItemAsync("m1");
+
+        Assert.Equal("DELETE /api/media/items/m1", server.Requests.Single());
+    }
+
+    [Fact]
+    public async Task A_refused_delete_surfaces_the_servers_sentence()
+    {
+        using var server = new FakeServer().On("DELETE", "/api/media/items/m1",
+            """{"error":"This movie is on another computer's share, so it can't be deleted from here."}""",
+            HttpStatusCode.BadRequest);
+        using var client = ClientFor(server);
+
+        var error = await Assert.ThrowsAsync<SentinelServerException>(() => client.DeleteMediaItemAsync("m1"));
+
+        Assert.Equal(400, error.Status);
+        Assert.Equal("This movie is on another computer's share, so it can't be deleted from here.", error.Message);
     }
 
     [Fact]

@@ -349,6 +349,15 @@ public sealed class MediaDownloadManager(
         var kind = search.Input.Kind == MediaKinds.Show ? MediaKinds.Episode : MediaKinds.Movie;
         var library = await PickLibraryAsync(kind, input.LibraryId, cancellationToken);
 
+        Guid? replaceItemId = null;
+        if (kind == MediaKinds.Movie && input.Replace != false && await OwnedCopyAsync(search.Input, cancellationToken) is { } owned)
+        {
+            var problem = MediaItemDeletion.Problem(owned, await media.GetLibraryAsync(owned.LibraryId, cancellationToken));
+            if (input.Replace is null) throw new MediaDownloadDuplicateException(owned, problem is null);
+            if (problem is not null) throw new MediaDownloadException($"The copy you have cannot be replaced from here: {problem}");
+            replaceItemId = owned.Id;
+        }
+
         await _queueLock.WaitAsync(cancellationToken);
         try
         {
@@ -374,6 +383,7 @@ public sealed class MediaDownloadManager(
                 Source = release.DownloadSource,
                 InfoHash = release.InfoHash,
                 LibraryId = library.Id,
+                ReplaceItemId = replaceItemId,
                 StagingPath = Path.Combine(library.Path, ".downloads", id.ToString("N")),
                 RequestedBy = requestedBy,
                 CreatedAt = DateTimeOffset.UtcNow
@@ -385,6 +395,18 @@ public sealed class MediaDownloadManager(
             return download;
         }
         finally { _queueLock.Release(); }
+    }
+
+    // The movie already in the library that a search is for: the same TMDB film, or - when either
+    // side has no TMDB id - the same title and year.
+    private async Task<MediaItem?> OwnedCopyAsync(MediaDownloadSearchInput wanted, CancellationToken cancellationToken)
+    {
+        var movies = await media.GetItemsAsync(new MediaQuery(Kinds: [MediaKinds.Movie]), cancellationToken);
+        if (wanted.TmdbId is { } tmdb && movies.FirstOrDefault(m => m.TmdbId == tmdb) is { } byTmdb) return byTmdb;
+        var key = MediaNaming.NormalizeKey(wanted.Title);
+        return movies.FirstOrDefault(m => (wanted.TmdbId is null || m.TmdbId is null)
+            && MediaNaming.NormalizeKey(m.Title) == key
+            && (wanted.Year is null || m.Year is null || m.Year == wanted.Year));
     }
 
     private async Task<MediaLibrary> PickLibraryAsync(string kind, Guid? libraryId, CancellationToken cancellationToken)
@@ -599,6 +621,19 @@ public sealed class MediaDownloadManager(
                 ? "The download had no video file in it."
                 : "None of the videos in the download were the episodes asked for.");
 
+        // Replacing the copy already in the library: only now that the new one has a video to
+        // file does the old one go, and the plan is made again so the new file takes its name.
+        if (download.ReplaceItemId is { } replaceId && await media.GetItemAsync(replaceId, cancellationToken) is { } old
+            && await media.GetLibraryAsync(old.LibraryId, cancellationToken) is { } oldLibrary
+            && MediaItemDeletion.Problem(old, oldLibrary) is null)
+        {
+            await Task.Run(() => MediaItemDeletion.Delete(old.Path, oldLibrary.Path), cancellationToken);
+            await media.DeleteItemAsync(old.Id, cancellationToken);
+            logger.LogInformation("Movie downloads: deleted the old copy of {Title} ({Path}) to replace it", old.Title, old.Path);
+            plan = MediaDownloadImporter.Plan(download, files.Select(f => new MediaDownloadImporter.SourceFile(f.Name, f.Size)).ToList(),
+                download.StagingPath, library, showFolder);
+        }
+
         var landed = await Task.Run(() => MediaDownloadImporter.Execute(plan), cancellationToken);
         DeleteStaging(download);
         download.ImportedPaths = landed;
@@ -648,6 +683,14 @@ public sealed class MediaDownloadManager(
 }
 
 public sealed class MediaDownloadException(string message) : Exception(message);
+
+// The movie is already in the library and the app has not said whether to replace it.
+public sealed class MediaDownloadDuplicateException(MediaItem existing, bool canReplace)
+    : Exception($"You already have {existing.Title}{(existing.Year is { } year ? $" ({year})" : "")}.")
+{
+    public MediaItem Existing { get; } = existing;
+    public bool CanReplace { get; } = canReplace;
+}
 
 public sealed class MediaDownloadWorker(MediaDownloadManager manager, ILogger<MediaDownloadWorker> logger) : BackgroundService
 {

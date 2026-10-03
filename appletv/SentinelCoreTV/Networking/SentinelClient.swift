@@ -438,10 +438,16 @@ final class SentinelClient {
     }
 
     // The server fetches the torrent through the VPN before it answers, so the long timeout.
-    func startMediaDownload(searchId: String, releaseId: String, libraryId: String? = nil) async throws -> MediaDownload {
+    // Throws MediaAlreadyInLibrary when the movie is already there and `replace` is nil.
+    func startMediaDownload(searchId: String, releaseId: String, libraryId: String? = nil, replace: Bool? = nil) async throws -> MediaDownload {
         try await mediaDownloadsRequest(
             "/api/media/downloads", method: "POST",
-            body: MediaDownloadGrabInput(searchId: searchId, releaseId: releaseId, libraryId: libraryId))
+            body: MediaDownloadGrabInput(searchId: searchId, releaseId: releaseId, libraryId: libraryId, replace: replace))
+    }
+
+    // Deletes a movie's files from the server's disk. Cannot be undone.
+    func deleteMediaItem(id: String) async throws {
+        let _: EmptyResponse = try await send("/api/media/items/\(id)", method: "DELETE", body: Optional<String>.none)
     }
 
     // Cancels an active download (its files are deleted) or removes a finished one from the list.
@@ -489,6 +495,11 @@ final class SentinelClient {
                let busy = try? JSONDecoder.sentinel.decode(MediaDownloadsBusy.self, from: data),
                busy.starting == true {
                 throw MediaDownloadsStartingError(message: busy.error ?? "Connecting to the VPN... try again in a moment.")
+            }
+            if http.statusCode == 409,
+               let duplicate = try? JSONDecoder.sentinel.decode(MediaAlreadyInLibrary.self, from: data),
+               duplicate.code == "alreadyInLibrary" {
+                throw duplicate
             }
             if http.statusCode == 401 { throw ClientError.authenticationRequired }
             let message = (try? JSONDecoder.sentinel.decode(APIError.self, from: data))

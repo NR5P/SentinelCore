@@ -343,6 +343,50 @@ struct MediaDownloadGrabInput: Encodable {
     var searchId: String
     var releaseId: String
     var libraryId: String?
+    // A movie already in the library: nil asks (409), true replaces the old copy, false keeps both.
+    var replace: Bool?
+}
+
+// 409 from POST /api/media/downloads: the movie is already in the library and the app has not
+// said whether to replace it. Ask, then send the same request with `replace`.
+struct MediaAlreadyInLibrary: Decodable, LocalizedError {
+    struct Existing: Decodable {
+        var itemId: String?
+        var title: String?
+        var year: Int?
+        var sizeBytes: Int64?
+        var height: Int?
+        var canReplace: Bool?
+    }
+
+    var error: String?
+    var code: String?
+    var existing: Existing?
+
+    var errorDescription: String? { error ?? "You already have this movie." }
+    var canReplace: Bool { existing?.canReplace == true }
+
+    // "720p · 1.4 GB": the copy you have, so the choice is an informed one.
+    var existingLine: String {
+        var parts: [String] = []
+        if let height = existing?.height, height > 0 { parts.append(height >= 2000 ? "4K" : "\(height)p") }
+        if let size = existing?.sizeBytes, size > 0 { parts.append(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+// "You already have it": which release was picked, and what the server said is there.
+struct MediaReplaceQuestion: Identifiable {
+    let release: MediaRelease
+    let duplicate: MediaAlreadyInLibrary
+    var id: String { release.id ?? "" }
+
+    var message: String {
+        let have = duplicate.existingLine.isEmpty ? "It is already in the library." : "The copy you have: \(duplicate.existingLine)."
+        return duplicate.canReplace
+            ? "\(have) Replace it with this download? The old copy is deleted once the new one has downloaded."
+            : "\(have) It is on another computer's share, so it can't be replaced from here."
+    }
 }
 
 // GET /api/media/downloads - the queue. `recent` is the last 30 finished.

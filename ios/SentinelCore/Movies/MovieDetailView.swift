@@ -14,6 +14,9 @@ struct MovieDetailView: View {
     @State private var working = false
     // A My List change the server turned down; the button has already been put back.
     @State private var listError: String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingDelete = false
+    @State private var deleteError: String?
 
     private var compact: Bool { horizontalSizeClass == .compact }
 
@@ -48,6 +51,33 @@ struct MovieDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(listError ?? "")
+        }
+        .toolbar {
+            if detail?.canDelete == true {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(role: .destructive) {
+                        confirmingDelete = true
+                    } label: {
+                        Label("Delete Movie", systemImage: "trash")
+                    }
+                    .disabled(working)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete \(detail?.summary.title ?? route.title)?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { Task { await deleteMovie() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The movie's file is deleted from the server's disk for everyone. This can't be undone.")
+        }
+        .alert("Couldn't Delete", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteError ?? "")
         }
     }
 
@@ -362,6 +392,19 @@ struct MovieDetailView: View {
             detail?.summary.inList = current
             if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
             listError = error.localizedDescription
+        }
+    }
+
+    private func deleteMovie() async {
+        working = true
+        defer { working = false }
+        do {
+            try await model.client.deleteMediaItem(id: route.id)
+            NotificationCenter.default.post(name: .mediaItemDeleted, object: route.id)
+            dismiss()
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            deleteError = error.localizedDescription
         }
     }
 

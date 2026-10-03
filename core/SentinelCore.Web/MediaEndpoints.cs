@@ -545,6 +545,26 @@ public static class MediaEndpoints
                 : Results.Ok(view.Detail(item, IsAdmin(context), scanner.SeasonPoster));
         });
 
+        // Deletes a movie's files from the disk and forgets it. Cannot be undone.
+        enabled.MapDelete("/items/{id:guid}", async (Guid id, IMediaStore store, ILoggerFactory loggers, CancellationToken ct) =>
+        {
+            var item = await store.GetItemAsync(id, ct);
+            if (item is null) return Results.NotFound(new { error = "That title is not in the library any more." });
+            var library = await store.GetLibraryAsync(item.LibraryId, ct);
+            if (MediaItemDeletion.Problem(item, library) is { } problem) return Results.BadRequest(new { error = problem });
+            try
+            {
+                await Task.Run(() => MediaItemDeletion.Delete(item.Path, library!.Path), ct);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return Results.Json(new { error = $"Could not delete {item.Title}: {ex.Message}" }, statusCode: StatusCodes.Status500InternalServerError);
+            }
+            await store.DeleteItemAsync(id, ct);
+            loggers.CreateLogger("SentinelCore.Media").LogInformation("Media: deleted {Title} ({Path})", item.Title, item.Path);
+            return Results.NoContent();
+        }).RequireAuthorization("AdminOnly");
+
         enabled.MapGet("/items/{id:guid}/{art:regex(^(poster|backdrop|thumb)$)}", async (
             Guid id, string art, HttpContext context, IMediaStore store, MediaScanner scanner, CancellationToken ct) =>
         {
@@ -1269,6 +1289,8 @@ public static class MediaEndpoints
                     ? $"https://www.themoviedb.org/{(item.Kind == MediaKinds.Movie ? "movie" : "tv")}/{tmdb}"
                     : null,
                 metadataLocked = item.MetadataLocked,
+                // DELETE /api/media/items/{id} would be allowed (admins, movies on the server's own disks).
+                canDelete = isAdmin && item.Kind == MediaKinds.Movie && !MediaNetworkPath.IsNetwork(item.Path),
                 metadataError = isAdmin ? item.MetadataError : null,
                 file = !item.IsPlayable ? null : new
                 {

@@ -268,6 +268,43 @@ public sealed class MediaDownloadGrabInput
     public string SearchId { get; init; } = "";
     public string ReleaseId { get; init; } = "";
     public string? LibraryId { get; init; }
+
+    /// <summary>
+    /// Only after a 409 "alreadyInLibrary": true replaces the copy the library has (its files go once
+    /// the new one downloads), false keeps both. Null leaves it out, so the server checks.
+    /// </summary>
+    public bool? Replace { get; init; }
+}
+
+/// <summary>The copy the library already has, from POST /api/media/downloads' 409 "alreadyInLibrary".</summary>
+public sealed class MediaDownloadExisting
+{
+    public string? ItemId { get; init; }
+    public string? Title { get; init; }
+    public int? Year { get; init; }
+    public long? SizeBytes { get; init; }
+    public int? Height { get; init; }
+
+    /// <summary>False for a copy on another computer's share: offer only "keep both".</summary>
+    public bool? CanReplace { get; init; }
+
+    [JsonIgnore] public bool IsReplaceable => CanReplace == true;
+
+    /// <summary>"720p · 1.4 GB", whichever halves are known; empty when neither is.</summary>
+    public string QualityText(System.Globalization.CultureInfo? culture = null)
+    {
+        var parts = new List<string>();
+        if (Height is > 0) parts.Add($"{Height.Value}p");
+        var size = MediaDownloadText.SizeLabel(SizeBytes, culture);
+        if (size.Length > 0) parts.Add(size);
+        return string.Join(" · ", parts);
+    }
+}
+
+/// <summary>The 409 body's <c>existing</c>, decoded off the error.</summary>
+internal sealed class MediaDownloadConflictBody
+{
+    public MediaDownloadExisting? Existing { get; init; }
 }
 
 public sealed class MediaDownload
@@ -303,6 +340,9 @@ public sealed class MediaDownload
 
     /// <summary>Once done: the new movie, or the show, in the library.</summary>
     public string? ItemId { get; init; }
+
+    /// <summary>The library item this download replaces once it is filed (the old copy's files go then).</summary>
+    public string? ReplacesItemId { get; init; }
     public string? RequestedBy { get; init; }
     public DateTimeOffset? CreatedAt { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }

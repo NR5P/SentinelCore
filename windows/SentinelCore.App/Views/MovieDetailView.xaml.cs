@@ -32,11 +32,15 @@ public partial class MovieDetailView : UserControl
     // so the button responds at once; a reload takes the server's word again.
     private bool _inList;
 
-    public MovieDetailView(AppModel model, INavigator? navigator, string itemId)
+    // Told after this title is deleted, before the view closes, so the list it came from reloads.
+    private readonly Action? _onDeleted;
+
+    public MovieDetailView(AppModel model, INavigator? navigator, string itemId, Action? onDeleted = null)
     {
         _model = model;
         _navigator = navigator ?? NullNavigator.Instance;
         _itemId = itemId;
+        _onDeleted = onDeleted;
         InitializeComponent();
 
         Loaded += (_, _) => _ = LoadAsync();
@@ -295,7 +299,36 @@ public partial class MovieDetailView : UserControl
             () => SetWatchedAsync(detail.Id, !detail.IsWatched));
         // Episodes are never on My List themselves - their show is.
         if (!detail.IsEpisode) actions.Children.Add(MyListButton(detail));
+
+        // Admins only, and only a movie on the server's own disks - the server decides.
+        if (detail.CanDelete)
+        {
+            var delete = AddAction("Delete", primary: false, () => DeleteAsync(detail));
+            delete.Foreground = Palette.Red;
+        }
         return actions;
+    }
+
+    private async Task DeleteAsync(MediaItemDetail detail)
+    {
+        var answer = MessageBox.Show(
+            Window.GetWindow(this),
+            "The movie's file is deleted from the server's disk for everyone. This can't be undone.",
+            $"Delete {detail.Title}?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes) return;
+
+        try
+        {
+            await _model.Client.DeleteMediaItemAsync(detail.Id);
+            _onDeleted?.Invoke();
+            _navigator.Pop();
+        }
+        catch (Exception error)
+        {
+            Notice(AppModel.UserFacingMessage(error));
+        }
     }
 
     private Button MyListButton(MediaItemDetail detail)

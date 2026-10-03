@@ -768,6 +768,16 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun mediaItem(id: String): MediaItemDetail = repository.mediaItem(id)
 
+    // Bumped when a title leaves the library, so the Movies tab's Home and grids load again and
+    // its poster is gone when the user lands back there.
+    private val _mediaLibraryVersion = MutableStateFlow(0)
+    val mediaLibraryVersion: StateFlow<Int> = _mediaLibraryVersion.asStateFlow()
+
+    suspend fun deleteMediaItem(id: String) {
+        repository.deleteMediaItem(id)
+        _mediaLibraryVersion.value++
+    }
+
     suspend fun mediaPlayback(id: String, start: Double?): MediaPlayback =
         repository.mediaPlayback(id, start, mediaCodecs.first, mediaCodecs.second)
 
@@ -825,7 +835,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun mediaReleaseSearch(id: String) = repository.mediaReleaseSearch(id)
 
-    suspend fun startMediaDownload(searchId: String, releaseId: String) = repository.startMediaDownload(searchId, releaseId)
+    suspend fun startMediaDownload(searchId: String, releaseId: String, replace: Boolean? = null) =
+        repository.startMediaDownload(searchId, releaseId, replace = replace)
 
     suspend fun mediaDownloads() = repository.mediaDownloads()
 

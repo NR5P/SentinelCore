@@ -167,6 +167,9 @@ data class MediaItemDetail(
     val subtitles: List<MediaSubtitle> = emptyList(),
     // Null for movies and episodes.
     val seasons: List<MediaSeason>? = null,
+    // The caller may delete this title (admins; movies on the server's own disks). Missing from
+    // older servers, which reads as no.
+    val canDelete: Boolean = false,
 )
 
 data class MediaHome(
@@ -550,6 +553,7 @@ internal fun parseMediaItemDetail(json: JSONObject): MediaItemDetail = MediaItem
     },
     subtitles = json.arrayOrNull("subtitles").objects(::parseMediaSubtitle),
     seasons = json.arrayOrNull("seasons")?.objects(::parseMediaSeason),
+    canDelete = json.optBoolean("canDelete", false),
 )
 
 internal fun parseMediaHome(json: JSONObject): MediaHome = MediaHome(

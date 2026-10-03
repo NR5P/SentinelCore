@@ -715,7 +715,21 @@ public partial class MediaDownloadAddWindow : Window
         Message("");
         try
         {
-            Grabbed = await _model.Client.StartMediaDownloadAsync(searchId, release.Id!);
+            try
+            {
+                Grabbed = await _model.Client.StartMediaDownloadAsync(searchId, release.Id!);
+            }
+            catch (SentinelCore.Client.Networking.MediaAlreadyInLibraryException owned)
+            {
+                // The library already has this movie: replace that copy, keep both, or leave it.
+                if (AskReplaceOrKeepBoth(owned) is not bool replace)
+                {
+                    foreach (var other in _downloadButtons) other.IsEnabled = true;
+                    button.Content = "Download";
+                    return;
+                }
+                Grabbed = await _model.Client.StartMediaDownloadAsync(searchId, release.Id!, replace: replace);
+            }
             DialogResult = true;
         }
         catch (Exception error)
@@ -724,6 +738,42 @@ public partial class MediaDownloadAddWindow : Window
             button.Content = "Download";
             Message(AppModel.UserFacingMessage(error), isError: true);
         }
+    }
+
+    /// <summary>
+    /// true = replace the copy the library has (its files go once the new one downloads), false =
+    /// keep both, null = don't download. Replace is offered only when the server says it can be.
+    /// </summary>
+    private bool? AskReplaceOrKeepBoth(SentinelCore.Client.Networking.MediaAlreadyInLibraryException owned)
+    {
+        var existing = owned.Existing;
+        var quality = existing.QualityText();
+        var have = quality.Length > 0 ? $"{owned.Message} ({quality})" : owned.Message;
+
+        if (existing.IsReplaceable)
+        {
+            var answer = MessageBox.Show(
+                this,
+                $"{have}\n\nReplace the copy you have? Its files are deleted once the new one has downloaded.\n\n"
+                    + "Yes - replace it\nNo - keep both\nCancel - don't download",
+                "Replace the copy you have?",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Question);
+            return answer switch
+            {
+                MessageBoxResult.Yes => true,
+                MessageBoxResult.No => false,
+                _ => null,
+            };
+        }
+
+        var keep = MessageBox.Show(
+            this,
+            $"{have}\n\nThat copy can't be replaced from here. Download this one as well and keep both?",
+            "Keep both?",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        return keep == MessageBoxResult.OK ? false : null;
     }
 
     // ---------------------------------------------------------------- Chrome
