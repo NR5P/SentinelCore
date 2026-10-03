@@ -846,4 +846,26 @@ internal object MediaDownloadFormat {
 
     // Digits only, like the web's /^\d+$/ check on the season / episode boxes.
     fun wholeNumber(text: String): Int? = text.trim().takeIf { it.matches(Regex("^\\d+$")) }?.toIntOrNull()
+
+    // What can be downloaded, and what each kind is called: the Add screen's Movie / TV show
+    // switch and the search offer's labels and buttons all come from here. Music gets a row when
+    // it can be downloaded.
+    val DOWNLOAD_KINDS: List<Pair<String, String>> = listOf("movie" to "Movie", "show" to "TV show")
+
+    fun kindLabel(kind: String): String? = DOWNLOAD_KINDS.firstOrNull { it.first == kind }?.second
+
+    // ---- Search offers a download (an empty library search asks to download what was typed) ----
+
+    const val OFFER_LIMIT = 6
+
+    // The offer shows when the library found nothing for at least two typed characters, no other
+    // filter (genre, unwatched, My List) could be the reason it found nothing, and this user may
+    // download.
+    fun offersDownload(typed: String, libraryEmpty: Boolean, filtered: Boolean, canDownload: Boolean): Boolean =
+        typed.trim().length >= 2 && libraryEmpty && !filtered && canDownload
+
+    // A kind=any lookup's rows for the offer: kinds this app can't download yet are skipped (the
+    // server adds music there one day), then the first six.
+    fun offerResults(lookup: MediaLookup): List<MediaLookupResult> =
+        lookup.results.filter { kindLabel(it.kind) != null }.take(OFFER_LIMIT)
 }

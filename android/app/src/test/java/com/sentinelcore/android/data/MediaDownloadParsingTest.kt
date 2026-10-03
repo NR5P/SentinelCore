@@ -582,4 +582,43 @@ class MediaDownloadParsingTest {
             MediaDownloadFormat.accountDate("2026-10-27T23:30:00+00:00", now, ZoneId.of("Asia/Tokyo")),
         )
     }
+
+    // ---- Search offers a download ----
+
+    @Test
+    fun `the search offer shows only for an unfiltered empty search by someone who can download`() {
+        assertTrue(MediaDownloadFormat.offersDownload("dune 2", libraryEmpty = true, filtered = false, canDownload = true))
+        assertTrue(MediaDownloadFormat.offersDownload("  du ", libraryEmpty = true, filtered = false, canDownload = true))
+        // One character (after trimming) is not enough.
+        assertFalse(MediaDownloadFormat.offersDownload(" d  ", libraryEmpty = true, filtered = false, canDownload = true))
+        assertFalse(MediaDownloadFormat.offersDownload("", libraryEmpty = true, filtered = false, canDownload = true))
+        assertFalse(MediaDownloadFormat.offersDownload("dune", libraryEmpty = false, filtered = false, canDownload = true))
+        assertFalse(MediaDownloadFormat.offersDownload("dune", libraryEmpty = true, filtered = true, canDownload = true))
+        assertFalse(MediaDownloadFormat.offersDownload("dune", libraryEmpty = true, filtered = false, canDownload = false))
+    }
+
+    @Test
+    fun `a kind=any lookup keeps known kinds, in order, up to six`() {
+        val results = JSONArray()
+        results.put(JSONObject("""{ "kind": "show", "tmdbId": 1, "title": "Dune: Prophecy", "inLibrary": true, "itemId": "s1" }"""))
+        results.put(JSONObject("""{ "kind": "music", "tmdbId": 2, "title": "Dune (Soundtrack)" }"""))
+        for (id in 3..9) results.put(JSONObject("""{ "kind": "movie", "tmdbId": $id, "title": "Dune $id" }"""))
+        val lookup = parseMediaLookup(JSONObject().put("tmdbConfigured", true).put("results", results))
+        val offered = MediaDownloadFormat.offerResults(lookup)
+        assertEquals(6, offered.size)
+        assertEquals(listOf(1L, 3L, 4L, 5L, 6L, 7L), offered.map { it.tmdbId })
+        assertTrue(offered.none { it.kind == "music" })
+        assertTrue(offered.first().inLibrary)
+        assertEquals("s1", offered.first().itemId)
+        assertTrue(MediaDownloadFormat.offerResults(parseMediaLookup(JSONObject("""{ "tmdbConfigured": false }"""))).isEmpty())
+    }
+
+    @Test
+    fun `kind labels come from one table`() {
+        assertEquals("Movie", MediaDownloadFormat.kindLabel("movie"))
+        assertEquals("TV show", MediaDownloadFormat.kindLabel("show"))
+        assertNull(MediaDownloadFormat.kindLabel("music"))
+        assertEquals(listOf("movie", "show"), MediaDownloadFormat.DOWNLOAD_KINDS.map { it.first })
+        assertEquals("/api/media/downloads/lookup?q=dune+2&kind=any", MediaDownloadApi.lookupPath("dune 2", "any"))
+    }
 }

@@ -20,7 +20,8 @@ namespace SentinelCore.App.Views;
 /// releases - each a panel; Back goes one stage up. A release search is started with a POST and
 /// polled every second until it is done or failed, showing the server's own message meanwhile.
 /// Choosing a release closes the window with DialogResult true and <see cref="Grabbed"/> set, and
-/// the caller opens Downloads.
+/// the caller opens Downloads. <see cref="AtTitle"/> and <see cref="AtSiteSearch"/> open it past
+/// Find, for the Movies search's "Not in your library" offer ("Search offers a download").
 /// </remarks>
 public partial class MediaDownloadAddWindow : Window
 {
@@ -79,7 +80,53 @@ public partial class MediaDownloadAddWindow : Window
 
         UpdateKind();
         ShowStage(Stage.Find);
-        Loaded += (_, _) => QueryBox.Focus();
+        Loaded += (_, _) =>
+        {
+            if (_start is { } start)
+            {
+                _start = null;
+                start();
+            }
+            else
+            {
+                QueryBox.Focus();
+            }
+        };
+    }
+
+    // Where the window opens past Find, run once it is on screen. Null for "+ Add" itself.
+    private Action? _start;
+
+    /// <summary>
+    /// Opens already at a TMDB match - the Movies search's "Not in your library" offer: a movie
+    /// goes straight to its release search, a show to its season picker. Back lands on Find with
+    /// the title typed in.
+    /// </summary>
+    public static MediaDownloadAddWindow AtTitle(AppModel model, MediaDownloadStatus? status, MediaDownloadTitle title)
+    {
+        var window = new MediaDownloadAddWindow(model, status);
+        window.Prefill(title.IsShow ? "show" : "movie", title.DisplayTitle);
+        window._start = () => window.Pick(title);
+        return window;
+    }
+
+    /// <summary>
+    /// Opens already searching the sites for exactly <paramref name="text"/> as a
+    /// <paramref name="kind"/> (movie or show), as Find's own "Search sites for" does.
+    /// </summary>
+    public static MediaDownloadAddWindow AtSiteSearch(AppModel model, MediaDownloadStatus? status, string kind, string text)
+    {
+        var window = new MediaDownloadAddWindow(model, status);
+        window.Prefill(kind, text);
+        window._start = window.SearchSitesDirectly;
+        return window;
+    }
+
+    private void Prefill(string kind, string text)
+    {
+        _kind = kind == "show" ? "show" : "movie";
+        QueryBox.Text = text;
+        UpdateKind();
     }
 
     /// <summary>The download started, once the window has closed with DialogResult true.</summary>
@@ -124,6 +171,10 @@ public partial class MediaDownloadAddWindow : Window
         _showGeneration++;
         ShowStage(Stage.Find);
         QueryBox.Focus();
+
+        // Opened straight at a title or a site search, Find has never been looked up: do it now,
+        // so Back shows the other matches rather than an empty page.
+        if (_results is null && _status.HasTmdb && Query.Length > 0) _ = LookupAsync(searchSitesIfNoTmdb: false);
     }
 
     // ---------------------------------------------------------------- 1. Find
@@ -177,7 +228,7 @@ public partial class MediaDownloadAddWindow : Window
 
     private void OnFindClicked(object sender, RoutedEventArgs e) => _ = LookupAsync();
 
-    private async Task LookupAsync()
+    private async Task LookupAsync(bool searchSitesIfNoTmdb = true)
     {
         var query = Query;
         if (query.Length == 0) return;
@@ -199,7 +250,7 @@ public partial class MediaDownloadAddWindow : Window
             // No TMDB key: there are no titles to pick from, so Find (and Enter) searches the
             // sites straight away rather than stopping at the "Search sites for" button - which
             // stays for coming back from the results.
-            if (MediaDownloadText.LookupSearchesSitesDirectly(lookup)) SearchSitesDirectly();
+            if (searchSitesIfNoTmdb && MediaDownloadText.LookupSearchesSitesDirectly(lookup)) SearchSitesDirectly();
         }
         catch (Exception error)
         {
@@ -236,12 +287,22 @@ public partial class MediaDownloadAddWindow : Window
             return;
         }
         SetResultsStatus(Palette.SecondaryText, "");
-        foreach (var result in results) ResultsHost.Children.Add(ResultCard(result));
+        foreach (var result in results)
+        {
+            ResultsHost.Children.Add(TitleCard(this, result, () => Pick(result), result.IsShow ? "Choose episodes" : "Find downloads"));
+        }
     }
 
-    private FrameworkElement ResultCard(MediaDownloadTitle result)
+    /// <summary>
+    /// One TMDB match as a pressable card: poster, title, year, an In library chip. Compact (the
+    /// Movies search's "Not in your library" offer) swaps the description for the kind label and
+    /// shrinks the poster, so six fit without scrolling.
+    /// </summary>
+    internal static Button TitleCard(FrameworkElement owner, MediaDownloadTitle result, Action pick, string toolTip, bool compact = false)
     {
-        var poster = MovieCards.Artwork(this, result.PosterUrl, result.DisplayTitle, 64, 96, 128);
+        var poster = compact
+            ? MovieCards.Artwork(owner, result.PosterUrl, result.DisplayTitle, 40, 60, 80)
+            : MovieCards.Artwork(owner, result.PosterUrl, result.DisplayTitle, 64, 96, 128);
 
         var titleLine = new WrapPanel();
         titleLine.Children.Add(new TextBlock
@@ -254,20 +315,24 @@ public partial class MediaDownloadAddWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
         });
         if (result.Year is { } year) titleLine.Children.Add(Chip(year.ToString(), Palette.SecondaryText));
+        if (compact && MediaDownloadText.KindLabel(result.Kind) is { } kind) titleLine.Children.Add(Chip(kind, Palette.Cyan));
         if (result.IsInLibrary) titleLine.Children.Add(Chip("In library", Palette.Green));
 
         var text = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(titleLine);
-        text.Children.Add(new TextBlock
+        if (!compact)
         {
-            Text = string.IsNullOrWhiteSpace(result.Overview) ? "No description." : result.Overview,
-            Foreground = Palette.SecondaryText,
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            TextTrimming = TextTrimming.WordEllipsis,
-            MaxHeight = 52,
-            Margin = new Thickness(0, 4, 0, 0),
-        });
+            text.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrWhiteSpace(result.Overview) ? "No description." : result.Overview,
+                Foreground = Palette.SecondaryText,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.WordEllipsis,
+                MaxHeight = 52,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+        }
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -278,16 +343,16 @@ public partial class MediaDownloadAddWindow : Window
 
         var card = new Border
         {
-            Padding = new Thickness(8),
+            Padding = new Thickness(compact ? 6 : 8),
             CornerRadius = new CornerRadius(8),
-            Background = (Brush)FindResource("CardBackground"),
-            BorderBrush = (Brush)FindResource("CardBorder"),
+            Background = (Brush)owner.FindResource("CardBackground"),
+            BorderBrush = (Brush)owner.FindResource("CardBorder"),
             BorderThickness = new Thickness(1),
             Child = grid,
         };
-        var button = MovieCards.PlainButton(card, () => Pick(result), result.IsShow ? "Choose episodes" : "Find downloads");
-        button.Margin = new Thickness(0, 0, 0, 8);
-        MovieCards.Highlight(button, card, this);
+        var button = MovieCards.PlainButton(card, pick, toolTip);
+        button.Margin = new Thickness(0, 0, 0, compact ? 6 : 8);
+        MovieCards.Highlight(button, card, owner);
         return button;
     }
 

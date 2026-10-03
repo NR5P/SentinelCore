@@ -52,7 +52,7 @@ struct MoviesTVView: View {
             case .shows:
                 MediaGridTV(kind: "show", refreshToken: refreshToken)
             case .search:
-                MediaSearchTV()
+                MediaSearchTV(downloads: downloads) { pane = .downloads }
             case .downloads:
                 MediaDownloadsTVView(downloads: downloads, open: { detailRoute = $0 })
             }
@@ -584,14 +584,30 @@ private struct MediaGridTV: View {
 // MARK: - Search
 
 private struct MediaSearchTV: View {
+    @ObservedObject var downloads: MediaDownloadsTracker
+    let onStarted: () -> Void
     @EnvironmentObject private var model: AppModel
     @State private var query = ""
     @State private var results: [MediaItemSummary] = []
+    // The text `results` answer, so the download offer never shows for text still being typed.
+    @State private var resultsQuery = ""
     @State private var searching = false
+    @State private var addStart: MediaAddStart?
     private let columns = [GridItem(.adaptive(minimum: MediaTileSize.posterWidth, maximum: MediaTileSize.posterWidth + 20), spacing: 40)]
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+
+    // Nothing in the library for what was typed: offer to download it instead.
+    private var offersDownload: Bool {
+        downloads.canDownload && !searching && results.isEmpty && trimmed.count >= 2 && resultsQuery == trimmed
+    }
 
     var body: some View {
         ScrollView {
+            if offersDownload {
+                MediaSearchOfferTV(query: trimmed, tmdbConfigured: downloads.status?.tmdbConfigured != false) { addStart = $0 }
+                    .padding(.horizontal, 60)
+            }
             LazyVGrid(columns: columns, alignment: .leading, spacing: 50) {
                 ForEach(results) { MediaPosterTileTV(item: $0) }
             }
@@ -601,17 +617,34 @@ private struct MediaSearchTV: View {
         .scrollClipDisabled()
         .searchable(text: $query, prompt: "Movies and TV shows")
         .overlay {
-            let trimmed = query.trimmingCharacters(in: .whitespaces)
             if searching, results.isEmpty {
                 ProgressView()
-            } else if !trimmed.isEmpty, results.isEmpty {
+            } else if !trimmed.isEmpty, results.isEmpty, !offersDownload {
                 ContentUnavailableView.search(text: trimmed)
             }
         }
+        // Full screen like Downloads' Add: a tvOS sheet is a narrow card. Menu closes it.
+        .fullScreenCover(item: $addStart) { start in
+            MediaAddTVView(status: downloads.status, vpnDisabled: downloads.vpnDisabled, start: start) { download in
+                downloads.noteStarted(download)
+                addStart = nil
+                onStarted()
+            }
+            .environmentObject(model)
+            // A tvOS full-screen cover is see-through until given a background.
+            .background { Color.black.ignoresSafeArea() }
+        }
+        #if DEBUG
+        // Simulator testing without a remote: `-debugMediaSearch <text>` types it into the search.
+        .task {
+            if let typed = UserDefaults.standard.string(forKey: "debugMediaSearch"), query.isEmpty { query = typed }
+        }
+        #endif
         .task(id: query) {
-            let trimmed = query.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else {
+            let text = trimmed
+            guard !text.isEmpty else {
                 results = []
+                resultsQuery = ""
                 return
             }
             // Let the typing settle before asking.
@@ -619,8 +652,9 @@ private struct MediaSearchTV: View {
             guard !Task.isCancelled else { return }
             searching = true
             defer { searching = false }
-            if let page = try? await model.client.mediaItems(kind: nil, query: trimmed, limit: 60) {
+            if let page = try? await model.client.mediaItems(kind: nil, query: text, limit: 60) {
                 results = page.items
+                resultsQuery = text
             }
         }
     }

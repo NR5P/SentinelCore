@@ -12,6 +12,23 @@ extension View {
     ) -> some View {
         modifier(MediaAddSheetModifier(isPresented: isPresented, downloads: downloads, onStarted: onStarted))
     }
+
+    // The Add sheet opened at a starting point - what a library search's offer does.
+    func mediaAddSheet(
+        start: Binding<MediaAddStart?>, downloads: MediaDownloadsTracker, onStarted: @escaping (MediaDownload) -> Void
+    ) -> some View {
+        modifier(MediaAddStartSheetModifier(start: start, downloads: downloads, onStarted: onStarted))
+    }
+}
+
+// Where "+ Add" opens when a library search that found nothing offers a download: already at a
+// picked title, or at a site search for exactly what was typed (MOVIE_DOWNLOADS.md, "Search offers
+// a download").
+struct MediaAddStart: Identifiable {
+    let kind: String
+    let title: String
+    var pick: MediaDownloadLookupResult?
+    let id = UUID()
 }
 
 private struct MediaAddSheetModifier: ViewModifier {
@@ -35,6 +52,27 @@ private struct MediaAddSheetModifier: ViewModifier {
     }
 }
 
+private struct MediaAddStartSheetModifier: ViewModifier {
+    @Binding var start: MediaAddStart?
+    let downloads: MediaDownloadsTracker
+    let onStarted: (MediaDownload) -> Void
+    @EnvironmentObject private var model: AppModel
+
+    func body(content: Content) -> some View {
+        content.sheet(item: $start) { start in
+            MediaAddView(status: downloads.status, vpnDisabled: downloads.vpnDisabled, start: start) { download in
+                downloads.noteStarted(download)
+                self.start = nil
+                onStarted(download)
+            }
+            .environmentObject(model)
+            #if os(macOS)
+            .frame(minWidth: 560, minHeight: 620)
+            #endif
+        }
+    }
+}
+
 private enum MediaAddRoute: Hashable {
     case show(MediaDownloadLookupResult)
     case releases(MediaDownloadSearchInput)
@@ -44,10 +82,12 @@ struct MediaAddView: View {
     let status: MediaDownloadsStatus?
     // Use VPN is off in Settings: say so before anyone searches.
     var vpnDisabled = false
+    var start: MediaAddStart?
     let onStarted: (MediaDownload) -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var path: [MediaAddRoute] = []
+    @State private var startApplied = false
     @State private var kind = "movie"
     @State private var query = ""
     // The text the results are for, so switching Movie / TV show searches again.
@@ -146,6 +186,24 @@ struct MediaAddView: View {
                 errorMessage = nil
                 if !searchedQuery.isEmpty, !trimmed.isEmpty { Task { await lookup(searchSitesWithoutTmdb: false) } }
             }
+            .onAppear {
+                guard let start, !startApplied else { return }
+                startApplied = true
+                kind = start.kind
+                query = start.title
+                if let picked = start.pick {
+                    pick(picked)
+                } else {
+                    path = [.releases(MediaDownloadSearchInput(kind: start.kind, title: start.title))]
+                }
+            }
+            .onChange(of: path) { _, newPath in
+                // Back from where a search offer opened the sheet: Find has never looked the
+                // typed text up, so it does now.
+                if newPath.isEmpty, results == nil, !searching, !trimmed.isEmpty {
+                    Task { await lookup(searchSitesWithoutTmdb: false) }
+                }
+            }
             .navigationDestination(for: MediaAddRoute.self) { route in
                 switch route {
                 case .show(let result):
@@ -237,8 +295,10 @@ struct MediaAddView: View {
     }
 }
 
-private struct MediaLookupRow: View {
+struct MediaLookupRow: View {
     let result: MediaDownloadLookupResult
+    // The search offer mixes movies and shows, so its rows say which each is.
+    var showsKind = false
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -251,6 +311,9 @@ private struct MediaLookupRow: View {
                     Text(result.displayTitle).font(.headline).lineLimit(2)
                     if let year = result.year {
                         Text(String(year)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if showsKind, let label = MediaSearchOffer.label(for: result.kind) {
+                        MediaChip(text: label)
                     }
                     if result.inLibrary == true {
                         MediaChip(text: "In library", highlighted: true)
@@ -265,6 +328,105 @@ private struct MediaLookupRow: View {
             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Search offers a download
+
+// A library search that found nothing offers to download what was typed instead
+// (MOVIE_DOWNLOADS.md, "Search offers a download"). The dashboard's version is showOffer in movies.js.
+struct MediaSearchOffer: View {
+    let query: String
+    let tmdbConfigured: Bool
+    let start: (MediaAddStart) -> Void
+    @EnvironmentObject private var model: AppModel
+    @State private var results: [MediaDownloadLookupResult]?
+    @State private var tmdbAnswered = true
+    @State private var errorMessage: String?
+
+    // Music gets a row here when it can be downloaded.
+    static let kinds: [(kind: String, label: String)] = [("movie", "Movie"), ("show", "TV show")]
+    private static let maxResults = 6
+
+    static func label(for kind: String?) -> String? { kinds.first { $0.kind == kind }?.label }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 4) {
+                Text("Not in your library").font(.title3.weight(.semibold))
+                Text("Want to download “\(query)”?").foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center)
+            if tmdbConfigured, tmdbAnswered {
+                found
+            }
+            VStack(spacing: 8) {
+                Text("Search the sites for “\(query)” as a")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 10) {
+                    ForEach(Self.kinds, id: \.kind) { entry in
+                        Button(entry.label) { start(MediaAddStart(kind: entry.kind, title: query)) }
+                            .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+        .task(id: query) { await lookup() }
+    }
+
+    @ViewBuilder
+    private var found: some View {
+        if let errorMessage {
+            Text(errorMessage).font(.caption).foregroundStyle(SentinelTheme.red).multilineTextAlignment(.center)
+        } else if let results {
+            if results.isEmpty {
+                Text("Nothing on TMDB called “\(query)”.").foregroundStyle(.secondary)
+            }
+            VStack(spacing: 8) {
+                ForEach(results) { result in
+                    Group {
+                        if result.inLibrary == true, let itemId = result.itemId {
+                            NavigationLink {
+                                MovieDetailView(route: MediaRoute(id: itemId, title: result.displayTitle))
+                            } label: {
+                                MediaLookupRow(result: result, showsKind: true)
+                            }
+                        } else {
+                            Button {
+                                start(MediaAddStart(kind: result.kind ?? "movie", title: query, pick: result))
+                            } label: {
+                                MediaLookupRow(result: result, showsKind: true)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .padding(10)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+        } else {
+            HStack(spacing: 10) { ProgressView(); Text("Looking it up…").foregroundStyle(.secondary) }
+        }
+    }
+
+    private func lookup() async {
+        guard tmdbConfigured else { return }
+        results = nil
+        errorMessage = nil
+        do {
+            let found = try await model.client.mediaDownloadLookup(query: query, kind: "any")
+            tmdbAnswered = found.tmdbConfigured != false
+            results = Array((found.results ?? []).filter { Self.label(for: $0.kind) != nil }.prefix(Self.maxResults))
+        } catch {
+            if MediaDownloadsTracker.isCancellation(error) { return }
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

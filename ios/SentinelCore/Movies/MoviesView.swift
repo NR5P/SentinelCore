@@ -45,7 +45,7 @@ struct MoviesView: View {
             case .shows:
                 MediaGridView(kind: "show", refreshToken: refreshToken)
             case .search:
-                MediaSearchView()
+                MediaSearchView(downloads: downloads) { _ in showingDownloads = true }
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -628,15 +628,31 @@ private struct MediaGridView: View {
 // MARK: - Search
 
 private struct MediaSearchView: View {
+    @ObservedObject var downloads: MediaDownloadsTracker
+    let onStarted: (MediaDownload) -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var query = ""
     @State private var results: [MediaItemSummary] = []
+    // The text `results` answer, so the download offer never shows for text still being typed.
+    @State private var resultsQuery = ""
     @State private var searching = false
+    @State private var addStart: MediaAddStart?
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+
+    // Nothing in the library for what was typed: offer to download it instead.
+    private var offersDownload: Bool {
+        downloads.canDownload && !searching && results.isEmpty && trimmed.count >= 2 && resultsQuery == trimmed
+    }
 
     var body: some View {
         let layout = MediaLayout(compact: horizontalSizeClass == .compact)
         ScrollView {
+            if offersDownload {
+                MediaSearchOffer(query: trimmed, tmdbConfigured: downloads.status?.tmdbConfigured != false) { addStart = $0 }
+                    .padding()
+            }
             LazyVGrid(columns: layout.gridColumns, alignment: .leading, spacing: 18) {
                 ForEach(results) { MediaPosterTile(item: $0) }
             }
@@ -645,19 +661,20 @@ private struct MediaSearchView: View {
         .environment(\.mediaLayout, layout)
         .searchable(text: $query, prompt: "Movies and TV shows")
         .overlay {
-            let trimmed = query.trimmingCharacters(in: .whitespaces)
             if searching, results.isEmpty {
                 ProgressView()
             } else if trimmed.isEmpty {
                 ContentUnavailableView("Search the library", systemImage: "magnifyingglass", description: Text("Find a movie or show by its title."))
-            } else if results.isEmpty {
+            } else if results.isEmpty, !offersDownload {
                 ContentUnavailableView.search(text: trimmed)
             }
         }
+        .mediaAddSheet(start: $addStart, downloads: downloads, onStarted: onStarted)
         .task(id: query) {
-            let trimmed = query.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else {
+            let text = trimmed
+            guard !text.isEmpty else {
                 results = []
+                resultsQuery = ""
                 return
             }
             // Let the typing settle before asking.
@@ -665,8 +682,9 @@ private struct MediaSearchView: View {
             guard !Task.isCancelled else { return }
             searching = true
             defer { searching = false }
-            if let page = try? await model.client.mediaItems(kind: nil, query: trimmed, limit: 60) {
+            if let page = try? await model.client.mediaItems(kind: nil, query: text, limit: 60) {
                 results = page.items
+                resultsQuery = text
             }
         }
     }

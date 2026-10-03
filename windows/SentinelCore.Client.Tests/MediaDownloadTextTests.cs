@@ -508,4 +508,61 @@ public class MediaDownloadTextTests
         Assert.Equal("Oct 28", MediaDownloadText.AccountDate(
             new DateTimeOffset(2026, 10, 28, 2, 0, 0, TimeSpan.Zero), AccountNow, TimeZoneInfo.Utc));
     }
+
+    // ---------------------------------------------------------------- Search offers a download
+
+    private static readonly MediaDownloadStatus CanDownload = new() { CanDownload = true };
+
+    [Theory]
+    [InlineData("dune 2", 0, false, true)]
+    [InlineData("  du  ", 0, false, true)]  // trimmed: "du" is two characters
+    [InlineData(" d ", 0, false, false)]    // one character is not a search yet
+    [InlineData("", 0, false, false)]
+    [InlineData(null, 0, false, false)]
+    [InlineData("dune 2", 1, false, false)] // the library has something
+    [InlineData("dune 2", 0, true, false)]  // a genre, Unwatched or My List filter may be hiding it
+    public void The_offer_needs_text_an_empty_library_answer_and_no_filters(string? query, int items, bool filters, bool expected) =>
+        Assert.Equal(expected, MediaDownloadText.ShowsSearchOffer(query, items, filters, CanDownload));
+
+    [Fact]
+    public void The_offer_needs_permission_to_download()
+    {
+        Assert.False(MediaDownloadText.ShowsSearchOffer("dune 2", 0, false, MediaDownloadStatus.Off));
+        Assert.False(MediaDownloadText.ShowsSearchOffer("dune 2", 0, false, null));
+        Assert.False(MediaDownloadText.ShowsSearchOffer("dune 2", 0, false, new MediaDownloadStatus { Enabled = true, CanDownload = false }));
+    }
+
+    [Fact]
+    public void Kind_labels_come_from_one_table()
+    {
+        Assert.Equal(new[] { "movie", "show" }, MediaDownloadText.DownloadKinds.Select(kind => kind.Kind));
+        Assert.Equal("Movie", MediaDownloadText.KindLabel("movie"));
+        Assert.Equal("TV show", MediaDownloadText.KindLabel("show"));
+        Assert.Null(MediaDownloadText.KindLabel("music"));
+        Assert.Null(MediaDownloadText.KindLabel(null));
+    }
+
+    [Fact]
+    public void Offer_results_skip_unknown_kinds_and_stop_at_six()
+    {
+        var lookup = new MediaDownloadLookup
+        {
+            Results = new[] { "movie", "music", "show", null, "movie", "show", "movie", "show", "movie" }
+                .Select((kind, i) => new MediaDownloadTitle { Kind = kind, TmdbId = i })
+                .ToList(),
+        };
+
+        var rows = MediaDownloadText.SearchOfferResults(lookup);
+
+        Assert.Equal(new long?[] { 0, 2, 4, 5, 6, 7 }, rows.Select(row => row.TmdbId));
+    }
+
+    [Fact]
+    public void Offer_wording()
+    {
+        Assert.Equal("Not in your library", MediaDownloadText.SearchOfferTitle);
+        Assert.Equal("Want to download “dune 2”?", MediaDownloadText.SearchOfferLine(" dune 2 "));
+        Assert.Equal("Nothing on TMDB called “dune 2”.", MediaDownloadText.SearchOfferNothingOnTmdb("dune 2"));
+        Assert.Equal("Search the sites for “dune 2” as a", MediaDownloadText.SearchOfferSitesLine("dune 2"));
+    }
 }

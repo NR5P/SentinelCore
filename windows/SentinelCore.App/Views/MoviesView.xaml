@@ -76,6 +76,30 @@
                         Margin="0,14,0,0" Style="{StaticResource PrimaryButton}" Visibility="Collapsed"
                         Click="OnEmptyLibrariesClicked" />
             </StackPanel>
+
+            <!-- Search found nothing: offer to download what was typed instead
+                 (core/docs/MOVIE_DOWNLOADS.md, "Search offers a download"). -->
+            <ScrollViewer x:Name="OfferScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Visibility="Collapsed">
+                <!-- Stretched up to MaxWidth, which WPF centres. -->
+                <Border Style="{StaticResource Card}" VerticalAlignment="Top" MaxWidth="560" Margin="0,24,0,16">
+                    <StackPanel>
+                        <TextBlock x:Name="OfferTitle" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PrimaryText}" />
+                        <TextBlock x:Name="OfferLine" Style="{StaticResource BodyText}" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                        <!-- TMDB matches of every kind; only with a TMDB key. -->
+                        <StackPanel x:Name="OfferLookupPanel" Margin="0,12,0,0">
+                            <TextBlock x:Name="OfferLookupStatus" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                                       Margin="0,0,0,8" Visibility="Collapsed" />
+                            <StackPanel x:Name="OfferResultsHost" />
+                        </StackPanel>
+
+                        <!-- Always: search the sites for exactly what was typed, as one of the known kinds. -->
+                        <TextBlock x:Name="OfferSitesLine" Style="{StaticResource Caption}" Margin="0,10,0,0" TextWrapping="Wrap" />
+                        <WrapPanel x:Name="OfferKindButtons" Margin="0,8,0,0" />
+                    </StackPanel>
+                </Border>
+            </ScrollViewer>
         </Grid>
     </DockPanel>
 </UserControl>
