@@ -71,7 +71,10 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                 var worker = services.First(s => s.ImplementationType == typeof(MediaDownloadWorker));
                 services.Remove(worker);
                 services.Remove(services.First(s => s.ImplementationType == typeof(MullvadAccountWorker)));
+                if (_music is not null) services.AddSingleton<IMusicAudioSource>(_music);
             }));
+
+    private FakeMusic? _music;
 
     private async Task<Guid> AddLibraryAsync(WebApplicationFactory<WebProgram> factory, string kind, string path)
     {
@@ -979,6 +982,145 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         Assert.Equal(
             [("nl", "Netherlands - any city"), ("nl-ams", "Netherlands - Amsterdam"), ("se", "Sweden - any city"), ("se-sto", "Sweden - Stockholm")],
             options.EnumerateArray().Select(o => (o.GetProperty("value").GetString(), o.GetProperty("label").GetString())));
+    }
+
+    // MARK: - Albums (the Music tab's + Add)
+
+    [Fact]
+    public async Task Album_IsSearchedPickedDownloadedAndFiledAsArtistAlbumYear()
+    {
+        var musicPath = Path.Combine(_root, "Music");
+        Directory.CreateDirectory(musicPath);
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "Music", musicPath)) { Lossless = 0.9 };
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1", "Stockholm", null, "SE", "Mullvad");
+        _prowlarr.Releases =
+        [
+            Release("Fleetwood Mac - Rumours (1977) [MP3 320]", 300, "magnet:?xt=urn:btih:mp3"),
+            Release("Fleetwood Mac - Rumours (1977) [FLAC]", 40, "magnet:?xt=urn:btih:flac", "flac"),
+            Release("Fleetwood Mac - Discography 1968-2003 [FLAC]", 900, "magnet:?xt=urn:btih:disco"),
+            Release("Stevie Nicks - Bella Donna [FLAC]", 90, "magnet:?xt=urn:btih:other"),
+        ];
+
+        var status = await JsonAsync(await client.GetAsync("/api/music/downloads/status", Ct), HttpStatusCode.OK);
+        Assert.True(status.GetProperty("canDownload").GetBoolean());
+        Assert.True(status.GetProperty("musicLibrary").GetBoolean());
+
+        var started = await JsonAsync(await client.PostAsJsonAsync("/api/music/downloads/search",
+            new { artist = "Fleetwood Mac", album = "Rumours", year = 1977, artUrl = "https://coverartarchive.org/x" }, Ct), HttpStatusCode.Accepted);
+        JsonElement search = default;
+        for (var i = 0; i < 100; i++)
+        {
+            search = await JsonAsync(await client.GetAsync($"/api/music/downloads/search/{started.GetProperty("id").GetString()}", Ct), HttpStatusCode.OK);
+            if (search.GetProperty("phase").GetString() is "done" or "failed") break;
+            await Task.Delay(50, Ct);
+        }
+        Assert.Equal("done", search.GetProperty("phase").GetString());
+        Assert.Equal(3000, _prowlarr.Categories[0]);
+        Assert.Equal("Fleetwood Mac Rumours 1977", _prowlarr.Queries[0]);
+        var results = search.GetProperty("results").EnumerateArray().ToList();
+        // A mostly-lossless library gets FLAC first, even with fewer people sharing it; the
+        // discography and the other album are not this album.
+        Assert.Equal("Fleetwood Mac - Rumours (1977) [FLAC]", results[0].GetProperty("title").GetString());
+        Assert.True(results[0].GetProperty("lossless").GetBoolean());
+        Assert.Equal("FLAC", results[0].GetProperty("format").GetString());
+        Assert.Equal("MP3 320", results[1].GetProperty("format").GetString());
+        var discography = results.Concat(search.GetProperty("others").EnumerateArray())
+            .Single(r => r.GetProperty("title").GetString()!.Contains("Discography"));
+        Assert.Contains("Discography", discography.GetProperty("warning").GetString());
+        Assert.Contains(search.GetProperty("others").EnumerateArray(), r => r.GetProperty("title").GetString() == "Stevie Nicks - Bella Donna [FLAC]");
+
+        var queued = await JsonAsync(await client.PostAsJsonAsync("/api/music/downloads",
+            new { searchId = search.GetProperty("id").GetString(), releaseId = results[0].GetProperty("id").GetString() }, Ct), HttpStatusCode.Created);
+        Assert.Equal("album", queued.GetProperty("kind").GetString());
+        Assert.Equal("Fleetwood Mac", queued.GetProperty("subtitle").GetString());
+        Assert.Equal("https://coverartarchive.org/x", queued.GetProperty("posterUrl").GetString());
+        var id = Guid.Parse(queued.GetProperty("id").GetString()!);
+
+        var manager = factory.Services.GetRequiredService<MediaDownloadManager>();
+        await manager.TickAsync(Ct);
+        var added = Assert.Single(_qbittorrent.Added);
+        var staging = Path.Combine(musicPath, ".downloads", id.ToString("N"));
+        Assert.Equal(staging, added.SavePath);
+
+        var release = Path.Combine(staging, "Fleetwood Mac - Rumours (1977) [FLAC]");
+        Directory.CreateDirectory(Path.Combine(release, "CD1"));
+        Directory.CreateDirectory(Path.Combine(release, "CD2"));
+        Directory.CreateDirectory(Path.Combine(release, "Scans"));
+        File.WriteAllText(Path.Combine(release, "CD1", "01 Second Hand News.flac"), "one");
+        File.WriteAllText(Path.Combine(release, "CD2", "01 Dreams (Demo).flac"), "two");
+        File.WriteAllText(Path.Combine(release, "cover.jpg"), "art");
+        File.WriteAllText(Path.Combine(release, "Scans", "back.jpg"), "scan");
+        File.WriteAllText(Path.Combine(release, "rip.nfo"), "nfo");
+        _qbittorrent.Torrents.Add(new FakeTorrent("flac", added.Tag, 1, 1000, 1000, 0, 0, "stalledUP"));
+        _qbittorrent.Files["flac"] =
+        [
+            ("Fleetwood Mac - Rumours (1977) [FLAC]/CD1/01 Second Hand News.flac", 3),
+            ("Fleetwood Mac - Rumours (1977) [FLAC]/CD2/01 Dreams (Demo).flac", 3),
+            ("Fleetwood Mac - Rumours (1977) [FLAC]/cover.jpg", 3),
+            ("Fleetwood Mac - Rumours (1977) [FLAC]/Scans/back.jpg", 4),
+            ("Fleetwood Mac - Rumours (1977) [FLAC]/rip.nfo", 3),
+        ];
+        await manager.TickAsync(Ct);
+
+        var done = (await manager.GetAsync(id, Ct))!;
+        Assert.Equal(MediaDownloadStates.Done, done.State);
+        var album = Path.Combine(musicPath, "Fleetwood Mac", "Rumours (1977)");
+        Assert.Equal("one", File.ReadAllText(Path.Combine(album, "CD1", "01 Second Hand News.flac")));
+        Assert.Equal("two", File.ReadAllText(Path.Combine(album, "CD2", "01 Dreams (Demo).flac")));
+        Assert.True(File.Exists(Path.Combine(album, "cover.jpg")));
+        Assert.False(File.Exists(Path.Combine(album, "rip.nfo")));
+        Assert.False(Directory.Exists(Path.Combine(album, "Scans")));
+        Assert.False(Directory.Exists(Path.Combine(musicPath, ".downloads")));
+        Assert.Equal(2, done.ImportedPaths.Count);
+        Assert.Equal([_music.Library.Id], _music.Scans);
+
+        // Albums are listed on the Music tab, not on Movies.
+        var musicList = await JsonAsync(await client.GetAsync("/api/music/downloads", Ct), HttpStatusCode.OK);
+        Assert.Equal(id.ToString(), Assert.Single(musicList.GetProperty("recent").EnumerateArray()).GetProperty("id").GetString());
+        var movieList = await JsonAsync(await client.GetAsync("/api/media/downloads", Ct), HttpStatusCode.OK);
+        Assert.Empty(movieList.GetProperty("recent").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Album_WithoutAMusicLibraryOnThisServer_CannotBeAdded()
+    {
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "NAS", "smb://nas/Music"));
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var status = await JsonAsync(await client.GetAsync("/api/music/downloads/status", Ct), HttpStatusCode.OK);
+        Assert.False(status.GetProperty("canDownload").GetBoolean());
+        Assert.False(status.GetProperty("musicLibrary").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Album_RoutesAnswer404WhenMusicIsOff()
+    {
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "Music", _root)) { Enabled = false };
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/music/downloads/status", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/music/downloads", Ct)).StatusCode);
+    }
+
+    private sealed class FakeMusic(AudioLibraryInfo library) : IMusicAudioSource
+    {
+        public AudioLibraryInfo Library { get; } = library;
+        public bool Enabled = true;
+        public double Lossless;
+        public readonly List<Guid> Scans = [];
+
+        public Task<bool> EnabledAsync(CancellationToken cancellationToken) => Task.FromResult(Enabled);
+        public Task<IReadOnlyList<AudioEntry>> ResolveTracksAsync(string userKey, bool isAdmin, IReadOnlyList<Guid> ids, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AudioEntry>>([]);
+        public Task<IReadOnlyList<Guid>> QueueForSourceAsync(string userKey, string type, string? id, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Guid>>([]);
+        public Task<object> StatsAsync(string userKey, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) => Task.FromResult<object>(new { });
+        public Task<IReadOnlyList<AudioLibraryInfo>> LibrariesAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AudioLibraryInfo>>([Library]);
+        public void RequestScan(Guid libraryId) => Scans.Add(libraryId);
+        public Task<bool> HasAlbumAsync(string artist, string album, CancellationToken cancellationToken) => Task.FromResult(false);
+        public Task<double> LosslessShareAsync(CancellationToken cancellationToken) => Task.FromResult(Lossless);
+        public Task<MusicBackup> ExportAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<int> RestoreAsync(MusicBackup backup, CancellationToken cancellationToken) => Task.FromResult(0);
     }
 
     private sealed class StaticHandler(string body) : HttpMessageHandler

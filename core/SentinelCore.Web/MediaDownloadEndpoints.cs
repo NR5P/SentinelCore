@@ -219,7 +219,8 @@ public static class MediaDownloadEndpoints
     {
         enabled.MapGet("", async (MediaDownloadManager manager, CancellationToken ct) =>
         {
-            var all = await manager.ListAsync(ct);
+            // Albums have their own list on the Music tab.
+            var all = (await manager.ListAsync(ct)).Where(d => d.Kind != MediaDownloadKinds.Album).ToList();
             var active = all.Where(d => MediaDownloadStates.IsActive(d.State)).OrderBy(d => d.CreatedAt).ToList();
             var recent = all.Where(d => !MediaDownloadStates.IsActive(d.State)).OrderByDescending(d => d.FinishedAt ?? d.CreatedAt).Take(30).ToList();
             return Results.Ok(new
@@ -289,8 +290,9 @@ public static class MediaDownloadEndpoints
         // "S02E05", "Season 2", or null for a film: the line under the title.
         subtitle = download.Kind == MediaKinds.Episode
             ? download.Season is { } s ? download.Episode is { } e ? $"S{s:00}E{e:00}" : $"Season {s}" : null
-            : null,
-        posterUrl = download.PosterPath is null ? null : TmdbClient.ImageUrl(download.PosterPath, "w342"),
+            : download.Kind == MediaDownloadKinds.Album ? download.Artist : null,
+        posterUrl = download.ArtUrl ?? (download.PosterPath is null ? null : TmdbClient.ImageUrl(download.PosterPath, "w342")),
+        artist = download.Artist,
         releaseTitle = download.ReleaseTitle,
         site = download.Indexer,
         sizeBytes = download.SizeBytes,
@@ -406,6 +408,6 @@ public static class MediaDownloadEndpoints
 
     private static bool IsAdmin(HttpContext context) => context.User.IsInRole(nameof(AccountRole.Admin));
 
-    private static bool CanDownload(HttpContext context, MediaDownloadsSettingsDto options) =>
+    public static bool CanDownload(HttpContext context, MediaDownloadsSettingsDto options) =>
         options.AllowedUsers == "everyone" || IsAdmin(context);
 }

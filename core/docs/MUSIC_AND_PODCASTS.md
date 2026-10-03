@@ -394,26 +394,51 @@ itself, with HTTP range support, so the URL can go straight into a player or a d
 
 This uses the same VPN/Prowlarr/qBittorrent stack and Settings as Movies (`MOVIE_DOWNLOADS.md`).
 
-- `GET /api/music/downloads/status` → `{ "canDownload": true, "reason": null, "vpn": { … same as movies } }`.
-  It is true when Movie Downloads is enabled and set up, the caller is allowed, and a music
-  library is on the server's own disk.
+This uses the same VPN, Prowlarr and qBittorrent setup as Movies, and the same Settings
+(Settings → MOVIE DOWNLOADS: enabled, who can add, VPN). It also uses the same sites. Like Movies,
+a search runs in the background, because starting the VPN can take a minute or two.
+
+- `GET /api/music/downloads/status` → `{ "enabled": true, "canDownload": true, "musicLibrary": true, "status": { … the same object as /api/media/downloads/status → status } }`.
+  - `canDownload` means downloads are on, the caller is allowed, and a music library is on the
+    server's own disk.
+  - `musicLibrary` is false when there is no such library; say "Add a music library on this
+    server's own disk first".
+  - This answers even when downloads are off.
 - `GET /api/music/downloads/lookup?q=rumours` →
-  `[ { "mbid": "…", "title": "Rumours", "artist": "Fleetwood Mac", "year": 1977, "type": "Album", "trackCount": 11, "artUrl": "https://coverartarchive.org/…", "inLibrary": true } ]`.
-  This searches MusicBrainz release groups. `inLibrary` means an album with that artist and title
-  is already in the library.
+  `[ { "mbid": "…", "title": "Rumours", "artist": "Fleetwood Mac", "year": 1977, "type": "Album|EP|Single|Compilation|Live", "trackCount": 11, "artUrl": "https://coverartarchive.org/release-group/…/front-250", "inLibrary": true } ]`.
+  - This searches MusicBrainz albums (release groups). Type `artist album` for the best
+    results, or just an album or an artist.
+  - `inLibrary` means an album with that artist and title is already in the library.
+  - `artUrl` may 404 when the Cover Art Archive has no picture; show a placeholder.
 - `POST /api/music/downloads/search` with body
-  `{ "artist": "Fleetwood Mac", "album": "Rumours", "year": 1977, "mbid": "…"? }` →
-  `{ "searchId", "releases": [ MusicRelease ] }`.
-  `MusicRelease = { "id", "title", "indexer", "sizeBytes", "seeders", "leechers", "publishedAt", "format": "FLAC|MP3 320|MP3 V0|AAC|…", "lossless": true, "matches": true, "warning": null, "score" }`.
-  Results are sorted best first: lossless when the library already has mostly lossless files,
-  then seeders.
-- `POST /api/music/downloads/grab` with body `{ "searchId", "releaseId", "libraryId"? }` → 201
-  Download (same shape as Movies' Download, with `kind: "album"`).
-- `GET /api/music/downloads` → `[Download]`, the album downloads only.
-  `DELETE /api/music/downloads/{id}` cancels one or clears a finished one.
+  `{ "artist": "Fleetwood Mac", "album": "Rumours", "year": 1977, "mbid": "…"?, "artUrl": "…"? }`
+  → **202** `Search`. Poll `GET /api/music/downloads/search/{id}` every 2 s until `phase` is
+  `done` or `failed`.
+  ```json
+  Search = { "id", "phase": "connecting|searching|done|failed", "message": "Connecting to the VPN...",
+             "error": null, "artist": "Fleetwood Mac", "album": "Rumours", "year": 1977,
+             "results": [ MusicRelease ], "others": [ MusicRelease ] }
+  MusicRelease = { "id": "r1", "title": "Fleetwood Mac - Rumours (1977) [FLAC]", "site": "The Pirate Bay",
+                   "sizeBytes": 300000000, "seeders": 40, "leechers": 2, "publishedAt": "…",
+                   "format": "FLAC|FLAC 24-bit|ALAC|MP3 320|MP3 V0|MP3|AAC|OGG|null", "lossless": true,
+                   "matches": true, "warning": "Discography: much more than this album"|null }
+  ```
+  - `results` are the releases that match and have people sharing them, best first. Lossless
+    comes first when most of the library already is, then the most seeders.
+  - `others` holds the rest, worth showing behind a "Show more" link.
+- `POST /api/music/downloads` with body `{ "searchId", "releaseId", "libraryId"? }` → 201
+  Download (400 `{ error }` when the search expired).
+  - `libraryId` defaults to the first music library on the server's own disk.
+  - Download has the same shape as Movies' Download, with `kind: "album"`, plus `artist`.
+    `title` is the album, `subtitle` the artist, and `posterUrl` is the `artUrl` sent with the
+    search.
+- `GET /api/music/downloads` → `{ "status", "active": [Download], "recent": [Download] }`, the
+  same as Movies but with album downloads only. Movies' own list no longer shows albums.
+- `GET /api/music/downloads/{id}`, `DELETE /api/music/downloads/{id}` (cancels one, or clears a
+  finished one) and `POST /api/music/downloads/{id}/retry` work as in Movies.
 - A finished download is filed as `<library>/<Artist>/<Album> (<Year>)/…`, keeping the torrent's
-  own disc folders. Only audio files, `.cue`, `.log`, `.lrc` and images are kept. The library is
-  then rescanned.
+  own disc folders (`CD1`, `Disc 2`). Only audio, `.cue`, `.log`, `.lrc` and image files are kept.
+  The music library is then rescanned, so the album shows up under Recently added.
 
 ---
 
@@ -695,6 +720,10 @@ as a **speaker**. Speakers belong to the household: anyone signed in can see and
   - `duck` drops the volume to 20% until `unduck` (or 30 s).
   - `announce` ducks, speaks `text` with the device's speech voice, then unducks.
   - `rampSeconds` fades the volume up from 0 to `volume` (used by alarms).
+  - **A speaker applies commands in `seq` order, and finishes speaking an `announce` before it
+    applies the next one.** An alarm playing the briefing sends `announce` (the spoken briefing)
+    and then `play` (its episodes), and the episodes must start after the voice ends. An
+    `announce` with nothing playing just speaks (at `volume` when given).
 - `GET /api/audio/speakers/{deviceId}/commands?after=41&wait=25` is a long poll →
   `{ "commands": [ { "seq": 42, "at": "…", "from": "nathan", ...SpeakerCommand } ] }`. It returns
   as soon as there is anything after `after`, or `[]` after `wait` seconds. Commands older than

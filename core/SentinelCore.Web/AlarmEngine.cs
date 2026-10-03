@@ -126,6 +126,10 @@ public sealed class AlarmEngine(IAlarmStore store, IAlarmActions actions, TimePr
     // rather than on its next sweep.
     public event Action? SensorsChanged;
 
+    // Raised with the reason ("Front door opened") once the alarm goes off, after the siren and
+    // the push are on their way - the speakers (AudioAnnouncer) pause and say so.
+    public event Action<string>? Triggered;
+
     public void SetDevices(IReadOnlyDictionary<Guid, HubDevice> devices) => _devices = devices;
 
     public IReadOnlyDictionary<Guid, HubDevice> Devices => _devices;
@@ -546,6 +550,8 @@ public sealed class AlarmEngine(IAlarmStore store, IAlarmActions actions, TimePr
         if (config.NotifyPush)
             Fire(actions.PushAsync("🚨 Alarm", $"{reason}{(wasArmed ? $" while armed {state.Mode}" : "")}. Open the app to see the cameras.", CancellationToken.None));
         Fire(actions.TriggerCamerasAsync(config.CameraIds, $"alarm: {reason}", CancellationToken.None));
+        try { Triggered?.Invoke(reason); }
+        catch (Exception ex) { logger.LogWarning(ex, "A listener for the alarm going off failed"); }
     }
 
     private async Task SirenAsync(AlarmConfig config, bool on, CancellationToken cancellationToken)

@@ -175,7 +175,7 @@ public static class MediaEndpoints
     // lists its shared folders; anything below that, or any local path, lists its folders.
     // Failures come back as `error` (and `needsLogin` when a sign-in would fix it) with a 200, so
     // a client can show the message and a sign-in form without special-casing status codes.
-    private static object Browse(string? path, MediaFiles files)
+    public static object Browse(string? path, MediaFiles files, Func<string, bool>? isMediaFile = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -188,7 +188,7 @@ public static class MediaEndpoints
                 path = "",
                 parent = (string?)null,
                 kind = "roots",
-                folders = LocalRoots().Select(r => Folder(r.Name, r.Path)).ToList(),
+                folders = LocalRoots().Select(r => Folder(r.Name, r.Path, isMediaFile)).ToList(),
                 computers,
                 videoCount = 0
             };
@@ -230,7 +230,7 @@ public static class MediaEndpoints
                         .Take(1000)
                         .Select(e => new { name = e.Name, path = e.Path, videoCount = (int?)null })
                         .ToList(),
-                    videoCount = entries.Count(e => !e.IsDirectory && MediaNaming.IsVideoFile(e.Name))
+                    videoCount = entries.Count(e => !e.IsDirectory && (isMediaFile ?? MediaNaming.IsVideoFile)(e.Name))
                 };
             }
             catch (MediaNetworkException ex) { return BrowseError(network.ToString(), parent, ex.Message, ex.NeedsLogin, network.HostWithPort); }
@@ -254,9 +254,9 @@ public static class MediaEndpoints
             {
                 var name = Path.GetFileName(directory);
                 if (IsHiddenFolder(name)) continue;
-                folders.Add(Folder(name, directory));
+                folders.Add(Folder(name, directory, isMediaFile));
             }
-            videos = Directory.EnumerateFiles(full).Take(5000).Count(MediaNaming.IsVideoFile);
+            videos = Directory.EnumerateFiles(full).Take(5000).Count(isMediaFile ?? MediaNaming.IsVideoFile);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -327,14 +327,14 @@ public static class MediaEndpoints
         return roots;
     }
 
-    private static object Folder(string name, string path)
+    private static object Folder(string name, string path, Func<string, bool>? isMediaFile)
     {
         var videos = 0;
         try
         {
             // Capped: a folder on a slow share with ten thousand files is not worth a stall for a hint.
             foreach (var file in Directory.EnumerateFiles(path).Take(2000))
-                if (MediaNaming.IsVideoFile(file)) videos++;
+                if ((isMediaFile ?? MediaNaming.IsVideoFile)(file)) videos++;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         return new { name, path, videoCount = (int?)videos };
@@ -342,7 +342,7 @@ public static class MediaEndpoints
 
     // MARK: - Network computers
 
-    private static void MapNetwork(RouteGroupBuilder enabled)
+    public static void MapNetwork(RouteGroupBuilder enabled)
     {
         var network = enabled.MapGroup("/network").RequireAuthorization("AdminOnly");
 

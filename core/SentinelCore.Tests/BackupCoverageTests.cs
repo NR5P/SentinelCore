@@ -82,6 +82,8 @@ public sealed class BackupCoverageTests : IDisposable
             ["MediaProgress"] = "Media.Progress",
             ["MediaPlays"] = "Media.Plays",
             ["MediaWatchlist"] = "Media.Watchlist",
+            ["AudioAlarms"] = "Audio.Alarms",
+            ["AudioListenBrainz"] = "Audio.ListenBrainz",
         };
 
         // Excluded on purpose, each for a reason recorded in BackupEndpoints:
@@ -103,6 +105,9 @@ public sealed class BackupCoverageTests : IDisposable
             ["MediaItems"] = "the movie catalog; a rescan of the library folders rebuilds it with the same ids",
             ["MediaState"] = "the media scanner's runtime memory",
             ["MediaDownloads"] = "the movie download queue and its history; what it fetched is in the library itself",
+            ["AudioNowPlaying"] = "what each device was playing a moment ago; the devices report it again",
+            ["AudioSpeakers"] = "speakers re-register every minute while they are switched on",
+            ["AudioListenQueue"] = "listens on their way to ListenBrainz; a day at most, and ListenBrainz keeps them",
         };
 
         var root = RepositoryCoreDirectory();

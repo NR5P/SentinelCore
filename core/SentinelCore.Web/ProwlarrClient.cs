@@ -17,6 +17,8 @@ public sealed class ProwlarrClient(IHttpClientFactory httpClientFactory, AppSett
     // Newznab categories: 2000 Movies, 5000 TV.
     public const int MovieCategory = 2000;
     public const int TvCategory = 5000;
+    // 3000 Audio (music): the Music tab's + Add.
+    public const int AudioCategory = 3000;
 
     public sealed record Release(
         string Guid, string Title, string? Indexer, long? Size, int? Seeders, int? Leechers, DateTimeOffset? PublishDate,

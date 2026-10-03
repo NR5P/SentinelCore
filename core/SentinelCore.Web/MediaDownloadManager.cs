@@ -17,6 +17,10 @@ public sealed class MediaDownloadSearch
     public string Phase { get; set; } = Connecting;
     public string? Error { get; set; }
     public List<MediaRelease> Results { get; set; } = [];
+    // An album search (the Music tab): its own input and results; Input then only carries the
+    // album as Title, for logging.
+    public MusicDownloadSearchInput? Album { get; init; }
+    public List<MusicRelease> AlbumResults { get; set; } = [];
 }
 
 // Everything between "+ Add" and the new title on the Home screen: searches, the download queue,
@@ -34,7 +38,8 @@ public sealed class MediaDownloadManager(
     MediaVpnConfig vpnConfig,
     MullvadAccountWatch mullvadAccount,
     IConfiguration configuration,
-    ILogger<MediaDownloadManager> logger)
+    ILogger<MediaDownloadManager> logger,
+    IMusicAudioSource? music = null)
 {
     public const string HomeIpClientName = "MediaDownloadsHomeIp";
     // How long a search or download waits for the VPN and the services to come up.
@@ -334,6 +339,162 @@ public sealed class MediaDownloadManager(
         return releases.OrderByDescending(r => r.Score).ThenByDescending(r => r.Seeders ?? 0).ToList();
     }
 
+    // MARK: - Albums (the Music tab's + Add)
+
+    public MediaDownloadSearch StartAlbumSearch(MusicDownloadSearchInput input)
+    {
+        foreach (var (id, old) in _searches)
+            if (DateTimeOffset.UtcNow - old.CreatedAt > SearchesKeptFor) _searches.TryRemove(id, out _);
+
+        var search = new MediaDownloadSearch
+        {
+            Id = Guid.NewGuid(),
+            Input = new MediaDownloadSearchInput { Kind = MediaDownloadKinds.Album, Title = input.Album, Year = input.Year },
+            Album = input,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _searches[search.Id] = search;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await EnsureReadyAsync(CancellationToken.None);
+                search.Phase = MediaDownloadSearch.Searching;
+                search.AlbumResults = await SearchAlbumReleasesAsync(input, CancellationToken.None);
+                search.Phase = MediaDownloadSearch.Done;
+            }
+            catch (Exception ex) when (ex is MediaDownloadException or ProwlarrException or QbittorrentException or InvalidOperationException)
+            {
+                search.Error = ex.Message;
+                search.Phase = MediaDownloadSearch.Failed;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Music downloads: search for {Artist} - {Album} failed", input.Artist, input.Album);
+                search.Error = "The search failed: " + ex.Message;
+                search.Phase = MediaDownloadSearch.Failed;
+            }
+        });
+        return search;
+    }
+
+    private async Task<List<MusicRelease>> SearchAlbumReleasesAsync(MusicDownloadSearchInput input, CancellationToken cancellationToken)
+    {
+        var preferLossless = music is not null && await music.LosslessShareAsync(cancellationToken) >= 0.5;
+        var artist = SearchText(input.Artist);
+        var album = SearchText(input.Album);
+        var various = artist.Length == 0 || artist.Equals("Various Artists", StringComparison.OrdinalIgnoreCase);
+        // Most sites name music "Artist - Album (Year) [Format]"; searching "Artist Album" finds
+        // that, and the album alone catches what a site files under a different artist spelling.
+        var queries = new List<string>();
+        if (!various)
+        {
+            if (input.Year is { } year) queries.Add($"{artist} {album} {year}");
+            queries.Add($"{artist} {album}");
+        }
+        queries.Add(album);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var releases = new List<MusicRelease>();
+        foreach (var query in queries.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var found = await prowlarr.SearchAsync(query, ProwlarrClient.AudioCategory, cancellationToken);
+            foreach (var release in found)
+            {
+                var source = release.MagnetUrl ?? release.DownloadUrl;
+                if (source is null) continue;
+                if (!seen.Add(release.InfoHash ?? $"{release.Title}|{release.Size}")) continue;
+                var parsed = MusicReleaseRanker.Parse(release.Title);
+                var matches = MusicReleaseRanker.Matches(release.Title, input.Artist, input.Album);
+                releases.Add(new MusicRelease(
+                    $"r{releases.Count + 1}", release.Title, release.Indexer, release.Size, release.Seeders, release.Leechers, release.PublishDate,
+                    parsed.Format, parsed.Lossless, matches, MusicReleaseRanker.Warning(parsed, release.Seeders),
+                    MusicReleaseRanker.Score(parsed, matches, release.Seeders, release.Size, preferLossless),
+                    source, release.InfoHash?.ToLowerInvariant()));
+            }
+            if (releases.Any(r => r.Matches && r.Seeders is > 0)) break;
+        }
+        return releases.OrderByDescending(r => r.Score).ThenByDescending(r => r.Seeders ?? 0).ToList();
+    }
+
+    public async Task<MediaDownload> GrabAlbumAsync(MusicDownloadGrabInput input, string requestedBy, CancellationToken cancellationToken)
+    {
+        var search = GetSearch(input.SearchId);
+        if (search?.Album is not { } album) throw new MediaDownloadException("That search has expired. Search again.");
+        var release = search.AlbumResults.FirstOrDefault(r => r.Id == input.ReleaseId) ?? throw new MediaDownloadException("That release is not in the search any more. Search again.");
+        var library = await PickMusicLibraryAsync(input.LibraryId, cancellationToken);
+
+        await _queueLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (release.InfoHash is { } hash)
+                foreach (var existing in await downloads.AllAsync(cancellationToken))
+                    if (existing.InfoHash == hash && MediaDownloadStates.IsActive(existing.State)) return existing;
+
+            var id = Guid.NewGuid();
+            var download = new MediaDownload
+            {
+                Id = id,
+                Kind = MediaDownloadKinds.Album,
+                Title = album.Album.Trim(),
+                Artist = album.Artist.Trim(),
+                Year = album.Year,
+                ArtUrl = album.ArtUrl ?? (album.Mbid is { Length: > 0 } mbid ? MusicDownloadLookup.ArtUrl(mbid) : null),
+                ReleaseTitle = release.Title,
+                Indexer = release.Indexer,
+                SizeBytes = release.SizeBytes,
+                Source = release.DownloadSource,
+                InfoHash = release.InfoHash,
+                LibraryId = library.Id,
+                StagingPath = Path.Combine(library.Path, ".downloads", id.ToString("N")),
+                RequestedBy = requestedBy,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            await downloads.SaveAsync(download, cancellationToken);
+            logger.LogInformation("Music downloads: {User} queued {Release} for {Artist} - {Album}", requestedBy, release.Title, download.Artist, download.Title);
+            Touch();
+            Wake();
+            return download;
+        }
+        finally { _queueLock.Release(); }
+    }
+
+    public async Task<AudioLibraryInfo?> FirstMusicLibraryAsync(CancellationToken cancellationToken)
+    {
+        if (music is null) return null;
+        return (await music.LibrariesAsync(cancellationToken)).FirstOrDefault(l => !MediaNetworkPath.IsNetwork(l.Path) && Directory.Exists(l.Path));
+    }
+
+    private async Task<AudioLibraryInfo> PickMusicLibraryAsync(Guid? libraryId, CancellationToken cancellationToken)
+    {
+        var libraries = music is null ? [] : (await music.LibrariesAsync(cancellationToken)).Where(l => !MediaNetworkPath.IsNetwork(l.Path)).ToList();
+        var library = libraryId is { } id ? libraries.FirstOrDefault(l => l.Id == id) : libraries.FirstOrDefault(l => Directory.Exists(l.Path));
+        if (library is null)
+            throw new MediaDownloadException("There is no music library on this server's own disks to save to. Add one under Settings -> Music -> Libraries.");
+        if (!Directory.Exists(library.Path)) throw new MediaDownloadException($"{library.Path} is not there. Is the disk mounted?");
+        return library;
+    }
+
+    private async Task ImportAlbumAsync(MediaDownload download, IReadOnlyList<QbittorrentClient.TorrentFile> files, CancellationToken cancellationToken)
+    {
+        var library = music is null ? null : (await music.LibrariesAsync(cancellationToken)).FirstOrDefault(l => l.Id == download.LibraryId)
+            ?? throw new MediaDownloadException("The music library it was going into has been removed.");
+        if (library is null) throw new MediaDownloadException("Music is not available on this server.");
+        var plan = MusicDownloadImporter.Plan(download, files.Select(f => new MediaDownloadImporter.SourceFile(f.Name, f.Size)).ToList(),
+            download.StagingPath, library.Path);
+        if (plan.Count == 0) throw new MediaDownloadException("The download had no music files in it.");
+
+        var landed = await Task.Run(() => MusicDownloadImporter.Execute(plan), cancellationToken);
+        DeleteStaging(download);
+        download.ImportedPaths = landed;
+        download.State = MediaDownloadStates.Done;
+        download.Progress = 1;
+        download.FinishedAt = DateTimeOffset.UtcNow;
+        await downloads.SaveAsync(download, cancellationToken);
+        logger.LogInformation("Music downloads: filed {Count} track(s) of {Artist} - {Album} into {Library}", landed.Count, download.Artist, download.Title, library.Name);
+        music!.RequestScan(library.Id);
+    }
+
     // Sites search words, not punctuation: "Dune: Part Two" is found as "Dune Part Two".
     private static string SearchText(string title) =>
         System.Text.RegularExpressions.Regex.Replace(title.Replace("&", "and"), @"[^\p{L}\p{N}' ]+", " ").Replace("'", "").Trim() is var text && text.Length > 0
@@ -608,6 +769,11 @@ public sealed class MediaDownloadManager(
         var files = await qbittorrent.FilesAsync(torrent.Hash, cancellationToken);
         // Out of qBittorrent first (keeping the files), so nothing is still writing or sharing them.
         await qbittorrent.DeleteAsync(torrent.Hash, deleteFiles: false, cancellationToken);
+        if (download.Kind == MediaDownloadKinds.Album)
+        {
+            await ImportAlbumAsync(download, files, cancellationToken);
+            return;
+        }
 
         var library = await media.GetLibraryAsync(download.LibraryId, cancellationToken)
             ?? throw new MediaDownloadException("The library it was going into has been removed.");

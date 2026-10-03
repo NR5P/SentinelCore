@@ -54,6 +54,8 @@ public sealed class BackupService(
     IMediaStore media,
     MediaScanner mediaScanner,
     MediaNetworkComputerStore mediaComputers,
+    SqliteAudioStore audio,
+    AudioListenBrainz listenBrainz,
     BackupWorkDirectory workDirectory,
     IOptions<BridgeOptions> bridgeOptions,
     IHostEnvironment environment,
@@ -97,7 +99,10 @@ public sealed class BackupService(
             await familyDrives.GetAllAsync(ct),
             new MediaBackup(await media.GetLibrariesAsync(ct), await media.AllProgressAsync(ct), mediaComputers.All(),
                 await media.AllPlaysAsync(ct), await media.AllWatchlistAsync(ct)),
-            warnings.Count > 0 ? warnings : null);
+            Warnings: warnings.Count > 0 ? warnings : null)
+        {
+            Audio = await audio.ExportAsync(ct)
+        };
     }
 
     // The full bundle: the document plus every file it points at, optionally encrypted.
@@ -454,6 +459,14 @@ public sealed class BackupService(
                 if (mediaBackup.Libraries!.Any(l => !MediaNetworkPath.IsNetwork(l.Path) && !Directory.Exists(l.Path)))
                     notes.Add("Some movie library folders don't exist on this machine yet. Mount them at the same paths (or edit the library) and they will be scanned.");
             }
+        }
+
+        // Wake-up alarms and ListenBrainz connections: added only where nothing by that id (or
+        // that person) exists yet, so restoring never undoes a change made since.
+        if (document.Audio is { } audioBackup)
+        {
+            await audio.RestoreAsync(audioBackup, ct);
+            await listenBrainz.ConnectedChangedAsync(ct);
         }
 
         // Written last among the stores because it's the one part that can still fail after

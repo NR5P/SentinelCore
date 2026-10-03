@@ -36,6 +36,10 @@ public sealed class MediaDownload
     public int? Season { get; set; }
     public int? Episode { get; set; }
     public string? PosterPath { get; set; }
+    // Albums (Kind "album", the Music tab's + Add): Title is the album, Artist who made it, and
+    // ArtUrl the Cover Art Archive picture the search was started from.
+    public string? Artist { get; set; }
+    public string? ArtUrl { get; set; }
 
     public string ReleaseTitle { get; set; } = string.Empty;
     public string? Indexer { get; set; }

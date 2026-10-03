@@ -265,6 +265,35 @@ builder.Services.AddSingleton<MediaDownloadManager>();
 builder.Services.AddHostedService<MediaDownloadWorker>();
 builder.Services.AddHostedService<MullvadAccountWorker>();
 
+// What the Music and Podcasts tabs share (Audio*.cs, core/docs/MUSIC_AND_PODCASTS.md §7-§9):
+// play where you left off, speakers, wake-up alarms, the morning briefing, stats, ListenBrainz.
+builder.Services.AddSingleton(new SqliteAudioStore(camerasRoot));
+builder.Services.AddSingleton(sp => new AudioSpeakerHub(sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IAudioNotifier, AudioNotifier>();
+builder.Services.AddSingleton<AudioBriefingBuilder>();
+builder.Services.AddSingleton<AudioDirector>();
+builder.Services.AddSingleton<AudioAlarmWorker>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioAlarmWorker>());
+builder.Services.AddHttpClient(AudioListenBrainz.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (self-hosted home server)");
+});
+builder.Services.AddSingleton<AudioListenBrainz>();
+builder.Services.AddSingleton<IListenBrainzSubmitter>(sp => sp.GetRequiredService<AudioListenBrainz>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioListenBrainz>());
+builder.Services.AddHostedService<AudioAnnouncer>();
+// "+ Add" on the Music tab rides the Movies download stack (MusicDownloads.cs).
+builder.Services.AddHttpClient(MusicDownloadLookup.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (self-hosted home media server)");
+});
+builder.Services.AddSingleton<MusicDownloadLookup>();
+// AUDIO-TEMPORARY: stand-ins until the Music and Podcasts halves are merged (AudioTemporarySources.cs).
+builder.Services.AddSingleton<IMusicAudioSource, TemporaryMusicAudioSource>();
+builder.Services.AddSingleton<IPodcastAudioSource, TemporaryPodcastAudioSource>();
+
 // Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
 // the data directory rather than /tmp - a bundle with everyone's attachments can be gigabytes.
 var backupWorkDirectory = new BackupWorkDirectory(Path.Combine(camerasRoot, "backup-work"));
@@ -584,6 +613,8 @@ app.MapLiveOrderEndpoints();
 app.MapOrganizerEndpoints();
 app.MapMediaEndpoints();
 app.MapMediaDownloadEndpoints();
+app.MapAudioEndpoints();
+app.MapMusicDownloadEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();
 app.MapCameraDiscoveryEndpoints();

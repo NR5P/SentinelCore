@@ -79,6 +79,9 @@ public sealed record BackupDocument(
     // itself (MediaItems) is left out because a rescan of the same folders rebuilds it with the
     // same ids, and the artwork cache is refetched from TMDB.
     MediaBackup? Media = null,
+    // Added without a schema bump (older files simply lack it): wake-up alarms and ListenBrainz
+    // connections from audio.db. The Music and Podcasts tabs carry their own sections.
+    AudioBackup? Audio = null,
     // What couldn't be included when this file was written, in words - e.g. the main app wasn't
     // running. Informational; restore ignores it.
     IReadOnlyList<string>? Warnings = null);
