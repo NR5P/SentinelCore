@@ -692,6 +692,11 @@ main {
   .tabs {
     order: 0;
     flex-basis: auto;
+    /* With Music and Podcasts there are up to sixteen tabs; on a laptop-width window they no
+       longer fit on one line and pushed the whole page sideways. Let them wrap instead. */
+    flex: 0 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
   }
 }
 
@@ -11554,7 +11559,9 @@ mark {
 .au-bar-main {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(180px, 1.3fr) auto auto minmax(0, 1fr);
+  /* The side column never goes below its buttons' width: at minmax(0, 1fr) a 1024px window gave
+     it 276px for 322px of buttons and the love heart slid over the "0:13 / 0:30" time. */
+  grid-template-columns: minmax(180px, 1.3fr) auto auto minmax(max-content, 1fr);
   align-items: center;
   gap: 18px;
   padding: 10px 22px 10px 14px;
@@ -13865,6 +13872,10 @@ button.au-rank-row:hover {
 
   .au-np-main {
     grid-template-columns: 1fr;
+    /* Stacked, the rows must take their content's height and let the page scroll. With the
+       default auto rows (and min-height: 0 on the columns) the player column was squeezed to
+       ~100px on a phone and the Up Next panel covered the seek bar and the play button. */
+    grid-auto-rows: max-content;
     overflow-y: auto;
     gap: 22px;
     padding: 6px 18px 30px;

@@ -847,7 +847,11 @@ public static class PodcastEndpoints
             var error = await audio.CutClipAsync(source, input.StartSeconds, input.DurationSeconds, path, title, ct);
             if (error is not null) return Results.Json(new { error }, statusCode: StatusCodes.Status502BadGateway);
 
-            var clip = new PodcastClip(clipId, UserKey(context), id, input.StartSeconds, input.DurationSeconds, input.Title?.Trim() ?? "", path, DateTimeOffset.UtcNow);
+            // A clip asked to run past the end of the episode stops at the end. Record the length of
+            // the file that was actually cut, or the clip list says "30 s" for a 15 s clip.
+            var cutSeconds = (await audio.ProbeAsync(path, ct)).DurationSeconds;
+            var clipSeconds = cutSeconds is > 0 && cutSeconds.Value < input.DurationSeconds - 0.5 ? Math.Round(cutSeconds.Value, 1) : input.DurationSeconds;
+            var clip = new PodcastClip(clipId, UserKey(context), id, input.StartSeconds, clipSeconds, input.Title?.Trim() ?? "", path, DateTimeOffset.UtcNow);
             await store.SaveClipAsync(clip, ct);
             return Results.Created($"/api/podcasts/clips/{clipId}.m4a", new { id = clipId, url = ClipUrl(clipId), durationSeconds = clip.DurationSeconds });
         });

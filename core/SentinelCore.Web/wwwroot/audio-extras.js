@@ -178,6 +178,9 @@ window.SentinelAudioExtras = (function () {
           null, "Where downloaded episodes are kept. Blank in the box means the server's own data folder. Save the section after choosing.");
       });
       row.appendChild(choose);
+      // A path plus a button does not fit one grid column - the box shrank to "/privat".
+      const fieldRow = row.closest(".field-row");
+      if (fieldRow) fieldRow.classList.add("field-row-wide");
     }
     const wrap = document.createElement("div");
     wrap.className = "au-settings-extra";
@@ -205,6 +208,14 @@ window.SentinelAudioExtras = (function () {
     if (footer) body.insertBefore(node, footer); else body.appendChild(node);
   }
 
+  // The server's Storage Limit (GB) means GiB (50 -> 50 * 1024^3), so the storage line counts the
+  // same way; the decimal sizeLabel showed a 50 GB limit as "53.7 GB".
+  function binarySize(bytes) {
+    const b = Number(bytes) || 0;
+    if (b >= 1073741824) return `${(b / 1073741824).toFixed(1).replace(/\.0$/, "")} GB`;
+    return `${b ? Math.max(1, Math.round(b / 1048576)) : 0} MB`;
+  }
+
   async function storageLine(box) {
     const res = await request("/api/podcasts/status");
     if (!box.isConnected) return;
@@ -215,7 +226,7 @@ window.SentinelAudioExtras = (function () {
     const pct = max ? Math.min(100, 100 * used / max) : 0;
     const tr = s.transcripts || {};
     box.innerHTML = `<div class="au-storage">
-        <div class="au-storage-line"><b>${h(U.sizeLabel(used) || "0 MB")}</b> used${max ? ` of ${h(U.sizeLabel(max))}` : " (no limit)"} · ${plural(s.podcastCount || 0, "show")} · ${plural(s.episodeCount || 0, "episode")}${s.downloadsActive || s.downloadsQueued ? ` · ${s.downloadsActive || 0} downloading, ${s.downloadsQueued || 0} waiting` : ""}</div>
+        <div class="au-storage-line"><b>${h(binarySize(used))}</b> used${max ? ` of ${h(binarySize(max))}` : " (no limit)"} · ${plural(s.podcastCount || 0, "show")} · ${plural(s.episodeCount || 0, "episode")}${s.downloadsActive || s.downloadsQueued ? ` · ${s.downloadsActive || 0} downloading, ${s.downloadsQueued || 0} waiting` : ""}</div>
         ${max ? `<div class="mv-scan-bar au-storage-bar ${pct > 90 ? "au-storage-full" : ""}"><span style="width:${pct.toFixed(1)}%"></span></div>` : ""}
         ${s.downloadFolder ? `<div class="settings-hint">In <code>${h(s.downloadFolder)}</code></div>` : ""}
         <div class="settings-hint">Transcripts: ${tr.enabled ? (tr.available ? `ready${tr.queued ? ` · ${tr.queued} waiting` : ""}` : `on, but ${h(tr.error || "whisper isn't working")}`) : "off"}${s.ffmpegAvailable === false ? " · ffmpeg is missing, so voice boost, trim silence and clips won't work" : ""}</div>
@@ -464,7 +475,7 @@ window.SentinelAudioExtras = (function () {
       <ol class="au-brief-lines">${(d.speech || []).map((line, i) => `<li data-line="${i}">${h(line)}</li>`).join("")}</ol>
       ${eps.length ? `<div class="au-brief-eps-title">Then ${plural(eps.length, "episode")}:</div>
         <div class="au-brief-eps">${eps.map((e) => `<div class="au-fill-ep"><span class="au-q-art">${U.safeSrc(e.artUrl) ? `<img src="${h(e.artUrl)}" alt="">` : ICON.mic}</span><span class="au-q-text"><span class="au-q-title">${h(e.title)}</span><span class="au-q-sub">${h(e.podcastTitle || "")}</span></span><span class="au-q-dur">${e.durationSeconds ? fmtDuration(e.durationSeconds) : ""}</span></div>`).join("")}</div>`
-        : `<div class="mv-field-note">No episodes yet: switch on “In my Morning Briefing” in a show's settings (Podcasts → a show → speed button).</div>`}
+        : `<div class="mv-field-note">No unplayed episodes from the shows in your briefing. To add a show, switch on “In my Morning Briefing” in its settings (Podcasts → a show → speed button).</div>`}
       <div class="mv-modal-foot">
         <button type="button" class="mv-btn" data-mact="au-brief-speaker">${ICON.cast}<span>play on a speaker</span></button>
         <button type="button" class="mv-btn mv-btn-primary" data-mact="au-brief-play">${ICON.play}<span>Play here</span></button>
@@ -486,7 +497,8 @@ window.SentinelAudioExtras = (function () {
     }
     if (briefing.cancel) return;
     const eps = d.episodes || [];
-    if (eps.length) A.playEpisodes(eps, 0, { type: "queue", id: "briefing", name: "Morning Briefing" });
+    // "Play here" means this browser, even while it is controlling a speaker.
+    if (eps.length) A.playEpisodes(eps, 0, { type: "queue", id: "briefing", name: "Morning Briefing" }, { local: true });
     U.closeModal();
   }
 
@@ -746,8 +758,10 @@ window.SentinelAudioExtras = (function () {
       return slides;
     }
     if (flags.music && m.minutes) {
-      const days = (m.minutes / 1440).toFixed(1);
-      slides.push({ theme: "minutes", html: `<div class="au-wr-kicker">You listened to</div><div class="au-wr-huge" data-count="${Math.round(m.minutes)}">0</div><div class="au-wr-line">minutes of music</div><div class="au-wr-sub">That's ${h(days)} whole days. ${m.plays ? `${Number(m.plays).toLocaleString()} plays of ${Number(m.distinctTracks || 0).toLocaleString()} different songs.` : ""}</div>` });
+      // "That's 0.0 whole days" read oddly for a light year; say days only once there is one.
+      const days = m.minutes / 1440;
+      const span = days >= 1 ? `That's ${days.toFixed(1)} whole days. ` : m.minutes >= 120 ? `That's ${(m.minutes / 60).toFixed(1)} hours. ` : "";
+      slides.push({ theme: "minutes", html: `<div class="au-wr-kicker">You listened to</div><div class="au-wr-huge" data-count="${Math.round(m.minutes)}">0</div><div class="au-wr-line">${Math.round(m.minutes) === 1 ? "minute" : "minutes"} of music</div><div class="au-wr-sub">${h(span)}${m.plays ? `${Number(m.plays).toLocaleString()} plays of ${Number(m.distinctTracks || 0).toLocaleString()} different songs.` : ""}</div>` });
     }
     const g = (m.topGenres || [])[0];
     if (flags.music && g) {
@@ -786,12 +800,12 @@ window.SentinelAudioExtras = (function () {
     }
     if (flags.music && (m.longestStreakDays || m.newArtists)) {
       slides.push({ theme: "streak", html: `<div class="au-wr-kicker">Keeping it going</div>
-        ${m.longestStreakDays ? `<div class="au-wr-huge" data-count="${m.longestStreakDays}">0</div><div class="au-wr-line">days in a row with music</div>` : ""}
+        ${m.longestStreakDays ? `<div class="au-wr-huge" data-count="${m.longestStreakDays}">0</div><div class="au-wr-line">${m.longestStreakDays === 1 ? "day" : "days in a row"} with music</div>` : ""}
         ${m.newArtists ? `<div class="au-wr-sub">and ${plural(m.newArtists, "artist")} you'd never played before</div>` : ""}` });
     }
     if (flags.podcasts && p.minutes) {
       const show = (p.topShows || [])[0];
-      slides.push({ theme: "pods", html: `<div class="au-wr-kicker">In your ears</div><div class="au-wr-huge" data-count="${Math.round(p.minutes)}">0</div><div class="au-wr-line">minutes of podcasts</div>
+      slides.push({ theme: "pods", html: `<div class="au-wr-kicker">In your ears</div><div class="au-wr-huge" data-count="${Math.round(p.minutes)}">0</div><div class="au-wr-line">${Math.round(p.minutes) === 1 ? "minute" : "minutes"} of podcasts</div>
         ${show && show.podcast ? `<div class="au-wr-row">${art(show.podcast.artUrl, "au-square au-wr-thumb", show.podcast.title, "", "", ICON.mic)}<div><div class="au-wr-sub">most of all</div><div class="au-wr-mid">${h(show.podcast.title)}</div><div class="au-wr-sub">${plural(show.episodes || 0, "episode")} · ${h(hoursMinutes(show.minutes))}</div></div></div>` : ""}
         ${p.timeSavedMinutes ? `<div class="au-wr-sub">Speed and trimmed silences gave you back <b>${h(hoursMinutes(p.timeSavedMinutes))}</b>.</div>` : ""}` });
     }

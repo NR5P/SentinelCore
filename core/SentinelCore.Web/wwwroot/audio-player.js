@@ -50,6 +50,8 @@ window.SentinelAudio = (function () {
       heart: s(`<path ${st} d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.3a4.3 4.3 0 0 1 7.5 2.5C19.5 15.4 12 20 12 20z"/>`),
       heartFill: s('<path fill="currentColor" d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.3a4.3 4.3 0 0 1 7.5 2.5C19.5 15.4 12 20 12 20z"/>'),
       queue: s(`<path ${st} d="M4 6h11M4 11h11M4 16h7M17 14v6l4-3z"/>`),
+      // "In Up Next": the list with a tick, so it never looks like the "Mark played" tick beside it.
+      queued: s(`<path ${st} d="M4 6h11M4 11h11M4 16h7M14.5 16.5l2.5 2.5 4.5-5"/>`),
       lyrics: s(`<path ${st} d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/><path ${st} d="M8 9h8M8 12h5"/>`),
       transcript: s(`<path ${st} d="M6 3.5h9l3 3V20.5H6z"/><path ${st} d="M9 10h6M9 13.5h6M9 17h4"/>`),
       chapters: s(`<path ${st} d="M5 6h2M5 12h2M5 18h2M10 6h9M10 12h9M10 18h9"/>`),
@@ -270,14 +272,49 @@ window.SentinelAudio = (function () {
 
   // ---- identity -------------------------------------------------------------------------------
 
+  // Each open tab is its own device. The browser's remembered id (localStorage) belongs to one tab
+  // at a time - the one holding a fresh "claim" - and any other tab opened alongside it gets an id
+  // of its own (kept in sessionStorage, so a reload keeps it). Before this every tab shared one id:
+  // a second tab could not see or control the first tab's "Let others play here" speaker (it hid
+  // itself from the picker), and both tabs answered every command sent to it.
+  const TAB_NONCE = Math.random().toString(36).slice(2);
+  const CLAIM_EVERY_MS = 5000;
+  const CLAIM_STALE_MS = 90000; // a hidden tab's timers can be throttled to once a minute
+  let tabDeviceId = null;
+
+  function newDeviceId() {
+    const rand = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return `web-${rand}`;
+  }
+
   function deviceId() {
-    let id = lsGet("deviceId", null);
+    if (tabDeviceId) return tabDeviceId;
+    let id = null;
+    try { id = sessionStorage.getItem(LS + "tabDeviceId"); } catch { /* blocked */ }
     if (!id) {
-      const rand = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
-      id = `web-${rand}`;
-      lsSet("deviceId", id);
+      const shared = lsGet("deviceId", null);
+      const claim = lsGet("deviceIdClaim", null);
+      const heldElsewhere = claim && claim.tab !== TAB_NONCE && Date.now() - (Number(claim.at) || 0) < CLAIM_STALE_MS;
+      if (!shared) { id = newDeviceId(); lsSet("deviceId", id); }
+      else id = heldElsewhere ? newDeviceId() : shared;
+      try { sessionStorage.setItem(LS + "tabDeviceId", id); } catch { /* blocked */ }
+    }
+    tabDeviceId = id;
+    if (isPrimaryTab()) {
+      const claimNow = () => lsSet("deviceIdClaim", { tab: TAB_NONCE, at: Date.now() });
+      claimNow();
+      setInterval(claimNow, CLAIM_EVERY_MS);
+      window.addEventListener("pagehide", () => {
+        const c = lsGet("deviceIdClaim", null);
+        if (c && c.tab === TAB_NONCE) { try { localStorage.removeItem(LS + "deviceIdClaim"); } catch { /* blocked */ } }
+      });
     }
     return id;
+  }
+
+  // The tab that owns the browser's remembered id: the one that is "this browser" as a speaker.
+  function isPrimaryTab() {
+    return !!tabDeviceId && tabDeviceId === lsGet("deviceId", null);
   }
 
   function defaultDeviceName() {
@@ -288,8 +325,15 @@ window.SentinelAudio = (function () {
     return os ? `${browser} on ${os}` : browser;
   }
 
-  function deviceName() {
+  function baseDeviceName() {
     return lsGet("deviceName", "") || defaultDeviceName();
+  }
+
+  // A second tab of the same browser says so, or "Play on…" and "Continue from" show two
+  // "Kitchen Speaker"s that are different tabs.
+  function deviceName() {
+    const base = baseDeviceName();
+    return tabDeviceId && !isPrimaryTab() ? `${base} (another tab)` : base;
   }
 
   let authInfo = null;
@@ -1285,11 +1329,19 @@ window.SentinelAudio = (function () {
     if (intro > 0 && (position == null || position < intro)) seekDeck(deck, intro);
   }
 
+  // Repeat is a music control: its button is hidden while an episode plays, so a repeat left on
+  // from music must not loop a podcast episode forever with no visible way to stop it.
+  function repeatMode() {
+    const item = currentItem();
+    return item && item.type === "episode" ? "off" : state.repeat;
+  }
+
   function nextIndex(auto) {
     if (!state.queue.length) return -1;
-    if (auto && state.repeat === "one") return state.index;
+    const mode = repeatMode();
+    if (auto && mode === "one") return state.index;
     if (state.index + 1 < state.queue.length) return state.index + 1;
-    if (state.repeat === "all") return 0;
+    if (mode === "all") return 0;
     return -1;
   }
 
@@ -1339,7 +1391,7 @@ window.SentinelAudio = (function () {
   }
 
   function preloadNext(deck) {
-    if (state.repeat === "one") return;
+    if (repeatMode() === "one") return;
     const nextI = nextIndex(false);
     const next = state.queue[nextI];
     const idle = idleDeck();
@@ -1387,7 +1439,7 @@ window.SentinelAudio = (function () {
     const item = deck.item;
     finishItem("completed");
     if (state.sleep && state.sleep.mode === "end") { endSleep(true); deck.el.pause(); emit("state"); return; }
-    if (state.repeat === "one") {
+    if (repeatMode() === "one") {
       deck.finished = false;
       deck.listened = 0;
       seekDeck(deck, 0);
@@ -1592,7 +1644,7 @@ window.SentinelAudio = (function () {
     const deck = activeDeck();
     if (!deck.item) return;
     if (deck.el.currentTime > 3 || state.index <= 0) {
-      if (state.index <= 0 && state.repeat === "all" && deck.el.currentTime <= 3 && state.queue.length > 1) {
+      if (state.index <= 0 && repeatMode() === "all" && deck.el.currentTime <= 3 && state.queue.length > 1) {
         playIndex(state.queue.length - 1, { reason: "skipped", resume: false, position: 0 });
         return;
       }
@@ -1670,6 +1722,22 @@ window.SentinelAudio = (function () {
       [copy[i], copy[j]] = [copy[j], copy[i]];
     }
     return copy;
+  }
+
+  // The green tint was the only sign of shuffle/repeat state; say it to screen readers and in the
+  // tooltip too ("Repeat: one").
+  function labelModes(shuffle, rep, isRemote) {
+    if (shuffle) {
+      const on = state.shuffle && !isRemote;
+      shuffle.setAttribute("aria-pressed", on ? "true" : "false");
+      shuffle.title = on ? "Shuffle: on" : "Shuffle: off";
+    }
+    if (rep) {
+      const mode = isRemote ? "off" : state.repeat;
+      rep.setAttribute("aria-pressed", mode !== "off" ? "true" : "false");
+      rep.title = mode === "one" ? "Repeat: this song" : mode === "all" ? "Repeat: all" : "Repeat: off";
+      rep.setAttribute("aria-label", rep.title);
+    }
   }
 
   function cycleRepeat() {
@@ -2127,6 +2195,7 @@ window.SentinelAudio = (function () {
     const rep = bar.querySelector('[data-pl="repeat"]');
     rep.classList.toggle("on", state.repeat !== "off" && !remote.target);
     rep.innerHTML = state.repeat === "one" ? ICON.repeat1 : ICON.repeat;
+    labelModes(bar.querySelector('[data-pl="shuffle"]'), rep, !!remote.target);
     const item = remote.target ? null : currentItem();
     const love = bar.querySelector('[data-pl="love"]');
     love.classList.add("au-love");
@@ -2491,6 +2560,7 @@ window.SentinelAudio = (function () {
     const rep = np.querySelector('.au-np-controls [data-pl="repeat"]');
     rep.classList.toggle("on", state.repeat !== "off" && !d.remote);
     rep.innerHTML = state.repeat === "one" ? ICON.repeat1 : ICON.repeat;
+    labelModes(np.querySelector('.au-np-controls [data-pl="shuffle"]'), rep, !!d.remote);
     const vol = el("au-np-vol");
     if (document.activeElement !== vol) vol.value = String(Math.round((d.volume ?? 0) * 100));
     np.querySelector('.au-np-tools [data-pl="mute"]').innerHTML = settings.muted || !d.volume ? ICON.mute : ICON.volume;
@@ -2573,7 +2643,7 @@ window.SentinelAudio = (function () {
           ${upcoming.length ? `<button type="button" class="mv-btn mv-btn-quiet" data-np="q-clear">clear</button>` : ""}
         </span></div>
       ${upcoming.length ? `<div class="au-q-list au-q-sortable">${upcoming.map((it, i) => queueRow(it, state.index + 1 + i, "", true)).join("")}</div>`
-        : `<div class="au-q-empty">${state.repeat === "all" ? "Repeat is on: the queue starts over." : "Nothing after this. Add songs or episodes with “Play next” or “Add to queue”."}</div>`}
+        : `<div class="au-q-empty">${repeatMode() === "all" ? "Repeat is on: the queue starts over." : "Nothing after this. Add songs or episodes with “Play next” or “Add to queue”."}</div>`}
       ${history.length ? `<details class="au-q-history"><summary>Played before (${history.length})</summary><div class="au-q-list">${history.map((it, i) => queueRow(it, i, "au-q-past", false)).join("")}</div></details>` : ""}`;
   }
 
@@ -2938,7 +3008,7 @@ window.SentinelAudio = (function () {
         <select class="field-input" id="au-pspeed">${[0.8, 0.9, 1, 1.1, 1.2, 1.25, 1.3, 1.5, 1.75, 2].map((v) => `<option value="${v}">${v}×</option>`).join("")}</select></label>
       <div class="au-pop-sep"></div>
       <label class="au-pop-row au-pop-row-wide"><span>This browser's name</span>
-        <input class="field-input" id="au-devname" value="${escapeHtml(deviceName())}" maxlength="60"></label>
+        <input class="field-input" id="au-devname" value="${escapeHtml(baseDeviceName())}" maxlength="60"></label>
       <label class="au-pop-check"><span>Let others play here <small>this browser shows up as a speaker in every app</small></span>
         <span class="switch"><input type="checkbox" id="au-spk" ${speaker.on ? "checked" : ""}><span class="switch-track"></span></span></label>
       <label class="au-pop-check"><span>Allow announcements <small>camera alerts and messages are spoken here</small></span>
@@ -3230,7 +3300,8 @@ window.SentinelAudio = (function () {
   }
 
   async function setSpeakerMode(on) {
-    lsSet("speakerMode", !!on);
+    deviceId();
+    if (isPrimaryTab()) lsSet("speakerMode", !!on);
     if (on) await startSpeaker(); else await stopSpeaker();
     const box = document.querySelector("#au-pop #au-spk");
     if (box) box.checked = speaker.on;
@@ -3564,7 +3635,10 @@ window.SentinelAudio = (function () {
     if (servicesStarted) return;
     servicesStarted = true;
     ensureAuth();
-    if (speakerPref()) startSpeaker();
+    // Only the browser's own tab comes back as its speaker; a second tab opened beside it is a
+    // separate device that can control it (and can be made a speaker itself from its switch).
+    deviceId();
+    if (speakerPref() && isPrimaryTab()) startSpeaker();
     checkContinue();
   }
 
@@ -3652,6 +3726,14 @@ window.SentinelAudio = (function () {
     checkEnabled();
   }
 
+  // A newly opened page (an episode, an album) starts at its top: without this it kept the
+  // scroll position of the list it was opened from and showed up half scrolled past its header.
+  function scrollToTopOf(node) {
+    if (!node) return;
+    const top = Math.max(0, node.getBoundingClientRect().top + window.scrollY - 8);
+    if (window.scrollY > top) window.scrollTo(0, top);
+  }
+
   init();
 
   return {
@@ -3661,7 +3743,7 @@ window.SentinelAudio = (function () {
       art, mosaic, wireImages, rowMarkup, wireRows, scrollRow, loadingMarkup, errorMarkup, emptyMarkup, stars,
       showToast, showErrors, sanitizeHtml, openModal, closeModal, modalOpen, modalHeader, onModalAction,
       openMenu, closeMenu, openPop, closePop, makeSortable, moveInArray, openFolderBrowser, ensureAuth, isAdmin,
-      authInfo: () => authInfo, isKiosk, deviceId, deviceName, lsGet, lsSet, artSized, withQuery, codecs, speak
+      authInfo: () => authInfo, isKiosk, deviceId, deviceName, lsGet, lsSet, artSized, withQuery, codecs, speak, scrollToTopOf
     },
     on, checkEnabled, enabled: () => ({ ...enabledFlags }),
     playTracks, playEpisodes, enqueue, startRadio, playMix, shuffleAll, stop,

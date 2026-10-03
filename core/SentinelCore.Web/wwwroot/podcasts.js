@@ -64,7 +64,8 @@ window.SentinelPodcasts = (function () {
 
   async function routeTo(r) {
     const token = ++routeToken;
-    if (route && (route.name !== r.name || route.id !== r.id)) scrollMemory[hashFor(route)] = window.scrollY;
+    const moved = !!route && (route.name !== r.name || route.id !== r.id);
+    if (moved) scrollMemory[hashFor(route)] = window.scrollY;
     route = r;
     clearTimeout(dlTimer);
     for (const b of document.querySelectorAll("#pc-subtabs [data-pc-nav]")) b.classList.toggle("active", b.dataset.pcNav === navKey(r));
@@ -95,6 +96,7 @@ window.SentinelPodcasts = (function () {
     if (token !== routeToken) return;
     const y = scrollMemory[hashFor(r)];
     if (y != null) window.scrollTo(0, y);
+    else if (moved) U.scrollToTopOf(el("pc-subtabs"));
   }
 
   function refreshCurrent() {
@@ -230,7 +232,7 @@ window.SentinelPodcasts = (function () {
         <button type="button" class="au-ep-play" data-act="play-list" data-list="${h(opts.list)}" data-i="${i}" title="${pr.started ? "Resume" : "Play"}">${ICON.play}<span>${pr.started ? fmtDuration(pr.left) : ep.durationSeconds ? fmtDuration(ep.durationSeconds) : "play"}</span></button>
         ${opts.removable
           ? `<button type="button" class="au-ctl au-ctl-xs" data-act="queue-remove" data-id="${h(ep.id)}" title="Remove from Up Next" aria-label="Remove from Up Next">${ICON.close}</button>`
-          : `<button type="button" class="au-ctl au-ctl-xs ${inQueue ? "on" : ""}" data-act="${inQueue ? "queue-remove" : "queue-add"}" data-id="${h(ep.id)}" title="${inQueue ? "In Up Next (click to remove)" : "Add to Up Next"}" aria-label="${inQueue ? "Remove from Up Next" : "Add to Up Next"}">${inQueue ? ICON.check : ICON.queue}</button>`}
+          : `<button type="button" class="au-ctl au-ctl-xs ${inQueue ? "on" : ""}" data-act="${inQueue ? "queue-remove" : "queue-add"}" data-id="${h(ep.id)}" title="${inQueue ? "In Up Next (click to remove)" : "Add to Up Next"}" aria-label="${inQueue ? "Remove from Up Next" : "Add to Up Next"}">${inQueue ? ICON.queued : ICON.queue}</button>`}
         <button type="button" class="au-ctl au-ctl-xs ${pr.played ? "on" : ""}" data-act="toggle-played" data-list="${h(opts.list)}" data-i="${i}" title="${pr.played ? "Mark unplayed" : "Mark played"}" aria-label="${pr.played ? "Mark unplayed" : "Mark played"}">${ICON.check}</button>
         <button type="button" class="au-ctl au-ctl-xs" data-act="ep-menu" data-list="${h(opts.list)}" data-i="${i}" title="More" aria-label="More">${ICON.more}</button>
       </div>
@@ -299,7 +301,8 @@ window.SentinelPodcasts = (function () {
       const inQ = ids.has(b.dataset.id);
       b.dataset.act = inQ ? "queue-remove" : "queue-add";
       b.classList.toggle("on", inQ);
-      b.innerHTML = inQ ? ICON.check : ICON.queue;
+      b.innerHTML = inQ ? ICON.queued : ICON.queue;
+      b.setAttribute("aria-label", inQ ? "Remove from Up Next" : "Add to Up Next");
       b.title = inQ ? "In Up Next (click to remove)" : "Add to Up Next";
     }
   }
@@ -698,7 +701,7 @@ window.SentinelPodcasts = (function () {
           <div class="mv-actions">
             <button type="button" class="mv-btn mv-btn-primary" data-act="play-list" data-list="episode" data-i="0">${ICON.play}<span>${pr.started ? `Resume · ${fmtDuration(pr.left)} left` : "Play"}</span></button>
             ${pr.started ? `<button type="button" class="mv-btn mv-btn-glass" data-act="play-start">${ICON.back15}<span>From the start</span></button>` : ""}
-            <button type="button" class="au-ctl ${inQueue ? "on" : ""}" data-act="${inQueue ? "queue-remove" : "queue-add"}" data-id="${h(ep.id)}" title="${inQueue ? "In Up Next (click to remove)" : "Add to Up Next"}">${inQueue ? ICON.check : ICON.queue}</button>
+            <button type="button" class="au-ctl ${inQueue ? "on" : ""}" data-act="${inQueue ? "queue-remove" : "queue-add"}" data-id="${h(ep.id)}" title="${inQueue ? "In Up Next (click to remove)" : "Add to Up Next"}">${inQueue ? ICON.queued : ICON.queue}</button>
             <button type="button" class="au-ctl ${pr.played ? "on" : ""}" data-act="toggle-played" data-list="episode" data-i="0" title="${pr.played ? "Mark unplayed" : "Mark played"}">${ICON.check}</button>
             <button type="button" class="au-ctl" data-act="ep-bookmark" title="Bookmark a moment">${ICON.bookmark}</button>
             <button type="button" class="au-ctl" data-act="ep-clip" title="Make a clip to share">${ICON.scissors}</button>
@@ -1176,7 +1179,7 @@ window.SentinelPodcasts = (function () {
       const d = res.data || {};
       const failed = d.failed || [];
       U.openModal(`${U.modalHeader("OPML imported")}
-        <p class="mv-modal-intro"><b>${h(d.added || 0)}</b> shows added, <b>${h(d.existing || 0)}</b> already followed. The new feeds are being read in the background - they appear in Your shows over the next minute.</p>
+        <p class="mv-modal-intro"><b>${h(d.added || 0)}</b> ${(d.added || 0) === 1 ? "show" : "shows"} added, <b>${h(d.existing || 0)}</b> already followed. The new feeds are being read in the background - they appear in Your shows over the next minute.</p>
         ${failed.length ? `<div class="mv-note mv-note-warn">${plural(failed.length, "feed")} couldn't be added:<ul>${failed.map((f) => `<li><code>${h(f.feedUrl)}</code> - ${h(f.error)}</li>`).join("")}</ul></div>` : ""}
         <div class="mv-modal-foot"><button type="button" class="mv-btn mv-btn-primary" data-mact="close">OK</button></div>`);
       if (route.name === "home" || route.name === "shows") setTimeout(refreshCurrent, 1500);
@@ -1203,7 +1206,7 @@ window.SentinelPodcasts = (function () {
       <div class="au-page-sub">${hits.length ? `${plural(hits.length, "moment")}${hits.length >= 50 ? " (the first 50)" : ""} · press one to play from there` : ""}</div>
       ${hits.length ? `<div class="au-hits">${hits.map((x) => `<button type="button" class="au-hit" data-act="bm-play" data-ep="${h(x.episodeId)}" data-t="${Number(x.startSeconds) || 0}" data-now-id="${h(x.episodeId)}">
           <span class="au-hit-art"><img src="/api/podcasts/${enc(x.podcastId)}/art" alt="" loading="lazy"></span>
-          <span class="au-hit-text"><span class="au-hit-where">${h(x.podcastTitle || "")} · <b>${h(x.episodeTitle || "")}</b></span><span class="au-hit-snippet">…${mark(x.snippet || "")}…</span></span>
+          <span class="au-hit-text"><span class="au-hit-where">${h(x.podcastTitle || "")} · <b>${h(x.episodeTitle || "")}</b></span><span class="au-hit-snippet">${mark(x.snippet || "")}</span></span>
           <span class="au-hit-time">${ICON.play}${fmtClock(x.startSeconds)}</span>
         </button>`).join("")}</div>` : emptyMarkup(`Nobody said “${q}”`, "Only episodes with a transcript are searched - from the feed, or written by the server when transcripts are on.", ICON.transcript)}
     </div>`);

@@ -78,7 +78,8 @@ window.SentinelMusic = (function () {
 
   async function routeTo(r) {
     const token = ++routeToken;
-    if (route && (route.name !== r.name || route.id !== r.id)) scrollMemory[hashFor(route)] = window.scrollY;
+    const moved = !!route && (route.name !== r.name || route.id !== r.id);
+    if (moved) scrollMemory[hashFor(route)] = window.scrollY;
     route = r;
     for (const b of document.querySelectorAll("#mu-subtabs [data-mu-nav]")) b.classList.toggle("active", b.dataset.muNav === navKey(r));
     const search = el("mu-search");
@@ -118,6 +119,7 @@ window.SentinelMusic = (function () {
     if (token !== routeToken) return;
     const y = scrollMemory[hashFor(r)];
     if (y != null) window.scrollTo(0, y);
+    else if (moved) U.scrollToTopOf(el("mu-subtabs"));
     A.markNow(content);
   }
 
@@ -651,7 +653,7 @@ window.SentinelMusic = (function () {
       <div class="au-page-head au-decade-head">
         <div class="au-decade-big">${h(label)}</div>
         <div><div class="mv-kicker">Decade</div><h2 class="au-page-title">The ${h(decade)}s</h2><div class="au-page-sub">${plural(total, "album")}</div></div>
-        <div class="mv-actions"><button type="button" class="mv-btn mv-btn-primary" data-act="play-mix" data-id="decade-${h(decade)}" data-name="The ${h(label)}">${ICON.play}<span>Play the ${h(label)}</span></button></div>
+        <div class="mv-actions"><button type="button" class="mv-btn mv-btn-primary" data-act="play-mix" data-id="decade-${h(decade)}" data-name="The ${h(decade)}s">${ICON.play}<span>Play the ${h(decade)}s</span></button></div>
       </div>
       ${grid(items, albumCard)}${pager(s, total, GRID_PAGE)}`);
   }
@@ -1185,8 +1187,13 @@ window.SentinelMusic = (function () {
     const d = res.data || {};
     const folders = d.folders || [];
     const tracks = d.tracks || [];
+    // Fetch the library names first time in, or the first crumb says "Library" instead of its name.
+    if (libraryId && !librariesCache) {
+      const r = await request("/api/music/libraries");
+      if (token !== routeToken) return;
+      librariesCache = r.ok && Array.isArray(r.data) ? r.data : [];
+    }
     const libName = libraryId ? ((librariesCache || []).find((l) => l.id === libraryId) || {}).name || "Library" : "";
-    if (libraryId && !librariesCache) request("/api/music/libraries").then((r) => { librariesCache = r.ok ? r.data : []; });
     const crumbs = [`<a class="au-crumb" href="#music/folders">Libraries</a>`];
     if (libraryId) {
       crumbs.push(`<a class="au-crumb" href="#music/folders/${enc(libraryId + "|")}">${h(libName)}</a>`);
@@ -1621,6 +1628,13 @@ window.SentinelMusic = (function () {
       const s = browse[bar.dataset.browse];
       s[e.target.dataset.f] = e.target.value;
       s.offset = 0;
+      if (e.target.dataset.f === "sort") {
+        // Each sort starts in its natural direction: "Most played" ascending listed the least
+        // played first. The ▲/▼ button still reverses it.
+        s.order = ["name", "title", "artist", "album"].includes(s.sort) ? "asc" : "desc";
+        const ob = bar.querySelector('[data-act="order"]');
+        if (ob) ob.outerHTML = orderButton(s);
+      }
       routeTo(route);
     });
     view.addEventListener("input", (e) => {

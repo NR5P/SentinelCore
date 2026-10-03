@@ -84,7 +84,7 @@ public sealed partial class PodcastAudioProcessor
     public async Task<bool> FfmpegAvailableAsync(CancellationToken cancellationToken)
     {
         if (_available is { } known) return known;
-        var result = await PodcastProcess.RunAsync(_ffmpegPath, ["-version"], TimeSpan.FromSeconds(10), cancellationToken);
+        var result = await PodcastProcess.RunAsync(_ffmpegPath, ["-version"], TimeSpan.FromSeconds(10), CancellationToken.None); // cached for the process: a cancelled request must not cache "missing"
         _available = result.Started && result.ExitCode == 0;
         return _available.Value;
     }

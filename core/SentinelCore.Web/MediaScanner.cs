@@ -73,7 +73,9 @@ public sealed partial class MediaScanner : IDisposable
     public async Task<bool> FfmpegAvailableAsync(CancellationToken cancellationToken)
     {
         if (_ffmpegAvailable is { } known) return known;
-        var ok = await FfmpegProcess.RunAsync(_ffmpegPath, ["-version"], TimeSpan.FromSeconds(10), _logger, "version check", null, cancellationToken);
+        // Not the caller's token: the answer is cached for the life of the process, and a page
+        // reload that aborted the first /status request used to cache "no ffmpeg" until restart.
+        var ok = await FfmpegProcess.RunAsync(_ffmpegPath, ["-version"], TimeSpan.FromSeconds(10), _logger, "version check", null, CancellationToken.None);
         _ffmpegAvailable = ok;
         return ok;
     }

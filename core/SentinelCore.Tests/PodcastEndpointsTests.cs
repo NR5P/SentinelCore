@@ -321,6 +321,12 @@ public sealed class PodcastEndpointsTests : IDisposable
             Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
         using (var gone = await client.GetAsync(url, Ct))
             Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
+
+        // A clip asked to run past the end stops at the end and says how long it really is
+        // (the episode is about 49 s, so 30 s from 40 s is about 9 s, not 30).
+        var tail = await JsonAsync(await client.PostAsJsonAsync($"/api/podcasts/episodes/{episodeId}/clips", new { startSeconds = 40, durationSeconds = 30 }, Ct), HttpStatusCode.Created);
+        Assert.InRange(tail.GetProperty("durationSeconds").GetDouble(), 8, 10);
+        Assert.InRange((await GetAsync(client, "/api/podcasts/clips"))[0].GetProperty("durationSeconds").GetDouble(), 8, 10);
     }
 
     [Fact]
