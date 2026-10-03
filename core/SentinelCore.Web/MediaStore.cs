@@ -160,6 +160,20 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
             """
             + (hadPlays ? "" : "INSERT INTO MediaPlays (UserKey, ItemId, PlayedAt) SELECT UserKey, ItemId, UpdatedAt FROM MediaProgress;");
         plays.ExecuteNonQuery();
+
+        // The frame-order check (MediaItem.TimestampsInDecodeOrder) arrived after the library was
+        // probed: send the files whose video can be copied as-is back through the probe once.
+        // AVI is left out - it has no frame timestamps to get wrong, and is re-encoded anyway.
+        using var reprobe = _connection.CreateCommand();
+        reprobe.CommandText = """
+            UPDATE MediaItems SET ProbedAt = NULL
+            WHERE ProbedAt IS NOT NULL
+              AND json_extract(Probe, '$.videoCodec') IN ('h264', 'hevc')
+              AND COALESCE(json_extract(Probe, '$.container'), '') <> 'avi'
+              AND NOT EXISTS (SELECT 1 FROM MediaState WHERE Key = 'probe.frameOrderChecked');
+            INSERT OR IGNORE INTO MediaState (Key, Value) VALUES ('probe.frameOrderChecked', '1');
+            """;
+        reprobe.ExecuteNonQuery();
     }
 
     // MARK: - Libraries
@@ -984,6 +998,7 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
         public string? VideoCodec { get; set; }
         public string? VideoProfile { get; set; }
         public string? VideoTag { get; set; }
+        public bool? TimestampsInDecodeOrder { get; set; }
         public string? PixelFormat { get; set; }
         public int? Width { get; set; }
         public int? Height { get; set; }
@@ -997,6 +1012,7 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
         public static ProbeBlob From(MediaItem item) => new()
         {
             Container = item.Container, VideoCodec = item.VideoCodec, VideoProfile = item.VideoProfile, VideoTag = item.VideoTag,
+            TimestampsInDecodeOrder = item.TimestampsInDecodeOrder ? true : null,
             PixelFormat = item.PixelFormat, Width = item.Width, Height = item.Height, Bitrate = item.Bitrate, AudioCodec = item.AudioCodec,
             AudioChannels = item.AudioChannels, AudioTracks = item.AudioTracks.Count > 0 ? item.AudioTracks : null,
             SubtitleTracks = item.SubtitleTracks.Count > 0 ? item.SubtitleTracks : null, ProbeError = item.ProbeError
@@ -1005,6 +1021,7 @@ public sealed class SqliteMediaStore : IMediaStore, IDisposable
         public void ApplyTo(MediaItem item)
         {
             item.Container = Container; item.VideoCodec = VideoCodec; item.VideoProfile = VideoProfile; item.VideoTag = VideoTag;
+            item.TimestampsInDecodeOrder = TimestampsInDecodeOrder == true;
             item.PixelFormat = PixelFormat; item.Width = Width; item.Height = Height; item.Bitrate = Bitrate; item.AudioCodec = AudioCodec;
             item.AudioChannels = AudioChannels; item.AudioTracks = AudioTracks ?? []; item.SubtitleTracks = SubtitleTracks ?? [];
             item.ProbeError = ProbeError;

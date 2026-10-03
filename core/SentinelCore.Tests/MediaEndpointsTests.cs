@@ -201,6 +201,67 @@ public sealed class MediaEndpointsTests : IDisposable
         Assert.Equal(1, backup.GetProperty("media").GetProperty("progress").GetArrayLength());
     }
 
+    // Rambo (2008) as downloaded: B-frames, every frame stamped with its decode time. Played
+    // as-is, AVPlayer shows the frames out of order and the picture wiggles back and forth.
+    [Fact]
+    public async Task AFileStampedInDecodeOrder_IsCaughtByTheProbe_AndPlaysWithItsFramesInOrder()
+    {
+        if (!await FfmpegAvailableAsync()) Assert.Skip("needs a real ffmpeg on PATH");
+
+        var good = Path.Combine(_root, "good.mp4");
+        await MakeVideoAsync(good, "libx264", "aac", 10);
+        var broken = Path.Combine(_movies, "Wiggle (2008)", "Wiggle (2008).mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(broken)!);
+        Assert.True(await FfmpegProcess.RunAsync("ffmpeg",
+            ["-hide_banner", "-loglevel", "error", "-y", "-i", good, "-c", "copy", "-bsf:v", "setts=pts=DTS", broken],
+            TimeSpan.FromMinutes(1), NullLogger.Instance, "test video", null, CancellationToken.None));
+        Assert.True(MediaProbe.ShownOutOfOrder(string.Join("\n", await FrameStampsAsync(broken))), "the test file should carry the fault");
+
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        using (var created = await client.PostAsJsonAsync("/api/media/libraries", new { name = "Movies", kind = "movies", path = _movies }, Ct))
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        await WaitForScanAsync(client, expectedMovies: 1, expectedEpisodes: 0);
+        var id = (await GetJsonAsync(client, "/api/media/items?kind=movie")).GetProperty("items")[0].GetProperty("id").GetString();
+
+        // An MP4 of H.264 and AAC would normally be handed to the TV as it is.
+        var playback = await GetJsonAsync(client, $"/api/media/items/{id}/playback?video=h264,hevc&audio=aac");
+        Assert.Equal("hls", playback.GetProperty("mode").GetString());
+        Assert.Contains("out of order", playback.GetProperty("reason").GetString());
+
+        var url = playback.GetProperty("url").GetString()!;
+        var baseUrl = url[..(url.LastIndexOf('/') + 1)];
+        var segments = new List<string>();
+        for (var attempt = 0; attempt < 120; attempt++)
+        {
+            var index = await client.GetStringAsync(baseUrl + "index.m3u8", Ct);
+            segments = [.. index.Split('\n').Where(line => line.EndsWith(".m4s", StringComparison.Ordinal))];
+            if (index.Contains("#EXT-X-ENDLIST")) break;
+            await Task.Delay(250, Ct);
+        }
+        Assert.NotEmpty(segments);
+        var served = Path.Combine(_root, "served.mp4");
+        await using (var output = File.Create(served))
+            foreach (var part in segments.Prepend("init.mp4"))
+                await output.WriteAsync(await client.GetByteArrayAsync(baseUrl + part, Ct), Ct);
+        // Every frame in order - except in the last second (one 25-frame GOP here), where dts2pts
+        // has no later pictures to place the final few against. In a film that is the credits.
+        var stamps = (await FrameStampsAsync(served)).Select(long.Parse).ToList();
+        Assert.True(stamps.Count >= 240, $"only {stamps.Count} frames came through");
+        var backwards = Enumerable.Range(1, stamps.Count - 26).Where(i => stamps[i] < stamps[i - 1]).ToList();
+        Assert.True(backwards.Count == 0, $"frames out of order at {string.Join(", ", backwards)} of {stamps.Count}");
+    }
+
+    private static async Task<List<string>> FrameStampsAsync(string path)
+    {
+        var output = await FfmpegProcess.RunCapturingStdoutAsync("ffprobe",
+            ["-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts", "-of", "csv=p=0", path],
+            TimeSpan.FromMinutes(1), NullLogger.Instance, "test probe", null, CancellationToken.None);
+        Assert.NotNull(output);
+        return [.. System.Text.Encoding.UTF8.GetString(output).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.TrimEnd(',')).Where(line => long.TryParse(line, out _))];
+    }
+
     [Fact]
     public async Task TurnedOff_HidesEverythingButTheFlag()
     {

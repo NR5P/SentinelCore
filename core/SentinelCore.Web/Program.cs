@@ -264,6 +264,33 @@ builder.Services.AddSingleton(sp => new MullvadAccountWatch(
 builder.Services.AddSingleton<MediaDownloadManager>();
 builder.Services.AddHostedService<MediaDownloadWorker>();
 builder.Services.AddHostedService<MullvadAccountWorker>();
+// --- Music (Music*.cs, core/docs/MUSIC_AND_PODCASTS.md sections 2-4) ---
+// music.db beside media.db; covers taken out of files or fetched from the Cover Art Archive in
+// music-art/, tracks converted for devices that cannot play the original in audio-cache/.
+builder.Services.AddSingleton<IMusicStore>(new SqliteMusicStore(camerasRoot));
+builder.Services.AddSingleton(new MusicArtCache(Path.Combine(camerasRoot, "music-art")));
+builder.Services.AddHttpClient(MusicCoverArtClient.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    // MusicBrainz turns away clients that don't say who they are.
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore-Music/1.0 (self-hosted home server; https://github.com/)");
+});
+builder.Services.AddHttpClient(MusicLyricsService.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore-Music/1.0 (self-hosted home server; https://github.com/)");
+});
+builder.Services.AddSingleton<MusicCoverArtClient>();
+builder.Services.AddSingleton<MusicLyricsService>();
+builder.Services.AddSingleton<MusicCatalogCache>();
+builder.Services.AddSingleton<MusicScanner>();
+builder.Services.AddSingleton(sp => new MusicTranscoder(
+    sp.GetRequiredService<MediaFiles>(), Path.Combine(camerasRoot, "audio-cache"),
+    sp.GetRequiredService<IConfiguration>()["FfmpegPath"] ?? "ffmpeg", sp.GetRequiredService<ILogger<MusicTranscoder>>()));
+builder.Services.AddSingleton<MusicService>();
+builder.Services.AddSingleton<IMusicAudioSource>(sp => sp.GetRequiredService<MusicService>());
+builder.Services.AddHostedService<MusicScanWorker>();
+// --- end Music ---
 
 // What the Music and Podcasts tabs share (Audio*.cs, core/docs/MUSIC_AND_PODCASTS.md §7-§9):
 // play where you left off, speakers, wake-up alarms, the morning briefing, stats, ListenBrainz.
@@ -290,8 +317,7 @@ builder.Services.AddHttpClient(MusicDownloadLookup.HttpClientName, client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (self-hosted home media server)");
 });
 builder.Services.AddSingleton<MusicDownloadLookup>();
-// AUDIO-TEMPORARY: stand-ins until the Music and Podcasts halves are merged (AudioTemporarySources.cs).
-builder.Services.AddSingleton<IMusicAudioSource, TemporaryMusicAudioSource>();
+// AUDIO-TEMPORARY: a stand-in until the Podcasts half is merged (AudioTemporarySources.cs).
 builder.Services.AddSingleton<IPodcastAudioSource, TemporaryPodcastAudioSource>();
 
 // Backup and the nightly auto export (BackupService, AutoExport.cs). The work directory sits under
@@ -614,6 +640,7 @@ app.MapOrganizerEndpoints();
 app.MapMediaEndpoints();
 app.MapMediaDownloadEndpoints();
 app.MapAudioEndpoints();
+app.MapMusicEndpoints();
 app.MapMusicDownloadEndpoints();
 app.MapKnownFaceEndpoints();
 app.MapGateCheckEndpoints();

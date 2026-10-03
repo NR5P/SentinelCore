@@ -573,7 +573,7 @@ public sealed class AudioSharedTests : IDisposable
         public void RequestScan(Guid libraryId) { }
         public Task<bool> HasAlbumAsync(string artist, string album, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<double> LosslessShareAsync(CancellationToken cancellationToken) => Task.FromResult(0.0);
-        public Task<MusicBackup> ExportAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<MusicBackup> ExportAsync(CancellationToken cancellationToken) => Task.FromResult(new MusicBackup());
         public Task<int> RestoreAsync(MusicBackup backup, CancellationToken cancellationToken) => Task.FromResult(0);
     }
 

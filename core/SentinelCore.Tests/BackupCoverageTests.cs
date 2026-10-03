@@ -84,6 +84,14 @@ public sealed class BackupCoverageTests : IDisposable
             ["MediaWatchlist"] = "Media.Watchlist",
             ["AudioAlarms"] = "Audio.Alarms",
             ["AudioListenBrainz"] = "Audio.ListenBrainz",
+            // Music.
+            ["MusicLibraries"] = "Music.Libraries",
+            ["MusicPlays"] = "Music.Plays",
+            ["MusicLoves"] = "Music.Loves",
+            ["MusicRatings"] = "Music.Ratings",
+            ["MusicPlaylists"] = "Music.Playlists",
+            ["MusicPlaylistEntries"] = "Music.Playlists",
+            ["MusicPlaylistPins"] = "Music.Pins",
         };
 
         // Excluded on purpose, each for a reason recorded in BackupEndpoints:
@@ -108,6 +116,10 @@ public sealed class BackupCoverageTests : IDisposable
             ["AudioNowPlaying"] = "what each device was playing a moment ago; the devices report it again",
             ["AudioSpeakers"] = "speakers re-register every minute while they are switched on",
             ["AudioListenQueue"] = "listens on their way to ListenBrainz; a day at most, and ListenBrainz keeps them",
+            // Music.
+            ["MusicTracks"] = "the music catalog; a rescan of the library folders rebuilds it with the same ids",
+            ["MusicArt"] = "where each album's cover was found; worked out again by a rescan",
+            ["MusicLyrics"] = "lyrics fetched from LRCLIB; fetched again on first request",
         };
 
         var root = RepositoryCoreDirectory();

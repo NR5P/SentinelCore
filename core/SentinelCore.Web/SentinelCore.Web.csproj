@@ -24,6 +24,9 @@
     <!-- SFTP delivery for the nightly auto export (AutoExport.cs), so a backup can reach another
          computer without that computer's share being mounted here first. -->
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <!-- Music tags and embedded cover art (MusicTags.cs): ID3, Vorbis comments, MP4 atoms, APE
+         and ASF, read through a stream so files on network shares work too. -->
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
   </ItemGroup>
   <!-- The SDK's default item globs otherwise sweep up whatever's sitting in the runtime data/
        folder next to this project (events.db, images, cameras.db, ...) as Content purely

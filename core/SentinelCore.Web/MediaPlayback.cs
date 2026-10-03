@@ -8,16 +8,26 @@ namespace SentinelCore.Web;
 // How a file will reach a given player: handed over as-is (direct play) when the container and
 // codecs are ones the device decodes, otherwise repackaged - and only re-encoded when it has to
 // be - into HLS by ffmpeg. Pure, so MediaPlaybackTests can pin every rule.
-public sealed record MediaPlaybackPlan(bool Direct, string VideoMode, string AudioMode, int? AudioTrackIndex, bool TagHvc1, string Reason);
+// RebuildTimestamps: the file's frame timestamps are in decode order (MediaItem.TimestampsInDecodeOrder).
+// A copied video has them re-derived from the bitstream; a re-encode needs nothing, since ffmpeg
+// stamps decoded frames afresh in the order the decoder shows them (checked on the Rambo file).
+public sealed record MediaPlaybackPlan(bool Direct, string VideoMode, string AudioMode, int? AudioTrackIndex, bool TagHvc1, string Reason, bool RebuildTimestamps = false);
 
 public static class MediaPlaybackPlanner
 {
     private static readonly HashSet<string> DirectContainers = new(StringComparer.OrdinalIgnoreCase) { "mp4", "m4v", "mov" };
 
-    public static MediaPlaybackPlan Plan(MediaItem item, IReadOnlySet<string> clientVideo, IReadOnlySet<string> clientAudio, int? requestedAudioTrack)
+    // `timestampRebuildCodecs`: the codecs this box's ffmpeg can re-derive timestamps for without
+    // re-encoding (its dts2pts filter; h264 in 8.0, hevc too from 8.1).
+    public static MediaPlaybackPlan Plan(MediaItem item, IReadOnlySet<string> clientVideo, IReadOnlySet<string> clientAudio, int? requestedAudioTrack,
+        IReadOnlySet<string>? timestampRebuildCodecs = null)
     {
         var videoCodec = NormalizeVideo(item.VideoCodec);
-        var videoOk = videoCodec is not null && clientVideo.Contains(videoCodec);
+        var rebuild = item.TimestampsInDecodeOrder;
+        // A file stamped in decode order can still have its video copied when ffmpeg can fix
+        // the stamps in passing; otherwise it is re-encoded, which stamps every frame afresh.
+        var videoOk = videoCodec is not null && clientVideo.Contains(videoCodec)
+            && (!rebuild || timestampRebuildCodecs?.Contains(videoCodec) == true);
 
         var audioTrack = requestedAudioTrack is { } wanted
             ? item.AudioTracks.FirstOrDefault(track => track.Index == wanted)
@@ -32,14 +42,15 @@ public static class MediaPlaybackPlanner
         // unless told otherwise, and so do plenty of the files out there.
         var hevcNeedsRetag = videoCodec == "hevc" && !string.Equals(item.VideoTag, "hvc1", StringComparison.OrdinalIgnoreCase);
 
-        if (item.Container is not null && DirectContainers.Contains(item.Container) && videoOk && audioOk && usesDefaultAudio && !hevcNeedsRetag)
+        if (item.Container is not null && DirectContainers.Contains(item.Container) && videoOk && audioOk && usesDefaultAudio && !hevcNeedsRetag && !rebuild)
             return new MediaPlaybackPlan(true, "copy", "copy", audioTrack?.Index, false, "the device plays this file as it is");
 
         // A device that plays MP3 in a file still cannot take it inside fMP4 HLS segments: Apple's
         // HLS carries AAC, AC-3 and E-AC-3 there, and AVPlayer answers "Cannot Open" to anything
         // else (an XviD/MP3 .avi, the common old rip, hit this on 2026-09-29).
         var audioCopiesIntoHls = audioOk && (audioTrack is null || audioCodec is "aac" or "ac3" or "eac3");
-        var reason = !videoOk ? $"{item.VideoCodec ?? "the video"} needs converting to H.264"
+        var reason = rebuild ? (videoOk ? "the frames are stamped out of order and are put right" : "the frames are stamped out of order; re-encoding puts them right")
+            : !videoOk ? $"{item.VideoCodec ?? "the video"} needs converting to H.264"
             : !audioOk ? $"{audioTrack?.Codec ?? "the audio"} needs converting to AAC"
             : hevcNeedsRetag ? "HEVC must be retagged for this device"
             : !usesDefaultAudio ? "a different audio track was chosen"
@@ -50,7 +61,8 @@ public static class MediaPlaybackPlanner
             audioTrack is null ? "none" : audioCopiesIntoHls ? "copy" : "aac",
             audioTrack?.Index,
             videoOk && videoCodec == "hevc",
-            reason);
+            reason,
+            rebuild);
     }
 
     public static string? NormalizeVideo(string? codec) => codec?.ToLowerInvariant() switch
@@ -79,6 +91,14 @@ public static class MediaPlaybackPlanner
             set.Add(codec.ToLowerInvariant());
         if (set.Count == 0) foreach (var codec in defaults) set.Add(codec);
         return set;
+    }
+
+    // `ffmpeg -h bsf=dts2pts` -> {"h264", "hevc"}, from its "    Supported codecs: h264 hevc" line.
+    public static HashSet<string> ParseBsfCodecs(string help)
+    {
+        const string marker = "Supported codecs:";
+        var line = help.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith(marker, StringComparison.OrdinalIgnoreCase));
+        return line is null ? [] : ParseCodecs(line[marker.Length..].Replace(' ', ','));
     }
 
     public static string MimeType(string? container) => container?.ToLowerInvariant() switch
@@ -113,6 +133,8 @@ public static class MediaPlaybackPlanner
         {
             args.AddRange(["-c:v", "copy"]);
             if (plan.TagHvc1) args.AddRange(["-tag:v", "hvc1"]);
+            // Re-derives each frame's timestamp from its picture order in the bitstream.
+            if (plan.RebuildTimestamps) args.AddRange(["-bsf:v", "dts2pts"]);
         }
         else
         {
@@ -200,7 +222,7 @@ public sealed class MediaHlsManager : IDisposable
         MediaItem item, MediaPlaybackPlan plan, double startSeconds, IReadOnlyList<MediaSubtitleTrack> subtitles, CancellationToken cancellationToken,
         string? input = null)
     {
-        var key = $"{item.Id:N}|{plan.VideoMode}|{plan.AudioMode}|{plan.AudioTrackIndex}|{Math.Round(startSeconds)}";
+        var key = $"{item.Id:N}|{plan.VideoMode}|{plan.AudioMode}|{plan.AudioTrackIndex}|{plan.RebuildTimestamps}|{Math.Round(startSeconds)}";
         var existing = _sessions.Values.FirstOrDefault(s => s.Key == key && (!s.Finished || File.Exists(s.PlaylistPath)));
         if (existing is not null && (File.Exists(existing.PlaylistPath) || !existing.Finished))
         {

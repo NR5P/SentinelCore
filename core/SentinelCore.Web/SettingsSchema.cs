@@ -695,6 +695,28 @@ public static class SettingsSchema
             ],
             ExtraAction = new SettingsActionSchema("rescanMedia", "scan now", "Checks every library folder for new, moved or deleted files right away, then fetches anything missing from TMDB.", "/api/media/scan", "POST")
         },
+        // MARK: Music (MusicEndpoints, core/docs/MUSIC_AND_PODCASTS.md)
+        new()
+        {
+            Key = "music",
+            Title = "MUSIC",
+            Group = SettingsGroups.Automation,
+            Endpoint = "/api/settings/music",
+            Basic = true,
+            DtoType = typeof(MusicSettingsDto),
+            Description = "The household's own music, on the dashboard and in every app including Apple TV. Point it at folders of music files (on this server, or shared from another computer) under Music -> Libraries; it reads each file's tags and cover art, fills in missing album covers and lyrics if allowed, and streams every track in a format the device can play. Everyone who signs in gets their own plays, loves, ratings, playlists and mixes.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the Music tab on the dashboard and in the apps. Turning it off hides it everywhere but keeps the libraries, playlists and everyone's listening history."),
+                Number("rescanHours", "Rescan Every (hours)", "How often the music folders are checked for new, changed or deleted files. The server also checks at startup and whenever a library is added. 0 turns the periodic check off; Scan under Music -> Libraries still works.", 0, 168),
+                Check("fetchArtworkOnline", "Find Missing Album Covers", "For albums with no cover in their files or folder, look the album up on MusicBrainz and fetch its cover from the Cover Art Archive. Only the artist and album names leave this server."),
+                Check("fetchLyricsOnline", "Find Missing Lyrics", "For tracks with no lyrics of their own, look them up on LRCLIB the first time someone opens the lyrics. Only the artist, title, album and length leave this server."),
+                Number("transcodeBitrate", "Converted Quality (kbps)", "The AAC bitrate used when a file has to be converted for a device that cannot play it as it is (a FLAC on an older TV, say), and for data saver when a device does not say. 256 is indistinguishable from the original for nearly everyone; lower saves mobile data.", 96, 320),
+                Check("pauseSpeakersOnAlarm", "Pause Speakers When The Alarm Goes Off", "When the home alarm goes off, every speaker playing music or a podcast is paused, and speakers that allow announcements say \"The alarm is going off\"."),
+                Check("announceOnSpeakers", "Announce Camera Alerts On Speakers", "Camera alerts about a person or a vehicle are spoken on speakers that allow announcements, at most once a minute per camera.")
+            ],
+            ExtraAction = new SettingsActionSchema("rescanMusic", "scan now", "Checks every music folder for new, changed or deleted files right away, then fills in covers and tags for anything new.", "/api/music/scan", "POST")
+        },
         new()
         {
             Key = "mediaDownloads",

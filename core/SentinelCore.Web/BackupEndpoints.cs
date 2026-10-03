@@ -84,7 +84,11 @@ public sealed record BackupDocument(
     AudioBackup? Audio = null,
     // What couldn't be included when this file was written, in words - e.g. the main app wasn't
     // running. Informational; restore ignores it.
-    IReadOnlyList<string>? Warnings = null);
+    IReadOnlyList<string>? Warnings = null,
+    // Music (no schema bump - older files simply lack it): the music libraries and what everyone
+    // did with them - plays, loves, ratings, playlists and pins. The catalog is rebuilt by a
+    // rescan with the same ids; art and lyrics are refetched.
+    MusicBackup? Music = null);
 
 public sealed record AlarmBackup(IReadOnlyList<AlarmSensor> Sensors, AlarmConfig Config);
 
