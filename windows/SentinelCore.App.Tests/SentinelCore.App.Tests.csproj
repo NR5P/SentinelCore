@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <!-- The presentation types under test - Brush, FontStyle, the value converters - are WPF's,
          so the test assembly needs WPF too. -->
     <UseWPF>true</UseWPF>

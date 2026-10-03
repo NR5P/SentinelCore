@@ -15,7 +15,14 @@ namespace SentinelCore.Client.Networking;
 /// </remarks>
 public sealed partial class SentinelClient
 {
-    private const string MediaBase = "/api/media";
+    /// <summary>The Movies &amp; TV routes - the default for the picker and network sign-ins below.</summary>
+    public const string MediaBase = "/api/media";
+
+    /// <summary>
+    /// Music &amp; Podcasts serve the same picker and network routes under /api/audio (MUSIC_AND_PODCASTS.md §1),
+    /// over the same saved sign-ins. Passing this as basePath points the methods below there.
+    /// </summary>
+    public const string AudioBase = "/api/audio";
 
     // MARK: - Libraries
 
@@ -49,18 +56,18 @@ public sealed partial class SentinelClient
     /// plus the saved network computers). Never throws for a folder that can't be opened - that
     /// comes back as <see cref="MediaBrowseListing.Error"/>.
     /// </summary>
-    public Task<MediaBrowseListing> MediaBrowseAsync(string? path = null, CancellationToken ct = default)
+    public Task<MediaBrowseListing> MediaBrowseAsync(string? path = null, CancellationToken ct = default, string basePath = MediaBase)
     {
         var query = string.IsNullOrWhiteSpace(path)
             ? null
             : new[] { new KeyValuePair<string, string>("path", path.Trim()) };
-        return GetAsync<MediaBrowseListing>($"{MediaBase}/browse", query, ct);
+        return GetAsync<MediaBrowseListing>($"{basePath}/browse", query, ct);
     }
 
     // MARK: - Network computers
 
-    public Task<List<MediaNetworkComputer>> MediaNetworkComputersAsync(CancellationToken ct = default) =>
-        GetAsync<List<MediaNetworkComputer>>($"{MediaBase}/network", ct: ct);
+    public Task<List<MediaNetworkComputer>> MediaNetworkComputersAsync(CancellationToken ct = default, string basePath = MediaBase) =>
+        GetAsync<List<MediaNetworkComputer>>($"{basePath}/network", ct: ct);
 
     /// <summary>
     /// Signs in to a computer and saves the sign-in only if it works: POST for a new one, PUT when
@@ -71,20 +78,20 @@ public sealed partial class SentinelClient
     /// <see cref="SentinelServerException.NeedsLogin"/> says whether other credentials would help.
     /// </remarks>
     public Task<MediaNetworkSignInResult> SaveMediaNetworkComputerAsync(
-        string? id, MediaNetworkComputerInput input, CancellationToken ct = default) =>
+        string? id, MediaNetworkComputerInput input, CancellationToken ct = default, string basePath = MediaBase) =>
         string.IsNullOrEmpty(id)
-            ? SendAsync<MediaNetworkSignInResult, MediaNetworkComputerInput>($"{MediaBase}/network", HttpMethod.Post, input, ct)
+            ? SendAsync<MediaNetworkSignInResult, MediaNetworkComputerInput>($"{basePath}/network", HttpMethod.Post, input, ct)
             : SendAsync<MediaNetworkSignInResult, MediaNetworkComputerInput>(
-                $"{MediaBase}/network/{Uri.EscapeDataString(id)}", HttpMethod.Put, input, ct);
+                $"{basePath}/network/{Uri.EscapeDataString(id)}", HttpMethod.Put, input, ct);
 
     /// <summary>Libraries on that computer fail to scan until it is signed in to again.</summary>
-    public Task DeleteMediaNetworkComputerAsync(string id, CancellationToken ct = default) =>
-        SendNoResultAsync<object>($"{MediaBase}/network/{Uri.EscapeDataString(id)}", HttpMethod.Delete, null, ct);
+    public Task DeleteMediaNetworkComputerAsync(string id, CancellationToken ct = default, string basePath = MediaBase) =>
+        SendNoResultAsync<object>($"{basePath}/network/{Uri.EscapeDataString(id)}", HttpMethod.Delete, null, ct);
 
     /// <summary>
     /// Computers advertising file sharing over mDNS. Takes about three seconds on the server.
     /// Windows PCs never appear; they are added by name or address.
     /// </summary>
-    public Task<List<MediaDiscoveredComputer>> DiscoverMediaComputersAsync(CancellationToken ct = default) =>
-        GetAsync<List<MediaDiscoveredComputer>>($"{MediaBase}/network/discover", ct: ct);
+    public Task<List<MediaDiscoveredComputer>> DiscoverMediaComputersAsync(CancellationToken ct = default, string basePath = MediaBase) =>
+        GetAsync<List<MediaDiscoveredComputer>>($"{basePath}/network/discover", ct: ct);
 }

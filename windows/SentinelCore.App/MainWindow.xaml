@@ -105,6 +105,10 @@
                     </StackPanel>
                 </Border>
 
+                <!-- The Music & Podcasts mini player: visible from every section while something
+                     plays, or while another device offers "continue here". Built in code. -->
+                <ContentControl x:Name="PlayerBarHost" DockPanel.Dock="Bottom" />
+
                 <ContentControl x:Name="SectionHost" />
             </DockPanel>
         </Grid>

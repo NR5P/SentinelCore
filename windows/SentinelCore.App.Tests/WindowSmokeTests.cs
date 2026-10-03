@@ -127,6 +127,35 @@ public class WindowSmokeTests
                     view.ApplyDownloadStatus(MediaDownloadStatus.Off);
                     return view;
                 }),
+                // Music & Podcasts. The player is made first: the mini bar, Now Playing and the
+                // settings panel all hang off it (it starts no audio until something is played).
+                ("PlayerController", () => SentinelCore.App.Audio.PlayerController.Shared = new SentinelCore.App.Audio.PlayerController(model, System.Windows.Threading.Dispatcher.CurrentDispatcher)),
+                ("MiniPlayerBar", () => new SentinelCore.App.Views.Audio.MiniPlayerBar(SentinelCore.App.Audio.PlayerController.Shared!, NullNavigator.Instance)),
+                ("NowPlayingView", () => new SentinelCore.App.Views.Audio.NowPlayingView(SentinelCore.App.Audio.PlayerController.Shared!, NullNavigator.Instance)),
+                ("MusicView", () => new SentinelCore.App.Views.Audio.MusicView(model, NullNavigator.Instance)),
+                ("AlbumView", () => new SentinelCore.App.Views.Audio.AlbumView(model, NullNavigator.Instance, "a1")),
+                ("ArtistView", () => new SentinelCore.App.Views.Audio.ArtistView(model, NullNavigator.Instance, "a1")),
+                ("PlaylistView", () => new SentinelCore.App.Views.Audio.PlaylistView(model, NullNavigator.Instance, "p1")),
+                ("MusicTrackListView", () => new SentinelCore.App.Views.Audio.MusicTrackListView(model, NullNavigator.Instance, "Rock", genre: "Rock")),
+                ("MusicDownloadsView", () => new SentinelCore.App.Views.Audio.MusicDownloadsView(model, NullNavigator.Instance)),
+                ("AudioStatsView", () => new SentinelCore.App.Views.Audio.AudioStatsView(model, NullNavigator.Instance)),
+                ("PodcastsView", () => new SentinelCore.App.Views.Audio.PodcastsView(model, NullNavigator.Instance)),
+                ("PodcastShowView", () => new SentinelCore.App.Views.Audio.PodcastShowView(model, NullNavigator.Instance, "s1")),
+                ("PodcastEpisodeView", () => new SentinelCore.App.Views.Audio.PodcastEpisodeView(model, NullNavigator.Instance, "e1")),
+                ("PodcastPreviewView", () => new SentinelCore.App.Views.Audio.PodcastPreviewView(model, NullNavigator.Instance, "https://example.com/feed.xml", null)),
+                ("PodcastClipsView", () => new SentinelCore.App.Views.Audio.PodcastClipsView(model, NullNavigator.Instance)),
+                ("AudioSettingsPanel", () => new SentinelCore.App.Views.Audio.AudioSettingsPanel(model)),
+                ("MusicLibrariesWindow", () => new SentinelCore.App.Views.Audio.MusicLibrariesWindow(model)),
+                ("PlaylistEditorWindow (new)", () => new SentinelCore.App.Views.Audio.PlaylistEditorWindow(model, null, smart: false)),
+                ("PlaylistEditorWindow (smart)", () => new SentinelCore.App.Views.Audio.PlaylistEditorWindow(model, null, smart: true)),
+                ("MusicAddWindow", () => new SentinelCore.App.Views.Audio.MusicAddWindow(model, MusicDownloadStatus.Off)),
+                ("ListenBrainzWindow", () => new SentinelCore.App.Views.Audio.ListenBrainzWindow(model)),
+                ("SpeakerPickerWindow", () => new SentinelCore.App.Views.Audio.SpeakerPickerWindow(model)),
+                ("WakeAlarmsWindow", () => new SentinelCore.App.Views.Audio.WakeAlarmsWindow(model)),
+                ("WakeAlarmEditorWindow", () => new SentinelCore.App.Views.Audio.WakeAlarmEditorWindow(model, null)),
+                ("PodcastSettingsWindow", () => new SentinelCore.App.Views.Audio.PodcastSettingsWindow(model, new Podcast { Id = "s1", Title = "Show" })),
+                ("PodcastClipWindow", () => new SentinelCore.App.Views.Audio.PodcastClipWindow(model, new PodcastEpisode { Id = "e1", Title = "Ep" }, 120)),
+                ("MediaFolderPickerWindow (audio)", () => new MediaFolderPickerWindow(model, null, SentinelCore.Client.Networking.SentinelClient.AudioBase)),
                 ("TextPromptWindow", () => new TextPromptWindow("Title", "Prompt?")),
                 ("ListPickerWindow", () => new ListPickerWindow("Pick", new[] { "One", "Two" })),
             };
@@ -146,6 +175,8 @@ public class WindowSmokeTests
                 }
             }
 
+            SentinelCore.App.Audio.PlayerController.Shared?.Dispose();
+            SentinelCore.App.Audio.PlayerController.Shared = null;
             model.Dispose();
             return broken;
         });

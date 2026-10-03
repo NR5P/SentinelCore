@@ -244,6 +244,24 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         private set => SetProperty(ref _moviesEnabled, value);
     }
 
+    // Whether the server has Music and Podcasts switched on (GET /api/audio/enabled). Each drives
+    // whether its section exists; a 404 from an older server means both off.
+    private bool _musicEnabled;
+
+    public bool MusicEnabled
+    {
+        get => _musicEnabled;
+        private set => SetProperty(ref _musicEnabled, value);
+    }
+
+    private bool _podcastsEnabled;
+
+    public bool PodcastsEnabled
+    {
+        get => _podcastsEnabled;
+        private set => SetProperty(ref _podcastsEnabled, value);
+    }
+
     // Whether the server has the Alarm switched on. Drives whether the section exists at all.
     private bool _alarmEnabled;
 
@@ -752,6 +770,21 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception) { MoviesEnabled = false; }
+
+            // Music & Podcasts: /api/audio/enabled always answers; a 404 from an older server
+            // means both tabs are off, never a failed connection.
+            try
+            {
+                var audio = await Client.AudioEnabledAsync(ct).ConfigureAwait(false);
+                MusicEnabled = audio.Music;
+                PodcastsEnabled = audio.Podcasts;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception)
+            {
+                MusicEnabled = false;
+                PodcastsEnabled = false;
+            }
 
             // Same treatment as the Device Hub: a server older than Family Files has no /status
             // route, and its 404 means "no Files section", not "the connection failed".

@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sentinel Core audio</title>
+<!--
+  The Music & Podcasts sound engine. Never shown: AudioEngine.cs hosts it in a zero-size WebView2
+  and drives it with window.sc.* calls; the page answers with postMessage. Served from the
+  server's own origin (see AudioEngine.PagePath), so every stream request carries the session
+  cookie and is same-origin - no CORS, no token in a URL.
+
+  Why a browser engine for audio at all: Chromium decodes everything the server serves to
+  "Web and Windows" (mp3, aac/m4a, flac, opus, vorbis, wav) on every Windows 10/11 PC without a
+  codec pack, seeks over HTTP ranges, and changes speed with the pitch preserved - which is
+  what a podcast player at 1.5x needs and what WPF's MediaPlayer does not do.
+-->
+</head>
+<body style="background:#000">
+<audio id="a" preload="auto"></audio>
+<script>
+(function () {
+  "use strict";
+  var a = document.getElementById("a");
+  a.preservesPitch = true;
+  var loadToken = 0;
+  var pendingStart = 0;
+  var wantPlay = false;
+  var lastPost = 0;
+
+  function post(message) {
+    try { window.chrome.webview.postMessage(message); } catch (e) { /* host gone */ }
+  }
+
+  function time(force) {
+    var now = Date.now();
+    if (!force && now - lastPost < 200) return;
+    lastPost = now;
+    post({
+      type: "time",
+      position: a.currentTime || 0,
+      duration: isFinite(a.duration) ? a.duration : 0,
+      playing: !a.paused && !a.ended,
+      buffering: a.readyState < 3 && !a.paused
+    });
+  }
+
+  a.addEventListener("timeupdate", function () { time(false); });
+  a.addEventListener("playing", function () { post({ type: "state", state: "playing" }); time(true); });
+  a.addEventListener("pause", function () { post({ type: "state", state: "paused" }); time(true); });
+  a.addEventListener("waiting", function () { post({ type: "state", state: "buffering" }); });
+  a.addEventListener("seeked", function () { time(true); });
+  a.addEventListener("ended", function () { time(true); post({ type: "ended" }); });
+  a.addEventListener("loadedmetadata", function () {
+    if (pendingStart > 0 && isFinite(a.duration) && pendingStart < a.duration) {
+      try { a.currentTime = pendingStart; } catch (e) { }
+    }
+    pendingStart = 0;
+    time(true);
+    post({ type: "loaded", duration: isFinite(a.duration) ? a.duration : 0 });
+    if (wantPlay) start();
+  });
+  a.addEventListener("error", function () {
+    var code = a.error ? a.error.code : 0;
+    var text = code === 4 ? "This file's format can't be played here."
+      : code === 2 ? "The network dropped while loading the audio."
+      : code === 3 ? "The audio could not be decoded."
+      : "The audio could not be played.";
+    post({ type: "error", message: text, code: code });
+  });
+
+  function start() {
+    var p = a.play();
+    if (p && p.catch) p.catch(function (e) {
+      if (e && e.name === "AbortError") return; // a newer load replaced this one
+      post({ type: "error", message: "Playback was refused: " + (e && e.message ? e.message : e), code: -1 });
+    });
+  }
+
+  window.sc = {
+    load: function (url, startSeconds, play, rate, volume) {
+      loadToken++;
+      pendingStart = startSeconds || 0;
+      wantPlay = !!play;
+      a.playbackRate = rate || 1;
+      a.defaultPlaybackRate = rate || 1;
+      a.volume = Math.max(0, Math.min(1, volume));
+      a.src = url;
+      a.load();
+    },
+    play: function () { wantPlay = true; if (a.src) start(); },
+    pause: function () { wantPlay = false; a.pause(); },
+    seek: function (seconds) {
+      if (!a.src) return;
+      if (a.readyState < 1) { pendingStart = seconds; return; }
+      try { a.currentTime = Math.max(0, seconds); } catch (e) { }
+      time(true);
+    },
+    rate: function (r) { a.playbackRate = r; a.defaultPlaybackRate = r; },
+    volume: function (v) { a.volume = Math.max(0, Math.min(1, v)); },
+    stop: function () {
+      wantPlay = false;
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+      time(true);
+    },
+    ping: function () { time(true); return "ok"; }
+  };
+
+  post({ type: "ready" });
+})();
+</script>
+</body>
+</html>

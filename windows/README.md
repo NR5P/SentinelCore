@@ -64,6 +64,23 @@ worth handing to someone who should not have to install a runtime first.
   full-window player in WebView2 (`Live/movie.html`: direct MP4 or HLS through hls.js, subtitles,
   "Up next" for the next episode). Progress is saved to the server, so it resumes on any device.
   The API is [`core/docs/MOVIES.md`](../core/docs/MOVIES.md).
+- **Music** and **Podcasts** — two sections, each shown only while the server has it on
+  (`/api/audio/enabled`). Music: Home rows, Artists / Albums / Songs / Genres / Playlists / Folders,
+  search, album and artist pages, love and star ratings, playlists (smart ones from rules), radio
+  and mixes, Shuffle all, and "+ Add" album downloads. Podcasts: Listen Now, Up Next, the Library,
+  Discover (directory search, top charts, preview before following, add by feed URL), show and
+  episode pages with show notes, chapters, transcripts (and Transcribe), bookmarks (Save to Note),
+  clips, transcript search, OPML and Fill my drive. One shared player
+  (`Audio/PlayerController.cs`) with a mini bar under every section and a Now Playing screen
+  (synced lyrics, queue, chapters, a transcript that follows along), shuffle/repeat, speed, sleep
+  timer, Sound Check, ±15/30, the Windows media keys and flyout, Continue from another device,
+  Play on another speaker, and "Let others play here" (Settings → Music & Podcasts) so phones,
+  alarms and announcements can play on this PC. Audio plays through a hidden WebView2
+  (`Audio/AudioEngine.cs` says why). Wake-up alarms, the Morning Briefing, Stats/Wrapped and
+  ListenBrainz are under More. The API is
+  [`core/docs/MUSIC_AND_PODCASTS.md`](../core/docs/MUSIC_AND_PODCASTS.md); the queue, lyrics,
+  transcript, Sound Check, sleep timer and speaker loop are unit-tested in
+  `SentinelCore.Client/Audio/`.
 - **This PC as a camera** — the PC's webcam becomes one of the dashboard's cameras (Settings → Cameras, or the
   button at the top of Live). The dashboard's own publish page runs in WebView2 with this session's cookie, and
   the app holds the PC out of sleep while it streams and resumes on the next launch. See
@@ -127,7 +144,8 @@ notifications at once.
 
 `%LOCALAPPDATA%\SentinelCore\` holds `settings.json` (the server address and a couple of
 preferences), `credentials\` (the dashboard login, encrypted with DPAPI against your Windows
-account), `WebView2\` (the live player's browser profile), and `Organizer\` (this PC's copy of the
+account), `WebView2\` (the live player's browser profile), `WebView2-Audio\` (the music and
+podcast player's), and `Organizer\` (this PC's copy of the
 Organizer: a SQLite database plus the attached files). Deleting `Organizer\` is safe once everything
 has synced — the next launch fetches it all again. Deleting the folder returns the app
 to a fresh install.

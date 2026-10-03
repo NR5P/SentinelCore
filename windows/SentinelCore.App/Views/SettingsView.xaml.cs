@@ -26,6 +26,9 @@ public partial class SettingsView : UserControl
             organizer.EnabledChanged += () => Dispatcher.BeginInvoke(ApplyOrganizer);
         }
 
+        AudioHost.Content = new Audio.AudioSettingsPanel(model);
+        ApplyAudio();
+
         AddressBox.Text = model.ServerUrl;
         RemoteAddressBox.Text = model.RemoteServerUrl;
         DesktopAlertsToggle.IsChecked = model.DesktopAlertsEnabled;
@@ -45,6 +48,11 @@ public partial class SettingsView : UserControl
             {
                 case nameof(AppModel.AuthStatus):
                     ApplyAccount();
+                    ApplyAudio();
+                    break;
+                case nameof(AppModel.MusicEnabled):
+                case nameof(AppModel.PodcastsEnabled):
+                    ApplyAudio();
                     break;
                 case nameof(AppModel.SystemStatus):
                     ApplyHealth();
@@ -67,6 +75,12 @@ public partial class SettingsView : UserControl
                     break;
             }
         });
+
+    private void ApplyAudio()
+    {
+        AudioCard.Visibility = _model.MusicEnabled || _model.PodcastsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        (AudioHost.Content as Audio.AudioSettingsPanel)?.Refresh();
+    }
 
     private void ApplyAccount()
     {

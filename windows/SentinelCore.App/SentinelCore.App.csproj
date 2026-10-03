@@ -2,7 +2,12 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- The Windows 10 SDK projections (10.0.19041 = Windows 10 2004, the oldest Windows 10 still
+         in support) so the Music & Podcasts player can drive System Media Transport Controls: the
+         media keys, and the Windows media flyout with artwork. Nothing else here uses WinRT; the
+         platform-neutral SentinelCore.Client stays on plain net8.0-windows. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
     <!-- For the tray icon and its balloon notifications, which is how this app raises an alert
          when the server decides one is worth notifying about. WPF has no equivalent. -->
@@ -41,6 +46,9 @@
          this server offers is one of those - so live video runs in the Edge WebView2 control, given
          this session's own cookie. See Live/PlayerHost.xaml.cs. -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <!-- The voice for speaker announcements and the Morning Briefing: the Windows SAPI voices,
+         which every Windows install has, speaking straight to the default output device. -->
+    <PackageReference Include="System.Speech" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -52,6 +60,7 @@
     <EmbeddedResource Include="Live\player.html" />
     <EmbeddedResource Include="Live\movie.html" />
     <EmbeddedResource Include="Live\radar.html" />
+    <EmbeddedResource Include="Audio\audio.html" />
   </ItemGroup>
 
 </Project>

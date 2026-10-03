@@ -17,10 +17,14 @@ public partial class MediaNetworkSignInWindow : Window
 
     /// <param name="existing">A saved computer to sign in to again, or null for a new one.</param>
     /// <param name="host">Prefills the computer box for a new one (a folder that needed a sign-in).</param>
-    public MediaNetworkSignInWindow(AppModel model, MediaNetworkComputer? existing, string? host = null)
+    // /api/media for Movies, /api/audio for Music & Podcasts - one saved list of sign-ins either way.
+    private readonly string _basePath;
+
+    public MediaNetworkSignInWindow(AppModel model, MediaNetworkComputer? existing, string? host = null, string basePath = SentinelClient.MediaBase)
     {
         _model = model;
         _existing = existing;
+        _basePath = basePath;
         InitializeComponent();
 
         HeadingText.Text = existing is null ? "Sign in to a computer" : $"Sign in to {existing.DisplayName}";
@@ -82,7 +86,7 @@ public partial class MediaNetworkSignInWindow : Window
         Message($"Signing in to {host}…");
         try
         {
-            Result = await _model.Client.SaveMediaNetworkComputerAsync(_existing?.Id, input);
+            Result = await _model.Client.SaveMediaNetworkComputerAsync(_existing?.Id, input, basePath: _basePath);
             DialogResult = true;
             Close();
         }
@@ -115,7 +119,7 @@ public partial class MediaNetworkSignInWindow : Window
 
         try
         {
-            await _model.Client.DeleteMediaNetworkComputerAsync(_existing.Id);
+            await _model.Client.DeleteMediaNetworkComputerAsync(_existing.Id, basePath: _basePath);
             Forgotten = true;
             DialogResult = true;
             Close();

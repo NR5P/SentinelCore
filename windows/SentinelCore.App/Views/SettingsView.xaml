@@ -103,6 +103,11 @@
                 </Border>
             </StackPanel>
 
+            <!-- ================= Music & Podcasts (built in code: Views/Audio/AudioSettingsPanel) ================= -->
+            <Border x:Name="AudioCard" Style="{StaticResource Card}" Margin="0,0,0,14" Visibility="Collapsed">
+                <ContentControl x:Name="AudioHost" />
+            </Border>
+
             <!-- ================= Organizer ================= -->
             <Border x:Name="OrganizerCard" Style="{StaticResource Card}" Margin="0,0,0,14" Visibility="Collapsed">
                 <ContentControl x:Name="OrganizerHost" />

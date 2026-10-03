@@ -32,6 +32,9 @@ public partial class MainWindow : Window, INavigator
     private TimelineView? _timeline;
     private LiveView? _live;
     private MoviesView? _movies;
+    private Views.Audio.MusicView? _music;
+    private Views.Audio.PodcastsView? _podcasts;
+    private readonly Audio.PlayerController _player;
     private WeatherView? _weather;
     private DeviceHubView? _devices;
     private AlarmView? _alarm;
@@ -47,6 +50,12 @@ public partial class MainWindow : Window, INavigator
 
         SetupView.Attach(model);
         LoginView.Attach(model);
+
+        // One player for Music and Podcasts, alive for as long as the app is (it keeps playing
+        // with the window hidden in the tray), with its mini bar under every section.
+        _player = new Audio.PlayerController(model, Dispatcher);
+        Audio.PlayerController.Shared = _player;
+        PlayerBarHost.Content = new Views.Audio.MiniPlayerBar(_player, this);
 
         _tray = new TrayNotifier(this, model);
         _model.NewNotifiedEvents += OnNewNotifiedEvents;
@@ -92,6 +101,8 @@ public partial class MainWindow : Window, INavigator
         Timeline,
         Live,
         Movies,
+        Music,
+        Podcasts,
         Weather,
         Alarm,
         Organizer,
@@ -111,6 +122,10 @@ public partial class MainWindow : Window, INavigator
 
         // Movies & TV is switched on server-side, like the Device Hub, and only exists while it is.
         if (_model.MoviesEnabled) sections.Add(new SectionItem(AppSection.Movies, "Movies", ""));
+
+        // Music and Podcasts each exist only while the server has them on (/api/audio/enabled).
+        if (_model.MusicEnabled) sections.Add(new SectionItem(AppSection.Music, "Music", ""));
+        if (_model.PodcastsEnabled) sections.Add(new SectionItem(AppSection.Podcasts, "Podcasts", ""));
 
         // Always there, like the dashboard's tab: with no location set it says how to set one.
         sections.Add(new SectionItem(AppSection.Weather, "Weather", "\uE753"));
@@ -149,6 +164,8 @@ public partial class MainWindow : Window, INavigator
             AppSection.Timeline => _timeline ??= new TimelineView(_model),
             AppSection.Live => _live ??= NewLiveView(),
             AppSection.Movies => _movies ??= new MoviesView(_model, this),
+            AppSection.Music => _music ??= new Views.Audio.MusicView(_model, this),
+            AppSection.Podcasts => _podcasts ??= new Views.Audio.PodcastsView(_model, this),
             AppSection.Weather => _weather ??= NewWeatherView(),
             AppSection.Devices => _devices ??= NewDeviceHubView(),
             AppSection.Alarm => _alarm ??= NewAlarmView(),
@@ -205,6 +222,8 @@ public partial class MainWindow : Window, INavigator
                 break;
             case nameof(AppModel.DeviceHubEnabled):
             case nameof(AppModel.MoviesEnabled):
+            case nameof(AppModel.MusicEnabled):
+            case nameof(AppModel.PodcastsEnabled):
             case nameof(AppModel.AlarmEnabled):
             case nameof(AppModel.FamilyFilesEnabled):
                 BuildSections();
@@ -428,6 +447,8 @@ public partial class MainWindow : Window, INavigator
         _model.NewNotifiedEvents -= OnNewNotifiedEvents;
         _model.PropertyChanged -= OnModelPropertyChanged;
         _live?.SetActive(false);
+        _player.Dispose();
+        Audio.PlayerController.Shared = null;
         _tray.Dispose();
         base.OnClosing(e);
     }

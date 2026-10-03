@@ -159,7 +159,17 @@ public partial class ServerSettingsWindow : Window
             }
         }
 
-        foreach (var field in section.Fields) FieldHost.Children.Add(BuildField(field, values));
+        foreach (var field in section.Fields)
+        {
+            FieldHost.Children.Add(BuildField(field, values));
+            // MUSIC_AND_PODCASTS.md §1: the podcasts download folder gets a "Choose…" that opens
+            // the server's folder picker, rather than asking for a path typed by hand.
+            if (section.Key == "podcasts" && field.Name == "downloadFolder") FieldHost.Children.Add(BuildDownloadFolderChooser(field));
+        }
+
+        // The hand-built parts of the Music and Podcasts sections (§1).
+        if (section.Key == "music") FieldHost.Children.Add(BuildMusicExtras());
+        if (section.Key == "podcasts") FieldHost.Children.Add(BuildPodcastExtras());
 
         if (section.NeedsRestart)
         {
@@ -434,6 +444,84 @@ public partial class ServerSettingsWindow : Window
     private void ApplyValue(string name, SettingsValue value)
     {
         if (_writers.TryGetValue(name, out var write)) write(value);
+    }
+
+    // ---------------------------------------------------------------- Music & Podcasts (§1)
+
+    private UIElement BuildDownloadFolderChooser(SettingsFieldSchema field)
+    {
+        var choose = new Button { Content = "Choose…", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, -6, 0, 14), ToolTip = "Pick a folder on the server" };
+        choose.Click += (_, _) =>
+        {
+            var current = _readers.TryGetValue(field.Name, out var read) ? read()?.DisplayString : null;
+            var picker = new MediaFolderPickerWindow(_model, current, Client.Networking.SentinelClient.AudioBase) { Owner = this };
+            if (picker.ShowDialog() == true && picker.ChosenPath is { } path)
+            {
+                ApplyValue(field.Name, SettingsValue.FromString(path));
+                Message("Chosen. Press Save to keep it.");
+            }
+        };
+        return choose;
+    }
+
+    private UIElement BuildMusicExtras()
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+        panel.Children.Add(new TextBlock { Text = "LIBRARIES", Style = (Style)FindResource("GroupHeading") });
+        var summary = Hint("Loading…");
+        panel.Children.Add(summary);
+        var open = new Button { Content = "Music libraries…", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
+        async Task Load()
+        {
+            try
+            {
+                var status = await _model.Client.MusicStatusAsync();
+                summary.Text = status.Libraries.Count == 0
+                    ? "No music libraries yet. Add the folder your music is in."
+                    : string.Join("\n", status.Libraries.Select(library => $"{library.Name}: {library.Path}")) + (status.Scanning ? "\nScanning now…" : "");
+            }
+            catch (Exception error)
+            {
+                summary.Text = AppModel.UserFacingMessage(error);
+            }
+        }
+        open.Click += async (_, _) =>
+        {
+            new Audio.MusicLibrariesWindow(_model) { Owner = this }.ShowDialog();
+            await Load();
+        };
+        panel.Children.Add(open);
+        _ = Load();
+        return panel;
+    }
+
+    private UIElement BuildPodcastExtras()
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+        panel.Children.Add(new TextBlock { Text = "STORAGE", Style = (Style)FindResource("GroupHeading") });
+        var storage = Hint("Loading…");
+        panel.Children.Add(storage);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var status = await _model.Client.PodcastStatusAsync();
+                await Dispatcher.InvokeAsync(() => storage.Text = Audio.AudioSettingsPanel.StorageLine(status));
+            }
+            catch (Exception error)
+            {
+                await Dispatcher.InvokeAsync(() => storage.Text = AppModel.UserFacingMessage(error));
+            }
+        });
+        var opml = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+        var import = new Button { Content = "Import OPML…" };
+        import.Click += (_, _) => _ = Audio.PodcastsView.ImportOpmlAsync(_model, this, null);
+        var export = new Button { Content = "Export OPML…", Margin = new Thickness(8, 0, 0, 0) };
+        export.Click += (_, _) => _ = Audio.PodcastsView.ExportOpmlAsync(_model, this);
+        opml.Children.Add(import);
+        opml.Children.Add(export);
+        panel.Children.Add(opml);
+        return panel;
     }
 
     private TextBlock Hint(string text) => new()

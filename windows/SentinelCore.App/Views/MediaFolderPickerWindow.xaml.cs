@@ -39,11 +39,20 @@ public partial class MediaFolderPickerWindow : Window
     // folders on a slow share never paints a stale page over the one asked for last.
     private int _generation;
 
-    public MediaFolderPickerWindow(AppModel model, string? startPath = null)
+    // Which server API the picker walks: Movies' /api/media (the default) or Music & Podcasts'
+    // /api/audio, which has the same shape and the same saved sign-ins but counts audio files
+    // rather than videos (MUSIC_AND_PODCASTS.md §1).
+    private readonly string _basePath;
+    private readonly bool _audio;
+
+    public MediaFolderPickerWindow(AppModel model, string? startPath = null, string basePath = Client.Networking.SentinelClient.MediaBase)
     {
         _model = model;
+        _basePath = basePath;
+        _audio = basePath == Client.Networking.SentinelClient.AudioBase;
         _startPath = string.IsNullOrWhiteSpace(startPath) ? null : startPath.Trim();
         InitializeComponent();
+        if (_audio) Title = "Choose a folder";
         UpButton.IsEnabled = false;
         Loaded += async (_, _) => await BrowseAsync(_startPath);
     }
@@ -60,7 +69,7 @@ public partial class MediaFolderPickerWindow : Window
         Message(string.IsNullOrWhiteSpace(path) ? "Loading…" : $"Opening {path}…");
         try
         {
-            var listing = await _model.Client.MediaBrowseAsync(path);
+            var listing = await _model.Client.MediaBrowseAsync(path, basePath: _basePath);
             if (generation != _generation) return;
 
             _listing = listing;
@@ -100,7 +109,7 @@ public partial class MediaFolderPickerWindow : Window
         foreach (var folder in listing.Folders)
         {
             ContentHost.Children.Add(Row(DriveGlyph, folder.Name, folder.Name == folder.Path ? null : folder.Path,
-                CountWording(folder.VideoCount), () => _ = BrowseAsync(folder.Path)));
+                CountWording(folder.VideoCount, _audio), () => _ = BrowseAsync(folder.Path)));
         }
 
         ContentHost.Children.Add(Heading("NETWORK COMPUTERS", top: 18));
@@ -214,9 +223,9 @@ public partial class MediaFolderPickerWindow : Window
         {
             ContentHost.Children.Add(Caption(videos switch
             {
-                0 => "No videos directly in this folder. That's fine for a folder of movie folders.",
-                1 => "1 video in this folder",
-                _ => $"{videos:N0} videos in this folder",
+                0 => _audio ? "No audio files directly in this folder. That's fine for a folder of artist or album folders." : "No videos directly in this folder. That's fine for a folder of movie folders.",
+                1 => _audio ? "1 audio file in this folder" : "1 video in this folder",
+                _ => _audio ? $"{videos:N0} audio files in this folder" : $"{videos:N0} videos in this folder",
             }, top: 0, bottom: 10));
         }
 
@@ -239,7 +248,7 @@ public partial class MediaFolderPickerWindow : Window
         }
         foreach (var folder in listing.Folders)
         {
-            ContentHost.Children.Add(Row(FolderGlyph, folder.Name, null, CountWording(folder.VideoCount),
+            ContentHost.Children.Add(Row(FolderGlyph, folder.Name, null, CountWording(folder.VideoCount, _audio),
                 () => _ = BrowseAsync(folder.Path)));
         }
     }
@@ -252,7 +261,7 @@ public partial class MediaFolderPickerWindow : Window
         if (_listing?.IsRoots == true) Render();
         try
         {
-            _discovered = await _model.Client.DiscoverMediaComputersAsync();
+            _discovered = await _model.Client.DiscoverMediaComputersAsync(basePath: _basePath);
             Message(_discovered.Count == 0 ? "" : $"Found {_discovered.Count} computer{(_discovered.Count == 1 ? "" : "s")}.");
         }
         catch (Exception error)
@@ -281,7 +290,7 @@ public partial class MediaFolderPickerWindow : Window
         {
             try
             {
-                _computers = await _model.Client.MediaNetworkComputersAsync();
+                _computers = await _model.Client.MediaNetworkComputersAsync(basePath: _basePath);
                 _computersLoaded = true;
             }
             catch (Exception)
@@ -295,7 +304,7 @@ public partial class MediaFolderPickerWindow : Window
 
     private void OpenSignIn(MediaNetworkComputer? existing, string? host, string? retryPath)
     {
-        var window = new MediaNetworkSignInWindow(_model, existing, host) { Owner = this };
+        var window = new MediaNetworkSignInWindow(_model, existing, host, _basePath) { Owner = this };
         if (window.ShowDialog() != true) return;
 
         if (window.Forgotten)
@@ -332,11 +341,11 @@ public partial class MediaFolderPickerWindow : Window
 
     // ---------------------------------------------------------------- Building blocks
 
-    private static string? CountWording(int? videos) => videos switch
+    private static string? CountWording(int? videos, bool audio) => videos switch
     {
         null or <= 0 => null,
-        1 => "1 video",
-        var count => $"{count:N0} videos",
+        1 => audio ? "1 audio file" : "1 video",
+        var count => audio ? $"{count:N0} audio files" : $"{count:N0} videos",
     };
 
     private TextBlock Heading(string text, double top) => new()
