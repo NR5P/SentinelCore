@@ -24,6 +24,19 @@
     { "say": "put soccer game saturday at 9am for 2 hours on the calendar", "kind": "event", "named": true, "title": "Soccer game", "start": "2026-09-26T09:00:00-05:00", "end": "2026-09-26T11:00:00-05:00" },
     { "say": "add an event soccer practice from 5 to 6:30", "kind": "event", "named": true, "title": "Soccer practice", "start": "2026-09-23T17:00:00-05:00", "end": "2026-09-23T18:30:00-05:00" },
     { "say": "add a calendar event for the dentist on Friday at 3pm for an hour and a half", "kind": "event", "named": true, "title": "The dentist", "start": "2026-09-25T15:00:00-05:00", "end": "2026-09-25T16:30:00-05:00" },
-    { "say": "event: book club", "kind": "event", "named": true, "title": "Book club", "start": "2026-09-23", "end": "2026-09-24" }
+    { "say": "event: book club", "kind": "event", "named": true, "title": "Book club", "start": "2026-09-23", "end": "2026-09-24" },
+    { "say": "Put dentist on my calendar Friday from 2 to 3pm", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "put dentist on my calendar Friday 2 to 3pm", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "put dentist on the calendar friday from 2 to 3", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "put the dentist in my calendar Friday from 2 to 3pm.", "kind": "event", "named": true, "title": "The dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "put dentist on my calendar Friday at 2pm", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "put dentist on my calendar Friday", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25", "end": "2026-09-26" },
+    { "say": "please put dinner with the Smiths on our calendar saturday at 6pm for 2 hours", "kind": "event", "named": true, "title": "Dinner with the Smiths", "start": "2026-09-26T18:00:00-05:00", "end": "2026-09-26T20:00:00-05:00" },
+    { "say": "schedule dentist on my calendar Friday from 2 to 3pm", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "schedule dentist Friday 2-3pm", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "add dentist to my calendar Friday from 2 to 3pm", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
+    { "say": "add dentist to my calendar at 3", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-23T15:00:00-05:00", "end": "2026-09-23T16:00:00-05:00" },
+    { "say": "add dentist to my calendar", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-23", "end": "2026-09-24" },
+    { "say": "add a reminder to put the dentist on my calendar", "kind": "reminder", "named": true, "title": "Put the dentist on my calendar", "due": null }
   ]
 }

@@ -23,10 +23,17 @@ public struct QuickCapture: Equatable, Sendable {
     public static func parse(_ text: String) -> QuickCapture {
         let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let rest = Rules.strip(Rules.noteLead, from: said) { return QuickCapture(kind: .note, named: true, text: rest) }
-        if let rest = Rules.strip(Rules.eventLead, from: said) { return QuickCapture(kind: .event, named: true, text: rest) }
+        if let rest = Rules.strip(Rules.eventLead, from: said) {
+            // "Schedule dentist on my calendar Friday": the calendar words go too.
+            return QuickCapture(kind: .event, named: true, text: Rules.strip(Rules.calendarWords, from: rest) ?? rest)
+        }
         if let rest = Rules.strip(Rules.todoLead, from: said) { return QuickCapture(kind: .reminder, named: true, text: rest) }
         // "Remind me…" and "add a reminder…" stay on: VoicePhrase takes them off around the date.
         if Rules.matches(Rules.reminderLead, said) { return QuickCapture(kind: .reminder, named: true, text: said) }
+        // "Put dentist on my calendar Friday from 2 to 3pm": the calendar words in the middle.
+        if Rules.matches(Rules.calendarAsk, said), let rest = Rules.strip(Rules.calendarWords, from: said) {
+            return QuickCapture(kind: .event, named: true, text: Rules.strip(Rules.addVerb, from: rest) ?? rest)
+        }
         if let rest = Rules.strip(Rules.eventTail, from: said) {
             return QuickCapture(kind: .event, named: true, text: Rules.strip(Rules.addVerb, from: rest) ?? rest)
         }
@@ -129,6 +136,10 @@ private enum Rules {
     static let reminderLead = regex(#"^\s*(?:please\s+)?(?:remind\s+me\b(?:\s+(?:to|that)\b)?|(?:(?:add|set|create|make|new|put)\s+(?:a\s+|an?\s+new\s+|new\s+)?)?reminder\b(?:\s+(?:to|that|for(?:\s+me\s+to)?)\b)?)"#)
     // "…to my calendar", "…on the calendar".
     static let eventTail = regex(#"\s+(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:family\s+)?calendar\s*[.!]?\s*$"#)
+    // "Add/put/schedule <something> on my calendar <when>": a verb, then the calendar words anywhere.
+    static let calendarAsk = regex(#"^\s*(?:please\s+)?(?:add|put|schedule)\s+\S.*?\s(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:family\s+)?calendar\b"#)
+    // The first "on my calendar", "to the calendar:", wherever it is.
+    static let calendarWords = regex(#"(?:^\s*|\s+)(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:family\s+)?calendar\b\s*[:,.!\-]?"#)
     // "…to my reminders", "…on the to-do list".
     static let reminderTail = regex(#"\s+(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:reminders?|to-?dos?|to\s+do|tasks?)(?:\s+list)?\s*[.!]?\s*$"#)
     // The verb left at the front once a tail named the kind: "add … to my calendar".

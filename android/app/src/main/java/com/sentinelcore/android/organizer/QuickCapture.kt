@@ -83,10 +83,15 @@ data class QuickCapture(
         fun parse(text: String): QuickCapture {
             val said = text.trim()
             Rules.strip(Rules.noteLead, said)?.let { return QuickCapture(Kind.NOTE, true, it) }
-            Rules.strip(Rules.eventLead, said)?.let { return QuickCapture(Kind.EVENT, true, it) }
+            // "Schedule dentist on my calendar Friday": the calendar words go too.
+            Rules.strip(Rules.eventLead, said)?.let { return QuickCapture(Kind.EVENT, true, Rules.strip(Rules.calendarWords, it) ?: it) }
             Rules.strip(Rules.todoLead, said)?.let { return QuickCapture(Kind.REMINDER, true, it) }
             // "Remind me…" and "add a reminder…" stay on: VoicePhrase takes them off around the date.
             if (Rules.reminderLead.containsMatchIn(said)) return QuickCapture(Kind.REMINDER, true, said)
+            // "Put dentist on my calendar Friday from 2 to 3pm": the calendar words in the middle.
+            if (Rules.calendarAsk.containsMatchIn(said)) {
+                Rules.strip(Rules.calendarWords, said)?.let { return QuickCapture(Kind.EVENT, true, Rules.strip(Rules.addVerb, it) ?: it) }
+            }
             Rules.strip(Rules.eventTail, said)?.let { return QuickCapture(Kind.EVENT, true, Rules.strip(Rules.addVerb, it) ?: it) }
             Rules.strip(Rules.reminderTail, said)?.let { return QuickCapture(Kind.REMINDER, true, Rules.strip(Rules.addVerb, it) ?: it) }
             return QuickCapture(Kind.REMINDER, false, said)
@@ -113,6 +118,10 @@ private object Rules {
     val reminderLead = regex("""^\s*(?:please\s+)?(?:remind\s+me\b(?:\s+(?:to|that)\b)?|(?:(?:add|set|create|make|new|put)\s+(?:a\s+|an?\s+new\s+|new\s+)?)?reminder\b(?:\s+(?:to|that|for(?:\s+me\s+to)?)\b)?)""")
     // "…to my calendar", "…on the calendar".
     val eventTail = regex("""\s+(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:family\s+)?calendar\s*[.!]?\s*$""")
+    // "Add/put/schedule <something> on my calendar <when>": a verb, then the calendar words anywhere.
+    val calendarAsk = regex("""^\s*(?:please\s+)?(?:add|put|schedule)\s+\S.*?\s(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:family\s+)?calendar\b""")
+    // The first "on my calendar", "to the calendar:", wherever it is.
+    val calendarWords = regex("""(?:^\s*|\s+)(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:family\s+)?calendar\b\s*[:,.!\-]?""")
     // "…to my reminders", "…on the to-do list".
     val reminderTail = regex("""\s+(?:to|on|in|onto)\s+(?:my\s+|the\s+|our\s+)?(?:reminders?|to-?dos?|to\s+do|tasks?)(?:\s+list)?\s*[.!]?\s*$""")
     // The verb left at the front once a tail named the kind: "add … to my calendar".
