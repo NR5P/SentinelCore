@@ -188,7 +188,7 @@ fun FillMyDriveDialog(onDismiss: () -> Unit) {
                 if (fill == null) LinearProgressIndicator(Modifier.fillMaxWidth()) else if (fill.episodes.isEmpty()) {
                     Text("Nothing unplayed fits in that time.", style = MaterialTheme.typography.bodySmall)
                 } else {
-                    Text("${fill.episodes.size} episodes, ${AudioFormat.duration(fill.totalSeconds)}:", style = MaterialTheme.typography.bodySmall)
+                    Text("${AudioFormat.count(fill.episodes.size, "episode")}, ${AudioFormat.duration(fill.totalSeconds)}:", style = MaterialTheme.typography.bodySmall)
                     fill.episodes.take(5).forEach {
                         Text("• ${it.title}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -503,7 +503,7 @@ fun PodcastPreviewScreen(feedUrl: String?, itunesId: Long?) {
                         art = { ArtImage(podcast.artUrl, Modifier.fillMaxSize(), sizePx = 700, fallbackIcon = Icons.Default.Podcasts, seed = podcast.title) },
                         title = podcast.title,
                         subtitle = podcast.author,
-                        detail = listOfNotNull(podcast.categories.firstOrNull(), "${value.episodes.size} episodes", "Explicit".takeIf { podcast.explicit }).joinToString(" · "),
+                        detail = listOfNotNull(podcast.categories.firstOrNull(), AudioFormat.count(value.episodes.size, "episode"), "Explicit".takeIf { podcast.explicit }).joinToString(" · "),
                     )
                 }
                 item {

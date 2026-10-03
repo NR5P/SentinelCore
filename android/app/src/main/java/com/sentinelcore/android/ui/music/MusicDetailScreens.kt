@@ -198,7 +198,8 @@ private fun ArtistContent(detail: ArtistDetail) {
                 art = { ArtImage(artist.artUrl, Modifier.fillMaxSize(), sizePx = 800, shape = CircleShape, fallbackIcon = Icons.Default.Person, seed = artist.name) },
                 title = artist.name,
                 subtitle = artist.genres.take(3).joinToString(", ").ifBlank { null },
-                detail = "${artist.albumCount} albums · ${artist.trackCount} songs" + if (artist.playCount > 0) " · ${artist.playCount} plays" else "",
+                detail = "${AudioFormat.count(artist.albumCount, "album")} · ${AudioFormat.count(artist.trackCount, "song")}" +
+                    if (artist.playCount > 0) " · ${AudioFormat.count(artist.playCount, "play")}" else "",
             )
         }
         item {

@@ -443,7 +443,7 @@ fun ContinueBanner(kind: String, modifier: Modifier = Modifier) {
                     ui.runtime.prefs.dismissedContinue = key
                     dismissed = key
                 }
-            }) { Text("Continue here") }
+            }) { Text("Continue here", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold) }
             IconButton(onClick = {
                 ui.runtime.prefs.dismissedContinue = key
                 dismissed = key

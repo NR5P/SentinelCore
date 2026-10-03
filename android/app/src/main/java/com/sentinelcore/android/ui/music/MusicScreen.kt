@@ -151,8 +151,11 @@ private fun MusicHomePane() {
 private fun HomeRows(home: MusicHome) {
     val ui = LocalAudioUi.current
     val numbers = NumberFormat.getIntegerInstance()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item { ContinueBanner("music") }
+    // The banner sits above the list rather than as its first row: it arrives after the rows, and as
+    // a row it landed above the already-anchored top edge, unseen unless the list was pulled down.
+    Column(Modifier.fillMaxSize()) {
+    ContinueBanner("music")
+    LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AssistChip(onClick = { ui.engine.shuffleAll() }, label = { Text("Shuffle all") }, leadingIcon = { Icon(Icons.Default.Shuffle, null, Modifier.size(18.dp)) })
@@ -230,6 +233,7 @@ private fun HomeRows(home: MusicHome) {
                 modifier = Modifier.fillMaxWidth().padding(24.dp),
             )
         }
+    }
     }
 }
 
@@ -387,7 +391,7 @@ private fun GenreBrowse() {
                             }
                             Column(Modifier.padding(12.dp)) {
                                 Text(genre.name, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${genre.albumCount} albums", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall)
+                                Text(com.sentinelcore.android.audio.AudioFormat.count(genre.albumCount, "album"), color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }

@@ -760,8 +760,11 @@ private fun QueuePanel() {
                     enableDismissFromStartToEnd = false,
                     modifier = Modifier.reorderableRow(reorder, item.uid),
                     backgroundContent = {
-                        Box(Modifier.fillMaxSize().background(if (dismiss.dismissDirection == SwipeToDismissBoxValue.EndToStart) Color(0xFFB3261E) else Color.Transparent).padding(horizontal = 24.dp), contentAlignment = Alignment.CenterEnd) {
-                            Text("Remove", color = Color.White)
+                        // The row on top is transparent (it sits on the blurred art), so the label
+                        // only exists mid-swipe - drawn always, it showed through every row.
+                        val swiping = dismiss.dismissDirection == SwipeToDismissBoxValue.EndToStart
+                        Box(Modifier.fillMaxSize().background(if (swiping) Color(0xFFB3261E) else Color.Transparent).padding(horizontal = 24.dp), contentAlignment = Alignment.CenterEnd) {
+                            if (swiping) Text("Remove", color = Color.White)
                         }
                     },
                 ) {

@@ -268,6 +268,13 @@ class AudioApi(private val transport: AudioTransport) {
 
     suspend fun preview(feedUrl: String?, itunesId: Long?): PodcastPreview {
         val json = obj("GET", "/api/podcasts/preview", mapOf("feedUrl" to (feedUrl ?: ""), "itunesId" to (itunesId?.toString() ?: "")), timeoutMillis = 60_000)
+        // Preview episodes are "Episode-lite" (§6): nothing is stored yet, so they carry no id, and
+        // parseEpisode needs one - without this every row was dropped and the page read "0 episodes".
+        val episodes = json.optJSONArray("episodes") ?: JSONArray()
+        for (index in 0 until episodes.length()) {
+            val episode = episodes.optJSONObject(index) ?: continue
+            if (episode.str("id") == null) episode.put("id", "preview-$index")
+        }
         return PodcastPreview(parsePodcast(json.obj("podcast") ?: JSONObject()), json.list("episodes", ::parseEpisode))
     }
 

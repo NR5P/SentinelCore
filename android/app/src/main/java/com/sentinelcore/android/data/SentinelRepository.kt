@@ -1765,7 +1765,10 @@ class SentinelRepository(
             groupOrder = if (json.has("groupOrder")) json.optInt("groupOrder") else Int.MAX_VALUE,
             basic = json.optBoolean("basic"),
             restartService = json.optString("restartService").ifEmpty { "bridge" },
-            dataEndpoint = json.optString("dataEndpoint").ifEmpty { null },
+            // The server writes "dataEndpoint": null for every section but one, and optString turns
+            // a JSON null into the string "null" - which sent every section to GET /null (404) and
+            // drew all of them empty instead of reading the bulk snapshot.
+            dataEndpoint = if (json.isNull("dataEndpoint")) null else json.optString("dataEndpoint").ifEmpty { null },
         )
     }
 

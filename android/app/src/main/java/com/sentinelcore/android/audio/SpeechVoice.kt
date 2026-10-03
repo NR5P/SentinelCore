@@ -43,7 +43,9 @@ class SpeechVoice(context: Context) {
                 })
             }
         }
-        val ok = withTimeoutOrNull(5_000) { waiting.await() } ?: false
+        // A cold Google TTS engine loads its voice packs before onInit fires; on a busy phone that
+        // took ~5 s and a 5 s cap dropped the first announcement (shutdown, then nothing said).
+        val ok = withTimeoutOrNull(15_000) { waiting.await() } ?: false
         if (!ok) {
             ready = null
             tts?.shutdown()

@@ -278,6 +278,9 @@ class AudioEngine(private val runtime: AudioRuntime) {
                 radioSeed = radioSeed,
             )
         }
+        // Repeat is a music control (podcast Now Playing has no button for it), but ExoPlayer keeps
+        // its mode across queues: Repeat all left on from an album looped episodes forever.
+        if (queue.any { it.isEpisode }) player.repeatMode = Player.REPEAT_MODE_OFF
         player.setMediaItems(ordered.map(::mediaItem), index, (startSeconds * 1000).toLong().coerceAtLeast(0))
         player.prepare()
         player.playWhenReady = autoplay

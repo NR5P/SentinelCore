@@ -169,15 +169,17 @@ private fun ListenNowPane(onUpNext: () -> Unit, onDiscover: () -> Unit, onFill: 
 @Composable
 private fun ListenNow(home: PodcastHome, onUpNext: () -> Unit, onFill: () -> Unit) {
     val ui = LocalAudioUi.current
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-        item { ContinueBanner("podcast") }
+    // Above the list, not its first row - see HomeRows in MusicScreen.
+    Column(Modifier.fillMaxSize()) {
+    ContinueBanner("podcast")
+    LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(bottom = 24.dp)) {
         if (home.continueListening.isNotEmpty()) {
             item { SectionTitle("Continue listening") }
             item { Shelf { items(home.continueListening, key = { "c" + it.id }) { EpisodeCard(it) } } }
         }
         if (home.upNext.isNotEmpty()) {
             item {
-                SectionTitle("Up Next", subtitle = "${home.upNext.size} episodes · ${AudioFormat.duration(home.upNext.sumOf { it.remainingSeconds })}", actionLabel = "Play all") {
+                SectionTitle("Up Next", subtitle = "${AudioFormat.count(home.upNext.size, "episode")} · ${AudioFormat.duration(home.upNext.sumOf { it.remainingSeconds })}", actionLabel = "Play all") {
                     ui.engine.playEpisodes(home.upNext, 0, PlayContext("queue", null, "Up Next"))
                 }
             }
@@ -215,6 +217,7 @@ private fun ListenNow(home: PodcastHome, onUpNext: () -> Unit, onFill: () -> Uni
             item { SectionTitle("Your shows") }
             item { Shelf { items(home.subscriptions, key = { "p" + it.id }) { podcast -> ShowCard(podcast) { ui.nav.openShow(podcast.id) } } } }
         }
+    }
     }
 }
 
@@ -303,7 +306,7 @@ fun UpNextPane() {
             item(contentType = "head") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "${rows.size} episodes · ${AudioFormat.duration(rows.sumOf { it.remainingSeconds })}",
+                        "${AudioFormat.count(rows.size, "episode")} · ${AudioFormat.duration(rows.sumOf { it.remainingSeconds })}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),

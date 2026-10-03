@@ -382,7 +382,7 @@ private fun GenresList() {
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(genre.name, fontWeight = FontWeight.Medium)
-                        Text("${genre.albumCount} albums · ${genre.trackCount} songs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${com.sentinelcore.android.audio.AudioFormat.count(genre.albumCount, "album")} · ${com.sentinelcore.android.audio.AudioFormat.count(genre.trackCount, "song")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { ui.engine.startRadio("genre", genre.name, genre.name) }) {
                         Icon(Icons.Default.AutoAwesome, contentDescription = "${genre.name} radio")

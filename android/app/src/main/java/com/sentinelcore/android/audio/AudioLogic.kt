@@ -198,6 +198,9 @@ object PlayReporting {
 // ---------------- Formatting ----------------
 
 object AudioFormat {
+    // "1 album", "3 albums" - for the count lines on artist and genre pages.
+    fun count(n: Int, noun: String): String = if (n == 1) "1 $noun" else "$n ${noun}s"
+
     fun clock(seconds: Double): String {
         val total = seconds.coerceAtLeast(0.0).toLong()
         val h = total / 3600
@@ -234,7 +237,9 @@ object AudioFormat {
     }
 
     fun speed(speed: Double): String {
-        val rounded = (speed * 100).toLong() / 100.0
+        // Rounded, not truncated: speeds arrive as Floats, and 1.8f is 1.7999999523 as a Double,
+        // which truncation printed as "1.79×".
+        val rounded = Math.round(speed * 100) / 100.0
         return if (abs(rounded - rounded.toLong()) < 0.001) "${rounded.toLong()}×" else "${rounded.toString().trimEnd('0')}×"
     }
 

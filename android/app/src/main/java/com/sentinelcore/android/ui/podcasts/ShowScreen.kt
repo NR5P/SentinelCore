@@ -178,7 +178,7 @@ private fun ShowContent(podcast: Podcast, onChanged: (Podcast) -> Unit) {
                 subtitle = podcast.author,
                 detail = listOfNotNull(
                     podcast.categories.take(2).joinToString(", ").ifBlank { null },
-                    "${podcast.episodeCount} episodes",
+                    AudioFormat.count(podcast.episodeCount, "episode"),
                     podcast.newestEpisodeAt?.let { "updated ${AudioFormat.day(it).lowercase()}" },
                     "Explicit".takeIf { podcast.explicit },
                 ).joinToString(" · "),
