@@ -1,5 +1,6 @@
 package com.sentinelcore.android.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -26,11 +27,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -149,6 +153,30 @@ fun MovieDetailScreen(
         }
     }
 
+    // Delete (admin, a movie on the server's own disks): asked first, then back to the library,
+    // which reloads without it (SentinelViewModel.mediaLibraryVersion).
+    var confirmDelete by remember(itemId) { mutableStateOf(false) }
+    val doomed = detail
+    if (confirmDelete && doomed != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete ${doomed.summary.title}?") },
+            text = { Text("The movie's file is deleted from the server's disk for everyone. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    scope.launch {
+                        busy = true
+                        runCatching { model.deleteMediaItem(doomed.summary.id) }
+                            .onSuccess { busy = false; onBack() }
+                            .onFailure { busy = false; error = it.message ?: "Could not delete this movie." }
+                    }
+                }) { Text("Delete", color = SentinelRed) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
+
     val current = detail
     Column(Modifier.fillMaxSize()) {
         val headerTitle = current?.summary?.let { s -> if (s.isEpisode) s.showTitle ?: s.title else s.title }
@@ -170,6 +198,7 @@ fun MovieDetailScreen(
                 onSelectSeason = { selectedSeason = it },
                 act = act,
                 onToggleList = toggleList,
+                onDelete = { confirmDelete = true },
                 onItem = onItem,
                 onPlay = onPlay,
             )
@@ -189,6 +218,7 @@ private fun DetailBody(
     onSelectSeason: (Int) -> Unit,
     act: (suspend () -> Unit) -> Unit,
     onToggleList: () -> Unit,
+    onDelete: () -> Unit,
     onItem: (String) -> Unit,
     onPlay: (String, Double?) -> Unit,
 ) {
@@ -233,6 +263,18 @@ private fun DetailBody(
                             modifier = Modifier.size(18.dp),
                         )
                         Text("  My List")
+                    }
+                }
+                // The server decides (admins, movies on its own disks).
+                if (current.canDelete) {
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = onDelete,
+                        border = BorderStroke(1.dp, SentinelRed.copy(alpha = 0.6f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SentinelRed),
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text("  Delete")
                     }
                 }
             }

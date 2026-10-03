@@ -398,6 +398,13 @@ class SentinelRepository(
         parseMediaItemDetail(JSONObject(request(MediaApi.itemPath(id))))
     }
 
+    // Admin: deletes a movie's files from the server's disk and forgets it (204). A 400 (a show,
+    // or a movie on another computer's share) or 404 throws with the server's message.
+    suspend fun deleteMediaItem(id: String): Unit = withContext(Dispatchers.IO) {
+        request(MediaApi.itemPath(id), method = "DELETE")
+        Unit
+    }
+
     suspend fun mediaPlayback(id: String, start: Double?, video: String, audio: String): MediaPlayback =
         withContext(Dispatchers.IO) {
             parseMediaPlayback(JSONObject(request(MediaApi.playbackPath(id, start, video, audio))))
@@ -553,12 +560,24 @@ class SentinelRepository(
         parseMediaReleaseSearch(JSONObject(request(MediaDownloadApi.searchPath(id))))
     }
 
-    // 201. A 400 (no library of the right kind, or the search expired) throws with its message.
-    suspend fun startMediaDownload(searchId: String, releaseId: String, libraryId: String? = null): MediaDownload =
-        withContext(Dispatchers.IO) {
-            val body = MediaDownloadApi.grabBody(searchId, releaseId, libraryId).toString()
-            parseMediaDownload(JSONObject(request(MediaDownloadApi.DOWNLOADS_PATH, method = "POST", body = body)))
-        }
+    // 201. A 400 (no library of the right kind, or the search expired) throws with its message; a
+    // 409 for a movie the library already has throws MediaAlreadyInLibraryException, so the screen
+    // can ask and send it again with `replace`.
+    suspend fun startMediaDownload(
+        searchId: String,
+        releaseId: String,
+        libraryId: String? = null,
+        replace: Boolean? = null,
+    ): MediaDownload = withContext(Dispatchers.IO) {
+        val body = MediaDownloadApi.grabBody(searchId, releaseId, libraryId, replace).toString()
+        val (status, text) = requestWithStatus(MediaDownloadApi.DOWNLOADS_PATH, method = "POST", body = body)
+        if (status in 200..299) return@withContext parseMediaDownload(JSONObject(text))
+        if (status == 409) parseMediaAlreadyInLibrary(text)?.let { throw it }
+        throw SentinelApiException(
+            status,
+            parseServerError(text) ?: if (status == 401) "This server requires you to sign in." else "Server request failed (HTTP $status).",
+        )
+    }
 
     suspend fun mediaDownloads(): MediaDownloadList = withContext(Dispatchers.IO) {
         parseMediaDownloadList(JSONObject(request(MediaDownloadApi.DOWNLOADS_PATH)))

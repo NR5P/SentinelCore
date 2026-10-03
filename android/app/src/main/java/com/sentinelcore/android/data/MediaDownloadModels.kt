@@ -225,6 +225,9 @@ data class MediaDownload(
     val error: String? = null,
     val libraryId: String? = null,
     val itemId: String? = null,
+    // The library item this download replaces (its files go once the new copy is filed); null
+    // for an ordinary download and on older servers.
+    val replacesItemId: String? = null,
     val requestedBy: String? = null,
     val createdAt: String? = null,
     val completedAt: String? = null,
@@ -282,6 +285,22 @@ data class MediaSiteDefinition(
 // A sites route answered 503 { starting: true }: Prowlarr is inside the VPN, which is still
 // coming up. The screen shows the message and asks again.
 class MediaDownloadsStartingException(message: String) : Exception(message)
+
+// 409 existing: the copy of the movie the library already has.
+data class MediaExistingCopy(
+    val itemId: String? = null,
+    val title: String? = null,
+    val year: Int? = null,
+    val sizeBytes: Long? = null,
+    // The picture height in pixels (720, 1080, 2160), when known.
+    val height: Int? = null,
+    // False for a copy on another computer's share - only Keep both is offered then.
+    val canReplace: Boolean = false,
+)
+
+// POST /api/media/downloads answered 409 { code: "alreadyInLibrary" }: nothing was queued. The
+// screen asks, then sends the same body again with replace true (replace it) or false (keep both).
+class MediaAlreadyInLibraryException(message: String, val existing: MediaExistingCopy) : Exception(message)
 
 // ---------------- Parsing ----------------
 
@@ -460,6 +479,7 @@ internal fun parseMediaDownload(json: JSONObject): MediaDownload = MediaDownload
     error = json.dlString("error"),
     libraryId = json.dlString("libraryId"),
     itemId = json.dlString("itemId"),
+    replacesItemId = json.dlString("replacesItemId"),
     requestedBy = json.dlString("requestedBy"),
     createdAt = json.dlString("createdAt"),
     completedAt = json.dlString("completedAt"),
@@ -531,6 +551,23 @@ internal fun parseMediaDownloadsStarting(body: String): MediaDownloadsStartingEx
     return MediaDownloadsStartingException(json.dlString("error") ?: "Connecting to the VPN... try again in a moment.")
 }
 
+// The grab's 409 body; null unless it is { code: "alreadyInLibrary" }.
+internal fun parseMediaAlreadyInLibrary(body: String): MediaAlreadyInLibraryException? {
+    val json = runCatching { JSONObject(body) }.getOrNull() ?: return null
+    if (json.dlString("code") != "alreadyInLibrary") return null
+    val existing = json.dlObject("existing")?.let {
+        MediaExistingCopy(
+            itemId = it.dlString("itemId"),
+            title = it.dlString("title"),
+            year = it.dlInt("year"),
+            sizeBytes = it.dlLong("sizeBytes"),
+            height = it.dlInt("height"),
+            canReplace = it.optBoolean("canReplace", false),
+        )
+    } ?: MediaExistingCopy()
+    return MediaAlreadyInLibraryException(json.dlString("error") ?: "You already have this movie.", existing)
+}
+
 // ---------------- Requests ----------------
 
 internal object MediaDownloadApi {
@@ -558,10 +595,13 @@ internal object MediaDownloadApi {
 
     fun catalogPath(query: String): String = "$SITES_PATH/catalog?q=${query(query.trim())}"
 
-    fun grabBody(searchId: String, releaseId: String, libraryId: String? = null): JSONObject = JSONObject()
-        .put("searchId", searchId)
-        .put("releaseId", releaseId)
-        .put("libraryId", libraryId ?: JSONObject.NULL)
+    // `replace` is left out until the server has asked (409 alreadyInLibrary): absent means "ask me".
+    fun grabBody(searchId: String, releaseId: String, libraryId: String? = null, replace: Boolean? = null): JSONObject =
+        JSONObject()
+            .put("searchId", searchId)
+            .put("releaseId", releaseId)
+            .put("libraryId", libraryId ?: JSONObject.NULL)
+            .apply { if (replace != null) put("replace", replace) }
 
     // The site form's answers, typed the way the web sends them: checkboxes as booleans, numbers
     // as numbers (blank = null), a select whose value is a whole number as a number.
@@ -643,6 +683,22 @@ internal object MediaDownloadFormat {
     }
 
     fun plural(count: Int, noun: String): String = if (count == 1) "1 $noun" else "$count ${noun}s"
+
+    // "720p · 1.4 GB" for the copy the library has, or null when the server knows neither.
+    fun existingCopyLabel(existing: MediaExistingCopy): String? =
+        listOfNotNull(existing.height?.takeIf { it > 0 }?.let { "${it}p" }, sizeLabel(existing.sizeBytes))
+            .joinToString(" · ")
+            .ifEmpty { null }
+
+    // The already-in-library dialog's body.
+    fun alreadyInLibraryText(existing: MediaExistingCopy): String {
+        val have = existingCopyLabel(existing)?.let { "The copy you have is $it. " }.orEmpty()
+        return if (existing.canReplace) {
+            have + "Replace it with this download? The old copy is deleted once the new one has downloaded."
+        } else {
+            have + "It is on another computer's share, so it can't be replaced from here. Download this one as well?"
+        }
+    }
 
     // "Downloading Bluey S02E05 · 42%", or "2 downloads in progress".
     fun bannerText(active: List<MediaDownload>): String? {

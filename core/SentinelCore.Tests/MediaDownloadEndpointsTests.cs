@@ -353,6 +353,98 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task AMovieYouHave_AsksFirst_ThenReplaceDeletesTheOldCopyWhenTheNewOneIsFiled()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var libraryId = await AddLibraryAsync(factory, MediaLibraryKinds.Movies, _moviesPath);
+        var oldFolder = Path.Combine(_moviesPath, "Big.Buck.Bunny.2008.DVDRip");
+        Directory.CreateDirectory(oldFolder);
+        File.WriteAllText(Path.Combine(oldFolder, "Big.Buck.Bunny.2008.DVDRip.avi"), "the old film");
+        File.WriteAllText(Path.Combine(oldFolder, "Big.Buck.Bunny.2008.DVDRip.srt"), "old subs");
+        var scanner = factory.Services.GetRequiredService<MediaScanner>();
+        while (!await scanner.ScanAsync(libraryId, Ct)) await Task.Delay(100, Ct);
+        var store = factory.Services.GetRequiredService<IMediaStore>();
+        var old = Assert.Single(await store.GetItemsAsync(new MediaQuery(Kinds: [MediaKinds.Movie]), Ct));
+
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1");
+        _prowlarr.Releases = [Release("Big.Buck.Bunny.2008.1080p.BluRay.x264-GRP", 50, "magnet:?xt=urn:btih:aaaa", "aaaa")];
+        var search = await SearchAsync(client, new { kind = "movie", title = "Big Buck Bunny", year = 2008 });
+        var grab = new { searchId = search.GetProperty("id").GetString(), releaseId = search.GetProperty("results")[0].GetProperty("id").GetString() };
+
+        // Not decided yet: the server says what is already there instead of queueing.
+        var asked = await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads", grab, Ct), HttpStatusCode.Conflict);
+        Assert.Equal("alreadyInLibrary", asked.GetProperty("code").GetString());
+        Assert.Equal("You already have Big Buck Bunny (2008).", asked.GetProperty("error").GetString());
+        Assert.Equal(old.Id.ToString(), asked.GetProperty("existing").GetProperty("itemId").GetString());
+        Assert.True(asked.GetProperty("existing").GetProperty("canReplace").GetBoolean());
+        Assert.Empty(await factory.Services.GetRequiredService<MediaDownloadManager>().ListAsync(Ct));
+
+        var queued = await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads",
+            new { grab.searchId, grab.releaseId, replace = true }, Ct), HttpStatusCode.Created);
+        Assert.Equal(old.Id.ToString(), queued.GetProperty("replacesItemId").GetString());
+        var id = Guid.Parse(queued.GetProperty("id").GetString()!);
+
+        // The old copy stays until the new one is downloaded.
+        var manager = factory.Services.GetRequiredService<MediaDownloadManager>();
+        await manager.TickAsync(Ct);
+        var added = Assert.Single(_qbittorrent.Added);
+        _qbittorrent.Torrents.Add(new FakeTorrent("aaaa", added.Tag, 0.5, 1000, 500, 10, 60, "downloading"));
+        await manager.TickAsync(Ct);
+        Assert.True(Directory.Exists(oldFolder));
+
+        var staging = Path.Combine(_moviesPath, ".downloads", id.ToString("N"));
+        Directory.CreateDirectory(staging);
+        File.WriteAllText(Path.Combine(staging, "Big.Buck.Bunny.2008.1080p.BluRay.x264-GRP.mkv"), "the new film");
+        _qbittorrent.Torrents[0] = _qbittorrent.Torrents[0] with { Progress = 1, State = "stalledUP" };
+        _qbittorrent.Files["aaaa"] = [("Big.Buck.Bunny.2008.1080p.BluRay.x264-GRP.mkv", 12)];
+        await manager.TickAsync(Ct);
+
+        var done = (await manager.GetAsync(id, Ct))!;
+        Assert.Equal(MediaDownloadStates.Done, done.State);
+        Assert.False(Directory.Exists(oldFolder), "the old copy's folder went with it");
+        Assert.Null(await store.GetItemAsync(old.Id, Ct));
+        Assert.Equal([Path.Combine(_moviesPath, "Big Buck Bunny (2008)", "Big Buck Bunny (2008).mkv")], done.ImportedPaths);
+
+        // Keep both: queued without asking again, and nothing is marked for replacing.
+        while (!await scanner.ScanAsync(libraryId, Ct)) await Task.Delay(100, Ct);
+        _prowlarr.Releases = [Release("Big.Buck.Bunny.2008.2160p.WEB-DL.x265", 50, "magnet:?xt=urn:btih:bbbb", "bbbb")];
+        var again = await SearchAsync(client, new { kind = "movie", title = "Big Buck Bunny", year = 2008 });
+        var both = await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads",
+            new { searchId = again.GetProperty("id").GetString(), releaseId = again.GetProperty("results")[0].GetProperty("id").GetString(), replace = false }, Ct), HttpStatusCode.Created);
+        Assert.Equal(JsonValueKind.Null, both.GetProperty("replacesItemId").ValueKind);
+    }
+
+    [Fact]
+    public async Task DeletingAMovie_RemovesItsFilesAndForgetsIt()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var libraryId = await AddLibraryAsync(factory, MediaLibraryKinds.Movies, _moviesPath);
+        var folder = Path.Combine(_moviesPath, "Sintel (2010)");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "Sintel (2010).mp4"), "film");
+        File.WriteAllText(Path.Combine(folder, "poster.jpg"), "art");
+        File.WriteAllText(Path.Combine(_moviesPath, "Elephants Dream (2006).mp4"), "other film");
+        var scanner = factory.Services.GetRequiredService<MediaScanner>();
+        while (!await scanner.ScanAsync(libraryId, Ct)) await Task.Delay(100, Ct);
+        var store = factory.Services.GetRequiredService<IMediaStore>();
+        var sintel = (await store.GetItemsAsync(new MediaQuery(Kinds: [MediaKinds.Movie]), Ct)).Single(i => i.Title == "Sintel");
+        await store.SetInWatchlistAsync("", sintel.Id, true, Ct);
+
+        var detail = await JsonAsync(await client.GetAsync($"/api/media/items/{sintel.Id}", Ct), HttpStatusCode.OK);
+        Assert.True(detail.GetProperty("canDelete").GetBoolean());
+
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/api/media/items/{sintel.Id}", Ct)).StatusCode);
+        Assert.False(Directory.Exists(folder));
+        Assert.True(File.Exists(Path.Combine(_moviesPath, "Elephants Dream (2006).mp4")), "only that movie goes");
+        Assert.Null(await store.GetItemAsync(sintel.Id, Ct));
+        Assert.Empty(await store.GetWatchlistAsync("", Ct));
+        await JsonAsync(await client.GetAsync($"/api/media/items/{sintel.Id}", Ct), HttpStatusCode.NotFound);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/media/items/{sintel.Id}", Ct)).StatusCode);
+    }
+
+    [Fact]
     public async Task TurnedOff_EverythingButStatusIs404()
     {
         WriteSettings(enabled: false);

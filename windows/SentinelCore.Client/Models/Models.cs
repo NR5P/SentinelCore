@@ -467,6 +467,9 @@ public sealed class ApiError
 
     /// <summary>Set by the movie-download site routes (503) while the VPN is still coming up: ask again shortly.</summary>
     public bool? Starting { get; init; }
+
+    /// <summary>A machine-readable reason, e.g. "alreadyInLibrary" on a movie download's 409.</summary>
+    public string? Code { get; init; }
 }
 
 public sealed class LoginBody

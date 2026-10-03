@@ -481,6 +481,7 @@ public class MediaDownloadsClientTests
         Assert.Contains("\"searchId\":\"s1\"", server.Bodies[1]);
         Assert.Contains("\"releaseId\":\"r1\"", server.Bodies[1]);
         Assert.DoesNotContain("libraryId", server.Bodies[1]);
+        Assert.DoesNotContain("replace", server.Bodies[1]);
 
         Assert.Equal("running", list.Status!.Services);
         var active = Assert.Single(list.Active);
@@ -514,6 +515,72 @@ public class MediaDownloadsClientTests
         Assert.Equal(400, error.Status);
         Assert.Equal("Add one (kind: TV shows) under Movies -> Libraries", error.Message);
         Assert.Contains("\"libraryId\":\"l9\"", server.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task A_movie_already_in_the_library_throws_what_the_library_has()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads", """
+            { "error": "You already have Dune (2021).", "code": "alreadyInLibrary",
+              "existing": { "itemId": "m7", "title": "Dune", "year": 2021, "sizeBytes": 1400000000, "height": 720, "canReplace": true } }
+            """, HttpStatusCode.Conflict);
+        using var client = ClientFor(server);
+
+        var error = await Assert.ThrowsAsync<MediaAlreadyInLibraryException>(() => client.StartMediaDownloadAsync("s1", "r1"));
+
+        Assert.Equal("You already have Dune (2021).", error.Message);
+        Assert.Equal("m7", error.Existing.ItemId);
+        Assert.Equal("Dune", error.Existing.Title);
+        Assert.Equal(2021, error.Existing.Year);
+        Assert.Equal(1_400_000_000, error.Existing.SizeBytes);
+        Assert.Equal(720, error.Existing.Height);
+        Assert.True(error.Existing.IsReplaceable);
+        Assert.Equal("720p · 1.4 GB", error.Existing.QualityText(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.DoesNotContain("replace", server.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task Another_409_stays_a_server_error()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads",
+            """{"error":"Something else."}""", HttpStatusCode.Conflict);
+        using var client = ClientFor(server);
+
+        var error = await Assert.ThrowsAsync<SentinelServerException>(() => client.StartMediaDownloadAsync("s1", "r1"));
+
+        Assert.Equal(409, error.Status);
+        Assert.Null(error.Code);
+    }
+
+    [Fact]
+    public async Task A_copy_that_cannot_be_replaced_says_so_and_unknown_quality_is_blank()
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads", """
+            { "error": "You already have Dune (2021).", "code": "alreadyInLibrary",
+              "existing": { "itemId": "m7", "canReplace": false } }
+            """, HttpStatusCode.Conflict);
+        using var client = ClientFor(server);
+
+        var error = await Assert.ThrowsAsync<MediaAlreadyInLibraryException>(() => client.StartMediaDownloadAsync("s1", "r1"));
+
+        Assert.False(error.Existing.IsReplaceable);
+        Assert.Equal("", error.Existing.QualityText());
+    }
+
+    [Theory]
+    [InlineData(true, "\"replace\":true")]
+    [InlineData(false, "\"replace\":false")]
+    public async Task The_answer_is_sent_back_as_replace(bool replace, string expected)
+    {
+        using var server = new FakeServer().On("POST", "/api/media/downloads",
+            """{ "id": "d2", "state": "queued", "replacesItemId": "m7" }""", HttpStatusCode.Created);
+        using var client = ClientFor(server);
+
+        var grabbed = await client.StartMediaDownloadAsync("s1", "r1", replace: replace);
+
+        Assert.Contains(expected, server.Bodies[0]);
+        Assert.Contains("\"searchId\":\"s1\"", server.Bodies[0]);
+        Assert.Equal("m7", grabbed.ReplacesItemId);
     }
 
     [Fact]

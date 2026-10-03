@@ -57,6 +57,9 @@ public sealed class MediaDownload
     public string StagingPath { get; set; } = string.Empty;
     public List<string> ImportedPaths { get; set; } = [];
     public Guid? ItemId { get; set; }
+    // The copy already in the library that this download replaces: its files are deleted once
+    // the new one is ready to be filed.
+    public Guid? ReplaceItemId { get; set; }
 
     public string RequestedBy { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
@@ -143,6 +146,9 @@ public sealed class MediaDownloadGrabInput
     public Guid SearchId { get; set; }
     public string ReleaseId { get; set; } = string.Empty;
     public Guid? LibraryId { get; set; }
+    // A movie already in the library: null asks (409 alreadyInLibrary), true replaces the old
+    // copy, false keeps both.
+    public bool? Replace { get; set; }
 }
 
 public sealed class MediaDownloadSiteInput

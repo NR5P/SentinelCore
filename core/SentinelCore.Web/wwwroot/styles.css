@@ -4783,12 +4783,14 @@ body.hub-wall main {
   animation: mv-spin 0.7s linear infinite;
 }
 
-.btn.mv-danger {
+.btn.mv-danger,
+.mv-btn.mv-danger {
   border-color: rgba(255, 77, 94, 0.45);
   color: var(--red);
 }
 
-.btn.mv-danger:hover {
+.btn.mv-danger:hover,
+.mv-btn.mv-danger:hover {
   background: rgba(255, 77, 94, 0.1);
   box-shadow: 0 0 10px rgba(255, 77, 94, 0.3);
 }

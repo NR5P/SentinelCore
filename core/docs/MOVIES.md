@@ -195,7 +195,13 @@ NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "user
   ```
   `file`, `audioTracks` and `subtitles` are null for shows; `seasons` is null for movies and
   episodes. Episode detail includes `showId` and the episode's own `file`. Subtitle `index` counts
-  text subtitles only (bitmap subtitles are not offered).
+  text subtitles only (bitmap subtitles are not offered). `canDelete` is true when the caller may
+  delete this title (admins; movies on the server's own disks).
+- `DELETE /api/media/items/{id}` (admin) → **204**. Deletes a movie from the disk and forgets it,
+  with its progress, plays and My List entries. Cannot be undone, so ask first. If the movie had
+  a folder to itself (no other video in it outside Sample/Extras folders) the whole folder goes;
+  otherwise only the video and the files named after it (`Movie.en.srt`, `Movie-poster.jpg`).
+  400 `{ error }` for shows/episodes and for movies on another computer's share; 404 when gone.
 - Artwork, all `image/jpeg` or `image/png`, cached for a day, 404 when absent:
   `GET /api/media/items/{id}/poster`, `GET /api/media/items/{id}/backdrop`, `GET /api/media/items/{id}/thumb`.
   Show seasons: `GET /api/media/items/{showId}/seasons/{n}/poster`.

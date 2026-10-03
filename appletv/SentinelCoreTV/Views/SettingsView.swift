@@ -15,7 +15,7 @@ struct SettingsView: View {
         // mediaLibraries` (or `folderPicker`) shows that screen in place of Settings.
         if let page = UserDefaults.standard.string(forKey: "debugSettingsPage") {
             if page == "folderPicker" {
-                MediaFolderPickerView(startPath: "") { _ in }
+                MediaFolderPickerView(path: .constant(""))
             } else {
                 MediaLibrariesAdminView()
             }

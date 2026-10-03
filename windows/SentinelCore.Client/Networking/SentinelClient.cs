@@ -604,6 +604,14 @@ public sealed partial class SentinelClient : IDisposable
         GetAsync<MediaItemDetail>($"/api/media/items/{Uri.EscapeDataString(id)}", ct: ct);
 
     /// <summary>
+    /// Deletes a movie from the server's disk and forgets it, with everyone's progress and My List
+    /// entries (204). Cannot be undone. Admin only; 400 with a sentence for a show, an episode or a
+    /// movie on another computer's share, 404 once it is gone - both as a SentinelServerException.
+    /// </summary>
+    public Task DeleteMediaItemAsync(string id, CancellationToken ct = default) =>
+        SendNoResultAsync<object>($"/api/media/items/{Uri.EscapeDataString(id)}", HttpMethod.Delete, null, ct);
+
+    /// <summary>
     /// One movie or show picked at random ("Surprise me"), unwatched ones preferred. When nothing
     /// matches the server answers 404 with a sentence to show, which arrives as the
     /// SentinelServerException message like every other refusal.
@@ -1088,6 +1096,8 @@ public sealed partial class SentinelClient : IDisposable
             {
                 NeedsLogin = flags?.NeedsLogin == true,
                 Starting = flags?.Starting == true,
+                Code = flags?.Code,
+                Body = data,
             };
         }
     }
@@ -1252,4 +1262,10 @@ public sealed class SentinelServerException(int status, string? serverMessage)
     /// its services are still coming up, and the same request will work in a few seconds.
     /// </summary>
     public bool Starting { get; init; }
+
+    /// <summary>The error body's machine-readable <c>code</c>, when it has one ("alreadyInLibrary").</summary>
+    public string? Code { get; init; }
+
+    /// <summary>The raw error body, for the few calls that decode more than the message from it.</summary>
+    public byte[]? Body { get; init; }
 }

@@ -152,6 +152,14 @@ class MediaParsingTest {
     }
 
     @Test
+    fun `canDelete parses, and an older server that leaves it out means no`() {
+        assertTrue(parseMediaItemDetail(JSONObject(movieSummary).put("canDelete", true)).canDelete)
+        assertFalse(parseMediaItemDetail(JSONObject(movieSummary).put("canDelete", false)).canDelete)
+        assertFalse(parseMediaItemDetail(JSONObject(movieSummary)).canDelete)
+        assertFalse(parseMediaItemDetail(JSONObject(movieSummary).put("canDelete", JSONObject.NULL)).canDelete)
+    }
+
+    @Test
     fun `an hls playback parses its start and next episode`() {
         val playback = parseMediaPlayback(
             JSONObject(

@@ -208,6 +208,8 @@ class MediaDownloadParsingTest {
         assertNull(download.itemId)
         assertEquals("sam", download.requestedBy)
         assertNull(download.finishedAt)
+        assertNull(download.replacesItemId)
+        assertEquals("m1", parseMediaDownload(JSONObject("""{ "id": "d3", "title": "Dune", "state": "queued", "replacesItemId": "m1" }""")).replacesItemId)
 
         val minimal = parseMediaDownload(JSONObject("""{ "id": "d2", "title": "Old", "state": "done", "itemId": "m9" }"""))
         assertTrue(minimal.isDone)
@@ -304,6 +306,37 @@ class MediaDownloadParsingTest {
         val grab = MediaDownloadApi.grabBody("s1", "r1")
         assertEquals("s1", grab.getString("searchId"))
         assertTrue(grab.isNull("libraryId"))
+        // No `replace` until the server has asked; then true or false, never null.
+        assertFalse(grab.has("replace"))
+        assertTrue(MediaDownloadApi.grabBody("s1", "r1", replace = true).getBoolean("replace"))
+        assertFalse(MediaDownloadApi.grabBody("s1", "r1", replace = false).getBoolean("replace"))
+    }
+
+    @Test
+    fun `a 409 for a movie already in the library carries the existing copy`() {
+        val duplicate = parseMediaAlreadyInLibrary(
+            """{ "error": "You already have Dune (2021).", "code": "alreadyInLibrary",
+                 "existing": { "itemId": "m1", "title": "Dune", "year": 2021, "sizeBytes": 1400000000, "height": 720, "canReplace": true } }""",
+        )!!
+        assertEquals("You already have Dune (2021).", duplicate.message)
+        assertEquals(MediaExistingCopy("m1", "Dune", 2021, 1_400_000_000L, 720, true), duplicate.existing)
+        assertEquals("720p · 1.4 GB", MediaDownloadFormat.existingCopyLabel(duplicate.existing))
+        assertEquals(
+            "The copy you have is 720p · 1.4 GB. Replace it with this download? The old copy is deleted once the new one has downloaded.",
+            MediaDownloadFormat.alreadyInLibraryText(duplicate.existing),
+        )
+
+        // A copy on another computer's share can't be replaced; missing size and height say nothing.
+        val shared = parseMediaAlreadyInLibrary(
+            """{ "error": "You already have Dune (2021).", "code": "alreadyInLibrary", "existing": { "itemId": "m2", "canReplace": false } }""",
+        )!!
+        assertFalse(shared.existing.canReplace)
+        assertNull(MediaDownloadFormat.existingCopyLabel(shared.existing))
+        assertFalse(MediaDownloadFormat.alreadyInLibraryText(shared.existing).startsWith("The copy you have"))
+
+        // Any other 409, or something that is not JSON, is an ordinary error.
+        assertNull(parseMediaAlreadyInLibrary("""{ "error": "Busy." }"""))
+        assertNull(parseMediaAlreadyInLibrary("not json"))
     }
 
     @Test

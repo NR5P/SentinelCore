@@ -676,6 +676,11 @@ final class SentinelClient {
     }
 
     // Adds to (or with false removes from) the signed-in account's My List.
+    // Deletes a movie's files from the server's disk. Cannot be undone.
+    func deleteMediaItem(id: String) async throws {
+        let _: EmptyResponse = try await send("/api/media/items/\(id)", method: "DELETE", body: Optional<String>.none)
+    }
+
     func setMediaInList(id: String, inList: Bool) async throws -> MediaListResult {
         try await send("/api/media/items/\(id)/list", method: "POST", body: MediaListBody(inList: inList))
     }
@@ -741,10 +746,11 @@ final class SentinelClient {
     }
 
     // The server fetches the torrent through the VPN before it answers, so the long timeout.
-    func startMediaDownload(searchId: String, releaseId: String, libraryId: String? = nil) async throws -> MediaDownload {
+    // Throws MediaAlreadyInLibrary when the movie is already there and `replace` is nil.
+    func startMediaDownload(searchId: String, releaseId: String, libraryId: String? = nil, replace: Bool? = nil) async throws -> MediaDownload {
         try await mediaDownloadsRequest(
             "/api/media/downloads", method: "POST",
-            body: MediaDownloadGrabInput(searchId: searchId, releaseId: releaseId, libraryId: libraryId))
+            body: MediaDownloadGrabInput(searchId: searchId, releaseId: releaseId, libraryId: libraryId, replace: replace))
     }
 
     func mediaDownload(id: String) async throws -> MediaDownload {
@@ -822,6 +828,11 @@ final class SentinelClient {
                let busy = try? JSONDecoder.sentinel.decode(MediaDownloadsBusy.self, from: data),
                busy.starting == true {
                 throw MediaDownloadsStartingError(message: busy.error ?? "Connecting to the VPN... try again in a moment.")
+            }
+            if http.statusCode == 409,
+               let duplicate = try? JSONDecoder.sentinel.decode(MediaAlreadyInLibrary.self, from: data),
+               duplicate.code == "alreadyInLibrary" {
+                throw duplicate
             }
         }
         let valid = try validated(data, response)

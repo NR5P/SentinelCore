@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -93,6 +94,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.sentinelcore.android.data.MediaAlreadyInLibraryException
 import com.sentinelcore.android.data.MediaDownload
 import com.sentinelcore.android.data.MediaDownloadFormat
 import com.sentinelcore.android.data.MediaDownloadList
@@ -221,6 +223,10 @@ internal class MovieAddModel(private val app: SentinelViewModel) : ViewModel() {
     var grabbing by mutableStateOf<String?>(null)
         private set
     var grabError by mutableStateOf<String?>(null)
+        private set
+    // The server said the library already has this movie: the release to send again once the
+    // user picks Replace or Keep both, with what it said.
+    var duplicate by mutableStateOf<Pair<MediaRelease, MediaAlreadyInLibraryException>?>(null)
         private set
 
     private var lookupJob: Job? = null
@@ -360,17 +366,27 @@ internal class MovieAddModel(private val app: SentinelViewModel) : ViewModel() {
         }
     }
 
-    fun grab(release: MediaRelease, onStarted: () -> Unit) {
+    // `replace` stays null on the first try; a 409 opens the already-in-library dialog, whose
+    // answer sends the same release again with it set.
+    fun grab(release: MediaRelease, onStarted: () -> Unit, replace: Boolean? = null) {
         val searchId = search?.id?.takeIf { it.isNotBlank() } ?: return
         if (grabbing != null) return
+        duplicate = null
         viewModelScope.launch {
             grabbing = release.id
             grabError = null
-            runCatching { app.startMediaDownload(searchId, release.id) }
+            runCatching { app.startMediaDownload(searchId, release.id, replace) }
                 .onSuccess { onStarted() }
-                .onFailure { grabError = it.message ?: "Could not start the download." }
+                .onFailure {
+                    if (it is MediaAlreadyInLibraryException && replace == null) duplicate = release to it
+                    else grabError = it.message ?: "Could not start the download."
+                }
             grabbing = null
         }
+    }
+
+    fun dismissDuplicate() {
+        duplicate = null
     }
 }
 
@@ -665,6 +681,23 @@ private fun AddShow(add: MovieAddModel) {
 private fun AddReleases(add: MovieAddModel, onDownloadStarted: () -> Unit) {
     val search = add.search
     val input = add.searchInput
+    add.duplicate?.let { (release, duplicate) ->
+        val existing = duplicate.existing
+        AlertDialog(
+            onDismissRequest = { add.dismissDuplicate() },
+            title = { Text(duplicate.message ?: "You already have this movie.") },
+            text = { Text(MediaDownloadFormat.alreadyInLibraryText(existing)) },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { add.grab(release, onDownloadStarted, replace = false) }) { Text("Keep both") }
+                    if (existing.canReplace) {
+                        TextButton(onClick = { add.grab(release, onDownloadStarted, replace = true) }) { Text("Replace") }
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { add.dismissDuplicate() }) { Text("Cancel") } },
+        )
+    }
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),

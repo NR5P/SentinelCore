@@ -314,6 +314,12 @@ public sealed class MediaItemDetail : MediaItemSummary
 
     // Null for movies and episodes.
     public List<MediaSeason>? Seasons { get; init; }
+
+    /// <summary>
+    /// Whether the signed-in user may delete this title: admins, and only movies on the server's
+    /// own disks. Missing from older servers, which reads as false.
+    /// </summary>
+    public bool CanDelete { get; init; }
 }
 
 public sealed class MediaHome

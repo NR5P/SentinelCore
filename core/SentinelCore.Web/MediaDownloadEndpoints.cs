@@ -237,6 +237,25 @@ public static class MediaDownloadEndpoints
                 var download = await manager.GrabAsync(input, context.User.Identity?.Name ?? "", ct);
                 return Results.Created($"/api/media/downloads/{download.Id}", DownloadDto(download));
             }
+            // The app asks "Replace the one you have?" and sends the same request again with
+            // replace true or false.
+            catch (MediaDownloadDuplicateException ex)
+            {
+                return Results.Json(new
+                {
+                    error = ex.Message,
+                    code = "alreadyInLibrary",
+                    existing = new
+                    {
+                        itemId = ex.Existing.Id,
+                        title = ex.Existing.Title,
+                        year = ex.Existing.Year,
+                        sizeBytes = ex.Existing.FileSize,
+                        height = ex.Existing.Height,
+                        canReplace = ex.CanReplace
+                    }
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
             catch (MediaDownloadException ex) { return Results.BadRequest(new { error = ex.Message }); }
         });
 
@@ -284,6 +303,7 @@ public static class MediaDownloadEndpoints
         error = download.Error,
         libraryId = download.LibraryId,
         itemId = download.ItemId,
+        replacesItemId = download.ReplaceItemId,
         requestedBy = download.RequestedBy,
         createdAt = download.CreatedAt,
         completedAt = download.CompletedAt,
