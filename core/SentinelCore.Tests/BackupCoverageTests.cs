@@ -92,6 +92,16 @@ public sealed class BackupCoverageTests : IDisposable
             ["MusicPlaylists"] = "Music.Playlists",
             ["MusicPlaylistEntries"] = "Music.Playlists",
             ["MusicPlaylistPins"] = "Music.Pins",
+            // ---- Podcasts ----
+            ["PodcastShows"] = "Podcasts.Shows",
+            ["PodcastSubscriptions"] = "Podcasts.Subscriptions",
+            ["PodcastProgress"] = "Podcasts.Progress",
+            ["PodcastQueue"] = "Podcasts.Queue",
+            ["PodcastBookmarks"] = "Podcasts.Bookmarks",
+            // Only the archived ones: the rest come back from the feeds with the same ids.
+            ["PodcastEpisodes"] = "Podcasts.ArchivedEpisodes",
+            ["PodcastListening"] = "Podcasts.Listening",
+            // ---- end Podcasts ----
         };
 
         // Excluded on purpose, each for a reason recorded in BackupEndpoints:
@@ -120,6 +130,12 @@ public sealed class BackupCoverageTests : IDisposable
             ["MusicTracks"] = "the music catalog; a rescan of the library folders rebuilds it with the same ids",
             ["MusicArt"] = "where each album's cover was found; worked out again by a rescan",
             ["MusicLyrics"] = "lyrics fetched from LRCLIB; fetched again on first request",
+            // ---- Podcasts ----
+            ["PodcastDownloads"] = "which episodes are on this server's disk; the audio is re-downloaded, not backed up",
+            ["PodcastChapters"] = "a cache of each episode's chapters, refetched from the feed or the file",
+            ["PodcastTranscripts"] = "feed transcripts are refetched and whisper ones rewritten (MUSIC_AND_PODCASTS.md §10)",
+            ["PodcastClips"] = "clips are audio files cut on this server, which the backup does not carry",
+            // ---- end Podcasts ----
         };
 
         var root = RepositoryCoreDirectory();

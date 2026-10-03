@@ -60,7 +60,8 @@ public sealed record SettingsSnapshot(
     MediaSettingsDto? Media = null,
     MediaDownloadsSettingsDto? MediaDownloads = null,
     // Music (MUSIC_AND_PODCASTS.md).
-    MusicSettingsDto? Music = null);
+    MusicSettingsDto? Music = null,
+    PodcastSettingsDto? Podcasts = null);
 
 public static class SettingsEndpoints
 {
@@ -192,6 +193,21 @@ public static class SettingsEndpoints
         // Music.
         settings.MapPut("/music", async (MusicSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, MusicSettingsDto.SectionName, ct));
+        // ---- Podcasts ----
+        settings.MapPut("/podcasts", async (PodcastSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+        {
+            dto.DownloadFolder = dto.DownloadFolder?.Trim() ?? string.Empty;
+            dto.DirectoryCountry = dto.DirectoryCountry?.Trim().ToLowerInvariant() ?? "us";
+            dto.WhisperCommand = string.IsNullOrWhiteSpace(dto.WhisperCommand) ? "whisper-cli" : dto.WhisperCommand.Trim();
+            dto.WhisperModel = dto.WhisperModel?.Trim() ?? string.Empty;
+            return await SaveSectionAsync(dto, appSettings, PodcastSettingsDto.SectionName, ct, extra =>
+            {
+                if (PodcastLocations.ValidateDownloadFolder(dto.DownloadFolder) is { } folderProblem) extra.Add(folderProblem);
+                if (dto.DirectoryCountry.Length != 2 || !dto.DirectoryCountry.All(char.IsAsciiLetterLower))
+                    extra.Add("Directory Country is a two-letter country code, like us or gb.");
+            });
+        });
+        // ---- end Podcasts ----
 
         // MOVIE DOWNLOADS -> Mullvad Location's list (SettingsOptionsSourceSchema contract).
         settings.MapGet("/media-downloads/mullvad-locations", async (MediaVpnConfig vpn, CancellationToken ct) =>
@@ -615,7 +631,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<MediaSettingsDto>(MediaSettingsDto.SectionName, cancellationToken),
         await settings.GetSectionAsync<MediaDownloadsSettingsDto>(MediaDownloadsSettingsDto.SectionName, cancellationToken),
         // Music.
-        await settings.GetSectionAsync<MusicSettingsDto>(MusicSettingsDto.SectionName, cancellationToken));
+        await settings.GetSectionAsync<MusicSettingsDto>(MusicSettingsDto.SectionName, cancellationToken),
+        Podcasts: await settings.GetSectionAsync<PodcastSettingsDto>(PodcastSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -668,6 +685,7 @@ public static class SettingsEndpoints
         Media = snapshot.Media ?? new(),
         MediaDownloads = snapshot.MediaDownloads ?? new(),
         Music = snapshot.Music ?? new(),
+        Podcasts = snapshot.Podcasts ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -755,6 +773,7 @@ public static class SettingsEndpoints
         if (snapshot.MediaDownloads is not null) await MergeUnmaskedAsync(snapshot.MediaDownloads, MediaDownloadsSettingsDto.SectionName, settings, cancellationToken);
         // Music.
         if (snapshot.Music is not null) await settings.MergeSectionAsync(MusicSettingsDto.SectionName, snapshot.Music, cancellationToken);
+        if (snapshot.Podcasts is not null) await settings.MergeSectionAsync(PodcastSettingsDto.SectionName, snapshot.Podcasts, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

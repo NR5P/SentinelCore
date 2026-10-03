@@ -88,7 +88,10 @@ public sealed record BackupDocument(
     // Music (no schema bump - older files simply lack it): the music libraries and what everyone
     // did with them - plays, loves, ratings, playlists and pins. The catalog is rebuilt by a
     // rescan with the same ids; art and lyrics are refetched.
-    MusicBackup? Music = null);
+    MusicBackup? Music = null,
+    // Added without a schema bump (MUSIC_AND_PODCASTS.md §10); older files simply lack it. Shows,
+    // everyone's subscriptions, progress, Up Next and bookmarks - see PodcastBackup.
+    PodcastBackup? Podcasts = null);
 
 public sealed record AlarmBackup(IReadOnlyList<AlarmSensor> Sensors, AlarmConfig Config);
 

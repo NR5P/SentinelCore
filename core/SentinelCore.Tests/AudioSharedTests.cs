@@ -590,7 +590,7 @@ public sealed class AudioSharedTests : IDisposable
             Task.FromResult<IReadOnlyList<Guid>>([]);
         public Task<object> StatsAsync(string userKey, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) =>
             Task.FromResult<object>(new { episodesFinished = 3 });
-        public Task<PodcastBackup> ExportAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<PodcastBackup> ExportAsync(CancellationToken cancellationToken) => Task.FromResult(new PodcastBackup());
         public Task<int> RestoreAsync(PodcastBackup backup, CancellationToken cancellationToken) => Task.FromResult(0);
     }
 

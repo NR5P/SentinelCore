@@ -753,6 +753,34 @@ public static class SettingsSchema
                 Password("qbittorrentPassword", "qBittorrent Password", "Only needed with a username.")
             ]
         },
+        // ---- Podcasts (MUSIC_AND_PODCASTS.md §1) ----
+        new()
+        {
+            Key = "podcasts",
+            Title = "PODCASTS",
+            Group = SettingsGroups.Automation,
+            Endpoint = "/api/settings/podcasts",
+            Basic = true,
+            DtoType = typeof(PodcastSettingsDto),
+            Description = "A podcast app for the whole household, on the dashboard and in every app. Follow shows from Apple's directory or by their feed address; this server checks the feeds, downloads new episodes onto its own disk and keeps them even after a show drops them from its feed, so the apps play them from here. Per show it can also even out the volume and cut long silences, and it can write transcripts with whisper.cpp so every episode is searchable. Everyone who signs in gets their own subscriptions, Up Next, progress and bookmarks.",
+            Fields =
+            [
+                Check("enabled", "Enabled", "Show the Podcasts tab on the dashboard and in the apps. Turning it off hides it everywhere and stops checking feeds, but keeps every show, download and everyone's progress."),
+                Text("downloadFolder", "Download Folder", "Where downloaded episodes are kept, on one of this server's own disks. Blank keeps them in the data folder beside the database. Changing it does not move episodes already downloaded; they are fetched again into the new folder when wanted."),
+                Number("refreshMinutes", "Check Feeds Every (minutes)", "How often each followed show's feed is checked for new episodes. Shows nobody follows any more are not checked at all.", 15, 1440),
+                Check("autoDownloadNew", "Download New Episodes", "The starting choice for each newly followed show: download new episodes onto the server as they come out, so they play instantly and keep working if the publisher's server is slow. Each show can be changed afterwards."),
+                Number("keepEpisodes", "Keep Episodes Per Show", "The starting choice for newly followed shows: how many of the newest downloaded episodes to keep per show. Older downloads are removed (they still play straight from the publisher). 0 keeps them all. Episodes in someone's Up Next are never removed for this.", 0, 1000),
+                Number("deletePlayedAfterDays", "Delete Played After (days)", "A downloaded episode everyone has finished is removed this many days later, and so are downloads of shows nobody follows any more. The episode stays in the list. 0 never removes them.", 0, 365),
+                Number("maxStorageGb", "Storage Limit (GB)", "The most space downloaded episodes may take. Past it, played episodes are removed first, then the oldest. 0 means no limit.", 0, 100000),
+                Text("directoryCountry", "Directory Country", "The two-letter country code of the Apple Podcasts store to search and take Top Shows from, e.g. us, gb, ca, au or de."),
+                Check("transcriptsEnabled", "Write Transcripts", "Off by default. Writes a transcript of episodes on this server with whisper.cpp, for shows set to transcribe and whenever someone asks for one, so they can be read along and searched. Shows that publish their own transcripts never need this. It is slow on a small machine: expect an hour-long episode to take 10-30 minutes with a base model on a CPU."),
+                Text("whisperCommand", "Whisper Command", "The whisper.cpp program. whisper-cli finds it on the PATH; otherwise give its full path, e.g. /usr/local/bin/whisper-cli. On a Mac: brew install whisper-cpp. On Linux: build it from github.com/ggerganov/whisper.cpp."),
+                Text("whisperModel", "Whisper Model", "The full path to a ggml model file from huggingface.co/ggerganov/whisper.cpp. ggml-base.en.bin (150 MB) is a good start for English; ggml-small.bin is more accurate, slower, and handles other languages."),
+                Number("whisperThreads", "Whisper Threads", "How many CPU threads whisper may use. More is faster but slows everything else on the server while a transcript is being written.", 1, 32)
+            ],
+            ExtraAction = new SettingsActionSchema("refreshPodcasts", "refresh now", "Checks every followed show's feed for new episodes right away, instead of waiting for the next scheduled check.", "/api/podcasts/refresh", "POST")
+        },
+        // ---- end Podcasts ----
         new()
         {
             Key = "packageTheftWatch",
