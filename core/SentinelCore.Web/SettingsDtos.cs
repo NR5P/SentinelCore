@@ -327,6 +327,14 @@ public sealed class SelfMonitoringSettingsDto
     public int FreeDiskWarningGigabytes { get; set; } = 10;
 
     public bool NotifyOnRecovery { get; set; } = true;
+
+    // Read by MemoryWatchWorker here in the dashboard, which sends through OwnerNotifier (push,
+    // email, Telegram) rather than the main app's Telegram-only SelfMonitoringWorker. 0 turns one off.
+    [Range(0, 100)]
+    public int MemoryWarningPercent { get; set; } = 90;
+
+    [Range(0, 100)]
+    public int ProcessMemoryWarningPercent { get; set; } = 50;
 }
 
 public sealed class StartupNotificationSettingsDto

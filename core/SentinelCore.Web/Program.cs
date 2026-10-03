@@ -401,6 +401,12 @@ builder.Services.AddSingleton<OwnerNotifier>();
 builder.Services.AddSingleton<IOwnerNotifier>(sp => sp.GetRequiredService<OwnerNotifier>());
 builder.Services.AddSingleton<PublisherWatchdog>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<PublisherWatchdog>());
+// SELF-MONITORING's memory warnings: one program growing past its share, or the box as a whole
+// filling up, told to the owner before the kernel starts killing things.
+builder.Services.AddSingleton(sp => new MemoryWatch(
+    sp.GetRequiredService<IOwnerNotifier>(), sp.GetRequiredService<ILogger<MemoryWatch>>(), sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IMemoryReader, HostMemoryReader>();
+builder.Services.AddHostedService<MemoryWatchWorker>();
 
 // Short timeout on purpose - a camera being probed is either on the LAN and answers in
 // milliseconds, or it isn't there, and the whole point of the probe is to fail fast on the ones

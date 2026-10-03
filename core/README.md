@@ -268,9 +268,13 @@ Watches for the three ways this service can silently stop protecting the camera:
   "QueueBacklogThreshold": 5,
   "ConsecutiveBacklogChecksBeforeAlert": 3,
   "FreeDiskWarningGigabytes": 10,
-  "NotifyOnRecovery": true
+  "NotifyOnRecovery": true,
+  "MemoryWarningPercent": 90,
+  "ProcessMemoryWarningPercent": 50
 }
 ```
+
+The two memory settings are watched by the dashboard (`SentinelCore.Web`'s `MemoryWatchWorker`), not this service, and go out through the owner channels - push to the apps, email and Telegram, whichever are set up. `ProcessMemoryWarningPercent` is the early warning: one program (all copies of it added together, swap included, .NET services named after their `.dll`) staying above that share of RAM for three minutes, named in the message - a leak crosses half of memory hours before the box runs out. `MemoryWarningPercent` is the whole machine staying that full. Each warning goes at most once every 12 hours, so a program that is killed and regrows does not page every time. 0 turns either off.
 
 `FreeDiskWarningGigabytes` (0 disables it) warns when free space on the volume holding `Bridge:DataDirectory` drops below the given figure. It is the only one of the three that will not recover on its own: clips for confirmed motion are kept permanently (see [Data](#data)), so free space only moves one way until you prune it. The default of 10 GB is deliberately above `ScheduledRecording:MinimumFreeGigabytes` (5), which is where a scheduled recording starts refusing to run - by that point the databases and the clip recorder are also nearly out of room, so a warning at the same number would arrive too late to act on. Recovery is declared only once free space is 10% clear of the threshold, because the motion retention sweep reclaims whole gigabytes at a time and a disk resting exactly on the line would otherwise alert on every sweep.
 

@@ -880,6 +880,14 @@ public sealed class SelfMonitoringOptions
     public int FreeDiskWarningGigabytes { get; init; } = 10;
 
     public bool NotifyOnRecovery { get; init; } = true;
+
+    // Not read here: the dashboard's MemoryWatchWorker watches memory, because OwnerNotifier (push
+    // to the apps as well as email and Telegram) lives there. Listed so the section is complete.
+    [Range(0, 100)]
+    public int MemoryWarningPercent { get; init; } = 90;
+
+    [Range(0, 100)]
+    public int ProcessMemoryWarningPercent { get; init; } = 50;
 }
 
 public sealed class StartupNotificationOptions

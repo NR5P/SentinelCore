@@ -836,7 +836,7 @@ public static class SettingsSchema
             Endpoint = "/api/settings/self-monitoring",
             Basic = false,
             DtoType = typeof(SelfMonitoringSettingsDto),
-            Description = "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive, or alerts backing up faster than they're processed. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
+            Description = "Watches the app's own health and warns you if it stops keeping up - the AI going unresponsive, alerts backing up faster than they're processed, or the server running short of memory. The defaults are sensible; these numbers decide how quickly it calls something genuinely broken rather than briefly slow.",
             Fields =
             [
                 Check("enabled", "Enabled", "Watch the bridge's own health and tell you if it stops working properly."),
@@ -845,6 +845,8 @@ public static class SettingsSchema
                 Number("queueBacklogThreshold", "Queue Backlog Threshold", "How many unprocessed alerts count as falling behind. Usually means the AI can't keep up.", 1, 10000),
                 Number("consecutiveBacklogChecksBeforeAlert", "Consecutive Backlog Checks Before Alert", "How many checks in a row must show a backlog before alerting, ignoring brief bursts.", 1, 20),
                 Number("freeDiskWarningGigabytes", "Warn Below Free Space (GB)", "Tell you when the disk is running out, while there is still time to do something about it. Saved clips for confirmed motion are never deleted automatically, so free space only goes one way unless you prune it. 0 turns the warning off.", 0, 10000),
+                Number("memoryWarningPercent", "Warn When Memory Is (%) Full", "Tell you, by push to the apps, email and Telegram, when the server's memory stays this full for a few minutes, with the programs using the most. If it runs out completely, the system starts killing programs - the camera AI, recordings, or this app. 0 turns the warning off.", 0, 100),
+                Number("processMemoryWarningPercent", "Warn When One Program Uses (%)", "The early warning: tell you when a single program grows past this share of the server's memory, naming it, usually hours before memory actually runs out. A program whose memory keeps creeping up (a leak) shows up here first. 0 turns the warning off.", 0, 100),
                 Check("notifyOnRecovery", "Notify On Recovery", "Also tell you when things go back to normal, not just when they break.")
             ]
         },
