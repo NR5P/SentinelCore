@@ -27,7 +27,9 @@ struct SettingsView: View {
                             organizerEnabled: model.organizer.status?.enabled ?? model.organizerLastKnownEnabled,
                             moviesEnabled: model.moviesEnabled,
                             alarmEnabled: model.alarmEnabled,
-                            filesEnabled: model.familyFilesEnabled))
+                            filesEnabled: model.familyFilesEnabled,
+                            musicEnabled: model.musicEnabled,
+                            podcastsEnabled: model.podcastsEnabled))
                     } label: {
                         Label("Customize Tab Bar", systemImage: "square.grid.2x2")
                     }
@@ -89,6 +91,10 @@ struct SettingsView: View {
             if model.organizer.status?.enabled ?? model.organizerLastKnownEnabled {
                 OrganizerOfflineSettingsSection()
                 RemindersInboxSection()
+            }
+
+            if model.musicEnabled || model.podcastsEnabled {
+                AudioSettingsSection()
             }
 
             Section("Account") {

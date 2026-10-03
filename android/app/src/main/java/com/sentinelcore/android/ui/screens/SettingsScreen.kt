@@ -75,6 +75,8 @@ fun SettingsScreen(
     onManageSchedules: () -> Unit,
     onServerSettings: () -> Unit,
     onMediaLibraries: () -> Unit = {},
+    // Music & Podcasts on this phone (speaker, downloads, equalizer...), when either tab is on.
+    onMusicAndPodcasts: (() -> Unit)? = null,
     // Set while the phone-width bottom bar is in use; the tablet's rail shows every section and
     // has nothing to customize. See TabBarLayout.
     onCustomizeTabBar: (() -> Unit)? = null,
@@ -170,6 +172,22 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Save and Reconnect")
+                    }
+                }
+            }
+
+            if (onMusicAndPodcasts != null) {
+                item {
+                    SettingsSection("Music & Podcasts") {
+                        TextButton(onClick = onMusicAndPodcasts, modifier = Modifier.fillMaxWidth()) {
+                            Text("Music & Podcasts on this phone", color = SentinelGreen, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            "Let others play here, announcements, data saver, downloads, equalizer, alarms and ListenBrainz." +
+                                if (state.isAdmin) " The music libraries and podcast folder are under Server Settings → MUSIC and PODCASTS." else "",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

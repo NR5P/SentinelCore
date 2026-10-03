@@ -57,10 +57,18 @@ struct SentinelCoreApp: App {
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             }
+            AudioCommands()
         }
         #endif
 
         #if os(macOS)
+        // Music and Podcasts' Now Playing, in a window of its own as on the Mac's Music app.
+        Window("Now Playing", id: NowPlayingView.windowId) {
+            NowPlayingView()
+                .environmentObject(appModel)
+        }
+        .defaultSize(width: 980, height: 680)
+
         // "This Mac as a camera" in its own window - opened from Settings, the Live toolbar, or
         // on its own when a stream resumes after a relaunch (DeviceCameraPresenter in RootView).
         // A window, not a sheet: see that presenter for the crash a sheet caused here.

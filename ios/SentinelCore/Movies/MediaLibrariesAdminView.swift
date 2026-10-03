@@ -352,12 +352,28 @@ struct MediaLibraryEditView: View {
 
 // MARK: - Folder picker
 
+// The picker is shared by Movies & TV and by Music / Podcasts: the same listing shape and the same
+// saved network sign-ins, under /api/media or /api/audio.
+enum MediaBrowseScope {
+    case media, audio
+
+    func count(_ count: Int) -> String {
+        switch self {
+        case .media: "\(count) video\(count == 1 ? "" : "s")"
+        case .audio: "\(count) audio file\(count == 1 ? "" : "s")"
+        }
+    }
+}
+
 struct MediaFolderPickerView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
     /// The library's folder box: read once to open the picker there, written by Use This Folder.
     @Binding var path: String
+    /// Which picker routes to walk: Movies' /api/media/browse, or Music's /api/audio/browse (the
+    /// same shape, counting audio files instead of videos - MUSIC_AND_PODCASTS.md §1).
+    var scope: MediaBrowseScope = .media
 
     @State private var listing: MediaBrowseListing?
     @State private var typedPath = ""
@@ -430,7 +446,7 @@ struct MediaFolderPickerView: View {
                         Text(listing.kind == "computer" ? "Shared Folders" : "Folders")
                     } footer: {
                         if let count = listing.videoCount, count > 0 {
-                            Text("\(count) video\(count == 1 ? "" : "s") directly in this folder.")
+                            Text("\(scope.count(count)) directly in this folder.")
                         }
                     }
                 }
@@ -548,7 +564,7 @@ struct MediaFolderPickerView: View {
     // moment it was presented (even with a bare Text as the destination). It hands back where to
     // go next through a binding for the same reason Choose Folder… takes one.
     private func signInView(host: String, computer: MediaNetworkComputer?) -> some View {
-        MediaNetworkSignInView(host: host, computer: computer, openAfter: $openAfterSignIn)
+        MediaNetworkSignInView(host: host, computer: computer, openAfter: $openAfterSignIn, scope: scope)
     }
 
     private func folderButton(_ folder: MediaBrowseFolder) -> some View {
@@ -560,7 +576,7 @@ struct MediaFolderPickerView: View {
                     .lineLimit(1)
                 Spacer()
                 if let count = folder.videoCount, count > 0 {
-                    Text("\(count) video\(count == 1 ? "" : "s")")
+                    Text(scope.count(count))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
@@ -583,7 +599,7 @@ struct MediaFolderPickerView: View {
         errorMessage = nil
         defer { loading = false }
         do {
-            let page = try await model.client.mediaBrowse(path: path)
+            let page = try await (scope == .audio ? model.client.audioBrowse(path: path) : model.client.mediaBrowse(path: path))
             // The picker opens on whatever the path box held, which may not exist any more;
             // then it opens on the starting page rather than on an error.
             if fallBackToRoots, !path.isEmpty, page.error != nil, page.needsLogin != true {
@@ -606,7 +622,7 @@ struct MediaFolderPickerView: View {
         discovering = true
         defer { discovering = false }
         do {
-            discovered = try await model.client.discoverMediaComputers()
+            discovered = try await (scope == .audio ? model.client.discoverAudioComputers() : model.client.discoverMediaComputers())
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -623,6 +639,7 @@ struct MediaNetworkSignInView: View {
     /// What the folder picker opens once this screen closes: the computer after signing in, the
     /// starting page ("") after forgetting it.
     @Binding var openAfter: String?
+    let scope: MediaBrowseScope
 
     @State private var host: String
     @State private var displayName: String
@@ -632,8 +649,9 @@ struct MediaNetworkSignInView: View {
     @State private var errorMessage: String?
     @State private var confirmingForget = false
 
-    init(host: String, computer: MediaNetworkComputer?, openAfter: Binding<String?>) {
+    init(host: String, computer: MediaNetworkComputer?, openAfter: Binding<String?>, scope: MediaBrowseScope = .media) {
         self.computer = computer
+        self.scope = scope
         _openAfter = openAfter
         _host = State(initialValue: computer?.host ?? host)
         _displayName = State(initialValue: computer.map { $0.name == $0.host ? "" : $0.name } ?? "")
@@ -704,7 +722,7 @@ struct MediaNetworkSignInView: View {
             password: password,
             domain: nil)
         do {
-            let result = try await model.client.saveMediaNetworkComputer(id: computer?.id, input)
+            let result = try await (scope == .audio ? model.client.saveAudioNetworkComputer(id: computer?.id, input) : model.client.saveMediaNetworkComputer(id: computer?.id, input))
             openAfter = result.computer.path
             dismiss()
         } catch {
@@ -715,7 +733,7 @@ struct MediaNetworkSignInView: View {
     private func forget() async {
         guard let computer else { return }
         do {
-            try await model.client.deleteMediaNetworkComputer(id: computer.id)
+            try await (scope == .audio ? model.client.deleteAudioNetworkComputer(id: computer.id) : model.client.deleteMediaNetworkComputer(id: computer.id))
             openAfter = ""
             dismiss()
         } catch {

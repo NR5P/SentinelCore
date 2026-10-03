@@ -113,6 +113,12 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    // Music & Podcasts (core/docs/MUSIC_AND_PODCASTS.md): the shared audio player runs in a
+    // MediaLibraryService, which gives the media notification, lock screen, Bluetooth buttons and
+    // Android Auto's browsable library. See audio/AudioPlaybackService.
+    implementation("androidx.media3:media3-session:1.5.1")
+    // The session's callbacks answer with ListenableFutures; this turns a coroutine into one.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
 
     // Using this phone as one of the dashboard's cameras: its video is pushed to the server over
     // WebRTC, the same way the web dashboard's publish page does it. See DevicePublisher.

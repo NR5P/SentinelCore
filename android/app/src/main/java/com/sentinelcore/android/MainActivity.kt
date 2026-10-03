@@ -68,10 +68,13 @@ class MainActivity : ComponentActivity() {
             OrganizerNavigation.open.value = true
         }
         DevicePublisher.requestScreen(intent)
+        if (intent?.getBooleanExtra(NowPlayingExtra, false) == true) com.sentinelcore.android.ui.audio.AudioNavigation.openNowPlaying.value = true
     }
 
     companion object {
         const val EventIdExtra = "eventId"
         const val AlarmExtra = "alarm"
+        // The media notification: opens Now Playing (see audio/AudioPlaybackService).
+        const val NowPlayingExtra = "nowPlaying"
     }
 }

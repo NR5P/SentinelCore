@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -22,6 +23,12 @@
          Alarms are cleared by a reboot, hence the boot receiver that puts them back. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Music & Podcasts: the shared player keeps playing with the screen off (audio/
+         AudioPlaybackService), and offline downloads run as a data-sync job (AudioDownloads). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- The Equalizer screen applies android.media.audiofx effects to the player's session. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
         android:allowBackup="true"
@@ -38,6 +45,28 @@
             android:name=".publish.DevicePublisherService"
             android:exported="false"
             android:foregroundServiceType="camera|microphone" />
+
+        <!-- Music & Podcasts player: media notification, lock screen, Bluetooth buttons, and the
+             browsable library Android Auto shows (audio/AutoBrowse). -->
+        <service
+            android:name=".audio.AudioPlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <!-- Offline downloads run as a WorkManager foreground job of type dataSync. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
         <service
             android:name=".push.SentinelFirebaseMessagingService"

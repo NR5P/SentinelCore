@@ -253,6 +253,14 @@ struct ServerSettingsSectionView: View {
             if section.key == "hostReboot" {
                 HostRebootPanel()
             }
+            // Music → Libraries and Podcasts → Download folder "Choose…" (MUSIC_AND_PODCASTS.md §1):
+            // the parts of those two sections a schema field can't express.
+            if section.key == "music" {
+                MusicServerSettingsPanel()
+            }
+            if section.key == "podcasts" {
+                PodcastServerSettingsPanel(downloadFolder: textBinding("downloadFolder"))
+            }
         }
         .formStyle(.grouped)
         .saveFeedback(feedback)

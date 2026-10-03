@@ -88,6 +88,8 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sentinelAlarmOpened)) { _ in
             selection = .alarm
         }
+        // The Now Playing sheet, and "Go to Album" / "Go to Show" from the player above every tab.
+        .modifier(AudioRootPresenter(selection: $selection))
         #if DEBUG
         // Simulator testing without taps: `-debugSection weather` as a launch argument, like the
         // Apple TV app's.
@@ -143,7 +145,8 @@ struct RootView: View {
                 List(AppSection.sidebarCases(
                     deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled,
                     moviesEnabled: model.moviesEnabled, alarmEnabled: model.alarmEnabled,
-                    filesEnabled: model.familyFilesEnabled), selection: $selection) { section in
+                    filesEnabled: model.familyFilesEnabled, musicEnabled: model.musicEnabled,
+                    podcastsEnabled: model.podcastsEnabled), selection: $selection) { section in
                     Label(section.title, systemImage: section.icon).tag(section)
                 }
                 .listStyle(.sidebar)
@@ -159,6 +162,7 @@ struct RootView: View {
                         EventDetailView(event: event)
                     }
             }
+            .audioMiniPlayer()
         }
     }
 
@@ -170,7 +174,8 @@ struct RootView: View {
         AppSection.visibleCases(
             deviceHubEnabled: model.deviceHubEnabled, organizerEnabled: organizerEnabled,
             moviesEnabled: model.moviesEnabled, alarmEnabled: model.alarmEnabled,
-            filesEnabled: model.familyFilesEnabled)
+            filesEnabled: model.familyFilesEnabled, musicEnabled: model.musicEnabled,
+            podcastsEnabled: model.podcastsEnabled)
     }
 
     private var compactNavigation: some View {
@@ -183,6 +188,7 @@ struct RootView: View {
                             EventDetailView(event: event)
                         }
                 }
+                .audioMiniPlayer()
                 .tabItem { Label(section.title, systemImage: section.icon) }
                 .tag(CompactTab.section(section))
             }
@@ -196,6 +202,7 @@ struct RootView: View {
                             EventDetailView(event: event)
                         }
                 }
+                .audioMiniPlayer()
                 .tabItem { Label("More", systemImage: "ellipsis.circle") }
                 .tag(CompactTab.more)
             }
@@ -258,6 +265,8 @@ struct RootView: View {
         case .timeline: RecordingTimelineView()
         case .live: LiveCamerasView(isActive: selection == .live)
         case .movies: MoviesView(isActive: selection == .movies)
+        case .music: MusicView(isActive: selection == .music)
+        case .podcasts: PodcastsView(isActive: selection == .podcasts)
         case .devices: DeviceHubView(isActive: selection == .devices)
         case .alarm: AlarmView(isActive: selection == .alarm)
         case .organizer: OrganizerView()
@@ -278,7 +287,8 @@ private enum CompactTab: Hashable {
 // once with the clip. They are now one Events section over the server's merged list.
 enum AppSection: String, CaseIterable, Identifiable {
     // Weather sits after the Organizer, as on the dashboard's tab row.
-    case events, timeline, live, movies, alarm, organizer, weather, files, devices, settings
+    // Music and Podcasts sit with Movies, the other things to play.
+    case events, timeline, live, movies, music, podcasts, alarm, organizer, weather, files, devices, settings
     var id: Self { self }
     var title: String {
         switch self {
@@ -286,6 +296,8 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .timeline: "Timeline"
         case .live: "Live"
         case .movies: "Movies"
+        case .music: "Music"
+        case .podcasts: "Podcasts"
         case .alarm: "Alarm"
         case .organizer: "Organizer"
         case .weather: "Weather"
@@ -300,6 +312,8 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .timeline: "clock.arrow.circlepath"
         case .live: "video.fill"
         case .movies: "film.stack"
+        case .music: "music.note"
+        case .podcasts: "mic.fill"
         case .alarm: "lock.shield.fill"
         case .organizer: "calendar"
         case .weather: "cloud.sun.fill"
@@ -312,10 +326,12 @@ enum AppSection: String, CaseIterable, Identifiable {
     // The Device Hub, the Organizer, Movies & TV, the Alarm and Files can each be switched off
     // server-side, so every list of sections is filtered rather than using allCases directly.
     static func visibleCases(deviceHubEnabled: Bool, organizerEnabled: Bool, moviesEnabled: Bool = false,
-                             alarmEnabled: Bool = false, filesEnabled: Bool = false) -> [AppSection] {
+                             alarmEnabled: Bool = false, filesEnabled: Bool = false,
+                             musicEnabled: Bool = false, podcastsEnabled: Bool = false) -> [AppSection] {
         allCases.filter {
             ($0 != .devices || deviceHubEnabled) && ($0 != .organizer || organizerEnabled)
                 && ($0 != .movies || moviesEnabled)
+                && ($0 != .music || musicEnabled) && ($0 != .podcasts || podcastsEnabled)
                 && ($0 != .alarm || alarmEnabled) && ($0 != .files || filesEnabled)
         }
     }
@@ -330,9 +346,11 @@ enum AppSection: String, CaseIterable, Identifiable {
     // when clicked. The sidebar row renders into the split view's detail column, which does have
     // one, so those screens work from here. Both routes now lead to the same place.
     static func sidebarCases(deviceHubEnabled: Bool, organizerEnabled: Bool, moviesEnabled: Bool = false,
-                             alarmEnabled: Bool = false, filesEnabled: Bool = false) -> [AppSection] {
+                             alarmEnabled: Bool = false, filesEnabled: Bool = false,
+                             musicEnabled: Bool = false, podcastsEnabled: Bool = false) -> [AppSection] {
         visibleCases(deviceHubEnabled: deviceHubEnabled, organizerEnabled: organizerEnabled,
-                     moviesEnabled: moviesEnabled, alarmEnabled: alarmEnabled, filesEnabled: filesEnabled)
+                     moviesEnabled: moviesEnabled, alarmEnabled: alarmEnabled, filesEnabled: filesEnabled,
+                     musicEnabled: musicEnabled, podcastsEnabled: podcastsEnabled)
     }
 }
 

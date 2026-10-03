@@ -7,6 +7,8 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
@@ -22,6 +24,8 @@ internal enum class AppSection(
     TIMELINE("Timeline", "timeline"),
     LIVE("Live", "live"),
     MOVIES("Movies", "movies"),
+    MUSIC("Music", "music"),
+    PODCASTS("Podcasts", "podcasts"),
     ALARM("Alarm", "alarm"),
     ORGANIZER("Organizer", "organizer"),
     WEATHER("Weather", "weather"),
@@ -38,6 +42,8 @@ internal enum class AppSection(
             TIMELINE -> Icons.Default.History
             LIVE -> Icons.Default.LiveTv
             MOVIES -> Icons.Default.Movie
+            MUSIC -> Icons.Default.LibraryMusic
+            PODCASTS -> Icons.Default.Podcasts
             ALARM -> Icons.Default.Shield
             ORGANIZER -> Icons.Default.CalendarMonth
             WEATHER -> Icons.Default.WbSunny
@@ -57,9 +63,13 @@ internal enum class AppSection(
             alarmEnabled: Boolean = false,
             filesEnabled: Boolean = false,
             weatherEnabled: Boolean = false,
+            musicEnabled: Boolean = false,
+            podcastsEnabled: Boolean = false,
         ): List<AppSection> =
             entries.filter {
-                (it != DEVICES || deviceHubEnabled) &&
+                (it != MUSIC || musicEnabled) &&
+                    (it != PODCASTS || podcastsEnabled) &&
+                    (it != DEVICES || deviceHubEnabled) &&
                     (it != ORGANIZER || organizerEnabled) &&
                     (it != MOVIES || moviesEnabled) &&
                     (it != ALARM || alarmEnabled) &&

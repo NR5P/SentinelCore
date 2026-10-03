@@ -319,6 +319,11 @@ private fun ServerSettingsSectionEditor(
     // scroll. The panel below is pure rendering; the state and the timers live at screen scope.
     val hostReboot = remember(section.key) { HostRebootState() }
 
+    // The audio folder picker, shown in place of the section while choosing (Music → Libraries,
+    // Podcasts → Download folder). Held here so the form's typed values survive the trip.
+    var audioPicker by remember { mutableStateOf<Pair<String, (String) -> Unit>?>(null) }
+    val libraryForm = remember(section.key) { com.sentinelcore.android.ui.audio.LibraryForm() }
+
     // One request per field that asks for one, when this section is opened - the phone reaches a
     // section by drilling into it, so there is nothing further to defer. A failure is not worth a
     // banner: the field stays the text box it has always been, with the server's own explanation
@@ -469,6 +474,18 @@ private fun ServerSettingsSectionEditor(
         }
     }
 
+    audioPicker?.let { (start, use) ->
+        androidx.activity.compose.BackHandler { audioPicker = null }
+        com.sentinelcore.android.ui.audio.AudioFolderPicker(
+            state = model.state.value,
+            model = model,
+            startPath = start,
+            onUse = { chosen -> use(chosen); audioPicker = null },
+            onClose = { audioPicker = null },
+        )
+        return
+    }
+
     SaveFeedbackHost(feedback) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -601,6 +618,24 @@ private fun ServerSettingsSectionEditor(
             // the server can answer, and the answer can change without this app being told.
             if (section.key == "hostReboot") {
                 item { HostRebootPanel(model, hostReboot, scope) }
+            }
+            // Music & Podcasts (MUSIC_AND_PODCASTS.md §1): the library list and the download
+            // folder's picker sit under the schema's own fields.
+            if (section.key == "music") {
+                item {
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        com.sentinelcore.android.ui.audio.MusicLibrariesPanel(model.audio, libraryForm) { start, use -> audioPicker = start to use }
+                    }
+                }
+            }
+            if (section.key == "podcasts") {
+                item {
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        com.sentinelcore.android.ui.audio.PodcastsFolderPanel(model.audio) {
+                            audioPicker = (text["downloadFolder"] ?: "") to { chosen -> text["downloadFolder"] = chosen }
+                        }
+                    }
+                }
             }
             item { Spacer(Modifier.padding(12.dp)) }
         }

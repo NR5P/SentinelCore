@@ -108,9 +108,11 @@
 	<string>Sentinel Core connects to your camera security server and live video streams on your local network.</string>
 	<!-- Keeping the Organizer and its Home Screen widgets current while the app is closed: the
 	     server's silent push (remote-notification) and a periodic background refresh (fetch).
-	     See OrganizerBackgroundRefresh. -->
+	     See OrganizerBackgroundRefresh. Music and Podcasts keep playing with the screen locked
+	     (audio) - see AudioPlayer. -->
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>

@@ -6,4 +6,6 @@
     <cache-path name="organizer" path="organizer-open/" />
     <!-- Files-library downloads, copied out under their real names for Open and Share. -->
     <cache-path name="files" path="files-open/" />
+    <!-- Podcast clips and OPML exports, handed to the share sheet (ui/podcasts). -->
+    <cache-path name="audio" path="audio-share/" />
 </paths>

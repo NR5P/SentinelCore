@@ -52,6 +52,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.sentinelcore.android.data.MediaApi
 import com.sentinelcore.android.data.MediaBrowseFolder
 import com.sentinelcore.android.data.MediaBrowseListing
 import com.sentinelcore.android.data.MediaDiscoveredComputer
@@ -90,6 +91,11 @@ fun MediaFolderPicker(
     startPath: String,
     onUse: (String) -> Unit,
     onClose: () -> Unit,
+    // Music & Podcasts reuse this picker against /api/audio/browse, whose counts are audio files.
+    routeBase: String = MediaApi.MEDIA_ROUTES,
+    countLabel: (Int) -> String = MediaLibraryForm::videoCountLabel,
+    pathPlaceholder: String = "/mnt/movies or smb://PC/Movies",
+    backLabel: String = "Back to the library",
 ) {
     val scope = rememberCoroutineScope()
     var listing by remember { mutableStateOf<MediaBrowseListing?>(null) }
@@ -107,7 +113,7 @@ fun MediaFolderPicker(
         scope.launch {
             loading = true
             requestError = null
-            runCatching { model.mediaBrowse(path) }
+            runCatching { model.mediaBrowse(path, routeBase) }
                 .onSuccess { result ->
                     listing = result
                     pathField = result.path
@@ -115,7 +121,7 @@ fun MediaFolderPicker(
                         // Match a saved sign-in for the same computer so the form edits it
                         // (and offers Forget) instead of adding a second one.
                         val host = result.host.orEmpty()
-                        val saved = if (host.isBlank()) null else runCatching { model.mediaNetworkComputers() }
+                        val saved = if (host.isBlank()) null else runCatching { model.mediaNetworkComputers(routeBase) }
                             .getOrNull()?.firstOrNull { it.host.equals(host, ignoreCase = true) }
                         signIn = SignInTarget(saved, saved?.host ?: host, result.error)
                     }
@@ -130,7 +136,7 @@ fun MediaFolderPicker(
     val target = signIn
     BackHandler(enabled = target != null) { signIn = null }
     if (target != null) {
-        MediaNetworkSignInForm(
+        MediaNetworkSignInForm(routeBase = routeBase,
             state = state,
             model = model,
             target = target,
@@ -152,7 +158,7 @@ fun MediaFolderPicker(
         ScreenHeader("Choose a Folder", state)
         TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-            Text("Back to the library", modifier = Modifier.weight(1f).padding(start = 8.dp))
+            Text(backLabel, modifier = Modifier.weight(1f).padding(start = 8.dp))
         }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp),
@@ -163,7 +169,7 @@ fun MediaFolderPicker(
                 value = pathField,
                 onValueChange = { pathField = it },
                 label = { Text("Folder") },
-                placeholder = { Text("/mnt/movies or smb://PC/Movies") },
+                placeholder = { Text(pathPlaceholder) },
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
@@ -209,7 +215,7 @@ fun MediaFolderPicker(
                             OutlinedButton(onClick = {
                                 scope.launch {
                                     val host = current.host.orEmpty()
-                                    val saved = runCatching { model.mediaNetworkComputers() }.getOrNull()
+                                    val saved = runCatching { model.mediaNetworkComputers(routeBase) }.getOrNull()
                                         ?.firstOrNull { it.host.equals(host, ignoreCase = true) }
                                     signIn = SignInTarget(saved, saved?.host ?: host, message)
                                 }
@@ -227,7 +233,7 @@ fun MediaFolderPicker(
             if (!current.isRoots && current.error == null && ownCount > 0) {
                 item {
                     Text(
-                        "${MediaLibraryForm.videoCountLabel(ownCount)} in this folder",
+                        "${countLabel(ownCount)} in this folder",
                         style = MaterialTheme.typography.bodySmall,
                         color = SentinelGreen,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -241,7 +247,7 @@ fun MediaFolderPicker(
                     item { PickerNote("No folders found. Type a path above.") }
                 }
                 items(current.folders, key = { "local-" + it.path }) { folder ->
-                    FolderRow(folder, Icons.Filled.Folder, showPath = true) { load(folder.path) }
+                    FolderRow(folder, Icons.Filled.Folder, showPath = true, countLabel = countLabel) { load(folder.path) }
                 }
 
                 item { PickerSectionTitle("Network computers") }
@@ -269,7 +275,7 @@ fun MediaFolderPicker(
                                 scope.launch {
                                     discovering = true
                                     discoverError = null
-                                    runCatching { model.discoverMediaNetworkComputers() }
+                                    runCatching { model.discoverMediaNetworkComputers(routeBase) }
                                         .onSuccess { discovered = it }
                                         .onFailure { discoverError = it.message ?: "Could not look for computers." }
                                     discovering = false
@@ -313,7 +319,7 @@ fun MediaFolderPicker(
                 }
                 val icon = if (current.kind == "computer") Icons.Filled.FolderShared else Icons.Filled.Folder
                 items(current.folders, key = { "f-" + it.path }) { folder ->
-                    FolderRow(folder, icon, showPath = false) { load(folder.path) }
+                    FolderRow(folder, icon, showPath = false, countLabel = countLabel) { load(folder.path) }
                 }
             }
         }
@@ -352,7 +358,7 @@ private fun PickerNote(text: String) {
 }
 
 @Composable
-private fun FolderRow(folder: MediaBrowseFolder, icon: ImageVector, showPath: Boolean, onClick: () -> Unit) {
+private fun FolderRow(folder: MediaBrowseFolder, icon: ImageVector, showPath: Boolean, countLabel: (Int) -> String, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -369,7 +375,7 @@ private fun FolderRow(folder: MediaBrowseFolder, icon: ImageVector, showPath: Bo
         if (count > 0) {
             Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
                 Text(
-                    MediaLibraryForm.videoCountLabel(count),
+                    countLabel(count),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 )
@@ -398,7 +404,7 @@ private fun ComputerRow(title: String, subtitle: String, onOpen: () -> Unit, onS
 // The server tests the sign-in before saving it, so a refusal keeps this form open with the
 // server's message.
 @Composable
-private fun MediaNetworkSignInForm(
+private fun MediaNetworkSignInForm(routeBase: String,
     state: SentinelUiState,
     model: SentinelViewModel,
     target: SignInTarget,
@@ -497,7 +503,7 @@ private fun MediaNetworkSignInForm(
                                     password = password,
                                     domain = existing?.domain.orEmpty(),
                                 )
-                                runCatching { model.saveMediaNetworkComputer(existing?.id, input) }
+                                runCatching { model.saveMediaNetworkComputer(existing?.id, input, routeBase) }
                                     .onSuccess(onSignedIn)
                                     // A MediaNetworkSignInException is the server refusing the
                                     // sign-in; either way the form stays open with the message.
@@ -533,7 +539,7 @@ private fun MediaNetworkSignInForm(
                 confirmForget = false
                 scope.launch {
                     busy = true
-                    runCatching { model.deleteMediaNetworkComputer(existing.id) }
+                    runCatching { model.deleteMediaNetworkComputer(existing.id, routeBase) }
                         .onSuccess { onForgotten() }
                         .onFailure { error = it.message ?: "Could not forget that computer." }
                     busy = false

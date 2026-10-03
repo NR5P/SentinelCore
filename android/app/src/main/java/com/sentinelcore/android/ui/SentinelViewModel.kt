@@ -8,6 +8,8 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import com.sentinelcore.android.data.MediaApi
+import com.sentinelcore.android.audio.AudioEnabled
+import com.sentinelcore.android.audio.AudioRuntime
 import com.sentinelcore.android.data.WeatherDetails
 import com.sentinelcore.android.data.WeatherMapInfo
 import com.sentinelcore.android.data.WeatherReport
@@ -186,6 +188,10 @@ data class SentinelUiState(
     // the location setting; only an older server lacks it. Starts from what the server said last
     // time, like moviesEnabled, so the tab doesn't blink in on every launch.
     val weatherEnabled: Boolean = false,
+    // Music & Podcasts (core/docs/MUSIC_AND_PODCASTS.md): each tab exists only while the server
+    // has it switched on. Starts from what the server said last time.
+    val musicEnabled: Boolean = false,
+    val podcastsEnabled: Boolean = false,
     // The alarm as last polled - see AlarmScreen. Null until the screen has asked.
     val alarmStatus: AlarmStatus? = null,
     // Whether the server has the Files library switched on - same treatment as the Device Hub.
@@ -251,6 +257,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         application.getSharedPreferences("sentinel_core", Application.MODE_PRIVATE)
     private val logSequence = AtomicLong()
     private val repository = SentinelRepository(application, ::log)
+
+    // The shared player, downloads and speaker - process-wide, like the Organizer's runtime.
+    val audio: AudioRuntime = AudioRuntime.get(application)
     private val serverDiscovery = ServerDiscovery(application)
     private val _state = MutableStateFlow(
         SentinelUiState(
@@ -260,6 +269,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             organizerEnabled = OrganizerDevice.lastKnownEnabled(application),
             moviesEnabled = preferences.getBoolean(MOVIES_ENABLED_KEY, false),
             weatherEnabled = preferences.getBoolean(WEATHER_ENABLED_KEY, false),
+            musicEnabled = AudioRuntime.get(application).enabled.value.music,
+            podcastsEnabled = AudioRuntime.get(application).enabled.value.podcasts,
         ),
     )
 
@@ -283,6 +294,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         // and outlives this ViewModel, since a foreground service keeps it streaming after the
         // Activity is gone. See DevicePublisher.
         DevicePublisher.attach(application, repository, ::log)
+        // Music & Podcasts share this repository too, and outlive this ViewModel the same way:
+        // the playback service keeps the process alive. See audio/AudioRuntime.
+        audio.attach(repository)
         refreshNotificationPermission()
         // The engine follows the connection: running while online and in the foreground.
         viewModelScope.launch {
@@ -409,7 +423,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                     "Connection established; loaded ${_state.value.activity.size} events",
                     DiagnosticLevel.INFO,
                 )
-                refreshPushStatus()
+                resolvePendingPushEvent()
+                audio.onConnected()
                 syncPushRegistration()
                 resolvePendingPushEvent()
             } catch (error: Exception) {
@@ -555,6 +570,12 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                     runCatching { repository.mediaEnabled() }
                         .onSuccess(::setMoviesEnabled)
                         .onFailure { setMoviesEnabled(false) }
+                },
+                // Music & Podcasts: /api/audio/enabled always answers; an older server 404s,
+                // which the API reads as both off. A failed request keeps what was known.
+                viewModelScope.async {
+                    runCatching { audio.api.enabled() }
+                        .onSuccess(::setAudioEnabled)
                 },
                 // Same again for the weather: only an older server lacks it.
                 viewModelScope.async {
@@ -707,6 +728,18 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     fun mediaHeaders(): Map<String, String> = repository.mediaHeaders()
 
+    // ---------------- Music & Podcasts ----------------
+
+    private fun setAudioEnabled(enabled: AudioEnabled) {
+        audio.setEnabled(enabled)
+        _state.update { it.copy(musicEnabled = enabled.music, podcastsEnabled = enabled.podcasts) }
+    }
+
+    // Settings saved a section that might have switched a tab on or off.
+    fun refreshAudioEnabled() {
+        viewModelScope.launch { runCatching { audio.api.enabled() }.onSuccess(::setAudioEnabled) }
+    }
+
     // ---------------- Weather ----------------
 
     private fun setWeatherEnabled(enabled: Boolean) {
@@ -811,16 +844,22 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun scanAllMedia() = repository.scanAllMedia()
 
-    suspend fun mediaBrowse(path: String?): MediaBrowseListing = repository.mediaBrowse(path)
+    // `base` is /api/media for Movies & TV and /api/audio for Music & Podcasts: the same picker
+    // and the same saved sign-ins behind both (MUSIC_AND_PODCASTS.md §1).
+    suspend fun mediaBrowse(path: String?, base: String = MediaApi.MEDIA_ROUTES): MediaBrowseListing =
+        repository.mediaBrowse(path, base)
 
-    suspend fun mediaNetworkComputers(): List<MediaNetworkComputer> = repository.mediaNetworkComputers()
+    suspend fun mediaNetworkComputers(base: String = MediaApi.MEDIA_ROUTES): List<MediaNetworkComputer> =
+        repository.mediaNetworkComputers(base)
 
-    suspend fun saveMediaNetworkComputer(id: String?, input: MediaNetworkSignInInput): MediaNetworkSignInResult =
-        repository.saveMediaNetworkComputer(id, input)
+    suspend fun saveMediaNetworkComputer(id: String?, input: MediaNetworkSignInInput, base: String = MediaApi.MEDIA_ROUTES): MediaNetworkSignInResult =
+        repository.saveMediaNetworkComputer(id, input, base)
 
-    suspend fun deleteMediaNetworkComputer(id: String) = repository.deleteMediaNetworkComputer(id)
+    suspend fun deleteMediaNetworkComputer(id: String, base: String = MediaApi.MEDIA_ROUTES) =
+        repository.deleteMediaNetworkComputer(id, base)
 
-    suspend fun discoverMediaNetworkComputers(): List<MediaDiscoveredComputer> = repository.discoverMediaNetworkComputers()
+    suspend fun discoverMediaNetworkComputers(base: String = MediaApi.MEDIA_ROUTES): List<MediaDiscoveredComputer> =
+        repository.discoverMediaNetworkComputers(base)
 
     // Movie downloads ("+ Add" on the Movies tab) - core/docs/MOVIE_DOWNLOADS.md. Null status
     // means the feature is off or the server predates it.
@@ -1046,7 +1085,10 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         }
 
     suspend fun saveSettingsSection(endpoint: String, body: org.json.JSONObject): Boolean =
-        repository.saveSettingsSection(endpoint, body)
+        repository.saveSettingsSection(endpoint, body).also {
+            // MUSIC and PODCASTS each carry an `enabled` switch that adds or removes a tab.
+            if (endpoint.endsWith("/music") || endpoint.endsWith("/podcasts")) refreshAudioEnabled()
+        }
 
     suspend fun settingsLookup(lookup: SettingsLookup, query: String): List<SettingsLookupCandidate> =
         repository.settingsLookup(lookup, query)

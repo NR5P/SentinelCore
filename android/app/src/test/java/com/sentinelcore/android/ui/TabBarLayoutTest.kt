@@ -36,12 +36,25 @@ class TabBarLayoutTest {
             alarmEnabled = true,
             filesEnabled = true,
             weatherEnabled = true,
+            musicEnabled = true,
+            podcastsEnabled = true,
         )
         assertEquals(
-            listOf(EVENTS, TIMELINE, LIVE, AppSection.MOVIES, AppSection.ALARM, ORGANIZER, AppSection.WEATHER, FILES, DEVICES, SETTINGS),
+            listOf(
+                EVENTS, TIMELINE, LIVE, AppSection.MOVIES, AppSection.MUSIC, AppSection.PODCASTS, AppSection.ALARM,
+                ORGANIZER, AppSection.WEATHER, FILES, DEVICES, SETTINGS,
+            ),
             all,
         )
         assertEquals(AppSection.entries.toList(), all)
+    }
+
+    @Test
+    fun `music and podcasts each follow their own switch`() {
+        val musicOnly = AppSection.visible(deviceHubEnabled = false, organizerEnabled = false, musicEnabled = true)
+        assertEquals(listOf(EVENTS, TIMELINE, LIVE, AppSection.MUSIC, SETTINGS), musicOnly)
+        val podcastsOnly = AppSection.visible(deviceHubEnabled = false, organizerEnabled = false, podcastsEnabled = true)
+        assertEquals(listOf(EVENTS, TIMELINE, LIVE, AppSection.PODCASTS, SETTINGS), podcastsOnly)
     }
 
     @Test

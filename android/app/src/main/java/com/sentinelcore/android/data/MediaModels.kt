@@ -337,6 +337,9 @@ internal object MediaLibraryForm {
     fun kindLabel(kind: String): String = if (kind == "shows") "TV Shows" else "Movies"
 
     fun videoCountLabel(count: Int): String = if (count == 1) "1 video" else "$count videos"
+
+    // /api/audio/browse counts audio files in the same field.
+    fun audioCountLabel(count: Int): String = if (count == 1) "1 audio file" else "$count audio files"
 }
 
 // ---------------- Parsing ----------------
@@ -759,11 +762,16 @@ internal object MediaApi {
 
     fun libraryPath(id: String): String = "/api/media/libraries/${segment(id)}"
 
-    fun networkComputerPath(id: String): String = "/api/media/network/${segment(id)}"
+    // The folder picker and network sign-ins are shared with Music & Podcasts, which serve the
+    // same shapes under /api/audio (MUSIC_AND_PODCASTS.md §1) - hence the route base.
+    const val MEDIA_ROUTES = "/api/media"
+    const val AUDIO_ROUTES = "/api/audio"
+
+    fun networkComputerPath(id: String, base: String = MEDIA_ROUTES): String = "$base/network/${segment(id)}"
 
     // No path (or a blank one) is the starting page.
-    fun browsePath(path: String?): String =
-        if (path.isNullOrBlank()) "/api/media/browse" else "/api/media/browse?path=${query(path)}"
+    fun browsePath(path: String?, base: String = MEDIA_ROUTES): String =
+        if (path.isNullOrBlank()) "$base/browse" else "$base/browse?path=${query(path)}"
 
     fun formatSeconds(seconds: Double): String =
         if (seconds % 1.0 == 0.0) seconds.toLong().toString() else "%.1f".format(java.util.Locale.ROOT, seconds)

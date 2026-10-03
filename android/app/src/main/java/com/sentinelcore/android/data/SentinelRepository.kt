@@ -478,8 +478,8 @@ class SentinelRepository(
 
     // Always a 200 on a working server; a folder that can't be opened comes back with `error`.
     // Browsing a computer can take a while (name lookup, sign-in), hence the longer timeout.
-    suspend fun mediaBrowse(path: String?): MediaBrowseListing = withContext(Dispatchers.IO) {
-        val (status, body) = requestWithStatus(MediaApi.browsePath(path), method = "GET", body = null, readTimeoutMillis = 60_000)
+    suspend fun mediaBrowse(path: String?, base: String = MediaApi.MEDIA_ROUTES): MediaBrowseListing = withContext(Dispatchers.IO) {
+        val (status, body) = requestWithStatus(MediaApi.browsePath(path, base), method = "GET", body = null, readTimeoutMillis = 60_000)
         if (status !in 200..299) {
             throw SentinelApiException(
                 status,
@@ -489,16 +489,16 @@ class SentinelRepository(
         parseMediaBrowseListing(JSONObject(body))
     }
 
-    suspend fun mediaNetworkComputers(): List<MediaNetworkComputer> = withContext(Dispatchers.IO) {
-        parseMediaNetworkComputers(JSONArray(request("/api/media/network")))
+    suspend fun mediaNetworkComputers(base: String = MediaApi.MEDIA_ROUTES): List<MediaNetworkComputer> = withContext(Dispatchers.IO) {
+        parseMediaNetworkComputers(JSONArray(request("$base/network")))
     }
 
     // Signs in and saves only if that works (POST, or PUT to update the saved `id`). A refused
     // sign-in is a 400 that throws MediaNetworkSignInException, so the form can stay open.
-    suspend fun saveMediaNetworkComputer(id: String?, input: MediaNetworkSignInInput): MediaNetworkSignInResult =
+    suspend fun saveMediaNetworkComputer(id: String?, input: MediaNetworkSignInInput, base: String = MediaApi.MEDIA_ROUTES): MediaNetworkSignInResult =
         withContext(Dispatchers.IO) {
             val (status, body) = requestWithStatus(
-                if (id == null) "/api/media/network" else MediaApi.networkComputerPath(id),
+                if (id == null) "$base/network" else MediaApi.networkComputerPath(id, base),
                 method = if (id == null) "POST" else "PUT",
                 body = input.toJson().toString(),
                 readTimeoutMillis = 60_000,
@@ -514,14 +514,14 @@ class SentinelRepository(
             }
         }
 
-    suspend fun deleteMediaNetworkComputer(id: String): Unit = withContext(Dispatchers.IO) {
-        request(MediaApi.networkComputerPath(id), method = "DELETE")
+    suspend fun deleteMediaNetworkComputer(id: String, base: String = MediaApi.MEDIA_ROUTES): Unit = withContext(Dispatchers.IO) {
+        request(MediaApi.networkComputerPath(id, base), method = "DELETE")
         Unit
     }
 
     // Takes about three seconds: the server listens for mDNS answers.
-    suspend fun discoverMediaNetworkComputers(): List<MediaDiscoveredComputer> = withContext(Dispatchers.IO) {
-        val (status, body) = requestWithStatus("/api/media/network/discover", method = "GET", body = null, readTimeoutMillis = 30_000)
+    suspend fun discoverMediaNetworkComputers(base: String = MediaApi.MEDIA_ROUTES): List<MediaDiscoveredComputer> = withContext(Dispatchers.IO) {
+        val (status, body) = requestWithStatus("$base/network/discover", method = "GET", body = null, readTimeoutMillis = 30_000)
         if (status !in 200..299) {
             throw SentinelApiException(status, parseServerError(body) ?: "Server request failed (HTTP $status).")
         }

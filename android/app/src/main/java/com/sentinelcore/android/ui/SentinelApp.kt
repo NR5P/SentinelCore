@@ -118,6 +118,11 @@ import com.sentinelcore.android.ui.screens.MovieDownloadsScreen
 import com.sentinelcore.android.ui.screens.MoviePlayerScreen
 import com.sentinelcore.android.ui.screens.MoviesScreen
 import com.sentinelcore.android.ui.weather.WeatherScreen
+import com.sentinelcore.android.ui.audio.*
+import com.sentinelcore.android.ui.music.*
+import com.sentinelcore.android.ui.podcasts.*
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.layout.navigationBarsPadding
 import com.sentinelcore.android.ui.screens.movieDetailRoute
 import com.sentinelcore.android.ui.screens.moviePlayerRoute
 import com.sentinelcore.android.ui.screens.LivePlayerScreen
@@ -136,6 +141,8 @@ import com.sentinelcore.android.ui.theme.SentinelPanel
 import com.sentinelcore.android.ui.theme.SentinelTextDim
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
@@ -242,11 +249,17 @@ private fun AppShell(
     // falls through to Events, which is where its Back lands anyway.
     val selectedSection = AppSection.entries.firstOrNull { section ->
         currentRoute == section.route || currentRoute?.startsWith("${section.route}/") == true
-    } ?: AppSection.EVENTS
+    } ?: when {
+        // The screens Music and Podcasts share (stats, alarms, downloads…) stay under the tab
+        // they're usually opened from.
+        currentRoute?.startsWith("audio/") == true && state.musicEnabled -> AppSection.MUSIC
+        currentRoute?.startsWith("audio/") == true && state.podcastsEnabled -> AppSection.PODCASTS
+        else -> AppSection.EVENTS
+    }
     // The Device Hub's wall display is the one screen that takes the whole tablet: no bar, no
     // rail, nothing to tap by accident. Its own Exit (or the back gesture) is the way out.
     // The movie player is the other: a film gets the whole screen.
-    val chromeHidden = currentRoute == DEVICE_WALL_ROUTE || currentRoute == MOVIE_PLAYER_ROUTE
+    val chromeHidden = currentRoute == DEVICE_WALL_ROUTE || currentRoute == MOVIE_PLAYER_ROUTE || currentRoute == AudioRoutes.WRAPPED
 
     // Navigates straight to the pushed event without waiting for state.events to already contain
     // it - the detail route itself shows a brief loading state if the list hasn't caught up yet,
@@ -366,9 +379,55 @@ private fun AppShell(
         alarmEnabled = state.alarmEnabled,
         filesEnabled = state.familyFilesEnabled,
         weatherEnabled = state.weatherEnabled,
+        musicEnabled = state.musicEnabled,
+        podcastsEnabled = state.podcastsEnabled,
     )
     val openTabBarEditor = { navController.navigate(TAB_BAR_EDITOR_ROUTE) { launchSingleTop = true } }
 
+    // Music & Podcasts: the shared state behind both tabs' screens, the mini player and Now
+    // Playing. See ui/audio/AudioUi.
+    val audioScope = rememberCoroutineScope()
+    val audioUi = remember(navController, state.isAdmin) {
+        fun go(route: String) = navController.navigate(route) { launchSingleTop = true }
+        AudioUi(
+            runtime = model.audio,
+            scope = audioScope,
+            isAdmin = state.isAdmin,
+            nav = AudioNav(
+                openAlbum = { go("music/album/${Uri.encode(it)}") },
+                openArtist = { go("music/artist/${Uri.encode(it)}") },
+                openPlaylist = { go("music/playlist/${Uri.encode(it)}") },
+                openGenre = { go("music/genre/${Uri.encode(it)}") },
+                openDecade = { go("music/decade/$it") },
+                openShow = { go("podcasts/show/${Uri.encode(it)}") },
+                openEpisode = { go("podcasts/episode/${Uri.encode(it)}") },
+                openPreview = { feed, itunes ->
+                    go("podcasts/preview?feed=${Uri.encode(feed ?: "")}&itunes=${itunes ?: ""}")
+                },
+                open = { go(it) },
+                back = { navController.popBackStack() },
+            ),
+        )
+    }
+    // Android 13+ shows the media notification only with this permission. Asked once, the first
+    // time something plays; playback works either way.
+    // Only whether something is queued: collecting the whole player state here would recompose the
+    // entire shell on every play/pause.
+    val audioHasQueue by remember(model) { model.audio.engine.state.map { it.hasQueue }.distinctUntilChanged() }.collectAsStateWithLifecycle(false)
+    val notificationAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshNotificationPermission() }
+    LaunchedEffect(audioHasQueue) {
+        if (audioHasQueue && android.os.Build.VERSION.SDK_INT >= 33) {
+            val prefs = context.getSharedPreferences("sentinel_audio", android.content.Context.MODE_PRIVATE)
+            val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted && !prefs.getBoolean("askedNotifications", false)) {
+                prefs.edit().putBoolean("askedNotifications", true).apply()
+                notificationAsk.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    CompositionLocalProvider(LocalAudioUi provides audioUi) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
         if (useRail) {
@@ -380,15 +439,18 @@ private fun AppShell(
                         onSelected = onSelectSection,
                     )
                 }
-                SentinelNavHost(
-                    navController = navController,
-                    state = state,
-                    model = model,
-                    tabBarPreferences = tabBarPreferences,
-                    // The rail shows every section, so there is no bar to customize.
-                    onCustomizeTabBar = null,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    SentinelNavHost(
+                        navController = navController,
+                        state = state,
+                        model = model,
+                        tabBarPreferences = tabBarPreferences,
+                        // The rail shows every section, so there is no bar to customize.
+                        onCustomizeTabBar = null,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (!chromeHidden) MiniPlayer(Modifier.navigationBarsPadding())
+                }
             }
         } else {
             val layout = tabBarPreferences.layout(visibleSections)
@@ -396,7 +458,10 @@ private fun AppShell(
             Scaffold(
                 containerColor = SentinelBackground,
                 bottomBar = {
-                    if (!chromeHidden) NavigationBar(containerColor = SentinelPanel) {
+                    if (!chromeHidden) Column {
+                    // The mini player sits on the tab bar, on every tab.
+                    MiniPlayer()
+                    NavigationBar(containerColor = SentinelPanel) {
                         layout.bar.forEach { item ->
                             NavigationBarItem(
                                 selected = selectedSection == item,
@@ -416,6 +481,7 @@ private fun AppShell(
                                 label = { Text("More") },
                             )
                         }
+                    }
                     }
                 },
             ) { padding ->
@@ -443,6 +509,9 @@ private fun AppShell(
                 )
             }
         }
+        // Now Playing, the long-press menus, the speaker picker and the snackbar, over everything.
+        AudioOverlays(snackbarBottom = if (useRail) 80.dp else 150.dp)
+    }
     }
 }
 
@@ -590,6 +659,51 @@ private fun SentinelNavHost(
             )
         }
 
+        // ---- Music & Podcasts (core/docs/MUSIC_AND_PODCASTS.md) ----
+        composable(AppSection.MUSIC.route) { MusicScreen(state) }
+        composable(AudioRoutes.ALBUM) { AlbumScreen(it.arguments?.getString("id").orEmpty()) }
+        composable(AudioRoutes.ARTIST) { ArtistScreen(it.arguments?.getString("id").orEmpty()) }
+        composable(AudioRoutes.PLAYLIST) { PlaylistScreen(it.arguments?.getString("id").orEmpty()) }
+        composable(AudioRoutes.GENRE) { GenreScreen(it.arguments?.getString("name").orEmpty()) }
+        composable(AudioRoutes.DECADE) { DecadeScreen(it.arguments?.getString("decade")?.toIntOrNull() ?: 1990) }
+        composable(AudioRoutes.SMART) { SmartPlaylistEditor(it.arguments?.getString("id")?.takeIf { id -> id != "new" }) }
+        composable(AudioRoutes.FOLDERS) { FoldersScreen() }
+        composable("music/albums?sort={sort}", arguments = listOf(navArgument("sort") { type = NavType.StringType; defaultValue = "title" })) {
+            AllAlbumsScreen(it.arguments?.getString("sort") ?: "title")
+        }
+        composable(AudioRoutes.ADD) { MusicAddScreen() }
+        composable(AudioRoutes.ALBUM_DOWNLOADS) { AlbumDownloadsScreen() }
+        composable(AudioRoutes.MUSIC_LIBRARIES) { MusicLibrariesScreen(state, model, onBack = { navController.popBackStack() }) }
+        composable(AppSection.PODCASTS.route) { PodcastsScreen(state) }
+        composable(AudioRoutes.SHOW) { ShowScreen(it.arguments?.getString("id").orEmpty()) }
+        composable(AudioRoutes.EPISODE) { EpisodeScreen(it.arguments?.getString("id").orEmpty()) }
+        composable(
+            AudioRoutes.PREVIEW,
+            arguments = listOf(
+                navArgument("feed") { type = NavType.StringType; defaultValue = "" },
+                navArgument("itunes") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            PodcastPreviewScreen(
+                entry.arguments?.getString("feed")?.takeIf { it.isNotBlank() },
+                entry.arguments?.getString("itunes")?.toLongOrNull(),
+            )
+        }
+        composable(AudioRoutes.BOOKMARKS) { BookmarksScreen() }
+        composable(AudioRoutes.TRANSCRIPT_SEARCH) { TranscriptSearchScreen() }
+        composable(AudioRoutes.CLIPS) { ClipsScreen() }
+        composable("podcasts/clip/{id}") { ClipMakerScreen(it.arguments?.getString("id").orEmpty()) }
+        composable(AudioRoutes.UP_NEXT) { UpNextPane() }
+        composable(AudioRoutes.DOWNLOADS) { DownloadsScreen() }
+        composable(AudioRoutes.ALARMS) { AlarmsScreen() }
+        composable(AudioRoutes.ALARM) { AlarmEditorScreen(it.arguments?.getString("id")?.takeIf { id -> id != "new" }) }
+        composable(AudioRoutes.BRIEFING) { BriefingScreen() }
+        composable(AudioRoutes.STATS) { StatsScreen() }
+        composable(AudioRoutes.WRAPPED) { WrappedScreen() }
+        composable(AudioRoutes.EQUALIZER) { EqualizerScreen() }
+        composable(AudioRoutes.SETTINGS) { AudioSettingsScreen() }
+        composable(AudioRoutes.LISTENBRAINZ) { ListenBrainzScreen() }
+
         composable(AppSection.WEATHER.route) {
             WeatherScreen(state = state, model = model)
         }
@@ -710,6 +824,9 @@ private fun SentinelNavHost(
                 onManageSchedules = { navController.navigate("settings/schedules") },
                 onServerSettings = { navController.navigate("settings/server") },
                 onMediaLibraries = { navController.navigate(MEDIA_LIBRARIES_ROUTE) },
+                onMusicAndPodcasts = if (state.musicEnabled || state.podcastsEnabled) {
+                    { navController.navigate(AudioRoutes.SETTINGS) }
+                } else null,
                 onCustomizeTabBar = onCustomizeTabBar,
             )
         }
@@ -723,6 +840,8 @@ private fun SentinelNavHost(
                     alarmEnabled = state.alarmEnabled,
                     filesEnabled = state.familyFilesEnabled,
                     weatherEnabled = state.weatherEnabled,
+                    musicEnabled = state.musicEnabled,
+                    podcastsEnabled = state.podcastsEnabled,
                 ),
                 onBack = { navController.popBackStack() },
             )
@@ -1091,6 +1210,8 @@ private fun SentinelNavigationRail(
             alarmEnabled = state.alarmEnabled,
             filesEnabled = state.familyFilesEnabled,
             weatherEnabled = state.weatherEnabled,
+            musicEnabled = state.musicEnabled,
+            podcastsEnabled = state.podcastsEnabled,
         ).forEach { item ->
             NavigationRailItem(
                 selected = selected == item,

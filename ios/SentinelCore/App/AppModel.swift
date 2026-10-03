@@ -81,6 +81,14 @@ final class AppModel: ObservableObject {
     // Whether the server has Family Files switched on - the shared file library with its backup
     // drives. Same job as deviceHubEnabled: decides whether the FILES section exists at all.
     @Published private(set) var familyFilesEnabled = false
+    // Music and Podcasts each have their own switch (GET /api/audio/enabled, which answers even
+    // when both are off; a 404 is an older server and means both off). Remembered like Movies.
+    @Published private(set) var musicEnabled: Bool = UserDefaults.standard.bool(forKey: "musicEnabled") {
+        didSet { UserDefaults.standard.set(musicEnabled, forKey: "musicEnabled") }
+    }
+    @Published private(set) var podcastsEnabled: Bool = UserDefaults.standard.bool(forKey: "podcastsEnabled") {
+        didSet { UserDefaults.standard.set(podcastsEnabled, forKey: "podcastsEnabled") }
+    }
 
     // Drives the UNLICENSED watermark over camera images and live video. Starts out - and stays -
     // true whenever the check can't be made: an older server has no such endpoint, and a request
@@ -602,6 +610,20 @@ final class AppModel: ObservableObject {
         } catch {
             if Self.isCancellation(error) { throw error }
             moviesEnabled = false
+        }
+        do {
+            let audio = try await client.audioEnabled()
+            musicEnabled = audio.music == true
+            podcastsEnabled = audio.podcasts == true
+            // Plays heard offline go up now that the server answers.
+            await AudioReportQueue.shared.flush()
+            SpeakerHost.shared.resumeIfEnabled()
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            if case ClientError.server(status: 404, _) = error {
+                musicEnabled = false
+                podcastsEnabled = false
+            }
         }
         // Same treatment as the Device Hub: /status always answers on a server that has the
         // feature, and a 404 from an older one just means no Files section.
