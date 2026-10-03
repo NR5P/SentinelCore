@@ -413,7 +413,10 @@ struct ClipMakerView: View {
                         ShareLink(item: file) {
                             Label("Share Clip", systemImage: "square.and.arrow.up")
                         }
-                        Text("Clip ready: \(Int(length)) seconds.").font(.footnote).foregroundStyle(.secondary)
+                        // The server stops at the end of the episode, so a 30 s clip of the last
+                        // 12 s is 12 s long - say what was made, not what was asked for.
+                        let made = request.episode.duration > 0 ? min(length, max(1, request.episode.duration - start)) : length
+                        Text("Clip ready: \(Int(made.rounded())) seconds.").font(.footnote).foregroundStyle(.secondary)
                     } else {
                         Button {
                             Task { await make() }
@@ -435,6 +438,9 @@ struct ClipMakerView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            // Opened from Now Playing, whose white tint a sheet doesn't inherit - it came up in
+            // the system blue, the one screen in the app that wasn't green.
+            .tint(SentinelTheme.green)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .onAppear {
                 guard !seeded else { return }
@@ -458,7 +464,8 @@ struct ClipMakerView: View {
             let (data, response) = try await URLSession.shared.data(from: url)
             _ = try client.validated(data, response)
             let name = (title.isEmpty ? "\(request.episode.podcastTitle ?? "Clip") - \(request.episode.title)" : title)
-                .replacingOccurrences(of: "/", with: "-").prefix(80)
+                // ":" too - "Episode 1: Birds" was shared as "Episode 1/ Birds".
+                .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: " -").prefix(80)
             let local = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).m4a")
             try data.write(to: local, options: .atomic)
             file = local

@@ -107,7 +107,10 @@ final class SpeakerHost {
     }
 
     private func apply(_ command: SpeakerCommand) async {
-        lastCommand = [command.action, command.from.map { "from \($0)" }].compactMap { $0 }.joined(separator: " ")
+        // With login off the server signs commands "(no login required)", which read as
+        // "announce from (no login required)" - only a real name is worth showing.
+        let sender = command.from.flatMap { $0.hasPrefix("(") ? nil : $0 }
+        lastCommand = [command.action, sender.map { "from \($0)" }].compactMap { $0 }.joined(separator: " ")
         switch command.action {
         case "play":
             if let volume = command.volume { player.setUserVolume(volume, ramp: command.rampSeconds ?? 0) }

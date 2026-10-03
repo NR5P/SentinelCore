@@ -1033,6 +1033,11 @@ enum AudioFormat {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
+    // For sizes set in GiB on the server (the podcast storage limit).
+    static func binaryBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary).replacingOccurrences(of: "iB", with: "B")
+    }
+
     static func relative(_ iso: String?) -> String? {
         guard let date = AudioDate.parse(iso) else { return nil }
         if Calendar.current.isDateInToday(date) { return "Today" }

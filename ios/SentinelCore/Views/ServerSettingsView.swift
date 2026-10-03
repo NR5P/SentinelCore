@@ -147,6 +147,53 @@ struct ServerSettingsView: View {
     }
 }
 
+// One server settings section reached straight from elsewhere in the app ("Server Settings →
+// Podcasts" in Podcast Storage), so a link that names a section opens that section instead of
+// the top of the 36-section list.
+struct ServerSettingsSectionByKeyView: View {
+    @EnvironmentObject private var model: AppModel
+    let key: String
+    @State private var section: SettingsSectionSchema?
+    @State private var data: [String: SettingsValue] = [:]
+    @State private var loadError: String?
+
+    var body: some View {
+        Group {
+            if let section {
+                ServerSettingsSectionView(section: section, initialData: data)
+            } else if let loadError {
+                VStack(spacing: 12) {
+                    Text(loadError).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("Retry") { Task { await load() } }
+                }
+                .padding()
+            } else {
+                ProgressView("Loading settings…")
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        loadError = nil
+        do {
+            let schema = try await model.client.settingsSchema()
+            guard let found = schema.first(where: { $0.key == key }) else {
+                loadError = "This server has no “\(key)” settings."
+                return
+            }
+            if let endpoint = found.dataEndpoint {
+                data = (try? await model.client.settingsSectionData(endpoint: endpoint)) ?? [:]
+            } else if case .object(let values)? = try await model.client.settingsSnapshot()[found.key] {
+                data = values
+            }
+            section = found
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+}
+
 // What a lookup has to say for itself between presses - "nothing found", "filled in from X", or
 // whatever the server explained went wrong. Kept apart from saveErrors so a failed lookup doesn't
 // read as a failed save.

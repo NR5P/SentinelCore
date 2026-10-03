@@ -52,7 +52,10 @@ struct SentinelProminentButtonStyle: PrimitiveButtonStyle {
         Button(role: configuration.role, action: configuration.trigger) {
             InkedLabel(label: configuration.label)
         }
-        .buttonStyle(.sentinelProminent)
+        // The system style underneath - this said .sentinelProminent, i.e. itself, so every
+        // button using it recursed until the stack ran out: Quick Add, the movie page's Play,
+        // the Organizer's add buttons all crashed the app the moment they were drawn.
+        .buttonStyle(.borderedProminent)
     }
 
     private struct InkedLabel: View {

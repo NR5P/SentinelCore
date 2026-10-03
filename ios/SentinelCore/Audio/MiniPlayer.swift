@@ -106,7 +106,18 @@ struct ContinueListeningBanner: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var device: NowPlayingDevice?
-    @State private var dismissed: Set<String> = []
+    // Shared by every copy of the banner and kept for the life of the app: as @State it was
+    // forgotten whenever Music was opened afresh, so a session already taken over (or closed
+    // with the x) came straight back - "Playing on Kitchen Dashboard - Continue Here" while
+    // this phone was the one playing it. The key carries the other device's updatedAt, so a
+    // new report from it still shows.
+    @MainActor private static var dismissedKeys: Set<String> = []
+    @State private var dismissed: Set<String> = ContinueListeningBanner.dismissedKeys
+
+    private func dismiss(_ device: NowPlayingDevice) {
+        dismissed.insert(key(device))
+        Self.dismissedKeys.insert(key(device))
+    }
     @State private var taking = false
     @State private var errorMessage: String?
 
@@ -134,7 +145,7 @@ struct ContinueListeningBanner: View {
                     .tint(SentinelTheme.green)
                     .controlSize(.small)
                     Button {
-                        dismissed.insert(key(device))
+                        dismiss(device)
                     } label: {
                         Image(systemName: "xmark").font(.caption)
                     }
@@ -182,7 +193,7 @@ struct ContinueListeningBanner: View {
         defer { taking = false }
         do {
             try await AudioPlayer.shared.takeOver(device)
-            dismissed.insert(key(device))
+            dismiss(device)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

@@ -12,13 +12,27 @@ struct NowPlayingView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @AppStorage("nowPlaying.panel") private var panel: Panel = .none
+    @AppStorage("nowPlaying.panel") private var storedPanel: Panel = .none
     @State private var scrubbing: Double?
     @State private var showingPlayOn = false
     @State private var clipRequest: ClipRequest?
     @State private var bookmarkNote: BookmarkDraft?
 
     private var player: AudioPlayer { AudioPlayer.shared }
+
+    // The remembered panel, unless it doesn't apply to what is playing now. Chapters left open on
+    // a podcast used to come back as a blank screen (no art, no panel) for the next song, with
+    // its button not even on the bar to close it.
+    private var panel: Panel {
+        let entry = player.current
+        switch storedPanel {
+        case .lyrics: return entry?.track != nil ? .lyrics : .none
+        case .transcript: return entry?.episode?.hasTranscript == true ? .transcript : .none
+        case .chapters: return entry?.isEpisode == true && !player.chapters.isEmpty ? .chapters : .none
+        case .queue, .none: return storedPanel
+        }
+    }
+
     private var wide: Bool {
         #if os(macOS)
         true
@@ -360,7 +374,7 @@ struct NowPlayingView: View {
 
     private func panelButton(_ target: Panel, _ symbol: String, _ label: String, enabled: Bool) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.25)) { panel = panel == target ? .none : target }
+            withAnimation(.easeInOut(duration: 0.25)) { storedPanel = panel == target ? .none : target }
         } label: {
             Image(systemName: symbol)
                 .foregroundStyle(panel == target ? .black : .white)

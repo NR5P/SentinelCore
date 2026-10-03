@@ -113,7 +113,8 @@ struct PodcastEpisodeView: View {
                 Button {
                     if isCurrent { player.togglePlayPause() } else { PodcastActions.play(episode) }
                 } label: {
-                    Label(isCurrent && player.isPlaying ? "Pause" : (episode.isInProgress ? "Resume · \(episode.remainingLabel)" : "Play \(episode.remainingLabel)"),
+                    // remainingLabel is "Played" for a finished episode, which made "Play Played".
+                    Label(isCurrent && player.isPlaying ? "Pause" : (episode.isInProgress ? "Resume · \(episode.remainingLabel)" : episode.isPlayed ? "Play Again" : "Play \(episode.remainingLabel)"),
                           systemImage: isCurrent && player.isPlaying ? "pause.fill" : "play.fill")
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)

@@ -52,26 +52,43 @@ struct PosterImage: View {
             return
         }
         failed = false
-        if let loaded = await Self.fetch(url, maxPixel: maxPixel) {
+        // One retry: a shelf asks for the same picture several times at once, and a busy server
+        // can fail one of them (a 5xx or a dropped connection) - that isn't "no artwork".
+        var outcome = await Self.fetch(url, maxPixel: maxPixel)
+        if case .failed = outcome, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(400))
+            outcome = await Self.fetch(url, maxPixel: maxPixel)
+        }
+        guard !Task.isCancelled else { return }
+        switch outcome {
+        case .image(let loaded):
             ArtworkCache.images.setObject(loaded, forKey: key)
             image = loaded
-        } else if !Task.isCancelled {
+        case .missing:
+            // Only a real "not here" is remembered for the rest of the run.
             ArtworkCache.missing.insert(key as String)
+            image = nil
+            failed = true
+        case .failed:
             image = nil
             failed = true
         }
     }
 
+    private enum Outcome { case image(CGImage), missing, failed }
+
     // Off the main actor: the download and the decode.
-    nonisolated private static func fetch(_ url: URL, maxPixel: CGFloat) async -> CGImage? {
+    nonisolated private static func fetch(_ url: URL, maxPixel: CGFloat) async -> Outcome {
         guard let (data, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-        ] as CFDictionary)
+              let status = (response as? HTTPURLResponse)?.statusCode else { return .failed }
+        if status == 404 || status == 204 { return .missing }
+        guard status == 200, let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+              ] as CFDictionary) else { return status == 200 ? .missing : .failed }
+        return .image(image)
     }
 }
 

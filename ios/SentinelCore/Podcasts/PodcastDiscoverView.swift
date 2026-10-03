@@ -72,7 +72,9 @@ struct PodcastDiscoverView: View {
         .onSubmit(of: .search) { Task { await search() } }
         .onChange(of: query) { _, value in if value.isEmpty { results = nil } }
         .overlay { if searching { ProgressView() } }
-        .sheet(isPresented: $addingURL) { AddPodcastByURLView { _ in } }
+        // Straight to the show just followed, as the Library's copy of this sheet refreshes to
+        // show it - otherwise the sheet closes onto Discover and the show is nowhere in sight.
+        .sheet(isPresented: $addingURL) { AddPodcastByURLView { podcast in AudioRouter.shared.open(.show(podcast.id)) } }
         .task {
             async let g = model.client.podcastGenres()
             async let r = model.client.podcastRecommended()
@@ -216,7 +218,7 @@ struct AddPodcastByURLView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("", text: $url, prompt: Text("https://example.com/feed.xml"))
+                    TextField("", text: $url, prompt: Text(verbatim: "https://example.com/feed.xml"))
                         .labelsHidden()
                         .multilineTextAlignment(.leading)
                         .autocorrectionDisabled()
@@ -467,7 +469,7 @@ struct TranscriptSearchView: View {
                         Text("\(hit.podcastTitle ?? "") · \(AudioFormat.duration(hit.startSeconds))")
                             .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                         Text(hit.episodeTitle ?? "").font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                        if let snippet = hit.snippet { Text("\u{2026}\(snippet)\u{2026}").font(.subheadline).foregroundStyle(.secondary) }
+                        if let snippet = hit.snippet { Text(snippet) /* the server's snippet already carries its "…" */.font(.subheadline).foregroundStyle(.secondary) }
                     }
                 }
                 .buttonStyle(.plain)

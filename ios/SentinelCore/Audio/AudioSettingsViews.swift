@@ -121,7 +121,9 @@ struct PodcastStorageLine: View {
         VStack(alignment: .leading, spacing: 4) {
             let used = status.storageBytes ?? 0
             let max = status.maxStorageBytes ?? 0
-            LabeledContent("Storage", value: max > 0 ? "\(AudioFormat.bytes(used)) of \(AudioFormat.bytes(max))" : AudioFormat.bytes(used))
+            // The server's limit is whole GiB (Gb × 1024³), so both figures use the binary
+            // formatter - .file showed a 50 GB limit as "53.7 GB".
+            LabeledContent("Storage", value: max > 0 ? "\(AudioFormat.binaryBytes(used)) of \(AudioFormat.binaryBytes(max))" : AudioFormat.binaryBytes(used))
             if max > 0 { ProgressView(value: min(1, Double(used) / Double(max))) }
             if let folder = status.downloadFolder {
                 Text(folder).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -148,7 +150,7 @@ struct PodcastStorageView: View {
                 Section { PodcastStorageLine(status: status) }
             }
             Section {
-                NavigationLink("Server Settings → Podcasts") { ServerSettingsView() }
+                NavigationLink("Server Settings → Podcasts") { ServerSettingsSectionByKeyView(key: "podcasts") }
             } footer: {
                 Text("The download folder, how many episodes to keep, the storage limit and transcription are all in Server Settings → Podcasts.")
             }

@@ -136,6 +136,9 @@ struct RootView: View {
         } message: { prompt in
             Text("This device has \(prompt.localCount) Organizer items from a server that isn't the one answering now\(prompt.serverCount.map { " (it has \($0))" } ?? ""). If the old server was lost or reinstalled, upload this copy to fill the new one back up - anything already on the new server is kept, and newer edits win. Using the server's copy replaces what's on this device. Not Now keeps this device's copy and pauses Organizer sync until you decide in Settings.")
         }
+        // Again, outside the sheets attached above: the .tint at the top only reaches views
+        // inside it, so Add to Playlist and Quick Add came up in the system blue.
+        .tint(SentinelTheme.green)
     }
 
     private var splitNavigation: some View {

@@ -69,6 +69,10 @@ final class AudioPlayer {
     @ObservationIgnored private var lastTickPosition: Double?
     @ObservationIgnored private var lastProgressReport = Date.distantPast
     @ObservationIgnored private var lastNowPlayingReport = Date.distantPast
+    // Reports go out one at a time, in order: two sent a moment apart (a track change and the
+    // pause right after it) could otherwise reach the server swapped and leave it holding the
+    // older one.
+    @ObservationIgnored private var nowPlayingSend: Task<Void, Never>?
     @ObservationIgnored private var pendingSeek: Double?
     @ObservationIgnored private var fade: Double = 1
     @ObservationIgnored private var duck: Double = 1
@@ -573,6 +577,9 @@ final class AudioPlayer {
     }
 
     private func nextIndex(after i: Int, manual: Bool) -> Int? {
+        // Repeat is a music setting: left on from a song, it must not loop a podcast episode (or
+        // a queue of them) forever.
+        let repeatMode = queue.indices.contains(i) && queue[i].isEpisode ? AudioRepeat.off : self.repeatMode
         if repeatMode == .one && !manual { return i }
         if sleepAtEndOfItem && !manual { return nil }
         if i + 1 < queue.count { return i + 1 }
@@ -637,7 +644,11 @@ final class AudioPlayer {
                 position = 0
                 isPlaying = false
                 if sleepAtEndOfItem { cancelSleepTimer() }
-                // Leave the last item loaded at its start, paused, so Play starts it again.
+                // Leave the last item loaded at its start, paused, so Play starts it again. The
+                // player's rate is still 1 once its queue runs dry, so without the pause the item
+                // put back started playing by itself - the last song looped forever, reporting a
+                // play every time round.
+                player.pause()
                 if let entry = current, let item = makePlayerItem(entry) {
                     player.insert(item, after: nil)
                     syncUpcoming()
@@ -909,7 +920,11 @@ final class AudioPlayer {
             queue: window.map(\.ref), index: index - lower, positionSeconds: (position * 10).rounded() / 10,
             playing: isPlaying, shuffle: shuffle, repeat: repeatMode.rawValue, speed: speed, context: context)
         let client = client
-        Task { try? await client.putNowPlaying(report) }
+        let previous = nowPlayingSend
+        nowPlayingSend = Task {
+            await previous?.value
+            try? await client.putNowPlaying(report)
+        }
     }
 
     // Leaving the app: say where we got to.

@@ -206,13 +206,23 @@ final class OfflineFetcher: NSObject, URLSessionDownloadDelegate, @unchecked Sen
 
     private let lock = NSLock()
     private var jobs: [Int: Job] = [:]
-    private lazy var session: URLSession = {
-        let configuration = URLSessionConfiguration.default
-        configuration.httpCookieStorage = .shared
-        configuration.timeoutIntervalForRequest = 120
-        configuration.timeoutIntervalForResource = 60 * 60
-        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-    }()
+    // Made once, under the lock. This was a lazy var, and two downloads starting together (an
+    // album's first two songs) each made their own session; both sessions number their tasks from
+    // 1, so the second job overwrote the first in `jobs` and one song spun forever, its finished
+    // file left behind in tmp.
+    private var madeSession: URLSession?
+    private var session: URLSession {
+        lock.withLock {
+            if let madeSession { return madeSession }
+            let configuration = URLSessionConfiguration.default
+            configuration.httpCookieStorage = .shared
+            configuration.timeoutIntervalForRequest = 120
+            configuration.timeoutIntervalForResource = 60 * 60
+            let made = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+            madeSession = made
+            return made
+        }
+    }
 
     func download(_ request: URLRequest, progress: @escaping @Sendable (Double) -> Void) async throws -> Result {
         try await withCheckedThrowingContinuation { continuation in
