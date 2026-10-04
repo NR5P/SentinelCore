@@ -2051,8 +2051,15 @@ window.GateWatchCameras = (function () {
   // matches the size it is now, but only when that is not the one it is already on - the browser
   // fires fullscreenchange on every tile, and reconnecting one that did not change size would
   // black out a working picture for no reason.
+  //
+  // The tile is not the only way in: the <video>'s own transport bar has a fullscreen button, and
+  // a double-click on the picture does the same, and both make the video element fullscreen
+  // rather than the tile. Checking for the tile alone left those on the grid's 640x480 stream
+  // blown up to the whole screen - which went unnoticed only while a camera with no low rendition
+  // was serving its main stream to the grid as well.
   function syncTileQuality(video, status, camera, tile) {
-    const wanted = document.fullscreenElement === tile ? FULLSCREEN_QUALITY : GRID_QUALITY;
+    const full = document.fullscreenElement;
+    const wanted = full && (full === tile || tile.contains(full)) ? FULLSCREEN_QUALITY : GRID_QUALITY;
     if (liveTileQuality.get(camera.id) === wanted) return;
     teardownCameraStream(camera.id, video);
     showStatus(status, "connecting…");
