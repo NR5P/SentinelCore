@@ -2652,6 +2652,7 @@ window.GateWatchCameras = (function () {
       case Hls.ErrorTypes.NETWORK_ERROR:
         showStatus(status, "reconnecting…");
         hls.startLoad();
+        restartLadderIfStuck(hls, video, status, camera, quality);
         break;
       case Hls.ErrorTypes.MEDIA_ERROR:
         showStatus(status, "recovering…");
@@ -2670,6 +2671,26 @@ window.GateWatchCameras = (function () {
         }, 2000);
         break;
     }
+  }
+
+  // startLoad() is enough for a dropped segment, but not for the server itself going away: a
+  // restart closes every MSE socket, each tile falls to HLS while the dashboard is still down, and
+  // hls.js's restarted loader never got going again - the wall kiosk sat on "reconnecting…" on
+  // every tile until somebody reloaded it. A tile still not playing a while later starts over
+  // from the top of the ladder, which also gets it back onto MSE rather than leaving it on HLS.
+  const HLS_STUCK_RESTART_MS = 10000;
+  const hlsStuckTimers = new WeakMap();
+
+  function restartLadderIfStuck(hls, video, status, camera, quality) {
+    if (hlsStuckTimers.has(hls)) return;
+    hlsStuckTimers.set(hls, setTimeout(() => {
+      hlsStuckTimers.delete(hls);
+      if (!video.isConnected || hlsInstances.get(camera.id) !== hls) return;
+      if (status.classList.contains("hidden")) return; // recovered in place
+      try { hls.destroy(); } catch { /* already gone */ }
+      hlsInstances.delete(camera.id);
+      attachPlayer(video, status, camera, quality);
+    }, HLS_STUCK_RESTART_MS));
   }
 
   function showStatus(status, text) {
