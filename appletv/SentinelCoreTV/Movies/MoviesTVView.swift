@@ -34,14 +34,7 @@ struct MoviesTVView: View {
     @State private var refreshToken = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Picker("Show", selection: $pane) {
-                ForEach(Pane.allCases.filter { $0 != .downloads || downloads.canDownload }) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 1000)
-            .padding(.horizontal, 60)
-
+        Group {
             switch pane {
             case .home:
                 MediaHomeTV(
@@ -56,6 +49,14 @@ struct MoviesTVView: View {
             case .downloads:
                 MediaDownloadsTVView(downloads: downloads, open: { detailRoute = $0 })
             }
+        }
+        .tabHeader {
+            Picker("Show", selection: $pane) {
+                ForEach(Pane.allCases.filter { $0 != .downloads || downloads.canDownload }) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 1000)
+            .padding(.horizontal, 60)
         }
         // Reads whether downloads are on, then follows the queue - always while the Downloads
         // pane shows, otherwise only while something is downloading (the banner on Home).

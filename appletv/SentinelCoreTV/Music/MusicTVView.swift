@@ -25,24 +25,27 @@ struct MusicTVView: View {
     @State private var refreshToken = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 40) {
-                Picker("Show", selection: $pane) {
-                    ForEach(Pane.allCases.filter { $0 != .add || canDownload }) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 900)
-                Spacer()
-            }
-            .padding(.horizontal, 60)
-
-            AudioTopBar()
-
+        Group {
             switch pane {
             case .home: MusicHomeTV(isActive: isActive, refreshToken: refreshToken)
             case .library: MusicLibraryTV()
             case .search: MusicSearchTV()
             case .add: MusicAddTVView()
+            }
+        }
+        .tabHeader(spacing: 20) {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(spacing: 40) {
+                    Picker("Show", selection: $pane) {
+                        ForEach(Pane.allCases.filter { $0 != .add || canDownload }) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 900)
+                    Spacer()
+                }
+                .padding(.horizontal, 60)
+
+                AudioTopBar()
             }
         }
         .modifier(AudioTabRoot(isActive: isActive))
@@ -256,13 +259,7 @@ private struct MusicLibraryTV: View {
     @State private var kind: Kind = .albums
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Browse", selection: $kind) {
-                ForEach(Kind.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 1100)
-            .padding(.horizontal, 60)
+        Group {
             switch kind {
             case .artists: ArtistGridTV()
             case .albums: AlbumGridTVView(title: nil, genre: nil, decade: nil)
@@ -270,6 +267,14 @@ private struct MusicLibraryTV: View {
             case .genres: GenreGridTV()
             case .playlists: PlaylistGridTV()
             }
+        }
+        .tabHeader(spacing: 10) {
+            Picker("Browse", selection: $kind) {
+                ForEach(Kind.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 1100)
+            .padding(.horizontal, 60)
         }
     }
 }

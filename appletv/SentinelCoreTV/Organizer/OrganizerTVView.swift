@@ -61,7 +61,15 @@ struct OrganizerTVView: View {
     @State private var pane: Pane = .agenda
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        Group {
+            switch pane {
+            case .agenda: AgendaTV()
+            case .reminders: RemindersTV()
+            case .notes: NotesTV()
+            case .boards: BoardsTV()
+            }
+        }
+        .tabHeader {
             HStack {
                 Picker("Show", selection: $pane) {
                     ForEach(Pane.allCases) { Text($0.title).tag($0) }
@@ -79,12 +87,6 @@ struct OrganizerTVView: View {
                         .font(.caption)
                         .foregroundStyle(SentinelTheme.amber)
                 }
-            }
-            switch pane {
-            case .agenda: AgendaTV()
-            case .reminders: RemindersTV()
-            case .notes: NotesTV()
-            case .boards: BoardsTV()
             }
         }
         .padding(.horizontal, 60)

@@ -24,22 +24,25 @@ struct PodcastsTVView: View {
     @State private var pane: Pane = .listenNow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Picker("Show", selection: $pane) {
-                ForEach(Pane.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 1200)
-            .padding(.horizontal, 60)
-
-            AudioTopBar()
-
+        Group {
             switch pane {
             case .listenNow: ListenNowTV(isActive: isActive)
             case .upNext: UpNextTV()
             case .library: PodcastLibraryTV()
             case .discover: DiscoverTVView()
             case .bookmarks: BookmarksTVView()
+            }
+        }
+        .tabHeader(spacing: 20) {
+            VStack(alignment: .leading, spacing: 20) {
+                Picker("Show", selection: $pane) {
+                    ForEach(Pane.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 1200)
+                .padding(.horizontal, 60)
+
+                AudioTopBar()
             }
         }
         .modifier(AudioTabRoot(isActive: isActive))

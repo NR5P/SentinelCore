@@ -54,6 +54,8 @@ enum DebugFocusWalker {
     //   press           - activate the focused item (the remote's select button)
     //   menu            - the remote's Menu/back button
     //   arrow <dir>     - up/down/left/right from the focused item
+    //   btn <name>      - a real press: up/down/left/right/select/menu/playpause
+    //   tabbar          - the scroll view each page of the tab hands the tab bar
     private static var remoteItems: [(item: UIFocusItem, frame: CGRect)] = []
 
     private static func startRemote() {
@@ -134,6 +136,32 @@ enum DebugFocusWalker {
                     default: .rightArrow
                     }
                     moveDirection(type, in: window)
+                case "btn":
+                    // A real remote press: UIKit's own button event, built from a press info the
+                    // way the HID path builds one - the focus engine, the tab bar and
+                    // Menu-leaves-the-app all handle it exactly as a remote's. (Xcode 27 hands
+                    // simulator keyboard input to dtuhidd, so HID keys from the Mac don't arrive.)
+                    sendButton(arg, in: window)
+                case "tabbar":
+                    // Which scroll view each page of the selected tab hands the tab bar - the one
+                    // tvOS slides the bar away for. A tab root reporting nil can strand the bar
+                    // hidden after Back (see TabHeader.swift).
+                    func tabs(_ vc: UIViewController?) -> UITabBarController? {
+                        guard let vc else { return nil }
+                        if let t = vc as? UITabBarController { return t }
+                        for child in vc.children { if let t = tabs(child) { return t } }
+                        return nil
+                    }
+                    let selected = tabs(window.rootViewController)?.selectedViewController
+                    if let nav = (selected as? UINavigationController)
+                        ?? selected?.children.lazy.compactMap({ $0 as? UINavigationController }).first {
+                        for vc in nav.viewControllers {
+                            let s = vc.contentScrollView(for: .top)
+                            print("REMOTE tabbar \(type(of: vc)) top=\(s.map { "\(type(of: $0)) \($0.frame.integral) y=\(Int($0.contentOffset.y))" } ?? "nil")")
+                        }
+                    } else {
+                        print("REMOTE tabbar: no navigation stack")
+                    }
                 default:
                     print("REMOTE unknown \(verb)")
                 }
@@ -177,6 +205,31 @@ enum DebugFocusWalker {
             print("REMOTE arrow: no item that way"); return
         }
         move(to: next.item, in: window)
+    }
+
+    private static func sendButton(_ name: String, in window: UIWindow) {
+        let types: [String: UIPress.PressType] = [
+            "up": .upArrow, "down": .downArrow, "left": .leftArrow, "right": .rightArrow,
+            "select": .select, "menu": .menu, "playpause": .playPause,
+        ]
+        guard let type = types[name], let infoClass = NSClassFromString("UIPressInfo") as? NSObject.Type else {
+            print("REMOTE btn: can't send \(name)"); return
+        }
+        let send = NSSelectorFromString("_sendButtonEventWithPressInfo:")
+        let contextID = (window.value(forKey: "_contextId") as? NSNumber) ?? 0
+        Task { @MainActor in
+            for phase in [UIPress.Phase.began, .ended] {
+                let info = infoClass.init()
+                info.setValue(type.rawValue, forKey: "type")
+                info.setValue(phase.rawValue, forKey: "phase")
+                info.setValue(ProcessInfo.processInfo.systemUptime, forKey: "timestamp")
+                info.setValue(contextID, forKey: "contextID")
+                info.setValue(phase == .began ? 1.0 : 0.0, forKey: "force")
+                _ = UIApplication.shared.perform(send, with: info)
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+            print("REMOTE btn \(name)")
+        }
     }
 
     private static func pressKey(_ type: UIPress.PressType, in window: UIWindow) {
