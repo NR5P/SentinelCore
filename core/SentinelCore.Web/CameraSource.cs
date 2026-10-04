@@ -21,10 +21,16 @@ namespace SentinelCore.Web;
 // and dropped frames stayed at zero throughout (starved for data, not short of decode). The same
 // camera alone ran at 15 Mbit/s with no stalls at all. Detection has downshifted to the low
 // rendition since it shipped, for the same reason; live view simply never got the same treatment.
+//
+// Hd is a third, MSE-only rendition for a viewer that wants detail but cannot decode Main: the
+// wall kiosk is a Raspberry Pi whose hardware decoder stops at 1080p and whose CPU freezes on
+// 2560x1920 after a few dozen frames. go2rtc scales Main down to 1280 wide for it, and - being an
+// ffmpeg source - only runs that transcode while somebody is watching it.
 public enum StreamQuality
 {
     Main,
-    Sub
+    Sub,
+    Hd
 }
 
 public sealed class CameraSource(IConfiguration configuration)
@@ -40,7 +46,8 @@ public sealed class CameraSource(IConfiguration configuration)
         if (camera.IsBrowserPublished) return PublishedUrl(camera.Id);
 
         var mainUrl = HlsStreamManager.BuildAuthenticatedUrl(camera);
-        if (quality == StreamQuality.Main) return mainUrl;
+        // Hd is made from Main, so the camera URL behind it is Main's.
+        if (quality != StreamQuality.Sub) return mainUrl;
         return TryDeriveLowResUrl(mainUrl) ?? mainUrl;
     }
 

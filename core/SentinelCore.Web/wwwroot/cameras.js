@@ -56,6 +56,20 @@ window.GateWatchCameras = (function () {
   const GRID_QUALITY = "sub";
   const FULLSCREEN_QUALITY = "main";
 
+  // Except on the wall kiosk, a Raspberry Pi that cannot decode main at all: its hardware decoder
+  // stops at 1080p and software decoding froze a 2560x1920 camera after ~50 frames. "hd" is main
+  // scaled to 1280 wide by the server, which it only transcodes while this view is open. It is an
+  // MSE-only rendition, so the HLS and WebRTC rungs fall back to sub for it (see quality below),
+  // never to the main stream that would freeze.
+  function fullscreenQuality() {
+    return document.documentElement.classList.contains("kiosk") ? "hd" : FULLSCREEN_QUALITY;
+  }
+
+  // The rendition to ask a rung other than MSE for.
+  function nonMseQuality(quality) {
+    return quality === "hd" ? "sub" : quality;
+  }
+
   // The rendition each tile is currently connected at, so a fullscreenchange can tell whether it
   // actually needs to reconnect or is already showing the right one.
   const liveTileQuality = new Map();
@@ -2059,7 +2073,7 @@ window.GateWatchCameras = (function () {
   // was serving its main stream to the grid as well.
   function syncTileQuality(video, status, camera, tile) {
     const full = document.fullscreenElement;
-    const wanted = full && (full === tile || tile.contains(full)) ? FULLSCREEN_QUALITY : GRID_QUALITY;
+    const wanted = full && (full === tile || tile.contains(full)) ? fullscreenQuality() : GRID_QUALITY;
     if (liveTileQuality.get(camera.id) === wanted) return;
     teardownCameraStream(camera.id, video);
     showStatus(status, "connecting…");
@@ -2227,7 +2241,7 @@ window.GateWatchCameras = (function () {
       // from the ICE checks we send it).
       await waitForIceGathering(pc, 1000);
 
-      const response = await fetch(`/api/cameras/${camera.id}/webrtc/${quality}`, {
+      const response = await fetch(`/api/cameras/${camera.id}/webrtc/${nonMseQuality(quality)}`, {
         method: "POST",
         headers: { "Content-Type": "application/sdp" },
         body: pc.localDescription.sdp
@@ -2530,7 +2544,7 @@ window.GateWatchCameras = (function () {
     // 2560x1920 stream per tile. It follows the same rendition rule as the rungs above it: the
     // grid gets the low stream, fullscreen the main one. A camera with no low stream is served its
     // main one either way, so asking for the low one costs nothing where it can't help.
-    const src = `/api/cameras/${camera.id}/stream/${quality}/stream.m3u8`;
+    const src = `/api/cameras/${camera.id}/stream/${nonMseQuality(quality)}/stream.m3u8`;
     video.srcObject = null; // in case a WebRTC attempt got as far as attaching a stream
     const startedAt = Date.now();
 

@@ -88,4 +88,33 @@ public sealed class StreamQualityTests
         var source = CreateSource();
         Assert.Equal(source.ResolveUrl(camera, StreamQuality.Main), source.ResolveUrl(camera));
     }
+
+    [Fact]
+    public void TheKiosksHdRenditionIsMadeFromMainInsideGo2rtc()
+    {
+        // Read from the Main stream by name, never from the camera's URL: a second pull of the
+        // camera would spend its tight connection budget, and the URL carries the credentials.
+        var camera = CameraWith("rtsp://user:secret@cam:554/h264Preview_01_main");
+        var hd = Assert.Single(Go2RtcManager.BuildStreamSources(camera, StreamQuality.Hd));
+        Assert.Equal($"ffmpeg:{camera.Id:N}#video=h264#width=1280", hd);
+        Assert.DoesNotContain("cam:554", hd);
+    }
+
+    [Fact]
+    public void TheHdRenditionCarriesTheCamerasAudioOnlyWhenTheCameraHasAudioOn()
+    {
+        var camera = new Camera(
+            Guid.NewGuid(), "Test Camera", "rtsp://cam:554/h264Preview_01_main", null, null, true, false,
+            null, null, false, DateTimeOffset.UtcNow);
+        Assert.EndsWith("#audio=copy", Assert.Single(Go2RtcManager.BuildStreamSources(camera, StreamQuality.Hd)));
+    }
+
+    [Fact]
+    public void TheHdRenditionsCameraUrlIsMains()
+    {
+        // Never the low stream - Hd is a smaller Main, not a sharper Sub.
+        var camera = CameraWith("rtsp://cam:554/h264Preview_01_main");
+        var source = CreateSource();
+        Assert.Equal(source.ResolveUrl(camera, StreamQuality.Main), source.ResolveUrl(camera, StreamQuality.Hd));
+    }
 }

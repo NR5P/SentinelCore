@@ -300,7 +300,8 @@ public static class CameraEndpoints
         // Same two-route shape as the HLS playlist above, and for the same reason: an app built
         // before this existed keeps asking for the unqualified path and keeps getting the main
         // stream, while a grid of tiles asks for the cheap rendition by name.
-        app.Map("/api/cameras/{id:guid}/mse/{quality:regex(^(main|sub)$)}",
+        // MSE alone also takes "hd" (see StreamQuality.Hd) - the HLS and WebRTC routes don't.
+        app.Map("/api/cameras/{id:guid}/mse/{quality:regex(^(main|sub|hd)$)}",
             (Guid id, string quality, HttpContext http, ICameraStore store, Go2RtcManager webrtc, ILoggerFactory loggerFactory, CancellationToken ct) =>
                 ServeMseAsync(id, ParseQuality(quality), http, store, webrtc, loggerFactory, ct))
             .RequireAuthorization();
@@ -431,9 +432,12 @@ public static class CameraEndpoints
         }).RequireAuthorization();
     }
 
-    // The {quality} route segment, which the route constraint has already limited to main|sub.
+    // The {quality} route segment, which the route constraint has already limited to main|sub
+    // (or main|sub|hd on the MSE route).
     private static StreamQuality ParseQuality(string quality) =>
-        quality.Equals("sub", StringComparison.OrdinalIgnoreCase) ? StreamQuality.Sub : StreamQuality.Main;
+        quality.Equals("sub", StringComparison.OrdinalIgnoreCase) ? StreamQuality.Sub
+        : quality.Equals("hd", StringComparison.OrdinalIgnoreCase) ? StreamQuality.Hd
+        : StreamQuality.Main;
 
     private static async Task<IResult> ServeHlsAsync(
         Guid id, StreamQuality quality, string file, HttpContext http,
