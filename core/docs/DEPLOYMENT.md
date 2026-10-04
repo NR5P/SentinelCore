@@ -130,6 +130,19 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull gemma3:4b
 ```
 
+Then turn off llama-server's RAM prompt cache. It defaults to 8 GB, never gets a hit on
+camera images, and on a 16 GB box grows until the machine runs out of memory every few hours.
+Once you have the code (section 3):
+
+```bash
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+sudo cp core/systemd/ollama-cache-ram.conf /etc/systemd/system/ollama.service.d/cache-ram.conf
+sudo systemctl daemon-reload && sudo systemctl restart ollama
+```
+
+After the next alert, `journalctl -u ollama | grep "prompt cache"` should say
+`prompt cache is disabled`.
+
 ## 3. Getting the code
 
 ```bash
@@ -1407,6 +1420,11 @@ VLANs are the usual causes).
 **Ollama unreachable / `/health/ready` fails.** Confirm Ollama is running
 (`systemctl status ollama` or `curl http://127.0.0.1:11434`) and that the model in
 `Ollama:Model` has actually been pulled (`ollama list`).
+
+**Memory warnings naming `llama-server`, or the box running out of memory every few hours.**
+llama-server's prompt cache is still on: `journalctl -u ollama | grep "prompt cache"` says
+`enabled, size limit: 8192 MiB`. Install the drop-in from section 2 (and check it survived any
+Ollama reinstall).
 
 ## 16. Stopping / uninstalling
 
