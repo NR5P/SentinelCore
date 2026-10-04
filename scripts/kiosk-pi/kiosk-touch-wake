@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+# Kiosk touch -> screen wake, started from ~/.config/labwc/autostart.
+#
+# With mouseEmulation="no" in rc.xml (needed for real swiping), labwc does not
+# count touches as idle activity, so swayidle never sees a tap: the screen
+# never wakes and the dim/off timers never reset. This reads the touchscreen
+# directly instead, and runs swayidle as a child:
+#   - a tap while dimmed/off turns the screen on and restarts swayidle
+#   - any tap restarts swayidle (at most every RESTART_EVERY s), which restarts
+#     its timers, so dim/off count from the last touch
+# swayidle still owns the timers, so a page's Wake Lock (idle inhibitor) holds.
+import glob, os, select, signal, subprocess, time
+
+SCREEN = os.path.expanduser("~/.local/bin/kiosk-screen")
+STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "kiosk-screen.state")
+SWAYIDLE = ["swayidle", "-w",
+            "timeout", "60", SCREEN + " dim", "resume", SCREEN + " on",
+            "timeout", "300", SCREEN + " off", "resume", SCREEN + " on"]
+RESTART_EVERY = 10
+
+
+def touch_device():
+    for d in glob.glob("/sys/class/input/event*"):
+        try:
+            name = open(d + "/device/name").read()
+        except OSError:
+            continue
+        if "Goodix" in name or "Touch" in name:
+            return "/dev/input/" + os.path.basename(d)
+    return None
+
+
+def screen_state():
+    try:
+        return open(STATE).read().strip()
+    except OSError:
+        return "on"
+
+
+idle = None
+
+
+def restart_idle():
+    global idle
+    if idle and idle.poll() is None:
+        idle.terminate()
+        try:
+            idle.wait(2)
+        except subprocess.TimeoutExpired:
+            idle.kill()
+    idle = subprocess.Popen(SWAYIDLE)
+
+
+def stop(*_):
+    if idle and idle.poll() is None:
+        idle.terminate()
+    raise SystemExit(0)
+
+
+signal.signal(signal.SIGTERM, stop)
+restart_idle()
+last_restart = time.monotonic()
+fd = None
+while True:
+    if fd is None:
+        dev = touch_device()
+        if dev:
+            try:
+                fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                fd = None
+        if fd is None:
+            time.sleep(5)
+            continue
+    if idle.poll() is not None:
+        restart_idle()
+    r, _, _ = select.select([fd], [], [], 5)
+    if not r:
+        continue
+    try:
+        while os.read(fd, 4096):
+            pass
+    except BlockingIOError:
+        pass
+    except OSError:
+        os.close(fd)
+        fd = None
+        continue
+    now = time.monotonic()
+    if screen_state() != "on":
+        subprocess.run([SCREEN, "on"])
+        restart_idle()
+        last_restart = now
+    elif now - last_restart >= RESTART_EVERY:
+        restart_idle()
+        last_restart = now

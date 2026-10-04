@@ -1,0 +1,2 @@
+sleep 5 && chromium --password-store=basic --ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3 --disable-accelerated-video-decode --kiosk --noerrdialogs --no-first-run 'https://192.168.50.8:3443/?kiosk=1&screenoff=300' &
+/home/admin/.local/bin/kiosk-touch-wake &

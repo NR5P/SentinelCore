@@ -1,0 +1,15 @@
+#!/bin/sh
+# Kiosk screen power, run by swayidle (via ~/.local/bin/kiosk-touch-wake):
+#   dim - nobody has touched it for a minute
+#   off - nobody has touched it for five minutes
+#   on  - someone touched it
+# The current state goes in $STATE so kiosk-touch-wake knows when a tap
+# should wake the screen (labwc does not count touches as activity).
+BL=/sys/class/backlight/10-0045/brightness
+STATE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-screen.state"
+case "$1" in
+  dim) echo 40 > "$BL" ;;
+  off) echo 0 > "$BL" ;;  # not wlopm --off: vc4 DSI never comes back from it (swapchain test fails)
+  on)  echo 255 > "$BL" ;;
+esac
+echo "$1" > "$STATE"

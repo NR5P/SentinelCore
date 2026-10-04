@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+	<touch deviceName="10-0014 Goodix Capacitive TouchScreen" mapToOutput="DSI-1" mouseEmulation="no"/>
+</openbox_config>
