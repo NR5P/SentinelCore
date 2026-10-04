@@ -9374,6 +9374,42 @@ html.kiosk .ptz-pad {
   grid-template-rows: repeat(3, 40px);
 }
 
+/* Swipe to scroll (kiosk-scroll.js): the finger moves the page, so the scrollbars are hidden like
+   on a phone, and text doesn't get selected by a drag. Typing fields still select normally. */
+html.kiosk,
+html.kiosk * {
+  scrollbar-width: none;
+}
+
+html.kiosk ::-webkit-scrollbar {
+  display: none;
+}
+
+html.kiosk body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.kiosk input,
+html.kiosk textarea,
+html.kiosk [contenteditable=''],
+html.kiosk [contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+html.kiosk img,
+html.kiosk a {
+  -webkit-user-drag: none;
+}
+
+html.kiosk-dragging,
+html.kiosk-dragging * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
 /* ---------------------------------------------------------------------------------------------
    Music & Podcasts (audio-player.js, audio-extras.js, music.js, podcasts.js). Built on the Movies
    look - the same cards, rows, buttons and modal - with square album art, the player bar that
