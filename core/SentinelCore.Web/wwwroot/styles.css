@@ -9413,6 +9413,12 @@ html.kiosk .org-md-remove {
   opacity: 1;
 }
 
+/* A tap on a tile fills the screen with it (see bindKioskTileTap in cameras.js), so the grid only
+   needs the pictures. The PTZ pad is for steering a camera you are actually looking at. */
+html.kiosk .live-tile:not(:fullscreen) .ptz-controls {
+  display: none;
+}
+
 html.kiosk .mv-row-arrow:not(:disabled) {
   opacity: 1;
   pointer-events: auto;

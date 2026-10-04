@@ -1460,6 +1460,7 @@ window.GateWatchCameras = (function () {
       // the moment they stop. Reconnecting at the matching rendition is the only way to change it:
       // the quality is fixed when the stream opens.
       tile.addEventListener("fullscreenchange", () => syncTileQuality(video, status, camera, tile));
+      bindKioskTileTap(tile);
 
       attachPlayer(video, status, camera);
     }
@@ -1611,6 +1612,30 @@ window.GateWatchCameras = (function () {
     }, 400);
   }
 
+  // ---------------- Live tab: kiosk tap to fill the screen ----------------
+  //
+  // On the wall kiosk a tap on a camera fills the screen with it, and a tap anywhere on it again
+  // goes back to the grid. Buttons (zoom, mute, PTZ, the drag handle) keep their own meaning, and
+  // a press that moved - panning a zoomed picture - is not a tap.
+  const isKiosk = () => document.documentElement.classList.contains("kiosk");
+  const KIOSK_TAP_SLOP_PX = 12;
+
+  function bindKioskTileTap(tile) {
+    let downAt = null;
+    tile.addEventListener("pointerdown", e => { downAt = { x: e.clientX, y: e.clientY }; });
+    tile.addEventListener("click", e => {
+      const from = downAt;
+      downAt = null;
+      if (!isKiosk() || e.target.closest("button, .ptz-controls, .live-tile-zoom")) return;
+      if (from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > KIOSK_TAP_SLOP_PX) return;
+      if (document.fullscreenElement === tile) {
+        document.exitFullscreen().catch(() => { /* already left */ });
+      } else if (!document.fullscreenElement) {
+        tile.requestFullscreen().catch(() => { /* denied or unsupported - nothing to recover */ });
+      }
+    });
+  }
+
   // ---------------- Live tab: digital zoom ----------------
   //
   // Zoom that has nothing to do with the camera's own lens. The PTZ pad below sends a command to
@@ -1698,7 +1723,9 @@ window.GateWatchCameras = (function () {
       // The browser's own controls are part of the video element, so they would be blown up and
       // then clipped by the tile along with the picture. Hidden while zoomed, back the moment the
       // whole frame is on screen again.
-      video.controls = !zoomed;
+      // Never on the kiosk: there a tap on the picture means "full screen" / "back to the grid"
+      // (bindKioskTileTap), and Chromium's bar would take the same tap as play/pause.
+      video.controls = !zoomed && !isKiosk();
       // On the tile rather than on this cluster: the cursor and the "keep me visible" rule both
       // belong to the picture, which is a sibling of these buttons.
       tile.classList.toggle("live-tile-zoomed", zoomed);
