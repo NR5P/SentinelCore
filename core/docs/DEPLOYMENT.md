@@ -130,18 +130,37 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull gemma3:4b
 ```
 
-Then turn off llama-server's RAM prompt cache. It defaults to 8 GB, never gets a hit on
-camera images, and on a 16 GB box grows until the machine runs out of memory every few hours.
-Once you have the code (section 3):
+#### Turn off Ollama's prompt cache (the installers do this for you)
 
-```bash
-sudo mkdir -p /etc/systemd/system/ollama.service.d
-sudo cp core/systemd/ollama-cache-ram.conf /etc/systemd/system/ollama.service.d/cache-ram.conf
-sudo systemctl daemon-reload && sudo systemctl restart ollama
-```
+Ollama runs llama.cpp's `llama-server`, whose RAM prompt cache defaults to **8 GB**. Every
+camera alert carries a different image, so the cache never gets a hit - it just grows by about
+400 MB per alert until the model (~4 GB) plus a full cache (~8 GB) runs a 16 GB box out of
+memory every few hours. Turning it off costs nothing for this app.
 
-After the next alert, `journalctl -u ollama | grep "prompt cache"` should say
-`prompt cache is disabled`.
+`install-linux.sh`, `install-windows.ps1` and the release-bundle installers set this up (and pull
+`gemma3:4b` if it's missing) whenever Ollama is present.
+To do it by hand:
+
+- **Linux** - once you have the code (section 3):
+
+  ```bash
+  sudo mkdir -p /etc/systemd/system/ollama.service.d
+  sudo cp core/systemd/ollama-cache-ram.conf /etc/systemd/system/ollama.service.d/cache-ram.conf
+  sudo systemctl daemon-reload && sudo systemctl restart ollama
+  ```
+
+- **Windows** - set a machine-wide `LLAMA_ARG_CACHE_RAM=0` environment variable (elevated
+  PowerShell: `[Environment]::SetEnvironmentVariable('LLAMA_ARG_CACHE_RAM','0','Machine')`), then
+  quit and reopen Ollama from the tray.
+- **macOS** - `install-macos.sh` does **not** do this yet. For Ollama started by Homebrew, add
+  `LLAMA_ARG_CACHE_RAM` = `0` to the `EnvironmentVariables` of its launchd plist
+  (`brew services info ollama` shows the path) and `brew services restart ollama`; for the
+  Ollama app, `launchctl setenv LLAMA_ARG_CACHE_RAM 0` and reopen it (repeat after each reboot).
+
+To confirm, after the next alert: `journalctl -u ollama | grep "prompt cache"` should say
+`prompt cache is disabled` (not `enabled, size limit: 8192 MiB`). The dashboard's memory
+warning (Settings → SELF-MONITORING) is the backstop if it ever comes back - for example an
+Ollama reinstall that removed the drop-in.
 
 ## 3. Getting the code
 
@@ -525,8 +544,12 @@ Run each in its own terminal. Stop with Ctrl+C.
 ./scripts/install-linux.sh
 ```
 
-It builds, runs the tests, installs and starts all three services (alert pipeline, dashboard,
-and — if Node.js is present — the HomeKit sidecar), then prints a health check. Everything runs
+It installs what's missing (.NET, ffmpeg, Node.js, Ollama), sets Ollama up for this app (pulls
+`gemma3:4b` and turns off its memory-hungry prompt cache - see
+[section 2](#turn-off-ollamas-prompt-cache-the-installers-do-this-for-you)), builds, runs the
+tests, installs and starts all three services (alert pipeline, dashboard, and — if Node.js is
+present — the HomeKit sidecar), then prints a health check.
+Everything runs
 in place from this checkout, so updating later is just `git pull && ./scripts/deploy.sh`.
 
 Override the defaults if your setup differs:

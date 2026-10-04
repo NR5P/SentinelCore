@@ -123,6 +123,20 @@ if (-not (Test-Command 'ffmpeg')) { Write-Warn "ffmpeg is not installed. Live vi
 if (-not (Test-Command 'ollama')) {
     Write-Warn "Ollama is not installed. Either install it and run 'ollama pull gemma3:4b',"
     Write-Warn "or configure a cloud vision provider in the dashboard's setup wizard."
+} else {
+    # llama-server's RAM prompt cache defaults to 8 GB and never hits on camera images, so it grows
+    # until the machine runs out of memory - see docs/DEPLOYMENT.md. Ollama reads the machine
+    # environment when it starts, so it takes effect at its next start (sign out and back in, or quit
+    # and reopen Ollama from the tray).
+    if ([Environment]::GetEnvironmentVariable('LLAMA_ARG_CACHE_RAM', 'Machine') -ne '0') {
+        Write-Host "==> Turning off Ollama's RAM prompt cache (takes effect when Ollama next starts)"
+        [Environment]::SetEnvironmentVariable('LLAMA_ARG_CACHE_RAM', '0', 'Machine')
+    }
+    if (-not ((& ollama list 2>$null) -match '^gemma3:4b')) {
+        Write-Host "==> Downloading the gemma3:4b vision model (about 3.3 GB)"
+        & ollama pull gemma3:4b
+        if ($LASTEXITCODE -ne 0) { Write-Warn "'ollama pull gemma3:4b' failed - run it by hand before the first alert." }
+    }
 }
 
 $nodePath = $null

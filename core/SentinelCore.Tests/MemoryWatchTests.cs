@@ -95,6 +95,44 @@ public sealed class MemoryWatchTests
     }
 
     [Fact]
+    public async Task ARestart_DoesNotSendTheSameWarningAgain()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"memory-warnings-{Guid.NewGuid():N}.json");
+        try
+        {
+            var leaking = Reading(13, ("llama-server", 8));
+            await CheckTimes(new MemoryWatch(_notifier, NullLogger<MemoryWatch>.Instance, _clock, path), leaking);
+            Assert.Equal(2, _notifier.Sent.Count);
+
+            // The dashboard restarts (a deploy) half an hour later and the leak is still there.
+            _clock.Now += TimeSpan.FromMinutes(30);
+            await CheckTimes(new MemoryWatch(_notifier, NullLogger<MemoryWatch>.Instance, _clock, path), leaking, 10);
+            Assert.Equal(2, _notifier.Sent.Count);
+
+            // Twelve hours on, a fresh process does say it again.
+            _clock.Now += TimeSpan.FromHours(12);
+            await CheckTimes(new MemoryWatch(_notifier, NullLogger<MemoryWatch>.Instance, _clock, path), leaking);
+            Assert.Equal(4, _notifier.Sent.Count);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task ACorruptStateFile_CostsOneRepeat_NotTheWarning()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"memory-warnings-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, "{ not json");
+            var watch = new MemoryWatch(_notifier, NullLogger<MemoryWatch>.Instance, _clock, path);
+            await CheckTimes(watch, Reading(10, ("llama-server", 8)));
+            Assert.Single(_notifier.Sent);
+            Assert.Contains("llama-server", File.ReadAllText(path));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void ProcStatus_CountsSwapAsThatProgramsMemory_AndSkipsKernelThreads()
     {
         string[] llama = ["Name:\tllama-server", "VmPeak:\t 9000000 kB", "VmRSS:\t 4156124 kB", "VmSwap:\t 1000000 kB"];

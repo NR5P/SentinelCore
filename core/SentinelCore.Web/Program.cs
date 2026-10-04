@@ -404,7 +404,8 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PublisherWatchdog>
 // SELF-MONITORING's memory warnings: one program growing past its share, or the box as a whole
 // filling up, told to the owner before the kernel starts killing things.
 builder.Services.AddSingleton(sp => new MemoryWatch(
-    sp.GetRequiredService<IOwnerNotifier>(), sp.GetRequiredService<ILogger<MemoryWatch>>(), sp.GetRequiredService<TimeProvider>()));
+    sp.GetRequiredService<IOwnerNotifier>(), sp.GetRequiredService<ILogger<MemoryWatch>>(), sp.GetRequiredService<TimeProvider>(),
+    Path.Combine(camerasRoot, "memory-warnings-sent.json")));
 builder.Services.AddSingleton<IMemoryReader, HostMemoryReader>();
 builder.Services.AddHostedService<MemoryWatchWorker>();
 

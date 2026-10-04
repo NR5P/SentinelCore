@@ -104,6 +104,23 @@ fi
 if ! command -v ollama >/dev/null 2>&1; then
   echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma3:4b'," >&2
   echo "         or configure a cloud vision provider in the dashboard's setup wizard." >&2
+else
+  # Ollama runs llama.cpp's llama-server, whose RAM prompt cache defaults to 8 GB. Camera images
+  # never hit it, so it grows ~400 MB per alert until a 16 GB box runs out of memory every few
+  # hours (the media box, 2026-10). Ollama passes its environment to llama-server; this turns
+  # the cache off. Same file as core/systemd/ollama-cache-ram.conf - see docs/DEPLOYMENT.md.
+  if systemctl cat ollama.service >/dev/null 2>&1; then
+    echo "==> Turning off Ollama's RAM prompt cache"
+    mkdir -p /etc/systemd/system/ollama.service.d
+    printf '[Service]\nEnvironment="LLAMA_ARG_CACHE_RAM=0"\n' | tee /etc/systemd/system/ollama.service.d/cache-ram.conf >/dev/null
+    systemctl daemon-reload
+    systemctl restart ollama
+  fi
+  for _ in $(seq 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
+  if ! ollama list 2>/dev/null | grep -q '^gemma3:4b'; then
+    echo "==> Downloading the gemma3:4b vision model (about 3.3 GB)"
+    ollama pull gemma3:4b || echo "WARNING: 'ollama pull gemma3:4b' failed - run it by hand before the first alert." >&2
+  fi
 fi
 
 NODE_PATH=""

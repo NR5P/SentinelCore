@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using SentinelCore;
 
 namespace SentinelCore.Web;
@@ -33,21 +34,30 @@ public interface IMemoryReader
 //    is to blame.
 // Each needs ConsecutiveChecks readings in a row (a build or a big transcode is a brief spike, not
 // a problem) and is sent at most once per RepeatAfter, whether it stays high or keeps coming back.
-public sealed class MemoryWatch(IOwnerNotifier notifier, ILogger<MemoryWatch> logger, TimeProvider? clock = null)
+// When each was last sent is kept in statePath, so a restart - a deploy restarts the dashboard
+// several times a day - doesn't send the same warning again (the box, 2026-10-04: two llama-server
+// warnings 24 minutes apart, either side of a restart).
+public sealed class MemoryWatch(IOwnerNotifier notifier, ILogger<MemoryWatch> logger, TimeProvider? clock = null, string? statePath = null)
 {
     public const int ConsecutiveChecks = 3;
     public static readonly TimeSpan RepeatAfter = TimeSpan.FromHours(12);
     private const int ProgramsListed = 5;
 
-    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
-    private readonly Signal _machine = new();
-    // Keyed by program name. Pruned to the programs currently over the line or still counting.
-    private readonly Dictionary<string, Signal> _programs = new(StringComparer.Ordinal);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    private sealed class Signal
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+    private readonly Signal _machine = new(MachineKey);
+    // Keyed by program name. Only the programs currently over the line or still counting.
+    private readonly Dictionary<string, Signal> _programs = new(StringComparer.Ordinal);
+    private Dictionary<string, DateTimeOffset>? _lastSent;
+
+    // Program names come from /proc and never contain a space or parentheses.
+    private const string MachineKey = "(whole machine)";
+
+    private sealed class Signal(string key)
     {
+        public string Key { get; } = key;
         public int HighChecks;
-        public DateTimeOffset? LastSent;
     }
 
     public async Task CheckAsync(MemoryReading reading, int machinePercent, int programPercent, CancellationToken cancellationToken)
@@ -62,20 +72,18 @@ public sealed class MemoryWatch(IOwnerNotifier notifier, ILogger<MemoryWatch> lo
                 if (!_programs.TryGetValue(program.Name, out var signal))
                 {
                     if (percent < programPercent) continue;
-                    _programs[program.Name] = signal = new Signal();
+                    _programs[program.Name] = signal = new Signal(program.Name);
                 }
                 if (Observe(signal, percent, programPercent))
                     await SendAsync(signal, ProgramWarning(program, reading), cancellationToken);
             }
-            // A program that has exited or dropped back under has nothing left to remember -
-            // except when it was last warned about, so a leak that gets killed and regrows every
+            // A program that has exited or dropped back under has nothing left to count. When it was
+            // last warned about lives on in _lastSent, so a leak that gets killed and regrows every
             // few hours does not page every few hours.
             var running = reading.Programs.Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
             foreach (var name in _programs.Keys.ToList())
             {
-                var signal = _programs[name];
-                if (!running.Contains(name)) signal.HighChecks = 0;
-                if (signal.HighChecks == 0 && (signal.LastSent is not { } sent || _clock.GetUtcNow() - sent >= RepeatAfter))
+                if (!running.Contains(name) || _programs[name].HighChecks == 0)
                     _programs.Remove(name);
             }
         }
@@ -97,7 +105,46 @@ public sealed class MemoryWatch(IOwnerNotifier notifier, ILogger<MemoryWatch> lo
         if (signal.HighChecks < ConsecutiveChecks) return false;
         // Whether it stayed high or recovered and came back, one warning per RepeatAfter: a leak
         // that is killed and regrows every few hours is the same trouble each time.
-        return signal.LastSent is not { } sent || _clock.GetUtcNow() - sent >= RepeatAfter;
+        return !LastSent.TryGetValue(signal.Key, out var sent) || _clock.GetUtcNow() - sent >= RepeatAfter;
+    }
+
+    private Dictionary<string, DateTimeOffset> LastSent => _lastSent ??= Load();
+
+    private Dictionary<string, DateTimeOffset> Load()
+    {
+        var lastSent = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        if (statePath is null || !File.Exists(statePath)) return lastSent;
+        try
+        {
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, DateTimeOffset>>(File.ReadAllText(statePath), JsonOptions);
+            foreach (var pair in loaded ?? []) lastSent[pair.Key] = pair.Value;
+        }
+        // A missing or corrupt file costs one repeat of a warning, the right side to fail on.
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Couldn't read {Path}; memory warnings may repeat once", statePath);
+        }
+        return lastSent;
+    }
+
+    private void Save()
+    {
+        if (statePath is null) return;
+        var now = _clock.GetUtcNow();
+        foreach (var key in LastSent.Where(pair => now - pair.Value >= RepeatAfter).Select(pair => pair.Key).ToList())
+            LastSent.Remove(key);
+        try
+        {
+            var directory = Path.GetDirectoryName(statePath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            var temporary = $"{statePath}.{Environment.ProcessId}.tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(LastSent, JsonOptions));
+            File.Move(temporary, statePath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Couldn't save {Path}; memory warnings may repeat after a restart", statePath);
+        }
     }
 
     private async Task SendAsync(Signal signal, (string Subject, string Text) message, CancellationToken cancellationToken)
@@ -105,7 +152,8 @@ public sealed class MemoryWatch(IOwnerNotifier notifier, ILogger<MemoryWatch> lo
         logger.LogWarning("Memory warning: {Subject}", message.Subject);
         // Counted as sent either way: with no channel set up there is nobody to repeat it to, and
         // the log line above is the record.
-        signal.LastSent = _clock.GetUtcNow();
+        LastSent[signal.Key] = _clock.GetUtcNow();
+        Save();
         if (!await notifier.SendAsync(message.Subject, message.Text, cancellationToken))
             logger.LogWarning("Memory warning: no email, Telegram or push is set up to say so");
     }
@@ -138,8 +186,9 @@ public sealed class MemoryWatch(IOwnerNotifier notifier, ILogger<MemoryWatch> lo
     // The one culprit already known by name gets the fix spelled out.
     private static string Advice(string name) =>
         name is "llama-server" or "ollama"
-            ? "This is Ollama, the AI that reads camera snapshots; its memory tends to creep up the longer it runs. " +
-              "Restarting it frees it: sudo systemctl restart ollama"
+            ? "This is Ollama, the AI that reads camera snapshots. If it keeps climbing past about 5 GB, llama-server's " +
+              "prompt cache is probably still on - see core/systemd/ollama-cache-ram.conf. " +
+              "Restarting it frees the memory for now: sudo systemctl restart ollama"
             : "Restarting it usually frees the memory.";
 
     private static string TopPrograms(MemoryReading reading)
