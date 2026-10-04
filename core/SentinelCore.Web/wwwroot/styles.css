@@ -8114,23 +8114,61 @@ html.kiosk .org-day-plus {
   font-family: var(--mono);
 }
 
+/* Full screen: the map fills the whole screen edge to edge, with the layer buttons and the
+   loop controls floating over it. The station picker, overlay toggles and legend wait for the
+   normal view. */
 .wx-radar.wx-fullscreen {
   position: fixed;
   inset: 0;
   z-index: 2000;
+  margin: 0;
+  padding: 0;
+  border: 0;
   border-radius: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .wx-radar.wx-fullscreen .wx-map-wrap {
-  flex: 1;
-  min-height: 300px;
+  position: absolute;
+  inset: 0;
 }
 
 .wx-radar.wx-fullscreen .wx-map {
   height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.wx-radar.wx-fullscreen .wx-panel-head,
+.wx-radar.wx-fullscreen .wx-timeline {
+  position: absolute;
+  z-index: 900;
+  margin: 0;
+  padding: 6px 10px;
+  background: rgba(5, 7, 10, 0.82);
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+}
+
+/* Clear of Leaflet's buttons on the left and the frame time on the right. */
+.wx-radar.wx-fullscreen .wx-panel-head {
+  top: 10px;
+  left: 60px;
+  right: 190px;
+  width: fit-content;
+  max-width: calc(100% - 250px);
+}
+
+.wx-radar.wx-fullscreen .wx-panel-title,
+.wx-radar.wx-fullscreen .wx-map-options,
+.wx-radar.wx-fullscreen .wx-legend {
+  display: none;
+}
+
+.wx-radar.wx-fullscreen .wx-timeline {
+  left: 10px;
+  right: 10px;
+  bottom: 24px;
 }
 
 body.wx-noscroll {

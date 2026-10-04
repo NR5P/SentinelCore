@@ -787,6 +787,44 @@ window.SentinelWeather = (function () {
     ].filter(Boolean).join(" · ");
   }
 
+  // ---------------- Keeping the screen on ----------------
+
+  // A screen wake lock while the radar is full screen. The browser drops it whenever the page is
+  // hidden, so it is asked for again on coming back. html.keep-awake tells kiosk-wake.js the
+  // screen can't have gone dark, so the next tap is a real tap.
+  const KeepAwake = (function () {
+    let wanted = false;
+    let lock = null;
+
+    async function acquire() {
+      if (!wanted || lock || !navigator.wakeLock || document.visibilityState !== "visible") return;
+      try {
+        lock = await navigator.wakeLock.request("screen");
+        lock.addEventListener("release", () => { lock = null; });
+        if (!wanted) release();
+      } catch (e) {
+        // Not allowed here (plain HTTP, say): the screen just sleeps as usual.
+      }
+    }
+
+    function release() {
+      const held = lock;
+      lock = null;
+      held?.release().catch(() => {});
+    }
+
+    document.addEventListener("visibilitychange", acquire);
+
+    return {
+      set(on) {
+        wanted = on;
+        document.documentElement.classList.toggle("keep-awake", on);
+        if (on) acquire();
+        else release();
+      }
+    };
+  })();
+
   // ---------------- The radar map ----------------
 
   const RadarMap = (function () {
@@ -964,16 +1002,35 @@ window.SentinelWeather = (function () {
       map.flyTo([location.latitude, location.longitude], Math.max(map.getZoom(), 8), { duration: 0.8 });
     }
 
-    function toggleFullscreen() {
+    // Full screen fills the window with the map and also asks the browser for real full screen,
+    // so its tabs and address bar go too. The screen is kept awake the whole time - the wall
+    // kiosk would otherwise dim and switch off in the middle of watching a storm come in.
+    let browserFullscreen = false;
+
+    function toggleFullscreen(force) {
       const wrap = panelEl;
-      const on = !wrap.classList.contains("wx-fullscreen");
+      const on = force ?? !wrap.classList.contains("wx-fullscreen");
+      if (on === wrap.classList.contains("wx-fullscreen")) return;
       wrap.classList.toggle("wx-fullscreen", on);
       document.body.classList.toggle("wx-noscroll", on);
+      if (on && wrap.requestFullscreen && !document.fullscreenElement) wrap.requestFullscreen().catch(() => {});
+      if (!on && document.fullscreenElement === wrap) document.exitFullscreen().catch(() => {});
+      KeepAwake.set(on);
       setTimeout(() => map.invalidateSize(), 50);
     }
 
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && panelEl?.classList.contains("wx-fullscreen")) toggleFullscreen();
+      if (e.key === "Escape" && panelEl?.classList.contains("wx-fullscreen")) toggleFullscreen(false);
+    });
+
+    // Leaving the browser's full screen its own way (Escape, F11) leaves ours too.
+    document.addEventListener("fullscreenchange", () => {
+      if (!panelEl) return;
+      if (document.fullscreenElement === panelEl) browserFullscreen = true;
+      else if (browserFullscreen) {
+        browserFullscreen = false;
+        toggleFullscreen(false);
+      }
     });
 
     // The house: a pulsing ring and a labelled pin that stays readable over any radar colour.

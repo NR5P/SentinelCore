@@ -33,6 +33,8 @@
   const idleMs = seconds * 1000 + MARGIN_MS;
 
   const isOn = () => document.documentElement.classList.contains("kiosk");
+  // Something on the page (the full-screen radar) is holding the screen on, so it never went dark.
+  const keptAwake = () => document.documentElement.classList.contains("keep-awake");
 
   let lastInput = performance.now();
   let waking = null;   // pointerId of the wake press, until its click arrives
@@ -49,7 +51,7 @@
     const idle = performance.now() - lastInput;
     touched();
     waking = null;   // a new press is never part of an earlier wake tap
-    if (!isOn() || idle < idleMs) return;
+    if (!isOn() || idle < idleMs || keptAwake()) return;
     waking = e.pointerId;
     swallow(e);
   }, true);
