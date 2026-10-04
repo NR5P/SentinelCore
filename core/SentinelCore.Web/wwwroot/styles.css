@@ -9479,6 +9479,120 @@ html.kiosk-dragging * {
   user-select: none !important;
 }
 
+/* On-screen keyboard (kiosk-keyboard.js): slides up from the bottom while a typing field has
+   focus. The page and any open dialog give up the bottom of the screen to it, so the field being
+   typed into stays in view above the keys. */
+.kiosk-kb {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 10px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-bright);
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
+  font-family: var(--mono);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  transform: translateY(100%);
+  visibility: hidden;
+  transition: transform 0.18s ease, visibility 0s linear 0.18s;
+}
+
+.kiosk-kb.open {
+  transform: none;
+  visibility: visible;
+  transition: transform 0.18s ease;
+}
+
+.kiosk-kb-row {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  max-width: 1100px;
+}
+
+.kiosk-kb-key {
+  flex: 1 1 0;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.kiosk-kb-special {
+  color: var(--text-dim);
+  font-size: 16px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.kiosk-kb-bksp,
+.kiosk-kb-enter,
+.kiosk-kb-shift {
+  flex-grow: 1.5;
+}
+
+.kiosk-kb-bksp,
+.kiosk-kb-shift {
+  font-size: 24px;
+}
+
+.kiosk-kb-enter {
+  color: var(--green);
+  border-color: var(--border-bright);
+}
+
+.kiosk-kb-space {
+  flex-grow: 6;
+}
+
+.kiosk-kb-123,
+.kiosk-kb-abc,
+.kiosk-kb-hide {
+  flex-grow: 2;
+}
+
+.kiosk-kb-shift.kiosk-kb-on {
+  color: var(--green);
+  border-color: var(--green-dim);
+}
+
+.kiosk-kb-shift.kiosk-kb-lock {
+  background: var(--green-dim);
+  color: var(--bg);
+}
+
+.kiosk-kb-key.kiosk-kb-down {
+  background: var(--green-dim);
+  border-color: var(--green);
+  color: var(--bg);
+}
+
+html.kiosk-kb-open body {
+  padding-bottom: var(--kiosk-kb-h);
+}
+
+html.kiosk-kb-open .lightbox {
+  padding-bottom: calc(var(--kiosk-kb-h) + 12px);
+}
+
+html.kiosk-kb-open .lightbox > * {
+  max-height: 100%;
+}
+
 /* ---------------------------------------------------------------------------------------------
    Music & Podcasts (audio-player.js, audio-extras.js, music.js, podcasts.js). Built on the Movies
    look - the same cards, rows, buttons and modal - with square album art, the player bar that
