@@ -480,6 +480,7 @@ window.SentinelOrganizer = (function () {
       cells += `
         <div class="org-day${date.getMonth() !== monthCursor.getMonth() ? " org-day-out" : ""}${key === today ? " org-today" : ""}${key === selectedDay ? " org-day-selected" : ""}" data-day="${key}">
           <div class="org-day-number">${date.getDate()}</div>
+          ${key === selectedDay ? '<button class="org-day-plus" data-day-add aria-label="add an event on this day" title="add an event on this day">+</button>' : ""}
           ${shown}${more}
         </div>`;
     }
@@ -513,15 +514,41 @@ window.SentinelOrganizer = (function () {
     el("org-cal-add").addEventListener("click", () => openEventEditor(null, { day: selectedDay }));
     el("org-cal-holidays").addEventListener("click", openHolidaySettings);
     el("org-day-add").addEventListener("click", () => openEventEditor(null, { day: selectedDay }));
+    // Adding on a day has to work by touch too (the wall kiosk and tablets never send dblclick, and
+    // the re-render after the first tap swallows it anyway): tap a day to select it, then tap it
+    // again, tap its +, or press and hold any day.
     for (const cell of root.querySelectorAll("[data-day]")) {
+      let holdTimer = null;
+      let held = false;
+      let downAt = null;
+      const cancelHold = () => { clearTimeout(holdTimer); holdTimer = null; };
+      cell.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || event.target.closest("[data-entry]")) return;
+        held = false;
+        downAt = { x: event.clientX, y: event.clientY };
+        cancelHold();
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          held = true;
+          openEventEditor(null, { day: cell.dataset.day });
+        }, 500);
+      });
+      cell.addEventListener("pointermove", (event) => {
+        if (holdTimer && downAt && Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > 10) cancelHold();
+      });
+      cell.addEventListener("pointerup", cancelHold);
+      cell.addEventListener("pointercancel", cancelHold);
+      cell.addEventListener("pointerleave", cancelHold);
+      cell.addEventListener("contextmenu", (event) => event.preventDefault());
       cell.addEventListener("click", (event) => {
+        if (held) { held = false; return; }
         if (event.target.closest("[data-entry]")) return;
+        if (event.target.closest("[data-day-add]") || cell.dataset.day === selectedDay) {
+          openEventEditor(null, { day: cell.dataset.day });
+          return;
+        }
         selectedDay = cell.dataset.day;
         renderCalendar();
-      });
-      cell.addEventListener("dblclick", (event) => {
-        if (event.target.closest("[data-entry]")) return;
-        openEventEditor(null, { day: cell.dataset.day });
       });
     }
     bindEntryClicks(root, entries);

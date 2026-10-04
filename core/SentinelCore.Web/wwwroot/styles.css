@@ -3314,6 +3314,37 @@ body.hub-wall main {
   background: var(--bg-card);
   cursor: pointer;
   overflow: hidden;
+  position: relative;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.org-day-plus {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-bright);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--green);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.org-day-plus:hover {
+  background: rgba(57, 255, 156, 0.14);
+}
+
+html.kiosk .org-day-plus {
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
 }
 
 .org-day:hover {
