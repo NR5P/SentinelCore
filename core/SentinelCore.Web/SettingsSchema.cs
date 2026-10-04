@@ -1180,10 +1180,10 @@ public static class SettingsSchema
             Endpoint = "/api/settings/login-alerts",
             Basic = true,
             DtoType = typeof(LoginAlertSettingsDto),
-            Description = "Emails and/or Telegrams you when someone enters the wrong password for this dashboard, using the accounts configured under Email and Telegram above. Off by default. One alert is sent per source IP per cooldown window, no matter how many usernames or passwords are tried against it, so a brute-force burst doesn't flood you.",
+            Description = "Emails, Telegrams and/or push-notifies you when someone enters the wrong password for this dashboard, using the Email, Telegram and Push Notifications settings above. Off by default. One alert is sent per source IP per cooldown window, no matter how many usernames or passwords are tried against it, so a brute-force burst doesn't flood you.",
             Fields =
             [
-                Check("enabled", "Enabled", "Alert you by Email and/or Telegram when someone fails to log in to this dashboard, using the accounts configured under Email and Telegram above."),
+                Check("enabled", "Enabled", "Alert you by Email, Telegram and/or push notification to the phone apps when someone fails to log in to this dashboard."),
                 Number("cooldownMinutes", "Cooldown (min)", "After alerting on a failed login from a given address, suppress further alerts from that same address for this many minutes - so one attacker hammering the login page sends one alert, not one per attempt.", 1, 1440)
             ]
         },

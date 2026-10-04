@@ -10,14 +10,15 @@ public interface ILoginAlertSender
 }
 
 // Alerts the homeowner - not the developer, see WebBugReportSender for that - when someone gets
-// a login wrong. Follows the same shape as InternetOutageWorker's NotifyAsync (try Email and
-// Telegram independently, one failing doesn't block the other) but lives here rather than in the
+// a login wrong. Follows the same shape as InternetOutageWorker's NotifyAsync (try Email,
+// Telegram and push to the phone apps independently, one failing doesn't block the other) but lives here rather than in the
 // main app because that's where AuthEndpoints and the login attempt itself live. Like
 // WebBugReportSender, it has no SMTP/Telegram configuration of its own - Email and Telegram are
 // read straight out of the main app's appsettings.json via the shared AppSettingsFile.
 public sealed class LoginAlertSender(
     AppSettingsFile settings,
     IHttpClientFactory httpClientFactory,
+    PushNotificationDispatcher push,
     ILogger<LoginAlertSender> logger) : ILoginAlertSender
 {
     private const string TelegramApiBaseUrl = "https://api.telegram.org";
@@ -40,6 +41,7 @@ public sealed class LoginAlertSender(
         var sent = false;
         sent |= await TrySendEmailAsync(report, cancellationToken);
         sent |= await TrySendTelegramAsync(report, cancellationToken);
+        sent |= await TrySendPushAsync(report, cancellationToken);
 
         // Only starts the cooldown once something was actually delivered - an alert that
         // couldn't be sent (misconfigured SMTP, Telegram unreachable) shouldn't also suppress
@@ -115,6 +117,29 @@ public sealed class LoginAlertSender(
             return false;
         }
     }
+    // Same gate as the alarm's push: push turned on and at least one provider set up.
+    private async Task<bool> TrySendPushAsync(LoginAlertReport report, CancellationToken cancellationToken)
+    {
+        var options = await settings.GetSectionAsync<PushNotificationOptions>(PushNotificationOptions.SectionName, cancellationToken);
+        if (options is null || !options.Enabled || !PushProviderSelection.AnyConfigured(options))
+        {
+            logger.LogDebug("Skipping the invalid-login push - push notifications aren't enabled/configured");
+            return false;
+        }
+
+        try
+        {
+            // EventType "system", as OwnerNotifier uses: there is no camera event to open on tap.
+            var result = await push.SendAsync(options, LoginAlertNotification.BuildPush(report), cancellationToken);
+            logger.LogInformation("Invalid-login push for {Ip}: {Delivered}/{Attempted} delivered", report.Ip, result.Delivered, result.Attempted);
+            return result.Delivered > 0;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to push the invalid-login alert");
+            return false;
+        }
+    }
 }
 
 public sealed record LoginAlertReport(string AttemptedUsername, string Ip, string Via, int FailuresInWindow, DateTimeOffset OccurredAt);
@@ -146,6 +171,15 @@ public static class LoginAlertNotification
         message.To.Add(email.ToAddress);
         return message;
     }
+
+    // Short on purpose: a lock-screen banner shows a line or two, and the email/Telegram copies
+    // carry the full detail.
+    public static PushMessage BuildPush(LoginAlertReport report) => new(
+        "Invalid login attempt",
+        $"Wrong password for '{report.AttemptedUsername}' from {report.Ip} ({report.Via}).",
+        null,
+        null,
+        "system");
 
     public static string BuildTelegramText(LoginAlertReport report) =>
         $"""
