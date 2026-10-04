@@ -5,13 +5,14 @@
 // scrollbar. In kiosk mode (html.kiosk) this turns a drag with that "mouse" into a phone-style
 // scroll: the content follows the finger, keeps gliding after a flick and eases to a stop, and a
 // drag never counts as a tap on whatever it started over. Real touch input is left alone - the
-// browser already scrolls that natively.
+// browser already scrolls that natively, and much more smoothly, so this is the fallback: the
+// Pi itself now gives Chromium real touch (labwc mouseEmulation="no" + --ozone-platform=wayland).
 (function () {
   const START_DISTANCE = 8;      // px a press must travel before it becomes a scroll, not a tap
-  const FRICTION = 0.95;         // fraction of the glide speed kept per 16ms frame
-  const MIN_SPEED = 0.02;        // px/ms below which a glide stops
-  const MAX_SPEED = 5;           // px/ms cap on a flick, so a hard swipe doesn't fly off the page
-  const VELOCITY_WINDOW = 100;   // ms of recent movement that sets the flick speed
+  const GLIDE_TIME = 325;        // ms time constant of the glide's slow-down (what iOS uses)
+  const MIN_SPEED = 0.1;         // px/ms a flick needs to glide at all
+  const MAX_SPEED = 6;           // px/ms cap on a flick, so a hard swipe doesn't fly off the page
+  const VELOCITY_WINDOW = 80;    // ms of movement before letting go that sets the flick speed
 
   // Places where a drag already means something else.
   const SKIP = "input, textarea, select, [contenteditable=''], [contenteditable='true'], " +
@@ -64,22 +65,32 @@
     delete el.dataset.kioskSnap;
   }
 
-  function scrollBy(el, axis, delta) {
-    if (axis === "y") el.scrollTo({ top: el.scrollTop + delta, behavior: "instant" });
-    else el.scrollTo({ left: el.scrollLeft + delta, behavior: "instant" });
+  // The position is tracked here as a fraction rather than read back from the element: the
+  // browser rounds scrollTop to whole pixels, so adding a sub-pixel step to it each frame stalls a
+  // slow glide and makes a drag move in uneven jumps.
+  const posOf = (el, axis) => axis === "y" ? el.scrollTop : el.scrollLeft;
+  const maxOf = (el, axis) => axis === "y"
+    ? el.scrollHeight - el.clientHeight
+    : el.scrollWidth - el.clientWidth;
+  function scrollTo(el, axis, pos) {
+    if (axis === "y") el.scrollTop = pos; else el.scrollLeft = pos;
   }
 
+  // The glide follows a fixed curve worked out from the moment of release, rather than adding
+  // up per-frame steps, so a frame the Pi drops costs no distance and no speed - it just lands
+  // where it should have been.
   function startGlide(el, axis, velocity) {
-    let last = performance.now();
+    const from = posOf(el, axis);
+    const max = maxOf(el, axis);
+    const distance = -velocity * GLIDE_TIME;
+    const begin = performance.now();
     const step = (now) => {
-      const dt = Math.min(now - last, 50);
-      last = now;
-      const before = axis === "y" ? el.scrollTop : el.scrollLeft;
-      scrollBy(el, axis, -velocity * dt);
-      const after = axis === "y" ? el.scrollTop : el.scrollLeft;
-      velocity *= Math.pow(FRICTION, dt / 16);
-      // Stop once it has slowed right down or run into the end.
-      if (Math.abs(velocity) < MIN_SPEED || after === before) {
+      const t = now - begin;
+      const left = Math.exp(-t / GLIDE_TIME);   // fraction of the glide still to come
+      const pos = Math.max(0, Math.min(max, from + distance * (1 - left)));
+      scrollTo(el, axis, pos);
+      // Stop once the remaining movement is under half a pixel or it has run into an end.
+      if (Math.abs(distance * left) < 0.5 || pos === 0 || pos === max) {
         glide = null;
         resumeSnap(el);
         return;
@@ -89,7 +100,19 @@
     glide = requestAnimationFrame(step);
   }
 
+  // Finger movement arrives faster and less evenly than the screen redraws, so it is collected
+  // here and applied once per frame.
+  let frame = null;
+  function applyDrag() {
+    frame = null;
+    if (!press || !press.axis) return;
+    const finger = press.axis === "y" ? press.y : press.x;
+    const pos = Math.max(0, Math.min(maxOf(press.scroller, press.axis), press.origin - (finger - press.start)));
+    scrollTo(press.scroller, press.axis, pos);
+  }
+
   document.addEventListener("pointerdown", (e) => {
+    if (frame) { cancelAnimationFrame(frame); frame = null; }
     if (glide) {
       // A finger on gliding content stops it, like a phone, and is not a tap.
       stopGlide();
@@ -131,18 +154,23 @@
       document.documentElement.classList.add("kiosk-dragging");
       const sel = window.getSelection && window.getSelection();
       if (sel) sel.removeAllRanges();
+      // From here the content stays pinned under the finger: its position is where it was at
+      // this moment, minus however far the finger has gone since.
       press.x = e.clientX;
       press.y = e.clientY;
+      press.start = press.axis === "y" ? e.clientY : e.clientX;
+      press.origin = posOf(press.scroller, press.axis);
+      press.samples = [{ t: e.timeStamp, x: e.clientX, y: e.clientY }];
       return;
     }
 
     e.preventDefault();
-    const delta = press.axis === "y" ? press.y - e.clientY : press.x - e.clientX;
-    scrollBy(press.scroller, press.axis, delta);
     press.x = e.clientX;
     press.y = e.clientY;
-    press.samples.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
-    while (press.samples.length > 2 && e.timeStamp - press.samples[0].t > VELOCITY_WINDOW) press.samples.shift();
+    const points = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    for (const p of points.length ? points : [e]) press.samples.push({ t: p.timeStamp, x: p.clientX, y: p.clientY });
+    while (press.samples.length > 2 && e.timeStamp - press.samples[0].t > VELOCITY_WINDOW * 2) press.samples.shift();
+    if (!frame) frame = requestAnimationFrame(applyDrag);
   });
 
   function release(e, cancelled) {
@@ -150,20 +178,26 @@
     const p = press;
     press = null;
     if (!p.axis) return;
+    if (frame) { cancelAnimationFrame(frame); frame = null; }
+    press = p; applyDrag(); press = null;   // land the last bit of movement before gliding
     document.documentElement.classList.remove("kiosk-dragging");
     if (!cancelled) {
       // The press ended a scroll, so the click the browser is about to send is not a tap.
       swallowClick = true;
       setTimeout(() => { swallowClick = false; }, 0);
     }
-    const first = p.samples[0];
-    const age = e.timeStamp - first.t;
+    // The flick speed is the finger's average over the last moments before it lifted - just the
+    // last two samples would be too jumpy, and the whole swipe would include its slow start.
+    const last = p.samples[p.samples.length - 1];
+    const recent = p.samples.filter((s) => last.t - s.t <= VELOCITY_WINDOW);
+    const first = recent[0];
+    const age = last.t - first.t;
     // Holding still before letting go means "stop here", not "flick".
-    const stale = e.timeStamp - p.samples[p.samples.length - 1].t > 60;
+    const stale = e.timeStamp - last.t > 60;
     if (cancelled || stale || age <= 0) { resumeSnap(p.scroller); return; }
-    const moved = p.axis === "y" ? e.clientY - first.y : e.clientX - first.x;
+    const moved = p.axis === "y" ? last.y - first.y : last.x - first.x;
     const velocity = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, moved / age));
-    if (Math.abs(velocity) < MIN_SPEED * 5) { resumeSnap(p.scroller); return; }
+    if (Math.abs(velocity) < MIN_SPEED) { resumeSnap(p.scroller); return; }
     press = { scroller: p.scroller };   // remembered so a press mid-glide can restore snapping
     startGlide(p.scroller, p.axis, velocity);
   }
@@ -176,6 +210,12 @@
     swallowClick = false;
     e.preventDefault();
     e.stopPropagation();
+  }, true);
+
+  // With real touch input a long press opens the browser's right-click menu, which a wall screen
+  // has no use for and no way to dismiss tidily.
+  document.addEventListener("contextmenu", (e) => {
+    if (isOn() && !e.target.closest?.(SKIP)) e.preventDefault();
   }, true);
 
   // Links and pictures are natively draggable; a swipe that starts on one would otherwise pick
