@@ -9,14 +9,45 @@
 #   - any tap restarts swayidle (at most every RESTART_EVERY s), which restarts
 #     its timers, so dim/off count from the last touch
 # swayidle still owns the timers, so a page's Wake Lock (idle inhibitor) holds.
-import glob, os, select, signal, subprocess, time
+#
+# How long before dim and off comes from the dashboard (Settings > WALL KIOSK,
+# GET /api/kiosk/screen-sleep), checked every minute; a change re-arms swayidle.
+# Until it answers, and whenever it can't, the last timings stand (60/300 at
+# boot). HTTPS is checked against the dashboard's local CA in CA_FILE.
+import glob, json, os, select, signal, ssl, subprocess, time, urllib.request
 
 SCREEN = os.path.expanduser("~/.local/bin/kiosk-screen")
 STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "kiosk-screen.state")
-SWAYIDLE = ["swayidle", "-w",
-            "timeout", "60", SCREEN + " dim", "resume", SCREEN + " on",
-            "timeout", "300", SCREEN + " off", "resume", SCREEN + " on"]
+DASHBOARD = os.environ.get("KIOSK_DASHBOARD", "https://192.168.50.8:3443")
+CA_FILE = os.path.expanduser("~/.config/sentinelcore/ca.crt")
+SETTINGS_EVERY = 60
 RESTART_EVERY = 10
+
+timings = {"dim": 60, "off": 300}
+
+
+def swayidle_command():
+    cmd = ["swayidle", "-w"]
+    for step in ("dim", "off"):
+        if timings[step] > 0:
+            cmd += ["timeout", str(timings[step]), SCREEN + " " + step, "resume", SCREEN + " on"]
+    # Both steps off: nothing to time, but keep a child so the loop below stays the same.
+    return cmd if len(cmd) > 2 else ["sleep", "infinity"]
+
+
+def fetch_timings():
+    """True when the dashboard's timings differ from the ones running."""
+    try:
+        context = ssl.create_default_context(cafile=CA_FILE if os.path.exists(CA_FILE) else None)
+        with urllib.request.urlopen(DASHBOARD + "/api/kiosk/screen-sleep", timeout=5, context=context) as r:
+            body = json.load(r)
+        new = {"dim": int(body["dimSeconds"]), "off": int(body["offSeconds"])}
+    except Exception:
+        return False
+    if new == timings:
+        return False
+    timings.update(new)
+    return True
 
 
 def touch_device():
@@ -48,7 +79,7 @@ def restart_idle():
             idle.wait(2)
         except subprocess.TimeoutExpired:
             idle.kill()
-    idle = subprocess.Popen(SWAYIDLE)
+    idle = subprocess.Popen(swayidle_command())
 
 
 def stop(*_):
@@ -58,10 +89,16 @@ def stop(*_):
 
 
 signal.signal(signal.SIGTERM, stop)
+fetch_timings()
 restart_idle()
-last_restart = time.monotonic()
+last_restart = last_settings = time.monotonic()
 fd = None
 while True:
+    if time.monotonic() - last_settings >= SETTINGS_EVERY:
+        last_settings = time.monotonic()
+        if fetch_timings():
+            # New timings start counting from now; a dark screen stays dark until touched.
+            restart_idle()
     if fd is None:
         dev = touch_device()
         if dev:

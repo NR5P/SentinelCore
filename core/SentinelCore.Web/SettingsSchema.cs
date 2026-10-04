@@ -1243,6 +1243,21 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "kiosk",
+            Title = "WALL KIOSK",
+            Group = SettingsGroups.Maintenance,
+            Endpoint = "/api/settings/kiosk",
+            Basic = true,
+            DtoType = typeof(KioskSettingsDto),
+            Description = "When the wall tablet (a screen showing this dashboard in kiosk mode) dims and turns its screen off after nobody has touched it. A tap wakes it, and that waking tap doesn't press anything. A camera or the radar shown full screen keeps it awake. The tablet picks up a change within a minute.",
+            Fields =
+            [
+                Number("dimSeconds", "Dim After (s)", "Seconds untouched before the screen dims. 0 never dims.", 0, 86400),
+                Number("offSeconds", "Screen Off After (s)", "Seconds untouched before the screen goes dark. 0 keeps it on.", 0, 86400)
+            ]
+        },
+        new()
+        {
             Key = "hostReboot",
             Title = "REBOOT SERVER",
             Group = SettingsGroups.Maintenance,

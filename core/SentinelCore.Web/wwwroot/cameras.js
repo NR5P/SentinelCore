@@ -1620,6 +1620,14 @@ window.GateWatchCameras = (function () {
   const isKiosk = () => document.documentElement.classList.contains("kiosk");
   const KIOSK_TAP_SLOP_PX = 12;
 
+  // A camera somebody has put full screen is being watched, not abandoned: keep the screen on for
+  // as long as it stays there (on the wall kiosk, its sleep timer waits). Either way in counts -
+  // the tile, or the <video> inside it from the player's own button.
+  document.addEventListener("fullscreenchange", () => {
+    const full = document.fullscreenElement;
+    window.KeepAwake?.set("camera", !!full?.closest?.(".live-tile"));
+  });
+
   function bindKioskTileTap(tile) {
     let downAt = null;
     tile.addEventListener("pointerdown", e => { downAt = { x: e.clientX, y: e.clientY }; });

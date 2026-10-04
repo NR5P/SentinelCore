@@ -702,6 +702,7 @@ app.MapAutomationRuleProxyEndpoints();
 app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
 app.MapWeatherEndpoints();
+app.MapKioskEndpoints();
 app.MapOllamaModelEndpoints();
 app.MapCloudVisionModelEndpoints();
 app.MapNotificationTestProxyEndpoints();

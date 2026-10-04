@@ -672,6 +672,21 @@ public sealed class HostRebootSettingsDto
     public int DelaySeconds { get; set; } = 60;
 }
 
+// The wall kiosk's screen sleep (the Raspberry Pi tablet). The timers run on the Pi itself
+// (scripts/kiosk-pi/kiosk-touch-wake), which reads these from the anonymous
+// GET /api/kiosk/screen-sleep, and the page's kiosk-wake.js uses OffSeconds to know when a tap is
+// only waking a dark screen. 0 turns that step off.
+public sealed class KioskSettingsDto
+{
+    public const string SectionName = "Kiosk";
+
+    [Range(0, 86400)]
+    public int DimSeconds { get; set; } = 60;
+
+    [Range(0, 86400)]
+    public int OffSeconds { get; set; } = 300;
+}
+
 // Server settings for the Organizer. On by default: a household that never opens it pays nothing
 // for it, and one that does shouldn't have to find a switch first.
 public sealed class OrganizerSettingsDto

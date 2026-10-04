@@ -61,7 +61,8 @@ public sealed record SettingsSnapshot(
     MediaDownloadsSettingsDto? MediaDownloads = null,
     // Music (MUSIC_AND_PODCASTS.md).
     MusicSettingsDto? Music = null,
-    PodcastSettingsDto? Podcasts = null);
+    PodcastSettingsDto? Podcasts = null,
+    KioskSettingsDto? Kiosk = null);
 
 public static class SettingsEndpoints
 {
@@ -403,6 +404,14 @@ public static class SettingsEndpoints
         // Saved into the main app's appsettings.json like every other section here, and read back
         // there through IOptionsMonitor - so switching this on takes effect within a second or two
         // and needs no restart of anything.
+        settings.MapPut("/kiosk", async (KioskSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, KioskSettingsDto.SectionName, ct, extra =>
+            {
+                // Dimming after the screen is already dark would never be seen.
+                if (dto.DimSeconds > 0 && dto.OffSeconds > 0 && dto.DimSeconds >= dto.OffSeconds)
+                    extra.Add("Dim After has to be shorter than Screen Off After, or 0 to skip dimming.");
+            }));
+
         settings.MapPut("/host-reboot", async (HostRebootSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "HostReboot", ct));
 
@@ -632,7 +641,8 @@ public static class SettingsEndpoints
         await settings.GetSectionAsync<MediaDownloadsSettingsDto>(MediaDownloadsSettingsDto.SectionName, cancellationToken),
         // Music.
         await settings.GetSectionAsync<MusicSettingsDto>(MusicSettingsDto.SectionName, cancellationToken),
-        Podcasts: await settings.GetSectionAsync<PodcastSettingsDto>(PodcastSettingsDto.SectionName, cancellationToken));
+        Podcasts: await settings.GetSectionAsync<PodcastSettingsDto>(PodcastSettingsDto.SectionName, cancellationToken),
+        Kiosk: await settings.GetSectionAsync<KioskSettingsDto>(KioskSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -686,6 +696,7 @@ public static class SettingsEndpoints
         MediaDownloads = snapshot.MediaDownloads ?? new(),
         Music = snapshot.Music ?? new(),
         Podcasts = snapshot.Podcasts ?? new(),
+        Kiosk = snapshot.Kiosk ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -774,6 +785,7 @@ public static class SettingsEndpoints
         // Music.
         if (snapshot.Music is not null) await settings.MergeSectionAsync(MusicSettingsDto.SectionName, snapshot.Music, cancellationToken);
         if (snapshot.Podcasts is not null) await settings.MergeSectionAsync(PodcastSettingsDto.SectionName, snapshot.Podcasts, cancellationToken);
+        if (snapshot.Kiosk is not null) await settings.MergeSectionAsync(KioskSettingsDto.SectionName, snapshot.Kiosk, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

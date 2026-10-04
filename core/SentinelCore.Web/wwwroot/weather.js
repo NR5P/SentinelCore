@@ -796,44 +796,6 @@ window.SentinelWeather = (function () {
     ].filter(Boolean).join(" · ");
   }
 
-  // ---------------- Keeping the screen on ----------------
-
-  // A screen wake lock while the radar is full screen. The browser drops it whenever the page is
-  // hidden, so it is asked for again on coming back. html.keep-awake tells kiosk-wake.js the
-  // screen can't have gone dark, so the next tap is a real tap.
-  const KeepAwake = (function () {
-    let wanted = false;
-    let lock = null;
-
-    async function acquire() {
-      if (!wanted || lock || !navigator.wakeLock || document.visibilityState !== "visible") return;
-      try {
-        lock = await navigator.wakeLock.request("screen");
-        lock.addEventListener("release", () => { lock = null; });
-        if (!wanted) release();
-      } catch (e) {
-        // Not allowed here (plain HTTP, say): the screen just sleeps as usual.
-      }
-    }
-
-    function release() {
-      const held = lock;
-      lock = null;
-      held?.release().catch(() => {});
-    }
-
-    document.addEventListener("visibilitychange", acquire);
-
-    return {
-      set(on) {
-        wanted = on;
-        document.documentElement.classList.toggle("keep-awake", on);
-        if (on) acquire();
-        else release();
-      }
-    };
-  })();
-
   // ---------------- The radar map ----------------
 
   const RadarMap = (function () {
@@ -1024,7 +986,7 @@ window.SentinelWeather = (function () {
       document.body.classList.toggle("wx-noscroll", on);
       if (on && wrap.requestFullscreen && !document.fullscreenElement) wrap.requestFullscreen().catch(() => {});
       if (!on && document.fullscreenElement === wrap) document.exitFullscreen().catch(() => {});
-      KeepAwake.set(on);
+      KeepAwake.set("radar", on);
       if (!on && renderWaiting) render();
       setTimeout(() => map.invalidateSize(), 50);
     }

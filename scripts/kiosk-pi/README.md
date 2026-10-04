@@ -14,9 +14,12 @@ by hand (`scp` as `admin@`).
 
 ## Screen sleep
 
-The screen dims after 1 minute untouched and goes dark after 5. A tap brings it back. The
-dashboard's `kiosk-wake.js` swallows that first tap (`screenoff=300` in the start URL, which must
-match the off timeout), and a page Wake Lock (the radar full screen) keeps it awake.
+The screen dims and goes dark after the times set in Settings > WALL KIOSK (1 and 5 minutes by
+default; `kiosk-touch-wake` re-reads them every minute from `/api/kiosk/screen-sleep`, checking
+HTTPS against the dashboard CA saved at `~/.config/sentinelcore/ca.crt`). A tap brings it back. The
+dashboard's `kiosk-wake.js` swallows that first tap (it reads the same off time; `screenoff=300`
+in the start URL only stands in until it does), and a page Wake Lock (the radar or a camera full
+screen) keeps it awake.
 
 Two Pi-specific traps shaped this:
 
