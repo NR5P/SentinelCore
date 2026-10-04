@@ -387,6 +387,14 @@ public sealed class Go2RtcManager : IDisposable
 
     private async Task RegisterStreamAsync(Camera camera, StreamQuality quality, CancellationToken cancellationToken)
     {
+        // The Hd source is an ffmpeg reading the Main stream *by name*, so Main has to exist in
+        // go2rtc first. Nothing else guarantees that: with only grid tiles open (all on Sub) and
+        // no recording running, Main is never registered, the transcode has nothing to read, MSE
+        // times out and the kiosk fell all the way to HLS on the 640x360 sub - 12 fps with
+        // multi-second jumps, the opposite of what fullscreen asked for.
+        if (quality == StreamQuality.Hd)
+            await RegisterStreamAsync(camera, StreamQuality.Main, cancellationToken);
+
         var sources = BuildStreamSources(camera, quality);
         var sourceKey = string.Join('\n', sources);
         lock (_registeredSources)
