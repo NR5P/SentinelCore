@@ -683,8 +683,17 @@ window.SentinelWeather = (function () {
     })();
   }
 
+  // A render while the radar is full screen waits until it closes: moving the map panel (which
+  // every render does) would throw the browser out of full screen, and nothing else shows then.
+  let renderWaiting = false;
+
   function render() {
     if (!report) return;
+    if (RadarMap.isFullscreen()) {
+      renderWaiting = true;
+      return;
+    }
+    renderWaiting = false;
 
     const fetched = report.fetchedAt ? `updated ${formatTime(report.fetchedAt, CLOCK)}` : "";
     updatedEl.textContent = report.stale ? `${fetched} · showing the last answer weather.gov gave` : fetched;
@@ -1016,7 +1025,12 @@ window.SentinelWeather = (function () {
       if (on && wrap.requestFullscreen && !document.fullscreenElement) wrap.requestFullscreen().catch(() => {});
       if (!on && document.fullscreenElement === wrap) document.exitFullscreen().catch(() => {});
       KeepAwake.set(on);
+      if (!on && renderWaiting) render();
       setTimeout(() => map.invalidateSize(), 50);
+    }
+
+    function isFullscreen() {
+      return !!panelEl?.classList.contains("wx-fullscreen");
     }
 
     document.addEventListener("keydown", (e) => {
@@ -1471,9 +1485,11 @@ window.SentinelWeather = (function () {
       clearInterval(stormsTimer);
       stormsTimer = null;
       stop();
+      // Leaving the tab lets go of full screen and the screen with it.
+      if (isFullscreen()) toggleFullscreen(false);
     }
 
-    return { panel, attached, start, stop: stopTimers, focusCell, loadStorms };
+    return { panel, attached, start, stop: stopTimers, focusCell, loadStorms, isFullscreen };
   })();
 
   // ---------------- Loading ----------------
