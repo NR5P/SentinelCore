@@ -1423,6 +1423,9 @@ window.GateWatchCameras = (function () {
       const tile = document.createElement("div");
       tile.className = "live-tile";
       tile.dataset.cameraId = camera.id;
+      // The kiosk leaves a webcam device's tile out until it is actually streaming (styles.css):
+      // most of the time the phone or laptop isn't, and the tile would just say "connecting…".
+      if (camera.isBrowserPublished) tile.classList.add("live-tile-webcam");
 
       const video = document.createElement("video");
       video.muted = true;
@@ -1461,6 +1464,7 @@ window.GateWatchCameras = (function () {
       // the quality is fixed when the stream opens.
       tile.addEventListener("fullscreenchange", () => syncTileQuality(video, status, camera, tile));
       bindKioskTileTap(tile);
+      video.addEventListener("playing", () => tile.classList.add("live-tile-playing"));
 
       attachPlayer(video, status, camera);
     }

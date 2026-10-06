@@ -44,6 +44,7 @@
       <span class="cursor">&#9608;</span>
     </div>
     <nav class="tabs" id="tabs">
+      <button class="tab tab-kiosk-only" id="tab-home" data-view="home">home</button>
       <button class="tab active" data-view="events" data-tip-below data-tip="Confirmed events only, newest first - the snapshot, its clip, and what the AI made of it. Anything the AI rejected, is still judging, or never got to is filtered out; use &quot;show hidden&quot; to see it and why." >events</button>
       <button class="tab" data-view="timeline" data-tip-below data-tip="Review saved trigger clips across a day, with Sentinel AI events marked on the time rail.">timeline</button>
       <button class="tab" data-view="live" data-tip-below data-tip="Live video from the cameras you added here. Streams start when you open this tab and stop when you leave.">live</button>
@@ -75,6 +76,11 @@
   </div>
 
   <main>
+    <!-- Kiosk Home (kiosk-home.js): the wall's start page. Only reachable in kiosk mode. -->
+    <section id="view-home" class="view hidden">
+      <div id="home-root" class="kh"></div>
+    </section>
+
     <section id="view-events" class="view">
       <div class="toolbar">
         <div class="toolbar-label">EVENTS</div>
@@ -949,6 +955,8 @@
   <script src="audio-extras.js"></script>
   <script src="music.js"></script>
   <script src="podcasts.js"></script>
+  <script src="kiosk-home.js"></script>
+  <script src="kiosk-nav.js"></script>
   <script src="kiosk-wake.js"></script>
   <script src="kiosk-scroll.js"></script>
   <script src="kiosk-keyboard.js"></script>

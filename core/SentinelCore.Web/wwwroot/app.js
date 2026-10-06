@@ -510,6 +510,7 @@ window.GateWatchExposure.check();
 // data-view, which hid every view at once and blanked the page.
 const tabs = document.querySelectorAll("#tabs .tab");
 const views = {
+  home: document.getElementById("view-home"),
   events: document.getElementById("view-events"),
   timeline: document.getElementById("view-timeline"),
   live: document.getElementById("view-live"),
@@ -554,6 +555,7 @@ for (const tab of tabs) {
     // every tab, which is the point of it.
     if (currentView === "music" && target !== "music") window.SentinelMusic.hide();
     if (currentView === "podcasts" && target !== "podcasts") window.SentinelPodcasts.hide();
+    if (currentView === "home" && target !== "home") window.SentinelKioskHome.hide();
 
     if (target === "settings" && !settingsLoaded) {
       settingsLoaded = true;
@@ -585,6 +587,7 @@ for (const tab of tabs) {
     // Both read the rest of the hash themselves (#music/album/<id>, #podcasts/show/<id>, ...).
     if (target === "music") window.SentinelMusic.show();
     if (target === "podcasts") window.SentinelPodcasts.show();
+    if (target === "home") window.SentinelKioskHome.show();
     if (target === "timeline") {
       if (!timelineLoaded) timelineLoaded = true;
       window.GateWatchTimeline.load();

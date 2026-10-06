@@ -1508,5 +1508,5 @@ window.SentinelWeather = (function () {
     RadarMap.stop();
   }
 
-  return { show, hide };
+  return { show, hide, glyph };
 })();
