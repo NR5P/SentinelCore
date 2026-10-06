@@ -46,3 +46,7 @@ appsettings.json.bak*
 # the review refuses to commit anything when the working tree is already dirty, so a tracked
 # report file would make it permanently unable to ship its own fixes.
 daily-reviews/
+
+# Signed Core update bundles the push relay serves (SentinelCore.PushRelay/updates/), put there
+# by scripts/publish-update.sh. Release artifacts, 150 MB apiece - never source.
+SentinelCore.PushRelay/updates/

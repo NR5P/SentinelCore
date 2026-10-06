@@ -16,6 +16,12 @@ public sealed class RelayOptions
     [Required]
     public string DataDirectory { get; init; } = "data";
 
+    // Where publish-update.sh drops signed Core update bundles: <channel>/<platform>/manifest.json
+    // plus the .zip it names, e.g. updates/stable/linux-x64/. Served to licensed installs by
+    // RelayUpdateEndpoints. Relative paths are under the content root, like DataDirectory.
+    [Required]
+    public string UpdatesDirectory { get; init; } = "updates";
+
     // Per license. A household is a handful of phones and an Apple TV or two; a number in the
     // hundreds means a license file is being shared around, and the cap is what makes that show
     // up as a refusal in the customer's log rather than as a bill.

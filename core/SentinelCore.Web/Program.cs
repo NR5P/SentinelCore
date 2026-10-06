@@ -361,6 +361,17 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton(new AutoExportStateFile(Path.Combine(camerasRoot, "auto-export-state.json")));
 builder.Services.AddSingleton<AutoExportRunner>();
 builder.Services.AddHostedService<AutoExportWorker>();
+// Overnight self-update for release-bundle installs (docs/AUTO_UPDATE.md). Anywhere else - a
+// source install or a non-Linux machine - the worker logs why it's off and stops, and Settings
+// shows the same reason.
+builder.Services.AddSingleton(builder.Configuration.GetSection(AutoUpdateHostOptions.SectionName).Get<AutoUpdateHostOptions>() ?? new AutoUpdateHostOptions());
+// No overall timeout: the bundle is 150 MB through a home upload link. The manifest fetch sets
+// its own.
+builder.Services.AddHttpClient(AutoUpdateService.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan);
+builder.Services.AddSingleton<IUpdateBusyProbe, UpdateBusyProbe>();
+builder.Services.AddSingleton<AutoUpdateService>();
+builder.Services.AddSingleton<AutoUpdateWorker>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoUpdateWorker>());
 // The family file library, its backup drives and the nightly duplicate check - see
 // FamilyFiles.cs. The library folder is a setting; everything else sits under the data directory.
 builder.Services.AddSingleton(sp => new FamilyFilesLocations(camerasRoot, sp.GetRequiredService<AppSettingsFile>()));
@@ -694,6 +705,7 @@ app.MapAuthEndpoints();
 app.MapAccountEndpoints();
 app.MapBackupEndpoints();
 app.MapAutoExportEndpoints();
+app.MapAutoUpdateEndpoints();
 app.MapFamilyFilesEndpoints();
 app.MapChatEndpoints();
 app.MapQueueEndpoints();

@@ -258,7 +258,55 @@ WantedBy=multi-user.target
 UNIT
 fi
 
+# ---------------------------------------------------------------------------
+# Automatic updates (docs/AUTO_UPDATE.md). The dashboard downloads and verifies a release into
+# $INSTALL_DIR/updates and drops pending.json there; this path unit then runs the root-owned
+# installer, which swaps the files in, restarts, and rolls back if the new build doesn't come up.
+# Turn it off in the dashboard (Settings -> AUTOMATIC UPDATES), not here.
+# ---------------------------------------------------------------------------
+
+if [[ -f "$SCRIPT_DIR/sentinelcore-apply-update.sh" ]]; then
+  echo "==> Setting up automatic updates"
+  mkdir -p "$INSTALL_DIR/updates"
+  chown "$APP_USER" "$INSTALL_DIR/updates"
+  # Root-owned and outside the install folder: the app user can write everything in there, so
+  # the code that runs as root must not live in it.
+  install -D -o root -g root -m 0755 "$SCRIPT_DIR/sentinelcore-apply-update.sh" /usr/local/libexec/sentinelcore-apply-update
+  mkdir -p /etc/sentinelcore
+  cat > /etc/sentinelcore/update.conf <<CONF
+INSTALL_DIR=${INSTALL_DIR}
+APP_USER=${APP_USER}
+MAIN_PORT=${MAIN_PORT}
+WEB_PORT=${WEB_PORT}
+CONF
+  chmod 0644 /etc/sentinelcore/update.conf
+
+  cat > /etc/systemd/system/sentinelcore-update.path <<UNIT
+[Unit]
+Description=Watch for a staged Sentinel Core update
+
+[Path]
+PathExists=${INSTALL_DIR}/updates/pending.json
+Unit=sentinelcore-update.service
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  cat > /etc/systemd/system/sentinelcore-update.service <<UNIT
+[Unit]
+Description=Install a staged Sentinel Core update
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/sentinelcore-apply-update
+TimeoutStartSec=15min
+SyslogIdentifier=sentinelcore-update
+UNIT
+fi
+
 systemctl daemon-reload
+[[ -f /etc/systemd/system/sentinelcore-update.path ]] && systemctl enable --now sentinelcore-update.path >/dev/null
 
 # enable, then restart - deliberately not `enable --now`, which only *starts* a service and so
 # leaves an already-running one on the previous release's binaries. That made re-running this
@@ -348,8 +396,9 @@ else
        Plus, only if you turn HomeKit on (iPhones connect to this port directly):
          sudo ufw allow from <your-subnet>/24 to any port 51826 proto tcp
 
-    2. Updating. This isn't a git checkout - to update, unpack the next release .zip over this
-       directory and re-run its install.sh. It will detect this install, keep your settings and
-       data, back the configuration up first, and restart onto the new binaries.
+    2. Updating. This server updates itself overnight once a license is installed (Settings ->
+       AUTOMATIC UPDATES to change when, or switch it off). To update by hand instead, unpack the
+       next release .zip over this directory and re-run its install.sh - it keeps your settings
+       and data, backs the configuration up first, and restarts onto the new binaries.
 NEXT
 fi

@@ -31,5 +31,7 @@
   <ItemGroup>
     <Content Remove="data/**" />
     <None Remove="data/**" />
+    <Content Remove="updates/**" />
+    <None Remove="updates/**" />
   </ItemGroup>
 </Project>

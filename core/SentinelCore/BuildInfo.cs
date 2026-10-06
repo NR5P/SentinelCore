@@ -22,6 +22,11 @@ public sealed record BuildVersion(string Version, string Commit, bool IsDirty)
     [JsonIgnore]
     public bool HasCommit => Commit != UnknownCommit;
 
+    // The release build number auto-update compares - stamped only into bundles built by
+    // scripts/publish-update.sh (see Directory.Build.props). 0 everywhere else: a git checkout,
+    // dotnet run, or a test host.
+    public int Build { get; init; }
+
     // Single human-readable string for the places that want one line rather than fields.
     public string Display => (HasCommit, IsDirty) switch
     {
@@ -59,8 +64,17 @@ public static class BuildInfo
     // be updated independently, and each should report the version of the code it is actually
     // running rather than the version of the shared library it happens to reference. Falls back
     // to this assembly under a test host, where there is no meaningful entry assembly.
-    public static BuildVersion Current { get; } = BuildVersion.Parse(
-        (Assembly.GetEntryAssembly() ?? typeof(BuildInfo).Assembly)
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion);
+    public static BuildVersion Current { get; } = Read(Assembly.GetEntryAssembly() ?? typeof(BuildInfo).Assembly);
+
+    private static BuildVersion Read(Assembly assembly) =>
+        BuildVersion.Parse(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion) with
+        {
+            Build = ParseBuildNumber(assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                .FirstOrDefault(attribute => attribute.Key == "BuildNumber")?.Value)
+        };
+
+    public static int ParseBuildNumber(string? value) =>
+        int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var build) && build > 0
+            ? build
+            : 0;
 }

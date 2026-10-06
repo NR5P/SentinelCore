@@ -148,6 +148,9 @@ public sealed class AutoExportRunner(
 
     private readonly SemaphoreSlim _running = new(1, 1);
 
+    // Auto-update holds off while this is true rather than restart the server mid-export.
+    public bool IsRunning => _running.CurrentCount == 0;
+
     public static bool IsOwnFile(string name) => OwnFileName.IsMatch(name);
 
     // `occurrence` is the nightly slot being run for; null for "export now".

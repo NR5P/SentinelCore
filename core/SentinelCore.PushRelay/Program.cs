@@ -52,6 +52,7 @@ var app = builder.Build();
 app.UseMiddleware<LicenseAuthMiddleware>();
 app.UseRateLimiter();
 app.MapRelayEndpoints();
+app.MapRelayUpdateEndpoints();
 app.MapPublicPages();
 
 app.Logger.LogInformation(

@@ -62,7 +62,8 @@ public sealed record SettingsSnapshot(
     // Music (MUSIC_AND_PODCASTS.md).
     MusicSettingsDto? Music = null,
     PodcastSettingsDto? Podcasts = null,
-    KioskSettingsDto? Kiosk = null);
+    KioskSettingsDto? Kiosk = null,
+    AutoUpdateSettingsDto? AutoUpdate = null);
 
 public static class SettingsEndpoints
 {
@@ -412,6 +413,9 @@ public static class SettingsEndpoints
                     extra.Add("Dim After has to be shorter than Screen Off After, or 0 to skip dimming.");
             }));
 
+        settings.MapPut("/auto-update", async (AutoUpdateSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
+            await SaveSectionAsync(dto, appSettings, AutoUpdateSettingsDto.SectionName, ct));
+
         settings.MapPut("/host-reboot", async (HostRebootSettingsDto dto, AppSettingsFile appSettings, CancellationToken ct) =>
             await SaveSectionAsync(dto, appSettings, "HostReboot", ct));
 
@@ -642,7 +646,8 @@ public static class SettingsEndpoints
         // Music.
         await settings.GetSectionAsync<MusicSettingsDto>(MusicSettingsDto.SectionName, cancellationToken),
         Podcasts: await settings.GetSectionAsync<PodcastSettingsDto>(PodcastSettingsDto.SectionName, cancellationToken),
-        Kiosk: await settings.GetSectionAsync<KioskSettingsDto>(KioskSettingsDto.SectionName, cancellationToken));
+        Kiosk: await settings.GetSectionAsync<KioskSettingsDto>(KioskSettingsDto.SectionName, cancellationToken),
+        AutoUpdate: await settings.GetSectionAsync<AutoUpdateSettingsDto>(AutoUpdateSettingsDto.SectionName, cancellationToken));
 
     // Every schema section, guaranteed non-null - what a settings *form* needs, as opposed to
     // what a backup needs.
@@ -697,6 +702,7 @@ public static class SettingsEndpoints
         Music = snapshot.Music ?? new(),
         Podcasts = snapshot.Podcasts ?? new(),
         Kiosk = snapshot.Kiosk ?? new(),
+        AutoUpdate = snapshot.AutoUpdate ?? new(),
         PackageTheftWatch = snapshot.PackageTheftWatch ?? new(),
         RepeatAlerts = snapshot.RepeatAlerts ?? new(),
         SemanticSearch = snapshot.SemanticSearch ?? new(),
@@ -786,6 +792,7 @@ public static class SettingsEndpoints
         if (snapshot.Music is not null) await settings.MergeSectionAsync(MusicSettingsDto.SectionName, snapshot.Music, cancellationToken);
         if (snapshot.Podcasts is not null) await settings.MergeSectionAsync(PodcastSettingsDto.SectionName, snapshot.Podcasts, cancellationToken);
         if (snapshot.Kiosk is not null) await settings.MergeSectionAsync(KioskSettingsDto.SectionName, snapshot.Kiosk, cancellationToken);
+        if (snapshot.AutoUpdate is not null) await settings.MergeSectionAsync(AutoUpdateSettingsDto.SectionName, snapshot.AutoUpdate, cancellationToken);
     }
 
     // Restore-side twin of the unmask in SaveSectionAsync. New sections whose schema gains a

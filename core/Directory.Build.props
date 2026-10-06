@@ -7,6 +7,14 @@
     <VersionPrefix>1.0.0</VersionPrefix>
   </PropertyGroup>
 
+  <!-- The release build number auto-update compares (BuildInfo.Current.Build). Only
+       scripts/publish-update.sh sets it, to the master commit count, so it only ever goes up;
+       every other build (git checkouts, dotnet run, tests) leaves it unset and reports build 0,
+       which the updater treats as "not a release bundle". -->
+  <ItemGroup Condition="'$(SentinelBuildNumber)' != ''">
+    <AssemblyMetadata Include="BuildNumber" Value="$(SentinelBuildNumber)" />
+  </ItemGroup>
+
   <!-- Stamps the git commit into AssemblyInformationalVersion, so a running install can say
        exactly which source it was built from. The SDK does the appending itself: its
        AddSourceRevisionToInformationalVersion target turns Version + SourceRevisionId into

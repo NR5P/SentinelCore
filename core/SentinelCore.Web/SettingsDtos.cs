@@ -687,6 +687,30 @@ public sealed class KioskSettingsDto
     public int OffSeconds { get; set; } = 300;
 }
 
+// Overnight automatic updates (see AutoUpdateWorker). On by default: on an install that can't
+// update itself (a git checkout, a Mac or Windows machine) it does nothing, and on one that can,
+// updates arriving on their own is the point. Hour is local time in the Schedules time zone; the
+// window runs two hours from there, starting at a minute fixed per install.
+public sealed class AutoUpdateSettingsDto : IValidatableObject
+{
+    public const string SectionName = "AutoUpdate";
+    public const string Stable = "stable";
+    public const string Beta = "beta";
+
+    public bool Enabled { get; set; } = true;
+
+    public string Channel { get; set; } = Stable;
+
+    [Range(0, 23)]
+    public int Hour { get; set; } = 4;
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (Channel is not (Stable or Beta))
+            yield return new ValidationResult("Channel must be stable or beta.", [nameof(Channel)]);
+    }
+}
+
 // Server settings for the Organizer. On by default: a household that never opens it pays nothing
 // for it, and one that does shouldn't have to find a switch first.
 public sealed class OrganizerSettingsDto

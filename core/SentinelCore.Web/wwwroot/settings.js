@@ -657,6 +657,10 @@ window.GateWatchSettings = (function () {
     // system will actually permit a reboot. So this section grows a live panel underneath it.
     if (schema.key === "hostReboot") body.appendChild(buildHostRebootPanel());
 
+    // And automatic updates: the fields say what should happen overnight, but which build is
+    // running, whether a newer one is out and how the last install went only the server knows.
+    if (schema.key === "autoUpdate") body.appendChild(buildAutoUpdatePanel());
+
     // Same idea, different question: the field above says where the bridge should listen, which
     // is not what someone typing an address into the phone app needs to know. The server is the
     // only side that can see what addresses this machine actually has, so it gets asked.
@@ -737,6 +741,132 @@ window.GateWatchSettings = (function () {
 
     section.append(header, body);
     return section;
+  }
+
+  // Automatic updates' live state, from GET /api/updates/status. Borrows the reboot panel's
+  // styling - same job, a status line plus the one action that moves things forward.
+  function buildAutoUpdatePanel() {
+    const panel = document.createElement("div");
+    panel.className = "host-reboot";
+
+    const status = document.createElement("div");
+    status.className = "host-reboot-status";
+    status.textContent = "checking…";
+
+    const notes = document.createElement("div");
+    notes.className = "settings-hint host-reboot-note";
+    notes.hidden = true;
+
+    const last = document.createElement("div");
+    last.className = "settings-hint host-reboot-note";
+    last.hidden = true;
+
+    const actions = document.createElement("div");
+    actions.className = "host-reboot-actions";
+
+    const installBtn = document.createElement("button");
+    installBtn.type = "button";
+    installBtn.className = "btn";
+    installBtn.textContent = "install now";
+    installBtn.dataset.tip = "Download and install the new release now instead of waiting for tonight. The server restarts for about a minute.";
+    installBtn.hidden = true;
+
+    actions.append(installBtn);
+    panel.append(status, notes, last, actions);
+
+    let pollTimer = null;
+    const when = (iso) => iso ? new Date(iso).toLocaleString() : "";
+
+    function render(s) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+      const running = `Running build ${s.current.build || "?"} (${s.current.version}, ${s.current.commit}).`;
+
+      if (!s.supported) {
+        status.dataset.state = "unsupported";
+        status.textContent = `${running} ${s.unsupportedReason}`;
+        notes.hidden = true;
+        last.hidden = true;
+        installBtn.hidden = true;
+        return;
+      }
+
+      const busy = s.phase && s.phase !== "idle";
+      if (busy) {
+        status.dataset.state = "pending";
+        status.textContent = {
+          checking: "Checking for an update…",
+          downloading: "Downloading the update…",
+          staging: "Unpacking and checking the update…",
+          installing: "Installing - the server restarts in a moment, then this page comes back."
+        }[s.phase] || "Working…";
+        // Keeps asking until the server has restarted onto the new build; a failed fetch while
+        // it's down is expected and just means ask again.
+        pollTimer = setTimeout(probe, 4000);
+      } else if (s.available) {
+        status.dataset.state = "setupRequired";
+        status.textContent = `${running} Build ${s.available.build} (${s.available.version}) is available` +
+          (s.enabled && s.nextWindowUtc ? ` and installs ${when(s.nextWindowUtc)}.` : ".");
+      } else {
+        status.dataset.state = s.lastCheckOutcome === "failed" ? "unsupported" : (s.enabled ? "ready" : "off");
+        const checked = s.lastCheckUtc ? ` Last checked ${when(s.lastCheckUtc)}: ${s.lastMessage}` : " Not checked yet.";
+        const next = s.enabled && s.nextWindowUtc ? ` Next overnight check ${when(s.nextWindowUtc)}.` : (s.enabled ? "" : " Automatic installs are off.");
+        status.textContent = running + checked + next;
+      }
+
+      notes.hidden = !(s.available && s.available.notes);
+      notes.textContent = s.available && s.available.notes ? `What's new: ${s.available.notes}` : "";
+
+      const r = s.lastResult;
+      last.hidden = !r;
+      if (r) {
+        const outcome = { installed: "installed", rolledBack: "rolled back", failed: "failed" }[r.outcome] || r.outcome;
+        last.textContent = `Last install: build ${r.build} ${outcome} ${when(r.finishedAt)}. ${r.message}`;
+      }
+
+      installBtn.hidden = busy || !s.available;
+      installBtn.disabled = false;
+    }
+
+    async function probe() {
+      try {
+        const response = await fetch("/api/updates/status");
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          status.dataset.state = "unsupported";
+          status.textContent = payload.error || "Could not ask the server about updates.";
+          return;
+        }
+        render(await response.json());
+      } catch {
+        // Mid-install the server is restarting; keep trying rather than show an error.
+        status.dataset.state = "pending";
+        status.textContent = "Waiting for the server to come back…";
+        pollTimer = setTimeout(probe, 4000);
+      }
+    }
+
+    installBtn.addEventListener("click", async () => {
+      if (!confirm("Install the update now?\n\nThe server restarts for about a minute - live view, " +
+        "alerts and this dashboard pause meanwhile. If the new version doesn't start, the current " +
+        "one is put back automatically.")) return;
+      installBtn.disabled = true;
+      try {
+        const response = await fetch("/api/updates/install", { method: "POST" });
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok) {
+          showToast(payload.detail || "Installing", true);
+        } else {
+          showToast(payload.error || "Couldn't start the update", false);
+        }
+      } catch {
+        showToast("Could not reach the server", false);
+      }
+      setTimeout(probe, 1000);
+    });
+
+    probe();
+    return panel;
   }
 
   // Rebooting the machine itself. Three states, and the whole design rests on never conflating

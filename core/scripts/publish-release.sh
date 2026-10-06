@@ -275,6 +275,13 @@ for platform in $PLATFORMS; do
   cp "$SCRIPT_DIR/release/$install_script" "$stage/$install_dest"
   chmod +x "$stage/$install_dest" 2>/dev/null || true
 
+  # The root half of automatic updates (docs/AUTO_UPDATE.md) - Linux only, installed by
+  # install.sh to /usr/local/libexec, where the copy that actually runs lives.
+  if [[ "$platform" == linux-* ]]; then
+    cp "$SCRIPT_DIR/release/sentinelcore-apply-update.sh" "$stage/sentinelcore-apply-update.sh"
+    chmod +x "$stage/sentinelcore-apply-update.sh"
+  fi
+
   # The install scripts and README below point people at docs/DEPLOYMENT.md and USER_GUIDE.md -
   # include them (and PUSH_NOTIFICATIONS.md, which the dashboard's own Docs tab also serves as a
   # PDF - see DocsEndpoints.cs) so that's actually true for someone who only has this .zip, not a

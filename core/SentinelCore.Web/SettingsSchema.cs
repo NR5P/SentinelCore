@@ -1258,6 +1258,30 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "autoUpdate",
+            Title = "AUTOMATIC UPDATES",
+            Group = SettingsGroups.Maintenance,
+            Endpoint = "/api/settings/auto-update",
+            Basic = true,
+            DtoType = typeof(AutoUpdateSettingsDto),
+            Description = "Keeps this server on the latest version by itself. Overnight it checks for a new release, downloads it, checks it really came from Sentinel Core (every release is signed), and installs it. The server restarts for about a minute. If the new version doesn't start properly, the previous one is put back automatically and you're told. Your settings, cameras, recordings and history are never touched. It waits if the alarm is counting down, someone is watching a movie or a backup is running. Needs a license, and works on Linux servers installed from a release (not ones run from source code).",
+            Fields =
+            [
+                Check("enabled", "Install Updates Automatically", "Install new releases overnight. Off, nothing installs by itself - 'check now' still tells you when one is out."),
+                Select("channel", "Channel", "Stable gets releases once they've been tried. Beta gets them first, with more chance of a rough edge.",
+                    ("stable", "Stable"),
+                    ("beta", "Beta")),
+                Number("hour", "Start Hour (0-23)", "When the two-hour overnight window starts, in 24-hour time, in the Schedules time zone (the server's own if that's blank). Each server picks its own minute within the first hour. The default 4 runs after the nightly backup at 3.", 0, 23)
+            ],
+            ExtraAction = new SettingsActionSchema(
+                "checkForUpdatesNow",
+                "check now",
+                "Ask the update server whether a newer release is out. Nothing is installed - this only looks.",
+                "/api/updates/check",
+                "POST")
+        },
+        new()
+        {
             Key = "hostReboot",
             Title = "REBOOT SERVER",
             Group = SettingsGroups.Maintenance,

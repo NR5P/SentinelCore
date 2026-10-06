@@ -218,6 +218,14 @@ public sealed class MediaHlsManager : IDisposable
 
     public void Touch(MediaHlsSession session) => session.LastAccessed = DateTimeOffset.UtcNow;
 
+    // Sessions a player has fetched from within `within` - someone actually watching, as opposed
+    // to a transcode left over from a closed tab. Auto-update waits for these to finish.
+    public int ActiveSessionCount(TimeSpan within)
+    {
+        var cutoff = DateTimeOffset.UtcNow - within;
+        return _sessions.Values.Count(s => s.LastAccessed >= cutoff);
+    }
+
     public async Task<MediaHlsSession> StartAsync(
         MediaItem item, MediaPlaybackPlan plan, double startSeconds, IReadOnlyList<MediaSubtitleTrack> subtitles, CancellationToken cancellationToken,
         string? input = null)
