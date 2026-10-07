@@ -9,7 +9,7 @@ window.SentinelKioskHome = (function () {
   const WEATHER_MS = 10 * 60 * 1000;
   const ALARM_MS = 15000;
   const DEVICES_MS = 10000;
-  const THUMBS_MS = 30000;
+  const THUMBS_MS = 5000;
   const CLOCK_MS = 5000;
 
   let visible = false;
@@ -217,8 +217,16 @@ window.SentinelKioskHome = (function () {
   function refreshThumbnails() {
     const stamp = Math.floor(Date.now() / THUMBS_MS);
     for (const img of document.querySelectorAll("#kh-cams img")) {
-      img.style.visibility = "";
-      img.src = img.src.replace(/t=\d+/, `t=${stamp}`);
+      // A camera with no warm stream costs the box a fresh ffmpeg grab per request, which can
+      // take longer than the refresh interval - don't stack a second one on an unfinished one.
+      if (img.dataset.loading) continue;
+      img.dataset.loading = "1";
+      // Load off-screen and swap once it's in, so the tile never blanks while the next frame
+      // arrives.
+      const next = new Image();
+      next.onload = () => { delete img.dataset.loading; img.style.visibility = ""; img.src = next.src; };
+      next.onerror = () => { delete img.dataset.loading; };
+      next.src = img.src.replace(/t=\d+/, `t=${stamp}`);
     }
   }
 

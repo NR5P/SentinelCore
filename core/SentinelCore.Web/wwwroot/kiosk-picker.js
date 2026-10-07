@@ -215,6 +215,10 @@
     if (!isOn() || !pickable(e.target)) return;
     e.preventDefault();
     e.target.blur();
+    // Cancelling the press also stops focus leaving the field typed in before (the event's title),
+    // which would keep the on-screen keyboard up over the picker. Let it go so the keyboard hides.
+    const prev = document.activeElement;
+    if (prev && prev !== document.body && prev !== e.target) prev.blur();
     open(e.target);
   }, true);
   document.addEventListener("click", (e) => {
