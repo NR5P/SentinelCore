@@ -339,6 +339,10 @@ window.SentinelOrganizer = (function () {
 
   function show() {
     visible = true;
+    // Opening the tab always lands on today. The kiosk keeps one page open for days, so the
+    // day picked at page load (or left selected last visit) would otherwise be stale.
+    monthCursor = firstOfMonth(new Date());
+    selectedDay = ymd(new Date());
     S.start();
     render();
   }
