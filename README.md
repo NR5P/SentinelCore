@@ -92,6 +92,13 @@ and filters for people, vehicles, animals, packages and plates.
 
 ![Day timeline with events on the rail](docs/screenshots/timeline.jpg)
 
+### On your phone
+
+The same events, the AI's explanation of each one, and live video from every camera, in the
+iPhone app (and the iPad, Mac, Apple TV, Android and Windows apps).
+
+![iPhone app: events feed, event detail and live cameras](docs/screenshots/iphone-cameras.jpg)
+
 Each camera can have **trigger zones** drawn on its picture, its own motion sensitivity and clip
 length, **gate checks** that periodically ask the AI whether a gate or door has been left open,
 and camera **groups** so one trigger saves clips from its neighbours too.
