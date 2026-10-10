@@ -3479,6 +3479,49 @@ html.kiosk .org-day-plus {
   font-size: 12px;
 }
 
+/* The expanded day: every entry on its own wrapping line, no clipping. */
+.org-day-sheet .org-row {
+  flex-wrap: wrap;
+  font-size: 15px;
+  padding: 10px 4px;
+}
+
+.org-day-sheet .org-row-time {
+  font-size: 14px;
+}
+
+.org-day-sheet .org-row-title {
+  overflow-wrap: anywhere;
+}
+
+.org-day-sheet .org-row-sub {
+  display: block;
+  margin: 3px 0 0;
+  font-size: 13px;
+}
+
+html.kiosk .org-modal-panel:has(.org-day-sheet) {
+  max-width: 900px;
+}
+
+html.kiosk .org-day-sheet .org-row {
+  font-size: 22px;
+  padding: 16px 6px;
+}
+
+html.kiosk .org-day-sheet .org-row-time {
+  flex-basis: 210px;
+  font-size: 19px;
+}
+
+html.kiosk .org-day-sheet .org-row-sub {
+  font-size: 17px;
+}
+
+html.kiosk .org-day-sheet .org-tag {
+  font-size: 15px;
+}
+
 /* Reminders */
 
 .org-quick-add {

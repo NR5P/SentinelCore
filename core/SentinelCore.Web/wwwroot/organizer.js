@@ -519,8 +519,8 @@ window.SentinelOrganizer = (function () {
     el("org-cal-holidays").addEventListener("click", openHolidaySettings);
     el("org-day-add").addEventListener("click", () => openEventEditor(null, { day: selectedDay }));
     // Adding on a day has to work by touch too (the wall kiosk and tablets never send dblclick, and
-    // the re-render after the first tap swallows it anyway): tap a day to select it, then tap it
-    // again, tap its +, or press and hold any day.
+    // the re-render after the first tap swallows it anyway): tap an empty day to select it, then tap
+    // it again, tap its +, or press and hold any day.
     for (const cell of root.querySelectorAll("[data-day]")) {
       let holdTimer = null;
       let held = false;
@@ -547,15 +547,35 @@ window.SentinelOrganizer = (function () {
       cell.addEventListener("click", (event) => {
         if (held) { held = false; return; }
         if (event.target.closest("[data-entry]")) return;
-        if (event.target.closest("[data-day-add]") || cell.dataset.day === selectedDay) {
+        // A day with things on it opens big, so every entry reads in full (the grid cells only
+        // fit three clipped lines, which is unreadable across the room on the wall kiosk). The
+        // sheet has its own + event, and the day's + and press-and-hold still add directly.
+        const onDay = byDay.get(cell.dataset.day) || [];
+        if (event.target.closest("[data-day-add]") || (cell.dataset.day === selectedDay && !onDay.length)) {
           openEventEditor(null, { day: cell.dataset.day });
           return;
         }
         selectedDay = cell.dataset.day;
         renderCalendar();
+        if (onDay.length) openDaySheet(selectedDay, onDay);
       });
     }
     bindEntryClicks(root, entries);
+  }
+
+  function openDaySheet(day, dayEntries) {
+    openModal(`
+      <div class="zone-editor-header"><span>${escapeHtml(formatDate(fromYmd(day)).toUpperCase())}</span></div>
+      <div class="wizard-body org-day-sheet">
+        ${dayEntries.map((entry) => entryRow(entry)).join("")}
+      </div>
+      <div class="zone-editor-footer">
+        <button class="btn" id="org-day-sheet-add">+ event on this day</button>
+        <button class="btn" id="org-close">close</button>
+      </div>`);
+    el("org-close").addEventListener("click", closeModal);
+    el("org-day-sheet-add").addEventListener("click", () => openEventEditor(null, { day }));
+    bindEntryClicks(el("org-modal-panel"));
   }
 
   function entryChip(entry) {
