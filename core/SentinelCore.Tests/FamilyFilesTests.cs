@@ -85,6 +85,33 @@ public sealed class FamilyFilesTests : IDisposable
 
     // ---- the library over HTTP ---------------------------------------------------------------
 
+    // Any account can upload, and files come back from the dashboard's own origin: a scriptable
+    // type opened directly must download, never render, or a Viewer's SVG runs as the Admin who
+    // opens it. Photos still display inline.
+    [Fact]
+    public async Task AScriptableUpload_IsServedAsADownload_WhileAPhotoStaysInline()
+    {
+        var dataDirectory = TempDirectory();
+        using var factory = CreateWebFactory(dataDirectory);
+        using var client = factory.CreateClient();
+        await UploadAsync(client, "Shared/evil.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>");
+        await UploadAsync(client, "Shared/page.html", "<script>alert(1)</script>");
+        await UploadAsync(client, "Shared/photo.jpg", "jpeg bytes");
+
+        foreach (var path in new[] { "Shared/evil.svg", "Shared/page.html" })
+        {
+            using var get = await client.GetAsync($"/api/family-files/files/{path}", Ct);
+            Assert.Equal(HttpStatusCode.OK, get.StatusCode);
+            Assert.Equal("attachment", get.Content.Headers.ContentDisposition?.DispositionType);
+            Assert.Equal("nosniff", get.Headers.GetValues("X-Content-Type-Options").Single());
+        }
+
+        using var photo = await client.GetAsync("/api/family-files/files/Shared/photo.jpg", Ct);
+        Assert.Null(photo.Content.Headers.ContentDisposition);
+        Assert.Equal("nosniff", photo.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("SAMEORIGIN", photo.Headers.GetValues("X-Frame-Options").Single());
+    }
+
     [Fact]
     public async Task AFile_GoesIn_ListsAndComesBackOut_AndIsNeverOverwritten()
     {

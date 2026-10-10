@@ -827,7 +827,7 @@ public static class PodcastEndpoints
     private static void MapClips(RouteGroupBuilder podcasts)
     {
         podcasts.MapPost("/episodes/{id:guid}/clips", async (Guid id, PodcastClipInput input, HttpContext context, IPodcastStore store,
-            PodcastAudioProcessor audio, PodcastLocations locations, CancellationToken ct) =>
+            PodcastAudioProcessor audio, PodcastLocations locations, IConfiguration configuration, CancellationToken ct) =>
         {
             var episode = await store.GetEpisodeAsync(id, ct);
             if (episode is null) return Results.NotFound(new { error = MissingEpisode });
@@ -840,6 +840,9 @@ public static class PodcastEndpoints
 
             // The start is in the time the person heard: the downloaded file's when there is one.
             var source = episode.Download is { IsDone: true } done && File.Exists(done.FilePath) ? done.FilePath! : episode.EnclosureUrl;
+            // ffmpeg fetches a remote source itself, outside PublicNetworkGuard's HttpClient check.
+            if (source == episode.EnclosureUrl && !await PublicNetworkGuard.PointsAtPublicInternetAsync(source, configuration, ct))
+                return Results.BadRequest(new { error = "This episode's audio address is on a local or private network, so a clip can't be cut from it." });
             Directory.CreateDirectory(locations.ClipsFolder);
             var clipId = Guid.NewGuid();
             var path = Path.Combine(locations.ClipsFolder, $"{clipId:N}.m4a");

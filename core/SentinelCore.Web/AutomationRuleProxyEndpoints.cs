@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace SentinelCore.Web;
 
@@ -16,10 +17,13 @@ public static class AutomationRuleProxyEndpoints
 {
     public static void MapAutomationRuleProxyEndpoints(this WebApplication app)
     {
+        // Any account can read rules (the Automations tab is visible to everyone), but only an
+        // Admin sees their secrets - see RedactForViewer.
         app.MapGet("/api/automation-rules", (
-            IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,
+            HttpContext context, IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,
             ILogger<AutomationRuleProxyLog> logger, CancellationToken ct) =>
-            ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, HttpMethod.Get, "/api/automation-rules", null, ct))
+            ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, HttpMethod.Get, "/api/automation-rules", null, ct,
+                redact: !context.User.IsInRole(nameof(AccountRole.Admin))))
             .RequireAuthorization();
 
         app.MapGet("/api/automation-rules/metadata", (
@@ -29,9 +33,10 @@ public static class AutomationRuleProxyEndpoints
             .RequireAuthorization();
 
         app.MapGet("/api/automation-rules/{id:guid}", (
-            Guid id, IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,
+            Guid id, HttpContext context, IHttpClientFactory httpClientFactory, AppSettingsFile mainAppSettings, IConfiguration configuration,
             ILogger<AutomationRuleProxyLog> logger, CancellationToken ct) =>
-            ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, HttpMethod.Get, $"/api/automation-rules/{id}", null, ct))
+            ForwardAsync(httpClientFactory, mainAppSettings, configuration, logger, HttpMethod.Get, $"/api/automation-rules/{id}", null, ct,
+                redact: !context.User.IsInRole(nameof(AccountRole.Admin))))
             .RequireAuthorization();
 
         app.MapPost("/api/automation-rules", (
@@ -69,7 +74,8 @@ public static class AutomationRuleProxyEndpoints
         HttpMethod method,
         string path,
         JsonElement? body,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool redact = false)
     {
         var bridge = await mainAppSettings.GetSectionAsync<BridgeSettingsDto>("Bridge", ct);
         if (bridge is null || string.IsNullOrWhiteSpace(bridge.ApiKey))
@@ -90,6 +96,7 @@ public static class AutomationRuleProxyEndpoints
             if (!response.IsSuccessStatusCode)
                 logger.LogWarning("Automation rule proxy {Method} {Path} failed: {StatusCode} {Body}", method, path, (int)response.StatusCode, responseBody);
 
+            if (redact && response.IsSuccessStatusCode) responseBody = RedactForViewer(responseBody);
             return Results.Content(responseBody, "application/json", statusCode: (int)response.StatusCode);
         }
         catch (HttpRequestException ex)
@@ -97,5 +104,33 @@ public static class AutomationRuleProxyEndpoints
             logger.LogWarning(ex, "Could not reach the main app at {BaseUrl} for {Path}", baseUrl, path);
             return Results.Json(new { error = "Could not reach the main app." }, statusCode: 502);
         }
+    }
+
+    public const string Hidden = "(hidden - admins only)";
+
+    // A webhook rule carries whatever the target needs to accept the call - typically a Home
+    // Assistant long-lived token in an Authorization header, sometimes a token in the URL's query
+    // string or the body. Viewers can't edit rules, so they never need the real values: keep what
+    // says where the rule goes (scheme, host, path) and hide the rest.
+    public static string RedactForViewer(string json)
+    {
+        JsonNode? root;
+        try { root = JsonNode.Parse(json); }
+        catch (JsonException) { return json; }
+
+        foreach (var rule in root is JsonArray array ? array.OfType<JsonObject>() : root is JsonObject single ? [single] : [])
+        {
+            foreach (var field in new[] { "webhookHeaders", "webhookBody" })
+                if (rule[field] is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0)
+                    rule[field] = Hidden;
+
+            if (rule["webhookUrl"] is JsonValue url && url.TryGetValue<string>(out var address) && address.Length > 0)
+                rule["webhookUrl"] = Uri.TryCreate(address, UriKind.Absolute, out var uri)
+                    // Authority is host:port without any user:password@.
+                    ? $"{uri.Scheme}://{uri.Authority}{uri.AbsolutePath}" + (uri.Query.Length > 0 ? "?" + Hidden : "")
+                    : Hidden;
+        }
+
+        return root?.ToJsonString(new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? json;
     }
 }

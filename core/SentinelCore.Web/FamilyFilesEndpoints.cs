@@ -143,8 +143,9 @@ public static class FamilyFilesEndpoints
             var file = await library.FindAsync(relative, ct);
             if (file is null) return Results.NotFound(new { error = "That file isn't in the library." });
             context.Response.Headers.CacheControl = "private, no-cache";
-            return Results.File(file.FullName, FamilyFilePaths.ContentTypeFor(file.Name),
-                download == true ? file.Name : null, file.LastWriteTimeUtc, enableRangeProcessing: true);
+            var contentType = FamilyFilePaths.ContentTypeFor(file.Name);
+            return Results.File(file.FullName, contentType,
+                UploadedContent.DownloadNameFor(context, contentType, file.Name, download == true), file.LastWriteTimeUtc, enableRangeProcessing: true);
         });
 
         enabled.MapGet("/thumbnail/{**path}", async (string path, HttpContext context, FamilyFilesLibrary library, CancellationToken ct) =>

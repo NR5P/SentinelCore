@@ -215,7 +215,9 @@ public static class OrganizerEndpoints
             var name = StringField(attachment.Fields, "name");
             // Content never changes under a hash, so it can be cached forever.
             context.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
-            return Results.File(blobs.PathFor(hash), contentType, download == true ? name ?? hash : null, enableRangeProcessing: true);
+            // The content type is whatever the uploader's client claimed - see UploadedContent.
+            return Results.File(blobs.PathFor(hash), contentType,
+                UploadedContent.DownloadNameFor(context, contentType, name ?? hash, download == true), enableRangeProcessing: true);
         });
 
         enabled.MapGet("/blobs/{hash}/thumbnail", async (string hash, HttpContext context, IOrganizerStore store, OrganizerBlobStore blobs, CancellationToken ct) =>

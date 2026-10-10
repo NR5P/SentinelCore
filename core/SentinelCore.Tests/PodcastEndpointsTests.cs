@@ -49,10 +49,12 @@ public sealed class PodcastEndpointsTests : IDisposable
               "Organizer": { "Enabled": {{(organizerEnabled ? "true" : "false")}} } }
             """);
 
-    private WebApplicationFactory<WebProgram> CreateFactory(string? dataDirectory = null, HttpMessageHandler? directory = null)
+    private WebApplicationFactory<WebProgram> CreateFactory(string? dataDirectory = null, HttpMessageHandler? directory = null, bool allowPrivateNetwork = true)
     {
         var factory = new WebApplicationFactory<WebProgram>().WithWebHostBuilder(builder => builder
             .UseTestSettings(_settingsPath, dataDirectory ?? _dataDirectory)
+            // The fake feed server is on loopback, which PublicNetworkGuard refuses by default.
+            .UseSetting(PublicNetworkGuard.AllowPrivateKey, allowPrivateNetwork ? "true" : "false")
             .ConfigureTestServices(services =>
             {
                 services.AddSingleton<IPodcastNotifier>(_notifier);
@@ -63,6 +65,22 @@ public sealed class PodcastEndpointsTests : IDisposable
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    // Any account can subscribe, and the server fetches whatever the feed URL names - so by
+    // default a feed on loopback (go2rtc's API, the camera list with its passwords, lives there)
+    // must be refused without the server ever connecting to it.
+    [Fact]
+    public async Task A_feed_on_a_private_address_is_refused_by_default()
+    {
+        _server.Feed("/show.xml", Feed("Show", 1));
+        using var client = CreateFactory(allowPrivateNetwork: false).CreateClient();
+
+        using var response = await client.PostAsJsonAsync("/api/podcasts/subscriptions", new { feedUrl = _server.Url("/show.xml") }, Ct);
+
+        var error = (await JsonAsync(response, HttpStatusCode.BadRequest)).GetProperty("errors")[0].GetString();
+        Assert.Contains("private network", error);
+        Assert.False(_server.Hits.ContainsKey("/show.xml"), "the server connected to a loopback feed");
+    }
 
     private static async Task<JsonElement> JsonAsync(HttpResponseMessage response, HttpStatusCode expected = HttpStatusCode.OK)
     {

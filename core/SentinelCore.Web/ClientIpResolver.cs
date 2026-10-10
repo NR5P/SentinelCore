@@ -10,18 +10,20 @@ namespace SentinelCore.Web;
 // On the Internet Exposed port, RemoteIpAddress is always cloudflared's own loopback connection
 // (see InternetExposedSettings) - the real internet client is never visible at the TCP layer at
 // all. Cloudflare's edge sets CF-Connecting-IP on every request it proxies, and cloudflared
-// passes it through unmodified, so that header is what identifies the real caller there. This is
-// safe to trust only because docs/DEPLOYMENT.md 14b has the operator firewall this port to
-// 127.0.0.1 - the only thing that can ever open a TCP connection to it - so nothing but
-// cloudflared itself is in a position to set that header before Kestrel sees it. Only used for
-// logging/rate-limiting, never for an authorization decision, so a misconfigured firewall would
-// at worst mislabel a log line rather than open a security hole.
+// passes it through unmodified, so that header is what identifies the real caller there.
+//
+// The headers are trusted only when the TCP peer itself is loopback - cloudflared on this
+// machine, as docs/DEPLOYMENT.md 14b sets it up. The port listens on every interface, so if the
+// operator's firewall rule is missing, anyone who can reach it directly could otherwise send a
+// new made-up address with each request and walk straight past the per-IP login lockout. A
+// direct connection is judged by its real address instead.
 public static class ClientIpResolver
 {
     public static string Resolve(HttpContext context, InternetExposedSettings internetExposed)
     {
         var isExposedRequest = internetExposed.Enabled && context.Connection.LocalPort == internetExposed.Port;
-        if (isExposedRequest)
+        var viaLocalProxy = context.Connection.RemoteIpAddress is { } peer && System.Net.IPAddress.IsLoopback(peer);
+        if (isExposedRequest && viaLocalProxy)
         {
             var cfConnectingIp = context.Request.Headers["CF-Connecting-IP"].FirstOrDefault();
             if (!string.IsNullOrWhiteSpace(cfConnectingIp))

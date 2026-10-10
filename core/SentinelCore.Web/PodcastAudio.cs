@@ -252,13 +252,17 @@ public sealed partial class PodcastAudioProcessor
     // `input` is a local file or the publisher's URL (ffmpeg seeks over HTTP with ranges).
     public async Task<string?> CutClipAsync(string input, double start, double duration, string output, string? title, CancellationToken cancellationToken)
     {
-        var args = new List<string>
-        {
-            "-hide_banner", "-nostats", "-loglevel", "error", "-y",
+        var args = new List<string> { "-hide_banner", "-nostats", "-loglevel", "error", "-y" };
+        // A URL comes from a feed: let ffmpeg speak HTTP(S) to it and nothing else (no file:,
+        // concat:, subfile: or the like reaching into the server's own disk).
+        if (input.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || input.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            args.AddRange(["-protocol_whitelist", "http,https,tcp,tls"]);
+        args.AddRange(
+        [
             "-ss", start.ToString("0.###", CultureInfo.InvariantCulture), "-i", input,
             "-t", duration.ToString("0.###", CultureInfo.InvariantCulture),
             "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"
-        };
+        ]);
         if (!string.IsNullOrWhiteSpace(title)) args.AddRange(["-metadata", $"title={title.Trim()}"]);
         args.AddRange(["-f", "mp4", output]);
         var result = await PodcastProcess.RunAsync(_ffmpegPath, args, TimeSpan.FromMinutes(5), cancellationToken);

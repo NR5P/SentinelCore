@@ -327,16 +327,18 @@ builder.Services.AddHttpClient(PodcastHttp.HttpClientName, client =>
 {
     client.Timeout = TimeSpan.FromSeconds(30);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (Podcasts)");
-}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+}).ConfigurePrimaryHttpMessageHandler(sp => PublicNetworkGuard.Apply(new SocketsHttpHandler
 {
     AllowAutoRedirect = false,
     AutomaticDecompression = System.Net.DecompressionMethods.All
-});
+}, sp.GetRequiredService<IConfiguration>()));
+// Both podcast clients fetch URLs a feed supplied - see PublicNetworkGuard.
 builder.Services.AddHttpClient(PodcastDownloadManager.HttpClientName, client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SentinelCore/1.0 (Podcasts)");
-}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 10 });
+}).ConfigurePrimaryHttpMessageHandler(sp => PublicNetworkGuard.Apply(
+    new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 10 }, sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddHttpClient(PodcastDirectory.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton<PodcastHttp>();
 builder.Services.AddSingleton<PodcastDirectory>();
@@ -657,6 +659,19 @@ else if (internetExposedSkipReason is not null)
 // First in the pipeline so it sees every request, including static files: someone loading the
 // dashboard itself from off-LAN is exactly the case worth knowing about.
 app.UseMiddleware<ExposureWarningMiddleware>();
+
+// Baseline browser hardening on every response. nosniff stops a browser treating an uploaded file
+// as HTML it can run; frame-ancestors/X-Frame-Options stop another site framing the dashboard to
+// trick a click (the docs viewer frames this origin itself, hence 'self' rather than none).
+app.Use((context, next) =>
+{
+    var headers = context.Response.Headers;
+    headers.XContentTypeOptions = "nosniff";
+    headers.XFrameOptions = "SAMEORIGIN";
+    headers.ContentSecurityPolicy = "frame-ancestors 'self'";
+    headers["Referrer-Policy"] = "same-origin";
+    return next(context);
+});
 
 app.UseDefaultFiles();
 // no-cache means "keep it, but ask first" - with the ETag that's a 304 and a few bytes per file.
