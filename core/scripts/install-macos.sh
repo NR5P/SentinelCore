@@ -140,6 +140,14 @@ sudo -u "$APP_USER" -H "$DOTNET_PATH" build-server shutdown >/dev/null 2>&1 || t
 echo "==> Building (Release)"
 sudo -u "$APP_USER" -H "$DOTNET_PATH" build "$ROOT_DIR" -c Release
 
+# appsettings.json is untracked live configuration (the dashboard writes every credential into
+# it); a fresh clone has only the checked-in, secret-free appsettings.defaults.json. Create the
+# live file before either service starts, because the dashboard reads it too. Never overwrite one.
+if [[ ! -f "$INSTALL_DIR/SentinelCore/appsettings.json" ]]; then
+  echo "==> Creating SentinelCore/appsettings.json from appsettings.defaults.json"
+  sudo -u "$APP_USER" cp "$INSTALL_DIR/SentinelCore/appsettings.defaults.json" "$INSTALL_DIR/SentinelCore/appsettings.json"
+fi
+
 if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
   echo "==> Running tests"
   sudo -u "$APP_USER" -H "$DOTNET_PATH" test "$ROOT_DIR" -c Release

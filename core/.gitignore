@@ -28,6 +28,14 @@ certs/
 # source, never worth committing.
 dist/
 
+# The main app's live configuration. The dashboard writes every camera, credential and alert
+# channel into this file, so in a git checkout (which is how a source install runs) it was always
+# one commit away from publishing someone's Gmail app password and bot tokens - and it did, more
+# than once. What's tracked instead is appsettings.defaults.json, the secret-free starting point;
+# ConfigDefaultsSeeder creates appsettings.json from it on first boot and adds any new keys on
+# later ones. Anchored so it only ever matches this one file.
+/SentinelCore/appsettings.json
+
 # Timestamped copies of a live appsettings.json, made by hand before a risky config change
 # (appsettings.json.bak-pretv-20260817-221248 and friends). appsettings.json itself is tracked
 # and carries the shipped defaults, so these backups are full copies of one machine's local

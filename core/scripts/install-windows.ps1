@@ -165,6 +165,15 @@ Write-Step "Building (Release)"
 & dotnet build $InstallDir -c Release
 if ($LASTEXITCODE -ne 0) { throw "Build failed." }
 
+# appsettings.json is untracked live configuration (the dashboard writes every credential into
+# it); a fresh clone has only the checked-in, secret-free appsettings.defaults.json. Create the
+# live file before either service starts, because the dashboard reads it too. Never overwrite one.
+$mainSettings = Join-Path $InstallDir "SentinelCore\appsettings.json"
+if (-not (Test-Path $mainSettings)) {
+    Write-Step "Creating SentinelCore\appsettings.json from appsettings.defaults.json"
+    Copy-Item (Join-Path $InstallDir "SentinelCore\appsettings.defaults.json") $mainSettings
+}
+
 if (-not $SkipTests) {
     Write-Step "Running tests"
     & dotnet test $InstallDir -c Release

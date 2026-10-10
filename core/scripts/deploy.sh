@@ -125,6 +125,14 @@ if [[ $built -ne 1 ]]; then
   exit 1
 fi
 
+# appsettings.json is untracked live configuration, created from the checked-in
+# appsettings.defaults.json. Normally it already exists; this covers a checkout that predates the
+# split, or one where it was lost. Never overwrites an existing file.
+if [[ ! -f SentinelCore/appsettings.json ]]; then
+  echo "==> Creating SentinelCore/appsettings.json from appsettings.defaults.json"
+  cp SentinelCore/appsettings.defaults.json SentinelCore/appsettings.json
+fi
+
 if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
   echo "==> Running tests"
   dotnet test

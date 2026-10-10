@@ -601,23 +601,25 @@ public sealed class BackupCoverageTests : IDisposable
     public async Task TheShippedConfiguration_StillExportsAndImportsCleanly()
     {
         var ct = TestContext.Current.CancellationToken;
-        var shipped = Path.Combine(RepositoryRootOrSkip(), "core/SentinelCore/appsettings.json");
-        Assert.SkipUnless(File.Exists(shipped), "The shipped appsettings.json isn't in this checkout.");
+        var shipped = Path.Combine(RepositoryRootOrSkip(), "core/SentinelCore/appsettings.defaults.json");
+        Assert.SkipUnless(File.Exists(shipped), "The shipped appsettings.defaults.json isn't in this checkout.");
 
         var sourceDirectory = TempDirectory();
         var sourceSettings = Path.Combine(sourceDirectory, "appsettings.json");
         File.Copy(shipped, sourceSettings, overwrite: true);
 
-        // appsettings.json is live config on an installed machine, not a fixture - the checkout
-        // this runs in is usually the one the server is running from, so whatever the operator has
-        // turned on is in the file being read. Auth is the section that decides whether this test
-        // can call anything: /api/backup is AdminOnly, and the synthetic Admin that makes it pass
-        // unauthenticated only exists while Auth:Enabled is false. An install that turned dashboard
-        // login on ships that `true` in this file, and its accounts live in accounts.db - which is
-        // deliberately not copied here, so the host boots with login required and no account to
-        // satisfy it, and every request 401s. That failed on the box this project actually runs on
-        // while passing everywhere else, and deploy.sh runs under `set -e`, so it blocked the
-        // restart rather than just reporting.
+        // The shipped defaults carry no Bridge:ApiKey - every install generates its own on the main
+        // app's first boot, long before anyone can take a backup. This host is the dashboard alone,
+        // so do that first boot's part here rather than export a key no real backup would lack.
+        SentinelCore.AutoApiKeyProvisioner.EnsureApiKey(sourceSettings, configuredApiKey: null);
+
+        // Auth is the section that decides whether this test can call anything: /api/backup is
+        // AdminOnly, and the synthetic Admin that makes it pass unauthenticated only exists while
+        // Auth:Enabled is false. The shipped defaults turn login on, and accounts live in
+        // accounts.db - which is deliberately not copied here, so the host would boot with login
+        // required and no account to satisfy it, and every request would 401. (This used to read
+        // the live appsettings.json, and failed on the box that turned login on while passing
+        // everywhere else; deploy.sh runs under `set -e`, so it blocked the restart.)
         //
         // Auth is pinned off in the copy because it is incidental to what this asserts: that the
         // *settings values* survive an export/import round trip. The Auth section's own

@@ -7,11 +7,18 @@ using Microsoft.Extensions.Options;
 // appsettings.json precisely so that unpacking an upgrade cannot overwrite a live configuration,
 // and this is the other half of that bargain - see ConfigDefaultsSeeder.
 //
-// Keyed off the binary's own directory rather than the content root because the defaults file is
-// deployed next to the executable; every shipped service unit sets WorkingDirectory to that same
-// folder, so the two agree in each configuration this actually ships in.
+// Keyed off the binary's own directory because the defaults file is deployed next to the
+// executable in a release bundle, where every shipped service unit sets WorkingDirectory to that
+// same folder. A git checkout is the other case: the units run from the project folder, the
+// content root the host reads appsettings.json from, and appsettings.json there is untracked live
+// configuration created from the checked-in appsettings.defaults.json - so seed that folder too.
 var configSeed = ConfigDefaultsSeeder.Seed(AppContext.BaseDirectory);
 if (configSeed.Describe() is { } configSeedMessage) Console.WriteLine(configSeedMessage);
+var contentRootDirectory = Directory.GetCurrentDirectory();
+if (Path.GetFullPath(contentRootDirectory).TrimEnd(Path.DirectorySeparatorChar)
+    != Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar)
+    && ConfigDefaultsSeeder.Seed(contentRootDirectory).Describe() is { } checkoutSeedMessage)
+    Console.WriteLine(checkoutSeedMessage);
 
 var builder = WebApplication.CreateBuilder(args);
 

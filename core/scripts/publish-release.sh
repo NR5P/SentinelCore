@@ -92,9 +92,16 @@ def write_defaults(directory, settings):
     with open(f"{directory}/{DEFAULTS_NAME}", "w") as f:
         json.dump(settings, f, indent=2)
         f.write("\n")
-    os.remove(f"{directory}/appsettings.json")
+    live = f"{directory}/appsettings.json"
+    if os.path.exists(live):
+        os.remove(live)
 
-main_path = f"{stage}/SentinelCore/appsettings.json"
+# The main app's starting point is the checked-in appsettings.defaults.json, never the
+# appsettings.json `dotnet publish` may also have copied: that one is untracked live config, and
+# on a machine that runs the server from this checkout it holds that machine's real credentials.
+# The blanking below is then only a second line of defence for anything that slipped into the
+# defaults file.
+main_path = f"{stage}/SentinelCore/{DEFAULTS_NAME}"
 with open(main_path) as f:
     main_settings = json.load(f)
 
@@ -299,13 +306,11 @@ for platform in $PLATFORMS; do
   # and recording compliance) is something an operator needs before they switch that feature on.
   cp "$ROOT_DIR/EULA.md" "$stage/"
 
-  # The appsettings.json files `dotnet publish` just copied are the ones checked into this repo
-  # - which double as this maintainer's own live configuration for the in-place git-checkout
-  # deployment (see docs/DEPLOYMENT.md section 3). That means they carry a real Bridge:ApiKey,
-  # Setup:Completed=true (skips the setup wizard), and absolute paths specific to this
-  # maintainer's own machine - all wrong to hand to someone else. Replace both with a clean,
-  # portable, secret-free starting point instead; every other shipped default (PromptProfiles,
-  # ports, etc.) is left untouched.
+  # The main app's appsettings.json that `dotnet publish` may have copied is untracked live
+  # configuration for the in-place git-checkout deployment (see docs/DEPLOYMENT.md section 3) -
+  # a real Bridge:ApiKey, alert-channel credentials, Setup:Completed=true - so the bundle is built
+  # from the checked-in appsettings.defaults.json instead, and the dashboard's file gets its paths
+  # made portable. Every other shipped default (PromptProfiles, ports, etc.) is left untouched.
   #
   # This also renames them to appsettings.defaults.json and drops the appsettings.json publish
   # produced, so that no file in this archive can overwrite an existing install's live settings -

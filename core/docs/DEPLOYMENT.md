@@ -245,6 +245,14 @@ the wizard doesn't cover or if you'd rather edit the file directly.
 
 ### Main app — `SentinelCore/appsettings.json`
 
+This file is **not in git**. The repo carries `SentinelCore/appsettings.defaults.json`, a
+secret-free starting point (login on, every alert channel off, no API key), and the install
+scripts and the app itself create `appsettings.json` from it the first time - after that it is
+this machine's own live configuration, the file the dashboard saves every credential into, and
+it is gitignored so a `git commit -a` can never publish it. Change shipped defaults in
+`appsettings.defaults.json`; new keys added there reach existing installs on their next boot
+(`ConfigDefaultsSeeder`, add-only - it never changes a value you've set).
+
 1. **Generate and set a real API key** (Blue Iris authenticates with this) - the setup wizard
    does this step for you automatically; only do it by hand if you're skipping the wizard:
    ```bash
@@ -1501,8 +1509,9 @@ Each is a **self-contained, single-file publish** (`dotnet publish -r <rid> --se
 tools that can't be bundled this way - the installer inside each .zip offers to install them,
 same as `install-linux.sh`/`install-macos.sh`/`install-windows.ps1` do for a source build.
 
-Before zipping, the script also replaces the repo's own `appsettings.json` files with a clean,
-secret-free copy for each bundle: `Bridge:ApiKey` blanked (the app generates and persists a
+Before zipping, the script also builds each bundle's configuration from the checked-in
+`appsettings.defaults.json` (never the untracked live `appsettings.json` on the build machine)
+and re-applies the same blanking as a second line of defence: `Bridge:ApiKey` blanked (the app generates and persists a
 fresh one on first boot - see `AutoApiKeyProvisioner` - so this isn't a manual step either),
 `Setup:Completed` set to false so the setup wizard runs, `Auth:Enabled` set to true so the
 install starts locked until its owner creates the admin account, and every alert channel (Email,

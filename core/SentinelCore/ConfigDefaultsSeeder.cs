@@ -7,8 +7,8 @@ namespace SentinelCore;
 // What happened on this boot, for the one line the call site logs.
 public enum ConfigSeedAction
 {
-    // No appsettings.defaults.json next to the binary. This is the normal result for a git
-    // checkout, where appsettings.json is the checked-in file and there is nothing to seed from.
+    // No appsettings.defaults.json in the directory. The normal result for a build output folder
+    // that predates the defaults file, or for the dashboard's folder in a git checkout.
     NotApplicable,
     // Every key in the defaults file was already present. The steady state after the first boot
     // of a given build.
