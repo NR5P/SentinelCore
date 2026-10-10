@@ -9,15 +9,23 @@
 window.KeepAwake = (function () {
   const reasons = new Set();
   let lock = null;
+  // True while a request is in flight. Without it two quick calls (a fullscreenchange and a
+  // visibilitychange, say) each got a lock, only the second was kept, and the first was never
+  // released - the kiosk then never slept again until Chromium restarted.
+  let requesting = false;
 
   async function acquire() {
-    if (reasons.size === 0 || lock || !navigator.wakeLock || document.visibilityState !== "visible") return;
+    if (reasons.size === 0 || lock || requesting || !navigator.wakeLock || document.visibilityState !== "visible") return;
+    requesting = true;
     try {
-      lock = await navigator.wakeLock.request("screen");
-      lock.addEventListener("release", () => { lock = null; });
+      const got = await navigator.wakeLock.request("screen");
+      got.addEventListener("release", () => { if (lock === got) lock = null; });
+      lock = got;
       if (reasons.size === 0) release();
     } catch (e) {
       // Not allowed here (plain HTTP, say): the screen just sleeps as usual.
+    } finally {
+      requesting = false;
     }
   }
 
