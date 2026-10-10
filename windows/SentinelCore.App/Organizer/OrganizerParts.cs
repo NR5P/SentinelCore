@@ -25,7 +25,13 @@ internal sealed class DateTimeInput : StackPanel
         Children.Add(_time);
         Value = value;
         AllDay = allDay;
+        _date.SelectedDateChanged += (_, _) => Changed?.Invoke();
+        // A typed time counts once the field is left, not at each keystroke on the way to "2:30".
+        _time.LostFocus += (_, _) => Changed?.Invoke();
     }
+
+    /// <summary>The date was picked or the time typed and left.</summary>
+    public event Action? Changed;
 
     public bool AllDay
     {

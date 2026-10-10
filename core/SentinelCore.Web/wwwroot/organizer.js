@@ -752,6 +752,23 @@ window.SentinelOrganizer = (function () {
     };
     el("ev-allday").addEventListener("change", syncAllDay);
     syncAllDay();
+    // Moving the start carries the end along, keeping the event's length (an hour for a new one),
+    // as calendar apps do - otherwise a new 3pm event still ends at whatever the default was.
+    const formStart = () => new Date(`${el("ev-start-date").value}T${el("ev-start-time").value || "00:00"}`);
+    const formEnd = () => new Date(`${el("ev-end-date").value || el("ev-start-date").value}T${el("ev-end-time").value || "00:00"}`);
+    let lastStart = formStart();
+    const followStart = () => {
+      const s = formStart();
+      if (isNaN(s)) return;
+      const e = formEnd();
+      const length = !isNaN(lastStart) && !isNaN(e) && e > lastStart ? e - lastStart : 3600000;
+      const moved = new Date(s.getTime() + length);
+      el("ev-end-date").value = ymd(moved);
+      el("ev-end-time").value = hm(moved);
+      lastStart = s;
+    };
+    el("ev-start-date").addEventListener("change", followStart);
+    el("ev-start-time").addEventListener("change", followStart);
     bindLinksEditor();
 
     let saved = event;

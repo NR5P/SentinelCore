@@ -29,6 +29,7 @@ internal sealed class ItemEditorWindow : Window
     private readonly CheckBox _completed = new() { Content = "Done" };
     private readonly CheckBox _flagged = new() { Content = "Flagged" };
     private readonly DateTimeInput _start;
+    private DateTimeOffset? _lastStart;
     private readonly DateTimeInput _end;
     private readonly DateTimeInput _due;
     private readonly ComboBox _repeat = new() { MinWidth = 200 };
@@ -91,7 +92,8 @@ internal sealed class ItemEditorWindow : Window
         // A card's due date is a day; there's no time for it to throw away.
         _due = new DateTimeInput(due, allDay || kind == OrganizerKinds.Card);
         _hasDue.IsChecked = due is not null;
-        _start.DatePicker.SelectedDateChanged += (_, _) => KeepEndAfterStart();
+        _lastStart = start;
+        _start.Changed += EndFollowsStart;
 
         _allDay.Click += (_, _) =>
         {
@@ -254,11 +256,16 @@ internal sealed class ItemEditorWindow : Window
         return root;
     }
 
-    private void KeepEndAfterStart()
+    // Moving the start carries the end along, keeping the event's length (an hour when there's
+    // nothing sensible to keep), as calendar apps do.
+    private void EndFollowsStart()
     {
-        if (_start.Value is not { } start) return;
-        if (_end.Value is { } end && end >= start) return;
-        _end.Value = _allDay.IsChecked == true ? start : start.AddHours(1);
+        if (_start.Value is not { } start || start == _lastStart) return;
+        var length = _lastStart is { } last && _end.Value is { } end && end >= last
+            ? end - last
+            : (_allDay.IsChecked == true ? TimeSpan.Zero : TimeSpan.FromHours(1));
+        _end.Value = start + length;
+        _lastStart = start;
     }
 
     private static readonly (string Label, string Rule)[] Repeats =
