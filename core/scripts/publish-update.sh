@@ -24,9 +24,14 @@
 #
 # Overrides:
 #   UPDATE_SIGNING_KEY  private key PEM  (default ~/sentinelcore-update-keys/update-signing-key.pem)
-#   UPDATE_HOST         ssh destination  (default user@server)
+#   UPDATE_HOST         ssh destination of the relay box, as user@host (required to upload)
 #   UPDATE_DIR          relay updates folder on that host
-#                       (default Desktop/BlueIrisOllamaBridge/core/SentinelCore.PushRelay/updates)
+#                       (default /opt/sentinelcore/core/SentinelCore.PushRelay/updates)
+#
+# Any of these can live in scripts/local.env (gitignored, sourced if present) so a plain
+# ./scripts/publish-update.sh needs no flags, e.g.
+#   UPDATE_HOST=user@relay-host
+#   UPDATE_DIR=/opt/sentinelcore/core/SentinelCore.PushRelay/updates
 #   PLATFORMS           (default "linux-x64 linux-arm64")
 #   ALLOW_DIRTY=1       publish from a tree with uncommitted changes (don't, for a real release)
 
@@ -36,9 +41,15 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 OUT_DIR="$ROOT_DIR/dist/updates"
 
+# Machine-specific defaults (the relay's ssh target and folder) stay out of the repo.
+if [[ -f "$SCRIPT_DIR/local.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/local.env"
+fi
+
 KEY=${UPDATE_SIGNING_KEY:-$HOME/sentinelcore-update-keys/update-signing-key.pem}
-UPDATE_HOST=${UPDATE_HOST:-user@server}
-UPDATE_DIR=${UPDATE_DIR:-Desktop/BlueIrisOllamaBridge/core/SentinelCore.PushRelay/updates}
+UPDATE_HOST=${UPDATE_HOST:-}
+UPDATE_DIR=${UPDATE_DIR:-/opt/sentinelcore/core/SentinelCore.PushRelay/updates}
 PLATFORMS=${PLATFORMS:-"linux-x64 linux-arm64"}
 
 CHANNEL=stable
@@ -80,6 +91,11 @@ done
 
 if [[ ! "$CHANNEL" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]; then
   echo "Channel must be lower-case letters, digits and dashes (stable, beta, ...)." >&2
+  exit 1
+fi
+if [[ "$UPLOAD" == "1" && -z "$UPDATE_HOST" ]]; then
+  echo "UPDATE_HOST is not set - export it, put UPDATE_HOST=user@host in scripts/local.env," >&2
+  echo "or pass --no-upload to build and sign only." >&2
   exit 1
 fi
 if [[ ! -f "$KEY" ]]; then

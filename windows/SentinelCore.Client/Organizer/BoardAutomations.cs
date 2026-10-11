@@ -478,7 +478,7 @@ public static class BoardAutomationRules
         }
     }
 
-    /// <summary>"Nathan", "Nathan and Sam", "Nathan, Sam and Dylan"; "…" (or nothing, quietly) for nobody.</summary>
+    /// <summary>"Morgan", "Morgan and Pat", "Morgan, Pat and Dylan"; "…" (or nothing, quietly) for nobody.</summary>
     public static string WhoWords(IEnumerable<string>? usernames, AutomationContext context, bool quiet = false)
     {
         var names = (usernames ?? Enumerable.Empty<string>())

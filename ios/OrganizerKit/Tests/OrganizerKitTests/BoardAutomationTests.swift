@@ -8,9 +8,9 @@ import XCTest
 final class BoardAutomationTests: XCTestCase {
     private let columns = ["todo": "To do", "done": "Done", "blank": ""]
     private let people = [
-        OrganizerPerson(username: "nathan", displayName: "Nathan", hasEmail: true),
+        OrganizerPerson(username: "morgan", displayName: "Morgan", hasEmail: true),
         OrganizerPerson(username: "terry", displayName: "Terry", hasEmail: false),
-        OrganizerPerson(username: "sam", displayName: nil),
+        OrganizerPerson(username: "pat", displayName: nil),
     ]
 
     private var words: AutomationWording {
@@ -95,10 +95,10 @@ final class BoardAutomationTests: XCTestCase {
         XCTAssertEqual(words.actionWords(block(["type": "assign", "username": ""])), "assign it to …")
         XCTAssertEqual(words.actionWords(block(["type": "deleteCard"])), "delete it")
         XCTAssertEqual(words.actionWords(block(["type": "notify", "everyone": true, "people": [], "text": "bins"])), "notify everyone “bins”")
-        XCTAssertEqual(words.actionWords(block(["type": "notify", "everyone": false, "people": ["nathan", "terry", "sam"], "text": ""])),
-                       "notify Nathan, Terry and sam “…”")
+        XCTAssertEqual(words.actionWords(block(["type": "notify", "everyone": false, "people": ["morgan", "terry", "pat"], "text": ""])),
+                       "notify Morgan, Terry and pat “…”")
         XCTAssertEqual(words.actionWords(block(["type": "notify", "everyone": false, "people": [], "text": "x"])), "notify … “x”")
-        XCTAssertEqual(words.actionWords(block(["type": "email", "people": ["nathan"], "addresses": ["a@b.com"], "text": "hi"])), "email Nathan, a@b.com “hi”")
+        XCTAssertEqual(words.actionWords(block(["type": "email", "people": ["morgan"], "addresses": ["a@b.com"], "text": "hi"])), "email Morgan, a@b.com “hi”")
         XCTAssertEqual(words.actionWords(block(["type": "email", "people": [], "addresses": [], "text": ""])), "email … “…”")
         XCTAssertEqual(words.actionWords(block(["type": "moveAllCards", "columnId": "done", "toColumnId": "todo", "onlyCompleted": true])),
                        "move every finished card from Done to To do")
@@ -128,7 +128,7 @@ final class BoardAutomationTests: XCTestCase {
     // field and a block this build has never heard of. All of it has to go back unchanged.
     func testRuleSurvivesARoundTripIncludingNullsAndUnknowns() throws {
         let json = """
-        {"id":"abc","name":"Eggs","enabled":false,"boardId":"b1","timeZone":null,"runAs":"nathan","createdBy":"nathan",
+        {"id":"abc","name":"Eggs","enabled":false,"boardId":"b1","timeZone":null,"runAs":"morgan","createdBy":"morgan",
          "createdAt":"2026-09-24T12:00:00+00:00","updatedAt":"2026-09-24T12:00:00+00:00",
          "nextRunAt":"2026-09-30T12:00:00+00:00","lastRunAt":"2026-09-29T12:00:00.1234567+00:00","lastOk":true,"lastResult":"made 1 card","runCount":3,
          "futureField":{"x":[1,2.5,null]},
@@ -276,7 +276,7 @@ final class BoardAutomationTests: XCTestCase {
         XCTAssertEqual(BoardAutomations.make(.actions, "notify", context: context).bool("everyone"), true)
         let withPeople = AutomationMakeContext(firstColumnId: "todo", lastColumnId: "done", timeZone: "UTC", people: people)
         XCTAssertEqual(BoardAutomations.make(.actions, "notify", context: withPeople).bool("everyone"), false)
-        XCTAssertEqual(BoardAutomations.make(.actions, "assign", context: withPeople).string("username"), "nathan")
+        XCTAssertEqual(BoardAutomations.make(.actions, "assign", context: withPeople).string("username"), "morgan")
 
         XCTAssertEqual(BoardAutomations.triggers.count, 7)
         XCTAssertEqual(BoardAutomations.conditions.count, 5)

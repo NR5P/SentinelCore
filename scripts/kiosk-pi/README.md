@@ -3,7 +3,11 @@
 The wall tablet is a Pi 4 (Pi OS trixie, labwc, official DSI touch display) running Chromium
 full screen against the dashboard with `?kiosk=1`. These are copies of the files that live on it,
 kept here so the setup can be rebuilt. Changing them here does not change the Pi: copy them over
-by hand (`scp` as `admin@`).
+by hand (`scp` as the Pi's login user).
+
+**Before copying:** set `KIOSK_DASHBOARD` at the top of `autostart` to your dashboard's address
+(for example `https://192.168.1.50:3443`). `autostart` exports it, so `kiosk-touch-wake` uses the
+same value; nothing else holds an address.
 
 | File | On the Pi | What it does |
 | --- | --- | --- |

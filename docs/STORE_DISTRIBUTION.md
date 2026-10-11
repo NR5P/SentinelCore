@@ -62,9 +62,9 @@ shows what Apple accepted; Play Console's internal track shows the Android uploa
 
 ## 1. Accounts **[you]**
 
-- **Apple Developer Program** - already enrolled (team `G4GK5372G8`).
+- **Apple Developer Program** - already enrolled (team `<TEAM_ID>`).
 - **Google Play Console** - https://play.google.com/console, one-time US$25. Use the same
-  Google account that owns the Firebase project `firebase-project-id` so the app record and the
+  Google account that owns the Firebase project (`<firebase-project-id>`) so the app record and the
   push project sit together.
 
 ## 2. Apple: app records and signing **[you]**, ~15 minutes
@@ -141,7 +141,7 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
    Then create `android/keystore.properties` (gitignored):
 
    ```
-   storeFile=/Users/you/sentinelcore-upload.jks
+   storeFile=/Users/<you>/sentinelcore-upload.jks
    storePassword=<the password>
    keyAlias=upload
    keyPassword=<the password>
@@ -175,17 +175,17 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
 5. **Automatic uploads [you], once.** `android/scripts/play-upload.py` talks to the Play
    Developer API with a *service account* - a robot identity you invite to the Play Console.
    - https://console.cloud.google.com → project picker → choose the Firebase project
-     (`firebase-project-id`; Firebase projects are Google Cloud projects) → **IAM & Admin →
+     (`<firebase-project-id>`; Firebase projects are Google Cloud projects) → **IAM & Admin →
      Service Accounts → Create service account**: name `play-publisher`, no roles → Done.
    - Open it → **Keys → Add key → Create new key → JSON**. Save the download as
      `~/sentinelcore-play-publisher.json` (outside the repo; gitignored anyway).
    - Play Console → **Users and permissions → Invite new users** → email = the service
-     account's address (`play-publisher@firebase-project-id.iam.gserviceaccount.com`) →
+     account's address (`play-publisher@<firebase-project-id>.iam.gserviceaccount.com`) →
      **App permissions → Add app → Sentinel Core** → tick **Release apps to testing tracks**
      (and *Manage testing tracks and edit tester lists*) → **Invite user**. Takes a few minutes
      to become active.
    - Add one line to `android/keystore.properties`:
-     `playServiceAccountJson=/Users/you/sentinelcore-play-publisher.json`
+     `playServiceAccountJson=/Users/<you>/sentinelcore-play-publisher.json` (an absolute path; `~` is not expanded)
    - Verify: `python3 android/scripts/play-upload.py --key ~/sentinelcore-play-publisher.json --check`
      should print the current internal release. From then on `android/release.sh` uploads.
 

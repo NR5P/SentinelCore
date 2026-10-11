@@ -283,7 +283,7 @@ final class EngineTests: XCTestCase {
         let folder = directory()
         let engine = try OrganizerEngine(directory: folder, deviceId: "phone", policy: .computerDefault)
         let transport = ScriptedTransport { request in
-            request.path == "/api/organizer/status" ?ScriptedTransport.status(username: "nathan") :ScriptedTransport.reply(items: [[
+            request.path == "/api/organizer/status" ?ScriptedTransport.status(username: "morgan") :ScriptedTransport.reply(items: [[
                 "id": "diary", "kind": "note", "spaceId": "family", "deleted": false, "fields": ["title": "Mine"], "clocks": [:], "seq": 1,
             ]])
         }
@@ -300,7 +300,7 @@ final class EngineTests: XCTestCase {
 
     func testLosingAccessToAGroupDropsWhatWasInIt() async throws {
         let engine = try OrganizerEngine(directory: directory(), deviceId: "phone", policy: .computerDefault)
-        let group: [String: Any] = ["id": "group:abc", "kind": "Group", "name": "Parents", "members": ["nathan", "terry"]]
+        let group: [String: Any] = ["id": "group:abc", "kind": "Group", "name": "Parents", "members": ["morgan", "terry"]]
         let family: [String: Any] = ["id": "family", "kind": "Family", "name": "Family", "members": []]
         let transport = ScriptedTransport { request in
             request.path == "/api/organizer/status" ?ScriptedTransport.status(username: "terry") :ScriptedTransport.reply(spaces: [family, group], items: [[
@@ -356,7 +356,7 @@ final class EngineTests: XCTestCase {
         let column = engine.create(.column, fields: ["title": "To do"], parentId: board.id)
         let card = engine.create(.card, fields: ["title": "Paint"], parentId: column.id)
         let transport = ScriptedTransport { request in
-            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: "Nathan") : ScriptedTransport.reply(items: [[
+            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: "Morgan") : ScriptedTransport.reply(items: [[
                 "id": "from-anna", "kind": "comment", "spaceId": "family", "parentId": card.id, "deleted": false,
                 "fields": ["body": "Which colour?"], "clocks": [:], "seq": 1,
                 "createdAt": "2020-01-01T10:00:00.1234567+00:00", "createdBy": "anna",
@@ -367,15 +367,15 @@ final class EngineTests: XCTestCase {
 
         let mine = try XCTUnwrap(engine.postComment("  Blue  ", on: card.id))
         XCTAssertEqual(mine.string("body"), "Blue")
-        XCTAssertEqual(mine.createdBy, "Nathan")
+        XCTAssertEqual(mine.createdBy, "Morgan")
         XCTAssertNil(engine.postComment("   ", on: card.id))
         XCTAssertEqual(engine.comments(on: card.id).map(\.id), ["from-anna", mine.id])
 
         let theirs = try XCTUnwrap(engine.item("from-anna"))
-        XCTAssertFalse(theirs.isAuthored(by: "nathan"))
-        XCTAssertTrue(mine.isAuthored(by: "NATHAN"))
+        XCTAssertFalse(theirs.isAuthored(by: "morgan"))
+        XCTAssertTrue(mine.isAuthored(by: "MORGAN"))
         XCTAssertTrue(theirs.isAuthored(by: nil), "login off: anyone may edit")
-        XCTAssertTrue(OrganizerItem(id: "x", kind: .comment, spaceId: "family").isAuthored(by: "nathan"), "unknown author")
+        XCTAssertTrue(OrganizerItem(id: "x", kind: .comment, spaceId: "family").isAuthored(by: "morgan"), "unknown author")
 
         XCTAssertNil(engine.item(mine.id)?.editedAt)
         XCTAssertFalse(engine.editComment(mine.id, body: "Blue"), "unchanged body is not an edit")
@@ -393,7 +393,7 @@ final class EngineTests: XCTestCase {
     func testAKindThisBuildDoesNotKnow_IsSkipped_NotAFailedSync() async throws {
         let engine = try OrganizerEngine(directory: directory(), deviceId: "phone", policy: .computerDefault)
         let transport = ScriptedTransport { request in
-            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: "Nathan") : ScriptedTransport.reply(items: [
+            request.path == "/api/organizer/status" ? ScriptedTransport.status(username: "Morgan") : ScriptedTransport.reply(items: [
                 ["id": "from-the-future", "kind": "sticker", "spaceId": "family", "deleted": false,
                  "fields": ["shape": "star"], "clocks": [:], "seq": 1],
                 ["id": "n1", "kind": "note", "spaceId": "family", "deleted": false,

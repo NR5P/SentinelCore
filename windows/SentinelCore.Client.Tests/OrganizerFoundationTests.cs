@@ -62,7 +62,7 @@ public class OrganizerFoundationTests
         Assert.Equal("1790000000000-0001-pc", clock.Next(1_790_000_000_000));
         clock.Observe("1790000060000-0003-laptop");
         Assert.True(string.CompareOrdinal(clock.Next(1_790_000_000_000), "1790000060000-0003-laptop") > 0);
-        Assert.Equal("NathansPC2", new HybridClock("Nathan’s PC (2)").DeviceId);
+        Assert.Equal("MorgansPC2", new HybridClock("Morgan’s PC (2)").DeviceId);
     }
 
     [Fact]

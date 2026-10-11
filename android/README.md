@@ -13,7 +13,7 @@ This README covers what's here and how it fits together.
    `local.properties` (the SDK path) the first time.
 2. Choose a phone, tablet or emulator (API 26+) and run the `app` configuration. Or from a
    terminal: `./gradlew assembleDebug`, then `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
-3. Enter the server address, for example `http://192.168.50.8:3320`. On an emulator, the host
+3. Enter the server address, for example `http://192.168.1.50:3320`. On an emulator, the host
    computer's own loopback is `10.0.2.2`, not `localhost`.
 
 Files the build looks for that aren't in git: `local.properties` (the SDK path, required),

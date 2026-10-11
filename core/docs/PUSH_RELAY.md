@@ -16,20 +16,20 @@ tests run with everyone else's, and it deploys only where you put it.
 
 - The .NET 10 runtime (already present on a host that runs Core).
 - The APNs auth key and Firebase service-account JSON - the same two files a direct-mode Core
-  install uses. On the current host they are `~/sentinelcore-push-keys/AuthKey_APNSKEYID0.p8`
+  install uses. On the current host they are `~/sentinelcore-push-keys/AuthKey_<KEY_ID>.p8`
   and `~/sentinelcore-push-keys/firebase-service-account.json`.
 - Outbound HTTPS to `api.push.apple.com`, `api.sandbox.push.apple.com`,
   `fcm.googleapis.com` and `oauth2.googleapis.com`.
-- Something to put it on the internet at `https://push.nr5p.com`. Today that is the
-  `cloudflared` tunnel already running on the same host for `cam.example.com`.
+- Something to put it on the internet at `https://push.nr5p.com`. For example a
+  `cloudflared` tunnel on the same host (the one that may already publish your dashboard at
+  your tunnel hostname, e.g. `cam.example.com`).
 
 It does **not** need the license private key. It verifies with the public key compiled into
 `SentinelCore.Licensing/LicensePublicKey.cs` - the same one every Core install carries.
 
 ## Install (first time, on the vendor host)
 
-From the repository checkout that already runs Core (`~/Desktop/BlueIrisOllamaBridge/core` on
-the media box):
+From the repository checkout that already runs Core (`/opt/sentinelcore/core` in these examples):
 
 1. Fill in the live configuration. `SentinelCore.PushRelay/appsettings.json` is committed with
    empty credentials; edit the working copy in place, the same way Core's own is:
@@ -38,16 +38,16 @@ the media box):
    "Relay": {
      "Apple": {
        "Enabled": true,
-       "TeamId": "G4GK5372G8",
-       "KeyId": "APNSKEYID0",
+       "TeamId": "<TEAM_ID>",
+       "KeyId": "<KEY_ID>",
        "BundleId": "com.sentinelcore.client",
        "TvBundleId": "com.sentinelcore.client.tv",
-       "PrivateKeyPath": "/home/sentinel/sentinelcore-push-keys/AuthKey_APNSKEYID0.p8"
+       "PrivateKeyPath": "/home/<user>/sentinelcore-push-keys/AuthKey_<KEY_ID>.p8"
      },
      "Firebase": {
        "Enabled": true,
-       "ProjectId": "firebase-project-id",
-       "ServiceAccountPath": "/home/sentinel/sentinelcore-push-keys/firebase-service-account.json"
+       "ProjectId": "<firebase-project-id>",
+       "ServiceAccountPath": "/home/<user>/sentinelcore-push-keys/firebase-service-account.json"
      }
    }
    ```
@@ -60,7 +60,7 @@ the media box):
 
    ```bash
    sed -e "s|__DOTNET_PATH__|$(command -v dotnet)|g" \
-       -e "s|__INSTALL_DIR__|$HOME/Desktop/BlueIrisOllamaBridge/core|g" \
+       -e "s|__INSTALL_DIR__|/opt/sentinelcore/core|g" \
        -e "s|__APP_USER__|$USER|g" \
        systemd/sentinelcore-push-relay.service | sudo tee /etc/systemd/system/sentinelcore-push-relay.service >/dev/null
    sudo systemctl daemon-reload

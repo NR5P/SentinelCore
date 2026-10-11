@@ -268,7 +268,7 @@ public sealed class OrganizerEngineTests : IDisposable
     {
         var engine = Engine(new InMemoryOrganizerStore(NewDirectory()));
         var transport = new ScriptedTransport((_, path, _) => path == "/api/organizer/status"
-            ? ScriptedTransport.Status("nathan")
+            ? ScriptedTransport.Status("morgan")
             : ScriptedTransport.Reply(items: """[{"id":"diary","kind":"note","spaceId":"family","deleted":false,"fields":{"title":"Mine"},"clocks":{},"seq":1}]"""));
         engine.Connect(transport);
         await Settle(engine);
@@ -282,7 +282,7 @@ public sealed class OrganizerEngineTests : IDisposable
     public async Task LosingAccessToAGroupDropsWhatWasInIt()
     {
         var engine = Engine(new InMemoryOrganizerStore(NewDirectory()));
-        const string group = """{"id":"group:abc","kind":"Group","name":"Parents","members":["nathan","terry"]}""";
+        const string group = """{"id":"group:abc","kind":"Group","name":"Parents","members":["morgan","terry"]}""";
         var transport = OnlyStatus((_, _, _) => ScriptedTransport.Reply(
             spaces: $"[{ScriptedTransport.FamilySpace},{group}]",
             items: """[{"id":"gift","kind":"reminder","spaceId":"group:abc","deleted":false,"fields":{"title":"Bike"},"clocks":{},"seq":1}]"""));
@@ -417,13 +417,13 @@ public sealed class OrganizerEngineTests : IDisposable
     public void CommentAvatarsShowInitialsInAStableColour()
     {
         Assert.Equal("AS", OrganizerComments.Initials("Alice Smith"));
-        Assert.Equal("NR", OrganizerComments.Initials("nathan.rigg"));
+        Assert.Equal("MR", OrganizerComments.Initials("morgan.reed"));
         Assert.Equal("BO", OrganizerComments.Initials("bob"));
         Assert.Equal("B", OrganizerComments.Initials("b"));
         Assert.Null(OrganizerComments.Initials(null));
         Assert.Null(OrganizerComments.Initials(" "));
 
-        Assert.Equal(OrganizerComments.ColorIndex("Nathan", 8), OrganizerComments.ColorIndex("nathan", 8));
+        Assert.Equal(OrganizerComments.ColorIndex("Morgan", 8), OrganizerComments.ColorIndex("morgan", 8));
         // "ab" = 97 + 98 = 195, and 195 % 8 = 3 - the same sum the Apple and Android apps use.
         Assert.Equal(3, OrganizerComments.ColorIndex("ab", 8));
     }

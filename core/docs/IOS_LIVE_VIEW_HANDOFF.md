@@ -202,10 +202,3 @@ one piece here worth retrieving.
 resolve anywhere else. If it turns out to be wanted, it needs pushing from there first; if this
 note is old and nobody ever went back to it, the branch may simply be gone, and the description
 above plus `HlsStreamManager` is enough to rebuild it.
-
-### Note for anyone testing from this Mac
-
-The Mac cannot reach the media box: instant TCP RST on every port, no ICMP, while the server is up
-and still advertising `_sentinelcore._tcp` at `192.168.50.8:3443`. It is firewalled off — the
-lasting consequence of an earlier round of failed SSH auth. Pointing a simulator at the real server
-needs that lifted first.

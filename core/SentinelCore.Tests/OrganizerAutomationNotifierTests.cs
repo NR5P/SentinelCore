@@ -172,17 +172,17 @@ public sealed class OrganizerAutomationNotifierTests : IDisposable
             using var command = old.CreateCommand();
             command.CommandText = """
                 CREATE TABLE Accounts (Id TEXT PRIMARY KEY, Username TEXT NOT NULL, PasswordHash TEXT NOT NULL, Role TEXT NOT NULL, DisplayName TEXT, CreatedAt TEXT NOT NULL);
-                INSERT INTO Accounts VALUES ('0123456789abcdef0123456789abcdef', 'nathan', 'hash', 'Admin', NULL, '2026-01-01T00:00:00.0000000Z');
+                INSERT INTO Accounts VALUES ('0123456789abcdef0123456789abcdef', 'morgan', 'hash', 'Admin', NULL, '2026-01-01T00:00:00.0000000Z');
                 """;
             command.ExecuteNonQuery();
         }
 
         var accounts = new SqliteAccountStore(_directory);
         _disposables.Add(accounts);
-        var nathan = (await accounts.GetByUsernameAsync("nathan", Ct))!;
-        Assert.Null(nathan.Email);
-        await accounts.UpdateEmailAsync(nathan.Id, "n@example.com", Ct);
-        Assert.Equal("n@example.com", (await accounts.GetByUsernameAsync("nathan", Ct))!.Email);
+        var morgan = (await accounts.GetByUsernameAsync("morgan", Ct))!;
+        Assert.Null(morgan.Email);
+        await accounts.UpdateEmailAsync(morgan.Id, "n@example.com", Ct);
+        Assert.Equal("n@example.com", (await accounts.GetByUsernameAsync("morgan", Ct))!.Email);
     }
 
     // ---- whose phone is whose -------------------------------------------------------------------

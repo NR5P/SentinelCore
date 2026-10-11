@@ -45,7 +45,7 @@ enum AudioRepeat: String, CaseIterable, Sendable {
     }
 }
 
-// Who this device is, to the speaker list and to "Playing on Nathan's iPhone".
+// Who this device is, to the speaker list and to "Playing on Morgan's iPhone".
 @MainActor
 enum AudioDevice {
     static var id: String { OrganizerDevice.id }

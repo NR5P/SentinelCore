@@ -112,11 +112,11 @@ public class MediaDownloadTextTests
     {
         var download = new MediaDownload
         {
-            State = "done", SizeBytes = 6_400_000_000, RequestedBy = "sam",
+            State = "done", SizeBytes = 6_400_000_000, RequestedBy = "pat",
             CreatedAt = Now.AddHours(-5), FinishedAt = Now.AddHours(-3),
         };
 
-        Assert.Equal(new[] { "ready", "6.4 GB", "by sam", "3 h ago" }, MediaDownloadText.DownloadFacts(download, Now, Invariant));
+        Assert.Equal(new[] { "ready", "6.4 GB", "by pat", "3 h ago" }, MediaDownloadText.DownloadFacts(download, Now, Invariant));
         Assert.Equal(new[] { "failed" }, MediaDownloadText.DownloadFacts(new MediaDownload { State = "failed" }, Now, Invariant));
     }
 
@@ -292,7 +292,7 @@ public class MediaDownloadTextTests
         Assert.Equal(-3L, MediaDownloadText.SiteFieldValue("select", "-3"));
         Assert.Equal("newest", MediaDownloadText.SiteFieldValue("select", "newest"));
         Assert.Equal("", MediaDownloadText.SiteFieldValue("select", ""));
-        Assert.Equal("sam", MediaDownloadText.SiteFieldValue("text", "sam"));
+        Assert.Equal("pat", MediaDownloadText.SiteFieldValue("text", "pat"));
         Assert.Equal("", MediaDownloadText.SiteFieldValue("password", null));
     }
 

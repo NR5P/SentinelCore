@@ -31,7 +31,8 @@ cd core
   commit count, so it only ever goes up. Installs compare build numbers.
 - Refuses to run if `core/` has uncommitted changes (`ALLOW_DIRTY=1` overrides this for a
   throwaway test) or if the signing key doesn't match the public key compiled into the app.
-- Uploads with `scp` to `user@server`. The bundle goes up first and the manifest last, each
+- Uploads with `scp` to the relay box named by `UPDATE_HOST` (`user@host`; export it or put it
+  in the gitignored `core/scripts/local.env`, which the script sources if present). The bundle goes up first and the manifest last, each
   renamed into place, so a box never sees a manifest pointing at a half-uploaded file. The
   newest three bundles are kept per platform.
 - `--channel beta` publishes to boxes that chose Beta in Settings. `--no-upload` builds and

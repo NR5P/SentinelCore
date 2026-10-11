@@ -25,7 +25,7 @@ struct KnownFaceEditView: View {
             Section("Name") {
                 // Renaming an enrolled person isn't supported by the server yet - the field is
                 // read-only once created rather than silently doing nothing on save.
-                SentinelTextField(label: "Name", prompt: "e.g. Nathan", text: $label)
+                SentinelTextField(label: "Name", prompt: "e.g. Morgan", text: $label)
                     .disabled(!isNew)
             }
 

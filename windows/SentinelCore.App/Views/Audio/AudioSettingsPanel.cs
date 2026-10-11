@@ -146,7 +146,7 @@ public sealed class AudioSettingsPanel : StackPanel
         }
     }
 
-    /// <summary>"/home/sentinel/podcasts · 11.2 GB of 50 GB · 1 downloading, 3 waiting · transcripts: …".</summary>
+    /// <summary>"/srv/media/podcasts · 11.2 GB of 50 GB · 1 downloading, 3 waiting · transcripts: …".</summary>
     public static string StorageLine(PodcastStatus status)
     {
         var parts = new List<string>();

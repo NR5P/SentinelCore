@@ -39,7 +39,7 @@ class MediaDownloadParsingTest {
           "posterUrl": "https://image.tmdb.org/t/p/w342/b.jpg", "releaseTitle": "Bluey.S02E05.1080p", "site": "TheSite",
           "sizeBytes": 400000000, "state": "downloading",
           "progress": 0.42, "downloadedBytes": 168000000, "speedBytesPerSecond": 3100000, "etaSeconds": 75,
-          "peers": 14, "error": "Looking for people sharing it...", "libraryId": "lib2", "itemId": null, "requestedBy": "sam",
+          "peers": 14, "error": "Looking for people sharing it...", "libraryId": "lib2", "itemId": null, "requestedBy": "pat",
           "createdAt": "2026-09-29T10:00:00Z", "completedAt": null, "finishedAt": null }
     """.trimIndent()
 
@@ -206,7 +206,7 @@ class MediaDownloadParsingTest {
         assertEquals(14, download.peers)
         assertEquals("Looking for people sharing it...", download.error)
         assertNull(download.itemId)
-        assertEquals("sam", download.requestedBy)
+        assertEquals("pat", download.requestedBy)
         assertNull(download.finishedAt)
         assertNull(download.replacesItemId)
         assertEquals("m1", parseMediaDownload(JSONObject("""{ "id": "d3", "title": "Dune", "state": "queued", "replacesItemId": "m1" }""")).replacesItemId)
@@ -268,10 +268,10 @@ class MediaDownloadParsingTest {
 
         val body = MediaDownloadApi.siteFieldsJson(
             fields,
-            values = mapOf("username" to "sam", "sort" to "0", "pages" to ""),
+            values = mapOf("username" to "pat", "sort" to "0", "pages" to ""),
             checks = mapOf("freeleech" to false),
         )
-        assertEquals("sam", body.getString("username"))
+        assertEquals("pat", body.getString("username"))
         assertEquals(false, body.getBoolean("freeleech"))
         assertEquals(0L, body.getLong("sort"))
         assertTrue(body.isNull("pages"))

@@ -359,7 +359,7 @@ public class AudioClientTests
         using var server = new FakeServer()
             .On("PUT", "/api/audio/speakers/w1", "", HttpStatusCode.NoContent)
             .On("DELETE", "/api/audio/speakers/w1", "", HttpStatusCode.NoContent)
-            .OnGet("/api/audio/speakers/w1/commands", """{"commands":[{"seq":5,"at":"2026-10-02T10:00:00Z","from":"nathan","action":"pause"}],"latestSeq":5}""");
+            .OnGet("/api/audio/speakers/w1/commands", """{"commands":[{"seq":5,"at":"2026-10-02T10:00:00Z","from":"morgan","action":"pause"}],"latestSeq":5}""");
         using var client = ClientFor(server);
         var received = new List<string>();
         var session = new SpeakerSession(client, "w1", () => new SpeakerRegistration { Name = "PC" }, command =>
@@ -397,9 +397,9 @@ public class AudioClientTests
     {
         using var server = new FakeServer()
             .On("POST", "/api/audio/alarms", """{"id":"w1","name":"Weekdays","time":"06:45","days":["mon"],"speakerId":"k1","source":{"type":"briefing"},"volume":0.5,"rampSeconds":120,"enabled":true,"nextFireAt":"2026-10-03T11:45:00Z"}""", HttpStatusCode.Created)
-            .OnGet("/api/audio/briefing", $$"""{"greeting":"Good morning, Nathan.","speech":["It's Thursday.",""],"episodes":[{{EpisodeJson}}]}""")
+            .OnGet("/api/audio/briefing", $$"""{"greeting":"Good morning, Morgan.","speech":["It's Thursday.",""],"episodes":[{{EpisodeJson}}]}""")
             .OnGet("/api/audio/stats", """{"period":"year","music":{"minutes":12034,"plays":3400,"topArtists":[{"artist":{"id":"a","name":"Fleetwood Mac"},"plays":300,"minutes":1100}],"byHour":[1,2],"longestStreakDays":41,"firstPlay":null},"podcasts":{"minutes":4000,"topShows":[]}}""")
-            .On("PUT", "/api/audio/me/listenbrainz", """{"connected":true,"username":"nathan"}""");
+            .On("PUT", "/api/audio/me/listenbrainz", """{"connected":true,"username":"morgan"}""");
         using var client = ClientFor(server);
 
         var alarm = await client.SaveWakeAlarmAsync(new WakeAlarm { Name = "Weekdays", Time = "06:45", Days = new() { "mon" }, SpeakerId = "k1", Source = new WakeAlarmSource { Type = "briefing" } });
@@ -410,7 +410,7 @@ public class AudioClientTests
         Assert.Equal("w1", alarm.Id);
         Assert.NotNull(alarm.NextFireAt);
         Assert.DoesNotContain("nextFireAt", server.Bodies[0]);
-        Assert.Equal(new[] { "Good morning, Nathan.", "It's Thursday." }, briefing.AllLines);
+        Assert.Equal(new[] { "Good morning, Morgan.", "It's Thursday." }, briefing.AllLines);
         Assert.Equal("Fleetwood Mac", stats.Music!.TopArtists.Single().Artist.Name);
         Assert.Contains("GET /api/audio/stats?period=year&year=2026", server.Requests);
         Assert.Equal("""{"token":"tok"}""", server.Bodies[3]);

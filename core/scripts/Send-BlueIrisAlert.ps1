@@ -3,7 +3,7 @@ param(
     [string]$Camera = "unknown",
     [string]$AlertId = "",
     [string]$Profile = "default",
-    [string]$BridgeUrl = "http://192.168.50.8:5080",
+    [string]$BridgeUrl = "http://192.168.1.50:5080",
     [Parameter(Mandatory = $true)][string]$ApiKey
 )
 

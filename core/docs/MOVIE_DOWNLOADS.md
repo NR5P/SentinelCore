@@ -265,7 +265,7 @@ Download = { "id": "…", "kind": "movie|episode", "title": "Bluey", "year": 201
              "posterUrl": "https://image.tmdb.org/…", "releaseTitle": "…", "site": "TheSite",
              "sizeBytes": 400000000, "state": "queued|downloading|seeding|importing|done|failed|canceled",
              "progress": 0.42, "downloadedBytes": 168000000, "speedBytesPerSecond": 3100000, "etaSeconds": 75,
-             "peers": 14, "error": null, "libraryId": "…", "itemId": "…|null", "replacesItemId": "…|null", "requestedBy": "sam",
+             "peers": 14, "error": null, "libraryId": "…", "itemId": "…|null", "replacesItemId": "…|null", "requestedBy": "pat",
              "createdAt": "…", "completedAt": "…|null", "finishedAt": "…|null" }
 ```
 

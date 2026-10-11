@@ -99,7 +99,7 @@ extension View {
     }
 }
 
-// "Playing on Nathan's iPad - Continue here" (§7): the newest other device of this person's that
+// "Playing on Morgan's iPad - Continue here" (§7): the newest other device of this person's that
 // has something queued and has been heard from in the last day.
 struct ContinueListeningBanner: View {
     let kind: String   // music | podcast

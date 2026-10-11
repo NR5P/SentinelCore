@@ -24,8 +24,8 @@ namespace SentinelCore.Web;
 // Visibility is by space. Every item sits in exactly one: Family (everyone on the server),
 // Personal (one account) or a Group (a named list of accounts). Spaces are keyed by username, not
 // account id, on purpose: when this server dies and a new one is installed, accounts get
-// recreated with fresh ids but the same names, and a device re-uploading "personal:nathan" has to
-// land in Nathan's space on the new box.
+// recreated with fresh ids but the same names, and a device re-uploading "personal:morgan" has to
+// land in Morgan's space on the new box.
 // Written as text on the wire and in backups. The backup importer reads with plain Web defaults,
 // which have no string-enum converter, so it has to be declared here rather than relied on from
 // the host's JSON options.

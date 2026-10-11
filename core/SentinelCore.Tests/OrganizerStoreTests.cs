@@ -9,7 +9,7 @@ namespace SentinelCore.Tests;
 // person's reminders to another - so each rule gets a test that would catch it going wrong.
 public sealed class OrganizerStoreTests : IDisposable
 {
-    private static readonly OrganizerUser Nathan = new("nathan", null);
+    private static readonly OrganizerUser Morgan = new("morgan", null);
     private static readonly OrganizerUser Terry = new("terry", null);
     private static readonly OrganizerUser Kid = new("kid", null);
 
@@ -59,13 +59,13 @@ public sealed class OrganizerStoreTests : IDisposable
     public async Task EditsToDifferentFields_OnTwoDevices_BothSurvive()
     {
         var store = NewStore();
-        await store.ApplyChangesAsync(Nathan, [Change("card-note", OrganizerKinds.Note, Clock(60), ("spaceId", "family"), ("title", "Groceries"), ("body", "milk"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("card-note", OrganizerKinds.Note, Clock(60), ("spaceId", "family"), ("title", "Groceries"), ("body", "milk"))], null, Ct);
 
         // Phone renames it; laptop pins it. Neither knew about the other.
-        await store.ApplyChangesAsync(Nathan, [Change("card-note", OrganizerKinds.Note, Clock(30, "phone"), ("title", "Shopping"))], null, Ct);
-        await store.ApplyChangesAsync(Nathan, [Change("card-note", OrganizerKinds.Note, Clock(40, "laptop"), ("pinned", true))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("card-note", OrganizerKinds.Note, Clock(30, "phone"), ("title", "Shopping"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("card-note", OrganizerKinds.Note, Clock(40, "laptop"), ("pinned", true))], null, Ct);
 
-        var note = await OnlyItemAsync(store, Nathan, "card-note");
+        var note = await OnlyItemAsync(store, Morgan, "card-note");
         Assert.Equal("Shopping", note.Fields["title"]!.GetValue<string>());
         Assert.True(note.Fields["pinned"]!.GetValue<bool>());
     }
@@ -74,13 +74,13 @@ public sealed class OrganizerStoreTests : IDisposable
     public async Task AnOlderEdit_ArrivingLate_DoesNotOverwriteANewerOne()
     {
         var store = NewStore();
-        await store.ApplyChangesAsync(Nathan, [Change("r1", OrganizerKinds.Reminder, Clock(60), ("spaceId", "family"), ("title", "Call vet"))], null, Ct);
-        await store.ApplyChangesAsync(Nathan, [Change("r1", OrganizerKinds.Reminder, Clock(10, "laptop"), ("title", "Call vet at 3"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("r1", OrganizerKinds.Reminder, Clock(60), ("spaceId", "family"), ("title", "Call vet"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("r1", OrganizerKinds.Reminder, Clock(10, "laptop"), ("title", "Call vet at 3"))], null, Ct);
 
         // The phone was offline and made its edit before the laptop's; it only gets through now.
-        await store.ApplyChangesAsync(Nathan, [Change("r1", OrganizerKinds.Reminder, Clock(30, "phone"), ("title", "Call the vet"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("r1", OrganizerKinds.Reminder, Clock(30, "phone"), ("title", "Call the vet"))], null, Ct);
 
-        Assert.Equal("Call vet at 3", (await OnlyItemAsync(store, Nathan, "r1")).Fields["title"]!.GetValue<string>());
+        Assert.Equal("Call vet at 3", (await OnlyItemAsync(store, Morgan, "r1")).Fields["title"]!.GetValue<string>());
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public sealed class OrganizerStoreTests : IDisposable
         var clock = Clock(5);
 
         // Deliberately out of order: a client may flush its queue in any order.
-        var result = await store.ApplyChangesAsync(Nathan,
+        var result = await store.ApplyChangesAsync(Morgan,
         [
             Change("card1", OrganizerKinds.Card, clock, ("parentId", "col1"), ("title", "Paint fence")),
             Change("col1", OrganizerKinds.Column, clock, ("parentId", "board1"), ("title", "To do")),
@@ -98,7 +98,7 @@ public sealed class OrganizerStoreTests : IDisposable
         ], null, Ct);
 
         Assert.Empty(result.Rejected);
-        var card = await OnlyItemAsync(store, Nathan, "card1");
+        var card = await OnlyItemAsync(store, Morgan, "card1");
         Assert.Equal("family", card.SpaceId);
     }
 
@@ -107,9 +107,9 @@ public sealed class OrganizerStoreTests : IDisposable
     {
         var store = NewStore();
         var clock = Clock(5);
-        await store.ApplyChangesAsync(Nathan, [Change("note1", OrganizerKinds.Note, clock, ("spaceId", "family"), ("title", "x"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("note1", OrganizerKinds.Note, clock, ("spaceId", "family"), ("title", "x"))], null, Ct);
 
-        var result = await store.ApplyChangesAsync(Nathan,
+        var result = await store.ApplyChangesAsync(Morgan,
         [
             Change("orphan", OrganizerKinds.Card, clock, ("parentId", "nope"), ("title", "a")),
             Change("misplaced", OrganizerKinds.Card, clock, ("parentId", "note1"), ("title", "b")),
@@ -124,18 +124,18 @@ public sealed class OrganizerStoreTests : IDisposable
     {
         var store = NewStore();
         var clock = Clock(30);
-        await store.ApplyChangesAsync(Nathan,
+        await store.ApplyChangesAsync(Morgan,
         [
             Change("board1", OrganizerKinds.Board, clock, ("spaceId", "family"), ("title", "House")),
             Change("col1", OrganizerKinds.Column, clock, ("parentId", "board1"), ("title", "To do")),
             Change("card1", OrganizerKinds.Card, clock, ("parentId", "col1"), ("title", "Paint fence")),
         ], null, Ct);
 
-        await store.ApplyChangesAsync(Nathan, [Change("c-nathan", OrganizerKinds.Comment, Clock(20, "phone"), ("parentId", "card1"), ("body", "Got the paint"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("c-morgan", OrganizerKinds.Comment, Clock(20, "phone"), ("parentId", "card1"), ("body", "Got the paint"))], null, Ct);
         await store.ApplyChangesAsync(Terry, [Change("c-terry", OrganizerKinds.Comment, Clock(25, "laptop"), ("parentId", "card1"), ("body", "Wrong colour"))], null, Ct);
 
-        var comments = await store.GetItemsAsync(Nathan, OrganizerKinds.Comment, null, Ct);
-        Assert.Equal(["c-nathan", "c-terry"], comments.Select(c => c.Id).Order());
+        var comments = await store.GetItemsAsync(Morgan, OrganizerKinds.Comment, null, Ct);
+        Assert.Equal(["c-morgan", "c-terry"], comments.Select(c => c.Id).Order());
         Assert.All(comments, c => Assert.Equal("family", c.SpaceId));
         Assert.Equal("terry", comments.Single(c => c.Id == "c-terry").CreatedBy);
     }
@@ -145,9 +145,9 @@ public sealed class OrganizerStoreTests : IDisposable
     {
         var store = NewStore();
         var clock = Clock(5);
-        await store.ApplyChangesAsync(Nathan, [Change("note1", OrganizerKinds.Note, clock, ("spaceId", "family"), ("title", "x"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("note1", OrganizerKinds.Note, clock, ("spaceId", "family"), ("title", "x"))], null, Ct);
 
-        var result = await store.ApplyChangesAsync(Nathan,
+        var result = await store.ApplyChangesAsync(Morgan,
         [
             Change("on-note", OrganizerKinds.Comment, clock, ("parentId", "note1"), ("body", "a")),
             Change("loose", OrganizerKinds.Comment, clock, ("spaceId", "family"), ("body", "b")),
@@ -161,7 +161,7 @@ public sealed class OrganizerStoreTests : IDisposable
     {
         var store = NewStore();
         var clock = Clock(60);
-        await store.ApplyChangesAsync(Nathan,
+        await store.ApplyChangesAsync(Morgan,
         [
             Change("board1", OrganizerKinds.Board, clock, ("spaceId", "family"), ("title", "House")),
             Change("col1", OrganizerKinds.Column, clock, ("parentId", "board1"), ("title", "To do")),
@@ -169,16 +169,16 @@ public sealed class OrganizerStoreTests : IDisposable
             Change("c1", OrganizerKinds.Comment, clock, ("parentId", "card1"), ("body", "Got the paint")),
         ], null, Ct);
 
-        var bySarah = await store.ApplyChangesAsync(Terry, [Change("c1", OrganizerKinds.Comment, Clock(30), ("body", "Nathan forgot the paint"))], null, Ct);
-        Assert.Equal("c1", Assert.Single(bySarah.Rejected).Id);
+        var byTerry = await store.ApplyChangesAsync(Terry, [Change("c1", OrganizerKinds.Comment, Clock(30), ("body", "Morgan forgot the paint"))], null, Ct);
+        Assert.Equal("c1", Assert.Single(byTerry.Rejected).Id);
 
-        var byNathan = await store.ApplyChangesAsync(Nathan, [Change("c1", OrganizerKinds.Comment, Clock(20), ("body", "Got the paint, and brushes"))], null, Ct);
-        Assert.Empty(byNathan.Rejected);
-        Assert.Equal("Got the paint, and brushes", (await OnlyItemAsync(store, Nathan, "c1")).Fields["body"]!.GetValue<string>());
+        var byMorgan = await store.ApplyChangesAsync(Morgan, [Change("c1", OrganizerKinds.Comment, Clock(20), ("body", "Got the paint, and brushes"))], null, Ct);
+        Assert.Empty(byMorgan.Rejected);
+        Assert.Equal("Got the paint, and brushes", (await OnlyItemAsync(store, Morgan, "c1")).Fields["body"]!.GetValue<string>());
 
         var deleted = await store.ApplyChangesAsync(Terry, [Change("c1", OrganizerKinds.Comment, Clock(10), ("deleted", true))], null, Ct);
         Assert.Empty(deleted.Rejected);
-        Assert.Empty(await store.GetItemsAsync(Nathan, OrganizerKinds.Comment, null, Ct));
+        Assert.Empty(await store.GetItemsAsync(Morgan, OrganizerKinds.Comment, null, Ct));
     }
 
     [Fact]
@@ -186,18 +186,18 @@ public sealed class OrganizerStoreTests : IDisposable
     {
         var store = NewStore();
         var original = Clock(120);
-        await store.ApplyChangesAsync(Nathan, [Change("n1", OrganizerKinds.Note, original, ("spaceId", "family"), ("title", "Trip"), ("body", "pack bags"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("n1", OrganizerKinds.Note, original, ("spaceId", "family"), ("title", "Trip"), ("body", "pack bags"))], null, Ct);
 
         var laptop = Change("n1", OrganizerKinds.Note, Clock(60, "laptop"), ("body", "pack bags, passports"));
         laptop.BaseClocks = new() { ["body"] = original };
-        await store.ApplyChangesAsync(Nathan, [laptop], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [laptop], null, Ct);
 
         // The phone also started from the original text, and saves later.
         var phone = Change("n1", OrganizerKinds.Note, Clock(30, "phone"), ("body", "pack bags, snacks"));
         phone.BaseClocks = new() { ["body"] = original };
         var result = await store.ApplyChangesAsync(Terry, [phone], null, Ct);
 
-        var notes = await store.GetItemsAsync(Nathan, OrganizerKinds.Note, null, Ct);
+        var notes = await store.GetItemsAsync(Morgan, OrganizerKinds.Note, null, Ct);
         Assert.Equal(2, notes.Count);
         Assert.Equal("pack bags, snacks", notes.Single(n => n.Id == "n1").Fields["body"]!.GetValue<string>());
         var copy = notes.Single(n => n.Id != "n1");
@@ -206,7 +206,7 @@ public sealed class OrganizerStoreTests : IDisposable
 
         // Resending the same batch - a dropped response - must not make a second copy.
         await store.ApplyChangesAsync(Terry, [phone], null, Ct);
-        Assert.Equal(2, (await store.GetItemsAsync(Nathan, OrganizerKinds.Note, null, Ct)).Count);
+        Assert.Equal(2, (await store.GetItemsAsync(Morgan, OrganizerKinds.Note, null, Ct)).Count);
         Assert.Contains(result.Items, item => item.Id == copy.Id);
     }
 
@@ -215,19 +215,19 @@ public sealed class OrganizerStoreTests : IDisposable
     {
         var store = NewStore();
         var nextYear = $"{DateTimeOffset.UtcNow.AddYears(1).ToUnixTimeMilliseconds():D13}-0000-brokenphone";
-        await store.ApplyChangesAsync(Nathan, [Change("e1", OrganizerKinds.Event, nextYear, ("spaceId", "family"), ("title", "Party"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("e1", OrganizerKinds.Event, nextYear, ("spaceId", "family"), ("title", "Party"))], null, Ct);
 
         // Otherwise that phone would win every future edit to this event for a year.
         await Task.Delay(5, Ct);
-        await store.ApplyChangesAsync(Nathan, [Change("e1", OrganizerKinds.Event, Clock(0, "laptop"), ("title", "Birthday party"))], null, Ct);
-        Assert.Equal("Birthday party", (await OnlyItemAsync(store, Nathan, "e1")).Fields["title"]!.GetValue<string>());
+        await store.ApplyChangesAsync(Morgan, [Change("e1", OrganizerKinds.Event, Clock(0, "laptop"), ("title", "Birthday party"))], null, Ct);
+        Assert.Equal("Birthday party", (await OnlyItemAsync(store, Morgan, "e1")).Fields["title"]!.GetValue<string>());
     }
 
     [Fact]
     public async Task PersonalItems_AreOnlyVisibleToTheirOwner()
     {
         var store = NewStore();
-        var mine = await store.ApplyChangesAsync(Nathan, [Change("diary", OrganizerKinds.Note, Clock(5), ("spaceId", "personal:nathan"), ("title", "private"))], null, Ct);
+        var mine = await store.ApplyChangesAsync(Morgan, [Change("diary", OrganizerKinds.Note, Clock(5), ("spaceId", "personal:morgan"), ("title", "private"))], null, Ct);
         Assert.Empty(mine.Rejected);
 
         Assert.Empty(await store.GetItemsAsync(Terry, null, null, Ct));
@@ -235,10 +235,10 @@ public sealed class OrganizerStoreTests : IDisposable
 
         // Nor may she write to it, by editing the item or by making one in that space.
         var edit = await store.ApplyChangesAsync(Terry, [Change("diary", OrganizerKinds.Note, Clock(1), ("title", "hacked"))], null, Ct);
-        var create = await store.ApplyChangesAsync(Terry, [Change("plant", OrganizerKinds.Note, Clock(1), ("spaceId", "personal:nathan"), ("title", "x"))], null, Ct);
+        var create = await store.ApplyChangesAsync(Terry, [Change("plant", OrganizerKinds.Note, Clock(1), ("spaceId", "personal:morgan"), ("title", "x"))], null, Ct);
         Assert.Single(edit.Rejected);
         Assert.Single(create.Rejected);
-        Assert.Equal("private", (await OnlyItemAsync(store, Nathan, "diary")).Fields["title"]!.GetValue<string>());
+        Assert.Equal("private", (await OnlyItemAsync(store, Morgan, "diary")).Fields["title"]!.GetValue<string>());
     }
 
     [Fact]
@@ -253,12 +253,12 @@ public sealed class OrganizerStoreTests : IDisposable
     public async Task GroupItems_AreVisibleToMembersOnly()
     {
         var store = NewStore();
-        var parents = await store.CreateGroupAsync(Nathan, "Parents", ["terry"], null, Ct);
-        Assert.Equal(["nathan", "terry"], parents.Members);
+        var parents = await store.CreateGroupAsync(Morgan, "Parents", ["terry"], null, Ct);
+        Assert.Equal(["morgan", "terry"], parents.Members);
 
         await store.ApplyChangesAsync(Terry, [Change("gift", OrganizerKinds.Reminder, Clock(5), ("spaceId", parents.Id), ("title", "Buy bike"))], null, Ct);
 
-        Assert.Single(await store.GetItemsAsync(Nathan, null, null, Ct));
+        Assert.Single(await store.GetItemsAsync(Morgan, null, null, Ct));
         Assert.Empty(await store.GetItemsAsync(Kid, null, null, Ct));
     }
 
@@ -266,57 +266,57 @@ public sealed class OrganizerStoreTests : IDisposable
     public async Task MovingABoardOutOfAGroup_TellsTheOtherMemberToDropIt_WithItsCards()
     {
         var store = NewStore();
-        var group = await store.CreateGroupAsync(Nathan, "Us", ["terry"], null, Ct);
+        var group = await store.CreateGroupAsync(Morgan, "Us", ["terry"], null, Ct);
         var clock = Clock(60);
-        await store.ApplyChangesAsync(Nathan,
+        await store.ApplyChangesAsync(Morgan,
         [
             Change("b", OrganizerKinds.Board, clock, ("spaceId", group.Id), ("title", "Surprise")),
             Change("c", OrganizerKinds.Column, clock, ("parentId", "b"), ("title", "Ideas")),
             Change("k", OrganizerKinds.Card, clock, ("parentId", "c"), ("title", "Party")),
         ], null, Ct);
 
-        var sarahView = await store.PullAsync(Terry, 0, new HashSet<string>(), 100, Ct);
-        Assert.Equal(3, sarahView.Items.Count);
+        var terryView = await store.PullAsync(Terry, 0, new HashSet<string>(), 100, Ct);
+        Assert.Equal(3, terryView.Items.Count);
 
-        await store.ApplyChangesAsync(Nathan, [Change("b", OrganizerKinds.Board, Clock(10), ("spaceId", "personal:nathan"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("b", OrganizerKinds.Board, Clock(10), ("spaceId", "personal:morgan"))], null, Ct);
 
-        var after = await store.PullAsync(Terry, sarahView.Cursor, sarahView.Items.Select(i => i.SpaceId).ToHashSet(), 100, Ct);
+        var after = await store.PullAsync(Terry, terryView.Cursor, terryView.Items.Select(i => i.SpaceId).ToHashSet(), 100, Ct);
         Assert.Equal(["b", "c", "k"], after.Removed.Order());
         Assert.Empty(after.Items);
 
         // And the column and card went with the board.
-        Assert.All(await store.GetItemsAsync(Nathan, null, null, Ct), item => Assert.Equal("personal:nathan", item.SpaceId));
+        Assert.All(await store.GetItemsAsync(Morgan, null, null, Ct), item => Assert.Equal("personal:morgan", item.SpaceId));
     }
 
     [Fact]
     public async Task SomeoneAddedToAGroup_GetsEverythingAlreadyInIt()
     {
         var store = NewStore();
-        var group = await store.CreateGroupAsync(Nathan, "Trip", [], null, Ct);
-        await store.ApplyChangesAsync(Nathan, [Change("old", OrganizerKinds.Note, Clock(60), ("spaceId", group.Id), ("title", "Hotel"))], null, Ct);
+        var group = await store.CreateGroupAsync(Morgan, "Trip", [], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("old", OrganizerKinds.Note, Clock(60), ("spaceId", group.Id), ("title", "Hotel"))], null, Ct);
 
-        var sarahFirst = await store.PullAsync(Terry, 0, new HashSet<string>(), 100, Ct);
+        var terryFirst = await store.PullAsync(Terry, 0, new HashSet<string>(), 100, Ct);
         var known = (await store.GetVisibleSpacesAsync(Terry, Ct)).Select(space => space.Id).ToHashSet();
 
-        await store.UpdateGroupAsync(Nathan, group.Id, "Trip", ["nathan", "terry"], null, Ct);
+        await store.UpdateGroupAsync(Morgan, group.Id, "Trip", ["morgan", "terry"], null, Ct);
 
         // Her cursor is already past the note - only the new-space backfill can deliver it.
-        var sarahNext = await store.PullAsync(Terry, sarahFirst.Cursor, known, 100, Ct);
-        Assert.Contains(sarahNext.Items, item => item.Id == "old");
+        var terryNext = await store.PullAsync(Terry, terryFirst.Cursor, known, 100, Ct);
+        Assert.Contains(terryNext.Items, item => item.Id == "old");
     }
 
     [Fact]
     public async Task ADeletedItem_StaysDeleted_WhenAStaleDeviceEditsIt()
     {
         var store = NewStore();
-        await store.ApplyChangesAsync(Nathan, [Change("r", OrganizerKinds.Reminder, Clock(60), ("spaceId", "family"), ("title", "Old"))], null, Ct);
-        await store.ApplyChangesAsync(Nathan, [Change("r", OrganizerKinds.Reminder, Clock(20), ("deleted", true))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("r", OrganizerKinds.Reminder, Clock(60), ("spaceId", "family"), ("title", "Old"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("r", OrganizerKinds.Reminder, Clock(20), ("deleted", true))], null, Ct);
 
         // A phone that never saw the delete renames it.
-        await store.ApplyChangesAsync(Nathan, [Change("r", OrganizerKinds.Reminder, Clock(10, "phone"), ("title", "Renamed"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("r", OrganizerKinds.Reminder, Clock(10, "phone"), ("title", "Renamed"))], null, Ct);
 
-        Assert.Empty(await store.GetItemsAsync(Nathan, null, null, Ct));
-        var tombstone = Assert.Single((await store.PullAsync(Nathan, 0, new HashSet<string>(), 100, Ct)).Items);
+        Assert.Empty(await store.GetItemsAsync(Morgan, null, null, Ct));
+        var tombstone = Assert.Single((await store.PullAsync(Morgan, 0, new HashSet<string>(), 100, Ct)).Items);
         Assert.True(tombstone.Deleted);
     }
 
@@ -324,14 +324,14 @@ public sealed class OrganizerStoreTests : IDisposable
     public async Task DeletingAGroup_TombstonesWhatWasInIt()
     {
         var store = NewStore();
-        var group = await store.CreateGroupAsync(Nathan, "Temp", [], null, Ct);
-        await store.ApplyChangesAsync(Nathan, [Change("x", OrganizerKinds.Note, Clock(5), ("spaceId", group.Id), ("title", "x"))], null, Ct);
+        var group = await store.CreateGroupAsync(Morgan, "Temp", [], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("x", OrganizerKinds.Note, Clock(5), ("spaceId", group.Id), ("title", "x"))], null, Ct);
 
         Assert.False(await store.DeleteGroupAsync(Terry, group.Id, Ct));
-        Assert.True(await store.DeleteGroupAsync(Nathan, group.Id, Ct));
+        Assert.True(await store.DeleteGroupAsync(Morgan, group.Id, Ct));
 
-        Assert.DoesNotContain(await store.GetVisibleSpacesAsync(Nathan, Ct), space => space.Id == group.Id);
-        Assert.Empty(await store.GetItemsAsync(Nathan, null, null, Ct));
+        Assert.DoesNotContain(await store.GetVisibleSpacesAsync(Morgan, Ct), space => space.Id == group.Id);
+        Assert.Empty(await store.GetItemsAsync(Morgan, null, null, Ct));
     }
 
     // The disaster-recovery path: the server is gone, a new one is installed, and a device that
@@ -340,15 +340,15 @@ public sealed class OrganizerStoreTests : IDisposable
     public async Task ARebuiltServer_IsRefilledFromADevicesCopy()
     {
         var oldServer = NewStore();
-        var group = await oldServer.CreateGroupAsync(Nathan, "Parents", ["terry"], null, Ct);
-        await oldServer.ApplyChangesAsync(Nathan,
+        var group = await oldServer.CreateGroupAsync(Morgan, "Parents", ["terry"], null, Ct);
+        await oldServer.ApplyChangesAsync(Morgan,
         [
-            Change("mine", OrganizerKinds.Note, Clock(60), ("spaceId", "personal:nathan"), ("title", "Mine")),
+            Change("mine", OrganizerKinds.Note, Clock(60), ("spaceId", "personal:morgan"), ("title", "Mine")),
             Change("ours", OrganizerKinds.Event, Clock(60), ("spaceId", group.Id), ("title", "Date night")),
             Change("all", OrganizerKinds.Reminder, Clock(60), ("spaceId", "family"), ("title", "Trash day")),
         ], null, Ct);
-        var deviceCopy = await oldServer.PullAsync(Nathan, 0, new HashSet<string>(), 100, Ct);
-        var deviceSpaces = await oldServer.GetVisibleSpacesAsync(Nathan, Ct);
+        var deviceCopy = await oldServer.PullAsync(Morgan, 0, new HashSet<string>(), 100, Ct);
+        var deviceSpaces = await oldServer.GetVisibleSpacesAsync(Morgan, Ct);
 
         var newServer = NewStore();
         Assert.NotEqual(oldServer.ServerId, newServer.ServerId);
@@ -360,14 +360,14 @@ public sealed class OrganizerStoreTests : IDisposable
             foreach (var (name, clock) in item.Clocks) change.Clocks[name] = clock;
             return change;
         }).ToList();
-        var result = await newServer.ApplyChangesAsync(Nathan, reupload, deviceSpaces, Ct);
+        var result = await newServer.ApplyChangesAsync(Morgan, reupload, deviceSpaces, Ct);
 
         Assert.Empty(result.Rejected);
-        Assert.Equal(3, (await newServer.GetItemsAsync(Nathan, null, null, Ct)).Count);
+        Assert.Equal(3, (await newServer.GetItemsAsync(Morgan, null, null, Ct)).Count);
 
         // The group came back with its members, so Terry sees what she saw before.
-        var sarahSees = await newServer.GetItemsAsync(Terry, null, null, Ct);
-        Assert.Equal(["all", "ours"], sarahSees.Select(item => item.Id).Order());
+        var terrySees = await newServer.GetItemsAsync(Terry, null, null, Ct);
+        Assert.Equal(["all", "ours"], terrySees.Select(item => item.Id).Order());
     }
 
     [Fact]
@@ -383,16 +383,16 @@ public sealed class OrganizerStoreTests : IDisposable
     public async Task BackupRestore_IsIdempotent_AndNeverRollsBackNewerEdits()
     {
         var source = NewStore();
-        await source.ApplyChangesAsync(Nathan, [Change("n", OrganizerKinds.Note, Clock(60), ("spaceId", "personal:nathan"), ("title", "Backed up"))], null, Ct);
+        await source.ApplyChangesAsync(Morgan, [Change("n", OrganizerKinds.Note, Clock(60), ("spaceId", "personal:morgan"), ("title", "Backed up"))], null, Ct);
         var backup = await source.ExportAsync(Ct);
 
         var target = NewStore();
-        await target.ApplyChangesAsync(Nathan, [Change("n", OrganizerKinds.Note, Clock(5), ("spaceId", "personal:nathan"), ("title", "Newer"))], null, Ct);
+        await target.ApplyChangesAsync(Morgan, [Change("n", OrganizerKinds.Note, Clock(5), ("spaceId", "personal:morgan"), ("title", "Newer"))], null, Ct);
 
         await target.ImportAsync(backup, Ct);
         await target.ImportAsync(backup, Ct);
 
-        Assert.Equal("Newer", (await OnlyItemAsync(target, Nathan, "n")).Fields["title"]!.GetValue<string>());
+        Assert.Equal("Newer", (await OnlyItemAsync(target, Morgan, "n")).Fields["title"]!.GetValue<string>());
     }
 
     [Fact]
@@ -400,7 +400,7 @@ public sealed class OrganizerStoreTests : IDisposable
     {
         var store = NewStore();
         var clock = Clock(5);
-        await store.ApplyChangesAsync(Nathan,
+        await store.ApplyChangesAsync(Morgan,
             [.. Enumerable.Range(0, 25).Select(i => Change($"r{i}", OrganizerKinds.Reminder, clock, ("spaceId", "family"), ("title", $"#{i}")))],
             null, Ct);
 
@@ -409,7 +409,7 @@ public sealed class OrganizerStoreTests : IDisposable
         OrganizerPullResult page;
         do
         {
-            page = await store.PullAsync(Nathan, cursor, new HashSet<string> { "family", "personal:nathan" }, 10, Ct);
+            page = await store.PullAsync(Morgan, cursor, new HashSet<string> { "family", "personal:morgan" }, 10, Ct);
             foreach (var item in page.Items) seen.Add(item.Id);
             cursor = page.Cursor;
         }
@@ -427,7 +427,7 @@ public sealed class OrganizerStoreTests : IDisposable
         var waiting = store.WaitForChangeAsync(cursor, TimeSpan.FromSeconds(10), Ct);
         Assert.False(waiting.IsCompleted);
 
-        await store.ApplyChangesAsync(Nathan, [Change("x", OrganizerKinds.Note, Clock(1), ("spaceId", "family"), ("title", "x"))], null, Ct);
+        await store.ApplyChangesAsync(Morgan, [Change("x", OrganizerKinds.Note, Clock(1), ("spaceId", "family"), ("title", "x"))], null, Ct);
         Assert.True(await waiting.WaitAsync(TimeSpan.FromSeconds(5), Ct) > cursor);
     }
 

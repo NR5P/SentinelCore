@@ -49,7 +49,7 @@ class OrganizerFoundationTest {
         assertEquals("1790000000000-0001-phone", b)
         clock.observe("1790000060000-0003-laptop")
         assertTrue(clock.next(1_790_000_000_000) > "1790000060000-0003-laptop")
-        assertEquals("NathansPhone2", HybridClock("Nathan’s Phone (2)").deviceId)
+        assertEquals("MorgansPhone2", HybridClock("Morgan’s Phone (2)").deviceId)
     }
 
     @Test

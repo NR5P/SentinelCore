@@ -38,7 +38,7 @@ public class MediaDownloadsClientTests
           "posterUrl": "https://image.tmdb.org/t/p/w342/bluey.jpg", "releaseTitle": "Bluey.S02E05.1080p", "site": "TheSite",
           "sizeBytes": 400000000, "state": "downloading",
           "progress": 0.42, "downloadedBytes": 168000000, "speedBytesPerSecond": 3100000, "etaSeconds": 75,
-          "peers": 14, "error": "Looking for people sharing it...", "libraryId": "l2", "itemId": null, "requestedBy": "sam",
+          "peers": 14, "error": "Looking for people sharing it...", "libraryId": "l2", "itemId": null, "requestedBy": "pat",
           "createdAt": "2026-09-29T10:00:00Z", "completedAt": null, "finishedAt": null }
         """;
 
@@ -534,7 +534,7 @@ public class MediaDownloadsClientTests
         Assert.False(recent.IsActive);
         Assert.Null(recent.Title);
         Assert.Equal("d1", grabbed.Id);
-        Assert.Equal("sam", one.RequestedBy);
+        Assert.Equal("pat", one.RequestedBy);
         Assert.Equal("downloading", retried.State);
     }
 
@@ -679,7 +679,7 @@ public class MediaDownloadsClientTests
         var added = await client.AddMediaDownloadSiteAsync(new MediaDownloadSiteInput
         {
             Definition = "private1",
-            Fields = new Dictionary<string, object?> { ["username"] = "sam", ["freeleech"] = false, ["sort"] = 1L, ["limit"] = null },
+            Fields = new Dictionary<string, object?> { ["username"] = "pat", ["freeleech"] = false, ["sort"] = 1L, ["limit"] = null },
         });
         await client.SetMediaDownloadSiteEnabledAsync(3, false);
         await client.DeleteMediaDownloadSiteAsync(3);
@@ -720,7 +720,7 @@ public class MediaDownloadsClientTests
         Assert.Equal(5, added.Id);
         var body = server.Bodies[2];
         Assert.Contains("\"definition\":\"private1\"", body);
-        Assert.Contains("\"username\":\"sam\"", body);
+        Assert.Contains("\"username\":\"pat\"", body);
         Assert.Contains("\"freeleech\":false", body);
         Assert.Contains("\"sort\":1", body);
         Assert.Contains("\"limit\":null", body);

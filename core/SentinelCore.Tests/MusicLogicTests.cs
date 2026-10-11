@@ -139,11 +139,11 @@ public sealed class MusicLogicTests : IDisposable
         using var store = new SqliteMusicStore(_directory);
         var track = Guid.NewGuid();
         var at = DateTimeOffset.UtcNow;
-        Assert.True(await store.RecordPlayAsync(new MusicPlay("nathan", track, at, 200, false), MusicPlayRules.DuplicateWindow, Ct));
-        Assert.False(await store.RecordPlayAsync(new MusicPlay("nathan", track, at.AddSeconds(4), 200, false), MusicPlayRules.DuplicateWindow, Ct));
+        Assert.True(await store.RecordPlayAsync(new MusicPlay("morgan", track, at, 200, false), MusicPlayRules.DuplicateWindow, Ct));
+        Assert.False(await store.RecordPlayAsync(new MusicPlay("morgan", track, at.AddSeconds(4), 200, false), MusicPlayRules.DuplicateWindow, Ct));
         Assert.True(await store.RecordPlayAsync(new MusicPlay("terry", track, at.AddSeconds(1), 200, false), MusicPlayRules.DuplicateWindow, Ct));
-        Assert.True(await store.RecordPlayAsync(new MusicPlay("nathan", track, at.AddSeconds(300), 200, false), MusicPlayRules.DuplicateWindow, Ct));
-        Assert.Equal(2, (await store.GetPlaysAsync("nathan", Ct)).Count);
+        Assert.True(await store.RecordPlayAsync(new MusicPlay("morgan", track, at.AddSeconds(300), 200, false), MusicPlayRules.DuplicateWindow, Ct));
+        Assert.Equal(2, (await store.GetPlaysAsync("morgan", Ct)).Count);
     }
 
     // MARK: - Albums
@@ -242,7 +242,7 @@ public sealed class MusicLogicTests : IDisposable
         using var store = new SqliteMusicStore(_directory);
         if (arrange is not null) await arrange(store);
         var catalog = new MusicCatalog(1, tracks, new Dictionary<string, MusicArtRecord>(), []);
-        return new MusicView(catalog, await MusicUserState.LoadAsync(store, "nathan", Ct), isAdmin: false);
+        return new MusicView(catalog, await MusicUserState.LoadAsync(store, "morgan", Ct), isAdmin: false);
     }
 
     private static MusicSmartRule Rule(string field, string op, object value) =>
@@ -261,11 +261,11 @@ public sealed class MusicLogicTests : IDisposable
         var tracks = new List<MusicTrack> { old, played, jazz, pop };
         var view = await ViewAsync(tracks, async store =>
         {
-            await store.RecordPlayAsync(new MusicPlay("nathan", played.Id, DateTimeOffset.UtcNow.AddDays(-2), 200, false), TimeSpan.Zero, Ct);
-            await store.RecordPlayAsync(new MusicPlay("nathan", jazz.Id, DateTimeOffset.UtcNow.AddDays(-200), 200, false), TimeSpan.Zero, Ct);
-            await store.SetRatingAsync(new MusicRating("nathan", MusicLoveKinds.Track, old.Id, 5, DateTimeOffset.UtcNow), Ct);
-            await store.SetRatingAsync(new MusicRating("nathan", MusicLoveKinds.Track, played.Id, 2, DateTimeOffset.UtcNow), Ct);
-            await store.SetLoveAsync(new MusicLove("nathan", MusicLoveKinds.Track, pop.Id, true, DateTimeOffset.UtcNow), Ct);
+            await store.RecordPlayAsync(new MusicPlay("morgan", played.Id, DateTimeOffset.UtcNow.AddDays(-2), 200, false), TimeSpan.Zero, Ct);
+            await store.RecordPlayAsync(new MusicPlay("morgan", jazz.Id, DateTimeOffset.UtcNow.AddDays(-200), 200, false), TimeSpan.Zero, Ct);
+            await store.SetRatingAsync(new MusicRating("morgan", MusicLoveKinds.Track, old.Id, 5, DateTimeOffset.UtcNow), Ct);
+            await store.SetRatingAsync(new MusicRating("morgan", MusicLoveKinds.Track, played.Id, 2, DateTimeOffset.UtcNow), Ct);
+            await store.SetLoveAsync(new MusicLove("morgan", MusicLoveKinds.Track, pop.Id, true, DateTimeOffset.UtcNow), Ct);
         });
         var now = DateTimeOffset.UtcNow;
         List<string> Run(string match, params MusicSmartRule[] rules) =>
@@ -323,7 +323,7 @@ public sealed class MusicLogicTests : IDisposable
                 tracks.Add(Tagged($"{artist}/{i:00}.mp3", $"{artist} {i}", artist, $"{artist} Album", genres: ["Rock"], year: 1990 + i));
         var heard = tracks[5];
         var view = await ViewAsync(tracks, store =>
-            store.RecordPlayAsync(new MusicPlay("nathan", heard.Id, DateTimeOffset.UtcNow.AddMinutes(-10), 200, false), TimeSpan.Zero, Ct));
+            store.RecordPlayAsync(new MusicPlay("morgan", heard.Id, DateTimeOffset.UtcNow.AddMinutes(-10), 200, false), TimeSpan.Zero, Ct));
         var seed = tracks[0];
         var result = MusicService.Radio(view, "track", seed.Id.ToString(), [], new HashSet<Guid> { tracks[1].Id }, 40, DateTimeOffset.UtcNow);
 
@@ -354,8 +354,8 @@ public sealed class MusicLogicTests : IDisposable
         var view = await ViewAsync(tracks, async store =>
         {
             foreach (var track in tracks.Take(4).Append(tracks[5]))
-                await store.RecordPlayAsync(new MusicPlay("nathan", track.Id, DateTimeOffset.UtcNow.AddDays(-3), 200, false), TimeSpan.Zero, Ct);
-            await store.RecordPlayAsync(new MusicPlay("nathan", tracks[8].Id, DateTimeOffset.UtcNow.AddDays(-3), 200, false), TimeSpan.Zero, Ct);
+                await store.RecordPlayAsync(new MusicPlay("morgan", track.Id, DateTimeOffset.UtcNow.AddDays(-3), 200, false), TimeSpan.Zero, Ct);
+            await store.RecordPlayAsync(new MusicPlay("morgan", tracks[8].Id, DateTimeOffset.UtcNow.AddDays(-3), 200, false), TimeSpan.Zero, Ct);
         });
         var mixes = MusicDiscovery.Mixes(view, DateTimeOffset.UtcNow);
         var daily1 = mixes.Single(m => m.Dto.Id == "daily-1").Dto;

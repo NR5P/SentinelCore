@@ -670,7 +670,7 @@ public class SentinelClientTests
     public async Task A_Family_Files_status_decodes_drives_the_nightly_pass_the_trash_and_a_running_job()
     {
         const string json = """
-            {"enabled":true,"isAdmin":true,"username":"nathan","libraryFolder":"/srv/family","maxUploadBytes":2147483648,
+            {"enabled":true,"isAdmin":true,"username":"morgan","libraryFolder":"/srv/family","maxUploadBytes":2147483648,
              "library":{"files":1234,"bytes":9876543210,"indexedUtc":"2026-09-25T02:00:00Z"},
              "drives":[{"id":"d1","name":"USB drive","kind":"folder","enabled":true,"location":"/mnt/usb/Family Files",
                         "folderPath":"/mnt/usb/Family Files","sftpHost":"","sftpPort":22,"sftpUsername":"","sftpFolder":"",

@@ -462,7 +462,7 @@ struct MediaDownload: Decodable, Hashable, Identifiable {
     }
 
     // "42% · 3.1 MB/s · 2 min left · 400 MB · 14 peers" while active,
-    // "ready · 400 MB · by sam · 3 h ago" once finished.
+    // "ready · 400 MB · by pat · 3 h ago" once finished.
     var factsLine: String {
         var parts: [String] = []
         if isActive {

@@ -258,7 +258,7 @@ class OrganizerEngineTest {
     fun `signing in as someone else starts from an empty copy`() = runBlocking {
         val engine = engine(InMemoryOrganizerStore(directory()))
         val transport = ScriptedTransport { _, path, _ ->
-            if (path == "/api/organizer/status") ScriptedTransport.status("nathan")
+            if (path == "/api/organizer/status") ScriptedTransport.status("morgan")
             else ScriptedTransport.reply(items = JSONArray().put(JSONObject("""{"id":"diary","kind":"note","spaceId":"family","deleted":false,"fields":{"title":"Mine"},"clocks":{},"seq":1}""")))
         }
         engine.connect(transport)
@@ -273,7 +273,7 @@ class OrganizerEngineTest {
     fun `losing access to a group drops what was in it`() = runBlocking {
         val engine = engine(InMemoryOrganizerStore(directory()))
         val family = JSONObject("""{"id":"family","kind":"Family","name":"Family","members":[]}""")
-        val group = JSONObject("""{"id":"group:abc","kind":"Group","name":"Parents","members":["nathan","terry"]}""")
+        val group = JSONObject("""{"id":"group:abc","kind":"Group","name":"Parents","members":["morgan","terry"]}""")
         val transport = onlyStatus { _, _, _ ->
             ScriptedTransport.reply(spaces = JSONArray().put(family).put(group),
                 items = JSONArray().put(JSONObject("""{"id":"gift","kind":"reminder","spaceId":"group:abc","deleted":false,"fields":{"title":"Bike"},"clocks":{},"seq":1}""")))

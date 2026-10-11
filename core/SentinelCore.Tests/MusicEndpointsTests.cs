@@ -308,36 +308,36 @@ public sealed class MusicEndpointsTests : IDisposable
         using (var scope = factory.Services.CreateScope())
         {
             var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
-            foreach (var name in new[] { "nathan", "terry" })
+            foreach (var name in new[] { "morgan", "terry" })
                 await accounts.CreateAsync(name, PasswordHasher.Hash("correct horse battery"), AccountRole.Viewer, null, Ct);
         }
         var settings = JsonNode.Parse(await File.ReadAllTextAsync(_settingsPath, Ct))!.AsObject();
         settings["Auth"] = new JsonObject { ["Enabled"] = true };
         await File.WriteAllTextAsync(_settingsPath, settings.ToJsonString(), Ct);
 
-        using var nathan = factory.CreateClient();
+        using var morgan = factory.CreateClient();
         using var terry = factory.CreateClient();
-        foreach (var (client, name) in new[] { (nathan, "nathan"), (terry, "terry") })
+        foreach (var (client, name) in new[] { (morgan, "morgan"), (terry, "terry") })
             await SendJsonAsync(client, HttpMethod.Post, "/api/auth/login", new { Username = name, Password = "correct horse battery" }, HttpStatusCode.OK);
 
         // Viewers cannot manage libraries, and never see paths.
-        await SendJsonAsync(nathan, HttpMethod.Post, "/api/music/libraries", new { name = "Mine", path = _music }, HttpStatusCode.Forbidden);
-        var dreams = await TrackIdAsync(nathan, "Dreams");
-        var formation = await TrackIdAsync(nathan, "Formation");
-        Assert.Equal(JsonValueKind.Null, (await GetJsonAsync(nathan, $"/api/music/tracks/{dreams}")).GetProperty("path").ValueKind);
+        await SendJsonAsync(morgan, HttpMethod.Post, "/api/music/libraries", new { name = "Mine", path = _music }, HttpStatusCode.Forbidden);
+        var dreams = await TrackIdAsync(morgan, "Dreams");
+        var formation = await TrackIdAsync(morgan, "Formation");
+        Assert.Equal(JsonValueKind.Null, (await GetJsonAsync(morgan, $"/api/music/tracks/{dreams}")).GetProperty("path").ValueKind);
 
-        await SendJsonAsync(nathan, HttpMethod.Post, "/api/music/playlists", new { name = "" }, HttpStatusCode.BadRequest);
-        var secret = await SendJsonAsync(nathan, HttpMethod.Post, "/api/music/playlists",
+        await SendJsonAsync(morgan, HttpMethod.Post, "/api/music/playlists", new { name = "" }, HttpStatusCode.BadRequest);
+        var secret = await SendJsonAsync(morgan, HttpMethod.Post, "/api/music/playlists",
             new { name = "Secret", trackIds = new[] { dreams, dreams, Guid.NewGuid().ToString() } }, HttpStatusCode.Created);
         Assert.Equal(2, secret.GetProperty("trackCount").GetInt32());
         Assert.True(secret.GetProperty("mine").GetBoolean());
-        Assert.Equal("nathan", secret.GetProperty("ownerName").GetString());
+        Assert.Equal("morgan", secret.GetProperty("ownerName").GetString());
         var secretId = secret.GetProperty("id").GetString();
         await SendJsonAsync(terry, HttpMethod.Get, $"/api/music/playlists/{secretId}", null, HttpStatusCode.NotFound);
         Assert.Empty((await GetJsonAsync(terry, "/api/music/playlists")).EnumerateArray());
 
         // Shared: Terry can play it but not change it.
-        await SendJsonAsync(nathan, HttpMethod.Put, $"/api/music/playlists/{secretId}", new { name = "Road Trip", shared = true }, HttpStatusCode.OK);
+        await SendJsonAsync(morgan, HttpMethod.Put, $"/api/music/playlists/{secretId}", new { name = "Road Trip", shared = true }, HttpStatusCode.OK);
         var shared = await GetJsonAsync(terry, $"/api/music/playlists/{secretId}");
         Assert.Equal("Road Trip", shared.GetProperty("name").GetString());
         Assert.False(shared.GetProperty("mine").GetBoolean());
@@ -348,7 +348,7 @@ public sealed class MusicEndpointsTests : IDisposable
         await SendJsonAsync(terry, HttpMethod.Delete, $"/api/music/playlists/{secretId}", null, HttpStatusCode.Forbidden);
 
         // Collaborative: she can add, reorder and remove tracks, but still not rename or delete it.
-        await SendJsonAsync(nathan, HttpMethod.Put, $"/api/music/playlists/{secretId}", new { collaborative = true }, HttpStatusCode.OK);
+        await SendJsonAsync(morgan, HttpMethod.Put, $"/api/music/playlists/{secretId}", new { collaborative = true }, HttpStatusCode.OK);
         var added = await SendJsonAsync(terry, HttpMethod.Post, $"/api/music/playlists/{secretId}/tracks", new { trackIds = new[] { formation }, position = 0 }, HttpStatusCode.OK);
         Assert.Equal(3, added.GetProperty("trackCount").GetInt32());
         var full = await GetJsonAsync(terry, $"/api/music/playlists/{secretId}");
@@ -357,21 +357,21 @@ public sealed class MusicEndpointsTests : IDisposable
         await SendJsonAsync(terry, HttpMethod.Put, $"/api/music/playlists/{secretId}/order", new { entryIds = order.Take(2) }, HttpStatusCode.BadRequest);
         await SendJsonAsync(terry, HttpMethod.Put, $"/api/music/playlists/{secretId}/order", new { entryIds = order }, HttpStatusCode.NoContent);
         await SendJsonAsync(terry, HttpMethod.Delete, $"/api/music/playlists/{secretId}/tracks/{order[0]}", null, HttpStatusCode.NoContent);
-        var after = await GetJsonAsync(nathan, $"/api/music/playlists/{secretId}");
+        var after = await GetJsonAsync(morgan, $"/api/music/playlists/{secretId}");
         Assert.Equal(["Dreams", "Formation"], after.GetProperty("tracks").EnumerateArray().Select(t => t.GetProperty("title").GetString()));
         await SendJsonAsync(terry, HttpMethod.Put, $"/api/music/playlists/{secretId}", new { name = "Ours" }, HttpStatusCode.Forbidden);
 
         // Pins are per person; a copy belongs to whoever made it.
         Assert.True((await SendJsonAsync(terry, HttpMethod.Post, $"/api/music/playlists/{secretId}/pin", new { pinned = true }, HttpStatusCode.OK)).GetProperty("pinned").GetBoolean());
         Assert.Single((await GetJsonAsync(terry, "/api/music/home")).GetProperty("pinned").EnumerateArray());
-        Assert.Empty((await GetJsonAsync(nathan, "/api/music/home")).GetProperty("pinned").EnumerateArray());
+        Assert.Empty((await GetJsonAsync(morgan, "/api/music/home")).GetProperty("pinned").EnumerateArray());
         var copy = await SendJsonAsync(terry, HttpMethod.Post, $"/api/music/playlists/{secretId}/duplicate", null, HttpStatusCode.Created);
         Assert.True(copy.GetProperty("mine").GetBoolean());
         Assert.False(copy.GetProperty("shared").GetBoolean());
         Assert.Equal(2, copy.GetProperty("trackCount").GetInt32());
 
         // A smart playlist works its tracks out each time; its copy is a plain list of today's.
-        var smart = await SendJsonAsync(nathan, HttpMethod.Post, "/api/music/playlists", new
+        var smart = await SendJsonAsync(morgan, HttpMethod.Post, "/api/music/playlists", new
         {
             name = "Pop",
             rules = new { match = "all", rules = new object[] { new { field = "genre", op = "is", value = "pop" } }, sort = "title", order = "asc", limit = 0 }
@@ -379,24 +379,24 @@ public sealed class MusicEndpointsTests : IDisposable
         Assert.True(smart.GetProperty("smart").GetBoolean());
         Assert.Equal(4, smart.GetProperty("trackCount").GetInt32());
         var smartId = smart.GetProperty("id").GetString();
-        await SendJsonAsync(nathan, HttpMethod.Post, $"/api/music/playlists/{smartId}/tracks", new { trackIds = new[] { dreams } }, HttpStatusCode.BadRequest);
-        var smartCopy = await SendJsonAsync(nathan, HttpMethod.Post, $"/api/music/playlists/{smartId}/duplicate", null, HttpStatusCode.Created);
+        await SendJsonAsync(morgan, HttpMethod.Post, $"/api/music/playlists/{smartId}/tracks", new { trackIds = new[] { dreams } }, HttpStatusCode.BadRequest);
+        var smartCopy = await SendJsonAsync(morgan, HttpMethod.Post, $"/api/music/playlists/{smartId}/duplicate", null, HttpStatusCode.Created);
         Assert.False(smartCopy.GetProperty("smart").GetBoolean());
         Assert.Equal(4, smartCopy.GetProperty("trackCount").GetInt32());
-        var bad = await SendJsonAsync(nathan, HttpMethod.Post, "/api/music/playlists", new
+        var bad = await SendJsonAsync(morgan, HttpMethod.Post, "/api/music/playlists", new
         {
             name = "Bad", rules = new { rules = new object[] { new { field = "genre", op = "gte", value = 3 } } }
         }, HttpStatusCode.BadRequest);
         Assert.Contains("genre can be matched with", bad.GetProperty("errors")[0].GetString());
 
         // The .m3u8 export lists paths inside the library.
-        using var m3u = await nathan.GetAsync($"/api/music/playlists/{secretId}/m3u", Ct);
+        using var m3u = await morgan.GetAsync($"/api/music/playlists/{secretId}/m3u", Ct);
         var text = await m3u.Content.ReadAsStringAsync(Ct);
         Assert.StartsWith("#EXTM3U", text);
         Assert.Contains("\nFleetwood Mac/Rumours/02 Dreams.flac\n", text);
         Assert.Contains("#EXTINF:8,Fleetwood Mac - Dreams", text);
 
-        await SendJsonAsync(nathan, HttpMethod.Delete, $"/api/music/playlists/{secretId}", null, HttpStatusCode.NoContent);
+        await SendJsonAsync(morgan, HttpMethod.Delete, $"/api/music/playlists/{secretId}", null, HttpStatusCode.NoContent);
         await SendJsonAsync(terry, HttpMethod.Get, $"/api/music/playlists/{secretId}", null, HttpStatusCode.NotFound);
     }
 

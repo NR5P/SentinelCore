@@ -1,2 +1,5 @@
-sleep 5 && chromium --password-store=basic --ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3 --disable-accelerated-video-decode --kiosk --noerrdialogs --no-first-run 'https://192.168.50.8:3443/?kiosk=1&screenoff=300' &
-/home/admin/.local/bin/kiosk-touch-wake &
+# Set this to your dashboard's address before copying the file to the Pi. kiosk-touch-wake
+# reads the same variable, so this is the only place it needs changing.
+export KIOSK_DASHBOARD=https://YOUR-SERVER-IP:3443
+sleep 5 && chromium --password-store=basic --ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3 --disable-accelerated-video-decode --kiosk --noerrdialogs --no-first-run "$KIOSK_DASHBOARD/?kiosk=1&screenoff=300" &
+"$HOME/.local/bin/kiosk-touch-wake" &

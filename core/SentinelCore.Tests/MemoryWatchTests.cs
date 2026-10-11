@@ -146,7 +146,7 @@ public sealed class MemoryWatchTests
     public void DotnetServicesAreNamedAfterTheirDll_EverythingElseByWhatWasRun()
     {
         Assert.Equal("SentinelCore.Web", HostMemoryReader.ProgramName(
-            "/usr/bin/dotnet\0/home/sentinel/x/SentinelCore.Web/bin/Release/net10.0/SentinelCore.Web.dll\0", "dotnet"));
+            "/usr/bin/dotnet\0/opt/sentinelcore/SentinelCore.Web/bin/Release/net10.0/SentinelCore.Web.dll\0", "dotnet"));
         Assert.Equal("llama-server", HostMemoryReader.ProgramName(
             "/usr/local/lib/ollama/llama-server\0--model\0/blobs/sha256-aeda\0", "llama-server"));
         Assert.Equal("SentinelCore.Tests", HostMemoryReader.ProgramName(

@@ -57,7 +57,7 @@ public sealed class SettingsGapSectionsTests : IDisposable
                 Apple = new
                 {
                     Enabled = true,
-                    TeamId = "G4GK5372G8",
+                    TeamId = "ABCDE12345",
                     KeyId = "ABC123DEFG",
                     BundleId = "com.sentinelcore.client",
                     TvBundleId = "com.sentinelcore.client.tv",
@@ -76,7 +76,7 @@ public sealed class SettingsGapSectionsTests : IDisposable
         var push = document.RootElement.GetProperty("pushNotifications");
 
         Assert.True(push.GetProperty("enabled").GetBoolean());
-        Assert.Equal("G4GK5372G8", push.GetProperty("apple").GetProperty("teamId").GetString());
+        Assert.Equal("ABCDE12345", push.GetProperty("apple").GetProperty("teamId").GetString());
         // TvBundleId is the field most at risk of being silently wiped: it exists on the Options
         // class but not in the shipped appsettings.json, so a DTO that forgot it would drop it
         // from the file on every save (MergeSectionAsync replaces the Apple block wholesale).

@@ -22,7 +22,7 @@ public class MediaLibrariesClientTests
         """;
 
     private const string ComputerJson = """
-        {"id":"c1","name":"Den PC","host":"192.168.1.20","username":"sam","domain":"","hasPassword":true,
+        {"id":"c1","name":"Den PC","host":"192.168.1.20","username":"pat","domain":"","hasPassword":true,
          "path":"smb://192.168.1.20","createdAt":"2026-09-20T10:00:00Z"}
         """;
 
@@ -259,15 +259,15 @@ public class MediaLibrariesClientTests
         var saved = await client.MediaNetworkComputersAsync();
         var created = await client.SaveMediaNetworkComputerAsync(null, new MediaNetworkComputerInput
         {
-            Host = "192.168.1.20", Name = "Den PC", Username = "sam", Password = "secret", Domain = "",
+            Host = "192.168.1.20", Name = "Den PC", Username = "pat", Password = "secret", Domain = "",
         });
         await client.SaveMediaNetworkComputerAsync("c1", new MediaNetworkComputerInput
         {
-            Host = "192.168.1.20", Username = "sam", Password = "",
+            Host = "192.168.1.20", Username = "pat", Password = "",
         });
         await client.DeleteMediaNetworkComputerAsync("c1");
 
-        Assert.Equal("sam", Assert.Single(saved).SignInSummary);
+        Assert.Equal("pat", Assert.Single(saved).SignInSummary);
         Assert.Equal("c1", created.Computer.Id);
         Assert.Equal("smb://192.168.1.20/Movies", Assert.Single(created.Shares).Path);
         Assert.Equal(
@@ -281,7 +281,7 @@ public class MediaLibrariesClientTests
             server.Requests);
         Assert.Contains("\"host\":\"192.168.1.20\"", server.Bodies[1]);
         Assert.Contains("\"name\":\"Den PC\"", server.Bodies[1]);
-        Assert.Contains("\"username\":\"sam\"", server.Bodies[1]);
+        Assert.Contains("\"username\":\"pat\"", server.Bodies[1]);
         Assert.Contains("\"password\":\"secret\"", server.Bodies[1]);
         Assert.Contains("\"password\":\"\"", server.Bodies[2]);   // blank keeps the saved one
         Assert.DoesNotContain("\"name\"", server.Bodies[2]);       // no name typed, none sent
@@ -297,7 +297,7 @@ public class MediaLibrariesClientTests
         using var client = ClientFor(server);
 
         var error = await Assert.ThrowsAsync<SentinelServerException>(() =>
-            client.SaveMediaNetworkComputerAsync(null, new MediaNetworkComputerInput { Host = "den-pc", Username = "sam" }));
+            client.SaveMediaNetworkComputerAsync(null, new MediaNetworkComputerInput { Host = "den-pc", Username = "pat" }));
 
         Assert.Equal(400, error.Status);
         Assert.True(error.NeedsLogin);

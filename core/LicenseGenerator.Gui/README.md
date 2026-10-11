@@ -79,8 +79,9 @@ getting pushes, nothing else about their install changes.
      *Connect* whether it's running). Leave it empty if the relay runs some other way; changes
      then save but aren't confirmed.
 
-   The defaults are today's setup (`user@server`, the repo checkout on the media box,
-   `sentinelcore-push-relay`). **If the relay moves to another host**, change these three fields
+   The server starts empty - enter your relay box's `user@host` once and it is remembered. The
+   other two default to `/opt/sentinelcore/core/SentinelCore.PushRelay/appsettings.json` and
+   `sentinelcore-push-relay`. **If the relay moves to another host**, change these three fields
    and press *Connect* - nothing to rebuild. *Reset to defaults* puts them back.
 2. **Connect** reads the current list and checks the relay is running. It changes nothing.
 3. **Block** a license three ways: pick a customer from your license records, paste a license id,
@@ -91,7 +92,7 @@ says whether the relay confirmed it. If it doesn't, the most likely reason is a 
 blocking existed - it saves the list and ignores it until `./scripts/deploy.sh relay` is run.
 
 It uses this Mac's own `ssh` in batch mode, so the key has to work without a password prompt:
-`ssh user@server` in Terminal should log straight in. Nothing but the three fields above is
+`ssh user@host` in Terminal should log straight in. Nothing but the three fields above is
 stored. Each change re-reads the file first and replaces it in one step (written beside it, then
 renamed over it), so it never overwrites an edit made on the server in the meantime and the relay
 never reads a half-written file.

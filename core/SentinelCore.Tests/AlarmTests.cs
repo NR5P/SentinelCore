@@ -83,7 +83,7 @@ public sealed class AlarmEngineTests : IDisposable
             var input = AlarmSensor.Defaults(zone);
             input.DeviceId = deviceId;
             input.Name = name;
-            var (sensor, error) = await Engine.SaveSensorAsync(input, "nathan", Ct);
+            var (sensor, error) = await Engine.SaveSensorAsync(input, "morgan", Ct);
             Assert.Null(error);
             return sensor!;
         }
@@ -115,7 +115,7 @@ public sealed class AlarmEngineTests : IDisposable
             await AddAsync(Leak, "Utility leak", AlarmZones.Always);
             await BaselineAsync(FrontDoor, Window, Hall, Leak);
             Engine.BrokerConnected = true;
-            var result = await Engine.ArmAsync(mode, force: false, pin: null, "nathan", Ct);
+            var result = await Engine.ArmAsync(mode, force: false, pin: null, "morgan", Ct);
             Assert.True(result.Ok, result.Error);
             if (mode == AlarmModes.Away)
             {
@@ -161,7 +161,7 @@ public sealed class AlarmEngineTests : IDisposable
         await bench.AddAsync(bench.FrontDoor, "Front door", AlarmZones.Entry);
         await bench.BaselineAsync(bench.FrontDoor);
 
-        var result = await bench.Engine.ArmAsync(AlarmModes.Away, false, null, "nathan", Ct);
+        var result = await bench.Engine.ArmAsync(AlarmModes.Away, false, null, "morgan", Ct);
         Assert.True(result.Ok);
 
         var status = await bench.StatusAsync();
@@ -184,7 +184,7 @@ public sealed class AlarmEngineTests : IDisposable
         Assert.Equal(AlarmStatuses.Armed, status.Status);
         Assert.Null(status.ExitUntil);
         Assert.Contains(await bench.EventsAsync(), e => e.Kind == AlarmEventKinds.Armed);
-        Assert.Contains(bench.Actions.Pushes, p => p.Title == "Alarm armed" && p.Body.Contains("nathan"));
+        Assert.Contains(bench.Actions.Pushes, p => p.Title == "Alarm armed" && p.Body.Contains("morgan"));
     }
 
     [Fact]
@@ -217,7 +217,7 @@ public sealed class AlarmEngineTests : IDisposable
 
         bench.Clock.Advance(TimeSpan.FromSeconds(20));
         await bench.Engine.TickAsync(Ct);
-        var disarm = await bench.Engine.DisarmAsync(null, "nathan", Ct);
+        var disarm = await bench.Engine.DisarmAsync(null, "morgan", Ct);
         Assert.True(disarm.Ok);
 
         bench.Clock.Advance(TimeSpan.FromSeconds(20));
@@ -237,7 +237,7 @@ public sealed class AlarmEngineTests : IDisposable
             SirenDeviceIds = [bench.Siren],
             SirenSeconds = 120,
             CameraIds = [Guid.Parse("11111111-1111-1111-1111-111111111111")]
-        }, "nathan", Ct);
+        }, "morgan", Ct);
         await bench.ArmedHouseAsync();
 
         await bench.ReadAsync(bench.FrontDoor, open: true);
@@ -261,7 +261,7 @@ public sealed class AlarmEngineTests : IDisposable
         Assert.False(status.SirenOn);
         Assert.Contains(bench.Actions.DeviceCommands, c => c.Device == bench.Siren && !c.On);
 
-        var disarm = await bench.Engine.DisarmAsync(null, "nathan", Ct);
+        var disarm = await bench.Engine.DisarmAsync(null, "morgan", Ct);
         Assert.True(disarm.Ok);
         Assert.Contains(bench.Actions.Pushes, p => p.Title == "Alarm silenced");
         Assert.Equal(AlarmStatuses.Disarmed, (await bench.StatusAsync()).Status);
@@ -333,12 +333,12 @@ public sealed class AlarmEngineTests : IDisposable
         await bench.BaselineAsync(bench.FrontDoor, bench.Window);
         await bench.ReadAsync(bench.Window, open: true);
 
-        var refused = await bench.Engine.ArmAsync(AlarmModes.Home, false, null, "nathan", Ct);
+        var refused = await bench.Engine.ArmAsync(AlarmModes.Home, false, null, "morgan", Ct);
         Assert.False(refused.Ok);
         Assert.Equal(409, refused.StatusCode);
         Assert.Equal(["Kitchen window"], refused.OpenSensors);
 
-        var forced = await bench.Engine.ArmAsync(AlarmModes.Home, true, null, "nathan", Ct);
+        var forced = await bench.Engine.ArmAsync(AlarmModes.Home, true, null, "morgan", Ct);
         Assert.True(forced.Ok);
         var status = await bench.StatusAsync();
         Assert.Equal(AlarmStatuses.Armed, status.Status);
@@ -350,9 +350,9 @@ public sealed class AlarmEngineTests : IDisposable
         Assert.Equal(AlarmStatuses.Armed, (await bench.StatusAsync()).Status);
 
         // ...and the bypass ends with the disarm.
-        Assert.True((await bench.Engine.DisarmAsync(null, "nathan", Ct)).Ok);
+        Assert.True((await bench.Engine.DisarmAsync(null, "morgan", Ct)).Ok);
         await bench.ReadAsync(bench.Window, open: false);
-        Assert.True((await bench.Engine.ArmAsync(AlarmModes.Home, false, null, "nathan", Ct)).Ok);
+        Assert.True((await bench.Engine.ArmAsync(AlarmModes.Home, false, null, "morgan", Ct)).Ok);
         Assert.False((await bench.StatusAsync()).Sensors.Single(s => s.Name == "Kitchen window").Bypassed);
     }
 
@@ -362,7 +362,7 @@ public sealed class AlarmEngineTests : IDisposable
         var bench = NewBench();
         await bench.AddAsync(bench.FrontDoor, "Front door", AlarmZones.Entry);
         await bench.BaselineAsync(bench.FrontDoor);
-        Assert.True((await bench.Engine.ArmAsync(AlarmModes.Away, false, null, "nathan", Ct)).Ok);
+        Assert.True((await bench.Engine.ArmAsync(AlarmModes.Away, false, null, "morgan", Ct)).Ok);
         await bench.ReadAsync(bench.FrontDoor, open: true);
 
         bench.Clock.Advance(TimeSpan.FromSeconds(61));
@@ -379,8 +379,8 @@ public sealed class AlarmEngineTests : IDisposable
     public async Task APin_IsNeededToDisarm_AndFiveWrongGuessesLockItOut()
     {
         var bench = NewBench();
-        Assert.Null(await bench.Engine.SetPinAsync("2468", null, isAdmin: true, "nathan", Ct));
-        Assert.Equal("The PIN must be 4 to 8 digits.", await bench.Engine.SetPinAsync("12", null, true, "nathan", Ct));
+        Assert.Null(await bench.Engine.SetPinAsync("2468", null, isAdmin: true, "morgan", Ct));
+        Assert.Equal("The PIN must be 4 to 8 digits.", await bench.Engine.SetPinAsync("12", null, true, "morgan", Ct));
         await bench.ArmedHouseAsync(AlarmModes.Home);
         Assert.True((await bench.StatusAsync()).PinSet);
 
@@ -407,14 +407,14 @@ public sealed class AlarmEngineTests : IDisposable
         // Arming never needs the PIN unless asked for.
         Assert.True((await bench.Engine.ArmAsync(AlarmModes.Home, false, null, "kid", Ct)).Ok);
         await bench.Engine.DisarmAsync("2468", "kid", Ct);
-        await bench.Engine.SaveConfigAsync((await bench.Engine.GetConfigAsync(Ct)) with { RequirePinToArm = true }, "nathan", Ct);
+        await bench.Engine.SaveConfigAsync((await bench.Engine.GetConfigAsync(Ct)) with { RequirePinToArm = true }, "morgan", Ct);
         Assert.False((await bench.Engine.ArmAsync(AlarmModes.Home, false, null, "kid", Ct)).Ok);
         Assert.True((await bench.Engine.ArmAsync(AlarmModes.Home, false, "2468", "kid", Ct)).Ok);
 
         // A non-admin changing the PIN needs the old one; an admin resets a forgotten one.
         Assert.Equal("The current PIN is wrong.", await bench.Engine.SetPinAsync("1357", "9999", false, "kid", Ct));
         Assert.Null(await bench.Engine.SetPinAsync("1357", "2468", false, "kid", Ct));
-        Assert.Null(await bench.Engine.SetPinAsync("", null, true, "nathan", Ct));
+        Assert.Null(await bench.Engine.SetPinAsync("", null, true, "morgan", Ct));
         Assert.False((await bench.StatusAsync()).PinSet);
     }
 
@@ -527,13 +527,13 @@ public sealed class AlarmEngineTests : IDisposable
         var bench = NewBench();
         await bench.Engine.SaveConfigAsync((await bench.Engine.GetConfigAsync(Ct)) with { SirenDeviceIds = [bench.Siren] }, null, Ct);
 
-        Assert.True((await bench.Engine.TestAsync("nathan", Ct)).Ok);
+        Assert.True((await bench.Engine.TestAsync("morgan", Ct)).Ok);
         Assert.Equal(AlarmStatuses.Disarmed, (await bench.StatusAsync()).Status);
         Assert.Contains(bench.Actions.Pushes, p => p.Title == "Alarm test");
         Assert.Contains(bench.Actions.DeviceCommands, c => c.Device == bench.Siren && c.On);
         Assert.Single(bench.Actions.CameraTriggers, t => t.Source == "alarm test");
 
-        Assert.True((await bench.Engine.PanicAsync("nathan", Ct)).Ok);
+        Assert.True((await bench.Engine.PanicAsync("morgan", Ct)).Ok);
         var status = await bench.StatusAsync();
         Assert.Equal(AlarmStatuses.Triggered, status.Status);
         Assert.Equal("Panic button", status.TriggeredBy);
@@ -564,8 +564,8 @@ public sealed class AlarmEngineTests : IDisposable
         var bench = NewBench();
         var sensor = await bench.AddAsync(bench.Window, "Kitchen window", AlarmZones.Perimeter);
         await bench.ReadAsync(bench.Window, open: true, battery: 5);
-        Assert.True(await bench.Engine.DeleteSensorAsync(sensor.Id, "nathan", Ct));
-        Assert.False(await bench.Engine.DeleteSensorAsync(sensor.Id, "nathan", Ct));
+        Assert.True(await bench.Engine.DeleteSensorAsync(sensor.Id, "morgan", Ct));
+        Assert.False(await bench.Engine.DeleteSensorAsync(sensor.Id, "morgan", Ct));
         var status = await bench.StatusAsync();
         Assert.Empty(status.Sensors);
         Assert.DoesNotContain(status.Issues, i => i.Contains("battery"));

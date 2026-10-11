@@ -1533,7 +1533,7 @@ window.GateWatchSettings = (function () {
     const labelInput = document.createElement("input");
     labelInput.type = "text";
     labelInput.className = "field-input";
-    labelInput.placeholder = "label, e.g. Nathan's Truck";
+    labelInput.placeholder = "label, e.g. Morgan's Truck";
     labelInput.value = vehicle.label || "";
 
     const removeBtn = document.createElement("button");
@@ -2480,7 +2480,7 @@ window.GateWatchSettings = (function () {
     const labelInput = document.createElement("input");
     labelInput.type = "text";
     labelInput.className = "field-input";
-    labelInput.placeholder = "name, e.g. Nathan";
+    labelInput.placeholder = "name, e.g. Morgan";
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = "image/*";

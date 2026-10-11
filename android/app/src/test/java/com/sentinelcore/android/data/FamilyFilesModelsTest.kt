@@ -14,7 +14,7 @@ class FamilyFilesModelsTest {
         val status = parseFamilyFilesStatus(
             JSONObject(
                 """
-                { "enabled": true, "isAdmin": true, "username": "nathan", "libraryFolder": "/srv/family",
+                { "enabled": true, "isAdmin": true, "username": "morgan", "libraryFolder": "/srv/family",
                   "maxUploadBytes": 4294967296,
                   "library": { "files": 1200, "bytes": 5368709120, "indexedUtc": "2026-09-25T02:00:00Z" },
                   "drives": [ { "id": "d1", "name": "USB disk", "kind": "folder", "enabled": true, "location": "/media/usb",
@@ -34,7 +34,7 @@ class FamilyFilesModelsTest {
 
         assertTrue(status.enabled)
         assertTrue(status.isAdmin)
-        assertEquals("nathan", status.username)
+        assertEquals("morgan", status.username)
         assertEquals("/srv/family", status.libraryFolder)
         assertEquals(4294967296L, status.maxUploadBytes)
         assertEquals(1200, status.library?.files)
@@ -176,7 +176,7 @@ class FamilyFilesModelsTest {
                 """
                 { "batches": [ { "id": "b1", "deletedUtc": "2026-09-25T09:00:00Z", "reason": "duplicate", "by": null,
                                  "files": [ { "path": "Photos/copy.jpg", "name": "copy.jpg", "size": 5, "keptCopy": "Photos/orig.jpg" } ] },
-                               { "id": "b2", "deletedUtc": "2026-09-25T09:30:00Z", "reason": "deleted", "by": "nathan",
+                               { "id": "b2", "deletedUtc": "2026-09-25T09:30:00Z", "reason": "deleted", "by": "morgan",
                                  "files": [ { "path": "old.txt", "name": "old.txt", "size": 1, "keptCopy": null } ] } ] }
                 """.trimIndent(),
             ),
@@ -185,7 +185,7 @@ class FamilyFilesModelsTest {
         assertEquals("duplicate", batches[0].reason)
         assertNull(batches[0].by)
         assertEquals("Photos/orig.jpg", batches[0].files.single().keptCopy)
-        assertEquals("nathan", batches[1].by)
+        assertEquals("morgan", batches[1].by)
         assertNull(batches[1].files.single().keptCopy)
     }
 

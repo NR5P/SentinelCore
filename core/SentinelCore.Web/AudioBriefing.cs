@@ -84,7 +84,7 @@ public sealed class AudioBriefingBuilder(
         var account = await accounts.GetByUsernameAsync(userKey, cancellationToken);
         var name = string.IsNullOrWhiteSpace(account?.DisplayName) ? account?.Username : account.DisplayName;
         if (string.IsNullOrWhiteSpace(name)) return null;
-        // "Nathan Rigg" -> "Nathan": a briefing says hello the way a person would.
+        // "Morgan Reed" -> "Morgan": a briefing says hello the way a person would.
         var first = name.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
         return char.ToUpper(first[0], CultureInfo.InvariantCulture) + first[1..];
     }

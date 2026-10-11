@@ -413,7 +413,7 @@ public sealed class PushDispatcherTests
         var store = new FakePushDeviceStore(
             NewDevice("apple", "terry-phone", "Terry's iPhone") with { Username = "terry" },
             NewDevice("apple", "terry-ipad", "Terry's iPad") with { Username = "terry" },
-            NewDevice("apple", "nathan-phone", "Nathan's iPhone") with { Username = "nathan" },
+            NewDevice("apple", "morgan-phone", "Morgan's iPhone") with { Username = "morgan" },
             NewDevice("apple", "nobodys-phone", "Registered with login off"));
         var handler = new ApnsCapture();
         var dispatcher = NewDispatcher(store, handler, new CapturingLogger());
@@ -524,7 +524,7 @@ public sealed class PushDispatcherTests
         using var key = NewSigningKey(out var keyPath);
         var store = new FakePushDeviceStore(
             NewDevice("apple", "terry-phone", "Terry's iPhone") with { Username = "terry" },
-            NewDevice("apple", "nathan-phone", "Nathan's iPhone") with { Username = "nathan" });
+            NewDevice("apple", "morgan-phone", "Morgan's iPhone") with { Username = "morgan" });
         var handler = new ApnsCapture();
         var (notifier, directory) = await NewNotifierAsync(NewDispatcher(store, handler, new CapturingLogger()), NewOptions(keyPath));
         try

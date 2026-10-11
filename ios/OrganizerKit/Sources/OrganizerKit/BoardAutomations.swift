@@ -500,7 +500,7 @@ public struct AutomationWording {
         }
     }
 
-    // "Nathan", "Nathan and Terry", "Nathan, Terry and Sam" - by display name where there is one.
+    // "Morgan", "Morgan and Terry", "Morgan, Terry and Pat" - by display name where there is one.
     public func whoWords(_ usernames: [String], quiet: Bool = false) -> String {
         let names = usernames.map { name in people.first { $0.username == name }?.label ?? name }
         if names.isEmpty { return quiet ? "" : "…" }

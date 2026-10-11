@@ -10,12 +10,12 @@ public sealed class KnownFaceMatcherTests
         var embedding = NormalizedEmbedding([1, 0, 0]);
         var knownFaces = new List<KnownFace>
         {
-            new() { Label = "Nathan", Enrollments = [new KnownFaceEnrollment { Embedding = embedding }] }
+            new() { Label = "Morgan", Enrollments = [new KnownFaceEnrollment { Embedding = embedding }] }
         };
 
         var match = KnownFaceMatcher.Match(knownFaces, embedding);
 
-        Assert.Equal("Nathan", match);
+        Assert.Equal("Morgan", match);
     }
 
     [Fact]
@@ -23,7 +23,7 @@ public sealed class KnownFaceMatcherTests
     {
         var knownFaces = new List<KnownFace>
         {
-            new() { Label = "Nathan", Enrollments = [new KnownFaceEnrollment { Embedding = NormalizedEmbedding([1, 0, 0]) }] }
+            new() { Label = "Morgan", Enrollments = [new KnownFaceEnrollment { Embedding = NormalizedEmbedding([1, 0, 0]) }] }
         };
 
         // Orthogonal to the enrolled embedding - cosine similarity 0, well below the threshold.
@@ -53,7 +53,7 @@ public sealed class KnownFaceMatcherTests
             },
             new()
             {
-                Label = "Nathan",
+                Label = "Morgan",
                 Enrollments =
                 [
                     new KnownFaceEnrollment { Embedding = NormalizedEmbedding([0, 1, 0]) },
@@ -64,7 +64,7 @@ public sealed class KnownFaceMatcherTests
 
         var match = KnownFaceMatcher.Match(knownFaces, target);
 
-        Assert.Equal("Nathan", match);
+        Assert.Equal("Morgan", match);
     }
 
     private static float[] NormalizedEmbedding(float[] vector)

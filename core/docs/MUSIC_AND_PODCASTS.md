@@ -197,7 +197,7 @@ Artist = { "id", "name": "Fleetwood Mac", "albumCount": 3, "trackCount": 38, "ge
 ```
 
 ```json
-Playlist = { "id", "name": "Road Trip", "description": "", "ownerName": "nathan", "mine": true,
+Playlist = { "id", "name": "Road Trip", "description": "", "ownerName": "morgan", "mine": true,
               "shared": true, "collaborative": false, "smart": false, "rules": null,
               "trackCount": 42, "durationSeconds": 9000,
               "artUrls": ["/api/music/albums/…/art", "…"], "createdAt": "…", "updatedAt": "…", "pinned": false }
@@ -661,7 +661,7 @@ Bookmark = { "id", "episodeId", "episodeTitle", "podcastId", "podcastTitle", "po
 `GET /api/podcasts/status` →
 ```json
 { "enabled": true, "ffmpegAvailable": true, "refreshing": false, "lastRefreshAt": "…",
-  "downloadFolder": "/home/sentinel/…/podcasts", "storageBytes": 12000000000, "maxStorageBytes": 53687091200,
+  "downloadFolder": "/srv/media/…/podcasts", "storageBytes": 12000000000, "maxStorageBytes": 53687091200,
   "downloadsActive": 1, "downloadsQueued": 3,
   "transcripts": { "enabled": true, "available": true, "error": null, "queued": 2 },
   "podcastCount": 18, "episodeCount": 5400 }
@@ -679,7 +679,7 @@ iPad — continue here?" and pick up the queue at the same spot.
 
 ```json
 NowPlaying = {
-  "deviceId": "ios-…", "deviceName": "Nathan's iPhone", "kind": "music|podcast",
+  "deviceId": "ios-…", "deviceName": "Morgan's iPhone", "kind": "music|podcast",
   "queue": [ { "type": "track|episode", "id": "…" } ],
   "index": 3, "positionSeconds": 61.2, "playing": true,
   "shuffle": false, "repeat": "off|all|one", "speed": 1.0,
@@ -729,7 +729,7 @@ as a **speaker**. Speakers belong to the household: anyone signed in can see and
     and then `play` (its episodes), and the episodes must start after the voice ends. An
     `announce` with nothing playing just speaks (at `volume` when given).
 - `GET /api/audio/speakers/{deviceId}/commands?after=41&wait=25` is a long poll →
-  `{ "commands": [ { "seq": 42, "at": "…", "from": "nathan", ...SpeakerCommand } ] }`. It returns
+  `{ "commands": [ { "seq": 42, "at": "…", "from": "morgan", ...SpeakerCommand } ] }`. It returns
   as soon as there is anything after `after`, or `[]` after `wait` seconds. Commands older than
   2 minutes are dropped and never delivered. On first connect, pass `after=-1` to get only new
   ones. The reply also carries `latestSeq`.
@@ -771,7 +771,7 @@ WakeAlarm = { "id", "name": "Weekdays", "time": "06:45", "days": ["mon","tue","w
 
 `GET /api/audio/briefing` →
 ```json
-{ "greeting": "Good morning, Nathan.",
+{ "greeting": "Good morning, Morgan.",
   "speech": [ "It's Thursday, October 2nd.", "Right now it's 61 degrees and clear in Holland…", "You have 2 events today: …", "3 reminders are due: …" ],
   "episodes": [Episode] }
 ```
@@ -804,7 +804,7 @@ Lists hold at most 10 entries. `period=year` uses `year` (default the current ye
 
 ### ListenBrainz scrobbling (per person)
 
-- `GET /api/audio/me/listenbrainz` → `{ "connected": true, "username": "nathan" }`.
+- `GET /api/audio/me/listenbrainz` → `{ "connected": true, "username": "morgan" }`.
 - `PUT /api/audio/me/listenbrainz` with body `{ "token": "…" }` → `{ "connected": true, "username" }`.
   The token is checked against `api.listenbrainz.org/1/validate-token`, and 400 comes back when it
   is bad. A blank token disconnects.

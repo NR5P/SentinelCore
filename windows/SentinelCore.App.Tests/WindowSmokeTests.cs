@@ -39,7 +39,7 @@ public class WindowSmokeTests
             var library = new MediaLibrary { Id = "l1", Name = "Movies", Kind = "movies", Path = "/mnt/movies" };
             var computer = new MediaNetworkComputer
             {
-                Id = "c1", Name = "Den PC", Host = "192.168.1.20", Username = "sam", HasPassword = true,
+                Id = "c1", Name = "Den PC", Host = "192.168.1.20", Username = "pat", HasPassword = true,
                 Path = "smb://192.168.1.20",
             };
             var activity = new ActivityItem

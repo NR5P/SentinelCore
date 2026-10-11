@@ -36,7 +36,7 @@ public sealed class PodcastServiceTests : IDisposable
     {
         var kit = Kit();
         _server.Feed("/feed.xml", PodcastFeeds.Rss("Archive Show", Items(1, 2, 3)));
-        var result = await kit.Service.SubscribeAsync("nathan", _server.Url("/feed.xml"), null, Ct);
+        var result = await kit.Service.SubscribeAsync("morgan", _server.Url("/feed.xml"), null, Ct);
         Assert.Null(result.Error);
         var show = result.Show!;
         Assert.Equal("Archive Show", show.Title);
@@ -135,7 +135,7 @@ public sealed class PodcastServiceTests : IDisposable
     {
         var kit = Kit();
         _server.Feed("/push.xml", PodcastFeeds.Rss("Push Show", Items(1, 2)));
-        var show = (await kit.Service.SubscribeAsync("nathan", _server.Url("/push.xml"), null, Ct)).Show!;
+        var show = (await kit.Service.SubscribeAsync("morgan", _server.Url("/push.xml"), null, Ct)).Show!;
         await kit.Service.SubscribeAsync("anna", _server.Url("/push.xml"), null, Ct);
         await kit.Service.SubscribeAsync("quiet", _server.Url("/push.xml"), null, Ct);
         var quiet = (await kit.Store.GetSubscriptionsAsync(Ct)).Single(s => s.UserKey == "quiet");
@@ -150,14 +150,14 @@ public sealed class PodcastServiceTests : IDisposable
         _server.Feed("/push.xml", PodcastFeeds.Rss("Push Show", Items(1, 2, 3, 4)));
         await kit.Service.RefreshAsync(show.Id, Ct);
         var push = Assert.Single(kit.Notifier.Sent);
-        Assert.Equal(["anna", "nathan"], push.Users.Order());
+        Assert.Equal(["anna", "morgan"], push.Users.Order());
         Assert.Equal(["Episode 4", "Episode 3"], push.Episodes.Select(e => e.Title));
 
         // Anna's Up Next gets them oldest first.
         var queue = await kit.Store.GetQueueAsync("anna", Ct);
         var titles = (await kit.Store.GetEpisodesAsync(queue.Select(q => q.EpisodeId), Ct)).ToDictionary(e => e.Id, e => e.Title);
         Assert.Equal(["Episode 3", "Episode 4"], queue.Select(q => titles[q.EpisodeId]));
-        Assert.Empty(await kit.Store.GetQueueAsync("nathan", Ct));
+        Assert.Empty(await kit.Store.GetQueueAsync("morgan", Ct));
 
         await kit.Service.RefreshAsync(show.Id, Ct);
         Assert.Single(kit.Notifier.Sent);
@@ -168,19 +168,19 @@ public sealed class PodcastServiceTests : IDisposable
     {
         var kit = Kit();
         _server.Feed("/listen.xml", PodcastFeeds.Rss("Listen Show", Items(1)));
-        var show = (await kit.Service.SubscribeAsync("nathan", _server.Url("/listen.xml"), null, Ct)).Show!;
+        var show = (await kit.Service.SubscribeAsync("morgan", _server.Url("/listen.xml"), null, Ct)).Show!;
         var episode = (await kit.Store.GetEpisodesAsync(show.Id, Ct)).Single();
-        await kit.Store.SetQueueAsync("nathan", [episode.Id], Ct);
+        await kit.Store.SetQueueAsync("morgan", [episode.Id], Ct);
 
-        Assert.Null(await kit.Service.ReportProgressAsync("nathan", episode, new PodcastProgressInput { PositionSeconds = 9 }, Ct));
-        var halfway = await kit.Service.ReportProgressAsync("nathan", episode, new PodcastProgressInput { PositionSeconds = 300, DurationSeconds = 600, Speed = 1.5 }, Ct);
+        Assert.Null(await kit.Service.ReportProgressAsync("morgan", episode, new PodcastProgressInput { PositionSeconds = 9 }, Ct));
+        var halfway = await kit.Service.ReportProgressAsync("morgan", episode, new PodcastProgressInput { PositionSeconds = 300, DurationSeconds = 600, Speed = 1.5 }, Ct);
         Assert.False(halfway!.Played);
-        var end = await kit.Service.ReportProgressAsync("nathan", episode, new PodcastProgressInput { PositionSeconds = 571, DurationSeconds = 600 }, Ct);
+        var end = await kit.Service.ReportProgressAsync("morgan", episode, new PodcastProgressInput { PositionSeconds = 571, DurationSeconds = 600 }, Ct);
         Assert.True(end!.Played);
         Assert.NotNull(end.PlayedAt);
-        Assert.Empty(await kit.Store.GetQueueAsync("nathan", Ct));
+        Assert.Empty(await kit.Store.GetQueueAsync("morgan", Ct));
 
-        var listening = await kit.Store.GetListeningAsync("nathan", DateTimeOffset.MinValue, DateTimeOffset.MaxValue, Ct);
+        var listening = await kit.Store.GetListeningAsync("morgan", DateTimeOffset.MinValue, DateTimeOffset.MaxValue, Ct);
         // The first report counts at most 15 s of listening (22.5 s of audio at 1.5x, saving 7.5 s);
         // the jump to the end a moment later is a seek, not 271 s of listening.
         var row = Assert.Single(listening);
@@ -188,7 +188,7 @@ public sealed class PodcastServiceTests : IDisposable
         Assert.Equal(7.5, row.SavedSeconds, 3);
 
         var source = new PodcastAudioSource(kit.Store, kit.Downloads, kit.Settings);
-        var stats = JsonSerializer.SerializeToElement(await source.StatsAsync("nathan", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1), Ct),
+        var stats = JsonSerializer.SerializeToElement(await source.StatsAsync("morgan", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1), Ct),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal(1, stats.GetProperty("episodesFinished").GetInt32());
         Assert.Equal(24, stats.GetProperty("byHour").GetArrayLength());
@@ -215,7 +215,7 @@ public sealed class PodcastServiceTests : IDisposable
         var content = Enumerable.Range(0, 200_000).Select(i => (byte)(i * 7)).ToArray();
         foreach (var n in new[] { 1, 2, 3 }) _server.Bytes($"/audio/{n}.mp3", content, "audio/mpeg");
         _server.Feed("/dl.xml", PodcastFeeds.Rss("Download Show", Items(1, 2, 3)));
-        var show = (await kit.Service.SubscribeAsync("nathan", _server.Url("/dl.xml"), null, Ct)).Show!;
+        var show = (await kit.Service.SubscribeAsync("morgan", _server.Url("/dl.xml"), null, Ct)).Show!;
         show.Settings.KeepEpisodes = 2;
         await kit.Store.SaveShowAsync(show, Ct);
         var episodes = (await kit.Store.GetEpisodesAsync(show.Id, Ct)).OrderBy(e => e.PublishedAt).ToList();
@@ -247,15 +247,15 @@ public sealed class PodcastServiceTests : IDisposable
         var kit = Kit("""{ "AutoDownloadNew": false, "TranscriptsEnabled": true }""");
         _server.Bytes("/audio/1.mp3", await kit.MakeEpisodeAudioAsync(chapters: true), "audio/mpeg");
         _server.Feed("/trim.xml", PodcastFeeds.Rss("Trim Show", PodcastFeeds.Item("ep-1", "Episode 1", Day, _server.Url("/audio/1.mp3"), duration: "49")));
-        var show = (await kit.Service.SubscribeAsync("nathan", _server.Url("/trim.xml"), null, Ct)).Show!;
+        var show = (await kit.Service.SubscribeAsync("morgan", _server.Url("/trim.xml"), null, Ct)).Show!;
         show.Settings.TrimSilence = true;
         show.Settings.VoiceBoost = true;
         await kit.Store.SaveShowAsync(show, Ct);
         var episode = (await kit.Store.GetEpisodesAsync(show.Id, Ct)).Single();
 
         // Listened to (and bookmarked) from the publisher's file before the download existed.
-        Assert.NotNull(await kit.Service.ReportProgressAsync("nathan", episode, new PodcastProgressInput { PositionSeconds = 12, DurationSeconds = 49 }, Ct));
-        await kit.Store.SaveBookmarkAsync(new PodcastBookmark(Guid.NewGuid(), "nathan", episode.Id, 7.5, "the high tone", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow), Ct);
+        Assert.NotNull(await kit.Service.ReportProgressAsync("morgan", episode, new PodcastProgressInput { PositionSeconds = 12, DurationSeconds = 49 }, Ct));
+        await kit.Store.SaveBookmarkAsync(new PodcastBookmark(Guid.NewGuid(), "morgan", episode.Id, 7.5, "the high tone", null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow), Ct);
 
         Assert.Null(await kit.Service.TranscribeAsync(episode.Id, Ct));
         await PodcastTestKit.WaitForAsync(async () => await kit.Store.GetTranscriptAsync(episode.Id, Ct) is not null, "download, trim and transcribe", 120);
@@ -277,11 +277,11 @@ public sealed class PodcastServiceTests : IDisposable
         Assert.Equal([0.0, 5.0], chapters.Select(c => Math.Round(c.StartSeconds, 1)));
         Assert.Equal(2.3, episode.Timeline.ToFile(chapters[1].StartSeconds), 1);
 
-        var view = await kit.ViewAsync("nathan");
+        var view = await kit.ViewAsync("morgan");
         var progress = JsonSerializer.SerializeToElement(PodcastView.Progress(view.ProgressOf(episode.Id), episode));
         Assert.Equal(7.6, progress.GetProperty("positionSeconds").GetDouble(), 1);
         Assert.InRange(progress.GetProperty("durationSeconds").GetDouble(), 44.45, 44.75);
-        var bookmark = JsonSerializer.SerializeToElement(view.Bookmark((await kit.Store.GetBookmarksAsync("nathan", Ct)).Single(), episode));
+        var bookmark = JsonSerializer.SerializeToElement(view.Bookmark((await kit.Store.GetBookmarksAsync("morgan", Ct)).Single(), episode));
         // 7.5 s was inside the second silence: it lands on the join, 7.15 - 2.7 = 4.45 s.
         Assert.InRange(bookmark.GetProperty("positionSeconds").GetDouble(), 4.4, 4.5);
 
@@ -347,15 +347,15 @@ public sealed class PodcastServiceTests : IDisposable
     {
         var source = Kit();
         _server.Feed("/backup.xml", PodcastFeeds.Rss("Backup Show", Items(1, 2)));
-        var show = (await source.Service.SubscribeAsync("nathan", _server.Url("/backup.xml"), null, Ct)).Show!;
+        var show = (await source.Service.SubscribeAsync("morgan", _server.Url("/backup.xml"), null, Ct)).Show!;
         show.Settings.TrimSilence = true;
         await source.Store.SaveShowAsync(show, Ct);
         var episodes = (await source.Store.GetEpisodesAsync(show.Id, Ct)).OrderBy(e => e.PublishedAt).ToList();
         _server.Feed("/backup.xml", PodcastFeeds.Rss("Backup Show", Items(2)));
         await source.Service.RefreshAsync(show.Id, Ct);
-        await source.Service.ReportProgressAsync("nathan", episodes[1], new PodcastProgressInput { PositionSeconds = 120, DurationSeconds = 600 }, Ct);
-        await source.Store.SetQueueAsync("nathan", [episodes[1].Id, episodes[0].Id], Ct);
-        await source.Store.SaveBookmarkAsync(new PodcastBookmark(Guid.NewGuid(), "nathan", episodes[0].Id, 42, "archived but kept", "snip", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow), Ct);
+        await source.Service.ReportProgressAsync("morgan", episodes[1], new PodcastProgressInput { PositionSeconds = 120, DurationSeconds = 600 }, Ct);
+        await source.Store.SetQueueAsync("morgan", [episodes[1].Id, episodes[0].Id], Ct);
+        await source.Store.SaveBookmarkAsync(new PodcastBookmark(Guid.NewGuid(), "morgan", episodes[0].Id, 42, "archived but kept", "snip", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow), Ct);
 
         var backup = await new PodcastAudioSource(source.Store, source.Downloads, source.Settings).ExportAsync(Ct);
         Assert.Single(backup.ArchivedEpisodes!);
@@ -364,7 +364,7 @@ public sealed class PodcastServiceTests : IDisposable
 
         var target = Kit();
         // Something newer already on the target must survive the restore.
-        await target.Store.SetProgressAsync(new PodcastProgress("nathan", episodes[1].Id, 500, 600, false, DateTimeOffset.UtcNow.AddHours(1)), Ct);
+        await target.Store.SetProgressAsync(new PodcastProgress("morgan", episodes[1].Id, 500, 600, false, DateTimeOffset.UtcNow.AddHours(1)), Ct);
         var restore = new PodcastAudioSource(target.Store, target.Downloads, target.Settings);
         Assert.True(await restore.RestoreAsync(parsed, Ct) > 0);
         var again = await restore.RestoreAsync(parsed, Ct);
@@ -373,9 +373,9 @@ public sealed class PodcastServiceTests : IDisposable
         Assert.True(restoredShow.Settings.TrimSilence);
         Assert.Null(restoredShow.LastRefreshedAt);   // the next refresh is a first fetch: no pushes
         Assert.True((await target.Store.GetSubscriptionsAsync(Ct)).Single().Subscribed);
-        Assert.Equal(500, (await target.Store.GetProgressAsync("nathan", Ct)).Single().PositionSeconds);
-        Assert.Equal([episodes[1].Id, episodes[0].Id], (await target.Store.GetQueueAsync("nathan", Ct)).Select(q => q.EpisodeId));
-        Assert.Single(await target.Store.GetBookmarksAsync("nathan", Ct));
+        Assert.Equal(500, (await target.Store.GetProgressAsync("morgan", Ct)).Single().PositionSeconds);
+        Assert.Equal([episodes[1].Id, episodes[0].Id], (await target.Store.GetQueueAsync("morgan", Ct)).Select(q => q.EpisodeId));
+        Assert.Single(await target.Store.GetBookmarksAsync("morgan", Ct));
         Assert.True((await target.Store.GetEpisodeAsync(episodes[0].Id, Ct))!.Archived);
         Assert.Equal(0, again);
 

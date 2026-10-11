@@ -169,8 +169,8 @@ git clone <your-repo-url> SentinelCore
 cd SentinelCore/core
 ```
 
-(If you're reading this on the box where it's already deployed, the working copy already
-lives at `/opt/sentinelcore` — the repo root holds `.git` plus a
+(If you're reading this on a box where it's already deployed, the working copy already
+lives wherever it was cloned (this guide uses `/opt/sentinelcore`) — the repo root holds `.git` plus a
 `core/` folder with all the .NET projects (and a sibling iOS app folder, if present).
 `cd` into `core/` and `git pull` for updates, covered in
 [section 11](#11-updating-to-a-new-version).)
@@ -744,7 +744,7 @@ dependencies (via [Homebrew](https://brew.sh)), builds, runs the tests, installs
 services, health-checks. Overrides work the same way:
 
 ```bash
-sudo APP_USER=nathan WEB_PORT=8080 ASSUME_YES=1 ./scripts/install-macos.sh
+sudo APP_USER=morgan WEB_PORT=8080 ASSUME_YES=1 ./scripts/install-macos.sh
 ```
 
 What differs from Linux:
@@ -1102,8 +1102,8 @@ to `default`.
 Restrict both ports to your LAN subnet — neither is designed for internet exposure:
 
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 5080 proto tcp
-sudo ufw allow from 192.168.50.0/24 to any port 3320 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 5080 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 3320 proto tcp
 ```
 
 (Adjust the subnet to match your actual network.)
@@ -1113,7 +1113,7 @@ by default) to your LAN so Home Assistant or other MQTT clients elsewhere on the
 reach it:
 
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 1883 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 1883 proto tcp
 ```
 
 Not needed if you're pointing this app at a broker that already exists elsewhere (e.g. Home
@@ -1133,7 +1133,7 @@ If you installed go2rtc for the real-time live view (USER_GUIDE section 4a), ope
 port as well - **both TCP and UDP**, because WebRTC will use either:
 
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 18555
+sudo ufw allow from 192.168.1.0/24 to any port 18555
 ```
 
 This is the one go2rtc port that has to be reachable from a viewer. Its other two - the API on
@@ -1150,7 +1150,7 @@ If you installed the HomeKit sidecar (section 8a), open its accessory port so iP
 LAN can reach it — they connect to it directly, mDNS only tells them where to look:
 
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 51826 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 51826 proto tcp
 ```
 
 Do **not** open 3321. That's the sidecar's control API, bound to `127.0.0.1` and meant only for
@@ -1188,7 +1188,7 @@ of this product that required both. `Https:Enabled: false` in `SentinelCore.Web/
 turns it off if you'd rather not run HTTPS at all.
 
 **The awkward part, stated plainly:** no public certificate authority will issue a certificate
-for a private address like `192.168.50.8`. Let's Encrypt cannot help, which is why this uses a
+for a private address like `192.168.1.50`. Let's Encrypt cannot help, which is why this uses a
 *local* authority instead — one generated on and unique to your own machine.
 
 > **Why not skip the authority and just self-sign the server certificate directly?** Because
@@ -1251,7 +1251,7 @@ make the app forget the old one.
 Open the firewall for the HTTPS port the same way as the others:
 
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 3443 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 3443 proto tcp
 ```
 
 **Renewal.** The certificate is capped at 825 days because Apple rejects anything longer, even

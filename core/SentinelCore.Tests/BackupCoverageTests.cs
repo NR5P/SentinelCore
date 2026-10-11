@@ -778,7 +778,7 @@ public sealed class BackupCoverageTests : IDisposable
     {
         using var store = new SqliteAccountStore(TempDirectory());
         var id = Guid.NewGuid();
-        var account = new Account(id, "nathan", "hash-one", AccountRole.Admin, "Nathan", DateTimeOffset.UtcNow);
+        var account = new Account(id, "morgan", "hash-one", AccountRole.Admin, "Morgan", DateTimeOffset.UtcNow);
 
         await store.RestoreAsync(account, TestContext.Current.CancellationToken);
         await store.RestoreAsync(account with { PasswordHash = "hash-two", Role = AccountRole.Viewer }, TestContext.Current.CancellationToken);
@@ -799,9 +799,9 @@ public sealed class BackupCoverageTests : IDisposable
         using var store = new SqliteAccountStore(TempDirectory());
         var ct = TestContext.Current.CancellationToken;
 
-        var fromSetup = await store.CreateAsync("nathan", "setup-hash", AccountRole.Admin, null, ct);
+        var fromSetup = await store.CreateAsync("morgan", "setup-hash", AccountRole.Admin, null, ct);
         var fromBackup = new Account(
-            Guid.NewGuid(), "Nathan", "backup-hash", AccountRole.Admin, "Nathan", DateTimeOffset.UtcNow);
+            Guid.NewGuid(), "Morgan", "backup-hash", AccountRole.Admin, "Morgan", DateTimeOffset.UtcNow);
 
         await store.RestoreAsync(fromBackup, ct);
 
@@ -821,18 +821,18 @@ public sealed class BackupCoverageTests : IDisposable
         var ct = TestContext.Current.CancellationToken;
 
         var backup = BuildBackupJson(
-            new Account(Guid.NewGuid(), "nathan", "hash-from-a-backup-nobody-remembers", AccountRole.Admin, null, DateTimeOffset.UtcNow),
+            new Account(Guid.NewGuid(), "morgan", "hash-from-a-backup-nobody-remembers", AccountRole.Admin, null, DateTimeOffset.UtcNow),
             new Account(Guid.NewGuid(), "guest", "guest-hash", AccountRole.Viewer, null, DateTimeOffset.UtcNow));
 
         var dataDirectory = TempDirectory();
         var settingsPath = Path.Combine(dataDirectory, "appsettings.json");
 
-        // An install as it stands after setup: login required, and an admin called "nathan" whose
+        // An install as it stands after setup: login required, and an admin called "morgan" whose
         // password is the one actually in use - deliberately not the one in the backup.
         const string passwordInUse = "the password that still works";
         using (var seed = new SqliteAccountStore(dataDirectory))
         {
-            await seed.CreateAsync("nathan", PasswordHasher.Hash(passwordInUse), AccountRole.Admin, null, ct);
+            await seed.CreateAsync("morgan", PasswordHasher.Hash(passwordInUse), AccountRole.Admin, null, ct);
         }
 
         File.WriteAllText(settingsPath, """{"Auth":{"Enabled":true}}""");
@@ -841,7 +841,7 @@ public sealed class BackupCoverageTests : IDisposable
         using var client = factory.CreateClient();
 
         using (var login = await client.PostAsJsonAsync(
-            "/api/auth/login", new { Username = "nathan", Password = passwordInUse }, ct))
+            "/api/auth/login", new { Username = "morgan", Password = passwordInUse }, ct))
         {
             Assert.Equal(HttpStatusCode.OK, login.StatusCode);
         }
@@ -851,12 +851,12 @@ public sealed class BackupCoverageTests : IDisposable
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-        Assert.Equal(1, result.GetProperty("accountsSkipped").GetInt32());   // nathan, left alone
+        Assert.Equal(1, result.GetProperty("accountsSkipped").GetInt32());   // morgan, left alone
         Assert.Equal(1, result.GetProperty("accountsRestored").GetInt32());  // guest, restored
 
         // The importer's password is untouched, so the login they are holding still works.
         using (var stillWorks = await client.PostAsJsonAsync(
-            "/api/auth/login", new { Username = "nathan", Password = passwordInUse }, ct))
+            "/api/auth/login", new { Username = "morgan", Password = passwordInUse }, ct))
         {
             Assert.Equal(HttpStatusCode.OK, stillWorks.StatusCode);
         }

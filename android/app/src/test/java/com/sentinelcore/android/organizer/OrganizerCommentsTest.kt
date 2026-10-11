@@ -56,7 +56,7 @@ class OrganizerCommentsTest {
     @Test
     fun `avatar initials come from the first two words, or the first two letters of one`() {
         assertEquals("AS", OrganizerComments.initials("Alice Smith"))
-        assertEquals("NR", OrganizerComments.initials("nathan.rigg"))
+        assertEquals("MR", OrganizerComments.initials("morgan.reed"))
         assertEquals("BO", OrganizerComments.initials("bob"))
         assertNull(OrganizerComments.initials(null))
         assertNull(OrganizerComments.initials(" "))
@@ -64,7 +64,7 @@ class OrganizerCommentsTest {
 
     @Test
     fun `avatar colour is stable per name and ignores case`() {
-        assertEquals(OrganizerComments.colorIndex("Nathan", 8), OrganizerComments.colorIndex("nathan", 8))
+        assertEquals(OrganizerComments.colorIndex("Morgan", 8), OrganizerComments.colorIndex("morgan", 8))
         // "ab" = 97 + 98 = 195, and 195 % 8 = 3 - the same sum the Apple and Windows apps use.
         assertEquals(3, OrganizerComments.colorIndex("ab", 8))
     }

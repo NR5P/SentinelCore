@@ -98,12 +98,12 @@ answer under `/api/audio/network`), and its picker (`/api/audio/browse`, `/api/a
 is this one counting audio files instead of videos - see MUSIC_AND_PODCASTS.md.
 
 ```json
-NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "username": "sam",
+NetworkComputer = { "id": "…", "name": "Den PC", "host": "192.168.1.20", "username": "pat",
                     "domain": "", "hasPassword": true, "path": "smb://192.168.1.20", "createdAt": "…" }
 ```
 
 - `GET /api/media/network` → `[ NetworkComputer ]`. Passwords are never returned.
-- `POST /api/media/network` body `{ "host": "DESKTOP-PC", "name": "Den PC", "username": "sam", "password": "…", "domain": "" }`
+- `POST /api/media/network` body `{ "host": "DESKTOP-PC", "name": "Den PC", "username": "pat", "password": "…", "domain": "" }`
   signs in and lists the computer's shares; it is saved only if that works.
   → 201 (or 200 when that host was already saved, which it replaces)
   `{ "computer": NetworkComputer, "shares": [ { "name": "Movies", "path": "smb://DESKTOP-PC/Movies" } ] }`.

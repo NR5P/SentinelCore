@@ -18,11 +18,12 @@ public sealed class RelayConnectionException(string message) : Exception(message
 // restart, no deploy. See RelayOptions.BlockedLicenseIds and docs/PUSH_RELAY.md.
 public sealed partial class RelayBlockList
 {
-    // Where the relay runs today. All three are settings in the window (remembered in AppState),
-    // so moving the relay to another host is three fields, not a rebuild - see "Moving it to a
-    // proper host later" in docs/PUSH_RELAY.md.
-    public const string DefaultSshTarget = "user@server";
-    public const string DefaultConfigPath = "~/Desktop/BlueIrisOllamaBridge/core/SentinelCore.PushRelay/appsettings.json";
+    // Where the relay runs. All three are settings in the window (remembered in AppState), so
+    // moving the relay to another host is three fields, not a rebuild - see "Moving it to a
+    // proper host later" in docs/PUSH_RELAY.md. There is no default ssh target: it is whatever
+    // user@host reaches your relay box, entered once and then remembered.
+    public const string DefaultSshTarget = "";
+    public const string DefaultConfigPath = "/opt/sentinelcore/core/SentinelCore.PushRelay/appsettings.json";
     public const string DefaultServiceName = "sentinelcore-push-relay";
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(20);
 
@@ -49,7 +50,7 @@ public sealed partial class RelayBlockList
         // Handed to ssh as its own argument, so this is about ssh reading it as an option, not the
         // shell: "-oProxyCommand=..." would run whatever it names on this Mac.
         if (_sshTarget.Length == 0 || _sshTarget.StartsWith('-') || _sshTarget.Any(char.IsWhiteSpace))
-            throw new RelayConnectionException("Enter the relay's server as user@host, for example user@server.");
+            throw new RelayConnectionException("Enter the relay's server as user@host, for example admin@relay-host.");
         if (_configPath.Length == 0)
             throw new RelayConnectionException("Enter the path to the relay's appsettings.json on that server.");
     }

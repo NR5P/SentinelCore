@@ -164,7 +164,7 @@ The service starts after and requires `ollama.service`.
 Permit only the local subnet:
 
 ```bash
-sudo ufw allow from 192.168.50.0/24 to any port 5080 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 5080 proto tcp
 ```
 
 ## Blue Iris action
@@ -248,7 +248,7 @@ Text `/photo` or `/snapshot` to the bot to get a live image pulled straight from
 ```json
 "BlueIris": {
   "Enabled": true,
-  "BaseUrl": "http://192.168.50.7:777",
+  "BaseUrl": "http://192.168.1.40:777",
   "Camera": "gateCamera",
   "Username": "",
   "Password": "",

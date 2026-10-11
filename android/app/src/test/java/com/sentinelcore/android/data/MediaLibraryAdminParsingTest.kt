@@ -53,7 +53,7 @@ class MediaLibraryAdminParsingTest {
                 """
                 { "path": "", "parent": null, "kind": "roots", "videoCount": 0,
                   "folders": [ { "name": "/mnt/movies", "path": "/mnt/movies", "videoCount": 4 } ],
-                  "computers": [ { "id": "c1", "name": "Den PC", "host": "192.168.1.20", "username": "sam",
+                  "computers": [ { "id": "c1", "name": "Den PC", "host": "192.168.1.20", "username": "pat",
                                    "domain": "", "hasPassword": true, "path": "smb://192.168.1.20", "createdAt": "2026-09-26T01:00:00Z" } ] }
                 """.trimIndent(),
             ),
@@ -67,7 +67,7 @@ class MediaLibraryAdminParsingTest {
         val computer = listing.computers.single()
         assertEquals("c1", computer.id)
         assertEquals("Den PC", computer.name)
-        assertEquals("sam", computer.username)
+        assertEquals("pat", computer.username)
         assertTrue(computer.hasPassword)
         assertEquals("smb://192.168.1.20", computer.path)
         assertNull(listing.error)
@@ -163,7 +163,7 @@ class MediaLibraryAdminParsingTest {
         val result = parseMediaNetworkSignIn(
             JSONObject(
                 """
-                { "computer": { "id": "c1", "name": "Den PC", "host": "DESKTOP-PC", "username": "sam", "domain": "",
+                { "computer": { "id": "c1", "name": "Den PC", "host": "DESKTOP-PC", "username": "pat", "domain": "",
                                 "hasPassword": true, "path": "smb://DESKTOP-PC", "createdAt": "…" },
                   "shares": [ { "name": "Movies", "path": "smb://DESKTOP-PC/Movies" } ] }
                 """.trimIndent(),
@@ -197,10 +197,10 @@ class MediaLibraryAdminParsingTest {
 
     @Test
     fun `sign-in and library bodies match the contract`() {
-        val body = MediaNetworkSignInInput(host = "DESKTOP-PC", name = "Den PC", username = "sam", password = "pw").toJson()
+        val body = MediaNetworkSignInInput(host = "DESKTOP-PC", name = "Den PC", username = "pat", password = "pw").toJson()
         assertEquals("DESKTOP-PC", body.getString("host"))
         assertEquals("Den PC", body.getString("name"))
-        assertEquals("sam", body.getString("username"))
+        assertEquals("pat", body.getString("username"))
         assertEquals("pw", body.getString("password"))
         assertEquals("", body.getString("domain"))
 

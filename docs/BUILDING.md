@@ -63,7 +63,7 @@ Homebrew's `node` lives in `/opt/homebrew/bin`, which may not be on a non-login 
 | File | Where it comes from | Needed by |
 | --- | --- | --- |
 | `android/local.properties` | Android Studio writes it (`sdk.dir=…`) | every Android build |
-| `android/app/google-services.json` | Firebase console, project `firebase-project-id` | Android push. Without it the app still builds, but has no push; never ship a release built that way |
+| `android/app/google-services.json` | Firebase console, your Firebase project (`<firebase-project-id>`) | Android push. Without it the app still builds, but has no push; never ship a release built that way |
 | `android/keystore.properties` + the `.jks` it names | you, once (see §6.3) | signed Android release bundles |
 | `core/*/appsettings.json` real values | each server's own config | a running server (the committed copies are defaults) |
 | APNs `.p8`, Firebase service-account JSON | Apple / Google consoles | a server that sends push |

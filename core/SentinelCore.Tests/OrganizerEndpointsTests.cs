@@ -84,12 +84,12 @@ public sealed class OrganizerEndpointsTests : IDisposable
     public async Task LoginOn_EachPersonHasTheirOwnPersonalSpace()
     {
         using var factory = CreateFactory();
-        await CreateAccountsAsync(factory, "nathan", "terry");
+        await CreateAccountsAsync(factory, "morgan", "terry");
         await EnableLoginAsync();
 
-        using var nathan = factory.CreateClient();
-        await SignInAsync(nathan, "nathan");
-        await SyncAsync(nathan, new { cursor = 0, changes = new[] { Change("secret", "note", new() { ["spaceId"] = "personal:nathan", ["title"] = "Mine" }) } });
+        using var morgan = factory.CreateClient();
+        await SignInAsync(morgan, "morgan");
+        await SyncAsync(morgan, new { cursor = 0, changes = new[] { Change("secret", "note", new() { ["spaceId"] = "personal:morgan", ["title"] = "Mine" }) } });
 
         using var terry = factory.CreateClient();
         await SignInAsync(terry, "terry");
@@ -107,7 +107,7 @@ public sealed class OrganizerEndpointsTests : IDisposable
     public async Task Groups_NeedRealAccounts_AndOnlyKnownMembers()
     {
         using var factory = CreateFactory();
-        await CreateAccountsAsync(factory, "nathan", "terry");
+        await CreateAccountsAsync(factory, "morgan", "terry");
 
         using (var loginOff = factory.CreateClient())
         {
@@ -116,18 +116,18 @@ public sealed class OrganizerEndpointsTests : IDisposable
         }
 
         await EnableLoginAsync();
-        using var nathan = factory.CreateClient();
-        await SignInAsync(nathan, "nathan");
+        using var morgan = factory.CreateClient();
+        await SignInAsync(morgan, "morgan");
 
-        using (var unknown = await nathan.PostAsJsonAsync("/api/organizer/spaces", new { name = "Parents", members = new[] { "nobody" } }, Ct))
+        using (var unknown = await morgan.PostAsJsonAsync("/api/organizer/spaces", new { name = "Parents", members = new[] { "nobody" } }, Ct))
             Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
 
-        using var created = await nathan.PostAsJsonAsync("/api/organizer/spaces", new { name = "Parents", members = new[] { "Terry" } }, Ct);
+        using var created = await morgan.PostAsJsonAsync("/api/organizer/spaces", new { name = "Parents", members = new[] { "Terry" } }, Ct);
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
         var group = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);
-        Assert.Equal(["nathan", "terry"], group.GetProperty("members").EnumerateArray().Select(m => m.GetString()));
+        Assert.Equal(["morgan", "terry"], group.GetProperty("members").EnumerateArray().Select(m => m.GetString()));
 
-        var people = await nathan.GetFromJsonAsync<JsonElement>("/api/organizer/people", Ct);
+        var people = await morgan.GetFromJsonAsync<JsonElement>("/api/organizer/people", Ct);
         Assert.Equal(2, people.GetProperty("people").GetArrayLength());
     }
 
@@ -154,20 +154,20 @@ public sealed class OrganizerEndpointsTests : IDisposable
     public async Task Attachments_AreOnlyReadableThroughAnItemYouCanSee_AndMissingOnesAreListed()
     {
         using var factory = CreateFactory();
-        await CreateAccountsAsync(factory, "nathan", "terry");
+        await CreateAccountsAsync(factory, "morgan", "terry");
         await EnableLoginAsync();
-        using var nathan = factory.CreateClient();
-        await SignInAsync(nathan, "nathan");
+        using var morgan = factory.CreateClient();
+        await SignInAsync(morgan, "morgan");
 
         var bytes = "a picture, honestly"u8.ToArray();
         var hash = Convert.ToHexStringLower(SHA256.HashData(bytes));
 
-        var reply = await SyncAsync(nathan, new
+        var reply = await SyncAsync(morgan, new
         {
             cursor = 0,
             changes = new[]
             {
-                Change("n", "note", new() { ["spaceId"] = "personal:nathan", ["title"] = "With photo" }),
+                Change("n", "note", new() { ["spaceId"] = "personal:morgan", ["title"] = "With photo" }),
                 Change("a", "attachment", new() { ["parentId"] = "n", ["hash"] = hash, ["name"] = "photo.txt", ["contentType"] = "text/plain" }),
             },
         });
@@ -176,13 +176,13 @@ public sealed class OrganizerEndpointsTests : IDisposable
         // Item arrived first (an offline phone), bytes not yet - the server asks for them.
         Assert.Equal([hash], reply.GetProperty("missingBlobs").EnumerateArray().Select(h => h.GetString()));
 
-        using (var wrong = await nathan.PutAsync($"/api/organizer/blobs/{hash}", new ByteArrayContent("something else"u8.ToArray()), Ct))
+        using (var wrong = await morgan.PutAsync($"/api/organizer/blobs/{hash}", new ByteArrayContent("something else"u8.ToArray()), Ct))
             Assert.Equal(HttpStatusCode.BadRequest, wrong.StatusCode);
-        using (var upload = await nathan.PutAsync($"/api/organizer/blobs/{hash}", new ByteArrayContent(bytes), Ct))
+        using (var upload = await morgan.PutAsync($"/api/organizer/blobs/{hash}", new ByteArrayContent(bytes), Ct))
             Assert.Equal(HttpStatusCode.OK, upload.StatusCode);
 
-        Assert.Empty((await SyncAsync(nathan, new { cursor = 0 })).GetProperty("missingBlobs").EnumerateArray());
-        Assert.Equal(bytes, await nathan.GetByteArrayAsync($"/api/organizer/blobs/{hash}", Ct));
+        Assert.Empty((await SyncAsync(morgan, new { cursor = 0 })).GetProperty("missingBlobs").EnumerateArray());
+        Assert.Equal(bytes, await morgan.GetByteArrayAsync($"/api/organizer/blobs/{hash}", Ct));
 
         using var terry = factory.CreateClient();
         await SignInAsync(terry, "terry");
@@ -194,18 +194,18 @@ public sealed class OrganizerEndpointsTests : IDisposable
     public async Task CalendarFeed_WorksWithoutASession_OnlyWithTheRightToken()
     {
         using var factory = CreateFactory();
-        await CreateAccountsAsync(factory, "nathan");
+        await CreateAccountsAsync(factory, "morgan");
         await EnableLoginAsync();
-        using var nathan = factory.CreateClient();
-        await SignInAsync(nathan, "nathan");
+        using var morgan = factory.CreateClient();
+        await SignInAsync(morgan, "morgan");
 
-        await SyncAsync(nathan, new
+        await SyncAsync(morgan, new
         {
             cursor = 0,
-            changes = new[] { Change("e", "event", new() { ["spaceId"] = "personal:nathan", ["title"] = "Dentist", ["start"] = "2026-10-01T09:00:00Z" }) },
+            changes = new[] { Change("e", "event", new() { ["spaceId"] = "personal:morgan", ["title"] = "Dentist", ["start"] = "2026-10-01T09:00:00Z" }) },
         });
 
-        var feed = await nathan.GetFromJsonAsync<JsonElement>("/api/organizer/calendar-feed", Ct);
+        var feed = await morgan.GetFromJsonAsync<JsonElement>("/api/organizer/calendar-feed", Ct);
         var path = feed.GetProperty("path").GetString()!;
 
         // A calendar app has no cookie.
@@ -213,7 +213,7 @@ public sealed class OrganizerEndpointsTests : IDisposable
         var ics = await calendarApp.GetStringAsync(path, Ct);
         Assert.Contains("SUMMARY:Dentist", ics);
 
-        using var reset = await nathan.PostAsync("/api/organizer/calendar-feed/reset", null, Ct);
+        using var reset = await morgan.PostAsync("/api/organizer/calendar-feed/reset", null, Ct);
         using var stale = await calendarApp.GetAsync(path, Ct);
         Assert.Equal(HttpStatusCode.NotFound, stale.StatusCode);
     }
@@ -390,23 +390,23 @@ public sealed class OrganizerEndpointsTests : IDisposable
     public async Task People_SaysWhoCanBeEmailed_WithoutGivingOutTheAddress()
     {
         using var factory = CreateFactory();
-        await CreateAccountsAsync(factory, "nathan", "terry");
+        await CreateAccountsAsync(factory, "morgan", "terry");
         using (var scope = factory.Services.CreateScope())
         {
             var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
             await accounts.UpdateEmailAsync((await accounts.GetByUsernameAsync("terry", Ct))!.Id, "terry@example.com", Ct);
         }
         await EnableLoginAsync();
-        using var nathan = factory.CreateClient();
-        await SignInAsync(nathan, "nathan");
+        using var morgan = factory.CreateClient();
+        await SignInAsync(morgan, "morgan");
 
-        using var response = await nathan.GetAsync("/api/organizer/people", Ct);
+        using var response = await morgan.GetAsync("/api/organizer/people", Ct);
         var text = await response.Content.ReadAsStringAsync(Ct);
         Assert.DoesNotContain("terry@example.com", text);
         var people = JsonDocument.Parse(text).RootElement.GetProperty("people").EnumerateArray().ToDictionary(
             p => p.GetProperty("username").GetString()!, p => p.GetProperty("hasEmail").GetBoolean());
         Assert.True(people["terry"]);
-        Assert.False(people["nathan"]);
+        Assert.False(people["morgan"]);
     }
 
     [Fact]
@@ -414,12 +414,12 @@ public sealed class OrganizerEndpointsTests : IDisposable
     {
         using var factory = CreateFactory();
         await CreateAccountsAsync(factory, "terry");
-        Guid sarahId;
+        Guid terryId;
         using (var scope = factory.Services.CreateScope())
         {
             var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
             await accounts.CreateAsync("boss", PasswordHasher.Hash("correct horse battery"), AccountRole.Admin, null, Ct);
-            sarahId = (await accounts.GetByUsernameAsync("terry", Ct))!.Id;
+            terryId = (await accounts.GetByUsernameAsync("terry", Ct))!.Id;
         }
         await EnableLoginAsync();
 
@@ -430,12 +430,12 @@ public sealed class OrganizerEndpointsTests : IDisposable
         Assert.Equal("terry@example.com", (await terry.GetFromJsonAsync<JsonElement>("/api/accounts/me", Ct)).GetProperty("email").GetString());
         using (var bad = await terry.PutAsJsonAsync("/api/accounts/me/email", new { email = "not an address" }, Ct))
             Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-        using (var others = await terry.PutAsJsonAsync($"/api/accounts/{sarahId}/email", new { email = "x@example.com" }, Ct))
+        using (var others = await terry.PutAsJsonAsync($"/api/accounts/{terryId}/email", new { email = "x@example.com" }, Ct))
             Assert.Equal(HttpStatusCode.Forbidden, others.StatusCode);
 
         using var boss = factory.CreateClient();
         await SignInAsync(boss, "boss");
-        using (var set = await boss.PutAsJsonAsync($"/api/accounts/{sarahId}/email", new { email = "new@example.com" }, Ct))
+        using (var set = await boss.PutAsJsonAsync($"/api/accounts/{terryId}/email", new { email = "new@example.com" }, Ct))
             Assert.Equal(HttpStatusCode.OK, set.StatusCode);
         var listed = await boss.GetFromJsonAsync<JsonElement>("/api/accounts", Ct);
         Assert.Contains(listed.EnumerateArray(), a => a.GetProperty("username").GetString() == "terry" && a.GetProperty("email").GetString() == "new@example.com");
@@ -445,15 +445,15 @@ public sealed class OrganizerEndpointsTests : IDisposable
     public async Task Automation_SendSteps_AreCheckedInPlainWords()
     {
         using var factory = CreateFactory();
-        await CreateAccountsAsync(factory, "nathan", "terry");
+        await CreateAccountsAsync(factory, "morgan", "terry");
         await EnableLoginAsync();
-        using var nathan = factory.CreateClient();
-        await SignInAsync(nathan, "nathan");
-        await MakeBoardAsync(nathan);
+        using var morgan = factory.CreateClient();
+        await SignInAsync(morgan, "morgan");
+        await MakeBoardAsync(morgan);
 
         async Task<List<string>> ErrorsFor(object action, object? trigger = null)
         {
-            using var response = await nathan.PostAsJsonAsync("/api/organizer/automations", new
+            using var response = await morgan.PostAsJsonAsync("/api/organizer/automations", new
             {
                 name = "x",
                 boardId = "b1",

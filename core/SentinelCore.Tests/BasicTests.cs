@@ -259,19 +259,19 @@ public sealed class BasicTests
     {
         var known = new List<KnownVehicle>
         {
-            new() { Plate = "ABC-1234", Label = "Nathan's Truck" },
+            new() { Plate = "ABC-1234", Label = "Morgan's Truck" },
             new() { Plate = "XYZ 9999", Label = "Delivery Van" }
         };
 
-        Assert.Equal("Nathan's Truck", KnownVehicleMatcher.Match(known, "abc1234"));
-        Assert.Equal("Nathan's Truck", KnownVehicleMatcher.Match(known, "ABC 1234"));
+        Assert.Equal("Morgan's Truck", KnownVehicleMatcher.Match(known, "abc1234"));
+        Assert.Equal("Morgan's Truck", KnownVehicleMatcher.Match(known, "ABC 1234"));
         Assert.Equal("Delivery Van", KnownVehicleMatcher.Match(known, "xyz-9999"));
     }
 
     [Fact]
     public void KnownVehicleMatcher_Match_ReturnsNullForUnknownOrEmptyPlate()
     {
-        var known = new List<KnownVehicle> { new() { Plate = "ABC1234", Label = "Nathan's Truck" } };
+        var known = new List<KnownVehicle> { new() { Plate = "ABC1234", Label = "Morgan's Truck" } };
 
         Assert.Null(KnownVehicleMatcher.Match(known, "ZZZ9999"));
         Assert.Null(KnownVehicleMatcher.Match(known, ""));
@@ -288,8 +288,8 @@ public sealed class BasicTests
         Assert.Equal("Plate: ZZZ9999 (unrecognized)", unknown);
 
         var known = AlertCategorizer.DescribeVehiclePlate(
-            new VehicleAnalysis { LicensePlateText = "ABC1234", KnownVehicleLabel = "Nathan's Truck" });
-        Assert.Equal("Plate: ABC1234 (known: Nathan's Truck)", known);
+            new VehicleAnalysis { LicensePlateText = "ABC1234", KnownVehicleLabel = "Morgan's Truck" });
+        Assert.Equal("Plate: ABC1234 (known: Morgan's Truck)", known);
     }
 
     [Fact]
@@ -889,7 +889,7 @@ public sealed class BasicTests
             {
                 Summary = "A car pulled into the driveway.",
                 Confidence = 0.8,
-                Vehicle = new VehicleAnalysis { Visible = true, LicensePlateText = "ABC1234", KnownVehicleLabel = "Nathan's Truck" }
+                Vehicle = new VehicleAnalysis { Visible = true, LicensePlateText = "ABC1234", KnownVehicleLabel = "Morgan's Truck" }
             }
         };
 
@@ -899,7 +899,7 @@ public sealed class BasicTests
 
         Assert.Equal("gateCamera", root.GetProperty("camera").GetString());
         Assert.Equal("ABC1234", root.GetProperty("vehicle_license_plate").GetString());
-        Assert.Equal("Nathan's Truck", root.GetProperty("vehicle_known_label").GetString());
+        Assert.Equal("Morgan's Truck", root.GetProperty("vehicle_known_label").GetString());
         Assert.False(root.TryGetProperty("nonexistent_field", out _));
     }
 

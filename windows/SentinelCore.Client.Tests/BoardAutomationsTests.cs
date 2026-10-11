@@ -20,7 +20,7 @@ public sealed class BoardAutomationsTests
         ColumnTitles = new Dictionary<string, string> { ["todo"] = "To do", ["doing"] = "Doing", ["done"] = "Done", ["blank"] = "" },
         BoardColumnIds = new[] { "todo", "doing", "done" },
         People = people
-            ? new[] { new OrganizerPerson("nathan", "Nathan"), new OrganizerPerson("sam", null), new OrganizerPerson("dylan", "Dylan", HasEmail: false) }
+            ? new[] { new OrganizerPerson("morgan", "Morgan"), new OrganizerPerson("pat", null), new OrganizerPerson("dylan", "Dylan", HasEmail: false) }
             : Array.Empty<OrganizerPerson>(),
         Culture = Us,
         TimeZone = "America/Chicago",
@@ -102,13 +102,13 @@ public sealed class BoardAutomationsTests
         Assert.Equal("add 3 checklist items", Words(new AutomationAction { Type = "addChecklist", Items = new() { "a", "b", "c" } }));
         Assert.Equal("untick its checklist", Words(new AutomationAction { Type = "resetChecklist" }));
         Assert.Equal("comment “finished on {date}”", Words(new AutomationAction { Type = "addComment", Text = "finished on {date}" }));
-        Assert.Equal("assign it to sam", Words(new AutomationAction { Type = "assign", Username = "sam" }));
+        Assert.Equal("assign it to pat", Words(new AutomationAction { Type = "assign", Username = "pat" }));
         Assert.Equal("assign it to …", Words(new AutomationAction { Type = "assign", Username = "" }));
         Assert.Equal("delete it", Words(new AutomationAction { Type = "deleteCard" }));
         Assert.Equal("notify everyone “bins”", Words(new AutomationAction { Type = "notify", Everyone = true, Text = "bins" }));
-        Assert.Equal("notify Nathan, sam and Dylan “…”", Words(new AutomationAction { Type = "notify", People = new() { "nathan", "sam", "dylan" } }));
+        Assert.Equal("notify Morgan, pat and Dylan “…”", Words(new AutomationAction { Type = "notify", People = new() { "morgan", "pat", "dylan" } }));
         Assert.Equal("notify … “hi”", Words(new AutomationAction { Type = "notify", People = new(), Text = "hi" }));
-        Assert.Equal("email Nathan, a@b.com “hi”", Words(new AutomationAction { Type = "email", People = new() { "nathan" }, Addresses = new() { "a@b.com" }, Text = "hi" }));
+        Assert.Equal("email Morgan, a@b.com “hi”", Words(new AutomationAction { Type = "email", People = new() { "morgan" }, Addresses = new() { "a@b.com" }, Text = "hi" }));
         Assert.Equal("email … “…”", Words(new AutomationAction { Type = "email", People = new(), Addresses = new() }));
         Assert.Equal("move every card from Done to To do", Words(new AutomationAction { Type = "moveAllCards", ColumnId = "done", ToColumnId = "todo" }));
         Assert.Equal("move every finished card from Done to (pick a list)", Words(new AutomationAction { Type = "moveAllCards", ColumnId = "done", OnlyCompleted = true }));
@@ -242,7 +242,7 @@ public sealed class BoardAutomationsTests
         var context = Context(people: false);
         Assert.True(BoardAutomationRules.MakeAction("notify", context).Everyone);
         Assert.False(BoardAutomationRules.MakeAction("notify", Context()).Everyone);
-        Assert.Equal("nathan", BoardAutomationRules.MakeAction("assign", Context()).Username);
+        Assert.Equal("morgan", BoardAutomationRules.MakeAction("assign", Context()).Username);
         Assert.Equal(("todo", "done"), (BoardAutomationRules.MakeAction("moveAllCards", context).ToColumnId, BoardAutomationRules.MakeAction("moveAllCards", context).ColumnId));
         Assert.Equal("America/Chicago", BoardAutomationRules.MakeTrigger("schedule", context).Schedule!.TimeZone);
         Assert.Equal("done", BoardAutomationRules.MakeTrigger("cardMoved", context).ColumnId);
@@ -262,7 +262,7 @@ public sealed class BoardAutomationsTests
     public void Json_round_trips_including_nulls_and_fields_it_does_not_know()
     {
         const string json = """
-            {"id":"r1","name":"Eggs","enabled":false,"boardId":"b1","timeZone":"America/Chicago","runAs":"nathan",
+            {"id":"r1","name":"Eggs","enabled":false,"boardId":"b1","timeZone":"America/Chicago","runAs":"morgan",
              "createdAt":"2026-09-24T12:00:00+00:00","nextRunAt":null,"lastOk":true,"runCount":4,"futureThing":{"x":1},
              "trigger":{"type":"schedule","columnId":null,"schedule":{"repeat":"daily","time":"07:00","days":[1,2],"timeZone":"America/Chicago","jitter":5}},
              "conditions":[{"type":"onDays","days":[1],"note":"kept"}],

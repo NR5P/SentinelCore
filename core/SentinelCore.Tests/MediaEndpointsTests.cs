@@ -288,13 +288,13 @@ public sealed class MediaEndpointsTests : IDisposable
         using var store = new SqliteMediaStore(_dataDirectory);
         await store.SaveLibraryAsync(library, Ct);
         await store.UpsertItemsAsync(MediaScanner.WalkMovies(library), Ct);
-        await store.SetProgressAsync(new MediaProgress("sam", first, 600, 6000, false, DateTimeOffset.UtcNow), Ct);
+        await store.SetProgressAsync(new MediaProgress("pat", first, 600, 6000, false, DateTimeOffset.UtcNow), Ct);
         await store.UpsertItemsAsync(MediaScanner.WalkMovies(library), Ct);
-        Assert.Equal(600, Assert.Single(await store.GetProgressAsync("sam", Ct)).PositionSeconds);
+        Assert.Equal(600, Assert.Single(await store.GetProgressAsync("pat", Ct)).PositionSeconds);
 
         // Newest edit wins on restore: an older backup row does not roll anyone back.
-        await store.RestoreProgressAsync([new MediaProgress("sam", first, 10, 6000, false, DateTimeOffset.UtcNow.AddDays(-1))], Ct);
-        Assert.Equal(600, Assert.Single(await store.GetProgressAsync("sam", Ct)).PositionSeconds);
+        await store.RestoreProgressAsync([new MediaProgress("pat", first, 10, 6000, false, DateTimeOffset.UtcNow.AddDays(-1))], Ct);
+        Assert.Equal(600, Assert.Single(await store.GetProgressAsync("pat", Ct)).PositionSeconds);
 
         // A library whose share went away keeps its catalog rather than emptying the shelf.
         Assert.Equal(0, await store.ReconcileMissingAsync(library.Id, new HashSet<Guid> { first }, Ct));

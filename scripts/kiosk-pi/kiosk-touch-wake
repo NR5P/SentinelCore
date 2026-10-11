@@ -18,7 +18,8 @@ import glob, json, os, select, signal, ssl, subprocess, time, urllib.request
 
 SCREEN = os.path.expanduser("~/.local/bin/kiosk-screen")
 STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "kiosk-screen.state")
-DASHBOARD = os.environ.get("KIOSK_DASHBOARD", "https://192.168.50.8:3443")
+# Exported by autostart; the fallback is a placeholder that will not answer.
+DASHBOARD = os.environ.get("KIOSK_DASHBOARD", "https://YOUR-SERVER-IP:3443")
 CA_FILE = os.path.expanduser("~/.config/sentinelcore/ca.crt")
 SETTINGS_EVERY = 60
 RESTART_EVERY = 10

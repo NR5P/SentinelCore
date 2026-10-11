@@ -18,7 +18,7 @@
     { "say": "take a note: plumber says the water heater needs a new anode rod and the pressure valve checked next spring", "kind": "note", "named": true, "title": "Plumber says the water heater needs a new anode…", "body": "Plumber says the water heater needs a new anode rod and the pressure valve checked next spring" },
     { "say": "add an event dentist friday at 3", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T15:00:00-05:00", "end": "2026-09-25T16:00:00-05:00" },
     { "say": "add dentist Friday from 2 to 3pm to my calendar", "kind": "event", "named": true, "title": "Dentist", "start": "2026-09-25T14:00:00-05:00", "end": "2026-09-25T15:00:00-05:00" },
-    { "say": "schedule lunch with Sam tomorrow at noon for 90 minutes", "kind": "event", "named": true, "title": "Lunch with Sam", "start": "2026-09-24T12:00:00-05:00", "end": "2026-09-24T13:30:00-05:00" },
+    { "say": "schedule lunch with Pat tomorrow at noon for 90 minutes", "kind": "event", "named": true, "title": "Lunch with Pat", "start": "2026-09-24T12:00:00-05:00", "end": "2026-09-24T13:30:00-05:00" },
     { "say": "add a meeting with Bob next Tuesday 11 to 1pm", "kind": "event", "named": true, "title": "Meeting with Bob", "start": "2026-09-29T11:00:00-05:00", "end": "2026-09-29T13:00:00-05:00" },
     { "say": "new event family reunion october 10", "kind": "event", "named": true, "title": "Family reunion", "start": "2026-10-10", "end": "2026-10-11" },
     { "say": "put soccer game saturday at 9am for 2 hours on the calendar", "kind": "event", "named": true, "title": "Soccer game", "start": "2026-09-26T09:00:00-05:00", "end": "2026-09-26T11:00:00-05:00" },

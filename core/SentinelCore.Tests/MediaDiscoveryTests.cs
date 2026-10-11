@@ -75,7 +75,7 @@ public sealed class MediaDiscoveryTests : IDisposable
         var item = Guid.NewGuid();
         var other = Guid.NewGuid();
         using (var before = new SqliteMediaStore(_dataDirectory))
-            await before.SetProgressAsync(new MediaProgress("sam", item, 600, 6000, false, DateTimeOffset.UtcNow.AddDays(-3)), Ct);
+            await before.SetProgressAsync(new MediaProgress("pat", item, 600, 6000, false, DateTimeOffset.UtcNow.AddDays(-3)), Ct);
         // A media.db from before play history existed.
         using (var connection = new SqliteConnection($"Data Source={Path.Combine(_dataDirectory, "media.db")};Pooling=False"))
         {
@@ -90,13 +90,13 @@ public sealed class MediaDiscoveryTests : IDisposable
         Assert.Equal(1, (await store.PlayStatsAsync(Ct))[item].Count);
 
         var now = DateTimeOffset.UtcNow;
-        Assert.True(await store.RecordPlayAsync(new MediaPlay("sam", item, now), MediaPlay.SameSitting, Ct));
+        Assert.True(await store.RecordPlayAsync(new MediaPlay("pat", item, now), MediaPlay.SameSitting, Ct));
         // A seek or an audio-track change an hour later is the same sitting...
-        Assert.False(await store.RecordPlayAsync(new MediaPlay("sam", item, now.AddHours(1)), MediaPlay.SameSitting, Ct));
+        Assert.False(await store.RecordPlayAsync(new MediaPlay("pat", item, now.AddHours(1)), MediaPlay.SameSitting, Ct));
         // ...but someone else pressing play is another play, and so is tomorrow.
         Assert.True(await store.RecordPlayAsync(new MediaPlay("alex", item, now.AddHours(1)), MediaPlay.SameSitting, Ct));
-        Assert.True(await store.RecordPlayAsync(new MediaPlay("sam", item, now.AddDays(1)), MediaPlay.SameSitting, Ct));
-        Assert.True(await store.RecordPlayAsync(new MediaPlay("sam", other, now), MediaPlay.SameSitting, Ct));
+        Assert.True(await store.RecordPlayAsync(new MediaPlay("pat", item, now.AddDays(1)), MediaPlay.SameSitting, Ct));
+        Assert.True(await store.RecordPlayAsync(new MediaPlay("pat", other, now), MediaPlay.SameSitting, Ct));
 
         var stats = await store.PlayStatsAsync(Ct);
         Assert.Equal(4, stats[item].Count);
@@ -110,13 +110,13 @@ public sealed class MediaDiscoveryTests : IDisposable
         Assert.Equal(4, (await fresh.PlayStatsAsync(Ct))[item].Count);
 
         // My List is per person and adding twice keeps the first date.
-        await store.SetInWatchlistAsync("sam", item, true, Ct);
-        var added = Assert.Single(await store.GetWatchlistAsync("sam", Ct)).AddedAt;
-        await store.SetInWatchlistAsync("sam", item, true, Ct);
-        Assert.Equal(added, Assert.Single(await store.GetWatchlistAsync("sam", Ct)).AddedAt);
+        await store.SetInWatchlistAsync("pat", item, true, Ct);
+        var added = Assert.Single(await store.GetWatchlistAsync("pat", Ct)).AddedAt;
+        await store.SetInWatchlistAsync("pat", item, true, Ct);
+        Assert.Equal(added, Assert.Single(await store.GetWatchlistAsync("pat", Ct)).AddedAt);
         Assert.Empty(await store.GetWatchlistAsync("alex", Ct));
-        await store.SetInWatchlistAsync("sam", item, false, Ct);
-        Assert.Empty(await store.GetWatchlistAsync("sam", Ct));
+        await store.SetInWatchlistAsync("pat", item, false, Ct);
+        Assert.Empty(await store.GetWatchlistAsync("pat", Ct));
     }
 
     [Fact]

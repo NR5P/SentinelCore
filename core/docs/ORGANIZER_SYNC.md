@@ -24,7 +24,7 @@ Everything is an **item**:
 | `personal:<username>` | That one account. It is created automatically. |
 | `group:<hex>` | The accounts listed in `members` (lower-case usernames). |
 
-Spaces are keyed by **username**, not account id. When a server is rebuilt, accounts are recreated with new ids but the same names. A device re-uploading `personal:nathan` then lands in the right place.
+Spaces are keyed by **username**, not account id. When a server is rebuilt, accounts are recreated with new ids but the same names. A device re-uploading `personal:morgan` then lands in the right place.
 
 A client purges every local item whose `spaceId` is not in the latest `spaces` list from a sync. That is how removal from a group, or a deleted group, reaches a device.
 
@@ -77,7 +77,7 @@ Request:
 {
   "serverId": "…or null on the very first sync",
   "cursor": 1234,
-  "knownSpaces": ["personal:nathan", "family"],
+  "knownSpaces": ["personal:morgan", "family"],
   "changes": [
     {
       "id": "…", "kind": "card",

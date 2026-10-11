@@ -424,7 +424,7 @@ public sealed class WebAuthorizationTests : IDisposable
         using (var scope = factory.Services.CreateScope())
         {
             var accounts = scope.ServiceProvider.GetRequiredService<IAccountStore>();
-            await accounts.CreateAsync("nathan", SentinelCore.Web.PasswordHasher.Hash("original-password"), AccountRole.Admin, null, ct);
+            await accounts.CreateAsync("morgan", SentinelCore.Web.PasswordHasher.Hash("original-password"), AccountRole.Admin, null, ct);
         }
         await EnableLoginAsync(ct);
 
@@ -434,7 +434,7 @@ public sealed class WebAuthorizationTests : IDisposable
         foreach (var client in new[] { owner, stolen })
         {
             using var login = await client.PostAsJsonAsync("/api/auth/login",
-                new { Username = "nathan", Password = "original-password" }, ct);
+                new { Username = "morgan", Password = "original-password" }, ct);
             login.EnsureSuccessStatusCode();
         }
 
@@ -462,11 +462,11 @@ public sealed class WebAuthorizationTests : IDisposable
         // And the new password is the one that works now.
         using var fresh = factory.CreateClient();
         using (var stale = await fresh.PostAsJsonAsync("/api/auth/login",
-            new { Username = "nathan", Password = "original-password" }, ct))
+            new { Username = "morgan", Password = "original-password" }, ct))
             Assert.Equal(HttpStatusCode.Unauthorized, stale.StatusCode);
 
         using var relogin = await fresh.PostAsJsonAsync("/api/auth/login",
-            new { Username = "nathan", Password = "a-brand-new-password" }, ct);
+            new { Username = "morgan", Password = "a-brand-new-password" }, ct);
         Assert.Equal(HttpStatusCode.OK, relogin.StatusCode);
     }
 

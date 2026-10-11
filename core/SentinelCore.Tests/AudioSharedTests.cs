@@ -101,7 +101,7 @@ public sealed class AudioSharedTests : IDisposable
         var tracks = Enumerable.Range(0, 800).Select(_ => Guid.NewGuid()).ToList();
         await JsonAsync(await client.PutAsJsonAsync("/api/audio/now-playing", new
         {
-            deviceId = "phone", deviceName = "Nathan's iPhone", kind = "music",
+            deviceId = "phone", deviceName = "Morgan's iPhone", kind = "music",
             queue = tracks.Select(id => new { type = "track", id }), index = 700, positionSeconds = 61.5, playing = true,
             repeat = "all", speed = 1, context = new { type = "playlist", id = "p1", name = "Road Trip" }
         }, Ct), HttpStatusCode.NoContent);
@@ -426,7 +426,7 @@ public sealed class AudioSharedTests : IDisposable
         var bad = await JsonAsync(await client.PutAsJsonAsync("/api/audio/me/listenbrainz", new { token = "nope" }, Ct), HttpStatusCode.BadRequest);
         Assert.Contains("didn't accept", bad.GetProperty("error").GetString());
         var ok = await JsonAsync(await client.PutAsJsonAsync("/api/audio/me/listenbrainz", new { token = FakeListenBrainz.Token }, Ct), HttpStatusCode.OK);
-        Assert.Equal("nathan", ok.GetProperty("username").GetString());
+        Assert.Equal("morgan", ok.GetProperty("username").GetString());
         Assert.True((await JsonAsync(await client.GetAsync("/api/audio/me/listenbrainz", Ct), HttpStatusCode.OK)).GetProperty("connected").GetBoolean());
 
         var store = factory.Services.GetRequiredService<SqliteAudioStore>();
@@ -469,8 +469,8 @@ public sealed class AudioSharedTests : IDisposable
         using (var factory = CreateFactory())
         {
             var store = factory.Services.GetRequiredService<SqliteAudioStore>();
-            await store.SaveAlarmAsync(new AudioWakeAlarm { Id = alarmId, UserKey = "sam", Name = "School days", Time = "06:30", Days = ["mon"], SpeakerId = "kiosk" }, Ct);
-            await store.SetListenBrainzAsync("sam", new AudioListenBrainzAccount("sam", "tok", "sam_lb"), Ct);
+            await store.SaveAlarmAsync(new AudioWakeAlarm { Id = alarmId, UserKey = "pat", Name = "School days", Time = "06:30", Days = ["mon"], SpeakerId = "kiosk" }, Ct);
+            await store.SetListenBrainzAsync("pat", new AudioListenBrainzAccount("pat", "tok", "sam_lb"), Ct);
             document = await factory.Services.GetRequiredService<BackupService>().BuildDocumentAsync(Ct);
         }
         Assert.Equal("School days", Assert.Single(document.Audio!.Alarms!).Name);
@@ -480,13 +480,13 @@ public sealed class AudioSharedTests : IDisposable
         Directory.CreateDirectory(otherData);
         using var restored = new WebApplicationFactory<WebProgram>().WithWebHostBuilder(builder => builder.UseTestSettings(_settingsPath, otherData));
         var target = restored.Services.GetRequiredService<SqliteAudioStore>();
-        await target.SaveAlarmAsync(new AudioWakeAlarm { Id = alarmId, UserKey = "sam", Name = "Renamed", Time = "07:00", SpeakerId = "kiosk" }, Ct);
+        await target.SaveAlarmAsync(new AudioWakeAlarm { Id = alarmId, UserKey = "pat", Name = "Renamed", Time = "07:00", SpeakerId = "kiosk" }, Ct);
         var admin = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
             [new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, "Admin")], "test"));
         var result = await restored.Services.GetRequiredService<BackupService>().RestoreAsync(document, null, false, admin, Ct);
         Assert.True(result.Errors is null or { Count: 0 }, string.Join("; ", result.Errors ?? []));
         Assert.Equal("Renamed", Assert.Single(await target.GetAlarmsAsync(null, Ct)).Name);
-        Assert.Equal("sam_lb", (await target.GetListenBrainzAsync("sam", Ct))!.Username);
+        Assert.Equal("sam_lb", (await target.GetListenBrainzAsync("pat", Ct))!.Username);
     }
 
     // MARK: - The announcer
@@ -644,7 +644,7 @@ public sealed class AudioSharedTests : IDisposable
         {
             var token = request.Headers.Authorization?.Parameter;
             if (request.RequestUri!.AbsolutePath == "/1/validate-token")
-                return Json(token == Token ? """{ "valid": true, "user_name": "nathan" }""" : """{ "valid": false, "message": "Invalid token" }""");
+                return Json(token == Token ? """{ "valid": true, "user_name": "morgan" }""" : """{ "valid": false, "message": "Invalid token" }""");
             if (request.RequestUri.AbsolutePath == "/1/submit-listens")
             {
                 Submitted.Add(await request.Content!.ReadAsStringAsync(cancellationToken));

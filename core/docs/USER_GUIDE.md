@@ -194,7 +194,7 @@ go: **Say it** with the microphone, or **Type it…**. The medium size has **Rem
 rules on the device, not an AI:
 
 - *Note* — "note to self the wifi password is on the router", "jot down …", "note: …".
-- *Event* — "put dentist on my calendar Friday from 2 to 3pm", "schedule lunch with Sam tomorrow at
+- *Event* — "put dentist on my calendar Friday from 2 to 3pm", "schedule lunch with Pat tomorrow at
   noon for 90 minutes", "add a meeting with Bob next Tuesday 11 to 1pm", "new event family reunion
   October 10".
 - *Reminder* — "remind me tomorrow at 5 to call mom", "todo: renew passport friday", "add pay the
@@ -2241,7 +2241,7 @@ Each profile has:
 | License plate recognition | Off by default. See [section 10](#10-license-plate-recognition--known-vehicles). |
 
 Your original gate prompt is untouched and still keyed as `gate` — it's just labeled
-**"Nathan's Default Gate Prompt"** in the list now so it's easy to tell apart from the generic
+**"Default Gate Prompt"** in the list now so it's easy to tell apart from the generic
 starter profiles. That `gate` name specifically also gets one extra behavior: when the AI
 reports the gate as closed, a person or vehicle that's clearly still on the inside/camera side
 won't trigger a notification just for being there — but someone on the outside/road side, an
@@ -2269,11 +2269,11 @@ resolve a plate. Turning it on for one profile has no effect on any other.
 **What happens when it's on:** the AI is additionally asked to transcribe a vehicle's plate
 if — and only if — it's clearly legible in that frame; it's told explicitly not to guess. That
 reading is then checked against the **Known Vehicles** list in Settings: a shared, global list
-of plate/label pairs (e.g. `ABC1234` → "Nathan's Truck") that every plate-recognition-enabled
+of plate/label pairs (e.g. `ABC1234` → "Morgan's Truck") that every plate-recognition-enabled
 profile checks against. Add, edit, or remove entries there like any other settings list.
 
 **Where you'll see it:** when a plate was read, it's appended to the Email and Telegram
-notification for that event — `Plate: ABC1234 (known: Nathan's Truck)` if it matched
+notification for that event — `Plate: ABC1234 (known: Morgan's Truck)` if it matched
 something in your list, or `Plate: XYZ9999 (unrecognized)` if it didn't. Nothing is shown when
 recognition is off for that profile or no plate was legible in the frame, which is most events.
 

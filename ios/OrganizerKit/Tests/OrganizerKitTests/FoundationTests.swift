@@ -47,8 +47,8 @@ final class HybridClockTests: XCTestCase {
     }
 
     func testDeviceIdsAreCleanedToWhatTheServerAccepts() {
-        let clock = HybridClock(deviceId: "Nathan’s iPhone (2)")
-        XCTAssertEqual(clock.deviceId, "NathansiPhone2")
+        let clock = HybridClock(deviceId: "Morgan’s iPhone (2)")
+        XCTAssertEqual(clock.deviceId, "MorgansiPhone2")
         XCTAssertEqual(HybridClock(deviceId: "   ").deviceId, "apple")
     }
 }
