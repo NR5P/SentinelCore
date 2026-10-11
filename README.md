@@ -352,3 +352,14 @@ dotnet build windows/SentinelCore.Windows.sln -p:EnableWindowsTargeting=true   #
 
 Details, prerequisites and the files that aren't in git are in
 [docs/BUILDING.md](docs/BUILDING.md).
+
+## License
+
+Sentinel Core is **source-available**, not open source. The code is licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE.md): you may read it, run it for yourself and your
+household, modify it and share those changes, for any noncommercial purpose. Selling it, offering
+it as a service, or using it in a business needs a commercial license; see
+[core/EULA.md](core/EULA.md) or contact support@nr5p.com.
+
+Third-party components keep their own licenses; see
+[core/THIRD-PARTY-NOTICES.txt](core/THIRD-PARTY-NOTICES.txt).
