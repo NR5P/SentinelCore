@@ -15,7 +15,8 @@ wall-mounted kiosk mode, all talk to the same server.
 ![Sentinel Core on the web dashboard and the iPhone app](docs/screenshots/hero.jpg)
 
 <sub>Every screenshot in this README was taken from a real running server and the real apps,
-filled with demo data: invented cameras, events, family, titles and artists.</sub>
+filled with demo data: invented cameras, events, family, titles and artists. The camera footage
+is free stock video ([credits](docs/screenshots/CREDITS.md)).</sub>
 
 ---
 
