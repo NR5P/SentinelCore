@@ -478,7 +478,8 @@ to HLS only if it fails.
 Which rung a tile ended up on is shown on the tile itself, and every change is written to the
 server log, so "why was the feed stuttering last night" stays answerable after the fact.
 
-Setup is: install the single binary, restart the server. On a Mac `brew install go2rtc`; on
+The Linux release installer (`install.sh` in the release .zip) installs go2rtc for you. Otherwise
+setup is: install the single binary, restart the server. On a Mac `brew install go2rtc`; on
 Linux download the binary for your architecture from the go2rtc releases page, `chmod +x` it,
 and put it somewhere on the PATH (e.g. `/usr/local/bin/go2rtc`). If you'd rather keep it
 elsewhere, set `Go2Rtc:Path` in `SentinelCore.Web/appsettings.json` to its full path. The

@@ -51,16 +51,48 @@ done
 # bundled into the binaries above, so dotnet is NOT needed here.
 # ---------------------------------------------------------------------------
 
+# go2rtc is what makes live view real-time (WebRTC/MSE instead of HLS's few seconds of delay).
+# Pinned and checksummed rather than "latest", so an install never runs a binary nobody has
+# looked at. The dashboard finds it on the PATH by itself (Go2Rtc:Path) - no config to write.
+GO2RTC_VERSION=v1.9.14
+go2rtc_asset() {
+  case "$(uname -m)" in
+    x86_64)        echo "go2rtc_linux_amd64 32d616af226bd731678ffde328b94cfb94e30339bfefc469cfb76323144615a6" ;;
+    aarch64|arm64) echo "go2rtc_linux_arm64 359fabade8a7a51e81a55fe6df6b0ef81764a5e1d63179577534eaaa71904b50" ;;
+  esac
+}
+
+install_go2rtc() {
+  local asset sha tmp
+  read -r asset sha <<<"$(go2rtc_asset)"
+  if [[ -z "$asset" ]]; then
+    echo "WARNING: no go2rtc build for $(uname -m) - live view stays on HLS." >&2
+    return 0
+  fi
+  echo "==> Installing go2rtc $GO2RTC_VERSION (real-time live view)"
+  tmp=$(mktemp)
+  if curl -fsSL -o "$tmp" "https://github.com/AlexxIT/go2rtc/releases/download/$GO2RTC_VERSION/$asset" \
+    && echo "$sha  $tmp" | sha256sum -c --quiet -; then
+    install -o root -g root -m 0755 "$tmp" /usr/local/bin/go2rtc
+  else
+    echo "WARNING: go2rtc download or checksum failed - live view stays on HLS until it's installed." >&2
+  fi
+  rm -f "$tmp"
+}
+
 missing=()
 command -v ffmpeg >/dev/null 2>&1 || missing+=("ffmpeg")
+command -v go2rtc >/dev/null 2>&1 || missing+=("go2rtc")
 command -v node   >/dev/null 2>&1 || missing+=("node")
-command -v ollama >/dev/null 2>&1 || missing+=("ollama")
+# SKIP_OLLAMA=1: you'll use a cloud vision provider, or run Ollama on another machine.
+[[ "${SKIP_OLLAMA:-0}" == "1" ]] || command -v ollama >/dev/null 2>&1 || missing+=("ollama")
 
 describe_dependency() {
   case "$1" in
     ffmpeg) echo "ffmpeg - required for live view, trigger zones and clip recording" ;;
+    go2rtc) echo "go2rtc - real-time live view (without it live video runs a few seconds behind)" ;;
     node)   echo "Node.js 22+ - only for Apple HomeKit support; skippable" ;;
-    ollama) echo "Ollama - local AI vision. Skippable if you'll use a cloud model instead" ;;
+    ollama) echo "Ollama - local AI vision. Skippable if you'll use a cloud model instead (SKIP_OLLAMA=1)" ;;
   esac
 }
 
@@ -84,6 +116,9 @@ if [[ ${#missing[@]} -gt 0 ]]; then
       echo "==> Installing ffmpeg"
       apt-get update && apt-get install -y ffmpeg
     fi
+    if [[ " ${missing[*]} " == *" go2rtc "* ]]; then
+      install_go2rtc
+    fi
     if [[ " ${missing[*]} " == *" node "* ]]; then
       echo "==> Installing Node.js LTS (NodeSource)"
       curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
@@ -101,7 +136,12 @@ fi
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo "WARNING: ffmpeg is not installed. Live view, trigger zones and clip recording won't work." >&2
 fi
-if ! command -v ollama >/dev/null 2>&1; then
+if ! command -v go2rtc >/dev/null 2>&1; then
+  echo "WARNING: go2rtc is not installed. Live view works, but a few seconds behind the camera." >&2
+fi
+if [[ "${SKIP_OLLAMA:-0}" == "1" ]]; then
+  echo "Skipping Ollama (SKIP_OLLAMA=1) - pick a cloud vision provider in the setup wizard."
+elif ! command -v ollama >/dev/null 2>&1; then
   echo "WARNING: Ollama is not installed. Either install it and run 'ollama pull gemma3:4b'," >&2
   echo "         or configure a cloud vision provider in the dashboard's setup wizard." >&2
 else

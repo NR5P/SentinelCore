@@ -324,8 +324,9 @@ Sentinel Core - $platform release
 2. Open the dashboard at the address the installer prints when it finishes.
 
 This bundle needs no separate .NET install - the runtime is built into the SentinelCore and
-SentinelCore.Web binaries. ffmpeg (and optionally Node.js for HomeKit, Ollama for local AI
-vision) are still installed separately - the installer offers to do that for you.
+SentinelCore.Web binaries. ffmpeg$([[ "$platform" == linux-* ]] && echo ", go2rtc (real-time live view)") and optionally Node.js
+for HomeKit and Ollama for local AI vision are installed separately - the installer offers to do
+that for you.$([[ "$platform" == linux-* ]] && printf '\nUsing a cloud vision provider instead of local AI? Run: sudo SKIP_OLLAMA=1 ./install.sh')
 
 Full documentation: docs/DEPLOYMENT.md and docs/USER_GUIDE.md in the source repository.
 README
