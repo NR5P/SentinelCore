@@ -31,7 +31,7 @@ is free stock video ([credits](docs/screenshots/CREDITS.md)).</sub>
 - [Family Files](#family-files)
 - [Wall kiosk](#wall-kiosk)
 - [The apps](#the-apps)
-- [Running it](#running-it)
+- [Running it](#running-it) (install)
 - [How it fits together](#how-it-fits-together)
 - [Where things are](#where-things-are)
 - [Documentation](#documentation)
@@ -248,6 +248,20 @@ number per release.
 ---
 
 ## Running it
+
+**Install on Linux:** download the zip for your machine from the
+[latest release](https://github.com/NR5P/SentinelCore/releases/latest) (`linux-x64` for most PCs,
+`linux-arm64` for a Raspberry Pi 4/5), then:
+
+```bash
+unzip SentinelCore-linux-x64.zip
+cd linux-x64
+sudo ./install.sh
+```
+
+It installs what it needs (ffmpeg, go2rtc, Ollama and its vision model), sets up systemd services
+and prints the dashboard address. Open that address to create the admin account. macOS and Windows
+installs currently build from source; see [core/docs/DEPLOYMENT.md](core/docs/DEPLOYMENT.md).
 
 ![Settings, searched for "vision"](docs/screenshots/settings.jpg)
 
