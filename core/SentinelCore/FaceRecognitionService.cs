@@ -69,7 +69,7 @@ public sealed class FaceRecognitionService : IFaceRecognitionService, IDisposabl
     {
         try
         {
-            using var image = Image.Load<Rgb24>(imageBytes);
+            using var image = Image.Load<Rgb24>(SafeImageDecoding.Options, imageBytes);
             var faces = _detector.Value.DetectFaces(image);
             if (faces.Count == 0) return [];
 

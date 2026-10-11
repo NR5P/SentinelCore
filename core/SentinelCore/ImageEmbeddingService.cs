@@ -3,6 +3,7 @@ using ElBruno.LocalEmbeddings.ImageEmbeddings.Downloader;
 using ElBruno.LocalEmbeddings.ImageEmbeddings.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using SixLabors.ImageSharp;
 
 namespace SentinelCore;
 
@@ -48,6 +49,11 @@ public sealed class ImageEmbeddingService : IImageEmbeddingService, IDisposable
         {
             var (imageEncoder, _) = await EnsureInitializedAsync(cancellationToken);
             using var stream = new MemoryStream(imageBytes);
+            // The encoder decodes with ImageSharp's default configuration, TIFF included. Identify
+            // the format against SafeImageDecoding first (it throws for anything unregistered) so
+            // only those formats ever reach it - see SafeImageDecoding for why.
+            Image.DetectFormat(SafeImageDecoding.Options, stream);
+            stream.Position = 0;
             return imageEncoder.Encode(stream);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

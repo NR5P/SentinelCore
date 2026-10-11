@@ -495,7 +495,7 @@ public sealed class FamilyFilesLibrary(FamilyFilesLocations locations, FamilyFil
         var temporary = thumbnail + $".{Guid.NewGuid():N}.part";
         try
         {
-            using var image = await Image.LoadAsync(file.FullName, ct);
+            using var image = await Image.LoadAsync(SafeImageDecoding.Options, file.FullName, ct);
             image.Mutate(context => context.AutoOrient().Resize(new ResizeOptions
             {
                 Mode = ResizeMode.Max,

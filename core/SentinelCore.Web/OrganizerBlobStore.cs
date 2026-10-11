@@ -98,7 +98,7 @@ public sealed class OrganizerBlobStore(string root)
         var temporary = thumbnail + $".{Guid.NewGuid():N}.part";
         try
         {
-            using var image = await Image.LoadAsync(source, cancellationToken);
+            using var image = await Image.LoadAsync(SafeImageDecoding.Options, source, cancellationToken);
             image.Mutate(context => context.AutoOrient().Resize(new ResizeOptions
             {
                 Mode = ResizeMode.Max,

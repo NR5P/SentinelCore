@@ -264,7 +264,7 @@ public sealed class FastLocalDetector : IFastLocalDetector, IDisposable
         byte[] imageBytes, CropRegion? crop, int inputSize, CancellationToken cancellationToken)
     {
         await using var input = new MemoryStream(imageBytes, writable: false);
-        using var image = await Image.LoadAsync<Rgb24>(input, cancellationToken);
+        using var image = await Image.LoadAsync<Rgb24>(SafeImageDecoding.Options, input, cancellationToken);
 
         var analyzedWidth = image.Width;
         var analyzedHeight = image.Height;

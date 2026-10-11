@@ -213,7 +213,7 @@ public sealed class EventImageThumbnails
         {
             Directory.CreateDirectory(_cacheDirectory);
 
-            using var image = await Image.LoadAsync(source.FullName, cancellationToken);
+            using var image = await Image.LoadAsync(SafeImageDecoding.Options, source.FullName, cancellationToken);
 
             // Only ever downwards. A camera that already sends something small - a published
             // browser webcam, an older model - would otherwise have its frame blown up to 960 and

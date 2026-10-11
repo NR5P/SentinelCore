@@ -185,7 +185,7 @@ public static class KnownFaceEndpoints
         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
         await using var source = image.OpenReadStream();
-        using var decoded = await Image.LoadAsync(source, ct);
+        using var decoded = await Image.LoadAsync(SafeImageDecoding.Options, source, ct);
         await decoded.SaveAsync(absolutePath, new JpegEncoder(), ct);
 
         return relativePath;

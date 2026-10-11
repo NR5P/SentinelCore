@@ -47,7 +47,7 @@ public sealed class MusicArtCache(string root)
         {
             Directory.CreateDirectory(SizedRoot);
             await using var stream = fs.OpenRead(original);
-            using var image = await Image.LoadAsync(stream, cancellationToken);
+            using var image = await Image.LoadAsync(SafeImageDecoding.Options, stream, cancellationToken);
             if (image.Width <= bucket && image.Height <= bucket) return original;
             image.Mutate(context => context.Resize(new ResizeOptions { Size = new Size(bucket, bucket), Mode = ResizeMode.Max }));
             // A temporary name of its own: an album page asks for the same new size several times

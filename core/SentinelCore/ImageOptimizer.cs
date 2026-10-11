@@ -46,7 +46,7 @@ public sealed class ImageOptimizer : IImageOptimizer
         // interest someone set per camera, so those two still apply here.
         if (!options.Enabled)
         {
-            var info = Image.Identify(sourceBytes)
+            var info = Image.Identify(SafeImageDecoding.Options, sourceBytes)
                        ?? throw new InvalidOperationException("Unable to identify image.");
 
             // With neither to do there is no reason to decode: the camera's own JPEG goes out
@@ -63,7 +63,7 @@ public sealed class ImageOptimizer : IImageOptimizer
         }
 
         await using var input = new MemoryStream(sourceBytes, writable: false);
-        using var image = await Image.LoadAsync(input, cancellationToken);
+        using var image = await Image.LoadAsync(SafeImageDecoding.Options, input, cancellationToken);
 
         var originalWidth = image.Width;
         var originalHeight = image.Height;
@@ -127,7 +127,7 @@ public sealed class ImageOptimizer : IImageOptimizer
         var options = _options.CurrentValue;
 
         await using var input = new MemoryStream(sourceBytes, writable: false);
-        using var image = await Image.LoadAsync<Rgba32>(input, cancellationToken);
+        using var image = await Image.LoadAsync<Rgba32>(SafeImageDecoding.Options, input, cancellationToken);
 
         if (options.AutoOrient)
             image.Mutate(context => context.AutoOrient());
