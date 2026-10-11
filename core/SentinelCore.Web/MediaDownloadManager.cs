@@ -503,7 +503,9 @@ public sealed class MediaDownloadManager(
 
     // MARK: - Queue
 
-    public async Task<MediaDownload> GrabAsync(MediaDownloadGrabInput input, string requestedBy, CancellationToken cancellationToken)
+    // mayReplace: replacing deletes the copy already in the library, so it needs the same right as
+    // deleting a movie outright (an Admin) - the endpoint decides, this enforces.
+    public async Task<MediaDownload> GrabAsync(MediaDownloadGrabInput input, string requestedBy, CancellationToken cancellationToken, bool mayReplace = true)
     {
         var search = GetSearch(input.SearchId) ?? throw new MediaDownloadException("That search has expired. Search again.");
         var release = search.Results.FirstOrDefault(r => r.Id == input.ReleaseId) ?? throw new MediaDownloadException("That release is not in the search any more. Search again.");
@@ -514,7 +516,8 @@ public sealed class MediaDownloadManager(
         if (kind == MediaKinds.Movie && input.Replace != false && await OwnedCopyAsync(search.Input, cancellationToken) is { } owned)
         {
             var problem = MediaItemDeletion.Problem(owned, await media.GetLibraryAsync(owned.LibraryId, cancellationToken));
-            if (input.Replace is null) throw new MediaDownloadDuplicateException(owned, problem is null);
+            if (input.Replace is null) throw new MediaDownloadDuplicateException(owned, problem is null && mayReplace);
+            if (!mayReplace) throw new MediaDownloadException("You already have this movie, and only an admin can replace it.");
             if (problem is not null) throw new MediaDownloadException($"The copy you have cannot be replaced from here: {problem}");
             replaceItemId = owned.Id;
         }

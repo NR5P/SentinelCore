@@ -60,12 +60,23 @@ public sealed class MqttHotReloadTests
         return port;
     }
 
-    private static async Task<bool> CanConnectAsync(int port)
+    private static Task<bool> CanConnectAsync(int port) => CanConnectAsync(IPAddress.Loopback, port);
+
+    // This machine's own address on a real interface: connecting to it is what a device elsewhere
+    // on the LAN would do, without needing one.
+    private static IPAddress? LanAddress() =>
+        System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+            .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+            .Select(a => a.Address)
+            .FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(a));
+
+    private static async Task<bool> CanConnectAsync(IPAddress address, int port)
     {
         using var client = new TcpClient();
         try
         {
-            await client.ConnectAsync(IPAddress.Loopback, port).WaitAsync(TimeSpan.FromMilliseconds(500));
+            await client.ConnectAsync(address, port).WaitAsync(TimeSpan.FromMilliseconds(500));
             return true;
         }
         catch
@@ -112,6 +123,39 @@ public sealed class MqttHotReloadTests
 
             monitor.Update(Options(enabled: false, runBroker: false, port));
             Assert.True(await EventuallyAsync(async () => !await CanConnectAsync(port)), "broker kept listening after being disabled");
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+            service.Dispose();
+        }
+    }
+
+    // With no username anyone could connect, so the broker stays on this machine; setting
+    // credentials opens it to the LAN live, and clearing them closes it again.
+    [Fact]
+    public async Task Broker_IsLocalOnly_UntilCredentialsAreSet()
+    {
+        var lan = LanAddress();
+        Assert.SkipWhen(lan is null, "No non-loopback IPv4 interface on this machine.");
+        var port = FreePort();
+        var monitor = new MutableOptionsMonitor<MqttOptions>(Options(enabled: true, runBroker: true, port));
+        var service = new EmbeddedMqttBrokerService(monitor, NullLogger<EmbeddedMqttBrokerService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            Assert.True(await EventuallyAsync(() => CanConnectAsync(port)), "broker never started on loopback");
+            Assert.False(await CanConnectAsync(lan!, port), "an anonymous broker was reachable from the network");
+
+            monitor.Update(new MqttOptions
+            {
+                Enabled = true, RunEmbeddedBroker = true, EmbeddedBrokerPort = port, Username = "hub", Password = "a-password"
+            });
+            Assert.True(await EventuallyAsync(() => CanConnectAsync(lan!, port)), "setting credentials didn't open the broker to the network");
+
+            monitor.Update(Options(enabled: true, runBroker: true, port));
+            Assert.True(await EventuallyAsync(async () => !await CanConnectAsync(lan!, port)), "clearing credentials left the broker on the network");
         }
         finally
         {

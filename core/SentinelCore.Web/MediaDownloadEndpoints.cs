@@ -267,7 +267,7 @@ public static class MediaDownloadEndpoints
         {
             try
             {
-                var download = await manager.GrabAsync(input, context.User.Identity?.Name ?? "", ct);
+                var download = await manager.GrabAsync(input, context.User.Identity?.Name ?? "", ct, mayReplace: IsAdmin(context));
                 return Results.Created($"/api/media/downloads/{download.Id}", DownloadDto(download));
             }
             // The app asks "Replace the one you have?" and sends the same request again with
@@ -295,8 +295,14 @@ public static class MediaDownloadEndpoints
         enabled.MapGet("/{id:guid}", async (Guid id, MediaDownloadManager manager, CancellationToken ct) =>
             await manager.GetAsync(id, ct) is { } download ? Results.Ok(DownloadDto(download)) : Results.NotFound(new { error = "That download is gone." }));
 
-        enabled.MapDelete("/{id:guid}", async (Guid id, MediaDownloadManager manager, CancellationToken ct) =>
-            await manager.CancelAsync(id, ct) ? Results.NoContent() : Results.NotFound(new { error = "That download is gone." }));
+        // Cancel and retry belong to whoever asked for the download, and to admins - not to any
+        // account that can see the list.
+        enabled.MapDelete("/{id:guid}", async (Guid id, HttpContext context, MediaDownloadManager manager, CancellationToken ct) =>
+        {
+            if (await manager.GetAsync(id, ct) is not { } download) return Results.NotFound(new { error = "That download is gone." });
+            if (!MayManage(context, download)) return Results.Json(new { error = NotYoursMessage }, statusCode: StatusCodes.Status403Forbidden);
+            return await manager.CancelAsync(id, ct) ? Results.NoContent() : Results.NotFound(new { error = "That download is gone." });
+        });
 
         // "Test VPN": starts everything if needed (up to about a minute), proves the tunnel, and
         // answers in words, with the status for the light.
@@ -306,8 +312,12 @@ public static class MediaDownloadEndpoints
             return Results.Ok(new { ok, message, status = await manager.StatusAsync(ct) });
         });
 
-        enabled.MapPost("/{id:guid}/retry", async (Guid id, MediaDownloadManager manager, CancellationToken ct) =>
-            await manager.RetryAsync(id, ct) is { } download ? Results.Ok(DownloadDto(download)) : Results.NotFound(new { error = "That download is gone." }));
+        enabled.MapPost("/{id:guid}/retry", async (Guid id, HttpContext context, MediaDownloadManager manager, CancellationToken ct) =>
+        {
+            if (await manager.GetAsync(id, ct) is not { } existing) return Results.NotFound(new { error = "That download is gone." });
+            if (!MayManage(context, existing)) return Results.Json(new { error = NotYoursMessage }, statusCode: StatusCodes.Status403Forbidden);
+            return await manager.RetryAsync(id, ct) is { } download ? Results.Ok(DownloadDto(download)) : Results.NotFound(new { error = "That download is gone." });
+        });
     }
 
     public static object DownloadDto(MediaDownload download) => new
@@ -439,6 +449,11 @@ public static class MediaDownloadEndpoints
     }
 
     private static bool IsAdmin(HttpContext context) => context.User.IsInRole(nameof(AccountRole.Admin));
+
+    public const string NotYoursMessage = "Only the person who asked for this download, or an admin, can change it.";
+
+    public static bool MayManage(HttpContext context, MediaDownload download) =>
+        IsAdmin(context) || string.Equals(download.RequestedBy, context.User.Identity?.Name ?? "", StringComparison.OrdinalIgnoreCase);
 
     public static bool CanDownload(HttpContext context, MediaDownloadsSettingsDto options) =>
         options.AllowedUsers == "everyone" || IsAdmin(context);

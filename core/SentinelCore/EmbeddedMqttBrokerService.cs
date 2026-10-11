@@ -12,8 +12,9 @@ namespace SentinelCore;
 // Runs whenever the current options say it should, not just when they said so at startup: the
 // settings screens (dashboard, phone, Mac) can flip RunEmbeddedBroker or move the port, and
 // ReconcileAsync starts, stops, or rebinds the listener to match - the setting applies live,
-// with no restart, unlike the socket bindings in Urls. Username/password changes don't even
-// need that much: the connection validator reads CurrentValue per attempt and always has.
+// with no restart, unlike the socket bindings in Urls. The connection validator reads
+// CurrentValue per attempt, so a new password applies to the next connection; setting or clearing
+// the username also rebinds, because it decides whether the broker is reachable from the LAN.
 public sealed class EmbeddedMqttBrokerService(
     IOptionsMonitor<MqttOptions> options,
     ILogger<EmbeddedMqttBrokerService> logger) : IHostedService, IDisposable
@@ -21,6 +22,7 @@ public sealed class EmbeddedMqttBrokerService(
     private readonly SemaphoreSlim _reconcileLock = new(1, 1);
     private MqttServer? _server;
     private int _runningPort;
+    private bool _runningOnAllInterfaces;
     private bool _disposed;
     private IDisposable? _optionsSubscription;
 
@@ -89,11 +91,12 @@ public sealed class EmbeddedMqttBrokerService(
             var current = options.CurrentValue;
             var shouldRun = current.Enabled && current.RunEmbeddedBroker;
 
-            if (_server is not null && (!shouldRun || _runningPort != current.EmbeddedBrokerPort))
+            var onAllInterfaces = RequiresCredentials(current);
+            if (_server is not null && (!shouldRun || _runningPort != current.EmbeddedBrokerPort || _runningOnAllInterfaces != onAllInterfaces))
                 await StopServerUnlockedAsync();
 
             if (shouldRun && _server is null)
-                await StartServerUnlockedAsync(current.EmbeddedBrokerPort);
+                await StartServerUnlockedAsync(current.EmbeddedBrokerPort, onAllInterfaces);
         }
         finally
         {
@@ -101,28 +104,34 @@ public sealed class EmbeddedMqttBrokerService(
         }
     }
 
-    private async Task StartServerUnlockedAsync(int port)
+    // Without a username the broker has no way to tell a light switch from anyone else on the
+    // network, and Device Hub switches real locks, lights and garage doors over it. So a broker
+    // with no credentials listens on this machine only (this app's own client, a Zigbee2MQTT on
+    // the same box); setting Mqtt:Username/Password is what opens it to the LAN, with every
+    // connection checked.
+    public static bool RequiresCredentials(MqttOptions current) => !string.IsNullOrWhiteSpace(current.Username);
+
+    private async Task StartServerUnlockedAsync(int port, bool onAllInterfaces)
     {
         var serverOptions = new MqttServerFactory().CreateServerOptionsBuilder()
             .WithDefaultEndpoint()
-            .WithDefaultEndpointBoundIPAddress(IPAddress.Any)
+            .WithDefaultEndpointBoundIPAddress(onAllInterfaces ? IPAddress.Any : IPAddress.Loopback)
+            .WithDefaultEndpointBoundIPV6Address(onAllInterfaces ? IPAddress.IPv6Any : IPAddress.IPv6Loopback)
             .WithDefaultEndpointPort(port)
             .Build();
 
         var server = new MqttServerFactory().CreateMqttServer(serverOptions);
 
-        // This endpoint is bound to IPAddress.Any, so without this handler every machine on the
-        // LAN could connect anonymously. Credentials are only enforced when Mqtt:Username is
-        // actually set, which keeps an existing password-less Home Assistant setup working
-        // exactly as it did - but once Device Hub is switching real lights over this broker,
-        // setting a username/password is what makes that boundary real.
         server.ValidatingConnectionAsync += args =>
         {
             var expected = options.CurrentValue;
-            if (string.IsNullOrWhiteSpace(expected.Username)) return Task.CompletedTask;
+            // Loopback-only (see RequiresCredentials). A username set since this listener
+            // started is enforced straight away; the rebind to all interfaces follows it.
+            if (!RequiresCredentials(expected)) return Task.CompletedTask;
 
             var usernameMatches = string.Equals(args.UserName, expected.Username, StringComparison.Ordinal);
-            var passwordMatches = string.Equals(args.Password, expected.Password, StringComparison.Ordinal);
+            var passwordMatches = System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.UTF8.GetBytes(args.Password ?? ""), System.Text.Encoding.UTF8.GetBytes(expected.Password ?? ""));
             if (usernameMatches && passwordMatches) return Task.CompletedTask;
 
             args.ReasonCode = MqttConnectReasonCode.BadUserNameOrPassword;
@@ -147,10 +156,13 @@ public sealed class EmbeddedMqttBrokerService(
 
         _server = server;
         _runningPort = port;
-        logger.LogInformation(
-            "Embedded MQTT broker listening on port {Port} ({AuthMode})",
-            port,
-            string.IsNullOrWhiteSpace(options.CurrentValue.Username) ? "no authentication" : "username/password required");
+        _runningOnAllInterfaces = onAllInterfaces;
+        if (onAllInterfaces)
+            logger.LogInformation("Embedded MQTT broker listening on port {Port} on all interfaces (username/password required)", port);
+        else
+            logger.LogWarning(
+                "Embedded MQTT broker listening on port {Port} on this machine only, because no Mqtt:Username is set. " +
+                "Set a username and password to let devices elsewhere on your network connect.", port);
     }
 
     private async Task StopServerUnlockedAsync()

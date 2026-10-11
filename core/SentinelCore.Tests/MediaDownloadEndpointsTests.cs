@@ -383,6 +383,16 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         Assert.True(asked.GetProperty("existing").GetProperty("canReplace").GetBoolean());
         Assert.Empty(await factory.Services.GetRequiredService<MediaDownloadManager>().ListAsync(Ct));
 
+        // Replacing deletes the old copy, so only an Admin may: anyone else hears it's there with
+        // no offer to replace, and can't force it.
+        var asViewer = factory.Services.GetRequiredService<MediaDownloadManager>();
+        var viewerAsk = new MediaDownloadGrabInput { SearchId = Guid.Parse(grab.searchId!), ReleaseId = grab.releaseId! };
+        var refused = await Assert.ThrowsAsync<MediaDownloadDuplicateException>(() => asViewer.GrabAsync(viewerAsk, "viewer", Ct, mayReplace: false));
+        Assert.False(refused.CanReplace);
+        viewerAsk.Replace = true;
+        await Assert.ThrowsAsync<MediaDownloadException>(() => asViewer.GrabAsync(viewerAsk, "viewer", Ct, mayReplace: false));
+        Assert.Empty(await asViewer.ListAsync(Ct));
+
         var queued = await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads",
             new { grab.searchId, grab.releaseId, replace = true }, Ct), HttpStatusCode.Created);
         Assert.Equal(old.Id.ToString(), queued.GetProperty("replacesItemId").GetString());
