@@ -14,6 +14,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.sentinelcore.android.data.Reachability
 import com.sentinelcore.android.data.SentinelRepository
 import com.sentinelcore.android.data.ServerAddress
+import com.sentinelcore.android.data.ServerIdentity
 import com.sentinelcore.android.ui.SentinelViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -95,7 +96,12 @@ class AudioRuntime private constructor(context: Context) {
         if (local.isBlank()) return
         when (fallback.probe(local)) {
             Reachability.REACHABLE -> fallback.baseUrl = local
-            Reachability.CERTIFICATE_UNTRUSTED -> ServerAddress.httpFallback(local)?.let { fallback.baseUrl = it }
+            // Only to a server that has already proved it's this one - see ServerIdentity. With
+            // nobody watching there's no first-use exception; that waits for the app to be opened.
+            Reachability.CERTIFICATE_UNTRUSTED ->
+                if (ServerIdentity(context).check(local) == ServerIdentity.Check.Verified) {
+                    ServerAddress.httpFallback(local)?.let { fallback.baseUrl = it }
+                }
             Reachability.UNREACHABLE -> if (remote.isNotBlank()) fallback.baseUrl = remote
         }
     }

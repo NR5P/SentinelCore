@@ -29,8 +29,9 @@ namespace SentinelCore.App.Views;
 /// secure context, and the dashboard's usual address is plain http on the LAN - so the engine is
 /// told to treat that one origin as secure. And the dashboard's https certificate is signed by the
 /// install's own authority, which this PC has no reason to trust - so a certificate error for the
-/// server's host is accepted, and only for that host. Both are scoped to the server this app is
-/// already talking to; nothing else this engine loads is affected.
+/// server's host is accepted, but only for a certificate that authority signed, as remembered by
+/// ServerIdentity. Both are scoped to the server this app is already talking to; nothing else this
+/// engine loads is affected.
 /// </remarks>
 public partial class DeviceCameraWindow : Window
 {
@@ -217,11 +218,15 @@ public partial class DeviceCameraWindow : Window
         };
         core.ServerCertificateErrorDetected += (_, args) =>
         {
-            if (Uri.TryCreate(args.RequestUri, UriKind.Absolute, out var requested) &&
-                string.Equals(requested.Host, host, StringComparison.OrdinalIgnoreCase))
-            {
-                args.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
-            }
+            // Only the server's own certificate - one its remembered authority signed (see
+            // ServerIdentity). Anything else at the same host is refused rather than waved through:
+            // this page carries the session cookie and streams this PC's camera.
+            args.Action = Uri.TryCreate(args.RequestUri, UriKind.Absolute, out var requested) &&
+                          string.Equals(requested.Host, host, StringComparison.OrdinalIgnoreCase) &&
+                          PresentedCertificate(args.ServerCertificate) is { } presented &&
+                          _model.ServerIdentity.Accepts(requested, presented)
+                ? CoreWebView2ServerCertificateErrorAction.AlwaysAllow
+                : CoreWebView2ServerCertificateErrorAction.Cancel;
         };
         core.WebMessageReceived += OnWebMessageReceived;
 
@@ -241,6 +246,21 @@ public partial class DeviceCameraWindow : Window
             });
             """);
         return true;
+    }
+
+    // The certificate WebView2 was shown, in the form ServerIdentity can check.
+    private static System.Security.Cryptography.X509Certificates.X509Certificate2? PresentedCertificate(
+        CoreWebView2Certificate? certificate)
+    {
+        if (certificate is null) return null;
+        try
+        {
+            return System.Security.Cryptography.X509Certificates.X509Certificate2.CreateFromPem(certificate.ToPemEncoding());
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     /// <summary>

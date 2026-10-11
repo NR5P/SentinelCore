@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Local Sentinel Core installations currently use private-LAN HTTP addresses. -->
+    <!-- Cleartext stays allowed app-wide on purpose. The server's address is whatever IP or name
+         the user typed (or discovery found) - commonly http://<LAN IP>:3320, and the automatic
+         plain-HTTP fallback when this device doesn't trust the server's own certificate authority -
+         and this file can only name fixed domains, not "the configured server" or private IP ranges.
+         What keeps that safe is the app, not this file: the fallback carries the session only to a
+         server that has proved its identity over TLS (data/ServerIdentity.kt), and this app never
+         stores or replays a password. -->
     <base-config cleartextTrafficPermitted="true" />
 </network-security-config>
-

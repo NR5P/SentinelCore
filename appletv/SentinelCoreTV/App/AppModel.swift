@@ -217,8 +217,14 @@ final class AppModel: ObservableObject {
                     log("Couldn't check the certificate at \(httpsAddress) before falling back to plain HTTP", level: .notice)
                     failConnection(with: error)
                     return
-                case .verified, .unknown:
+                case .verified:
                     break
+                case .unknown:
+                    // Not yet known to be this server, so none of the existing session goes to
+                    // it - the probe below would otherwise carry the cookie. Signing in again
+                    // is the price of the first fallback.
+                    ServerIdentity.forgetSession(for: fallback)
+                    SessionCookieStore.clear()
                 }
                 log("This device does not trust the server's HTTPS certificate; trying the plain-HTTP port at \(fallback)", level: .notice)
                 activeServerURL = fallback

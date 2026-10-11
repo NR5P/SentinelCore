@@ -48,6 +48,7 @@ import com.sentinelcore.android.data.CameraInput
 import com.sentinelcore.android.data.CameraProbeRequest
 import com.sentinelcore.android.data.CameraProbeResult
 import com.sentinelcore.android.data.SECRET_MASK
+import com.sentinelcore.android.data.ServerIdentity
 import com.sentinelcore.android.data.ConnectionState
 import com.sentinelcore.android.data.DeviceCandidate
 import com.sentinelcore.android.data.DeviceScanSnapshot
@@ -257,6 +258,11 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         application.getSharedPreferences("sentinel_core", Application.MODE_PRIVATE)
     private val logSequence = AtomicLong()
     private val repository = SentinelRepository(application, ::log)
+    private val serverIdentity = ServerIdentity(application)
+
+    // Set by resolveActiveServerUrl when something at the local address failed the identity check,
+    // so the connection that follows reports that instead of a bare certificate error.
+    private var identityRefusal: String? = null
 
     // The shared player, downloads and speaker - process-wide, like the Organizer's runtime.
     val audio: AudioRuntime = AudioRuntime.get(application)
@@ -402,6 +408,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             }
             if (resetNetworkSession || wasOffline) repository.resetSession()
             log("Connecting to ${_state.value.serverUrl}", DiagnosticLevel.INFO)
+            identityRefusal = null
             resolveActiveServerUrl()
 
             try {
@@ -435,7 +442,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
                         } else {
                             ConnectionState.OFFLINE
                         },
-                        lastError = readableError(error),
+                        lastError = identityRefusal ?: readableError(error),
                     )
                 }
                 log("Connection failed: ${readableError(error)}", DiagnosticLevel.ERROR)
@@ -488,23 +495,31 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
             // the remote address would be doing it across the open Internet, which is a different
             // proposition entirely - and, when that address is fronted by a TLS-terminating proxy,
             // lands on a Secure session cookie this app cannot return anyway.
+            //
+            // And only to a server that proves it is this one (see ServerIdentity). A server that
+            // hasn't yet - the first fallback, before its authority is remembered - gets none of
+            // the existing session: it is dropped, and the sign-in screen asks for the password.
             Reachability.CERTIFICATE_UNTRUSTED -> if (httpFallback != null) {
-                log(
-                    "This device does not trust the server's HTTPS certificate; trying the " +
-                        "plain-HTTP port at $httpFallback",
-                    DiagnosticLevel.NOTICE,
-                )
-                if (repository.probe(httpFallback) == Reachability.REACHABLE) {
-                    log(
-                        "Using $httpFallback. To connect over HTTPS instead, install the server's " +
-                            "certificate authority (ca.crt) on this device - see DEPLOYMENT.md " +
-                            "section 14a.",
+                val identity = serverIdentity.check(current.serverUrl)
+                when (identity) {
+                    ServerIdentity.Check.Mismatch -> {
+                        log(
+                            "The server at ${current.serverUrl} presented a certificate its own " +
+                                "authority didn't sign - not falling back to plain HTTP",
+                            DiagnosticLevel.ERROR,
+                        )
+                        identityRefusal = IMPOSTOR_MESSAGE
+                    }
+                    ServerIdentity.Check.Unavailable -> log(
+                        "Couldn't check the certificate at ${current.serverUrl} before falling " +
+                            "back to plain HTTP",
                         DiagnosticLevel.NOTICE,
                     )
-                    useServerUrl(httpFallback, isRemote = false, isHttpFallback = true)
-                    return
+                    ServerIdentity.Check.Verified, is ServerIdentity.Check.Unknown -> {
+                        if (identity is ServerIdentity.Check.Unknown) repository.forgetSession(httpFallback)
+                        if (useHttpFallback(current.serverUrl, httpFallback, identity)) return
+                    }
                 }
-                log("The plain-HTTP port at $httpFallback did not answer either", DiagnosticLevel.NOTICE)
             }
             Reachability.UNREACHABLE -> Unit
         }
@@ -517,6 +532,60 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         }
         log("Local address unreachable; using remote address", DiagnosticLevel.INFO)
         useServerUrl(current.remoteServerUrl, isRemote = true, isHttpFallback = false)
+    }
+
+    // The plain-HTTP rung of resolveActiveServerUrl, once the identity check has allowed it. True
+    // when it was taken.
+    private suspend fun useHttpFallback(
+        httpsAddress: String,
+        httpFallback: String,
+        identity: ServerIdentity.Check,
+    ): Boolean {
+        log(
+            "This device does not trust the server's HTTPS certificate; trying the " +
+                "plain-HTTP port at $httpFallback",
+            DiagnosticLevel.NOTICE,
+        )
+        if (repository.probe(httpFallback) == Reachability.REACHABLE) {
+            if (identity is ServerIdentity.Check.Unknown) {
+                rememberServerIdentity(identity, httpsAddress, httpFallback)
+            }
+            log(
+                "Using $httpFallback. To connect over HTTPS instead, install the server's " +
+                    "certificate authority (ca.crt) on this device - see DEPLOYMENT.md " +
+                    "section 14a.",
+                DiagnosticLevel.NOTICE,
+            )
+            useServerUrl(httpFallback, isRemote = false, isHttpFallback = true)
+            return true
+        }
+        log("The plain-HTTP port at $httpFallback did not answer either", DiagnosticLevel.NOTICE)
+        return false
+    }
+
+    // Trust on first use - see ServerIdentity. Best effort: failing to remember just means the
+    // next fallback is treated as a first one again.
+    private suspend fun rememberServerIdentity(
+        identity: ServerIdentity.Check.Unknown,
+        httpsAddress: String,
+        httpAddress: String,
+    ) {
+        val authority = ServerIdentity.fetchAuthority(httpAddress)
+        when {
+            authority == null ->
+                log("Couldn't download the server's certificate authority to remember it", DiagnosticLevel.NOTICE)
+            serverIdentity.remember(authority, identity.leaf, httpsAddress) ->
+                log(
+                    "Remembered this server's certificate authority; plain-HTTP fallback now only " +
+                        "goes to this server",
+                    DiagnosticLevel.NOTICE,
+                )
+            else -> log(
+                "The certificate authority the server offered didn't sign its HTTPS certificate - " +
+                    "not remembering it",
+                DiagnosticLevel.NOTICE,
+            )
+        }
     }
 
     private fun useServerUrl(url: String, isRemote: Boolean, isHttpFallback: Boolean) {
@@ -636,6 +705,9 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         val normalized = SentinelRepository.normalizeAddress(address)
         connectionJob?.cancel()
         repository.clearAuthenticationSession()
+        // Saving the address is the way past a server whose certificate authority changed (a
+        // reinstall) - see ServerIdentity.
+        serverIdentity.forget(normalized)
         repository.baseUrl = normalized
         preferences.edit().putString(SERVER_URL_KEY, normalized).apply()
         _state.update {
@@ -661,6 +733,7 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
         val normalizedRemote = if (remoteAddress.isBlank()) "" else SentinelRepository.normalizeAddress(remoteAddress, defaultScheme = "https")
         connectionJob?.cancel()
         repository.clearAuthenticationSession()
+        serverIdentity.forget(normalizedLocal)
         repository.baseUrl = normalizedLocal
         preferences.edit()
             .putString(SERVER_URL_KEY, normalizedLocal)
@@ -1729,6 +1802,12 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
     companion object {
         private const val PTZ_STOP_ATTEMPTS = 3
         private const val PTZ_STOP_BACKOFF_MS = 150L
+
+        const val IMPOSTOR_MESSAGE =
+            "Something at this address isn't your Sentinel Core server - its certificate wasn't " +
+                "issued by your server. Nothing was sent to it. If you're away from home, that's " +
+                "expected: use the remote address. If you reinstalled the server, save its address " +
+                "again in Settings."
 
         // Read by widgets/OrganizerBackgroundSync too, which syncs with no ViewModel around.
         const val SERVER_URL_KEY = "server_url"

@@ -203,6 +203,9 @@ public partial class SettingsView : UserControl
             return;
         }
 
+        // Saving the address is the way past a server whose certificate authority changed (a
+        // reinstall) - see ServerIdentity.
+        _model.ServerIdentity.Forget(address);
         _model.ServerUrl = address;
         _model.RemoteServerUrl = normalizedRemote;
         ImageLoader.Clear();

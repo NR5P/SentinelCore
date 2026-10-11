@@ -75,6 +75,15 @@ enum ServerIdentity {
         return data
     }
 
+    // Drops the cookies this device would send to `address`. Cookies without Secure are scoped to
+    // the host, not the port or scheme, so a plain-HTTP address carries a session earned anywhere
+    // on that IP - which is exactly what mustn't reach a server that hasn't proved who it is.
+    static func forgetSession(for address: String) {
+        guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        let storage = HTTPCookieStorage.shared
+        storage.cookies(for: url)?.forEach(storage.deleteCookie)
+    }
+
     static func forget(_ httpsAddress: String) {
         guard let key = storageKey(for: httpsAddress) else { return }
         UserDefaults.standard.removeObject(forKey: key)

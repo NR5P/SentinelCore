@@ -13,6 +13,7 @@ import androidx.work.WorkerParameters
 import com.sentinelcore.android.data.Reachability
 import com.sentinelcore.android.data.SentinelRepository
 import com.sentinelcore.android.data.ServerAddress
+import com.sentinelcore.android.data.ServerIdentity
 import com.sentinelcore.android.organizer.AppOrganizerTransport
 import com.sentinelcore.android.organizer.OrganizerDevice
 import com.sentinelcore.android.organizer.OrganizerRuntime
@@ -69,7 +70,13 @@ object OrganizerBackgroundSync {
         val candidates = buildList {
             when (repository.probe(local)) {
                 Reachability.REACHABLE -> add(local)
-                Reachability.CERTIFICATE_UNTRUSTED -> ServerAddress.httpFallback(local)?.let(::add)
+                // Only to a server that has already proved it's this one - see ServerIdentity.
+                // Nobody is watching a background sync, so there's no first-use exception here:
+                // until a foreground connect has remembered the server's authority, this waits.
+                Reachability.CERTIFICATE_UNTRUSTED ->
+                    if (ServerIdentity(context).check(local) == ServerIdentity.Check.Verified) {
+                        ServerAddress.httpFallback(local)?.let(::add)
+                    }
                 Reachability.UNREACHABLE -> Unit
             }
             if (remote.isNotBlank()) add(remote)

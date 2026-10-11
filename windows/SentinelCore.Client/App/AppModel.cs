@@ -45,6 +45,15 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
     private string? _untrustedHttpsAddress;
     private string? _httpFallbackAddress;
 
+    // The certificate the https:// address showed when that fallback was settled on, so the
+    // shortcut can tell the same server from a different one at the same IP - see ConnectAsync.
+    private string? _httpFallbackLeafThumbprint;
+
+    // Whether the server behind the current fallback proved its identity - see ServerIdentity.
+    private bool _httpFallbackVerified;
+
+    private readonly ServerIdentity _identity;
+
     /// <param name="uiContext">
     /// Where notifications and list mutations are delivered - the window's dispatcher. Passed in
     /// rather than only picked up from <see cref="SynchronizationContext.Current"/> because relying
@@ -65,6 +74,7 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         _serverUrl = _preferences.GetString("serverURL");
         _remoteServerUrl = _preferences.GetString("remoteServerURL");
         _desktopAlertsEnabled = _preferences.GetBool("desktopAlertsEnabled", true);
+        _identity = new ServerIdentity(_preferences);
 
         // The resolved address once a connect has run, and the configured one until then. Without
         // that fallback every request made before the first successful connect - signing in from
@@ -78,6 +88,9 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
     }
 
     public SentinelClient Client { get; }
+
+    /// <summary>The server certificate authorities this app has remembered - see ServerIdentity.</summary>
+    public ServerIdentity ServerIdentity => _identity;
 
     /// <summary>The one preferences file. Shared, never re-opened: each store rewrites the whole
     /// file, so a second instance would erase whatever the first had written since it loaded.</summary>
@@ -393,6 +406,7 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             if (resetNetworkSession) ForgetHttpFallback();
 
             UsingHttpFallback = false;
+            _httpFallbackVerified = false;
             await ResolveActiveServerUrlAsync(ct).ConfigureAwait(false);
 
             // An address already known to be untrusted goes straight to the port that worked.
@@ -402,13 +416,28 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
             // was working perfectly normally. A log that cries wolf that often is a log nobody can
             // spot a real fault in. Re-tried from scratch on an explicit reconnect, which is what
             // makes installing the CA certificate take effect without restarting the app.
+            //
+            // The server's identity is still checked every time, quietly (a handshake that sends
+            // nothing and logs nothing): this PC can have moved to another network since, where
+            // something else answers at the same IP. A different server drops the shortcut and
+            // takes the full path below, which decides afresh what may be sent to it.
             if (!IsUsingRemote &&
                 _untrustedHttpsAddress is { } known &&
                 known == ActiveServerUrl &&
                 _httpFallbackAddress is { } remembered)
             {
-                ActiveServerUrl = remembered;
-                UsingHttpFallback = true;
+                var identity = await _identity.CheckAsync(known, ct, _httpFallbackLeafThumbprint).ConfigureAwait(false);
+                if (identity.Verdict == IdentityVerdict.Verified ||
+                    identity is { Verdict: IdentityVerdict.Unknown, Completed: true })
+                {
+                    ActiveServerUrl = remembered;
+                    UsingHttpFallback = true;
+                    _httpFallbackVerified = identity.Verdict == IdentityVerdict.Verified;
+                }
+                else
+                {
+                    ForgetHttpFallback();
+                }
             }
 
             // Logged here rather than at the top of the method, and naming the address actually
@@ -443,25 +472,56 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
                 // back to it rather than stranding the user. Local address only: a remote address
                 // crosses the open Internet, where quietly dropping encryption is not an
                 // acceptable trade.
+                //
+                // And only to a server that proves it is this one (see ServerIdentity) - checked
+                // before any plain-HTTP request, because even the reachability probe below carries
+                // the session cookie.
                 if (!IsUsingRemote &&
                     SentinelClient.IsCertificateTrustFailure(error) &&
                     ServerAddress.HttpFallback(ActiveServerUrl) is { } fallback)
                 {
+                    var httpsAddress = ActiveServerUrl;
+                    var identity = await _identity.CheckAsync(httpsAddress, ct).ConfigureAwait(false);
+                    switch (identity.Verdict)
+                    {
+                        case IdentityVerdict.Mismatch:
+                            Log($"The server at {httpsAddress} presented a certificate its own authority didn't sign - not falling back to plain HTTP",
+                                DiagnosticLevel.Error);
+                            FailConnection(ImpostorMessage);
+                            return;
+                        case IdentityVerdict.Unavailable:
+                            Log($"Couldn't check the certificate at {httpsAddress} before falling back to plain HTTP",
+                                DiagnosticLevel.Notice);
+                            FailConnection(error);
+                            return;
+                        case IdentityVerdict.Unknown:
+                            // Not yet known to be this server, so nothing of the existing session
+                            // goes to it: a fresh, cookie-less session, and (see
+                            // EstablishSessionAsync) no saved password either.
+                            Client.ResetSession();
+                            break;
+                    }
+
                     Log($"This PC does not trust the server's HTTPS certificate; trying the plain-HTTP port at {fallback}",
                         DiagnosticLevel.Notice);
                     if (await Client.ProbeReachableAsync(fallback, ct: ct).ConfigureAwait(false))
                     {
-                        // Captured before the overwrite below, which is the whole point of the
-                        // local: this has to be the https:// address that was rejected, since that
-                        // is what the next connect will resolve to and compare against.
-                        var untrusted = ActiveServerUrl;
+                        // httpsAddress was captured before this overwrite, which is the whole
+                        // point of the local: it has to be the https:// address that was rejected,
+                        // since that is what the next connect will resolve to and compare against.
                         ActiveServerUrl = fallback;
                         UsingHttpFallback = true;
+                        _httpFallbackVerified = identity.Verdict == IdentityVerdict.Verified;
                         try
                         {
                             await EstablishSessionAsync(ct).ConfigureAwait(false);
-                            _untrustedHttpsAddress = untrusted;
+                            _untrustedHttpsAddress = httpsAddress;
                             _httpFallbackAddress = fallback;
+                            _httpFallbackLeafThumbprint = identity.Leaf?.Thumbprint;
+                            if (identity is { Verdict: IdentityVerdict.Unknown, Leaf: { } leaf })
+                            {
+                                await RememberServerIdentityAsync(leaf, httpsAddress, fallback, ct).ConfigureAwait(false);
+                            }
                             Log("Connected over plain HTTP. For an encrypted connection instead, trust the server's " +
                                 "certificate authority (ca.crt) on this PC - see DEPLOYMENT.md section 14a.",
                                 DiagnosticLevel.Notice);
@@ -469,11 +529,13 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
                         catch (OperationCanceledException)
                         {
                             UsingHttpFallback = false;
+                            _httpFallbackVerified = false;
                             Log("Connection task cancelled by the app lifecycle", DiagnosticLevel.Notice);
                         }
                         catch (Exception retryError)
                         {
                             UsingHttpFallback = false;
+                            _httpFallbackVerified = false;
                             FailConnection(retryError);
                         }
                         return;
@@ -499,7 +561,17 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
     {
         AuthStatus = await Client.AuthStatusAsync(ct).ConfigureAwait(false);
 
-        if (RequiresLogin && _credentials.Load(ServerUrl) is { } credential)
+        // Never replay the saved password over the plain-HTTP fallback to a server that hasn't
+        // proved who it is - it would go, in the clear, to whatever answered. The first fallback
+        // (before the server's authority is remembered) shows the sign-in screen instead.
+        var mayReplayLogin = !UsingHttpFallback || _httpFallbackVerified;
+        if (RequiresLogin && !mayReplayLogin)
+        {
+            Log("Not sending the saved login over an unverified plain-HTTP connection; sign in to continue",
+                DiagnosticLevel.Notice);
+        }
+
+        if (RequiresLogin && mayReplayLogin && _credentials.Load(ServerUrl) is { } credential)
         {
             Log("The saved server session expired; renewing it with the stored login", DiagnosticLevel.Notice);
             try
@@ -563,7 +635,34 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
     {
         _untrustedHttpsAddress = null;
         _httpFallbackAddress = null;
+        _httpFallbackLeafThumbprint = null;
     }
+
+    /// <summary>
+    /// Trust on first use - see ServerIdentity. Best effort: failing to remember just means the
+    /// next fallback is treated as a first one again.
+    /// </summary>
+    private async Task RememberServerIdentityAsync(
+        System.Security.Cryptography.X509Certificates.X509Certificate2 leaf,
+        string httpsAddress,
+        string httpAddress,
+        CancellationToken ct)
+    {
+        if (await ServerIdentity.FetchAuthorityAsync(httpAddress, ct).ConfigureAwait(false) is not { } authority)
+        {
+            Log("Couldn't download the server's certificate authority to remember it", DiagnosticLevel.Notice);
+            return;
+        }
+        Log(_identity.Remember(authority, leaf, httpsAddress)
+                ? "Remembered this server's certificate authority; plain-HTTP fallback now only goes to this server"
+                : "The certificate authority the server offered didn't sign its HTTPS certificate - not remembering it",
+            DiagnosticLevel.Notice);
+    }
+
+    public const string ImpostorMessage =
+        "Something at this address isn't your Sentinel Core server - its certificate wasn't issued by your server. " +
+        "Nothing was sent to it. If you're away from home, that's expected: use the remote address. " +
+        "If you reinstalled the server, save its address again in Settings.";
 
     /// <summary>
     /// Whether an <see cref="OperationCanceledException"/> means "the app asked us to stop" rather
@@ -586,6 +685,12 @@ public sealed class AppModel : ObservableObject, ISentinelLog, IDisposable
         if (error is not OperationCanceledException) return false;
         if (error.InnerException is TimeoutException) return false;
         return ct.IsCancellationRequested;
+    }
+
+    private void FailConnection(string message)
+    {
+        ConnectionState = ConnectionState.Offline;
+        LastError = message;
     }
 
     private void FailConnection(Exception error)

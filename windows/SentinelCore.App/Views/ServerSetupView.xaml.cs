@@ -83,6 +83,7 @@ public partial class ServerSetupView : UserControl
 
         ErrorText.Visibility = Visibility.Collapsed;
         // Setting the address is what triggers the connect - the shell watches it.
+        _model.ServerIdentity.Forget(address);
         _model.ServerUrl = address;
         _ = _model.ConnectAsync(resetNetworkSession: true);
     }

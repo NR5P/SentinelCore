@@ -1585,6 +1585,20 @@ class SentinelRepository(
         return error is SSLHandshakeException
     }
 
+    // Drops whatever session this jar would send to `urlString` - in memory and on disk - so a
+    // server that hasn't proved who it is (see ServerIdentity) gets none of it. Non-Secure cookies
+    // are scoped to the host, not the port or scheme, so the plain-HTTP fallback address would
+    // otherwise carry a session earned anywhere on that IP.
+    fun forgetSession(urlString: String) {
+        val url = ServerAddress.normalize(urlString)?.let { runCatching { URL(it) }.getOrNull() } ?: return
+        runCatching {
+            val uri = url.toURI()
+            cookieManager.cookieStore.get(uri).forEach { cookieManager.cookieStore.remove(uri, it) }
+        }
+        runCatching { sessionCookieStore.clear(url) }
+        imageCache.evictAll()
+    }
+
     fun clearAuthenticationSession() {
         cookieManager.cookieStore.removeAll()
         normalizedBaseUrl()?.let { runCatching { sessionCookieStore.clear(URL(it)) } }
