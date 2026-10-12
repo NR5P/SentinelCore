@@ -1548,7 +1548,7 @@ window.SentinelOrganizer = (function () {
     const checklist = f.checklist || [];
     const done = checklist.filter((c) => c.done).length;
     const overdue = f.due && !f.completed && (f.due.length === 10 ? f.due < ymd(new Date()) : new Date(f.due) < new Date());
-    return `<div class="org-card${f.completed ? " org-card-done" : ""}" draggable="true" data-card="${escapeHtml(card.id)}">
+    return `<div class="org-card${f.completed ? " org-card-done" : ""}" data-card="${escapeHtml(card.id)}">
       ${cover ? `<img class="org-card-cover" src="${escapeHtml(S.blobUrl(cover.fields.hash, true))}" alt="" loading="lazy" />` : ""}
       ${(f.labels || []).length ? `<div class="org-labels">${f.labels.map((l) => `<span class="org-label" style="background:${escapeHtml(l.color || labelColor(l.name))}">${escapeHtml(l.name)}</span>`).join("")}</div>` : ""}
       <div class="org-card-title">${escapeHtml(f.title || "card")}</div>
@@ -1685,18 +1685,24 @@ window.SentinelOrganizer = (function () {
   // gets this instead: hold still a moment, the card lifts, a copy of it follows the finger, and
   // letting go drops it like the mouse would, on a column or on a board tab. A finger that moves
   // before the hold is up is a scroll, and a quick tap still opens the card.
-  const HOLD_TIME = 350;   // ms a finger must rest on a card before it lifts
+  const HOLD_TIME = 400;   // ms a finger must rest on a card before it lifts (styles.css matches)
   const HOLD_SLOP = 10;    // px a finger may wander during the hold and still lift the card
   const EDGE = 48;         // px from an edge where a held card scrolls the board or column
   let touchPress = null;
 
   function bindCardTouchDrag(card) {
+    // Only a mouse picks a card up with the browser's own drag and drop. Left draggable for a
+    // finger, Chromium on Linux turns a long press into its own drag (which goes nowhere) and
+    // cancels both this drag and a sideways swipe meant to scroll the board.
+    card.addEventListener("pointerdown", (event) => { card.draggable = event.pointerType === "mouse"; });
     card.addEventListener("touchstart", (event) => {
       cancelTouchPress();
       if (event.touches.length !== 1) return;
       const t = event.touches[0];
       touchPress = { id: t.identifier, card, x: t.clientX, y: t.clientY, ghost: null, over: null, timer: null, frame: null };
       touchPress.timer = setTimeout(liftCard, HOLD_TIME);
+      // Fills in over the hold, so it is clear the card is about to come loose.
+      card.classList.add("org-card-pressing");
     }, { passive: true });
     // A long press would otherwise open the right-click menu.
     card.addEventListener("contextmenu", (event) => { if (touchPress) event.preventDefault(); });
@@ -1706,6 +1712,7 @@ window.SentinelOrganizer = (function () {
     const p = touchPress;
     if (!p) return;
     p.timer = null;
+    p.card.classList.remove("org-card-pressing");
     // Something re-drew the board during the hold.
     if (!p.card.isConnected) { touchPress = null; return; }
     dragging = p.card.dataset.card;
@@ -1774,6 +1781,7 @@ window.SentinelOrganizer = (function () {
     if (!p) return;
     clearTimeout(p.timer);
     if (p.frame) cancelAnimationFrame(p.frame);
+    p.card.classList.remove("org-card-pressing");
     if (!p.ghost) return;
     p.ghost.remove();
     p.card.classList.remove("org-dragging");

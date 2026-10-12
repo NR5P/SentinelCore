@@ -3920,6 +3920,30 @@ html.kiosk .org-day-sheet .org-tag {
   -webkit-touch-callout: none;
 }
 
+/* A finger resting on a card: a ring closes in over the hold (organizer.js HOLD_TIME, 400ms),
+   held back a moment so a quick swipe across the board doesn't flash it. */
+.org-card-pressing {
+  animation: org-card-press 300ms ease-in 100ms both;
+}
+
+@keyframes org-card-press {
+  from {
+    box-shadow: 0 0 0 0 transparent;
+    transform: scale(1);
+  }
+  to {
+    border-color: var(--green);
+    box-shadow: 0 0 0 3px var(--green);
+    transform: scale(0.97);
+  }
+}
+
+/* Where a lifted card came from / will land, while a finger carries it. */
+.org-card.org-dragging {
+  border-style: dashed;
+  border-color: var(--green);
+}
+
 /* The copy of a card that follows a finger while it is dragged. */
 .org-touch-ghost {
   position: fixed;
@@ -3927,9 +3951,9 @@ html.kiosk .org-day-sheet .org-tag {
   top: 0;
   z-index: 1000;
   pointer-events: none;
-  opacity: 0.92;
-  border-color: var(--border-bright);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0.95;
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px var(--green), 0 10px 28px rgba(0, 0, 0, 0.55);
 }
 
 .org-card-cover {
