@@ -25,8 +25,6 @@
     more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'
   };
 
-  const LABELS = { organizer: "calendar" };
-
   const isKiosk = () => document.documentElement.classList.contains("kiosk");
   const nav = document.getElementById("tabs");
   const tabs = () => Array.from(nav.querySelectorAll(".tab[data-view]"));
@@ -45,7 +43,7 @@
     tab.classList.add("kiosk-primary");
     tab.style.setProperty("--kiosk-order", String(PRIMARY.indexOf(view)));
     tab.insertAdjacentHTML("afterbegin", svg(view));
-    tab.insertAdjacentHTML("beforeend", `<span class="kiosk-tab-label">${LABELS[view] || view}</span>`);
+    tab.insertAdjacentHTML("beforeend", `<span class="kiosk-tab-label">${view}</span>`);
   }
 
   // Not a .tab: app.js treats every #tabs .tab as a view switch.
