@@ -77,13 +77,15 @@ internal fun MoreSectionsSheet(
     onSelect: (AppSection) -> Unit,
     onEdit: () -> Unit,
     onDismiss: () -> Unit,
+    // The weather-warning dot (see weather/WeatherWarningBanner), per section.
+    alertLevel: (AppSection) -> String? = { null },
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.navigationBarsPadding().padding(bottom = 12.dp)) {
             sections.forEach { section ->
                 ListItem(
                     headlineContent = { Text(section.title) },
-                    leadingContent = { Icon(section.icon, contentDescription = null) },
+                    leadingContent = { BadgedIcon(alertLevel(section)) { Icon(section.icon, contentDescription = null) } },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.clickable { onSelect(section) },
                 )

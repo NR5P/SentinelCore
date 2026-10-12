@@ -16,6 +16,8 @@ struct RootView: View {
     @AppStorage(DeviceWall.storageKey) private var wallDisplayRemembered = false
     @State private var openedWallDisplay = false
     @State private var quickCapture: QuickCaptureRequest?
+    // NWS warnings: the flashing banner over every section and the Weather badge.
+    @StateObject private var weatherWarnings = WeatherWarningsModel()
 
     // Why Quick Add can't add anything yet, if it can't.
     private var quickCaptureBlocked: String? {
@@ -52,6 +54,24 @@ struct RootView: View {
             }
         }
         .tint(SentinelTheme.green)
+        // Over every section, not pushing anything down; only while signed in to a server.
+        .overlay(alignment: .top) {
+            if model.isConfigured && !model.requiresLogin {
+                WeatherWarningBanner(warnings: weatherWarnings) {
+                    selection = .weather
+                    WeatherWarningsModel.requestRadar()
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: weatherWarnings.unseen.isEmpty)
+        // Every minute while the app is in use (on the Mac, while it isn't hidden), and straight
+        // away on coming back to it.
+        .task(id: WarningsPollKey(active: scenePhase != .background && model.isConfigured && !model.requiresLogin,
+                                  server: model.activeServerURL)) {
+            guard model.isConfigured, !model.requiresLogin, scenePhase != .background,
+                  !model.activeServerURL.isEmpty else { return }
+            await weatherWarnings.run(client: model.client)
+        }
         // Reconnect whenever setup/settings changes the address. Keeping this task on the
         // persistent root normally prevents SwiftUI from cancelling it when a child disappears.
         // macOS can still recreate this root modifier while switching split-view sections,
@@ -150,7 +170,9 @@ struct RootView: View {
                     moviesEnabled: model.moviesEnabled, alarmEnabled: model.alarmEnabled,
                     filesEnabled: model.familyFilesEnabled, musicEnabled: model.musicEnabled,
                     podcastsEnabled: model.podcastsEnabled), selection: $selection) { section in
-                    Label(section.title, systemImage: section.icon).tag(section)
+                    Label(section.title, systemImage: section.icon)
+                        .badge(weatherBadge(section))
+                        .tag(section)
                 }
                 .listStyle(.sidebar)
 
@@ -193,6 +215,7 @@ struct RootView: View {
                 }
                 .audioMiniPlayer()
                 .tabItem { Label(section.title, systemImage: section.icon) }
+                .badge(weatherBadge(section))
                 .tag(CompactTab.section(section))
             }
             if layout.showsMore {
@@ -234,6 +257,11 @@ struct RootView: View {
                 selection = path.last
             }
         }
+    }
+
+    // "!" on Weather while any warning is in force, seen or not.
+    private func weatherBadge(_ section: AppSection) -> Text? {
+        section == .weather && !weatherWarnings.active.isEmpty ? Text("!") : nil
     }
 
     private func showUnderMoreIfNeeded(_ section: AppSection?) {
@@ -278,6 +306,11 @@ struct RootView: View {
         case .settings: SettingsView()
         }
     }
+}
+
+private struct WarningsPollKey: Equatable {
+    let active: Bool
+    let server: String
 }
 
 private enum CompactTab: Hashable {

@@ -352,6 +352,22 @@ internal object WeatherJson {
         problems = json.arr("problems").strings(),
     )
 
+    // GET /api/weather/warnings - only the alerts; wakeMinutes/openRadar are for the wall kiosk.
+    // Alerts with no id are dropped: "seen" is keyed by it.
+    fun warnings(json: JSONObject): List<WeatherWarning> = json.arr("alerts").objects { j ->
+        WeatherWarning(
+            id = j.optString("id"),
+            event = j.str("event") ?: "Weather alert",
+            level = j.str("level")?.lowercase() ?: "advisory",
+            category = j.str("category"),
+            severity = j.str("severity"),
+            headline = j.str("headline"),
+            instruction = j.str("instruction"),
+            ends = j.instant("ends"),
+            references = j.arr("references").strings(),
+        )
+    }.filter { it.id.isNotBlank() }
+
     fun storms(json: JSONObject): WeatherStorms = WeatherStorms(
         cells = json.arr("cells").objects(::cell),
         warnings = json.arr("warnings").objects(::warning),

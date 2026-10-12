@@ -66,6 +66,10 @@
                                                Foreground="{StaticResource Green}" Width="24" />
                                     <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
                                                Foreground="{StaticResource PrimaryText}" FontSize="13.5" />
+                                    <!-- Weather's dot while an NWS warning is in force (seen or
+                                         not); no brush, nothing drawn. -->
+                                    <Ellipse Width="9" Height="9" Margin="8,0,0,0" VerticalAlignment="Center"
+                                             Fill="{Binding AlertBrush}" />
                                 </StackPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>

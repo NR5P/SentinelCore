@@ -7,6 +7,8 @@ struct RootView: View {
     @State private var selection: AppSection = .live
     // Music & Podcasts: one player and speaker for the whole app, whichever tab is showing.
     @ObservedObject private var audio = AudioCenter.shared
+    // NWS warnings: the flashing banner over every tab and the Weather badge.
+    @StateObject private var weatherWarnings = WeatherWarningsModel()
 
     private var organizerEnabled: Bool {
         model.organizer.status?.enabled ?? model.organizerLastKnownEnabled
@@ -31,15 +33,7 @@ struct RootView: View {
                             moviesEnabled: model.moviesEnabled, alarmEnabled: model.alarmEnabled,
                             filesEnabled: model.familyFilesEnabled, musicEnabled: audio.musicEnabled,
                             podcastsEnabled: audio.podcastsEnabled)) { section in
-                            NavigationStack {
-                                sectionView(section)
-                                    .navigationDestination(item: $model.selectedEvent) { event in
-                                        AlertDetailView(event: event)
-                                    }
-                            }
-                            .formRowButtons(section == .settings)
-                            .tabItem { Label(section.title, systemImage: section.icon) }
-                            .tag(section)
+                            tab(section)
                         }
                     }
                     #if DEBUG
@@ -57,6 +51,15 @@ struct RootView: View {
                         }
                     }
                     #endif
+                    // Over every tab, just under the tab bar, not pushing anything down.
+                    .overlay(alignment: .top) {
+                        WeatherWarningBanner(warnings: weatherWarnings) {
+                            selection = .weather
+                            WeatherWarningsModel.requestRadar()
+                        }
+                        .padding(.top, WeatherWarningBanner.topInset)
+                    }
+                    .animation(.easeOut(duration: 0.25), value: weatherWarnings.unseen.isEmpty)
                     // An announcement spoken while Now Playing is closed still shows its words.
                     .overlay { SpokenLineOverlay(hidden: audio.showNowPlaying) }
                     // Now Playing covers everything, opened from either audio tab, a speaker
@@ -90,6 +93,11 @@ struct RootView: View {
         .task(id: "\(model.connectionState == .online)|\(model.activeServerURL)") {
             await audio.connect(model: model)
         }
+        // Every minute while the app is on screen, and straight away on coming back to it.
+        .task(id: warningsPollKey) {
+            guard warningsPolling, !model.activeServerURL.isEmpty else { return }
+            await weatherWarnings.run(client: model.client)
+        }
         .onChange(of: model.organizer.status?.enabled) { _, enabled in
             if let enabled { model.organizerLastKnownEnabled = enabled }
         }
@@ -106,6 +114,33 @@ struct RootView: View {
         } message: { prompt in
             Text("This TV has \(prompt.localCount) Organizer items from a server that isn't the one answering now.")
         }
+    }
+
+    private var warningsPolling: Bool {
+        scenePhase == .active && model.isConfigured && !model.requiresLogin
+    }
+
+    private var warningsPollKey: String { "\(warningsPolling)|\(model.activeServerURL)" }
+
+    // tvOS has no tab badges (.badge is unavailable), so while any weather warning is in force,
+    // seen or not, the Weather tab reads "Weather !" with a warning triangle for its icon.
+    private func tabLabel(_ section: AppSection) -> Label<Text, Image> {
+        if section == .weather && !weatherWarnings.active.isEmpty {
+            return Label("\(section.title) !", systemImage: "exclamationmark.triangle.fill")
+        }
+        return Label(section.title, systemImage: section.icon)
+    }
+
+    private func tab(_ section: AppSection) -> some View {
+        NavigationStack {
+            sectionView(section)
+                .navigationDestination(item: $model.selectedEvent) { event in
+                    AlertDetailView(event: event)
+                }
+        }
+        .formRowButtons(section == .settings)
+        .tabItem { tabLabel(section) }
+        .tag(section)
     }
 
     @ViewBuilder private func sectionView(_ section: AppSection) -> some View {

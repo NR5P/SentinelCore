@@ -147,6 +147,12 @@ final class SentinelClient {
         try await get("/api/weather")
     }
 
+    // The NWS alerts the server's weather-warning settings ask for, worst first - the app-wide
+    // flashing banner (WeatherWarningsModel). A 404 means a server from before the banner.
+    func weatherWarnings() async throws -> WeatherWarningsResponse {
+        try await get("/api/weather/warnings")
+    }
+
     // A GIF from radar.weather.gov, proxied by the server. `kind` is "loop" or "still". The
     // fallback when the server is too old for the radar map.
     func weatherRadar(scope: String, kind: String) async throws -> Data {

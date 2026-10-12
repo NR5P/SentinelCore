@@ -10,6 +10,9 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sentinelcore.android.ui.AlarmNavigation
 import com.sentinelcore.android.ui.SentinelApp
+import com.sentinelcore.android.ui.weather.WeatherNavigation
+import com.sentinelcore.android.data.WeatherWarning
+import java.time.Instant
 import com.sentinelcore.android.ui.SentinelViewModel
 import com.sentinelcore.android.ui.theme.SentinelTheme
 import com.sentinelcore.android.publish.DevicePublisher
@@ -69,6 +72,35 @@ class MainActivity : ComponentActivity() {
         }
         DevicePublisher.requestScreen(intent)
         if (intent?.getBooleanExtra(NowPlayingExtra, false) == true) com.sentinelcore.android.ui.audio.AudioNavigation.openNowPlaying.value = true
+        if (BuildConfig.DEBUG) handleDebugWeatherWarning(intent)
+    }
+
+    // DEBUG builds only: `adb shell am start -n com.sentinelcore.android/.MainActivity
+    // --es debugWeatherWarning warning|watch|advisory` adds a fake TEST alert to the weather
+    // warning banner (with --ei debugWeatherCount N for several), so it can be looked at without a
+    // real storm. "clear" removes them.
+    private fun handleDebugWeatherWarning(intent: Intent?) {
+        val level = intent?.getStringExtra(DebugWeatherWarningExtra) ?: return
+        if (level == "clear") {
+            WeatherNavigation.debugAlerts.value = emptyList()
+            return
+        }
+        val count = intent.getIntExtra("debugWeatherCount", 1).coerceIn(1, 5)
+        val event = mapOf("warning" to "Tornado Warning", "watch" to "Severe Thunderstorm Watch").getOrDefault(level, "Wind Advisory")
+        val stamp = System.currentTimeMillis()
+        WeatherNavigation.debugAlerts.value = (1..count).map { n ->
+            WeatherWarning(
+                id = "debug-$stamp-$n",
+                event = if (n == 1) "TEST $event" else "TEST Flood Advisory",
+                level = if (n == 1) level else "advisory",
+                category = null,
+                severity = "Extreme",
+                headline = "TEST - $event issued for this area until 45 minutes from now. This is only a test.",
+                instruction = null,
+                ends = Instant.now().plusSeconds(45 * 60),
+                references = emptyList(),
+            )
+        }
     }
 
     companion object {
@@ -76,5 +108,6 @@ class MainActivity : ComponentActivity() {
         const val AlarmExtra = "alarm"
         // The media notification: opens Now Playing (see audio/AudioPlaybackService).
         const val NowPlayingExtra = "nowPlaying"
+        const val DebugWeatherWarningExtra = "debugWeatherWarning"
     }
 }

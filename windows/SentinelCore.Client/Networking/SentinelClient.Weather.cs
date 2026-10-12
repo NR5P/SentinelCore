@@ -19,6 +19,22 @@ public sealed partial class SentinelClient
     public Task<WeatherReport> WeatherAsync(CancellationToken ct = default) =>
         GetAsync<WeatherReport>(WeatherBase, ct: ct);
 
+    /// <summary>
+    /// The NWS warnings the app-wide banner flashes, filtered by the owner's settings and sorted
+    /// worst first. Null from a server too old to have the route (404) - nothing to show, not an error.
+    /// </summary>
+    public async Task<WeatherWarnings?> WeatherWarningsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            return await GetAsync<WeatherWarnings>($"{WeatherBase}/warnings", ct: ct).ConfigureAwait(false);
+        }
+        catch (SentinelServerException error) when (error.Status == 404)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Precipitation totals, hourly feels-like and gusts, the pressure trend, the forecast discussion and the SPC outlook.</summary>
     public Task<WeatherDetails> WeatherDetailsAsync(CancellationToken ct = default) =>
         GetAsync<WeatherDetails>($"{WeatherBase}/details", ct: ct);

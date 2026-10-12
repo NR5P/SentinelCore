@@ -1,13 +1,14 @@
-// Kiosk weather warnings.
+// Weather warning banner.
 //
-// On the wall kiosk (html.kiosk), a tornado warning, severe thunderstorm watch or any other NWS
-// alert that Settings > WALL KIOSK WEATHER WARNINGS asks for gets a flashing banner across the top
-// of the screen. It floats over the page without blocking it: whoever is using the tablet carries
-// on, and the rest of the screen still works. Tapping the banner opens the radar full screen;
+// A tornado warning, severe thunderstorm watch or any other NWS alert that Settings > WEATHER
+// WARNING BANNER asks for gets a flashing banner across the top of the dashboard - on the wall
+// kiosk (html.kiosk) and on an ordinary browser alike, the same as the apps show. It floats over
+// the page without blocking it: whoever is using it carries on, and the rest of the screen still
+// works. Tapping the banner opens the radar full screen;
 // × dismisses it. Either way it counts as seen and goes away, and the Weather button keeps a
 // coloured dot until the alert ends.
 //
-// A new alert also wakes the screen (a wake lock, which the Pi's screen-sleep timer honours and
+// On the wall kiosk only, a new alert also wakes the screen (a wake lock, which the Pi's screen-sleep timer honours and
 // which lights a dimmed or dark screen) for the configured few minutes, and if nobody has touched
 // the tablet for a minute (so it has dimmed or gone dark) it goes straight to the radar full
 // screen, with the banner and the NWS headline over it saying what's happening.
@@ -136,7 +137,7 @@
 
   function update() {
     const now = Date.now();
-    const active = isKiosk() ? alerts.filter((a) => endsMs(a) > now) : [];
+    const active = alerts.filter((a) => endsMs(a) > now);
     const unseen = active.filter((a) => !isSeen(a));
     shownNow = unseen;
 
@@ -172,19 +173,19 @@
 
     // Wake and hold the screen while any unseen alert is still new.
     const wakeMs = wakeMinutes * 60_000;
-    const waking = wakeMs > 0 && unseen.some((a) => now - (firstShown.get(a.id) ?? now) < wakeMs);
+    const waking = isKiosk() && wakeMs > 0 && unseen.some((a) => now - (firstShown.get(a.id) ?? now) < wakeMs);
     KeepAwake.set("weather-alert", waking);
   }
 
   async function poll() {
-    if (!isKiosk()) {
-      if (alerts.length) { alerts = []; update(); }
-      return;
-    }
     let body;
     try {
-      const response = await fetch("/api/kiosk/weather-alerts", { cache: "no-store" });
-      if (!response.ok) return;
+      const response = await fetch("/api/weather/warnings", { cache: "no-store" });
+      // Signed out (401), or a server from before this route (404): nothing to show.
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 404) { alerts = []; update(); }
+        return;
+      }
       body = await response.json();
     } catch {
       return;   // server unreachable: keep what's showing
@@ -204,16 +205,16 @@
 
     update();
     // Nobody at the tablet (it has dimmed or gone dark): straight to the radar, banner on top.
-    if (arrived && openRadarOnArrival && !busy()) showRadar();
+    if (arrived && openRadarOnArrival && isKiosk() && !busy()) showRadar();
   }
 
-  // Leaving kiosk mode (or coming back to it) re-checks straight away. Only that class: the
-  // wake lock's html.keep-awake changes on every update.
+  // Leaving kiosk mode lets go of the wake hold straight away. Only that class: the wake lock's
+  // html.keep-awake changes on every update.
   let wasKiosk = isKiosk();
   new MutationObserver(() => {
     if (isKiosk() === wasKiosk) return;
     wasKiosk = isKiosk();
-    poll();
+    update();
   }).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 
   // The radar opening or closing changes what tapping the banner does.

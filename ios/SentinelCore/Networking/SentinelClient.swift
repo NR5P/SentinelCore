@@ -857,6 +857,12 @@ final class SentinelClient {
         try await get("/api/weather")
     }
 
+    // The NWS alerts the server's weather-warning settings ask for, worst first - the app-wide
+    // flashing banner (WeatherWarningsModel). A 404 means a server from before the banner.
+    func weatherWarnings() async throws -> WeatherWarningsResponse {
+        try await get("/api/weather/warnings")
+    }
+
     // Precipitation totals, hour-by-hour feels-like and gusts, the barometer's trend, the
     // forecasters' discussion and the SPC severe outlook.
     func weatherDetails() async throws -> WeatherDetails {

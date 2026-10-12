@@ -42,6 +42,13 @@ public partial class MainWindow : Window, INavigator
     private OrganizerView? _organizerView;
     private SettingsView? _settings;
 
+    // NWS warnings: the flashing banner over every section and the Weather item's dot.
+    private readonly WeatherWarningTracker _warnings;
+    private readonly DispatcherTimer _warningTimer;
+    private WeatherWarningBanner? _warningBanner;
+    private IReadOnlyList<WeatherWarning> _warningsShown = Array.Empty<WeatherWarning>();
+    private bool _warningPollRunning;
+
     public MainWindow(AppModel model, OrganizerSession? organizer = null)
     {
         _model = model;
@@ -82,13 +89,33 @@ public partial class MainWindow : Window, INavigator
         _refreshTimer.Tick += async (_, _) => await RefreshQuietlyAsync();
         _refreshTimer.Start();
 
+        // Weather warnings are asked for every minute while signed in - the kiosk's cadence.
+        _warnings = new WeatherWarningTracker(model.Preferences);
+        _warningTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(60) };
+        _warningTimer.Tick += async (_, _) => await PollWarningsAsync();
+        _warningTimer.Start();
+
         BuildSections();
         ApplyState();
 
         Loaded += async (_, _) => await _model.ConnectAsync(resetNetworkSession: true);
     }
 
-    private sealed record SectionItem(AppSection Section, string Title, string Glyph);
+    private sealed class SectionItem(AppSection Section, string Title, string Glyph) : ObservableObject
+    {
+        public AppSection Section { get; } = Section;
+        public string Title { get; } = Title;
+        public string Glyph { get; } = Glyph;
+
+        private Brush? _alertBrush;
+
+        /// <summary>The dot beside the title (Weather, while a warning is in force); null for none.</summary>
+        public Brush? AlertBrush
+        {
+            get => _alertBrush;
+            set => SetProperty(ref _alertBrush, value);
+        }
+    }
 
     /// <summary>
     /// "Feed" and "Triggers" used to be separate sections - one for AI-analysed alerts, one for raw
@@ -146,6 +173,7 @@ public partial class MainWindow : Window, INavigator
         var previous = (SectionList.SelectedItem as SectionItem)?.Section ?? AppSection.Events;
         SectionList.ItemsSource = sections;
         SectionList.SelectedItem = sections.FirstOrDefault(item => item.Section == previous) ?? sections[0];
+        ApplyWarningDot();
     }
 
     private void OnSectionChanged(object sender, SelectionChangedEventArgs e)
@@ -173,6 +201,9 @@ public partial class MainWindow : Window, INavigator
             AppSection.Organizer when _organizer is not null => _organizerView ??= new OrganizerView(_organizer),
             _ => _settings ??= new SettingsView(_model, _organizer),
         };
+
+        // Whether the banner offers the radar or just "got it" depends on what's showing.
+        ApplyWarnings();
     }
 
     private LiveView NewLiveView()
@@ -219,6 +250,7 @@ public partial class MainWindow : Window, INavigator
             case nameof(AppModel.AuthStatus):
                 ApplyState();
                 ResumeDeviceCamera();
+                _ = PollWarningsAsync();
                 break;
             case nameof(AppModel.DeviceHubEnabled):
             case nameof(AppModel.MoviesEnabled):
@@ -302,6 +334,110 @@ public partial class MainWindow : Window, INavigator
         catch (Exception error)
         {
             _model.Log($"Background refresh failed: {error.Message}", DiagnosticLevel.Notice);
+        }
+    }
+
+    // ---------------------------------------------------------------- Weather warnings
+
+    private bool SignedIn => _model.IsConfigured && !_model.RequiresLogin;
+
+    /// <summary>
+    /// Asks the server for the NWS warnings in force. A failure leaves what's showing (a Wi-Fi
+    /// blip shouldn't take a tornado warning off the screen); a server too old to have the route
+    /// answers null, which shows nothing.
+    /// </summary>
+    private async Task PollWarningsAsync()
+    {
+        if (!SignedIn)
+        {
+            _warnings.Update(null);
+            ApplyWarnings();
+            return;
+        }
+        if (_warningPollRunning) return;
+        _warningPollRunning = true;
+        try
+        {
+            var answer = await _model.Client.WeatherWarningsAsync();
+            _warnings.Update(answer?.Alerts);
+        }
+        catch (Exception error)
+        {
+            _model.Log($"Weather warnings unavailable: {error.Message}", DiagnosticLevel.Notice);
+            _warnings.Recompute();
+        }
+        finally
+        {
+            _warningPollRunning = false;
+        }
+        ApplyWarnings();
+    }
+
+    private void ApplyWarnings()
+    {
+        ApplyWarningDot();
+
+        var unseen = SignedIn ? _warnings.Unseen : Array.Empty<WeatherWarning>();
+        _warningsShown = unseen;
+        if (unseen.Count == 0 || !IsLoaded)
+        {
+            _warningBanner?.HideWarning();
+            return;
+        }
+
+        if (_warningBanner is null)
+        {
+            _warningBanner = new WeatherWarningBanner(this, MainState);
+            _warningBanner.Opened += OnWarningBannerOpened;
+            _warningBanner.Dismissed += OnWarningBannerDismissed;
+        }
+
+        var top = unseen[0];
+        var clock = new WeatherClock(TimeZoneInfo.Local);
+        _warningBanner.ShowWarning(
+            top,
+            WeatherWarningTracker.UntilText(top, clock, DateTimeOffset.Now),
+            WeatherWarningTracker.MoreText(unseen.Count),
+            onRadar: SectionHost.Content is WeatherView);
+    }
+
+    private void ApplyWarningDot()
+    {
+        if (SectionList.ItemsSource is not IEnumerable<SectionItem> sections) return;
+        var level = SignedIn ? _warnings.ActiveLevel : null;
+        Brush? brush = null;
+        if (level is not null)
+        {
+            var solid = new SolidColorBrush(WeatherWarningBanner.Colours(level).Bright);
+            solid.Freeze();
+            brush = solid;
+        }
+        foreach (var item in sections) item.AlertBrush = item.Section == AppSection.Weather ? brush : null;
+    }
+
+    private void OnWarningBannerOpened()
+    {
+        _warnings.MarkSeen(_warningsShown);
+        ShowWeatherRadar();
+        ApplyWarnings();
+    }
+
+    private void OnWarningBannerDismissed()
+    {
+        _warnings.MarkSeen(_warningsShown);
+        ApplyWarnings();
+    }
+
+    /// <summary>Opens the Weather section with the radar map full size.</summary>
+    private void ShowWeatherRadar()
+    {
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        if (SectionList.ItemsSource is IEnumerable<SectionItem> sections
+            && sections.FirstOrDefault(section => section.Section == AppSection.Weather) is { } weather)
+        {
+            if (SectionList.SelectedItem == weather) ClearStack();
+            else SectionList.SelectedItem = weather;
+            _weather?.ShowRadar();
         }
     }
 
@@ -442,6 +578,8 @@ public partial class MainWindow : Window, INavigator
         }
 
         _refreshTimer.Stop();
+        _warningTimer.Stop();
+        _warningBanner?.Close();
         _organizerAlerts?.Dispose();
         if (_organizer is not null) _organizer.EnabledChanged -= OnOrganizerEnabledChanged;
         _model.NewNotifiedEvents -= OnNewNotifiedEvents;

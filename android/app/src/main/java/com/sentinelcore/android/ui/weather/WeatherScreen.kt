@@ -32,8 +32,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -400,6 +402,26 @@ fun WeatherScreen(state: SentinelUiState, model: SentinelViewModel) {
     }
 
     BackHandler(enabled = fullscreen) { fullscreen = false }
+
+    // The weather warning banner was tapped (see WeatherWarningBanner): the radar, full screen, as
+    // soon as the map has loaded. A server without the map keeps the request until the tab is
+    // left; the animated radar picture is already on the page.
+    val openRadar by WeatherNavigation.openRadar.collectAsStateWithLifecycle()
+    LaunchedEffect(openRadar, wx.mapInfo) {
+        if (openRadar && wx.mapInfo != null) {
+            WeatherNavigation.openRadar.value = false
+            fullscreen = true
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            WeatherNavigation.openRadar.value = false
+            WeatherNavigation.radarShowing.value = false
+        }
+    }
+    LaunchedEffect(fullscreen, wx.mapInfo) {
+        WeatherNavigation.radarShowing.value = fullscreen && wx.mapInfo != null
+    }
 
     // The body draws on the plain background rather than inside Surfaces, so the text colour is
     // set here for light and dark alike.

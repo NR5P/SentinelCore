@@ -98,6 +98,17 @@ struct WeatherTVView: View {
         .fullScreenCover(isPresented: $radarFullScreen) {
             WeatherRadarFullScreen(radar: radar, zone: zone)
         }
+        // The weather warning banner was selected: the radar full screen, as soon as the map is
+        // ready (straight away if it already is).
+        .onReceive(NotificationCenter.default.publisher(for: .sentinelWeatherRadarRequested)) { _ in
+            if radar.info != nil, WeatherWarningsModel.takeRadarRequest() { radarFullScreen = true }
+        }
+        .onChange(of: radar.info != nil) { _, ready in
+            if ready, WeatherWarningsModel.takeRadarRequest() { radarFullScreen = true }
+        }
+        .onAppear {
+            if radar.info != nil, WeatherWarningsModel.takeRadarRequest() { radarFullScreen = true }
+        }
         #if DEBUG
         // Simulator testing without a remote: `-debugSection weather -debugWeatherRadarFullScreen YES`.
         .onChange(of: radar.info != nil) { _, ready in

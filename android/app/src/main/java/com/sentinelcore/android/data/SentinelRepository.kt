@@ -319,6 +319,14 @@ class SentinelRepository(
         WeatherJson.mapInfo(JSONObject(request("/api/weather/map$query")))
     }
 
+    // The app-wide warning banner's poll, once a minute. Quiet (not logged per request, so it
+    // doesn't bury Diagnostics) and null on any failure - including the 404 of a server older than
+    // the banner, which simply shows nothing.
+    suspend fun weatherWarnings(): List<WeatherWarning>? = withContext(Dispatchers.IO) {
+        val text = quietText("/api/weather/warnings") ?: return@withContext null
+        runCatching { WeatherJson.warnings(JSONObject(text)) }.getOrNull()
+    }
+
     suspend fun weatherStorms(path: String): WeatherStorms = withContext(Dispatchers.IO) {
         WeatherJson.storms(JSONObject(quietText(path) ?: throw IOException("Could not load the storms.")))
     }

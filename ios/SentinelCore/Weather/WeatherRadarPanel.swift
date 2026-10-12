@@ -50,6 +50,11 @@ struct WeatherRadarPanel: View {
             }
         }
         .sentinelCard()
+        // The weather warning banner was tapped: straight to the radar, full screen.
+        .onAppear { if WeatherWarningsModel.takeRadarRequest() { fullScreen = true } }
+        .onReceive(NotificationCenter.default.publisher(for: .sentinelWeatherRadarRequested)) { _ in
+            if WeatherWarningsModel.takeRadarRequest() { fullScreen = true }
+        }
         #if os(iOS)
         .fullScreenCover(isPresented: $fullScreen) { fullScreenMap }
         #else

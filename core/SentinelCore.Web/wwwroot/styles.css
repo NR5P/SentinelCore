@@ -15476,7 +15476,7 @@ html.kiosk .org-entry {
   }
 }
 
-/* ---- Kiosk weather warning banner (kiosk-weather-alert.js) ----------------------------------
+/* ---- Weather warning banner (kiosk-weather-alert.js), kiosk and desktop alike ---------------
    Floats at the top over everything, the full-screen radar (z 2000) included, but narrow and
    short so the page under it still works. Flashes until tapped. */
 .kwx-banner {
@@ -15501,6 +15501,12 @@ html.kiosk .org-entry {
 
 .kwx-banner.hidden {
   display: none;
+}
+
+/* On the desktop the header's tabs are at the top, so the banner floats at the bottom instead. */
+html:not(.kiosk) .kwx-banner {
+  top: auto;
+  bottom: 16px;
 }
 
 .kwx-banner.kwx-watch {
@@ -15626,6 +15632,14 @@ html.kiosk .org-entry {
   border-radius: 50%;
   background: var(--amber);
   box-shadow: 0 0 8px var(--amber);
+}
+
+/* The desktop header's tabs are small pills: the dot sits on the corner. */
+html:not(.kiosk) #tabs .tab[data-wx-alert] .kwx-dot {
+  top: -5px;
+  right: -5px;
+  width: 10px;
+  height: 10px;
 }
 
 #tabs .tab[data-wx-alert="warning"] .kwx-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }

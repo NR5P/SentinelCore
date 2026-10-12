@@ -170,6 +170,12 @@ public partial class WeatherView : UserControl
 
     // ---------------------------------------------------------------- Layout
 
+    /// <summary>Opens the radar map full size - where a click on the weather warning banner lands.</summary>
+    public void ShowRadar()
+    {
+        if (!_expanded) ToggleExpanded();
+    }
+
     private void ToggleExpanded()
     {
         _expanded = !_expanded;

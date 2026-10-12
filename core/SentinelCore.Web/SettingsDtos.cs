@@ -687,9 +687,11 @@ public sealed class KioskSettingsDto
     public int OffSeconds { get; set; } = 300;
 }
 
-// The wall kiosk's weather warning banner (kiosk-weather-alert.js, fed by GET
-// /api/kiosk/weather-alerts). Separate from WEATHER ALERTS, which is about messages to the owner:
-// this is what the tablet on the wall flashes about, and it defaults to everything.
+// The weather warning banner on every screen (WEATHER WARNING BANNER; the web's
+// kiosk-weather-alert.js and each app, fed by GET /api/weather/warnings). Separate from WEATHER
+// ALERTS, which is about messages to the owner: this is what the screens flash about, and it
+// defaults to everything. "Kiosk" in the names is where it started; WakeMinutes and OpenRadar are
+// still wall-tablet only.
 public sealed class KioskWeatherSettingsDto
 {
     public const string SectionName = "KioskWeather";

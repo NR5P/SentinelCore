@@ -66,6 +66,15 @@ import com.sentinelcore.android.ui.organizer.ReminderEditorScreen
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.sentinelcore.android.ui.weather.WeatherAlertDot
+import com.sentinelcore.android.ui.weather.WeatherNavigation
+import com.sentinelcore.android.ui.weather.WeatherWarningBanner
+import com.sentinelcore.android.ui.weather.WeatherWarningsModel
 import androidx.lifecycle.LifecycleEventObserver
 import com.sentinelcore.android.publish.DevicePublisher
 import com.sentinelcore.android.ui.components.ConnectionBadge
@@ -365,6 +374,32 @@ private fun AppShell(
     val context = LocalContext.current
     val tabBarPreferences = remember { TabBarPreferences(context.applicationContext) }
 
+    // NWS warnings for the whole app: polled once a minute while the app is in front (and at once
+    // on coming back to it); a flashing banner over every tab for the ones not yet seen, a dot on
+    // Weather while any is in force. See weather/WeatherWarningBanner.
+    val warnings: WeatherWarningsModel = viewModel { WeatherWarningsModel(model, context.applicationContext) }
+    val warningsLifecycle = LocalLifecycleOwner.current
+    LaunchedEffect(warningsLifecycle) {
+        warningsLifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                warnings.poll()
+                delay(WeatherWarningsModel.POLL_MS)
+            }
+        }
+    }
+    val debugWarnings by WeatherNavigation.debugAlerts.collectAsStateWithLifecycle()
+    LaunchedEffect(debugWarnings) { warnings.update() }
+    val radarShowing by WeatherNavigation.radarShowing.collectAsStateWithLifecycle()
+    val weatherAlertLevel = warnings.active.firstOrNull()?.level
+    val openWarnings: () -> Unit = {
+        val shown = warnings.unseen
+        warnings.markSeen(shown)
+        if (!radarShowing && state.weatherEnabled) {
+            WeatherNavigation.openRadar.value = true
+            onSelectSection(AppSection.WEATHER)
+        }
+    }
+
     // A tablet on a wall that was left in the wall display comes back to it on launch rather
     // than to Events. Once per run, and only once the server has said the hub is on - before that
     // there's no Device Hub to show. Leaving the wall display clears the preference.
@@ -439,6 +474,7 @@ private fun AppShell(
                     SentinelNavigationRail(
                         selected = selectedSection,
                         state = state,
+                        weatherAlertLevel = weatherAlertLevel,
                         onSelected = onSelectSection,
                     )
                 }
@@ -469,7 +505,7 @@ private fun AppShell(
                             NavigationBarItem(
                                 selected = selectedSection == item,
                                 onClick = { onSelectSection(item) },
-                                icon = { Icon(item.icon, contentDescription = item.title) },
+                                icon = { SectionIcon(item, if (item == AppSection.WEATHER) weatherAlertLevel else null) },
                                 label = { Text(item.title) },
                             )
                         }
@@ -480,7 +516,11 @@ private fun AppShell(
                             NavigationBarItem(
                                 selected = selectedSection !in layout.bar,
                                 onClick = { showMore = true },
-                                icon = { Icon(Icons.Default.MoreHoriz, contentDescription = "More") },
+                                icon = {
+                                    // Weather's dot moves here when Weather lives in More.
+                                    val moreDot = weatherAlertLevel?.takeIf { AppSection.WEATHER in layout.more }
+                                    BadgedIcon(moreDot) { Icon(Icons.Default.MoreHoriz, contentDescription = "More") }
+                                },
                                 label = { Text("More") },
                             )
                         }
@@ -500,6 +540,7 @@ private fun AppShell(
             if (showMore && layout.showsMore) {
                 MoreSectionsSheet(
                     sections = layout.more,
+                    alertLevel = { if (it == AppSection.WEATHER) weatherAlertLevel else null },
                     onSelect = { section ->
                         showMore = false
                         onSelectSection(section)
@@ -514,6 +555,17 @@ private fun AppShell(
         }
         // Now Playing, the long-press menus, the speaker picker and the snackbar, over everything.
         AudioOverlays(snackbarBottom = if (useRail) 80.dp else 150.dp)
+        // Over everything, Now Playing included - but only as tall as itself, so the rest of the
+        // screen still works. Not over the full-screen wall display or movie player.
+        if (!chromeHidden) {
+            WeatherWarningBanner(
+                alerts = warnings.unseen,
+                onOpen = openWarnings,
+                onDismiss = { warnings.markSeen(warnings.unseen) },
+                onRadar = radarShowing,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
     }
     }
 }
@@ -1193,6 +1245,7 @@ private fun DetailLoading(onBack: () -> Unit) {
 private fun SentinelNavigationRail(
     selected: AppSection,
     state: SentinelUiState,
+    weatherAlertLevel: String?,
     onSelected: (AppSection) -> Unit,
 ) {
     NavigationRail(
@@ -1222,7 +1275,7 @@ private fun SentinelNavigationRail(
             NavigationRailItem(
                 selected = selected == item,
                 onClick = { onSelected(item) },
-                icon = { Icon(item.icon, contentDescription = item.title) },
+                icon = { SectionIcon(item, if (item == AppSection.WEATHER) weatherAlertLevel else null) },
                 label = { Text(item.title) },
             )
         }
@@ -1230,6 +1283,30 @@ private fun SentinelNavigationRail(
         ConnectionBadge(
             state.connectionState,
             Modifier.padding(horizontal = 10.dp, vertical = 18.dp),
+        )
+    }
+}
+
+// A section's icon, with the weather-warning dot on its corner when `alertLevel` is set.
+@Composable
+internal fun SectionIcon(section: AppSection, alertLevel: String?) {
+    BadgedIcon(alertLevel) { Icon(section.icon, contentDescription = section.title) }
+}
+
+@Composable
+internal fun BadgedIcon(alertLevel: String?, icon: @Composable () -> Unit) {
+    if (alertLevel == null) {
+        icon()
+        return
+    }
+    Box {
+        icon()
+        WeatherAlertDot(
+            alertLevel,
+            Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 4.dp, y = (-3).dp)
+                .semantics { contentDescription = "weather alert" },
         )
     }
 }

@@ -4,7 +4,7 @@ namespace SentinelCore.Web;
 // Anonymous on purpose: that script has no login, and two timer lengths say nothing about anyone.
 public static class KioskEndpoints
 {
-    // How old the NWS answer behind the kiosk's banner may be. The page asks every minute.
+    // How old the NWS answer behind the warning banner may be. Screens ask every minute.
     public static readonly TimeSpan WeatherAlertsMaxAge = TimeSpan.FromMinutes(1);
 
     public static void MapKioskEndpoints(this WebApplication app)
@@ -16,9 +16,11 @@ public static class KioskEndpoints
             return Results.Ok(new { dimSeconds = kiosk.DimSeconds, offSeconds = kiosk.OffSeconds });
         }).AllowAnonymous();
 
-        // The weather warnings the kiosk banner (kiosk-weather-alert.js) shows, already filtered by
-        // Settings > WALL KIOSK WEATHER WARNINGS. Needs a login like the Weather tab it opens.
-        app.MapGet("/api/kiosk/weather-alerts", async (AppSettingsFile settings, WeatherService weather, CancellationToken ct) =>
+        // The weather warnings every screen's warning banner shows (the wall kiosk's
+        // kiosk-weather-alert.js, the dashboard, and the iPhone, Mac, Apple TV, Android and
+        // Windows apps), already filtered by Settings > WEATHER WARNING BANNER. Needs a login like
+        // the Weather tab it opens. /api/kiosk/weather-alerts is the name it shipped under.
+        async Task<IResult> Warnings(AppSettingsFile settings, WeatherService weather, CancellationToken ct)
         {
             var options = await settings.GetSectionAsync<KioskWeatherSettingsDto>(KioskWeatherSettingsDto.SectionName, ct)
                 ?? new KioskWeatherSettingsDto();
@@ -26,7 +28,10 @@ public static class KioskEndpoints
                 return Results.Ok(KioskWeatherAlerts.Response(options, []));
             var feed = await weather.GetActiveAlertsAsync(WeatherAlertsMaxAge, ct);
             return Results.Ok(KioskWeatherAlerts.Response(options, feed?.Alerts ?? []));
-        }).RequireAuthorization();
+        }
+
+        app.MapGet("/api/weather/warnings", Warnings).RequireAuthorization();
+        app.MapGet("/api/kiosk/weather-alerts", Warnings).RequireAuthorization();
     }
 }
 
