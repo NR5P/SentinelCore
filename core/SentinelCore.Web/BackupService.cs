@@ -467,9 +467,10 @@ public sealed class BackupService(
 
         // Wake-up alarms and ListenBrainz connections: added only where nothing by that id (or
         // that person) exists yet, so restoring never undoes a change made since.
+        var (wakeAlarmsRestored, listenBrainzRestored) = (0, 0);
         if (document.Audio is { } audioBackup)
         {
-            await audio.RestoreAsync(audioBackup, ct);
+            (wakeAlarmsRestored, listenBrainzRestored) = await audio.RestoreAsync(audioBackup, ct);
             await listenBrainz.ConnectedChangedAsync(ct);
         }
         // Music: libraries keep their ids and the rescan lands on the same track ids, so plays,
@@ -541,6 +542,8 @@ public sealed class BackupService(
             mediaProgressRestored,
             musicRowsRestored,
             podcastItemsRestored,
+            wakeAlarmsRestored,
+            listenBrainzRestored,
             devicesRestored = hubCounts?.DevicesRestored ?? 0,
             automationRulesRestored = hubCounts?.RulesRestored ?? 0,
             schedulesRestored = hubCounts?.SchedulesRestored ?? 0,

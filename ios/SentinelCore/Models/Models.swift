@@ -729,6 +729,7 @@ struct BackupRestoreResult: Decodable {
     var triggerZonesRestored: Int?
     var gateChecksRestored: Int?
     var accountsRestored: Int?
+    var liveOrderRestored: Int?
     var recordingSchedulesRestored: Int?
     var devicesRestored: Int?
     var automationRulesRestored: Int?
@@ -736,6 +737,15 @@ struct BackupRestoreResult: Decodable {
     var organizerItemsRestored: Int?
     var attachmentsRestored: Int?
     var knownFacePhotosRestored: Int?
+    var organizerAutomationsRestored: Int?
+    var alarmSensorsRestored: Int?
+    var familyDrivesRestored: Int?
+    var mediaLibrariesRestored: Int?
+    var mediaProgressRestored: Int?
+    var musicRowsRestored: Int?
+    var podcastItemsRestored: Int?
+    var wakeAlarmsRestored: Int?
+    var listenBrainzRestored: Int?
     // Things to act on that the counts can't say - "restart the dashboard", "the main app wasn't
     // running so devices weren't restored".
     var notes: [String]?
@@ -749,12 +759,22 @@ struct BackupRestoreResult: Decodable {
             (recordingSchedulesRestored, "recording schedule"),
             (gateChecksRestored, "gate check"),
             (accountsRestored, "account"),
+            (liveOrderRestored, "Live camera arrangement"),
             (devicesRestored, "device"),
             (automationRulesRestored, "automation rule"),
             (schedulesRestored, "schedule"),
             (organizerItemsRestored, "Organizer item"),
             (attachmentsRestored, "attachment"),
-            (knownFacePhotosRestored, "face photo")
+            (knownFacePhotosRestored, "face photo"),
+            (organizerAutomationsRestored, "board automation"),
+            (alarmSensorsRestored, "alarm sensor"),
+            (familyDrivesRestored, "Files backup drive"),
+            (mediaLibrariesRestored, "Movies & TV folder"),
+            (mediaProgressRestored, "watch position"),
+            (musicRowsRestored, "music item"),
+            (podcastItemsRestored, "podcast item"),
+            (wakeAlarmsRestored, "wake-up alarm"),
+            (listenBrainzRestored, "ListenBrainz connection")
         ]
         let described = parts.compactMap { count, noun -> String? in
             guard let count, count > 0 else { return nil }

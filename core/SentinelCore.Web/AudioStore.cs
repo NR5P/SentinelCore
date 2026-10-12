@@ -353,23 +353,24 @@ public sealed class SqliteAudioStore : IDisposable
 
     // Alarms and connections that already exist are left as they are: the live copy is newer
     // than any backup of it.
-    public async Task<int> RestoreAsync(AudioBackup backup, CancellationToken cancellationToken)
+    public async Task<(int Alarms, int ListenBrainz)> RestoreAsync(AudioBackup backup, CancellationToken cancellationToken)
     {
-        var restored = 0;
+        var alarms = 0;
+        var listenBrainz = 0;
         var existingAlarms = (await GetAlarmsAsync(null, cancellationToken)).Select(a => a.Id).ToHashSet();
         foreach (var alarm in backup.Alarms ?? [])
         {
             if (alarm.Id == Guid.Empty || existingAlarms.Contains(alarm.Id)) continue;
             await SaveAlarmAsync(alarm, cancellationToken);
-            restored++;
+            alarms++;
         }
         foreach (var account in backup.ListenBrainz ?? [])
         {
             if (string.IsNullOrWhiteSpace(account.Token) || await GetListenBrainzAsync(account.UserKey, cancellationToken) is not null) continue;
             await SetListenBrainzAsync(account.UserKey, account, cancellationToken);
-            restored++;
+            listenBrainz++;
         }
-        return restored;
+        return (alarms, listenBrainz);
     }
 
     private static async Task<IReadOnlyList<T>> ReadJsonAsync<T>(SqliteCommand command, CancellationToken cancellationToken)

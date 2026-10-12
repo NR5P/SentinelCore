@@ -724,12 +724,22 @@ class SentinelRepository(
             "recordingSchedulesRestored" to "recording schedule",
             "gateChecksRestored" to "gate check",
             "accountsRestored" to "account",
+            "liveOrderRestored" to "Live camera arrangement",
             "devicesRestored" to "device",
             "automationRulesRestored" to "automation rule",
             "schedulesRestored" to "schedule",
             "organizerItemsRestored" to "Organizer item",
             "attachmentsRestored" to "attachment",
             "knownFacePhotosRestored" to "face photo",
+            "organizerAutomationsRestored" to "board automation",
+            "alarmSensorsRestored" to "alarm sensor",
+            "familyDrivesRestored" to "Files backup drive",
+            "mediaLibrariesRestored" to "Movies & TV folder",
+            "mediaProgressRestored" to "watch position",
+            "musicRowsRestored" to "music item",
+            "podcastItemsRestored" to "podcast item",
+            "wakeAlarmsRestored" to "wake-up alarm",
+            "listenBrainzRestored" to "ListenBrainz connection",
         ).mapNotNull { (key, noun) ->
             val count = json.optInt(key)
             if (count > 0) count to noun else null

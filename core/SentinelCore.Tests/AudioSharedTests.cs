@@ -487,6 +487,9 @@ public sealed class AudioSharedTests : IDisposable
         Assert.True(result.Errors is null or { Count: 0 }, string.Join("; ", result.Errors ?? []));
         Assert.Equal("Renamed", Assert.Single(await target.GetAlarmsAsync(null, Ct)).Name);
         Assert.Equal("sam_lb", (await target.GetListenBrainzAsync("pat", Ct))!.Username);
+        var counts = System.Text.Json.JsonSerializer.SerializeToElement(result.Counts);
+        Assert.Equal(0, counts.GetProperty("wakeAlarmsRestored").GetInt32());
+        Assert.Equal(1, counts.GetProperty("listenBrainzRestored").GetInt32());
     }
 
     // MARK: - The announcer

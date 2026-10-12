@@ -22,7 +22,7 @@
                 <StackPanel>
                     <TextBlock Text="EXPORT" Style="{StaticResource GroupHeading}" />
                     <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                               Text="Saves the server's whole configuration to a file: cameras, trigger zones, accounts, schedules, devices and every setting. It travels as the server wrote it and goes back exactly as it came." />
+                               Text="Saves the server's configuration into one file you can restore later or move to another machine: settings, cameras, camera groups, trigger zones, recording schedules, gate checks, user accounts, Device Hub devices and automations, the alarm, Organizer notes, events, reminders, boards and board automations, Files backup drives, movie, music and podcast libraries with everyone's watch and listening history, and wake-up alarms. Attachments, face photos and the licence are only in the full backup made on the dashboard." />
                     <Button x:Name="ExportButton" Content="Save a backup…" Margin="0,14,0,0"
                             HorizontalAlignment="Left" Style="{StaticResource PrimaryButton}"
                             Click="OnExportClicked" />
@@ -33,7 +33,7 @@
                 <StackPanel>
                     <TextBlock Text="RESTORE" Style="{StaticResource GroupHeading}" />
                     <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap"
-                               Text="Replaces what is on the server now with what is in the file. Anything added since the backup was taken is lost." />
+                               Text="Nothing in the current setup that isn't mentioned in the backup is touched or removed." />
                     <Button x:Name="ImportButton" Content="Restore from a backup…" Margin="0,14,0,0"
                             HorizontalAlignment="Left" Style="{StaticResource DangerButton}"
                             Click="OnImportClicked" />

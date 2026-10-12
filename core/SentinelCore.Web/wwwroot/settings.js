@@ -1564,7 +1564,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
-    body.appendChild(buildSectionIntro("Saves everything you'd otherwise have to set up again into one file. That's settings, cameras, camera groups, trigger zones, recording schedules, gate checks, user accounts, Device Hub devices, automation rules and schedules. It's also all Organizer notes, events, reminders and boards with their attachments, known faces with their photos, the licence, and this server's HTTPS certificate authority and HomeKit pairing. Restore it here, on this machine or a replacement. To have this done for you every night, and sent to another computer, turn on NIGHTLY AUTO EXPORT. The FILES library itself is not in this file - only its backup drives are; the drives hold the files, and a restored server brings them back from one with \"bring files back\" on the FILES tab."));
+    body.appendChild(buildSectionIntro("Saves everything you'd otherwise have to set up again into one file. That's settings, cameras, camera groups, trigger zones, recording schedules, gate checks, user accounts, Device Hub devices, automation rules and schedules, and the alarm's sensors and settings. It's also all Organizer notes, events, reminders and boards with their attachments and board automations; the Movies & TV, Music and Podcasts libraries with everyone's watch and listening history, playlists and subscriptions; wake-up alarms; known faces with their photos, the licence, and this server's HTTPS certificate authority and HomeKit pairing. Restore it here, on this machine or a replacement. To have this done for you every night, and sent to another computer, turn on NIGHTLY AUTO EXPORT. The FILES library itself is not in this file - only its backup drives are; the drives hold the files, and a restored server brings them back from one with \"bring files back\" on the FILES tab. Movies, music and podcast episodes aren't in it either - just the folders they live in, which are scanned again after a restore."));
 
     const warning = document.createElement("div");
     warning.className = "settings-hint";
@@ -1737,12 +1737,22 @@ window.GateWatchSettings = (function () {
           [payload.recordingSchedulesRestored, "recording schedule"],
           [payload.gateChecksRestored, "gate check"],
           [payload.accountsRestored, "account"],
+          [payload.liveOrderRestored, "Live camera arrangement"],
           [payload.devicesRestored, "device"],
           [payload.automationRulesRestored, "automation rule"],
           [payload.schedulesRestored, "schedule"],
           [payload.organizerItemsRestored, "Organizer item"],
           [payload.attachmentsRestored, "attachment"],
-          [payload.knownFacePhotosRestored, "face photo"]
+          [payload.knownFacePhotosRestored, "face photo"],
+          [payload.organizerAutomationsRestored, "board automation"],
+          [payload.alarmSensorsRestored, "alarm sensor"],
+          [payload.familyDrivesRestored, "Files backup drive"],
+          [payload.mediaLibrariesRestored, "Movies & TV folder"],
+          [payload.mediaProgressRestored, "watch position"],
+          [payload.musicRowsRestored, "music item"],
+          [payload.podcastItemsRestored, "podcast item"],
+          [payload.wakeAlarmsRestored, "wake-up alarm"],
+          [payload.listenBrainzRestored, "ListenBrainz connection"]
         ]
           .filter(([count]) => count > 0)
           .map(([count, noun]) => `${count} ${noun}${count === 1 ? "" : "s"}`);

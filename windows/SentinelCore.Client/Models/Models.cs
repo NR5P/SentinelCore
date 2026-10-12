@@ -634,6 +634,7 @@ public sealed class BackupRestoreResult
     public int? TriggerZonesRestored { get; init; }
     public int? GateChecksRestored { get; init; }
     public int? AccountsRestored { get; init; }
+    public int? LiveOrderRestored { get; init; }
     public int? RecordingSchedulesRestored { get; init; }
     public int? DevicesRestored { get; init; }
     public int? AutomationRulesRestored { get; init; }
@@ -641,6 +642,15 @@ public sealed class BackupRestoreResult
     public int? OrganizerItemsRestored { get; init; }
     public int? AttachmentsRestored { get; init; }
     public int? KnownFacePhotosRestored { get; init; }
+    public int? OrganizerAutomationsRestored { get; init; }
+    public int? AlarmSensorsRestored { get; init; }
+    public int? FamilyDrivesRestored { get; init; }
+    public int? MediaLibrariesRestored { get; init; }
+    public int? MediaProgressRestored { get; init; }
+    public int? MusicRowsRestored { get; init; }
+    public int? PodcastItemsRestored { get; init; }
+    public int? WakeAlarmsRestored { get; init; }
+    public int? ListenBrainzRestored { get; init; }
 
     // Things to act on that the counts can't say - "restart the dashboard", "the main app wasn't
     // running so devices weren't restored".
@@ -664,12 +674,22 @@ public sealed class BackupRestoreResult
                 (RecordingSchedulesRestored, "recording schedule"),
                 (GateChecksRestored, "gate check"),
                 (AccountsRestored, "account"),
+                (LiveOrderRestored, "Live camera arrangement"),
                 (DevicesRestored, "device"),
                 (AutomationRulesRestored, "automation rule"),
                 (SchedulesRestored, "schedule"),
                 (OrganizerItemsRestored, "Organizer item"),
                 (AttachmentsRestored, "attachment"),
                 (KnownFacePhotosRestored, "face photo"),
+                (OrganizerAutomationsRestored, "board automation"),
+                (AlarmSensorsRestored, "alarm sensor"),
+                (FamilyDrivesRestored, "Files backup drive"),
+                (MediaLibrariesRestored, "Movies & TV folder"),
+                (MediaProgressRestored, "watch position"),
+                (MusicRowsRestored, "music item"),
+                (PodcastItemsRestored, "podcast item"),
+                (WakeAlarmsRestored, "wake-up alarm"),
+                (ListenBrainzRestored, "ListenBrainz connection"),
             };
             var described = parts
                 .Where(part => part.Count is > 0)

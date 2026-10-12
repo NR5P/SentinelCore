@@ -178,6 +178,42 @@ public sealed class BackupCoverageTests : IDisposable
                 $"{table} is on the deliberately-excluded list but appears in BackupDocument - update one or the other.");
     }
 
+    // The same drift one layer out: every client spells out what a restore brought back, and when
+    // board automations, the alarm, Files drives, Movies & TV, Music, Podcasts and wake-up alarms
+    // were added to the backup none of the four was told, so restoring them looked like it had
+    // brought back nothing. Each count BackupService reports has to be in every client's summary.
+    [Fact]
+    public void EveryRestoreCount_IsShownByEveryClient()
+    {
+        var core = RepositoryCoreDirectory();
+        var service = File.ReadAllText(Path.Combine(core, "SentinelCore.Web", "BackupService.cs"));
+        var start = service.IndexOf("return new RestoreResult(null, new", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Couldn't find the restore result in BackupService.cs.");
+        var block = service[start..service.IndexOf("});", start, StringComparison.Ordinal)];
+        // Counts only: the yes/no machine-identity flags are reported in the notes instead.
+        var counts = block.Split('\n')
+            .Where(line => !line.Contains("?? false", StringComparison.Ordinal))
+            .SelectMany(line => System.Text.RegularExpressions.Regex.Matches(line, @"\b(\w+Restored)\b").Select(m => m.Groups[1].Value))
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Contains("camerasRestored", counts);
+
+        var repository = Path.GetDirectoryName(core)!;
+        foreach (var client in new[]
+        {
+            Path.Combine(core, "SentinelCore.Web", "wwwroot", "settings.js"),
+            Path.Combine(repository, "ios", "SentinelCore", "Models", "Models.swift"),
+            Path.Combine(repository, "android", "app", "src", "main", "java", "com", "sentinelcore", "android", "data", "SentinelRepository.kt"),
+            Path.Combine(repository, "windows", "SentinelCore.Client", "Models", "Models.cs"),
+        })
+        {
+            if (!File.Exists(client)) continue;
+            var source = File.ReadAllText(client);
+            foreach (var count in counts)
+                Assert.True(source.Contains(count, StringComparison.OrdinalIgnoreCase),
+                    $"{Path.GetFileName(client)} doesn't show {count}: add it to that client's restore summary.");
+        }
+    }
+
     private static string RepositoryCoreDirectory()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)

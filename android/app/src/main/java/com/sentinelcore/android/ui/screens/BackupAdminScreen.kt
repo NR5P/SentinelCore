@@ -121,9 +121,12 @@ fun BackupAdminScreen(
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Export", style = MaterialTheme.typography.titleSmall, color = SentinelGreen)
                         Text(
-                            "Saves everything configurable here — settings, cameras, camera groups, trigger " +
-                                "zones, gate checks, user accounts, known vehicles, prompt profiles — into one " +
-                                "file you can restore later or move to another machine.",
+                            "Saves the server's configuration into one file you can restore later or move to another " +
+                                "machine: settings, cameras, camera groups, trigger zones, recording schedules, gate checks, " +
+                                "user accounts, Device Hub devices and automations, the alarm, Organizer notes, events, " +
+                                "reminders, boards and board automations, Files backup drives, movie, music and podcast " +
+                                "libraries with everyone's watch and listening history, and wake-up alarms. Attachments, face " +
+                                "photos and the licence are only in the full backup made on the dashboard.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
