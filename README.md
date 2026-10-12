@@ -249,9 +249,9 @@ number per release.
 
 ## Running it
 
-**Install on Linux:** download the zip for your machine from the
-[latest release](https://github.com/NR5P/SentinelCore/releases/latest) (`linux-x64` for most PCs,
-`linux-arm64` for a Raspberry Pi 4/5), then:
+**Install on Linux:** download `SentinelCore-linux-x64.zip` from the
+[latest release](https://github.com/NR5P/SentinelCore/releases/latest) onto an x86-64 PC, mini PC or
+server (a Raspberry Pi isn't enough for the local vision model), then:
 
 ```bash
 unzip SentinelCore-linux-x64.zip
