@@ -243,7 +243,7 @@ window.SentinelFiles = (function () {
 
   async function rename(path) {
     const current = nameOf(path);
-    const name = prompt("New name:", current);
+    const name = await window.SentinelAsk.text("New name:", current);
     if (!name || name.trim() === current) return;
     try {
       await api("/move", json("POST", { from: path, to: `${parentOf(path)}${parentOf(path) ? "/" : ""}${name.trim()}` }));
@@ -254,7 +254,7 @@ window.SentinelFiles = (function () {
   }
 
   async function move(path) {
-    const target = prompt("Move to which folder? (e.g. Photos/2026, or blank for the top level)", parentOf(path));
+    const target = await window.SentinelAsk.text("Move to which folder? (e.g. Photos/2026, or blank for the top level)", parentOf(path));
     if (target === null) return;
     const folder = target.trim().replace(/^\/+|\/+$/g, "");
     try {
@@ -279,7 +279,7 @@ window.SentinelFiles = (function () {
   }
 
   async function newFolder() {
-    const name = prompt("Folder name:");
+    const name = await window.SentinelAsk.text("Folder name:");
     if (!name || !name.trim()) return;
     try {
       const made = await api("/folders", json("POST", { path: `${currentPath}${currentPath ? "/" : ""}${name.trim()}` }));

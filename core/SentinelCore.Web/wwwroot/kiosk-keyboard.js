@@ -247,7 +247,8 @@
   function enter() {
     const el = target;
     if (!el) return;
-    if (el.tagName === "TEXTAREA") { insert("\n"); return; }
+    // A textarea gets a new line - unless it's a one-entry-at-a-time box (data-kiosk-enter="submit").
+    if (el.tagName === "TEXTAREA" && el.dataset.kioskEnter !== "submit") { insert("\n"); return; }
     if (el.isContentEditable) { document.execCommand("insertParagraph"); return; }
     const init = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
     const proceed = el.dispatchEvent(new KeyboardEvent("keydown", init));
@@ -529,9 +530,11 @@
     if (!isOn() || !typeable(e.target)) return;
     // A field focused by a tap gets the keyboard. One a script focused on its own (a tab that
     // focuses its search box) doesn't, so the keyboard doesn't cover the page uninvited - except
-    // on the sign-in screen, where typing is the only thing to do.
+    // on the sign-in screen, where typing is the only thing to do, and in a dialog that exists
+    // only to ask for some text (data-kiosk-kb-auto, kiosk-ask.js).
     const tapped = performance.now() - lastPress < TAP_FOCUS_MS;
-    if (tapped || e.target.closest("#login-gate") || (kb && kb.classList.contains("open"))) show(e.target);
+    const asked = e.target.closest("#login-gate") || e.target.hasAttribute("data-kiosk-kb-auto");
+    if (tapped || asked || (kb && kb.classList.contains("open"))) show(e.target);
   });
 
   // The sign-in screen can focus its username box before the browser window itself has focus

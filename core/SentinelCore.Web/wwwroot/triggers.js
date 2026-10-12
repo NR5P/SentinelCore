@@ -510,10 +510,10 @@ window.GateWatchTriggers = (function () {
     renderCircle();
   });
 
-  document.getElementById("zone-rename").addEventListener("click", () => {
+  document.getElementById("zone-rename").addEventListener("click", async () => {
     const zone = activeZoneOrNull();
     if (!zone) return;
-    const name = window.prompt("Zone name", zone.name);
+    const name = await window.SentinelAsk.text("Zone name", zone.name);
     if (name === null) return;
     zone.name = name.trim().slice(0, 50) || zone.name;
     renderPolygon();

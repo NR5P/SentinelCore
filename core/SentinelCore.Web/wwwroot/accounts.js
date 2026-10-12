@@ -330,7 +330,7 @@ window.GateWatchAccounts = (function () {
     resetBtn.textContent = "reset password";
     resetBtn.addEventListener("click", async () => {
       errors.innerHTML = "";
-      const newPassword = prompt(`New password for "${account.username}" (min. 8 characters):`);
+      const newPassword = await window.SentinelAsk.text(`New password for "${account.username}" (min. 8 characters):`, "", { type: "password" });
       if (!newPassword) return;
       try {
         const response = await fetch(`/api/accounts/${account.id}/reset-password`, {
@@ -354,7 +354,7 @@ window.GateWatchAccounts = (function () {
     emailBtn.textContent = account.email ? "change email" : "add email";
     emailBtn.addEventListener("click", async () => {
       errors.innerHTML = "";
-      const email = prompt(`Email for "${account.username}" (used by board automations; leave empty to remove):`, account.email || "");
+      const email = await window.SentinelAsk.text(`Email for "${account.username}" (used by board automations; leave empty to remove):`, account.email || "", { type: "email" });
       if (email === null) return;
       const message = await saveEmail(`/api/accounts/${account.id}/email`, email.trim());
       if (message) { showErrors(errors, [message]); return; }

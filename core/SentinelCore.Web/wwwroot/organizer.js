@@ -1494,8 +1494,8 @@ window.SentinelOrganizer = (function () {
       tab.addEventListener("click", () => { selectedBoardId = tab.dataset.board; renderBoards(); });
       bindBoardTabDrop(tab);
     }
-    el("org-board-add").addEventListener("click", () => {
-      const title = prompt("Board name", "New board");
+    el("org-board-add").addEventListener("click", async () => {
+      const title = await window.SentinelAsk.text("Board name", "New board");
       if (!title) return;
       const newBoard = S.create("board", { title, position: Date.now() }, { spaceId: defaultSpace() });
       ["To do", "Doing", "Done"].forEach((name, i) => S.create("column", { title: name, position: i + 1 }, { parentId: newBoard.id }));
@@ -1506,8 +1506,8 @@ window.SentinelOrganizer = (function () {
 
     el("board-space").addEventListener("change", () => S.update(board.id, { spaceId: el("board-space").value }));
     el("board-automations").addEventListener("click", () => window.SentinelBoardAutomations.open(board));
-    el("board-rename").addEventListener("click", () => {
-      const title = prompt("Board name", board.fields.title || "");
+    el("board-rename").addEventListener("click", async () => {
+      const title = await window.SentinelAsk.text("Board name", board.fields.title || "");
       if (title) S.update(board.id, { title });
     });
     el("board-delete").addEventListener("click", () => {
@@ -1574,20 +1574,38 @@ window.SentinelOrganizer = (function () {
   }
 
   function bindBoard(root, board) {
+    const addCard = (columnId, title) => {
+      const cards = S.children(columnId).filter((c) => c.kind === "card");
+      const last = cards.reduce((max, c) => Math.max(max, c.fields.position || 0), 0);
+      S.create("card", { title, position: last + 1 }, { parentId: columnId });
+    };
+    const kiosk = document.documentElement.classList.contains("kiosk");
     for (const input of root.querySelectorAll("[data-add-card]")) {
+      if (kiosk) {
+        // On the wall a card is typed into a big box in the middle of the screen, above the
+        // keyboard, instead of the small field at the bottom of the column it would cover.
+        input.readOnly = true;
+        input.addEventListener("click", () => {
+          const column = S.get(input.dataset.addCard);
+          window.SentinelAsk.compose({
+            title: `Add to ${column ? column.fields.title || "column" : "column"}`,
+            placeholder: "type a card, then enter",
+            add: (title) => addCard(input.dataset.addCard, title),
+          });
+        });
+        continue;
+      }
       input.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" || !input.value.trim()) return;
-        const cards = S.children(input.dataset.addCard).filter((c) => c.kind === "card");
-        const last = cards.reduce((max, c) => Math.max(max, c.fields.position || 0), 0);
-        S.create("card", { title: input.value.trim(), position: last + 1 }, { parentId: input.dataset.addCard });
+        addCard(input.dataset.addCard, input.value.trim());
         const column = input.dataset.addCard;
         setTimeout(() => { const again = root.querySelector(`[data-add-card="${CSS.escape(column)}"]`); if (again) again.focus(); }, 30);
       });
     }
     for (const title of root.querySelectorAll("[data-rename-column]")) {
-      title.addEventListener("click", () => {
+      title.addEventListener("click", async () => {
         const column = S.get(title.dataset.renameColumn);
-        const name = prompt("Column name", column.fields.title || "");
+        const name = await window.SentinelAsk.text("Column name", column.fields.title || "");
         if (name) S.update(column.id, { title: name });
       });
     }
@@ -1932,7 +1950,7 @@ window.SentinelOrganizer = (function () {
         <div class="org-comments-card">${escapeHtml(card.fields.title || "card")}</div>
         <div id="card-comments" class="org-comments"></div>
         <div class="org-comment-compose">
-          <textarea class="field-textarea" id="card-new-comment" rows="2" placeholder="write a comment"></textarea>
+          <textarea class="field-textarea" id="card-new-comment" rows="2" data-kiosk-enter="submit" placeholder="write a comment"></textarea>
           <button class="btn" id="card-post-comment">post</button>
         </div>
       </div>
@@ -1984,7 +2002,7 @@ window.SentinelOrganizer = (function () {
         <div id="card-attachments"></div>
         <div class="org-subsection">COMMENTS</div>
         <div id="card-comments" class="org-comments"></div>
-        <textarea class="field-textarea" id="card-new-comment" rows="2" placeholder="write a comment, then press enter (shift+enter for a new line)"></textarea>
+        <textarea class="field-textarea" id="card-new-comment" rows="2" data-kiosk-enter="submit" placeholder="write a comment, then press enter (shift+enter for a new line)"></textarea>
       </div>
       <div class="zone-editor-footer">
         <button class="btn" id="card-save">save</button>
@@ -2127,7 +2145,7 @@ window.SentinelOrganizer = (function () {
             <button class="org-x" data-delete-comment="${escapeHtml(c.id)}" aria-label="delete comment">&times;</button>
           </div>
           ${editing === c.id
-            ? `<textarea class="field-textarea" data-editing rows="3">${escapeHtml(c.fields.body || "")}</textarea>
+            ? `<textarea class="field-textarea" data-editing data-kiosk-enter="submit" rows="3">${escapeHtml(c.fields.body || "")}</textarea>
                <div class="org-form-row"><button class="btn btn-small" data-save-comment>save</button><button class="btn btn-small" data-cancel-comment>cancel</button></div>`
             : `<div class="org-comment-body">${escapeHtml(c.fields.body || "")}</div>`}
         </div>`).join("") : `<div class="event-count">No comments yet.</div>`;
