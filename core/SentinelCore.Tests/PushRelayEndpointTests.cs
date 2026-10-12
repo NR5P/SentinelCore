@@ -394,4 +394,27 @@ public sealed class PublicPagesTests
         Assert.StartsWith("text/html", response.Content.Headers.ContentType?.MediaType);
         Assert.Contains(expectedText, await response.Content.ReadAsStringAsync(ct));
     }
+
+    // The website is deployed into the site folder while the relay is running, so / and its
+    // assets must pick it up without a restart - and /privacy must stay the repo's policy.
+    [Fact]
+    public async Task DeployedSite_ServesItsIndexAndAssets_ButNotPrivacy()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var site = Path.Combine(Path.GetTempPath(), $"relay-site-{Guid.NewGuid():N}");
+        using var factory = new WebApplicationFactory<RelayProgram>()
+            .WithWebHostBuilder(b => b
+                .UseSetting("Relay:DataDirectory", Path.Combine(Path.GetTempPath(), $"relay-pages-{Guid.NewGuid():N}"))
+                .UseSetting("Relay:SiteDirectory", site));
+        using var client = factory.CreateClient();
+        Assert.Contains("Sentinel Core", await client.GetStringAsync("/", ct));
+
+        await File.WriteAllTextAsync(Path.Combine(site, "index.html"), "<h1>deployed site</h1>", ct);
+        await File.WriteAllTextAsync(Path.Combine(site, "style.css"), "body{}", ct);
+
+        Assert.Contains("deployed site", await client.GetStringAsync("/", ct));
+        using var css = await client.GetAsync("/style.css", ct);
+        Assert.Equal(HttpStatusCode.OK, css.StatusCode);
+        Assert.Contains("Privacy Policy", await client.GetStringAsync("/privacy", ct));
+    }
 }

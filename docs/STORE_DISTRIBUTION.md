@@ -191,9 +191,10 @@ Mac and Apple TV builds work the same way inside the same TestFlight app records
 
 ## 6. Review prep (needed for external TestFlight and for anything beyond Play internal)
 
-- **Privacy policy URL: `https://nr5p.com/privacy`.** The push relay serves it (and a landing
-  page at `/`) straight from `docs/PRIVACY_POLICY.md`, so editing that file and running
-  `./scripts/deploy.sh relay` on the box updates the live page. One-time **[you]**: in
+- **Privacy policy URL: `https://nr5p.com/privacy`.** The push relay serves it straight from
+  `docs/PRIVACY_POLICY.md`, so editing that file and running `./scripts/deploy.sh relay` on the
+  box updates the live page. The rest of nr5p.com (landing page, Docs tab) is the private
+  `NR5P/nr5p-website` repo, which the relay serves from `SentinelCore.PushRelay/site/`. One-time **[you]**: in
   Cloudflare Zero Trust → the tunnel → Published application routes, change the existing
   `nr5p.com` route's service from `http://127.0.0.1` to **HTTP `127.0.0.1:3330`** (same target
   as `push.nr5p.com`). Nothing served the bare domain before, so nothing is displaced.

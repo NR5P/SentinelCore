@@ -22,6 +22,14 @@ public sealed class RelayOptions
     [Required]
     public string UpdatesDirectory { get; init; } = "updates";
 
+    // The nr5p.com website: a static folder whose index.html is served at / and whose other
+    // files (images, css) at their own paths. Its source is the separate NR5P/nr5p-website repo,
+    // copied here by that repo's deploy.sh. Missing or empty, / falls back to the small built-in
+    // page in PublicPages.cs. /privacy is never taken from here - it stays rendered from this
+    // repo's docs/PRIVACY_POLICY.md. Relative paths are under the content root.
+    [Required]
+    public string SiteDirectory { get; init; } = "site";
+
     // Per license. A household is a handful of phones and an Apple TV or two; a number in the
     // hundreds means a license file is being shared around, and the cap is what makes that show
     // up as a refusal in the customer's log rather than as a bill.

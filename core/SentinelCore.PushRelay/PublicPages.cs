@@ -1,12 +1,15 @@
 using System.Net.Mime;
 using System.Reflection;
 using Markdig;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Options;
 
 namespace SentinelCore.PushRelay;
 
 // The relay is the one process the vendor already has on the public internet, so it also serves
 // the two pages the app stores insist on: a landing page at the bare domain and the privacy
-// policy. Both are rendered once at startup from the embedded markdown. Nothing here touches
+// policy. The landing page is the nr5p.com website in Relay:SiteDirectory when one has been
+// deployed there, otherwise a small page rendered from the markdown below. Nothing here touches
 // the /v1 API or its license check.
 public static class PublicPages
 {
@@ -23,12 +26,24 @@ public static class PublicPages
         iPad, Mac, Apple TV, Android and Windows connect to it.
 
         - [Privacy policy](/privacy)
-        - Support: **support@nr5p.com**
+        - Contact: **nathan@nr5p.com**
         """));
 
     public static void MapPublicPages(this WebApplication app)
     {
-        app.MapGet("/", () => Results.Content(LandingHtml.Value, MediaTypeNames.Text.Html));
+        var options = app.Services.GetRequiredService<IOptions<RelayOptions>>().Value;
+        var siteRoot = Path.IsPathRooted(options.SiteDirectory)
+            ? options.SiteDirectory
+            : Path.Combine(app.Environment.ContentRootPath, options.SiteDirectory);
+        // Created up front and index.html looked up per request, so the first website deploy -
+        // and every one after it - needs no relay restart.
+        Directory.CreateDirectory(siteRoot);
+        var siteIndex = Path.Combine(siteRoot, "index.html");
+        app.UseStaticFiles(new StaticFileOptions { FileProvider = new PhysicalFileProvider(siteRoot) });
+
+        app.MapGet("/", () => File.Exists(siteIndex)
+            ? Results.File(siteIndex, MediaTypeNames.Text.Html)
+            : Results.Content(LandingHtml.Value, MediaTypeNames.Text.Html));
         app.MapGet("/privacy", () => Results.Content(PrivacyHtml.Value, MediaTypeNames.Text.Html));
     }
 

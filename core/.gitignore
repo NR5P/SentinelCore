@@ -59,5 +59,9 @@ daily-reviews/
 # by scripts/publish-update.sh. Release artifacts, 150 MB apiece - never source.
 SentinelCore.PushRelay/updates/
 
+# The nr5p.com website the relay serves at / (SentinelCore.PushRelay/site/). Its source is the
+# separate private NR5P/nr5p-website repo, whose deploy.sh copies it here on the box.
+SentinelCore.PushRelay/site/
+
 # Machine-specific overrides for scripts/publish-update.sh (the relay's ssh target and folder).
 /scripts/local.env
