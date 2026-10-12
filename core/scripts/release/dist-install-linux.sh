@@ -36,6 +36,26 @@ INSTALL_DIR=${INSTALL_DIR:-$SCRIPT_DIR}
 MAIN_PORT=${MAIN_PORT:-5080}
 WEB_PORT=${WEB_PORT:-3320}
 
+# This folder is the install - the services run from it and keep every database, recording and
+# setting inside it. Unzipped into Downloads or /tmp, one routine clean-up deletes the server.
+case "$INSTALL_DIR" in
+  */Downloads|*/Downloads/*|/tmp/*|/var/tmp/*)
+    echo "Sentinel Core runs from this folder and keeps all of its data in it:"
+    echo "  $INSTALL_DIR"
+    echo "That's a temporary place - clear it out and the server and everything it recorded go too."
+    echo "Move it somewhere permanent first, then run the installer from there:"
+    echo "  sudo mv \"$INSTALL_DIR\" /opt/sentinelcore && cd /opt/sentinelcore && sudo ./install.sh"
+    if [[ "${ASSUME_YES:-0}" != "1" ]]; then
+      if [[ ! -t 0 ]]; then
+        echo "Not running interactively - stopping. Set ASSUME_YES=1 to install here anyway." >&2
+        exit 1
+      fi
+      read -r -p "Install here anyway? [y/N] " reply
+      [[ "$reply" =~ ^[Yy]$ ]] || exit 1
+    fi
+    ;;
+esac
+
 BRIDGE_BIN="$INSTALL_DIR/SentinelCore/SentinelCore"
 WEB_BIN="$INSTALL_DIR/SentinelCore.Web/SentinelCore.Web"
 for required in "$BRIDGE_BIN" "$WEB_BIN"; do
@@ -437,8 +457,9 @@ else
          sudo ufw allow from <your-subnet>/24 to any port 51826 proto tcp
 
     2. Updating. This server updates itself overnight once a license is installed (Settings ->
-       AUTOMATIC UPDATES to change when, or switch it off). To update by hand instead, unpack the
-       next release .zip over this directory and re-run its install.sh - it keeps your settings
-       and data, backs the configuration up first, and restarts onto the new binaries.
+       AUTOMATIC UPDATES to change when, or switch it off). To update by hand instead, unzip the
+       next release somewhere else, copy it over this folder with cp -a --remove-destination and re-run
+       install.sh here (docs/DEPLOYMENT.md, "Upgrading an existing install") - it keeps your
+       settings and data, backs the configuration up first, and restarts onto the new binaries.
 NEXT
 fi

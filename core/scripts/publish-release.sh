@@ -74,6 +74,20 @@ publish_project() {
     -o "$out"
 }
 
+# Removes what `dotnet publish` leaves behind that a bundle never uses - about 85 MB of a Linux
+# download: the dashboard's duplicate copy of the face models (FaceRecognitionService.FindModel
+# reads the main app's instead), Windows ONNX Runtime DLLs in non-Windows builds (the native
+# library each platform loads is already inside the single-file executable), SQLitePCLRaw's static
+# library (link-time only) and the Development settings overlay (never loaded in Production).
+prune_bundle() {
+  local stage=$1 platform=$2
+  rm -rf "$stage/SentinelCore.Web/onnx"
+  rm -f "$stage"/SentinelCore*/libe_sqlite3.a "$stage"/SentinelCore*/appsettings.Development.json
+  if [[ "$platform" != win-* ]]; then
+    rm -f "$stage"/SentinelCore*/onnxruntime.dll "$stage"/SentinelCore*/onnxruntime_providers_shared.dll
+  fi
+}
+
 sanitize_release_config() {
   local stage=$1
   python3 - "$stage" <<'PYEOF'
@@ -319,9 +333,13 @@ for platform in $PLATFORMS; do
   # produced, so that no file in this archive can overwrite an existing install's live settings -
   # the whole reason a release .zip can be unpacked over a previous version at all.
   sanitize_release_config "$stage"
+  prune_bundle "$stage" "$platform"
 
   cat > "$stage/README.txt" <<README
 Sentinel Core - $platform release
+
+This folder IS the install: the server runs from it and keeps all its data inside it. Put it
+somewhere permanent before installing, not in Downloads or a temp folder.$([[ "$platform" == linux-* ]] && printf '\n\n   sudo mv %s /opt/sentinelcore\n   cd /opt/sentinelcore' "$platform")
 
 1. $([[ "$platform" == win-x64 ]] && echo "Right-click install.ps1 and choose 'Run with PowerShell' as Administrator" || echo "Run: sudo ./install.sh")
 2. Open the dashboard at the address the installer prints when it finishes.
@@ -331,7 +349,8 @@ SentinelCore.Web binaries. ffmpeg$([[ "$platform" == linux-* ]] && echo ", go2rt
 for HomeKit and Ollama for local AI vision are installed separately - the installer offers to do
 that for you.$([[ "$platform" == linux-* ]] && printf '\nUsing a cloud vision provider instead of local AI? Run: sudo SKIP_OLLAMA=1 ./install.sh')
 
-Full documentation: docs/DEPLOYMENT.md and docs/USER_GUIDE.md in the source repository.
+Full documentation is in the docs/ folder next to this file (DEPLOYMENT.md, USER_GUIDE.md) and
+at https://nr5p.com/docs.html
 README
 
   echo "==> Startup check for $platform"

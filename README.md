@@ -255,7 +255,8 @@ server (a Raspberry Pi isn't enough for the local vision model), then:
 
 ```bash
 unzip SentinelCore-linux-x64.zip
-cd linux-x64
+sudo mv linux-x64 /opt/sentinelcore    # the folder is the install - keep it somewhere permanent
+cd /opt/sentinelcore
 sudo ./install.sh
 ```
 

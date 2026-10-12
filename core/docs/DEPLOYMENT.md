@@ -1543,7 +1543,15 @@ are never staged.
 
 ### Installing a package (end-user side)
 
-1. Download and unzip the file for your OS.
+1. Download and unzip the file for your OS, then **move the unzipped folder somewhere
+   permanent**. That folder *is* the install: the services run from it and keep every setting,
+   database and recording inside it, so it must not live in Downloads or a temp folder. On Linux:
+   ```bash
+   unzip SentinelCore-linux-x64.zip
+   sudo mv linux-x64 /opt/sentinelcore
+   cd /opt/sentinelcore
+   ```
+   The Linux installer stops and asks if it's run from Downloads or `/tmp`.
 2. Run the install script inside it:
    - Linux: `sudo ./install.sh`
    - macOS: `sudo ./install.sh` (also clears Gatekeeper's quarantine flag on the bundle - macOS
@@ -1566,10 +1574,17 @@ Updating isn't `git pull` here, since there's no git checkout. It's the same two
 first install, run over the top of the old one:
 
 ```bash
-# from the directory the previous release was installed into
-unzip -o ~/Downloads/SentinelCore-linux-x64.zip
-sudo ./install.sh
+# unpack the new release somewhere else, then copy it over the install folder
+cd /tmp && unzip -o ~/Downloads/SentinelCore-linux-x64.zip
+sudo cp -a --remove-destination linux-x64/. /opt/sentinelcore/
+cd /opt/sentinelcore && sudo ./install.sh
 ```
+
+Two traps this avoids: unzipping *inside* the install folder lands the files in a new
+`linux-x64/` subfolder instead of over the old ones, and a plain `cp` fails with "Text file busy"
+on the two executables while the services are running. `--remove-destination` replaces each file
+rather than writing into it; the running services keep the old binaries until `install.sh`
+restarts them.
 
 On Windows, unzip over the folder and re-run `install.ps1` from an elevated prompt. The install
 script detects the existing install, prints `Existing install found - upgrading`, copies the

@@ -56,13 +56,27 @@ public sealed class FaceRecognitionService : IFaceRecognitionService, IDisposabl
     // about a path nobody chose.
     private static string ModelPath(string fileName)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "onnx", fileName);
-        if (!File.Exists(path))
+        var path = FindModel(AppContext.BaseDirectory, fileName);
+        if (path is null)
         {
+            var expected = Path.Combine(AppContext.BaseDirectory, "onnx", fileName);
             throw new FileNotFoundException(
-                $"Face recognition model '{fileName}' is missing from this install. Expected it at {path}.", path);
+                $"Face recognition model '{fileName}' is missing from this install. Expected it at {expected}.", expected);
         }
         return path;
+    }
+
+    // A build output has its own onnx/. A release bundle ships the models once, in SentinelCore/onnx,
+    // and the dashboard - always unpacked beside it as SentinelCore.Web/ - reads them from there:
+    // publish-release.sh drops the dashboard's copy, which was 66 MB of duplicate download.
+    public static string? FindModel(string baseDirectory, string fileName)
+    {
+        foreach (var folder in new[] { Path.Combine(baseDirectory, "onnx"), Path.Combine(baseDirectory, "..", "SentinelCore", "onnx") })
+        {
+            var path = Path.GetFullPath(Path.Combine(folder, fileName));
+            if (File.Exists(path)) return path;
+        }
+        return null;
     }
 
     public IReadOnlyList<float[]> DetectFaceEmbeddings(byte[] imageBytes)

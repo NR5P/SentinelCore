@@ -111,4 +111,30 @@ public sealed class FaceRecognitionServiceTests
         // stride grids have to move with it rather than silently mis-scaling every coordinate.
         Assert.Equal([1, 3, 640, 640], session.InputMetadata.Values.Single().Dimensions);
     }
+
+    // The release bundle ships the models only in SentinelCore/onnx; the dashboard beside it must
+    // still find them there, or enrolling a known face breaks in every release install.
+    [Fact]
+    public void FindModel_FallsBackToTheMainAppsModels_InAReleaseBundle()
+    {
+        var bundle = Directory.CreateTempSubdirectory("bundle-").FullName;
+        try
+        {
+            var web = Directory.CreateDirectory(Path.Combine(bundle, "SentinelCore.Web")).FullName;
+            var models = Directory.CreateDirectory(Path.Combine(bundle, "SentinelCore", "onnx")).FullName;
+            File.WriteAllText(Path.Combine(models, "model.onnx"), "");
+
+            Assert.Equal(Path.Combine(models, "model.onnx"), FaceRecognitionService.FindModel(web, "model.onnx"));
+            Assert.Null(FaceRecognitionService.FindModel(web, "missing.onnx"));
+
+            // A build output's own copy wins.
+            var own = Directory.CreateDirectory(Path.Combine(web, "onnx")).FullName;
+            File.WriteAllText(Path.Combine(own, "model.onnx"), "");
+            Assert.Equal(Path.Combine(own, "model.onnx"), FaceRecognitionService.FindModel(web, "model.onnx"));
+        }
+        finally
+        {
+            Directory.Delete(bundle, recursive: true);
+        }
+    }
 }
