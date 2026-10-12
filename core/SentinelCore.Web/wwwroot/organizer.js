@@ -1609,7 +1609,11 @@ window.SentinelOrganizer = (function () {
     }
     for (const card of root.querySelectorAll("[data-card]")) {
       card.addEventListener("click", () => openCardEditor(S.get(card.dataset.card)));
+      bindCardTouchDrag(card);
       card.addEventListener("dragstart", (event) => {
+        // A finger already lifted this card; a browser that also starts its own drag on a long
+        // press would only fight it.
+        if (touchPress) { event.preventDefault(); return; }
         dragging = card.dataset.card;
         card.classList.add("org-dragging");
         event.dataTransfer.effectAllowed = "move";
@@ -1630,12 +1634,7 @@ window.SentinelOrganizer = (function () {
         if (!dragging) return;
         event.preventDefault();
         column.classList.add("org-drop-target");
-        const after = cardAfterPointer(zone, event.clientY);
-        const node = root.querySelector(`[data-card="${CSS.escape(dragging)}"]`);
-        if (node) {
-          if (after) zone.insertBefore(node, after);
-          else zone.appendChild(node);
-        }
+        placeDraggedCard(zone, root.querySelector(`[data-card="${CSS.escape(dragging)}"]`), event.clientY);
       });
       column.addEventListener("dragleave", (event) => {
         if (!column.contains(event.relatedTarget)) column.classList.remove("org-drop-target");
@@ -1645,29 +1644,188 @@ window.SentinelOrganizer = (function () {
         column.classList.remove("org-drop-target");
         const cardId = dragging;
         if (!cardId) return;
-        // Usually the node is already where it was dropped. After hovering a board tab opened
-        // another board it isn't on the page at all, so the pointer says where it goes instead.
-        // Either way only the moved card is written, at a position between its new neighbours.
-        const nodes = [...zone.querySelectorAll("[data-card]")];
-        let index = nodes.findIndex((n) => n.dataset.card === cardId);
-        let beforeNode, afterNode;
-        if (index >= 0) {
-          beforeNode = nodes[index - 1];
-          afterNode = nodes[index + 1];
-        } else {
-          afterNode = cardAfterPointer(zone, event.clientY);
-          index = afterNode ? nodes.indexOf(afterNode) : nodes.length;
-          beforeNode = nodes[index - 1];
-        }
-        const before = beforeNode ? S.get(beforeNode.dataset.card) : null;
-        const after = afterNode ? S.get(afterNode.dataset.card) : null;
-        const lo = before ? before.fields.position ?? 0 : 0;
-        const hi = after ? after.fields.position ?? lo + 2 : lo + 2;
         dragging = null;
-        moveCard(cardId, S.get(zone.dataset.dropColumn), (lo + hi) / 2);
+        dropCard(zone, cardId, event.clientY);
       });
     }
   }
+
+  // Shows the dragged card where it would land in a column while it is held over it.
+  function placeDraggedCard(zone, node, y) {
+    if (!node) return;
+    const after = cardAfterPointer(zone, y);
+    if (after) zone.insertBefore(node, after);
+    else zone.appendChild(node);
+  }
+
+  // Usually the node is already where it was dropped. After hovering a board tab opened another
+  // board it isn't on the page at all, so the pointer says where it goes instead. Either way only
+  // the moved card is written, at a position between its new neighbours.
+  function dropCard(zone, cardId, y) {
+    const nodes = [...zone.querySelectorAll("[data-card]")];
+    let index = nodes.findIndex((n) => n.dataset.card === cardId);
+    let beforeNode, afterNode;
+    if (index >= 0) {
+      beforeNode = nodes[index - 1];
+      afterNode = nodes[index + 1];
+    } else {
+      afterNode = cardAfterPointer(zone, y);
+      index = afterNode ? nodes.indexOf(afterNode) : nodes.length;
+      beforeNode = nodes[index - 1];
+    }
+    const before = beforeNode ? S.get(beforeNode.dataset.card) : null;
+    const after = afterNode ? S.get(afterNode.dataset.card) : null;
+    const lo = before ? before.fields.position ?? 0 : 0;
+    const hi = after ? after.fields.position ?? lo + 2 : lo + 2;
+    moveCard(cardId, S.get(zone.dataset.dropColumn), (lo + hi) / 2);
+  }
+
+  // Press and hold a card to drag it with a finger. The browser's own drag and drop only starts
+  // from a mouse - Chromium on the Linux wall kiosk never lifts anything off on touch - so touch
+  // gets this instead: hold still a moment, the card lifts, a copy of it follows the finger, and
+  // letting go drops it like the mouse would, on a column or on a board tab. A finger that moves
+  // before the hold is up is a scroll, and a quick tap still opens the card.
+  const HOLD_TIME = 350;   // ms a finger must rest on a card before it lifts
+  const HOLD_SLOP = 10;    // px a finger may wander during the hold and still lift the card
+  const EDGE = 48;         // px from an edge where a held card scrolls the board or column
+  let touchPress = null;
+
+  function bindCardTouchDrag(card) {
+    card.addEventListener("touchstart", (event) => {
+      cancelTouchPress();
+      if (event.touches.length !== 1) return;
+      const t = event.touches[0];
+      touchPress = { id: t.identifier, card, x: t.clientX, y: t.clientY, ghost: null, over: null, timer: null, frame: null };
+      touchPress.timer = setTimeout(liftCard, HOLD_TIME);
+    }, { passive: true });
+    // A long press would otherwise open the right-click menu.
+    card.addEventListener("contextmenu", (event) => { if (touchPress) event.preventDefault(); });
+  }
+
+  function liftCard() {
+    const p = touchPress;
+    if (!p) return;
+    p.timer = null;
+    // Something re-drew the board during the hold.
+    if (!p.card.isConnected) { touchPress = null; return; }
+    dragging = p.card.dataset.card;
+    const box = p.card.getBoundingClientRect();
+    p.dx = p.x - box.left;
+    p.dy = p.y - box.top;
+    p.ghost = p.card.cloneNode(true);
+    p.ghost.removeAttribute("data-card");
+    p.ghost.classList.add("org-touch-ghost");
+    p.ghost.style.width = `${box.width}px`;
+    document.body.appendChild(p.ghost);
+    p.card.classList.add("org-dragging");
+    moveGhost(p);
+    hoverTouchDrop(p);
+    if (navigator.vibrate) navigator.vibrate(15);
+    p.frame = requestAnimationFrame(edgeScroll);
+  }
+
+  function moveGhost(p) {
+    p.ghost.style.transform = `translate(${p.x - p.dx}px, ${p.y - p.dy}px) rotate(2deg)`;
+  }
+
+  // Lights up whatever is under the finger and shows the card in its spot there.
+  function hoverTouchDrop(p) {
+    const under = document.elementFromPoint(p.x, p.y);
+    const column = under ? under.closest("[data-column]") : null;
+    const tab = under ? under.closest(".org-board-tabs [data-board]") : null;
+    const target = column || tab;
+    if (p.over !== target) {
+      if (p.over) p.over.classList.remove("org-drop-target");
+      if (target) target.classList.add("org-drop-target");
+      p.over = target;
+    }
+    if (column) placeDraggedCard(column.querySelector("[data-drop-column]"), p.card, p.y);
+  }
+
+  // Holding a card near an edge scrolls the board sideways or the column up and down, so a card
+  // can reach a column that is off screen.
+  function edgeScroll() {
+    const p = touchPress;
+    if (!p || !p.ghost) return;
+    let moved = false;
+    const strip = p.card.closest(".org-columns");
+    if (strip) {
+      const b = strip.getBoundingClientRect();
+      const before = strip.scrollLeft;
+      if (p.x < b.left + EDGE) strip.scrollLeft -= 10;
+      else if (p.x > b.right - EDGE) strip.scrollLeft += 10;
+      moved = moved || strip.scrollLeft !== before;
+    }
+    const zone = p.over && p.over.dataset.column ? p.over.querySelector("[data-drop-column]") : null;
+    if (zone) {
+      const b = zone.getBoundingClientRect();
+      const before = zone.scrollTop;
+      if (p.y < b.top + EDGE / 2) zone.scrollTop -= 8;
+      else if (p.y > b.bottom - EDGE / 2) zone.scrollTop += 8;
+      moved = moved || zone.scrollTop !== before;
+    }
+    if (moved) hoverTouchDrop(p);
+    p.frame = requestAnimationFrame(edgeScroll);
+  }
+
+  function endTouchDrag() {
+    const p = touchPress;
+    touchPress = null;
+    if (!p) return;
+    clearTimeout(p.timer);
+    if (p.frame) cancelAnimationFrame(p.frame);
+    if (!p.ghost) return;
+    p.ghost.remove();
+    p.card.classList.remove("org-dragging");
+    if (p.over) p.over.classList.remove("org-drop-target");
+    dragging = null;
+  }
+
+  function cancelTouchPress() {
+    const lifted = touchPress && touchPress.ghost;
+    endTouchDrag();
+    if (lifted) queueRender();   // put the card back where the data says it is
+  }
+
+  const pressTouch = (event) => touchPress ? [...event.changedTouches].find((t) => t.identifier === touchPress.id) : null;
+
+  document.addEventListener("touchmove", (event) => {
+    const t = pressTouch(event);
+    if (!t) return;
+    const p = touchPress;
+    if (!p.ghost) {
+      if (Math.hypot(t.clientX - p.x, t.clientY - p.y) > HOLD_SLOP) cancelTouchPress();
+      return;
+    }
+    // The card is lifted, so the finger moves it rather than scrolling the page.
+    if (event.cancelable) event.preventDefault();
+    p.x = t.clientX;
+    p.y = t.clientY;
+    moveGhost(p);
+    hoverTouchDrop(p);
+  }, { passive: false });
+
+  document.addEventListener("touchend", (event) => {
+    if (!pressTouch(event)) return;
+    const p = touchPress;
+    if (!p.ghost) { cancelTouchPress(); return; }
+    // No click afterwards: letting go of a dragged card should not open it.
+    if (event.cancelable) event.preventDefault();
+    const cardId = p.card.dataset.card;
+    const over = p.over;
+    endTouchDrag();
+    if (over && over.dataset.column) {
+      dropCard(over.querySelector("[data-drop-column]"), cardId, p.y);
+    } else if (over && over.dataset.board) {
+      const column = firstColumn(over.dataset.board);
+      if (column) moveCardToEnd(cardId, column);
+    }
+    queueRender();
+  }, { passive: false });
+
+  document.addEventListener("touchcancel", (event) => {
+    if (pressTouch(event)) cancelTouchPress();
+  });
 
   // A board tab takes a dragged card too: letting go on it files the card at the bottom of that
   // board's first column, and hovering a moment opens the board so it can go in any column.

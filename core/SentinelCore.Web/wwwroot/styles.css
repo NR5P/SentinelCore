@@ -3912,6 +3912,26 @@ html.kiosk .org-day-sheet .org-tag {
   opacity: 0.4;
 }
 
+/* A long press on a card lifts it to drag (touch screens), so it must not select text or open
+   the callout menu instead. */
+.org-card {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The copy of a card that follows a finger while it is dragged. */
+.org-touch-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0.92;
+  border-color: var(--border-bright);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
 .org-card-cover {
   display: block;
   width: calc(100% + 18px);
