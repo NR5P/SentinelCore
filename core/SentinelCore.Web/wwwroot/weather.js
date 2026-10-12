@@ -987,6 +987,7 @@ window.SentinelWeather = (function () {
       if (on && wrap.requestFullscreen && !document.fullscreenElement) wrap.requestFullscreen().catch(() => {});
       if (!on && document.fullscreenElement === wrap) document.exitFullscreen().catch(() => {});
       KeepAwake.set("radar", on);
+      document.dispatchEvent(new CustomEvent("sentinel:radar-fullscreen", { detail: on }));
       if (!on && renderWaiting) render();
       setTimeout(() => map.invalidateSize(), 50);
     }

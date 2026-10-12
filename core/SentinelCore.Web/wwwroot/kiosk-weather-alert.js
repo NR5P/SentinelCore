@@ -143,6 +143,12 @@
     // The Weather button's dot: the worst alert in force, seen or not.
     const tab = document.querySelector('#tabs .tab[data-view="weather"]');
     if (tab) {
+      let dot = tab.querySelector(".kwx-dot");
+      if (!dot) {
+        dot = document.createElement("span");
+        dot.className = "kwx-dot";
+        tab.appendChild(dot);
+      }
       if (active.length) tab.dataset.wxAlert = active[0].level;
       else delete tab.dataset.wxAlert;
     }
@@ -198,14 +204,20 @@
 
     update();
     // Nobody at the tablet (it has dimmed or gone dark): straight to the radar, banner on top.
-    if (arrived && openRadarOnArrival && !busy()) {
-      showRadar();
-      setTimeout(update, 500);
-    }
+    if (arrived && openRadarOnArrival && !busy()) showRadar();
   }
 
-  // Leaving kiosk mode (or coming back to it) re-checks straight away.
-  new MutationObserver(() => poll()).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  // Leaving kiosk mode (or coming back to it) re-checks straight away. Only that class: the
+  // wake lock's html.keep-awake changes on every update.
+  let wasKiosk = isKiosk();
+  new MutationObserver(() => {
+    if (isKiosk() === wasKiosk) return;
+    wasKiosk = isKiosk();
+    poll();
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+
+  // The radar opening or closing changes what tapping the banner does.
+  document.addEventListener("sentinel:radar-fullscreen", update);
 
   // The wake hold runs out between polls too.
   setInterval(update, 30_000);

@@ -15606,22 +15606,27 @@ html.kiosk .org-entry {
   cursor: pointer;
 }
 
-/* The Weather button's dot while an alert is in force (seen or not). */
+/* The Weather button's dot while an alert is in force (seen or not). A real element: the tab's
+   ::after is the hover tip, which kiosk mode hides. */
+.kwx-dot {
+  display: none;
+}
+
 #tabs .tab[data-view="weather"][data-wx-alert] {
   position: relative;
 }
 
-#tabs .tab[data-view="weather"][data-wx-alert]::after {
-  content: "";
+#tabs .tab[data-wx-alert] .kwx-dot {
+  display: block;
   position: absolute;
-  top: 6px;
-  right: 10px;
+  top: 8px;
+  right: calc(50% - 26px);
   width: 12px;
   height: 12px;
   border-radius: 50%;
   background: var(--amber);
-  box-shadow: 0 0 8px currentColor;
+  box-shadow: 0 0 8px var(--amber);
 }
 
-#tabs .tab[data-view="weather"][data-wx-alert="warning"]::after { background: var(--red); }
-#tabs .tab[data-view="weather"][data-wx-alert="watch"]::after { background: #ff8a2a; }
+#tabs .tab[data-wx-alert="warning"] .kwx-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+#tabs .tab[data-wx-alert="watch"] .kwx-dot { background: #ff8a2a; box-shadow: 0 0 8px #ff8a2a; }
