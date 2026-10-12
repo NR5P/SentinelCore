@@ -6,7 +6,8 @@
 // prompt() everywhere else), sitting above the keyboard with a large field.
 //
 // SentinelAsk.compose() is the kiosk's way to add several things in a row (board cards): a big
-// centered box, Enter adds what's typed and clears it for the next one, Done closes.
+// centered box, Enter adds what's typed and clears it for the next one, Done adds anything still
+// typed and closes.
 (function () {
   const isOn = () => document.documentElement.classList.contains("kiosk");
 
@@ -96,7 +97,8 @@
     // Tapping add mustn't take focus from the box, or the keyboard drops and comes back.
     panel.querySelector(".kiosk-ask-add").addEventListener("mousedown", (e) => e.preventDefault());
     panel.querySelector(".kiosk-ask-add").addEventListener("click", submit);
-    panel.querySelector(".kiosk-ask-done").addEventListener("click", () => finish && finish());
+    // Done adds whatever is still typed (the last entry) before closing.
+    panel.querySelector(".kiosk-ask-done").addEventListener("click", () => { submit(); if (finish) finish(); });
     field.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
       else if (e.key === "Escape") { e.preventDefault(); if (finish) finish(); }
