@@ -708,6 +708,58 @@ struct CardCommentsSection: View {
     }
 }
 
+// Just a card's comments, opened from the comment badge on its board tile: the card's title and
+// where it sits, then the same feed and "Write a comment" box as at the foot of CardEditor, with
+// none of the card's settings. Nothing here waits for a Save - comments post as they're written -
+// so the only button is Done. The card is re-read from the engine, so a rename or a move made
+// elsewhere while this is open shows up in the header.
+struct CardCommentsView: View {
+    @Environment(OrganizerEngine.self) private var engine
+    @Environment(\.dismiss) private var dismiss
+    let card: OrganizerItem
+
+    @State private var people: [OrganizerPerson] = []
+
+    var body: some View {
+        let current = engine.item(card.id) ?? card
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(current.title.isEmpty ? "Card" : current.title)
+                        .font(.title3.bold())
+                        .strikethrough(current.bool("completed"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let place = place(of: current) {
+                        Label(place, systemImage: "rectangle.split.3x1")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            CardCommentsSection(cardId: card.id, people: people)
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Comments")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+        }
+        .task {
+            if engine.status?.personalSpaces == true { people = (try? await engine.people()) ?? [] }
+        }
+    }
+
+    // "Doing · Kitchen remodel" - the card's column, then its board.
+    private func place(of item: OrganizerItem) -> String? {
+        guard let column = engine.item(item.parentId ?? "") else { return nil }
+        let board = engine.item(column.parentId ?? "")
+        return [column.title, board?.title].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · ")
+    }
+}
+
 // A multi-line box that types left to right from the leading edge with its prompt inside it.
 // A plain TextField in a grouped Form on the Mac shows its title as a label on the left and
 // right-aligns what you type, which is wrong for writing prose.

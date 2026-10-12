@@ -25,6 +25,8 @@ window.SentinelOrganizer = (function () {
   let renderQueued = false;
   let dragging = null;
   const CARD_DRAG_TYPE = "application/x-sentinelcore-card";
+  // A drawn speech bubble rather than the emoji: the wall kiosk has no emoji font and showed a box.
+  const COMMENT_ICON = `<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
   let people = null;
 
   const el = (id) => document.getElementById(id);
@@ -1551,12 +1553,14 @@ window.SentinelOrganizer = (function () {
     return `<div class="org-card${f.completed ? " org-card-done" : ""}" data-card="${escapeHtml(card.id)}">
       ${cover ? `<img class="org-card-cover" src="${escapeHtml(S.blobUrl(cover.fields.hash, true))}" alt="" loading="lazy" />` : ""}
       ${(f.labels || []).length ? `<div class="org-labels">${f.labels.map((l) => `<span class="org-label" style="background:${escapeHtml(l.color || labelColor(l.name))}">${escapeHtml(l.name)}</span>`).join("")}</div>` : ""}
-      <div class="org-card-title">${escapeHtml(f.title || "card")}</div>
+      <div class="org-card-head">
+        <div class="org-card-title">${escapeHtml(f.title || "card")}</div>
+        <button class="org-card-comments${comments ? "" : " org-card-comments-none"}" data-card-comments="${escapeHtml(card.id)}" aria-label="${comments ? `${comments} comment${comments === 1 ? "" : "s"}` : "add a comment"}">${COMMENT_ICON}${comments ? `<span>${comments}</span>` : ""}</button>
+      </div>
       <div class="org-card-meta">
         ${f.due ? `<span class="${overdue ? "org-overdue" : ""}">&#128339; ${escapeHtml(dueLabel({ fields: { due: f.due, allDay: f.due.length === 10 } }))}</span>` : ""}
         ${checklist.length ? `<span>&#9745; ${done}/${checklist.length}</span>` : ""}
         ${attachments.length ? `<span>&#128206; ${attachments.length}</span>` : ""}
-        ${comments ? `<span>&#128172; ${comments}</span>` : ""}
         ${f.description ? "<span>&#9776;</span>" : ""}
         ${(f.assignees || []).map((a) => `<span class="org-avatar" title="${escapeHtml(a)}">${escapeHtml(a.slice(0, 2).toUpperCase())}</span>`).join("")}
       </div>
@@ -1609,6 +1613,11 @@ window.SentinelOrganizer = (function () {
     }
     for (const card of root.querySelectorAll("[data-card]")) {
       card.addEventListener("click", () => openCardEditor(S.get(card.dataset.card)));
+      // The comment bubble opens just the conversation, not the card's settings.
+      card.querySelector("[data-card-comments]").addEventListener("click", (event) => {
+        event.stopPropagation();
+        openCardComments(S.get(card.dataset.card));
+      });
       bindCardTouchDrag(card);
       card.addEventListener("dragstart", (event) => {
         // A finger already lifted this card; a browser that also starts its own drag on a long
@@ -1912,6 +1921,35 @@ window.SentinelOrganizer = (function () {
     return people;
   }
 
+  // A card's comments on their own, from the bubble on the card: read them and add to them
+  // without the card's settings in the way. "open card" goes on to the full editor.
+  function openCardComments(card) {
+    if (!card) return;
+    const column = S.get(card.parentId);
+    openModal(`
+      <div class="zone-editor-header"><span>COMMENTS</span><span class="event-count">${escapeHtml(column ? column.fields.title : "")}</span></div>
+      <div class="org-form org-comments-view">
+        <div class="org-comments-card">${escapeHtml(card.fields.title || "card")}</div>
+        <div id="card-comments" class="org-comments"></div>
+        <div class="org-comment-compose">
+          <textarea class="field-textarea" id="card-new-comment" rows="2" placeholder="write a comment"></textarea>
+          <button class="btn" id="card-post-comment">post</button>
+        </div>
+      </div>
+      <div class="zone-editor-footer">
+        <button class="btn" id="card-comments-close">close</button>
+        <span class="org-spacer"></span>
+        <button class="btn" id="card-comments-open">open card</button>
+      </div>`);
+    const list = el("card-comments");
+    const comments = renderComments(list, el("card-new-comment"), card.id);
+    // Newest at the bottom, next to the box for the next one.
+    list.scrollTop = list.scrollHeight;
+    el("card-post-comment").addEventListener("click", () => { comments.post(); list.scrollTop = list.scrollHeight; });
+    el("card-comments-close").addEventListener("click", closeModal);
+    el("card-comments-open").addEventListener("click", () => openCardEditor(S.get(card.id)));
+  }
+
   async function openCardEditor(card) {
     if (!card) return;
     const f = card.fields;
@@ -2123,14 +2161,17 @@ window.SentinelOrganizer = (function () {
       }
     };
 
-    input.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" || event.shiftKey) return;
-      event.preventDefault();
+    const post = () => {
       const body = input.value.trim();
       if (!body) return;
       S.create("comment", { body }, { parentId: cardId });
       input.value = "";
       draw();
+    };
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey) return;
+      event.preventDefault();
+      post();
     });
 
     // Follow sync while the card is open, but never redraw under someone's half-edited comment.
@@ -2143,6 +2184,7 @@ window.SentinelOrganizer = (function () {
       if (!editing && document.body.contains(container)) draw();
     });
     draw();
+    return { post };
   }
 
   function renderAttachments(container, parentIdOf, ensureParent) {

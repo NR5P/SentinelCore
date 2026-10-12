@@ -322,17 +322,22 @@ public sealed class BoardsPane : OrganizerPane
         if (checklist.Count > 0) badges.Add($"☑ {checklist.Count(item => item.GetValueOrDefault("done") is true)}/{checklist.Count}");
         var files = Engine.Children(card.Id, OrganizerKinds.Attachment).Count;
         if (files > 0) badges.Add($"{files} file{(files == 1 ? "" : "s")}");
-        var comments = Engine.Children(card.Id, OrganizerKinds.Comment).Count;
-        if (comments > 0) badges.Add($"{comments} comment{(comments == 1 ? "" : "s")}");
         if (card.String("description") is { Length: > 0 }) badges.Add("notes");
         var assignees = card.List("assignees").OfType<string>().ToList();
         if (assignees.Count > 0) badges.Add(string.Join(", ", assignees));
+        // The comment count is its own button at the end of the row, always there, so a card with
+        // none can still take its first comment without opening the whole editor.
+        var footer = new DockPanel { Margin = new Thickness(0, 2, 0, 0) };
+        var commentsButton = CommentsBadge(card);
+        DockPanel.SetDock(commentsButton, Dock.Right);
+        footer.Children.Add(commentsButton);
         if (badges.Count > 0)
         {
             var text = Ui.Caption(string.Join(" · ", badges));
-            text.Margin = new Thickness(0, 4, 0, 0);
-            content.Children.Add(text);
+            text.VerticalAlignment = VerticalAlignment.Center;
+            footer.Children.Add(text);
         }
+        content.Children.Add(footer);
 
         var menu = new ContextMenu();
         menu.Items.Add(MenuItem("Open", () => new ItemEditorWindow(Engine, OrganizerKinds.Card, card).ShowDialog()));
@@ -417,6 +422,34 @@ public sealed class BoardsPane : OrganizerPane
             new ItemEditorWindow(Engine, OrganizerKinds.Card, card).ShowDialog();
         };
         return border;
+    }
+
+    /// <summary>
+    /// The speech bubble and count on a card, which opens just the comments. Faint with none.
+    /// </summary>
+    private Button CommentsBadge(OrganizerItem card)
+    {
+        var count = Engine.Children(card.Id, OrganizerKinds.Comment).Count;
+        var label = new StackPanel { Orientation = Orientation.Horizontal, Opacity = count > 0 ? 1 : 0.45 };
+        label.Children.Add(Ui.Glyph("", Palette.SecondaryText, 13));
+        if (OrganizerComments.BadgeCount(count) is { Length: > 0 } number)
+        {
+            label.Children.Add(new TextBlock { Text = number, Foreground = Palette.SecondaryText, FontSize = 12, Margin = new Thickness(5, 0, 0, 1), VerticalAlignment = VerticalAlignment.Center });
+        }
+        var button = Ui.Button("", () => new CardCommentsWindow(Engine, card.Id).ShowDialog(), "LinkButton", OrganizerComments.BadgeTooltip(count));
+        button.Content = label;
+        // Big enough for a fingertip, tucked into the card's padding so the card barely grows.
+        button.MinWidth = 40;
+        button.MinHeight = 32;
+        button.Padding = new Thickness(8, 4, 8, 4);
+        button.Margin = new Thickness(6, 0, -6, -6);
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
+        button.VerticalAlignment = VerticalAlignment.Bottom;
+        // The card's own press handler has already noted this press as the start of a drag or a
+        // click on the card. Forget it, so pressing the bubble neither picks the card up nor opens
+        // the full editor; the button handles the release itself.
+        button.PreviewMouseLeftButtonDown += (_, _) => _pressedCard = null;
+        return button;
     }
 
     private async Task LoadCoverAsync(Image target, string hash)

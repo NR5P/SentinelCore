@@ -26,6 +26,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -677,6 +678,9 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
     var nameText by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     var automationsFor by remember { mutableStateOf<OrganizerItem?>(null) }
+    // The card whose comments-only sheet is open. Held here rather than on the tile so the sheet
+    // stays open when a sync moves the card to another column (which redraws its tile).
+    var commentsFor by rememberSaveable { mutableStateOf<String?>(null) }
     val boards = engine.items(OrganizerKinds.BOARD).filter { (filter == null || it.spaceId == filter) && !it.bool("archived") }.sortedBy { it.sortPosition }
     val board = boards.firstOrNull { it.id == selectedId } ?: boards.firstOrNull()
 
@@ -770,7 +774,7 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
         val columns = engine.children(board.id, OrganizerKinds.COLUMN).sortedBy { it.sortPosition }
         LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
             items(columns, key = { it.id }) { column ->
-                BoardColumn(engine, column, columns, boards, zones, routes, onRename = { nameText = column.title; naming = "renameColumn" to column.id })
+                BoardColumn(engine, column, columns, boards, zones, routes, onComments = { commentsFor = it }, onRename = { nameText = column.title; naming = "renameColumn" to column.id })
             }
         }
     }
@@ -805,6 +809,7 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
         )
     }
     automationsFor?.let { BoardAutomationsDialog(engine, it) { automationsFor = null } }
+    commentsFor?.let { CardCommentsSheet(engine, it) { commentsFor = null } }
     if (confirmDelete && board != null) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -817,7 +822,7 @@ private fun BoardsPane(engine: OrganizerEngine, filter: String?, routes: Organiz
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BoardColumn(engine: OrganizerEngine, column: OrganizerItem, columns: List<OrganizerItem>, boards: List<OrganizerItem>, zones: DropZones, routes: OrganizerRoutes, onRename: () -> Unit) {
+private fun BoardColumn(engine: OrganizerEngine, column: OrganizerItem, columns: List<OrganizerItem>, boards: List<OrganizerItem>, zones: DropZones, routes: OrganizerRoutes, onComments: (String) -> Unit, onRename: () -> Unit) {
     var newCard by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     val cards = engine.children(column.id, OrganizerKinds.CARD).sortedBy { it.sortPosition }
@@ -844,7 +849,7 @@ private fun BoardColumn(engine: OrganizerEngine, column: OrganizerItem, columns:
             }
         }
         LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(cards, key = { it.id }) { card -> CardTile(engine, card, cards, column, columns, boards, zones, routes) }
+            items(cards, key = { it.id }) { card -> CardTile(engine, card, cards, column, columns, boards, zones, routes, onComments) }
         }
         OutlinedTextField(
             value = newCard, onValueChange = { newCard = it }, singleLine = true, label = { Text("Add a card") },
@@ -871,9 +876,10 @@ private fun moveColumn(engine: OrganizerEngine, columns: List<OrganizerItem>, in
 
 // Tap to open, long-press and drag to move - onto another column, another card, or a board's chip
 // at the top. The ⋮ menu does the same moves for people who find dragging on a phone fiddly.
+// The comment bubble is a tap target of its own: it opens just the comments, not the editor.
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<OrganizerItem>, column: OrganizerItem, columns: List<OrganizerItem>, boards: List<OrganizerItem>, zones: DropZones, routes: OrganizerRoutes) {
+private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<OrganizerItem>, column: OrganizerItem, columns: List<OrganizerItem>, boards: List<OrganizerItem>, zones: DropZones, routes: OrganizerRoutes, onComments: (String) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var pickingBoard by remember { mutableStateOf(false) }
     val attachments = engine.children(card.id, OrganizerKinds.ATTACHMENT)
@@ -907,6 +913,9 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(card.title.ifEmpty { "Card" }, textDecoration = if (card.bool("completed")) TextDecoration.LineThrough else null, modifier = Modifier.weight(1f))
+                    // Beside the menu rather than with the badges below, so a card with no
+                    // comments (just the faint bubble) is no taller than it was.
+                    CommentBadge(comments) { onComments(card.id) }
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(24.dp)) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "Card options", tint = SentinelTextDim, modifier = Modifier.size(18.dp))
                     }
@@ -920,10 +929,6 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
                     }
                     if (checklist.isNotEmpty()) Text("☑ ${checklist.count { (it as? Map<*, *>)?.get("done") == true }}/${checklist.size}", fontSize = 11.sp, color = SentinelTextDim)
                     if (attachments.isNotEmpty()) Text("📎 ${attachments.size}", fontSize = 11.sp, color = SentinelTextDim)
-                    if (comments > 0) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Comments", tint = SentinelTextDim, modifier = Modifier.size(12.dp))
-                        Text("$comments", fontSize = 11.sp, color = SentinelTextDim)
-                    }
                 }
             }
         }
@@ -973,6 +978,27 @@ private fun CardTile(engine: OrganizerEngine, card: OrganizerItem, cards: List<O
             confirmButton = {},
             dismissButton = { TextButton(onClick = { pickingBoard = false }) { Text("Cancel") } },
         )
+    }
+}
+
+// A card tile's comment count, which opens the comments-only sheet. With no comments yet it's a
+// faint bubble, so there's somewhere to tap to write the first one. It stays tile-sized: Compose
+// counts a touch within 48dp of a small clickable as a hit on it, so the finger target is full
+// size without making the tile taller. Its own click consumes the tap, so the tile underneath
+// neither opens the editor nor starts a drag.
+@Composable
+private fun CommentBadge(count: Int, onClick: () -> Unit) {
+    val tint = if (count > 0) SentinelTextDim else SentinelTextDim.copy(alpha = 0.45f)
+    Row(
+        Modifier.clip(RoundedCornerShape(4.dp))
+            .clickable(role = Role.Button, onClickLabel = "Show comments", onClick = onClick)
+            .semantics { contentDescription = when (count) { 0 -> "Add a comment"; 1 -> "1 comment"; else -> "$count comments" } }
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
+        if (count > 0) Text("$count", fontSize = 11.sp, color = tint)
     }
 }
 

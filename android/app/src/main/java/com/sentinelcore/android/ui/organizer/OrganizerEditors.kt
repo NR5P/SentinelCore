@@ -10,6 +10,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.automirrored.outlined.Comment
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -591,8 +596,11 @@ fun CardEditorScreen(engine: OrganizerEngine, itemId: String, onDone: () -> Unit
 // and the list follows sync while the card is open - an edit in progress lives in this
 // composable's own state, so a sync redrawing the list never wipes it. Only the author may edit a
 // comment (the server enforces it); anyone may delete one.
+//
+// The same section is the whole of the comments-only sheet a board card's bubble opens, where the
+// sheet's own header already says "Comments", so it can drop its heading.
 @Composable
-private fun CommentsSection(engine: OrganizerEngine, cardId: String, people: List<OrganizerPerson>) {
+private fun CommentsSection(engine: OrganizerEngine, cardId: String, people: List<OrganizerPerson>, showHeading: Boolean = true) {
     rememberOrganizerRevision(engine)
     val me = engine.status.collectAsStateValue()?.username
     val comments = OrganizerComments.sorted(engine.children(cardId, OrganizerKinds.COMMENT)).asReversed()
@@ -608,7 +616,7 @@ private fun CommentsSection(engine: OrganizerEngine, cardId: String, people: Lis
     val editing = editingId?.takeIf { id -> comments.any { it.id == id } }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (showHeading) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.AutoMirrored.Outlined.Comment, contentDescription = null, tint = SentinelCyan, modifier = Modifier.size(18.dp))
             Text("Comments", color = SentinelCyan, style = MaterialTheme.typography.labelLarge)
             if (comments.isNotEmpty()) Text("${comments.size}", color = SentinelTextDim, style = MaterialTheme.typography.labelLarge)
@@ -696,6 +704,40 @@ private fun CommentsSection(engine: OrganizerEngine, cardId: String, people: Lis
             },
             dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
         )
+    }
+}
+
+// Just a card's comments, from the bubble on its board tile: read and write them without the
+// card's settings in the way. A bottom sheet over the board, so the board stays where it was; the
+// header carries the card's title and column, and the list follows sync the same as in the editor.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CardCommentsSheet(engine: OrganizerEngine, cardId: String, onDismiss: () -> Unit) {
+    rememberOrganizerRevision(engine)
+    val card = engine.item(cardId)
+    val column = card?.parentId?.let { engine.item(it) }
+    val count = engine.children(cardId, OrganizerKinds.COMMENT).size
+    var people by remember { mutableStateOf<List<OrganizerPerson>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        if (engine.status.value?.personalSpaces == true) people = runCatching { engine.people() }.getOrDefault(emptyList())
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().imePadding()) {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(card?.title?.ifEmpty { "Card" } ?: "Card", style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(listOfNotNull(column?.title?.takeIf { it.isNotBlank() }, if (count == 1) "1 comment" else "$count comments").joinToString(" · "),
+                        style = MaterialTheme.typography.labelMedium, color = SentinelTextDim)
+                }
+                TextButton(onClick = onDismiss) { Text("Done") }
+            }
+            HorizontalDivider(Modifier.padding(top = 8.dp))
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 14.dp, bottom = 28.dp)) {
+                if (card == null) Text("This card was deleted.", color = SentinelTextDim)
+                else CommentsSection(engine, cardId, people, showHeading = false)
+            }
+        }
     }
 }
 

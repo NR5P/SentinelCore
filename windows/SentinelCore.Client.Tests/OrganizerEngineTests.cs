@@ -429,6 +429,19 @@ public sealed class OrganizerEngineTests : IDisposable
     }
 
     [Fact]
+    public void CardCommentBadgeIsBlankWithNoneSoTheBubbleInvitesTheFirst()
+    {
+        Assert.Equal("", OrganizerComments.BadgeCount(0));
+        Assert.Equal("", OrganizerComments.BadgeCount(-1));
+        Assert.Equal("1", OrganizerComments.BadgeCount(1));
+        Assert.Equal("12", OrganizerComments.BadgeCount(12));
+
+        Assert.Equal("Add a comment", OrganizerComments.BadgeTooltip(0));
+        Assert.Equal("1 comment - open the comments", OrganizerComments.BadgeTooltip(1));
+        Assert.Equal("3 comments - open the comments", OrganizerComments.BadgeTooltip(3));
+    }
+
+    [Fact]
     public void HolidaysAreOffByDefaultAndTheChoiceIsKept()
     {
         var store = new InMemoryOrganizerStore(NewDirectory());

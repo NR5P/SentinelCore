@@ -3970,6 +3970,22 @@ html.kiosk .org-day-sheet .org-tag {
   overflow-wrap: anywhere;
 }
 
+/* The title with the comment bubble beside it, so the bubble costs the card no extra line. */
+.org-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.org-card-head .org-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.org-card-meta:not(:has(*)) {
+  display: none;
+}
+
 .org-card-meta {
   display: flex;
   flex-wrap: wrap;
@@ -4078,6 +4094,63 @@ html.kiosk .org-day-sheet .org-tag {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* The comment bubble at the end of a card's meta row: a button of its own that opens just the
+   comments. Faint with none yet, so the first one can still be started from it. The padding is
+   pulled back with negative margins so the card is no taller for having a finger-sized target. */
+.org-card-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  margin: -4px -8px -4px 0;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--cyan);
+  font: inherit;
+  cursor: pointer;
+}
+
+.org-card-comments:hover {
+  background: var(--bg-panel);
+}
+
+.org-card-comments-none {
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+
+html.kiosk .org-card-comments {
+  padding: 8px 12px;
+  margin: -8px -12px -8px 0;
+}
+
+html.kiosk .org-card-comments svg {
+  width: 18px;
+  height: 18px;
+}
+
+.org-comments-card {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.org-comments-view .org-comments {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.org-comment-compose {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.org-comment-compose .field-textarea {
+  flex: 1 1 auto;
 }
 
 .org-comment {

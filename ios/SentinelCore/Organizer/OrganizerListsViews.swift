@@ -472,6 +472,7 @@ struct OrganizerBoardsView: View {
 
     @AppStorage("organizerBoard") private var selectedBoardId = ""
     @State private var editingCard: OrganizerItem?
+    @State private var commentingCard: OrganizerItem?
     @State private var naming: NamingTarget?
     @State private var nameText = ""
     @State private var confirmingDelete = false
@@ -551,7 +552,7 @@ struct OrganizerBoardsView: View {
                     HStack(alignment: .top, spacing: 12) {
                         let columns = engine.children(of: board.id, kind: .column).sorted { $0.sortPosition < $1.sortPosition }
                         ForEach(columns) { column in
-                            ColumnView(column: column, columns: columns, boards: boards, editCard: { editingCard = $0 }, rename: {
+                            ColumnView(column: column, columns: columns, boards: boards, editCard: { editingCard = $0 }, openComments: { commentingCard = $0 }, rename: {
                                 nameText = column.title
                                 naming = .renameColumn(column.id)
                             })
@@ -582,6 +583,14 @@ struct OrganizerBoardsView: View {
                 .environment(engine)
                 #if os(macOS)
                 .frame(minWidth: 480, minHeight: 620)
+                #endif
+        }
+        // The comment badge on a tile opens just the conversation, without the card's settings.
+        .sheet(item: $commentingCard) { card in
+            NavigationStack { CardCommentsView(card: card) }
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 480, minHeight: 520)
                 #endif
         }
         .sheet(item: $automating) { board in
@@ -674,6 +683,7 @@ private struct ColumnView: View {
     let columns: [OrganizerItem]
     let boards: [OrganizerItem]
     var editCard: (OrganizerItem) -> Void
+    var openComments: (OrganizerItem) -> Void
     var rename: () -> Void
 
     @State private var newCard = ""
@@ -731,12 +741,14 @@ private struct ColumnView: View {
     }
 
     private func cardTile(_ card: OrganizerItem, in cards: [OrganizerItem]) -> some View {
-        CardTile(card: card)
+        CardTile(card: card, openComments: { openComments(card) })
             .onTapGesture { editCard(card) }
-            // A tap gesture alone is invisible to VoiceOver; this makes the tile a button.
+            // A tap gesture alone is invisible to VoiceOver; this makes the tile a button. Combining
+            // the children swallows the comment badge's own button, so it comes back as a named action.
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { editCard(card) }
+            .accessibilityAction(named: "Comments") { openComments(card) }
             .draggable(CardDrag(id: card.id)) {
                 CardTile(card: card).frame(width: 250).environment(engine)
             }
@@ -793,6 +805,8 @@ private struct ColumnView: View {
 private struct CardTile: View {
     @Environment(OrganizerEngine.self) private var engine
     let card: OrganizerItem
+    // Set on the board, nil on the drag preview: the comment badge is then its own button.
+    var openComments: (() -> Void)? = nil
 
     var body: some View {
         let attachments = engine.children(of: card.id, kind: .attachment)
@@ -818,9 +832,13 @@ private struct CardTile: View {
                     }
                 }
             }
-            Text(card.title.isEmpty ? "Card" : card.title)
-                .strikethrough(card.bool("completed"))
-                .foregroundStyle(card.bool("completed") ? .secondary : .primary)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(card.title.isEmpty ? "Card" : card.title)
+                    .strikethrough(card.bool("completed"))
+                    .foregroundStyle(card.bool("completed") ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                commentBadge
+            }
             HStack(spacing: 10) {
                 if let dueText = card.string("due"), let due = OrganizerDates.parse(dueText, allDay: dueText.count == 10) {
                     Label(due.formatted(.dateTime.month(.abbreviated).day()), systemImage: "clock")
@@ -828,8 +846,6 @@ private struct CardTile: View {
                 }
                 if !checklist.isEmpty { Label("\(done)/\(checklist.count)", systemImage: "checklist") }
                 if !attachments.isEmpty { Label("\(attachments.count)", systemImage: "paperclip") }
-                let comments = engine.children(of: card.id, kind: .comment).count
-                if comments > 0 { Label("\(comments)", systemImage: "bubble.left") }
                 if card.string("description") != nil { Image(systemName: "text.alignleft") }
                 ForEach((card.fields["assignees"]?.array ?? []).compactMap(\.string), id: \.self) { person in
                     Text(person.prefix(2).uppercased())
@@ -847,5 +863,34 @@ private struct CardTile: View {
         .background(.background, in: RoundedRectangle(cornerRadius: 8))
         .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
         .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // The comment count beside the title, and a tap target of its own: it opens the comments
+    // without the rest of the card. With no comments yet it's a faint bubble, so there's still
+    // somewhere to start one. The hit area is padded out to 44pt and the padding taken back off
+    // the layout, so the tile doesn't grow; the button wins the tap over the tile's own gesture.
+    @ViewBuilder private var commentBadge: some View {
+        let comments = engine.children(of: card.id, kind: .comment).count
+        let badge = HStack(spacing: 3) {
+            Image(systemName: "bubble.left")
+            if comments > 0 { Text("\(comments)").monospacedDigit() }
+        }
+        .font(.caption)
+        .foregroundStyle(comments > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+        if let openComments {
+            Button(action: openComments) {
+                badge
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, -12)
+            .padding(.vertical, -14)
+            .help(comments > 0 ? "Comments" : "Add a comment")
+            .accessibilityLabel(comments == 1 ? "1 comment" : "\(comments) comments")
+        } else if comments > 0 {
+            badge
+        }
     }
 }

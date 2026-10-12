@@ -70,6 +70,19 @@ public static class OrganizerComments
     /// on every device.</summary>
     public static int ColorIndex(string name, int count) => name.ToLowerInvariant().Sum(c => (int)c) % count;
 
+    /// <summary>The number beside the speech bubble on a board card: blank with none, so the bubble
+    /// alone invites the first comment.</summary>
+    public static string BadgeCount(int count) =>
+        count > 0 ? count.ToString(System.Globalization.CultureInfo.CurrentCulture) : "";
+
+    /// <summary>What the speech bubble on a board card says it does when pointed at.</summary>
+    public static string BadgeTooltip(int count) => count switch
+    {
+        <= 0 => "Add a comment",
+        1 => "1 comment - open the comments",
+        _ => $"{count.ToString(System.Globalization.CultureInfo.CurrentCulture)} comments - open the comments",
+    };
+
     /// <summary>The change for an author rewriting their comment, or null when there's nothing to save.</summary>
     public static Dictionary<string, object?>? EditChanges(OrganizerItem comment, string body, DateTimeOffset? now = null)
     {
