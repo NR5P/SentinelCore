@@ -12,7 +12,6 @@
 #
 #   dist/win-x64/          SentinelCore\, SentinelCore.Web\, homekit-bridge\, docs\, install.ps1
 #   dist/linux-x64/        SentinelCore/,  SentinelCore.Web/,  homekit-bridge/,  docs/,  install.sh
-#   dist/linux-arm64/      (Raspberry Pi 4/5 and similar)
 #   dist/osx-x64/          Intel Macs
 #   dist/osx-arm64/        Apple Silicon Macs
 #   dist/SentinelCore-<platform>.zip   <- give this file to the end user for that platform
@@ -31,6 +30,10 @@
 #
 # Override PLATFORMS to build a subset, e.g.:
 #   PLATFORMS="linux-x64 win-x64" ./scripts/publish-release.sh
+#
+# linux-arm64 is still a valid platform but isn't built by default: a Raspberry Pi can't
+# realistically run the local vision model, so it isn't something to hand anyone. Name it in
+# PLATFORMS to build it anyway.
 
 set -euo pipefail
 
@@ -38,7 +41,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 DIST_DIR="$ROOT_DIR/dist"
 
-PLATFORMS=${PLATFORMS:-"win-x64 linux-x64 linux-arm64 osx-x64 osx-arm64"}
+PLATFORMS=${PLATFORMS:-"win-x64 linux-x64 osx-x64 osx-arm64"}
 
 if ! command -v dotnet >/dev/null 2>&1; then
   echo "dotnet is not available. Install the .NET 10 SDK to build release bundles." >&2

@@ -27,7 +27,8 @@ cd core
 ./scripts/publish-update.sh --notes "What changed, in a sentence or two"
 ```
 
-- Builds `linux-x64` and `linux-arm64` and stamps them with a **build number**: the master
+- Builds `linux-x64` (add `PLATFORMS="linux-x64 linux-arm64"` for ARM boxes, which aren't a
+  supported target any more) and stamps them with a **build number**: the master
   commit count, so it only ever goes up. Installs compare build numbers.
 - Refuses to run if `core/` has uncommitted changes (`ALLOW_DIRTY=1` overrides this for a
   throwaway test) or if the signing key doesn't match the public key compiled into the app.

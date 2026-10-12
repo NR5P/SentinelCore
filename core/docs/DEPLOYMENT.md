@@ -1497,7 +1497,6 @@ This produces, under `core/dist/`:
 ```
 SentinelCore-win-x64.zip      Windows (x64)
 SentinelCore-linux-x64.zip    Linux (x64)
-SentinelCore-linux-arm64.zip  Linux (ARM64 - Raspberry Pi 4/5 and similar)
 SentinelCore-osx-x64.zip      macOS (Intel)
 SentinelCore-osx-arm64.zip    macOS (Apple Silicon)
 ```
@@ -1519,6 +1518,8 @@ Telegram, Discord, Webhook, MQTT, Blue Iris, Cloud Vision) reset to `Enabled: fa
 credentials cleared. Otherwise a release built from a machine with a live, configured install
 would ship that maintainer's own API keys and personal settings to everyone who downloaded it.
 Build with `PLATFORMS="linux-x64 win-x64" ./scripts/publish-release.sh` to build a subset.
+`linux-arm64` still builds if you name it, but it isn't built by default: a Raspberry Pi can't
+realistically run the local vision model.
 
 Before zipping each bundle, the script **starts the binaries it just published** and fails the
 build if either doesn't answer its health endpoint. Only the bundle matching the build machine's

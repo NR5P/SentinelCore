@@ -2,7 +2,7 @@
 # Publishes a Core update that installed boxes pick up on their own overnight (docs/AUTO_UPDATE.md).
 # Run on the maintainer's Mac - the one machine that holds the update signing key.
 #
-#   ./scripts/publish-update.sh                          # stable channel, linux-x64 + linux-arm64
+#   ./scripts/publish-update.sh                          # stable channel, linux-x64
 #   ./scripts/publish-update.sh --channel beta --notes "Fixes the live grid stall"
 #   ./scripts/publish-update.sh --no-upload              # build + sign only, leave it in dist/updates/
 #   ./scripts/publish-update.sh --minimum-build 640      # boxes older than 640 must reinstall by hand
@@ -32,7 +32,7 @@
 # ./scripts/publish-update.sh needs no flags, e.g.
 #   UPDATE_HOST=user@relay-host
 #   UPDATE_DIR=/opt/sentinelcore/core/SentinelCore.PushRelay/updates
-#   PLATFORMS           (default "linux-x64 linux-arm64")
+#   PLATFORMS           (default "linux-x64"; add linux-arm64 to also update ARM boxes)
 #   ALLOW_DIRTY=1       publish from a tree with uncommitted changes (don't, for a real release)
 
 set -euo pipefail
@@ -50,7 +50,7 @@ fi
 KEY=${UPDATE_SIGNING_KEY:-$HOME/sentinelcore-update-keys/update-signing-key.pem}
 UPDATE_HOST=${UPDATE_HOST:-}
 UPDATE_DIR=${UPDATE_DIR:-/opt/sentinelcore/core/SentinelCore.PushRelay/updates}
-PLATFORMS=${PLATFORMS:-"linux-x64 linux-arm64"}
+PLATFORMS=${PLATFORMS:-"linux-x64"}
 
 CHANNEL=stable
 NOTES=""
