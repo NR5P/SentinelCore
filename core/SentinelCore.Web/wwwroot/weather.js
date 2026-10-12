@@ -1451,7 +1451,7 @@ window.SentinelWeather = (function () {
       if (isFullscreen()) toggleFullscreen(false);
     }
 
-    return { panel, attached, start, stop: stopTimers, focusCell, loadStorms, isFullscreen };
+    return { panel, attached, start, stop: stopTimers, focusCell, loadStorms, isFullscreen, fullscreen: toggleFullscreen };
   })();
 
   // ---------------- Loading ----------------
@@ -1482,6 +1482,7 @@ window.SentinelWeather = (function () {
         }
         await loadDetails();
         render();
+        openWantedRadar();
       }
     } catch (err) {
       console.error("Failed to load the weather", err);
@@ -1494,6 +1495,21 @@ window.SentinelWeather = (function () {
   }
 
   refreshBtn.addEventListener("click", () => { load(); RadarMap.loadStorms(); });
+
+  // The radar full screen, asked for by the kiosk's weather warning banner. The tab may still be
+  // loading, so it opens once there's a map to show.
+  let radarWanted = false;
+
+  function openRadar() {
+    radarWanted = true;
+    openWantedRadar();
+  }
+
+  function openWantedRadar() {
+    if (!radarWanted || report?.state !== "ok" || !mapStarted) return;
+    radarWanted = false;
+    RadarMap.fullscreen(true);
+  }
 
   function show() {
     hide();
@@ -1508,5 +1524,5 @@ window.SentinelWeather = (function () {
     RadarMap.stop();
   }
 
-  return { show, hide, glyph };
+  return { show, hide, glyph, openRadar };
 })();

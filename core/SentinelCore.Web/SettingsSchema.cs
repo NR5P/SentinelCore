@@ -1258,6 +1258,35 @@ public static class SettingsSchema
         },
         new()
         {
+            Key = "kioskWeather",
+            Title = "WALL KIOSK WEATHER WARNINGS",
+            Group = SettingsGroups.Maintenance,
+            Endpoint = "/api/settings/kiosk-weather",
+            Basic = true,
+            DtoType = typeof(KioskWeatherSettingsDto),
+            Description = "What the wall tablet flashes a banner about when the National Weather Service puts out a warning, watch or advisory for your location (set under LOCATION). The banner sits at the top of the screen without blocking anything; tap it to see the radar full screen, or × to dismiss it. Once seen it goes away, and the Weather button keeps a coloured dot until the alert ends. Separate from WEATHER ALERTS, which sends messages to you.",
+            Fields =
+            [
+                Check("enabled", "Show Warnings", "Flash a banner on the wall tablet for weather alerts."),
+                Select("minimumLevel", "Show Alerts At", "How serious an alert has to be before the tablet shows it. Warnings mean it is happening or about to; watches mean conditions are right for it; advisories and statements cover the rest.",
+                    (WeatherAlertOptions.LevelWarning, "Warnings only"),
+                    (WeatherAlertOptions.LevelWatch, "Watches and warnings"),
+                    (WeatherAlertOptions.LevelAdvisory, "Everything, including advisories")),
+                Check("tornado", "Tornado", "Tornado watches and warnings."),
+                Check("severeThunderstorm", "Severe Thunderstorm", "Severe thunderstorm watches and warnings."),
+                Check("flood", "Flood", "Flash flood, flood and coastal flood alerts."),
+                Check("winter", "Winter Weather", "Winter storm, blizzard, ice storm, snow and freezing rain alerts."),
+                Check("wind", "Wind", "High wind warnings, wind advisories and other wind alerts."),
+                Check("temperature", "Heat & Cold", "Extreme heat, heat advisories, extreme cold, wind chill, freeze and frost alerts."),
+                Check("tropical", "Tropical", "Hurricane, tropical storm and storm surge alerts."),
+                Check("fire", "Fire Weather", "Red flag warnings and fire weather watches."),
+                Check("other", "Everything Else", "Any alert not covered above: fog, air quality, special weather statements, and so on."),
+                Number("wakeMinutes", "Wake Screen For (min)", "A new alert turns the tablet's screen on (waking it from dim or dark) and keeps it on this long, or until someone taps the banner. 0 leaves the screen alone.", 0, 240),
+                Check("openRadar", "Show the Radar", "When a new alert comes in and nobody is using the tablet, switch it to the radar full screen.")
+            ]
+        },
+        new()
+        {
             Key = "autoUpdate",
             Title = "AUTOMATIC UPDATES",
             Group = SettingsGroups.Maintenance,

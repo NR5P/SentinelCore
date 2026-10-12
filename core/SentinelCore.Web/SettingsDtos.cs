@@ -687,6 +687,51 @@ public sealed class KioskSettingsDto
     public int OffSeconds { get; set; } = 300;
 }
 
+// The wall kiosk's weather warning banner (kiosk-weather-alert.js, fed by GET
+// /api/kiosk/weather-alerts). Separate from WEATHER ALERTS, which is about messages to the owner:
+// this is what the tablet on the wall flashes about, and it defaults to everything.
+public sealed class KioskWeatherSettingsDto
+{
+    public const string SectionName = "KioskWeather";
+
+    public bool Enabled { get; set; } = true;
+
+    public string MinimumLevel { get; set; } = WeatherAlertOptions.LevelAdvisory;
+
+    public bool Tornado { get; set; } = true;
+    public bool SevereThunderstorm { get; set; } = true;
+    public bool Flood { get; set; } = true;
+    public bool Winter { get; set; } = true;
+    public bool Wind { get; set; } = true;
+    public bool Temperature { get; set; } = true;
+    public bool Tropical { get; set; } = true;
+    public bool Fire { get; set; } = true;
+    public bool Other { get; set; } = true;
+
+    // How long a new warning keeps the screen lit, waking it if it was dark. 0 never wakes it.
+    [Range(0, 240)]
+    public int WakeMinutes { get; set; } = 10;
+
+    // A new warning arriving while nobody is using the tablet opens the radar full screen.
+    public bool OpenRadar { get; set; } = true;
+
+    // A method, not a property: SettingsSchemaTests treats every property as a field.
+    public WeatherAlertOptions ToFilter() => new()
+    {
+        Enabled = Enabled,
+        MinimumLevel = MinimumLevel,
+        Tornado = Tornado,
+        SevereThunderstorm = SevereThunderstorm,
+        Flood = Flood,
+        Winter = Winter,
+        Wind = Wind,
+        Temperature = Temperature,
+        Tropical = Tropical,
+        Fire = Fire,
+        Other = Other
+    };
+}
+
 // Overnight automatic updates (see AutoUpdateWorker). On by default: on an install that can't
 // update itself (a git checkout, a Mac or Windows machine) it does nothing, and on one that can,
 // updates arriving on their own is the point. Hour is local time in the Schedules time zone; the

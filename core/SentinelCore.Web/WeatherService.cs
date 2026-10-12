@@ -201,7 +201,12 @@ public sealed class WeatherService(
     // The alerts alone, for WeatherAlertWorker. `fresh` skips the five-minute cache (the answer
     // still lands in it, so the tab benefits). Null for every "nothing to check" case: no
     // location, outside NWS coverage, or the NWS unreachable with nothing cached.
-    public async Task<WeatherAlertFeed?> GetActiveAlertsAsync(bool fresh, CancellationToken ct)
+    public Task<WeatherAlertFeed?> GetActiveAlertsAsync(bool fresh, CancellationToken ct) =>
+        GetActiveAlertsAsync(fresh ? TimeSpan.Zero : AlertsTtl, ct);
+
+    // The same with a chosen age limit: the wall kiosk asks every minute and wants a tornado
+    // warning within a minute or two, not the tab's five.
+    public async Task<WeatherAlertFeed?> GetActiveAlertsAsync(TimeSpan maxAge, CancellationToken ct)
     {
         var (options, coordinate) = await ReadLocationAsync(ct);
         if (coordinate is null) return null;
@@ -214,7 +219,7 @@ public sealed class WeatherService(
             var point = await CachedAsync("point", PointTtl, c => FetchPointAsync(coordinate, c), ct);
             if (point.Value is null || !point.Value.Supported) return null;
 
-            var alerts = await CachedAsync("alerts", fresh ? TimeSpan.Zero : AlertsTtl, c => FetchAlertsAsync(coordinate, c), ct);
+            var alerts = await CachedAsync("alerts", maxAge, c => FetchAlertsAsync(coordinate, c), ct);
             if (alerts.Value is null) return null;
 
             var nearest = string.Join(", ", new[] { point.Value.City, point.Value.State }.Where(s => !string.IsNullOrWhiteSpace(s)));

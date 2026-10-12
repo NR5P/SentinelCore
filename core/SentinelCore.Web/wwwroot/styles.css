@@ -15475,3 +15475,153 @@ html.kiosk .org-entry {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Kiosk weather warning banner (kiosk-weather-alert.js) ----------------------------------
+   Floats at the top over everything, the full-screen radar (z 2000) included, but narrow and
+   short so the page under it still works. Flashes until tapped. */
+.kwx-banner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2100;
+  width: min(760px, calc(100% - 32px));
+  display: flex;
+  align-items: stretch;
+  border-radius: 12px;
+  overflow: hidden;
+  color: #fff;
+  --kwx: var(--red);
+  --kwx-dark: #7a0f1a;
+  background: var(--kwx-dark);
+  border: 2px solid var(--kwx);
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6), 0 0 24px var(--kwx);
+  animation: kwx-flash 1.1s ease-in-out infinite alternate;
+}
+
+.kwx-banner.hidden {
+  display: none;
+}
+
+.kwx-banner.kwx-watch {
+  --kwx: #ff8a2a;
+  --kwx-dark: #6e3300;
+}
+
+.kwx-banner.kwx-advisory {
+  --kwx: var(--amber);
+  --kwx-dark: #5c4100;
+}
+
+@keyframes kwx-flash {
+  from { background: var(--kwx-dark); box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6), 0 0 8px var(--kwx); }
+  to { background: var(--kwx); box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6), 0 0 34px var(--kwx); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kwx-banner { animation: none; background: var(--kwx-dark); }
+}
+
+.kwx-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  min-height: 56px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kwx-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+
+.kwx-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kwx-line,
+.kwx-headline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.kwx-event {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.kwx-until,
+.kwx-more {
+  font-size: 0.95rem;
+}
+
+.kwx-more {
+  opacity: 0.85;
+}
+
+.kwx-headline {
+  font-size: 0.85rem;
+  opacity: 0.92;
+}
+
+.kwx-headline:empty {
+  display: none;
+}
+
+.kwx-hint {
+  flex: none;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 8px;
+}
+
+.kwx-close {
+  flex: none;
+  width: 56px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 1.8rem;
+  cursor: pointer;
+}
+
+/* The Weather button's dot while an alert is in force (seen or not). */
+#tabs .tab[data-view="weather"][data-wx-alert] {
+  position: relative;
+}
+
+#tabs .tab[data-view="weather"][data-wx-alert]::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 8px currentColor;
+}
+
+#tabs .tab[data-view="weather"][data-wx-alert="warning"]::after { background: var(--red); }
+#tabs .tab[data-view="weather"][data-wx-alert="watch"]::after { background: #ff8a2a; }
