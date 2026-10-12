@@ -35,7 +35,7 @@ await evalJs('window.ready');
 const list = only !== undefined ? only.split(',').map(Number) : [...Array(Number(frameCount)).keys()];
 for (const f of list) {
   await evalJs(`render(${f / FPS})`);
-  const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: 1280, height: 720, scale: 1 } });
+  const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: 1280, height: 720, scale: 1 } });
   writeFileSync(`${outDir}/f${String(f).padStart(4, '0')}.png`, Buffer.from(shot.result.data, 'base64'));
 }
 ws.close(); brave.kill();
