@@ -216,6 +216,40 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
     }
 
     [Fact]
+    public async Task ASearchOnAColdServer_StartsTheServicesAgainWhenTheyAreStoppedPartWay()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await AddLibraryAsync(factory, MediaLibraryKinds.Movies, _moviesPath);
+        _prowlarr.Releases = [Release("Big.Buck.Bunny.2008.1080p.BluRay.x264", 20, "magnet:?xt=urn:btih:ffff")];
+        // The first start is stopped from outside before the tunnel is up (as every test server
+        // the suite started on the box during a deploy used to do); the second one connects.
+        _stack.AfterStart = stack =>
+        {
+            if (stack.Starts == 1) stack.State = MediaDownloadServiceStates.Failed;
+            else stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1");
+        };
+
+        var search = await SearchAsync(client, new { kind = "movie", title = "Big Buck Bunny", year = 2008 });
+
+        Assert.Equal("done", search.GetProperty("phase").GetString());
+        Assert.Equal(2, _stack.Starts);
+        Assert.NotEmpty(_prowlarr.Queries);
+    }
+
+    [Fact]
+    public async Task AServerThatHasJustStarted_LeavesServicesItNeverUsedRunning()
+    {
+        _stack.State = MediaDownloadServiceStates.Running;
+        using var factory = CreateFactory();
+        var manager = factory.Services.GetRequiredService<MediaDownloadManager>();
+
+        await manager.TickAsync(Ct);
+
+        Assert.Equal(0, _stack.Stops);
+    }
+
+    [Fact]
     public async Task TestVpn_ProvesTheTunnelHidesTheHomeAddress_AndTheStatusSaysSo()
     {
         using var factory = CreateFactory();
@@ -565,7 +599,9 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         public int Stops;
 
         public Task<string> StateAsync(CancellationToken cancellationToken) => Task.FromResult(State);
-        public Task StartAsync(CancellationToken cancellationToken) { Starts++; State = MediaDownloadServiceStates.Running; return Task.CompletedTask; }
+        // Runs after each start, to play what the real services do next.
+        public Action<FakeStack>? AfterStart;
+        public Task StartAsync(CancellationToken cancellationToken) { Starts++; State = MediaDownloadServiceStates.Running; AfterStart?.Invoke(this); return Task.CompletedTask; }
         public Task StopAsync(CancellationToken cancellationToken) { Stops++; State = MediaDownloadServiceStates.Stopped; return Task.CompletedTask; }
         public Task<MediaVpnStatus> VpnStatusAsync(CancellationToken cancellationToken) => Task.FromResult(Vpn);
         public bool UseVpn = true;

@@ -50,7 +50,11 @@ public sealed class MediaDownloadManager(
     private readonly SemaphoreSlim _queueLock = new(1, 1);
     private readonly SemaphoreSlim _startLock = new(1, 1);
     private readonly SemaphoreSlim _wake = new(0, int.MaxValue);
-    private DateTimeOffset _lastActivity = DateTimeOffset.MinValue;
+    // Starts at "just now", not "never": a server that has only just started has not been idle
+    // for IdleMinutes, so it does not stop services it never used. Without this, every copy of
+    // the server the test suite starts on the box during a deploy switched the live VPN off as
+    // it came up, and the first search after it failed with "the services failed to start".
+    private DateTimeOffset _lastActivity = DateTimeOffset.UtcNow;
     private (DateTimeOffset At, string Ip)? _homeIp;
 
     public static async Task<MediaDownloadsSettingsDto> ReadOptionsAsync(AppSettingsFile settings, CancellationToken cancellationToken) =>
@@ -115,17 +119,27 @@ public sealed class MediaDownloadManager(
 
             var deadline = DateTimeOffset.UtcNow + StartTimeout;
             string? lastProblem = null;
+            var startedAgain = false;
             while (true)
             {
                 lastProblem = await ProblemAsync(options, cancellationToken);
                 if (lastProblem is null) return;
-                if (DateTimeOffset.UtcNow > deadline) break;
-                if (await stack.StateAsync(cancellationToken) == MediaDownloadServiceStates.Failed)
-                {
-                    lastProblem = "The VPN or torrent services failed to start. On the server, `journalctl -u sentinelcore-vpn` says why - usually the VPN configuration.";
-                    break;
-                }
+                if (lastProblem == LeakMessage || DateTimeOffset.UtcNow > deadline) break;
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+                if (await stack.StateAsync(cancellationToken) is MediaDownloadServiceStates.Stopped or MediaDownloadServiceStates.Failed)
+                {
+                    // Stopped while coming up - by someone at the server, or anything else that
+                    // stops the target - rather than refusing to start: try once more before
+                    // giving up, so a search on a cold server still connects by itself.
+                    if (startedAgain)
+                    {
+                        lastProblem = "The VPN or torrent services failed to start. On the server, `journalctl -u sentinelcore-vpn` says why - usually the VPN configuration.";
+                        break;
+                    }
+                    startedAgain = true;
+                    logger.LogWarning("Movie downloads: the services stopped while starting; starting them again");
+                    await stack.StartAsync(cancellationToken);
+                }
             }
             if (IsMullvad(options))
             {
@@ -143,6 +157,8 @@ public sealed class MediaDownloadManager(
     }
 
     private string? _appliedVpnKey;
+
+    private const string LeakMessage = "The VPN is not hiding this server's address, so downloads were stopped. Check the VPN configuration.";
 
     private static bool IsMullvad(MediaDownloadsSettingsDto o) => o.UseVpn && o.VpnProvider == MediaVpnProviders.Mullvad;
 
@@ -166,7 +182,7 @@ public sealed class MediaDownloadManager(
             {
                 _verified = null;
                 await stack.StopAsync(cancellationToken);
-                return "The VPN is not hiding this server's address, so downloads were stopped. Check the VPN configuration.";
+                return LeakMessage;
             }
             // Only "proven" when the home address was actually known to compare against.
             if (home is not null) _verified = (DateTimeOffset.UtcNow, vpn.Ip!);
@@ -702,10 +718,20 @@ public sealed class MediaDownloadManager(
 
     private async Task StopWhenIdleAsync(MediaDownloadsSettingsDto options, CancellationToken cancellationToken)
     {
-        if (DateTimeOffset.UtcNow - _lastActivity < TimeSpan.FromMinutes(Math.Max(1, options.IdleMinutes))) return;
-        var state = await stack.StateAsync(cancellationToken);
-        if (state is MediaDownloadServiceStates.Running or MediaDownloadServiceStates.Starting)
-            await stack.StopAsync(cancellationToken);
+        var idleFor = TimeSpan.FromMinutes(Math.Max(1, options.IdleMinutes));
+        if (DateTimeOffset.UtcNow - _lastActivity < idleFor) return;
+        // Under the start lock and asked again inside it: a search that began while this pass was
+        // looking (EnsureReadyAsync touches before it waits for the lock) must not have the
+        // services it is starting switched off underneath it.
+        await _startLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (DateTimeOffset.UtcNow - _lastActivity < idleFor) return;
+            var state = await stack.StateAsync(cancellationToken);
+            if (state is MediaDownloadServiceStates.Running or MediaDownloadServiceStates.Starting)
+                await stack.StopAsync(cancellationToken);
+        }
+        finally { _startLock.Release(); }
     }
 
     private async Task AdvanceAsync(MediaDownload download, IReadOnlyList<QbittorrentClient.Torrent> torrents, MediaDownloadsSettingsDto options, CancellationToken cancellationToken)
