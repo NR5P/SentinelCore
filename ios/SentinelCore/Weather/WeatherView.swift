@@ -77,7 +77,7 @@ struct WeatherView: View {
         }
         .task(id: TabKey(active: isActive && report?.state == "ok", server: model.activeServerURL)) {
             guard isActive, report?.state == "ok" else {
-                radar.stop()
+                radar.stopAll()
                 return
             }
             radar.configure(client: model.client, home: report?.location)
@@ -87,7 +87,7 @@ struct WeatherView: View {
                 if Task.isCancelled { break }
                 await radar.refresh()
             }
-            radar.stop()
+            radar.stopAll()
         }
     }
 

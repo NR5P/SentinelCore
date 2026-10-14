@@ -69,7 +69,7 @@ struct WeatherTVView: View {
         }
         .task(id: TabKey(active: isActive && report?.state == "ok", server: model.activeServerURL)) {
             guard isActive, report?.state == "ok" else {
-                radar.stop()
+                radar.stopAll()
                 return
             }
             radar.configure(client: model.client, home: report?.location)
@@ -79,7 +79,7 @@ struct WeatherTVView: View {
                 if Task.isCancelled { break }
                 await radar.refresh()
             }
-            radar.stop()
+            radar.stopAll()
         }
         .sheet(item: $shownAlert) { alert in
             WeatherAlertSheet(alert: alert, zone: zone)
@@ -531,7 +531,13 @@ private struct WeatherMapFrame: View {
 
     var body: some View {
         WeatherRadarMapView(radar: radar, serverRoot: URL(string: serverURL.trimmingCharacters(in: .whitespacesAndNewlines)))
-            .overlay(alignment: .topTrailing) { timeBadge.padding(16) }
+            .overlay(alignment: .topTrailing) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    timeBadge
+                    if radar.showLightning && radar.lightningAvailable { lightningBadge }
+                }
+                .padding(16)
+            }
             .overlay(alignment: .bottomLeading) {
                 if case .cell(let cell) = radar.selection {
                     WeatherCellCard(cell: cell, zone: zone).padding(16)
@@ -553,6 +559,28 @@ private struct WeatherMapFrame: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .background(.regularMaterial, in: Capsule())
+    }
+
+    // "⚡ 1,260 flashes in view, last 15 min · nearest home 6.2 mi NE, 3 min ago" - white on red
+    // within ten miles.
+    private var lightningBadge: some View {
+        let status = radar.lightningStatus
+        let close = (status.nearestMiles ?? .infinity) <= LightningStore.closeMiles
+        let near = !close && (status.nearestMiles ?? .infinity) <= LightningStore.nearMiles
+        return Text(status.text)
+            .font(.caption.monospacedDigit().weight(.semibold))
+            .multilineTextAlignment(.trailing)
+            .frame(maxWidth: 760, alignment: .trailing)
+            .foregroundStyle(close ? .white : near ? Color(weatherHex: "#FF9800") : Color(weatherHex: "#FFEB3B"))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background {
+                if close {
+                    RoundedRectangle(cornerRadius: 12).fill(Color(weatherHex: "#C62828").opacity(0.92))
+                } else {
+                    RoundedRectangle(cornerRadius: 12).fill(.regularMaterial)
+                }
+            }
     }
 }
 
@@ -626,6 +654,9 @@ private struct WeatherRadarControls: View {
                 toggle("Storm cells & tracks", isOn: radar.showCells) { radar.showCells.toggle() }
                 toggle("Warning outlines", isOn: radar.showWarnings) { radar.showWarnings.toggle() }
                 toggle("SPC outlook today", isOn: radar.showOutlook) { radar.showOutlook.toggle() }
+                if radar.lightningAvailable {
+                    toggle("Lightning", isOn: radar.showLightning) { radar.showLightning.toggle() }
+                }
                 Divider()
                 ForEach([0.5, 0.75, 1.0], id: \.self) { value in
                     toggle("Radar \(Int(value * 100))% opaque", isOn: radar.opacity == value) { radar.opacity = value }
@@ -671,7 +702,32 @@ private struct WeatherRadarLegend: View {
                 if let layer = radar.currentLayer, !layer.description.isEmpty {
                     Text(layer.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
+                if radar.showLightning && radar.lightningAvailable { lightningKey }
             }
+        }
+    }
+
+    // Bolts are new; dots fade to red over 15 minutes.
+    private var lightningKey: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 16) {
+                Text("LIGHTNING").fontWeight(.semibold).foregroundStyle(Color(weatherHex: "#FFEB3B"))
+                Label { Text("new") } icon: { Image(systemName: "bolt.fill").foregroundStyle(Color(weatherHex: "#FFEB3B")) }
+                dot("#FFEB3B", "2-5")
+                dot("#FF9800", "5-10")
+                dot("#F44336", "10-15 min")
+            }
+            .lineLimit(1)
+            .fixedSize()
+            Text("NOAA GOES-19 Lightning Mapper").foregroundStyle(.secondary).lineLimit(1)
+        }
+        .font(.caption2)
+    }
+
+    private func dot(_ hex: String, _ text: String) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(Color(weatherHex: hex)).frame(width: 14, height: 14)
+            Text(text)
         }
     }
 }

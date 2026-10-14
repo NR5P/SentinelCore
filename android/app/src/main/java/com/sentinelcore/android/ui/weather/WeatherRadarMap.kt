@@ -57,16 +57,21 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -74,9 +79,17 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.sentinelcore.android.data.GeoPoint
 import com.sentinelcore.android.data.GeoPolygons
+import com.sentinelcore.android.data.LightningBox
+import com.sentinelcore.android.data.LightningFlash
+import com.sentinelcore.android.data.LightningLevel
+import com.sentinelcore.android.data.LightningMark
 import com.sentinelcore.android.data.Mercator
+import com.sentinelcore.android.data.WeatherLightning
 import com.sentinelcore.android.data.WeatherLogic
 import com.sentinelcore.android.data.WeatherMapLayer
 import com.sentinelcore.android.data.WeatherStormCell
@@ -140,6 +153,8 @@ internal data class MapView(
             Mercator.latitude((centerY - halfH).coerceAtLeast(0.0)),
         )
     }
+
+    fun box(pad: Double = 0.0): LightningBox = bounds(pad).let { LightningBox(it[0], it[1], it[2], it[3]) }
 
     // The tiles at zoom `z` that cover the canvas, centre-out so the middle loads first.
     fun tiles(z: Int): List<Pair<Int, Int>> {
@@ -236,6 +251,7 @@ internal sealed interface MapSelection {
     data class Warning(val id: String) : MapSelection
     data class Site(val id: String) : MapSelection
     data class Outlook(val label: String) : MapSelection
+    data class Strike(val flash: LightningFlash) : MapSelection
 }
 
 // ---------------- The panel ----------------
@@ -254,6 +270,22 @@ internal fun RadarMapPanel(
     LaunchedEffect(wx.playing, frames.size) {
         if (wx.playing) runLoop(wx, frames.size)
     }
+    // Lightning every 30 seconds while the map is up and the app in front - every 4 while the
+    // server is still filling in its first answer.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(wx.prefs.lightning, lifecycleOwner) {
+        if (!wx.prefs.lightning) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                wx.loadLightning()
+                delay(if (wx.lightning.ready) WeatherLightning.REFRESH_MS else WeatherLightning.LOADING_REFRESH_MS)
+            }
+        }
+    }
+    // The moment the lightning is drawn for: this frame's time, or null for "now" on the newest.
+    val moment = WeatherLightning.frameMoment(frames, wx.frameIndex)
+    val tilePx = with(LocalDensity.current) { 256.dp.toPx() }
+    var mapSize by remember { mutableStateOf(IntSize.Zero) }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -266,22 +298,29 @@ internal fun RadarMapPanel(
             Modifier
                 .fillMaxWidth()
                 .then(if (fullscreen) Modifier.weight(1f) else Modifier.heightIn(min = 340.dp, max = 340.dp))
-                .clip(RoundedCornerShape(8.dp)),
+                .clip(RoundedCornerShape(8.dp))
+                .onSizeChanged { mapSize = it },
         ) {
-            RadarCanvas(wx, layer, frames, Modifier.fillMaxSize())
-            // Frame time, top right.
+            RadarCanvas(wx, layer, frames, moment, Modifier.fillMaxSize())
+            // Frame time, top right, and the lightning line under it - clear of the buttons.
             val time = frames.getOrNull(wx.frameIndex)
-            Surface(
-                color = Color.Black.copy(alpha = 0.6f),
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+            Column(
+                Modifier.align(Alignment.TopEnd).padding(start = 52.dp, top = 8.dp, end = 8.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    frameLabel(time, clock),
-                    color = if (wx.frameIndex < frames.size - 1) Color(0xFFFFC400) else Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                )
+                Surface(color = Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(6.dp)) {
+                    Text(
+                        frameLabel(time, clock),
+                        color = if (wx.frameIndex < frames.size - 1) Color(0xFFFFC400) else Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+                if (wx.prefs.lightning && mapSize.width > 0) {
+                    val view = MapView(wx.centerX, wx.centerY, wx.zoom, mapSize.width.toFloat(), mapSize.height.toFloat(), tilePx)
+                    LightningStatusLine(wx, view.box(), moment)
+                }
             }
             Column(
                 Modifier.align(Alignment.TopStart).padding(8.dp),
@@ -326,13 +365,14 @@ internal fun RadarMapPanel(
         }
 
         if (!fullscreen) {
-            MapSelectionCard(wx, clock)
+            MapSelectionCard(wx, clock, moment)
             LayerPicker(wx, info.layers, layer, info.station)
             StationPicker(wx)
             OverlayToggles(wx)
+            if (wx.prefs.lightning) LightningKey()
             layer?.let { Legend(wx, it, info.station) }
         } else {
-            MapSelectionCard(wx, clock)
+            MapSelectionCard(wx, clock, moment)
         }
     }
 }
@@ -418,6 +458,14 @@ private fun OverlayToggles(wx: WeatherScreenModel) {
         FilterChip(prefs.warnings, { wx.updatePrefs { copy(warnings = !warnings) } }, label = { Text("Warnings") })
         FilterChip(prefs.outlook, { wx.updatePrefs { copy(outlook = !outlook) } }, label = { Text("SPC outlook") })
         FilterChip(prefs.sites, { wx.updatePrefs { copy(sites = !sites) } }, label = { Text("Radar sites") })
+        FilterChip(
+            prefs.lightning,
+            {
+                wx.updatePrefs { copy(lightning = !lightning) }
+                if (wx.selection is MapSelection.Strike) wx.selection = null
+            },
+            label = { Text("Lightning") },
+        )
     }
 }
 
@@ -443,16 +491,58 @@ private fun Legend(wx: WeatherScreenModel, layer: WeatherMapLayer, station: Stri
         Text(
             layer.description + " " +
                 (if (layer.isStation) "From radar $station; it sees about 150 miles out." else "Updated every few minutes.") +
-                " Pinch to zoom, drag to pan, tap a storm or warning for details.",
+                " Pinch to zoom, drag to pan, tap a storm, warning or lightning strike for details.",
             style = MaterialTheme.typography.bodySmall,
             color = SentinelTextDim,
         )
     }
 }
 
+// "⚡ 1,260 flashes in view, last 15 min · nearest home 6.2 mi NE, 3 min ago" for the moment
+// showing: orange within 25 miles, white on red within 10.
+@Composable
+private fun LightningStatusLine(wx: WeatherScreenModel, view: LightningBox, moment: Long?) {
+    val home = wx.report?.location?.let { GeoPoint(it.latitude, it.longitude) }
+    val status = remember(wx.lightning, view, home, moment) {
+        WeatherLightning.status(wx.lightning, view, home, moment ?: System.currentTimeMillis())
+    }
+    val (background, color) = when (status.level) {
+        LightningLevel.CLOSE -> Color(0xEBC62828) to Color.White
+        LightningLevel.NEAR -> Color.Black.copy(alpha = 0.6f) to Color(0xFFFF9800)
+        LightningLevel.NORMAL -> Color.Black.copy(alpha = 0.6f) to Color(0xFFFFEB3B)
+    }
+    Surface(color = background, shape = RoundedCornerShape(6.dp)) {
+        Text(
+            status.text,
+            color = color,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+@Composable
+private fun LightningKey() {
+    val dim = SentinelTextDim
+    Text(
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = Color(0xFFC79100), fontWeight = FontWeight.Bold)) { append("LIGHTNING  ") }
+            append("⚡ under 2 min · ")
+            withStyle(SpanStyle(color = Color(0xFFFFEB3B))) { append("●") }
+            append(" 2-5 · ")
+            withStyle(SpanStyle(color = Color(0xFFFF9800))) { append("●") }
+            append(" 5-10 · ")
+            withStyle(SpanStyle(color = Color(0xFFF44336))) { append("●") }
+            append(" 10-15 min old ")
+            withStyle(SpanStyle(color = dim)) { append("· NOAA GOES-19 Lightning Mapper, about a minute behind") }
+        },
+        style = MaterialTheme.typography.bodySmall,
+    )
+}
+
 // What a tap on the map picked, under the map (the dashboard shows these as popups).
 @Composable
-private fun MapSelectionCard(wx: WeatherScreenModel, clock: WeatherClock) {
+private fun MapSelectionCard(wx: WeatherScreenModel, clock: WeatherClock, moment: Long?) {
     val selection = wx.selection ?: return
     val storms = wx.storms
     val rows: List<Pair<String, String>>
@@ -492,6 +582,17 @@ private fun MapSelectionCard(wx: WeatherScreenModel, clock: WeatherClock) {
             val area = storms?.outlook?.firstOrNull { it.label == selection.label } ?: return
             title = "SPC today: ${area.name}"
             rows = listOf("outlook" to WeatherLogic.outlookScale(area.label))
+        }
+        is MapSelection.Strike -> {
+            title = "⚡ Lightning flash"
+            titleColor = Color(0xFFC79100)
+            rows = WeatherLightning.details(
+                selection.flash,
+                moment ?: System.currentTimeMillis(),
+                onNewest = moment == null,
+                home = wx.report?.location?.let { GeoPoint(it.latitude, it.longitude) },
+                time = { clock.clockSeconds(Instant.ofEpochMilli(it)) },
+            )
         }
     }
     androidx.compose.material3.Card(Modifier.fillMaxWidth()) {
@@ -536,6 +637,7 @@ private fun RadarCanvas(
     wx: WeatherScreenModel,
     layer: WeatherMapLayer?,
     frames: List<String?>,
+    moment: Long?,
     modifier: Modifier,
 ) {
     val density = LocalDensity.current
@@ -591,7 +693,7 @@ private fun RadarCanvas(
             .pointerInput(tilePx) {
                 detectTapGestures(
                     onDoubleTap = { wx.zoomAround(view(), it, 1.0) },
-                    onTap = { wx.selection = hitTest(wx, view(), it, density.density) },
+                    onTap = { wx.selection = hitTest(wx, view(), it, density.density, moment) },
                 )
             },
     ) {
@@ -620,10 +722,15 @@ private fun RadarCanvas(
             drawCircle(Color(0xFF4BE7FF).copy(alpha = if (chosen) 1f else 0.7f), (if (chosen) 6 else 4).dp.toPx(), at)
             drawCircle(Color.Black.copy(alpha = 0.6f), (if (chosen) 6 else 4).dp.toPx(), at, style = Stroke(1.dp.toPx()))
         }
+        // Lightning over the radar and warnings: the older flashes as dots under the storm cells,
+        // the newest as bolts on top of everything.
+        val lightningAt = moment ?: System.currentTimeMillis()
+        if (prefs.lightning) drawLightningDots(view, wx.lightning.flashes, lightningAt)
         if (prefs.cells) drawCells(view, storms?.cells.orEmpty(), (wx.selection as? MapSelection.Cell)?.id, measurer)
         info.home?.let { home ->
             drawHome(view.screen(home.latitude, home.longitude), home.label.ifBlank { "Home" }.uppercase(), measurer, labelStyle)
         }
+        if (prefs.lightning) drawLightningBolts(view, wx.lightning.flashes, lightningAt)
     }
 }
 
@@ -775,6 +882,53 @@ private fun DrawScope.drawHome(at: Offset, label: String, measurer: TextMeasurer
     drawText(text, topLeft = topLeft)
 }
 
+private inline fun forEachShowing(view: MapView, flashes: List<LightningFlash>, atMs: Long, margin: Float, action: (LightningFlash, Long, Offset) -> Unit) {
+    for (flash in flashes) {
+        val age = atMs - flash.timeMs
+        if (age < 0 || age > WeatherLightning.TRAIL_MS) continue
+        val x = view.screenX(flash.x)
+        val y = view.screenY(flash.y)
+        if (x < -margin || y < -margin || x > view.width + margin || y > view.height + margin) continue
+        action(flash, age, Offset(x, y))
+    }
+}
+
+private fun DrawScope.drawLightningDots(view: MapView, flashes: List<LightningFlash>, atMs: Long) {
+    val outline = Color.Black.copy(alpha = 0.7f)
+    val outlineWidth = 0.75.dp.toPx()
+    forEachShowing(view, flashes, atMs, 10.dp.toPx()) { flash, age, at ->
+        val mark = WeatherLightning.mark(age, flash.energy) as? LightningMark.Dot ?: return@forEachShowing
+        val radius = mark.radiusDp.dp.toPx()
+        drawCircle(Color(mark.color), radius, at, alpha = mark.alpha)
+        drawCircle(outline, radius, at, alpha = mark.alpha, style = Stroke(outlineWidth))
+    }
+}
+
+// The dashboard's bolt glyph (drawn in CSS pixels there, dp here), pale yellow with a dark edge and
+// a soft yellow halo standing in for its canvas glow.
+private fun DrawScope.drawLightningBolts(view: MapView, flashes: List<LightningFlash>, atMs: Long) {
+    val d = 1.dp.toPx()
+    val bolt = Path().apply {
+        moveTo(2 * d, -9 * d)
+        lineTo(-5 * d, 1 * d)
+        lineTo(-0.5f * d, 1 * d)
+        lineTo(-2.5f * d, 9 * d)
+        lineTo(5 * d, -2 * d)
+        lineTo(0.5f * d, -2 * d)
+        close()
+    }
+    val glow = Stroke(5 * d, join = StrokeJoin.Round)
+    val edge = Stroke(1.2f * d, join = StrokeJoin.Round)
+    forEachShowing(view, flashes, atMs, 10 * d) { _, age, at ->
+        if (age >= WeatherLightning.BOLT_MS) return@forEachShowing
+        translate(at.x, at.y) {
+            drawPath(bolt, Color(0xFFFFEB3B), alpha = 0.45f, style = glow)
+            drawPath(bolt, Color(0xFFFFFDE7))
+            drawPath(bolt, Color.Black.copy(alpha = 0.85f), style = edge)
+        }
+    }
+}
+
 private fun parseColor(hex: String?): Color? {
     val value = hex?.trim()?.removePrefix("#") ?: return null
     return runCatching {
@@ -787,9 +941,9 @@ private fun parseColor(hex: String?): Color? {
     }.getOrNull()
 }
 
-// What's under a tap: a storm cell first (they're small), then a radar site, then the most
-// serious warning containing the point, then the outlook area.
-private fun hitTest(wx: WeatherScreenModel, view: MapView, at: Offset, density: Float): MapSelection? {
+// What's under a tap: a storm cell first (they're small), then a radar site, then a lightning
+// flash within 10 dp, then the most serious warning containing the point, then the outlook area.
+private fun hitTest(wx: WeatherScreenModel, view: MapView, at: Offset, density: Float, moment: Long?): MapSelection? {
     val prefs = wx.prefs
     val storms = wx.storms
     val reach = 20 * density
@@ -807,6 +961,15 @@ private fun hitTest(wx: WeatherScreenModel, view: MapView, at: Offset, density: 
             .filter { it.second <= 14 * density }
             .minByOrNull { it.second }
             ?.let { return MapSelection.Site(it.first.id) }
+    }
+    if (prefs.lightning) {
+        var best: LightningFlash? = null
+        var bestDistance = 10 * density
+        forEachShowing(view, wx.lightning.flashes, moment ?: System.currentTimeMillis(), 10 * density) { flash, _, point ->
+            val distance = (point - at).getDistance()
+            if (distance <= bestDistance) { best = flash; bestDistance = distance }
+        }
+        best?.let { return MapSelection.Strike(it) }
     }
     val point = view.geo(at)
     if (prefs.warnings) {

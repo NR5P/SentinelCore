@@ -177,6 +177,81 @@ final class TrackLine: MKPolyline {
 
 final class HomePin: MKPointAnnotation {}
 
+// All the lightning on one world-sized overlay whose renderer draws the flashes itself - a few
+// thousand annotations would bring MapKit to its knees. The renderer draws tiles on background
+// threads, so what it draws is a snapshot swapped under a lock.
+final class LightningOverlay: NSObject, MKOverlay, @unchecked Sendable {
+    struct Snapshot {
+        var strikes: [LightningStrike] = []
+        var moment = Date()
+    }
+
+    let coordinate = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+    let boundingMapRect = MKMapRect.world
+    private let lock = NSLock()
+    private var current = Snapshot()
+
+    var snapshot: Snapshot {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
+}
+
+final class LightningRenderer: MKOverlayRenderer, @unchecked Sendable {
+    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
+        guard let overlay = overlay as? LightningOverlay else { return }
+        let snapshot = overlay.snapshot
+        // Sizes are in screen points; one point is 1/zoomScale map points.
+        let unit = 1 / zoomScale
+        let margin = 12 * unit
+        let area = mapRect.insetBy(dx: -margin, dy: -margin)
+        var bolts: [CGPoint] = []
+        for strike in snapshot.strikes {
+            let mapPoint = MKMapPoint(CLLocationCoordinate2D(latitude: strike.latitude, longitude: strike.longitude))
+            guard area.contains(mapPoint) else { continue }
+            let point = self.point(for: mapPoint)
+            switch LightningStore.look(strike, at: snapshot.moment) {
+            case .bolt:
+                bolts.append(point)
+            case .dot(let hex, let alpha, let radius):
+                let r = CGFloat(radius) * unit
+                let rect = CGRect(x: point.x - r, y: point.y - r, width: r * 2, height: r * 2)
+                context.setAlpha(CGFloat(alpha))
+                context.setFillColor(WeatherRadarMapCoordinator.cgColor(hex))
+                context.fillEllipse(in: rect)
+                context.setStrokeColor(CGColor(gray: 0, alpha: 0.7))
+                context.setLineWidth(0.75 * unit)
+                context.strokeEllipse(in: rect)
+            }
+        }
+        context.setAlpha(1)
+        // Bolts last, so the newest flashes sit on top of the older ones around them.
+        for point in bolts {
+            context.saveGState()
+            context.translateBy(x: point.x, y: point.y)
+            context.scaleBy(x: unit, y: unit)
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: 2, y: -9))
+            path.addLine(to: CGPoint(x: -5, y: 1))
+            path.addLine(to: CGPoint(x: -0.5, y: 1))
+            path.addLine(to: CGPoint(x: -2.5, y: 9))
+            path.addLine(to: CGPoint(x: 5, y: -2))
+            path.addLine(to: CGPoint(x: 0.5, y: -2))
+            path.closeSubpath()
+            context.setShadow(offset: .zero, blur: 6, color: WeatherRadarMapCoordinator.cgColor("#FFEB3B"))
+            context.addPath(path)
+            context.setFillColor(WeatherRadarMapCoordinator.cgColor("#FFFDE7"))
+            context.fillPath()
+            context.setShadow(offset: .zero, blur: 0, color: nil)
+            context.addPath(path)
+            context.setStrokeColor(CGColor(gray: 0, alpha: 0.85))
+            context.setLineWidth(1.2)
+            context.strokePath()
+            context.restoreGState()
+        }
+    }
+}
+
 final class CellPin: MKPointAnnotation {
     var cell: WeatherStormCell?
 }
@@ -201,6 +276,8 @@ final class WeatherRadarMapCoordinator: NSObject, MKMapViewDelegate {
     private var lastRequest: UUID?
     private var centeredOnHome = false
     private var home: HomePin?
+    private var lightningOverlay: LightningOverlay?
+    private var lightningKey = ""
     private var markerImages: [String: PlatformImage] = [:]
 
     init(radar: WeatherRadarModel) {
@@ -241,6 +318,7 @@ final class WeatherRadarMapCoordinator: NSObject, MKMapViewDelegate {
         syncFrames(map, serverRoot: serverRoot)
         syncStorms(map)
         syncSites(map)
+        syncLightning(map)
         if let request = radar.request, request.token != lastRequest {
             lastRequest = request.token
             fly(map, to: request.center, minimumZoom: request.minimumZoom)
@@ -383,6 +461,45 @@ final class WeatherRadarMapCoordinator: NSObject, MKMapViewDelegate {
         return (outer, holes.isEmpty ? nil : holes)
     }
 
+    // MARK: Lightning
+
+    private func syncLightning(_ map: MKMapView) {
+        let moment = radar.lightningMoment
+        let key = "\(radar.showLightning)|\(radar.lightningVersion)|\(Int(moment.timeIntervalSince1970))"
+        guard key != lightningKey else { return }
+        lightningKey = key
+        guard radar.showLightning else {
+            if let overlay = lightningOverlay { map.removeOverlay(overlay) }
+            lightningOverlay = nil
+            return
+        }
+        let overlay = lightningOverlay ?? LightningOverlay()
+        overlay.snapshot = LightningOverlay.Snapshot(strikes: radar.lightning.visible(at: moment), moment: moment)
+        if lightningOverlay == nil {
+            lightningOverlay = overlay
+            map.addOverlay(overlay, level: .aboveLabels)
+        } else {
+            map.renderer(for: overlay)?.setNeedsDisplay()
+        }
+    }
+
+    // The flash within a fingertip of a tap, nearest first.
+    private func strike(at point: CGPoint, in map: MKMapView) -> LightningStrike? {
+        guard radar.showLightning, let overlay = lightningOverlay else { return nil }
+        #if os(iOS)
+        let reach: CGFloat = 16
+        #else
+        let reach: CGFloat = 10
+        #endif
+        var best: (LightningStrike, CGFloat)?
+        for strike in overlay.snapshot.strikes {
+            let spot = map.convert(CLLocationCoordinate2D(latitude: strike.latitude, longitude: strike.longitude), toPointTo: map)
+            let distance = hypot(spot.x - point.x, spot.y - point.y)
+            if distance <= reach, distance < (best?.1 ?? .infinity) { best = (strike, distance) }
+        }
+        return best?.0
+    }
+
     // MARK: Radar sites
 
     private func syncSites(_ map: MKMapView) {
@@ -424,6 +541,9 @@ final class WeatherRadarMapCoordinator: NSObject, MKMapViewDelegate {
             renderer.fillColor = Self.platformColor(shape.fillHex).withAlphaComponent(0.18)
             renderer.lineWidth = 1.5
             return renderer
+        }
+        if overlay is LightningOverlay {
+            return LightningRenderer(overlay: overlay)
         }
         if let line = overlay as? TrackLine {
             let renderer = MKPolylineRenderer(polyline: line)
@@ -491,6 +611,10 @@ final class WeatherRadarMapCoordinator: NSObject, MKMapViewDelegate {
     // A tap on the map that isn't on a pin: the warning under it, strongest first, or nothing -
     // which closes whatever card was open.
     private func handleTap(at point: CGPoint, in map: MKMapView) {
+        if let strike = strike(at: point, in: map) {
+            radar.select(strike)
+            return
+        }
         let coordinate = map.convert(point, toCoordinateFrom: map)
         let warnings = map.overlays.compactMap { $0 as? WarningPolygon }
             .compactMap { shape in shape.warning.map { (shape, $0) } }
@@ -590,6 +714,13 @@ final class WeatherRadarMapCoordinator: NSObject, MKMapViewDelegate {
         #else
         NSImage(systemSymbolName: name, accessibilityDescription: nil)
         #endif
+    }
+
+    nonisolated static func cgColor(_ hex: String) -> CGColor {
+        var value: UInt64 = 0
+        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&value)
+        return CGColor(srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255,
+                       blue: CGFloat(value & 0xFF) / 255, alpha: 1)
     }
 
     #if os(iOS)

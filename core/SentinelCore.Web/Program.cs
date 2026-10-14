@@ -511,6 +511,13 @@ builder.Services.AddHttpClient(nameof(WeatherService), client => client.Timeout 
 builder.Services.AddSingleton<WeatherService>();
 builder.Services.AddHttpClient(nameof(WeatherMapService), client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddSingleton<WeatherMapService>();
+// Lightning on the radar map: GOES-19 flashes read from NOAA's public bucket with Range requests,
+// only while someone has the map open. Each block is one small request, so a short timeout -
+// and a backfill is a few thousand of them, so the per-request log lines are dropped.
+builder.Services.AddHttpClient(nameof(LightningService), client => client.Timeout = TimeSpan.FromSeconds(15))
+    .RemoveAllLoggers();
+builder.Services.AddSingleton<LightningService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LightningService>());
 // WEATHER ALERTS: the same NWS client, polled by a worker that tells the owner about new watches
 // and warnings. What it has already sent lives beside the other web-host data, so a restart
 // doesn't repeat the warning that is still up.

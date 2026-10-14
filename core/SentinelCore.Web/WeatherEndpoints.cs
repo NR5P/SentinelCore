@@ -94,6 +94,14 @@ public static class WeatherEndpoints
             Results.Ok(await map.GetStormsAsync(west, south, east, north, ct)))
         .RequireAuthorization();
 
+        // Lightning flashes inside the box over the loop window. `epoch` and `after` come from the
+        // previous answer, so a map left open only gets what arrived since.
+        app.MapGet("/api/weather/lightning", (
+            double? west, double? south, double? east, double? north, string? epoch, long? after,
+            LightningService lightning) =>
+            Results.Ok(lightning.GetFlashes(west, south, east, north, epoch, after)))
+        .RequireAuthorization();
+
         // The "send test alert" button on WEATHER ALERTS: a sample tornado warning through every
         // channel that is set up, so the owner learns where a real one will land before one does.
         // Same answer shape as the other test buttons ({ sent, detail } / { sent, error }).

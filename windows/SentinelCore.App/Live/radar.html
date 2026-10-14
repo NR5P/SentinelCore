@@ -137,6 +137,29 @@
   .track-4 { stroke: #ff00e5; }
   .track-incoming { stroke-width: 3; }
   .track-dot { stroke: #000; stroke-width: 1; fill: #fff; fill-opacity: 1; }
+
+  /* Lightning: the count and nearest-strike line under the clock, and its colour key. */
+  #lightning-status {
+    position: absolute; top: 40px; right: 10px; z-index: 650; max-width: calc(100% - 70px);
+    padding: 4px 10px; background: rgba(5, 7, 10, 0.82); border: 1px solid rgba(255, 235, 59, 0.45); border-radius: 5px;
+    color: #ffeb3b; font-size: 12px; letter-spacing: 0.5px; pointer-events: none;
+  }
+  #lightning-status[hidden] { display: none; }
+  /* Leaflet's popups live inside the map, which sits under everything floated over it, so the line
+     steps aside while a popup is open - a clicked strike's details are never hidden behind it. */
+  #lightning-status.behind-popup { visibility: hidden; }
+  #lightning-status.near { color: #ff9800; border-color: rgba(255, 152, 0, 0.6); }
+  #lightning-status.close { color: #fff; background: rgba(198, 40, 40, 0.92); border-color: #ff5252; }
+  .lightning-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+  .lightning-key { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 6px; font-size: 11px; color: var(--text); }
+  .lightning-key[hidden] { display: none; }
+  .lightning-key-name { color: #ffeb3b; letter-spacing: 0.1em; text-transform: uppercase; }
+  .lk {
+    display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.7); vertical-align: -1px; font-style: normal;
+  }
+  .lk-bolt { width: auto; height: auto; border: 0; border-radius: 0; font-size: 12px; }
+  .lightning-key .dim { color: var(--dim); }
 </style>
 </head>
 <body>
@@ -148,6 +171,7 @@
   <div class="map-wrap">
     <div id="map" aria-label="Radar map"></div>
     <div id="time"></div>
+    <div id="lightning-status" hidden></div>
     <div id="toast"></div>
     <div id="failed"></div>
   </div>
@@ -159,6 +183,7 @@
   <div class="row">
     <label title="Which radar the per-radar layers come from. Defaults to the one nearest home; clicking a radar dish on the map picks it too.">radar <select id="station"></select></label>
     <label><input type="checkbox" data-overlay="cells"> storm tracks</label>
+    <label title="Every lightning flash NOAA's GOES-19 satellite saw - cloud-to-ground and in-cloud - placed to within a few miles. It plays along with the radar loop: new flashes show as bolts, then fade from yellow to red over 15 minutes. Click one for when and where."><input type="checkbox" data-overlay="lightning"> lightning</label>
     <label><input type="checkbox" data-overlay="warnings"> warnings</label>
     <label><input type="checkbox" data-overlay="outlook"> SPC outlook</label>
     <label><input type="checkbox" data-overlay="sites"> radar sites</label>
@@ -166,6 +191,14 @@
   <div class="legend">
     <img id="legend" alt="">
     <div class="note" id="note"></div>
+    <div class="lightning-key" id="lightning-key" hidden>
+      <span class="lightning-key-name">lightning</span>
+      <span><i class="lk lk-bolt">&#9889;</i>under 2 min</span>
+      <span><i class="lk" style="background:#ffeb3b"></i>2-5</span>
+      <span><i class="lk" style="background:#ff9800"></i>5-10</span>
+      <span><i class="lk" style="background:#f44336"></i>10-15 min old</span>
+      <span class="dim">· NOAA GOES-19 Lightning Mapper, about a minute behind</span>
+    </div>
   </div>
 </div>
 <script src="/vendor/leaflet/leaflet.js"></script>
@@ -239,6 +272,7 @@
     station: null,
     opacity: 0.75,
     cells: true,
+    lightning: true,
     warnings: true,
     outlook: false,
     sites: true,
@@ -368,6 +402,9 @@
     labels.style.zIndex = 380;
     labels.style.pointerEvents = "none";
     map.createPane("wxWarnings").style.zIndex = 420;
+    const lightningPane = map.createPane("wxLightning");
+    lightningPane.style.zIndex = 430;
+    lightningPane.style.pointerEvents = "none";
 
     L.tileLayer("/api/weather/map/tile/base/{z}/{x}/{y}", {
       maxNativeZoom: 16,
@@ -384,6 +421,7 @@
     warningsGroup = L.layerGroup();
     cellsGroup = L.layerGroup();
     sitesGroup = L.layerGroup();
+    lightningLayer = new LightningLayer();
 
     addButtons();
     placeHome();
@@ -391,11 +429,19 @@
     let moveTimer = null;
     map.on("moveend", () => {
       clearTimeout(moveTimer);
-      moveTimer = setTimeout(loadStorms, 400);
+      moveTimer = setTimeout(() => {
+        loadStorms();
+        if (prefs.lightning && !lightningCovers()) loadLightning(true);
+        else renderLightningStatus();
+      }, 400);
     });
+    map.on("click", (e) => openStrikeAt(e.containerPoint));
+    map.on("popupopen", () => $("lightning-status").classList.add("behind-popup"));
+    map.on("popupclose", () => $("lightning-status").classList.remove("behind-popup"));
     map.on("zoomend", () => drawCells());
 
     if (prefs.followMe) locateMe(false);
+    applyOverlays();
   }
 
   // Home, locate-me and expand buttons under Leaflet's zoom buttons.
@@ -574,6 +620,8 @@
       label.textContent = "latest";
     }
     label.classList.toggle("old", frameIndex < frames.length - 1);
+    // The newest frame shows lightning right up to now - it runs a few minutes ahead of radar.
+    setLightningTime(frameIndex === frames.length - 1 || !time ? null : new Date(time).getTime());
   }
 
   function play() {
@@ -673,6 +721,14 @@
     toggle(warningsGroup, prefs.warnings);
     toggle(outlookGroup, prefs.outlook);
     toggle(sitesGroup, prefs.sites);
+    toggle(lightningLayer, prefs.lightning);
+    $("lightning-key").hidden = !prefs.lightning;
+    if (prefs.lightning) {
+      if (!lightningTimer && refreshTimer) startLightning();
+    } else {
+      stopLightning();
+      $("lightning-status").hidden = true;
+    }
   }
 
   function cellIcon(cell) {
@@ -845,6 +901,266 @@
     }
   }
 
+  // ---- Lightning ----
+  //
+  // A port of the dashboard's lightning (weather.js, "---- Lightning ----"). Flashes from the
+  // server's GOES-19 feed for the loop window, drawn on one canvas for whatever moment the loop is
+  // showing: the last 15 minutes before it, newest as bolts, older ones fading from yellow to red -
+  // so playing the loop shows the lightning marching along with the storm. The first answer may
+  // still be filling in (the server only starts reading when a map is opened), so it is asked again
+  // every few seconds until it says "ready". The answer's shape is typed for the .NET side as
+  // SentinelCore.Client's WeatherLightning.
+
+  const LIGHTNING_TRAIL_MS = 15 * 60_000;
+  const LIGHTNING_BOLT_MS = 2 * 60_000;
+  const LIGHTNING_KEEP_MS = 95 * 60_000;
+  const LIGHTNING_REFRESH_MS = 30_000;
+  const LIGHTNING_LOADING_REFRESH_MS = 4_000;
+  const MILES_PER_METRE = 1 / 1609.344;
+
+  let lightning = { epoch: null, sequence: null, state: null, flashes: [] };
+  let lightningBounds = null;
+  let lightningLayer = null;
+  let lightningTimer = null;
+  let lightningLoading = false;
+  // null = "now" (the newest frame); otherwise the frame's time in ms.
+  let lightningAt = null;
+
+  const LightningLayer = L.Layer.extend({
+    onAdd(m) {
+      this._canvas = L.DomUtil.create("canvas", "lightning-canvas leaflet-zoom-hide");
+      m.getPane("wxLightning").appendChild(this._canvas);
+      m.on("moveend zoomend resize viewreset", this.redraw, this);
+      this.redraw();
+    },
+    onRemove(m) {
+      m.off("moveend zoomend resize viewreset", this.redraw, this);
+      this._canvas.remove();
+      this._hits = [];
+    },
+    getAttribution() {
+      return "Lightning: NOAA GOES-19 GLM";
+    },
+    redraw() {
+      if (!this._map || !this._canvas) return;
+      const m = this._map;
+      const size = m.getSize();
+      const ratio = window.devicePixelRatio || 1;
+      const canvas = this._canvas;
+      canvas.width = Math.round(size.x * ratio);
+      canvas.height = Math.round(size.y * ratio);
+      canvas.style.width = `${size.x}px`;
+      canvas.style.height = `${size.y}px`;
+      L.DomUtil.setPosition(canvas, m.containerPointToLayerPoint([0, 0]));
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, size.x, size.y);
+
+      const now = lightningNow();
+      const hits = [];
+      const bolts = [];
+      for (const flash of lightning.flashes) {
+        const age = now - flash.t;
+        if (age < 0 || age > LIGHTNING_TRAIL_MS) continue;
+        const p = m.latLngToContainerPoint([flash.lat, flash.lon]);
+        if (p.x < -10 || p.y < -10 || p.x > size.x + 10 || p.y > size.y + 10) continue;
+        hits.push({ x: p.x, y: p.y, flash });
+        if (age < LIGHTNING_BOLT_MS) { bolts.push(p); continue; }
+        const radius = 2 + Math.min(2.5, Math.max(0, Math.log10(Math.max(flash.e, 1)) - 1.5) * 0.9);
+        ctx.globalAlpha = 1 - 0.55 * (age / LIGHTNING_TRAIL_MS);
+        ctx.fillStyle = age < 5 * 60_000 ? "#ffeb3b" : age < 10 * 60_000 ? "#ff9800" : "#f44336";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 0.75;
+        ctx.strokeStyle = "rgba(0,0,0,0.7)";
+        ctx.stroke();
+      }
+      // Bolts last, so the newest flashes sit on top of the older ones around them.
+      ctx.globalAlpha = 1;
+      for (const p of bolts) drawBolt(ctx, p.x, p.y);
+      this._hits = hits;
+    },
+    nearest(point, within) {
+      let best = null;
+      let bestDistance = within * within;
+      for (const hit of this._hits || []) {
+        const d = (hit.x - point.x) ** 2 + (hit.y - point.y) ** 2;
+        if (d <= bestDistance) { best = hit.flash; bestDistance = d; }
+      }
+      return best;
+    }
+  });
+
+  function drawBolt(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.beginPath();
+    ctx.moveTo(2, -9);
+    ctx.lineTo(-5, 1);
+    ctx.lineTo(-0.5, 1);
+    ctx.lineTo(-2.5, 9);
+    ctx.lineTo(5, -2);
+    ctx.lineTo(0.5, -2);
+    ctx.closePath();
+    ctx.fillStyle = "#fffde7";
+    ctx.shadowColor = "#ffeb3b";
+    ctx.shadowBlur = 8;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function lightningNow() {
+    return lightningAt ?? Date.now();
+  }
+
+  function setLightningTime(at) {
+    lightningAt = at;
+    if (!prefs.lightning || !lightningLayer) return;
+    lightningLayer.redraw();
+    renderLightningStatus();
+  }
+
+  // The box asked for: what's on screen with a margin, plus home's surroundings so the
+  // "nearest strike" line stays right while looking somewhere else.
+  function lightningBox() {
+    let bounds = map.getBounds().pad(0.3);
+    if (home) bounds = bounds.extend([[home.latitude - 1.5, home.longitude - 2], [home.latitude + 1.5, home.longitude + 2]]);
+    return bounds;
+  }
+
+  function lightningCovers() {
+    return !!lightningBounds && lightningBounds.contains(map.getBounds());
+  }
+
+  async function loadLightning(full) {
+    if (!map || !prefs.lightning || !active || lightningLoading) return;
+    lightningLoading = true;
+    try {
+      const incremental = !full && lightning.epoch && lightningCovers();
+      const bounds = incremental ? lightningBounds : lightningBox();
+      const params = new URLSearchParams({
+        west: bounds.getWest().toFixed(3),
+        south: bounds.getSouth().toFixed(3),
+        east: bounds.getEast().toFixed(3),
+        north: bounds.getNorth().toFixed(3)
+      });
+      if (incremental) {
+        params.set("epoch", lightning.epoch);
+        params.set("after", String(lightning.sequence));
+      }
+      const answer = await getJson(`/api/weather/lightning?${params}`);
+      if (!answer) throw new Error("no lightning from the server");
+      const fresh = answer.flashes.map(([lat, lon, s, e]) => ({ lat, lon, t: answer.origin + s * 1000, e }));
+      const cutoff = Date.now() - LIGHTNING_KEEP_MS;
+      const flashes = (answer.incremental ? lightning.flashes.concat(fresh) : fresh).filter(f => f.t >= cutoff);
+      flashes.sort((a, b) => a.t - b.t);
+      lightning = { epoch: answer.epoch, sequence: answer.sequence, state: answer.state, flashes };
+      if (!answer.incremental) lightningBounds = bounds;
+      lightningLayer.redraw();
+      renderLightningStatus();
+    } catch (err) {
+      console.error("Failed to load lightning", err);
+    } finally {
+      lightningLoading = false;
+    }
+    scheduleLightning();
+  }
+
+  function scheduleLightning() {
+    clearTimeout(lightningTimer);
+    if (!prefs.lightning || !refreshTimer) { lightningTimer = null; return; }
+    lightningTimer = setTimeout(() => loadLightning(false), lightning.state === "ready" ? LIGHTNING_REFRESH_MS : LIGHTNING_LOADING_REFRESH_MS);
+  }
+
+  function startLightning() {
+    clearTimeout(lightningTimer);
+    lightningTimer = -1;
+    loadLightning(!lightning.epoch);
+  }
+
+  function stopLightning() {
+    clearTimeout(lightningTimer);
+    lightningTimer = null;
+  }
+
+  function compass(degrees) {
+    return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round(((degrees % 360) + 360) % 360 / 22.5) % 16];
+  }
+
+  function bearingFromHome(lat, lon) {
+    const toRad = Math.PI / 180;
+    const y = Math.sin((lon - home.longitude) * toRad) * Math.cos(lat * toRad);
+    const x = Math.cos(home.latitude * toRad) * Math.sin(lat * toRad) - Math.sin(home.latitude * toRad) * Math.cos(lat * toRad) * Math.cos((lon - home.longitude) * toRad);
+    return Math.atan2(y, x) / toRad;
+  }
+
+  function fromHomeText(lat, lon) {
+    if (!home) return null;
+    const miles = map.distance([home.latitude, home.longitude], [lat, lon]) * MILES_PER_METRE;
+    return `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi ${compass(bearingFromHome(lat, lon))}`;
+  }
+
+  function agoText(ms) {
+    const minutes = Math.round(ms / 60_000);
+    return minutes < 1 ? "under a minute" : `${minutes} min`;
+  }
+
+  // "⚡ 132 flashes in view, last 15 min · nearest home 6.2 mi NE, 3 min ago" for the moment showing.
+  // Within 10 miles is the "if you can hear thunder, you can be struck" distance, so it turns red.
+  function renderLightningStatus() {
+    const el = $("lightning-status");
+    if (!el || !map) return;
+    el.hidden = !prefs.lightning;
+    if (!prefs.lightning) return;
+    const now = lightningNow();
+    const recent = lightning.flashes.filter(f => f.t <= now && now - f.t <= LIGHTNING_TRAIL_MS);
+    const view = map.getBounds();
+    const inView = recent.filter(f => view.contains([f.lat, f.lon])).length;
+    let nearest = null;
+    let nearestMiles = Infinity;
+    if (home) {
+      for (const f of recent) {
+        const miles = map.distance([home.latitude, home.longitude], [f.lat, f.lon]) * MILES_PER_METRE;
+        if (miles < nearestMiles) { nearestMiles = miles; nearest = f; }
+      }
+    }
+    const parts = [];
+    if (lightning.state !== "ready" && !lightning.flashes.length) parts.push("loading lightning…");
+    else parts.push(`${inView.toLocaleString()} flash${inView === 1 ? "" : "es"} in view, last 15 min`);
+    if (nearest && nearestMiles <= 100) parts.push(`nearest home ${fromHomeText(nearest.lat, nearest.lon)}, ${agoText(now - nearest.t)} ago`);
+    else if (home && lightning.state === "ready") parts.push("none within 100 mi of home");
+    if (lightning.state !== "ready" && lightning.flashes.length) parts.push("still filling in");
+    el.textContent = `⚡ ${parts.join(" · ")}`;
+    el.classList.toggle("close", nearestMiles <= 10);
+    el.classList.toggle("near", nearestMiles > 10 && nearestMiles <= 25);
+  }
+
+  function openStrikeAt(point) {
+    if (!prefs.lightning || !lightningLayer?._map) return;
+    const flash = lightningLayer.nearest(point, 10);
+    if (!flash) return;
+    const now = lightningNow();
+    const where = fromHomeText(flash.lat, flash.lon);
+    const rows = [
+      ["time", formatTime(flash.t, { hour: "numeric", minute: "2-digit", second: "2-digit" })],
+      ["age", lightningAt == null ? `${agoText(now - flash.t)} ago` : `${agoText(now - flash.t)} before this frame`],
+      where ? ["from home", where] : null,
+      ["where", `${flash.lat.toFixed(3)}, ${flash.lon.toFixed(3)} (good to a few miles)`],
+      ["brightness", `${Math.round(flash.e).toLocaleString()} fJ seen from orbit${flash.e >= 1000 ? " - a bright one" : ""}`],
+      ["seen by", "NOAA GOES-19 Lightning Mapper"]
+    ].filter(Boolean);
+    // Clear of the clock and the lightning line in the top corner.
+    L.popup({ maxWidth: popupWidth(), autoPanPadding: [12, 12], autoPanPaddingTopLeft: [12, 90] })
+      .setLatLng([flash.lat, flash.lon])
+      .setContent(`<div class="popup"><div class="popup-title">⚡ Lightning flash</div><dl>${rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join("")}</dl></div>`)
+      .openOn(map);
+  }
+
   function focusCell(id) {
     const cell = storms?.cells.find(c => c.id === id);
     if (!cell || !map) return false;
@@ -863,6 +1179,7 @@
   function startTimers() {
     clearInterval(refreshTimer);
     refreshTimer = setInterval(() => { loadInfo(); loadStorms(); }, RADAR_REFRESH_INTERVAL_MS);
+    if (prefs.lightning) startLightning();
   }
 
   // ---- What the host can ask of the page ----
@@ -890,6 +1207,7 @@
     } else {
       clearInterval(refreshTimer);
       refreshTimer = null;
+      stopLightning();
       stop();
     }
   };

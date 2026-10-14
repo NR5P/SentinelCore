@@ -72,6 +72,39 @@ public sealed partial class SentinelClient
     }
 
     /// <summary>
+    /// Lightning flashes inside a box of degrees over the radar loop's window. Pass the
+    /// <paramref name="epoch"/> and <paramref name="after"/> (its sequence) of the last answer for only
+    /// what's new (<see cref="WeatherLightning.Incremental"/> then says to append). Null from a server
+    /// too old to have the route (404).
+    /// </summary>
+    public async Task<WeatherLightning?> WeatherLightningAsync(
+        double west, double south, double east, double north,
+        string? epoch = null, long? after = null, CancellationToken ct = default)
+    {
+        static string Degrees(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+        var query = new List<KeyValuePair<string, string>>
+        {
+            new("west", Degrees(west)),
+            new("south", Degrees(south)),
+            new("east", Degrees(east)),
+            new("north", Degrees(north)),
+        };
+        if (!string.IsNullOrEmpty(epoch) && after is { } sequence)
+        {
+            query.Add(new("epoch", epoch));
+            query.Add(new("after", sequence.ToString(CultureInfo.InvariantCulture)));
+        }
+        try
+        {
+            return await GetAsync<WeatherLightning>($"{WeatherBase}/lightning", query, ct).ConfigureAwait(false);
+        }
+        catch (SentinelServerException error) when (error.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The storms around home - the same box the dashboard asks for (2.5 degrees of longitude and
     /// 2 of latitude either side), which is what the "storms near home" list and banner come from.
     /// </summary>

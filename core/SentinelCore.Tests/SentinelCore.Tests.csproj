@@ -13,6 +13,10 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Captured upstream files too awkward to build by hand (a GOES Lightning Mapper NetCDF). -->
+    <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Both projects are top-level-statement executables, so each has its own global::Program -
          referencing both here would make "Program" ambiguous without these aliases (see
          WebApplicationFactory usage in WebAuthorizationTests.cs and MainAppEndpointTests.cs).

@@ -100,7 +100,14 @@ struct WeatherRadarPanel: View {
             .frame(maxHeight: isFull ? .infinity : nil)
             .clipShape(shape)
             .overlay(shape.stroke(.primary.opacity(0.1)))
-            .overlay(alignment: .topTrailing) { timeBadge.padding(8) }
+            .overlay(alignment: .topTrailing) {
+                VStack(alignment: .trailing, spacing: 6) {
+                    timeBadge
+                    if radar.showLightning && radar.lightningAvailable { lightningBadge }
+                }
+                .padding(8)
+                .padding(.leading, 44)
+            }
             .overlay(alignment: .topLeading) {
                 VStack(spacing: 6) {
                     mapButton("house.fill", help: "Back to home") { radar.goHome() }
@@ -145,6 +152,28 @@ struct WeatherRadarPanel: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(.regularMaterial, in: Capsule())
+    }
+
+    // "⚡ 1,260 flashes in view, last 15 min · nearest home 6.2 mi NE, 3 min ago" - white on red
+    // within ten miles, the distance to get indoors.
+    private var lightningBadge: some View {
+        let status = radar.lightningStatus
+        let close = (status.nearestMiles ?? .infinity) <= LightningStore.closeMiles
+        let near = !close && (status.nearestMiles ?? .infinity) <= LightningStore.nearMiles
+        return Text(status.text)
+            .font(.caption2.monospacedDigit().weight(.semibold))
+            .multilineTextAlignment(.trailing)
+            .foregroundStyle(close ? .white : near ? Color(weatherHex: "#FF9800") : Color(weatherHex: "#E6C800"))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background {
+                if close {
+                    RoundedRectangle(cornerRadius: 8).fill(Color(weatherHex: "#C62828").opacity(0.92))
+                } else {
+                    RoundedRectangle(cornerRadius: 8).fill(.regularMaterial)
+                }
+            }
+            .accessibilityLabel(status.text)
     }
 
     // MARK: - Controls
@@ -217,6 +246,9 @@ struct WeatherRadarPanel: View {
             Toggle("Warnings", isOn: $radar.showWarnings)
             Toggle("SPC Outlook", isOn: $radar.showOutlook)
             Toggle("Radar Sites", isOn: $radar.showSites)
+            if radar.lightningAvailable {
+                Toggle("Lightning", isOn: $radar.showLightning)
+            }
         } label: {
             Label("Overlays", systemImage: "square.2.layers.3d.top.filled")
                 .font(.caption)
@@ -273,16 +305,47 @@ struct WeatherRadarPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if radar.showLightning && radar.lightningAvailable { LightningKey() }
             }
+        }
+    }
+}
+
+// The colour key for the lightning: bolts are new, dots fade to red over 15 minutes.
+struct LightningKey: View {
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) { items }
+            VStack(alignment: .leading, spacing: 4) { items }
+        }
+        .font(.caption)
+        .help("Every flash NOAA's GOES-19 satellite saw - cloud-to-ground and in-cloud - placed to within a few miles, about a minute behind. It plays along with the radar loop.")
+    }
+
+    @ViewBuilder private var items: some View {
+        Text("LIGHTNING").font(.caption.weight(.semibold)).foregroundStyle(Color(weatherHex: "#E6C800"))
+        HStack(spacing: 10) {
+            Label { Text("under 2 min") } icon: { Image(systemName: "bolt.fill").foregroundStyle(Color(weatherHex: "#E6C800")) }
+            dot("#FFEB3B", "2-5")
+            dot("#FF9800", "5-10")
+            dot("#F44336", "10-15 min old")
+        }
+        Text("NOAA GOES-19 Lightning Mapper").foregroundStyle(.secondary)
+    }
+
+    private func dot(_ hex: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(Color(weatherHex: hex)).overlay(Circle().stroke(.black.opacity(0.6), lineWidth: 1)).frame(width: 9, height: 9)
+            Text(text)
         }
     }
 }
 
 private enum SentinelInputHint {
     #if os(iOS)
-    static let zoom = "Pinch to zoom, drag to pan; tap a storm or warning for details."
+    static let zoom = "Pinch to zoom, drag to pan; tap a storm, warning or lightning strike for details."
     #else
-    static let zoom = "Scroll or pinch to zoom, drag to pan; click a storm or warning for details."
+    static let zoom = "Scroll or pinch to zoom, drag to pan; click a storm, warning or lightning strike for details."
     #endif
 }
 
@@ -352,6 +415,7 @@ struct WeatherMapSelectionCard: View {
         case .cell(let cell): cell.title
         case .warning(let warning): warning.name
         case .site(let site): "\(site.id) · \(site.name)"
+        case .strike: "⚡ Lightning Flash"
         }
     }
 
@@ -360,6 +424,7 @@ struct WeatherMapSelectionCard: View {
         case .cell(let cell): cell.threat >= 3 ? SentinelTheme.red : .primary
         case .warning(let warning): Color(weatherHex: warning.hexColor)
         case .site: .primary
+        case .strike: Color(weatherHex: "#E6C800")
         }
     }
 
@@ -400,6 +465,18 @@ struct WeatherMapSelectionCard: View {
         case .site(let site):
             return [("radar", site.id == radar.station ? "selected - the per-radar layers come from here" : "tap Use This Radar for its per-radar layers"),
                     ("location", String(format: "%.3f, %.3f", site.latitude, site.longitude))]
+        case .strike(let strike):
+            let age = LightningStore.ageText(radar.lightningMoment.timeIntervalSince(strike.time))
+            let home = radar.homeCoordinate.map { (latitude: $0.latitude, longitude: $0.longitude) }
+            let rows: [(String, String)?] = [
+                ("time", strike.time.formatted(Date.FormatStyle(date: .omitted, time: .standard, timeZone: zone))),
+                ("age", radar.isOldFrame ? "\(age) before this frame" : "\(age) ago"),
+                home.map { ("from home", LightningStore.distanceText(from: $0, to: strike)) },
+                ("where", String(format: "%.3f, %.3f (good to a few miles)", strike.latitude, strike.longitude)),
+                ("brightness", "\(Int(strike.energy.rounded()).formatted()) fJ seen from orbit\(strike.energy >= 1000 ? " - a bright one" : "")"),
+                ("seen by", "NOAA GOES-19 Lightning Mapper"),
+            ]
+            return rows.compactMap { $0 }
         }
     }
 }

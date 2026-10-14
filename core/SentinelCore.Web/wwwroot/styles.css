@@ -8355,6 +8355,92 @@ body.wx-noscroll {
   border-color: rgba(255, 181, 69, 0.5);
 }
 
+/* Lightning: the count and nearest-strike line under the clock, and its colour key. */
+.wx-lightning-status {
+  position: absolute;
+  top: 40px;
+  right: 10px;
+  /* Under Leaflet's popups (700), so a clicked strike's details are never hidden behind it. */
+  z-index: 650;
+  max-width: calc(100% - 70px);
+  padding: 4px 10px;
+  background: rgba(5, 7, 10, 0.82);
+  border: 1px solid rgba(255, 235, 59, 0.45);
+  border-radius: 3px;
+  color: #ffeb3b;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+}
+
+@media (max-width: 600px) {
+  .wx-lightning-status {
+    font-size: 11px;
+    letter-spacing: 0;
+    padding: 3px 7px;
+  }
+}
+
+.wx-lightning-status[hidden] {
+  display: none;
+}
+
+.wx-lightning-near {
+  color: #ff9800;
+  border-color: rgba(255, 152, 0, 0.6);
+}
+
+.wx-lightning-close {
+  color: #fff;
+  background: rgba(198, 40, 40, 0.92);
+  border-color: #ff5252;
+}
+
+.wx-lightning-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.wx-lightning-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.wx-lightning-key[hidden] {
+  display: none;
+}
+
+.wx-lightning-key-name {
+  color: #ffeb3b;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.wx-lk {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.7);
+  vertical-align: -1px;
+  font-style: normal;
+}
+
+.wx-lk-bolt {
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  font-size: 12px;
+}
+
 .wx-layer-group {
   display: inline-flex;
   flex-wrap: wrap;

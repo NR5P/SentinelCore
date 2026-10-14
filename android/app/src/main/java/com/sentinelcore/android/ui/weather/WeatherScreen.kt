@@ -72,12 +72,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.sentinelcore.android.data.GeoPoint
+import com.sentinelcore.android.data.LightningBox
+import com.sentinelcore.android.data.LightningData
 import com.sentinelcore.android.data.Mercator
 import com.sentinelcore.android.data.SentinelApiException
 import com.sentinelcore.android.data.WeatherAlert
 import com.sentinelcore.android.data.WeatherDay
 import com.sentinelcore.android.data.WeatherDetails
 import com.sentinelcore.android.data.WeatherHour
+import com.sentinelcore.android.data.WeatherLightning
 import com.sentinelcore.android.data.WeatherLogic
 import com.sentinelcore.android.data.WeatherMapInfo
 import com.sentinelcore.android.data.WeatherReport
@@ -121,7 +125,10 @@ internal class WeatherClock(val zone: ZoneId, is24Hour: Boolean) {
     private val weekdayFormat = DateTimeFormatter.ofPattern("EEE", locale).withZone(zone)
     private val longWeekdayFormat = DateTimeFormatter.ofPattern("EEEE", locale)
 
+    private val secondsFormat = DateTimeFormatter.ofPattern(if (is24Hour) "HH:mm:ss" else "h:mm:ss a", locale).withZone(zone)
+
     fun clock(at: Instant): String = clockFormat.format(at)
+    fun clockSeconds(at: Instant): String = secondsFormat.format(at)
     fun hour(at: Instant): String = hourFormat.format(at)
     fun weekday(at: Instant): String = weekdayFormat.format(at)
     fun weekdayClock(at: Instant): String = weekdayFormat.format(at) + " " + clockFormat.format(at)
@@ -138,6 +145,7 @@ internal data class WeatherMapPrefs(
     val warnings: Boolean = true,
     val outlook: Boolean = false,
     val sites: Boolean = true,
+    val lightning: Boolean = true,
 )
 
 // Kept per back-stack entry, so the report, the map's position and the loaded tiles survive a
@@ -150,6 +158,8 @@ internal class WeatherScreenModel(private val app: SentinelViewModel, context: C
     var report by mutableStateOf<WeatherReport?>(null)
     var details by mutableStateOf<WeatherDetails?>(null)
     var storms by mutableStateOf<WeatherStorms?>(null)
+    var lightning by mutableStateOf(LightningData())
+        private set
     var mapInfo by mutableStateOf<WeatherMapInfo?>(null)
     var mapUnavailable by mutableStateOf(false)
     var loading by mutableStateOf(false)
@@ -173,6 +183,8 @@ internal class WeatherScreenModel(private val app: SentinelViewModel, context: C
     var selection by mutableStateOf<MapSelection?>(null)
     val tiles = WeatherTileStore(viewModelScope) { app.weatherBytes(it) }
     private var lastView: MapView? = null
+    private var lightningBox: LightningBox? = null
+    private var lightningLoading = false
     private val legends = HashMap<String, ImageBitmap>()
 
     private val maxZoom: Double get() = (mapInfo?.maximumBaseZoom ?: 16).toDouble()
@@ -251,6 +263,38 @@ internal class WeatherScreenModel(private val app: SentinelViewModel, context: C
     fun onViewSettled(view: MapView) {
         lastView = view
         viewModelScope.launch { loadStorms() }
+        // Panned or zoomed out past the box last fetched: the new box, in full.
+        if (prefs.lightning && !lightningCovers(view)) viewModelScope.launch { loadLightning(full = true) }
+    }
+
+    private fun lightningCovers(view: MapView): Boolean =
+        lightningBox?.contains(view.box()) == true
+
+    // One lightning fetch: only what arrived since the last answer while the map stays inside the
+    // box that answer covered, the whole new box otherwise. The panel's loop calls it every 30
+    // seconds (every 4 while the server is still filling in).
+    suspend fun loadLightning(full: Boolean = false) {
+        val view = lastView ?: return
+        if (!prefs.lightning || lightningLoading) return
+        lightningLoading = true
+        try {
+            val held = lightning
+            val incremental = !full && held.epoch != null && lightningCovers(view)
+            val box = if (incremental) lightningBox!! else WeatherLightning.box(
+                view.box(0.3),
+                report?.location?.let { GeoPoint(it.latitude, it.longitude) },
+            )
+            val path = if (incremental) WeatherLightning.path(box, held.epoch, held.sequence) else WeatherLightning.path(box)
+            val answer = app.weatherLightning(path)
+            // Switched off while the answer was on its way.
+            if (!prefs.lightning) return
+            lightning = WeatherLightning.merge(held, answer, System.currentTimeMillis())
+            if (!answer.incremental) lightningBox = box
+        } catch (_: Exception) {
+            // Kept as it was; the next poll tries again.
+        } finally {
+            lightningLoading = false
+        }
     }
 
     suspend fun radarGif(scope: String): ByteArray? =
@@ -276,6 +320,7 @@ internal class WeatherScreenModel(private val app: SentinelViewModel, context: C
             .putBoolean(PREF_WARNINGS, prefs.warnings)
             .putBoolean(PREF_OUTLOOK, prefs.outlook)
             .putBoolean(PREF_SITES, prefs.sites)
+            .putBoolean(PREF_LIGHTNING, prefs.lightning)
             .apply()
     }
 
@@ -287,6 +332,7 @@ internal class WeatherScreenModel(private val app: SentinelViewModel, context: C
         warnings = preferences.getBoolean(PREF_WARNINGS, true),
         outlook = preferences.getBoolean(PREF_OUTLOOK, false),
         sites = preferences.getBoolean(PREF_SITES, true),
+        lightning = preferences.getBoolean(PREF_LIGHTNING, true),
     )
 
     fun selectLayer(id: String) {
@@ -363,6 +409,7 @@ internal class WeatherScreenModel(private val app: SentinelViewModel, context: C
         private const val PREF_WARNINGS = "weather_map_warnings"
         private const val PREF_OUTLOOK = "weather_map_outlook"
         private const val PREF_SITES = "weather_map_sites"
+        private const val PREF_LIGHTNING = "weather_map_lightning"
     }
 }
 

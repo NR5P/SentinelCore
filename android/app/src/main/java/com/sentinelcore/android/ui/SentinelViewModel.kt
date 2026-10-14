@@ -828,6 +828,8 @@ class SentinelViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun weatherStorms(path: String): WeatherStorms = repository.weatherStorms(path)
 
+    suspend fun weatherLightning(path: String): com.sentinelcore.android.data.LightningAnswer = repository.weatherLightning(path)
+
     suspend fun weatherWarnings(): List<com.sentinelcore.android.data.WeatherWarning>? = repository.weatherWarnings()
 
     suspend fun weatherBytes(path: String): ByteArray? = repository.weatherBytes(path)

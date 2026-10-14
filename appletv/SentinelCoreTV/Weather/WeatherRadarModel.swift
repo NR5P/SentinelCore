@@ -60,6 +60,18 @@ final class WeatherRadarModel: ObservableObject {
     @Published var showWarnings: Bool { didSet { defaults.set(showWarnings, forKey: Keys.warnings) } }
     @Published var showOutlook: Bool { didSet { defaults.set(showOutlook, forKey: Keys.outlook) } }
     @Published var showSites: Bool { didSet { defaults.set(showSites, forKey: Keys.sites) } }
+    @Published var showLightning: Bool {
+        didSet {
+            defaults.set(showLightning, forKey: Keys.lightning)
+            if showLightning { startLightning() } else { stopLightning() }
+        }
+    }
+
+    // GOES-19 flashes over the loop window, and a counter the map watches to redraw them.
+    @Published private(set) var lightning = LightningStore()
+    @Published private(set) var lightningVersion = 0
+    // The newest frame shows lightning up to now; the clock ticks it along between fetches.
+    @Published private(set) var now = Date()
     @Published private(set) var layerId: String { didSet { defaults.set(layerId, forKey: Keys.layer) } }
     @Published private(set) var stationPreference: String? { didSet { defaults.set(stationPreference, forKey: Keys.station) } }
 
@@ -71,6 +83,10 @@ final class WeatherRadarModel: ObservableObject {
     private var client: SentinelClient?
     private var playTask: Task<Void, Never>?
     private var stormsTask: Task<Void, Never>?
+    private var lightningTask: Task<Void, Never>?
+    // The box the held flashes were fetched for; panning outside it starts over for the new one.
+    private var lightningBox: (west: Double, south: Double, east: Double, north: Double)?
+    private var lightningMissingOnServer = false
     private let defaults = UserDefaults.standard
 
     private enum Keys {
@@ -81,6 +97,7 @@ final class WeatherRadarModel: ObservableObject {
         static let warnings = "weatherMap.warnings"
         static let outlook = "weatherMap.outlook"
         static let sites = "weatherMap.sites"
+        static let lightning = "weatherMap.lightning"
     }
 
     init() {
@@ -92,6 +109,7 @@ final class WeatherRadarModel: ObservableObject {
         showWarnings = defaults.object(forKey: Keys.warnings) as? Bool ?? true
         showOutlook = defaults.object(forKey: Keys.outlook) as? Bool ?? false
         showSites = defaults.object(forKey: Keys.sites) as? Bool ?? true
+        showLightning = defaults.object(forKey: Keys.lightning) as? Bool ?? true
     }
 
     // MARK: - Derived
@@ -129,6 +147,15 @@ final class WeatherRadarModel: ObservableObject {
     }
 
     var isOldFrame: Bool { frameIndex < frames.count - 1 }
+
+    // The moment lightning is drawn for: the frame on screen, or now on the newest one - the
+    // satellite runs a few minutes ahead of the radar.
+    var lightningMoment: Date {
+        isOldFrame ? (frameTime ?? now) : now
+    }
+
+    var lightningAvailable: Bool { !lightningMissingOnServer }
+
 
     // "Storms near home": within 100 miles, the ones heading this way and the dangerous ones
     // first - the dashboard's list.
@@ -169,6 +196,13 @@ final class WeatherRadarModel: ObservableObject {
     func refresh() async {
         await loadInfo()
         await loadStorms()
+        if showLightning && lightningTask == nil { startLightning() }
+    }
+
+    // Leaving the tab: the loop and the lightning polling both stop.
+    func stopAll() {
+        stop()
+        stopLightning()
     }
 
     func loadInfo() async {
@@ -254,6 +288,79 @@ final class WeatherRadarModel: ObservableObject {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             await self?.loadStorms()
+            if let self, self.showLightning, !self.lightningCovers(region) { await self.loadLightning(full: true) }
+        }
+    }
+
+    // MARK: - Lightning
+
+    // Every 30 seconds, or every 4 while the server is still reading the backlog (it only starts
+    // when somebody opens a radar map).
+    func startLightning() {
+        lightningTask?.cancel()
+        lightningTask = Task { [weak self] in
+            while !Task.isCancelled, let self, self.showLightning, !self.lightningMissingOnServer {
+                await self.loadLightning(full: false)
+                try? await Task.sleep(for: self.lightning.isReady ? .seconds(30) : .seconds(4))
+            }
+        }
+    }
+
+    func stopLightning() {
+        lightningTask?.cancel()
+        lightningTask = nil
+    }
+
+    private func lightningCovers(_ region: MKCoordinateRegion) -> Bool {
+        guard let box = lightningBox else { return false }
+        let halfLat = region.span.latitudeDelta / 2
+        let halfLon = region.span.longitudeDelta / 2
+        return region.center.latitude - halfLat >= box.south && region.center.latitude + halfLat <= box.north
+            && region.center.longitude - halfLon >= box.west && region.center.longitude + halfLon <= box.east
+    }
+
+    // What's on screen with a margin, plus home's surroundings so the nearest-strike line stays
+    // right while someone looks elsewhere.
+    private func wantedLightningBox() -> (west: Double, south: Double, east: Double, north: Double)? {
+        var west = Double.infinity, south = Double.infinity, east = -Double.infinity, north = -Double.infinity
+        if let region = visibleRegion {
+            let latPad = region.span.latitudeDelta * 0.8
+            let lonPad = region.span.longitudeDelta * 0.8
+            west = region.center.longitude - lonPad; east = region.center.longitude + lonPad
+            south = region.center.latitude - latPad; north = region.center.latitude + latPad
+        }
+        if let home = homeCoordinate {
+            west = min(west, home.longitude - 2); east = max(east, home.longitude + 2)
+            south = min(south, home.latitude - 1.5); north = max(north, home.latitude + 1.5)
+        }
+        return west.isFinite ? (west, south, east, north) : nil
+    }
+
+    func loadLightning(full: Bool) async {
+        guard let client else { return }
+        let incremental = !full && lightning.epoch != nil && (visibleRegion.map(lightningCovers) ?? true)
+        guard let box = incremental ? lightningBox : wantedLightningBox() else { return }
+        do {
+            let answer = try await client.weatherLightning(
+                west: box.west, south: box.south, east: box.east, north: box.north,
+                epoch: incremental ? lightning.epoch : nil, after: incremental ? lightning.sequence : nil)
+            now = Date()
+            lightning.merge(answer, now: now)
+            if !answer.incremental { lightningBox = box }
+            lightningVersion += 1
+        } catch {
+            if case ClientError.server(status: 404, _) = error { lightningMissingOnServer = true }
+            // Otherwise lightning is extra; the next round tries again.
+        }
+    }
+
+    var lightningStatus: (text: String, nearestMiles: Double?) {
+        let region = visibleRegion
+        let home = homeCoordinate.map { (latitude: $0.latitude, longitude: $0.longitude) }
+        return lightning.status(home: home, at: lightningMoment) { strike in
+            guard let region else { return true }
+            return abs(strike.latitude - region.center.latitude) <= region.span.latitudeDelta / 2
+                && abs(strike.longitude - region.center.longitude) <= region.span.longitudeDelta / 2
         }
     }
 

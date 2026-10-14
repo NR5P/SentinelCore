@@ -331,6 +331,11 @@ class SentinelRepository(
         WeatherJson.storms(JSONObject(quietText(path) ?: throw IOException("Could not load the storms.")))
     }
 
+    // The radar map's lightning, every 30 seconds while it shows - quiet for the same reason.
+    suspend fun weatherLightning(path: String): LightningAnswer = withContext(Dispatchers.IO) {
+        WeatherLightning.parse(JSONObject(quietText(path) ?: throw IOException("Could not load the lightning.")))
+    }
+
     // Map tiles, legends and the radar GIF. Not logged per request: a pan across the radar map is
     // dozens of tiles, and they would bury the Diagnostics screen. Null on any failure.
     suspend fun weatherBytes(path: String): ByteArray? = withContext(Dispatchers.IO) {

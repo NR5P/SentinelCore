@@ -75,6 +75,7 @@ SQLitePCLRaw                     Apache-2.0 https://github.com/ericsink/SQLitePC
 ElBruno.LocalEmbeddings          MIT        https://github.com/elbruno/LocalEmbeddings
 Microsoft.Extensions.*           MIT        https://github.com/dotnet/runtime
 SSH.NET                          MIT        https://github.com/sshnet/SSH.NET
+PureHDF                          MIT        https://github.com/Apollo3zehn/PureHDF
 
 SixLabors.ImageSharp             Six Labors Split License, used under its Apache-2.0
                                  terms.  https://github.com/SixLabors/ImageSharp

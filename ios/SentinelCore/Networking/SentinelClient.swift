@@ -886,6 +886,24 @@ final class SentinelClient {
         ])
     }
 
+    // GOES-19 lightning flashes inside a box over the loop window. `epoch` and `after` from the
+    // previous answer ask for only what arrived since. A 404 means a server from before lightning.
+    func weatherLightning(west: Double, south: Double, east: Double, north: Double,
+                          epoch: String?, after: Int?) async throws -> WeatherLightningAnswer {
+        let format = { (value: Double) in String(format: "%.3f", value) }
+        var query = [
+            URLQueryItem(name: "west", value: format(west)),
+            URLQueryItem(name: "south", value: format(south)),
+            URLQueryItem(name: "east", value: format(east)),
+            URLQueryItem(name: "north", value: format(north)),
+        ]
+        if let epoch, let after {
+            query.append(URLQueryItem(name: "epoch", value: epoch))
+            query.append(URLQueryItem(name: "after", value: String(after)))
+        }
+        return try await get("/api/weather/lightning", query: query)
+    }
+
     // The NWS's own animated radar GIF - the fallback when the server has no radar map.
     func weatherRadar(scope: String, kind: String) async throws -> Data {
         guard let url = url(path: "/api/weather/radar", query: [
