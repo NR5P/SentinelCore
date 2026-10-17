@@ -11,6 +11,10 @@ namespace SentinelCore.Client.Organizer;
 // sentence, the recipes, and the REST calls. The dashboard's organizer-automations.js is the
 // reference, and the wording here is a port of it, word for word.
 //
+// The same builder, opened from Reminders or Calendar, makes rules with no board (IsPlanner): they
+// add reminders and events to a space ("just me", "everyone", "admins"), on a schedule or when the
+// weather turns, and can be held back by the weather ("only if it hasn't rained an inch this week").
+//
 // Rules are not Organizer items and never sync: they are plain REST under /api/organizer/automations
 // and need the server. Each part of a rule is a loose bag on the server, so every class here keeps
 // whatever fields it doesn't know in Extra and sends them back untouched.
@@ -20,7 +24,10 @@ public sealed class BoardAutomation
     public string? Id { get; set; }
     public string Name { get; set; } = "";
     public bool Enabled { get; set; } = true;
+    // The board the rule looks after. Empty for a reminders-and-calendar rule, which belongs to
+    // SpaceId instead: the reminders and events it makes go there.
     public string BoardId { get; set; } = "";
+    public string? SpaceId { get; set; }
     // Null only in a draft that has no WHEN block yet; never saved like that.
     public AutomationTrigger? Trigger { get; set; }
     public List<AutomationCondition> Conditions { get; set; } = new();
@@ -44,6 +51,13 @@ public sealed class BoardAutomation
     [JsonIgnore]
     public bool IsScheduled => Trigger?.Type == AutomationTypes.Schedule;
 
+    [JsonIgnore]
+    public bool IsPlanner => string.IsNullOrEmpty(BoardId);
+
+    /// <summary>A schedule or the weather turning: there's no card of its own, and it can be run by hand.</summary>
+    [JsonIgnore]
+    public bool StartsWithoutCard => AutomationTypes.StartsWithoutCard(Trigger?.Type);
+
     public BoardAutomation Clone() => BoardAutomationJson.Read<BoardAutomation>(BoardAutomationJson.Write(this))!;
 }
 
@@ -54,6 +68,8 @@ public sealed class AutomationTrigger
     public int? MinutesBefore { get; set; }
     public string? Label { get; set; }
     public AutomationSchedule? Schedule { get; set; }
+    // weather: the test that starts the rule when it becomes true - a condition of type "weather".
+    public AutomationCondition? Weather { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
@@ -81,6 +97,12 @@ public sealed class AutomationCondition
     public string? Text { get; set; }
     public string? ColumnId { get; set; }
     public List<int>? Days { get; set; }
+    // weather: what's measured (see WeatherMetrics), "atLeast" or "atMost", the number, and how many
+    // days back (rainPast) or ahead (the forecasts) to look.
+    public string? Metric { get; set; }
+    public string? Op { get; set; }
+    public double? Value { get; set; }
+    public int? Window { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
@@ -110,6 +132,14 @@ public sealed class AutomationAction
     public List<string>? People { get; set; }
     public bool Everyone { get; set; }
     public List<string>? Addresses { get; set; }
+    // createReminder: 0 none .. 3 high. createReminder / createEvent: a heads-up this many minutes
+    // before; where, and how long (no time = an all-day event); and whether InDays counts from the
+    // day the weather test was about (the night of the freeze) rather than from today.
+    public int? Priority { get; set; }
+    public int? AlertMinutes { get; set; }
+    public string? Location { get; set; }
+    public int? DurationMinutes { get; set; }
+    public bool FromWeatherDay { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
@@ -124,14 +154,22 @@ public sealed record BoardAutomationList(IReadOnlyList<BoardAutomation> Automati
 public static class AutomationTypes
 {
     public const string Schedule = "schedule";
+    public const string Weather = "weather";
 
-    public static readonly string[] Triggers = { Schedule, "cardAdded", "cardMoved", "cardCompleted", "checklistCompleted", "cardDue", "labelAdded" };
-    public static readonly string[] Conditions = { "titleContains", "hasLabel", "lacksLabel", "inColumn", "onDays" };
+    public static readonly string[] Triggers = { Schedule, Weather, "cardAdded", "cardMoved", "cardCompleted", "checklistCompleted", "cardDue", "labelAdded" };
+    public static readonly string[] Conditions = { "titleContains", "hasLabel", "lacksLabel", "inColumn", "weather", "onDays" };
     public static readonly string[] Actions =
     {
-        "createCard", "moveCard", "addLabel", "removeLabel", "setDue", "complete", "addChecklist", "resetChecklist",
-        "addComment", "assign", "deleteCard", "notify", "email", "moveAllCards", "deleteAllCards",
+        "createReminder", "createEvent", "createCard", "moveCard", "addLabel", "removeLabel", "setDue", "complete", "addChecklist",
+        "resetChecklist", "addComment", "assign", "deleteCard", "notify", "email", "moveAllCards", "deleteAllCards",
     };
+
+    // What a reminders-and-calendar rule can use: it has no cards to watch or act on.
+    public static readonly string[] PlannerTriggers = { Schedule, Weather };
+    public static readonly string[] PlannerConditions = { "onDays", "weather" };
+    public static readonly string[] PlannerActions = { "createReminder", "createEvent", "notify", "email" };
+
+    public static bool StartsWithoutCard(string? type) => type is Schedule or Weather;
 }
 
 public static class BoardAutomationJson
@@ -179,17 +217,67 @@ public sealed class AutomationContext
 
 public sealed record AutomationRecipe(string Name, string Why, BoardAutomation Rule);
 
+/// <summary>What a weather test can look at: the words around the number, its unit, how far the
+/// number box steps, whether it looks back (past) or is a reading right now, the windows that make
+/// sense, and the test a new block starts with.</summary>
+public sealed record WeatherMetric(
+    string Key, string Label, string Unit, double Step, bool Past, bool Now, int[] Windows, string Op, double Value, int Window);
+
 /// <summary>The blocks, their wording, and the small rules the editor follows - all a port of the
 /// dashboard's builder.</summary>
 public static class BoardAutomationRules
 {
     public static readonly string[] DayShort = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
-    public static readonly (string Token, string What)[] Tokens =
+    public static readonly (string Token, string What)[] BoardTokens =
     {
         ("{date}", "today's date"), ("{weekday}", "day of the week"), ("{month}", "month"), ("{card}", "the card's title"),
         ("{due}", "the card's due date"), ("{board}", "this board's name"),
     };
+
+    public static readonly (string Token, string What)[] PlannerTokens =
+    {
+        ("{date}", "today's date"), ("{weekday}", "day of the week"), ("{month}", "month"),
+    };
+
+    public static readonly (string Token, string What)[] WeatherTokens =
+    {
+        ("{weather}", "what the weather test measured, like 28°F or 1.2 inches"), ("{weatherDay}", "the day it's about, like tonight or Tuesday night"),
+    };
+
+    /// <summary>The words the palette offers: a board's or the reminders builder's, then the weather ones.</summary>
+    public static (string Token, string What)[] Tokens(bool planner) => (planner ? PlannerTokens : BoardTokens).Concat(WeatherTokens).ToArray();
+
+    public static readonly WeatherMetric[] Metrics =
+    {
+        new("rainPast", "rain so far", "inches", 0.1, true, false, new[] { 1, 2, 3, 5, 7, 10, 14 }, "atMost", 1, 7),
+        new("rainNext", "rain forecast", "inches", 0.1, false, false, new[] { 1, 2, 3, 5, 7 }, "atLeast", 0.5, 2),
+        new("snowNext", "snow forecast", "inches", 0.5, false, false, new[] { 1, 2, 3, 5, 7 }, "atLeast", 2, 3),
+        new("lowNext", "lowest temperature", "°F", 1, false, false, new[] { 1, 2, 3, 5, 7 }, "atMost", 32, 7),
+        new("highNext", "highest temperature", "°F", 1, false, false, new[] { 1, 2, 3, 5, 7 }, "atLeast", 95, 3),
+        new("rainChanceNext", "chance of rain", "%", 5, false, false, new[] { 1, 2, 3, 5, 7 }, "atLeast", 60, 1),
+        new("tempNow", "temperature right now", "°F", 1, false, true, new[] { 1 }, "atMost", 32, 1),
+    };
+
+    public static WeatherMetric? Metric(string? key) => Metrics.FirstOrDefault(metric => metric.Key == key);
+
+    // Days from today for a reminder or event; from the weather's day, when it counts from that.
+    public static readonly (int Days, string Label)[] WeatherDayChoices =
+    {
+        (-2, "2 days before"), (-1, "the day before"), (0, "on the day"), (1, "the day after"),
+    };
+
+    public static readonly (int? Minutes, string Label)[] AlertChoices =
+    {
+        (null, "no heads-up"), (0, "at the time"), (15, "15 minutes before"), (60, "1 hour before"), (1440, "1 day before"),
+    };
+
+    public static readonly (int Minutes, string Label)[] DurationChoices =
+    {
+        (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"), (90, "1½ hours"), (120, "2 hours"), (240, "4 hours"),
+    };
+
+    public static readonly (int Priority, string Label)[] PriorityChoices = { (0, "none"), (1, "low"), (2, "medium"), (3, "high") };
 
     public static readonly (int Minutes, string Label)[] DueOffsets =
     {
@@ -213,6 +301,7 @@ public static class BoardAutomationRules
     public static readonly AutomationBlock[] TriggerBlocks =
     {
         new("trigger", "schedule", "⏰", "On a schedule", "every morning, every Monday, once…"),
+        new("trigger", "weather", "🌦", "When the weather turns", "a freeze, a heat wave, a wet day…"),
         new("trigger", "cardAdded", "＋", "When a card is added", "to a list, or anywhere on the board"),
         new("trigger", "cardMoved", "⇢", "When a card is moved", "into a particular list"),
         new("trigger", "cardCompleted", "✓", "When a card is marked done", "ticked off anywhere on the board"),
@@ -227,11 +316,14 @@ public static class BoardAutomationRules
         new("conditions", "hasLabel", "🏷", "Has a label", NeedsCard: true),
         new("conditions", "lacksLabel", "⊘", "Doesn't have a label", NeedsCard: true),
         new("conditions", "inColumn", "▤", "Is in a list", NeedsCard: true),
+        new("conditions", "weather", "🌦", "The weather…", "it hasn't rained, it'll freeze…"),
         new("conditions", "onDays", "📅", "Only on certain days"),
     };
 
     public static readonly AutomationBlock[] ActionBlocks =
     {
+        new("actions", "createReminder", "🔔", "Add a reminder", "to the Reminders list"),
+        new("actions", "createEvent", "📆", "Put an event on the calendar", "all day, or at a time"),
         new("actions", "createCard", "＋", "Create a card", "then the steps below act on it"),
         new("actions", "moveCard", "⇢", "Move the card", NeedsCard: true),
         new("actions", "addLabel", "🏷", "Add a label", NeedsCard: true),
@@ -256,6 +348,28 @@ public static class BoardAutomationRules
         _ => ActionBlocks,
     }).FirstOrDefault(block => block.Type == type);
 
+    /// <summary>The blocks the palette offers: all of them on a board, the no-card ones - in the
+    /// dashboard's order - for reminders and calendar.</summary>
+    public static IReadOnlyList<AutomationBlock> Offered(string zone, bool planner)
+    {
+        if (!planner)
+        {
+            return zone switch
+            {
+                "trigger" => TriggerBlocks,
+                "conditions" => ConditionBlocks,
+                _ => ActionBlocks,
+            };
+        }
+        var types = zone switch
+        {
+            "trigger" => AutomationTypes.PlannerTriggers,
+            "conditions" => AutomationTypes.PlannerConditions,
+            _ => AutomationTypes.PlannerActions,
+        };
+        return types.Select(type => Block(zone, type)).OfType<AutomationBlock>().ToList();
+    }
+
     /// <summary>The device's time zone as an IANA name - the server runs on Linux, which knows
     /// "America/Chicago" but not "Central Standard Time".</summary>
     public static string DeviceTimeZone()
@@ -273,6 +387,7 @@ public static class BoardAutomationRules
             Type = type,
             Schedule = new AutomationSchedule { Repeat = "daily", Time = "07:00", Days = new(), TimeZone = context.TimeZone },
         },
+        AutomationTypes.Weather => new AutomationTrigger { Type = type, Weather = NewWeatherTest("lowNext") },
         "cardAdded" => new AutomationTrigger { Type = type, ColumnId = "" },
         "cardMoved" => new AutomationTrigger { Type = type, ColumnId = context.LastColumnId },
         "cardDue" => new AutomationTrigger { Type = type, MinutesBefore = 60, ColumnId = "" },
@@ -284,11 +399,45 @@ public static class BoardAutomationRules
     {
         "inColumn" => new AutomationCondition { Type = type, ColumnId = context.FirstColumnId },
         "onDays" => new AutomationCondition { Type = type, Days = new() { 1, 2, 3, 4, 5 } },
+        "weather" => NewWeatherTest("rainPast"),
         _ => new AutomationCondition { Type = type, Text = "" },
     };
 
-    public static AutomationAction MakeAction(string type, AutomationContext context) => type switch
+    /// <summary>A weather test with the metric's own sensible numbers - 32°F isn't an amount of
+    /// rain - which is also what picking another metric resets it to.</summary>
+    public static AutomationCondition NewWeatherTest(string metric)
     {
+        var m = Metric(metric) ?? Metric("lowNext")!;
+        return new AutomationCondition { Type = "weather", Metric = metric, Op = m.Op, Value = m.Value, Window = m.Window };
+    }
+
+    /// <summary>Picking another metric in a weather block.</summary>
+    public static void ChangeMetric(AutomationCondition test, string metric)
+    {
+        var fresh = NewWeatherTest(metric);
+        test.Metric = fresh.Metric;
+        test.Op = fresh.Op;
+        test.Value = fresh.Value;
+        test.Window = fresh.Window;
+    }
+
+    /// <summary>Whether the rule has a weather test, in WHEN or ONLY IF - which a step can then count its day from.</summary>
+    public static bool WeatherInRule(BoardAutomation? draft) =>
+        draft is not null && (draft.Trigger?.Type == AutomationTypes.Weather || draft.Conditions.Any(condition => condition.Type == "weather"));
+
+    /// <summary>A new THEN block. <paramref name="draft"/> is the rule it goes into: a reminder in a
+    /// weather rule counts from the weather's day to begin with.</summary>
+    public static AutomationAction MakeAction(string type, AutomationContext context, BoardAutomation? draft = null) => type switch
+    {
+        "createReminder" => new AutomationAction
+        {
+            Type = type, Title = "", InDays = 0, Time = "", SkipIfExists = true, Priority = 0, AlertMinutes = null,
+            FromWeatherDay = draft?.Trigger?.Type == AutomationTypes.Weather,
+        },
+        "createEvent" => new AutomationAction
+        {
+            Type = type, Title = "", InDays = 0, Time = "", DurationMinutes = 60, SkipIfExists = true, AlertMinutes = null, FromWeatherDay = false,
+        },
         "createCard" => new AutomationAction { Type = type, ColumnId = context.FirstColumnId, Title = "", Position = "bottom", SkipIfExists = true },
         "moveCard" => new AutomationAction { Type = type, ColumnId = context.LastColumnId, Position = "top" },
         "addLabel" => new AutomationAction { Type = type, Name = "", Color = "" },
@@ -406,6 +555,58 @@ public static class BoardAutomationRules
         return string.IsNullOrEmpty(time) ? day : $"{day} at {Time12(time, culture)}";
     }
 
+    /// <summary>A number as JavaScript prints one: 1 not 1.0, 0.5 as 0.5, whatever the culture.</summary>
+    public static string JsNumber(double value) =>
+        value == 0 ? "0" : value.ToString("R", CultureInfo.InvariantCulture);
+
+    /// <summary>"the last 7 days", "the next day" - a weather block's window.</summary>
+    public static string WindowLabel(WeatherMetric metric, int days) =>
+        metric.Past ? (days == 1 ? "today" : $"the last {days} days") : (days == 1 ? "the next day" : $"the next {days} days");
+
+    /// <summary>Where a weather block's number comes from, said under its fields.</summary>
+    public static string WeatherSource(WeatherMetric metric) =>
+        metric.Past ? "Measured at the nearest airport weather station (Iowa State mesonet daily totals)."
+        : metric.Now ? "From the nearest weather station, checked every half hour."
+        : "From the National Weather Service forecast for Settings → LOCATION.";
+
+    public const string WeatherTriggerNote =
+        "Checked every half hour. It goes off when this becomes true - once, not again until it's been untrue for a while.";
+
+    public static string WeatherWords(AutomationCondition test)
+    {
+        var m = Metric(test.Metric) ?? Metric("rainPast")!;
+        var n = test.Window is { } window and not 0 ? window : 1;
+        var span = m.Now ? "" : m.Past ? (n == 1 ? " today" : $" in the last {n} days") : (n == 1 ? " in the next day" : $" in the next {n} days");
+        var most = test.Op == "atMost";
+        var value = test.Value ?? 0;
+        var v = JsNumber(value);
+        var inches = $"inch{(value == 1 ? "" : "es")}";
+        return test.Metric switch
+        {
+            "rainPast" => $"{v} {inches} of rain or {(most ? "less" : "more")} has fallen{span}",
+            "rainNext" => $"{v} {inches} of rain or {(most ? "less" : "more")} is forecast{span}",
+            "snowNext" => $"{v} {inches} of snow or {(most ? "less" : "more")} is forecast{span}",
+            "lowNext" => most ? $"it gets down to {v}°F or colder{span}" : $"it stays at {v}°F or warmer{span}",
+            "highNext" => most ? $"it stays at {v}°F or cooler{span}" : $"it gets up to {v}°F or hotter{span}",
+            "rainChanceNext" => most ? $"the chance of rain stays at {v}% or less{span}" : $"there's a {v}% chance of rain or more{span}",
+            "tempNow" => $"it's {v}°F or {(most ? "colder" : "warmer")} right now",
+            _ => "the weather…",
+        };
+    }
+
+    /// <summary>When a new reminder or event is for: "tomorrow at 7:00 AM", or counted from the
+    /// weather - "the day before the weather". Nothing for a reminder with no due date.</summary>
+    public static string ReminderWhen(AutomationAction action, CultureInfo culture)
+    {
+        if (action.InDays is not { } n) return "";
+        if (action.FromWeatherDay)
+        {
+            var day = n == 0 ? "on the day of the weather" : n == -1 ? "the day before the weather" : n < 0 ? $"{-n} days before the weather" : $"{n} days after the weather";
+            return string.IsNullOrEmpty(action.Time) ? day : $"{day} at {Time12(action.Time, culture)}";
+        }
+        return DueWords(n, action.Time, culture);
+    }
+
     private static string DayNames(IEnumerable<int>? days) =>
         string.Join(", ", (days ?? Enumerable.Empty<int>()).OrderBy(d => d).Where(d => d is >= 0 and <= 6).Select(d => DayShort[d]));
 
@@ -441,6 +642,8 @@ public static class BoardAutomationRules
         {
             case AutomationTypes.Schedule:
                 return ScheduleWords(trigger.Schedule ?? new AutomationSchedule(), context.Culture);
+            case AutomationTypes.Weather:
+                return $"When {WeatherWords(trigger.Weather ?? new AutomationCondition())}";
             case "cardAdded":
                 return $"When a card is added to {(string.IsNullOrEmpty(trigger.ColumnId) ? "any list" : context.ColumnName(trigger.ColumnId))}";
             case "cardMoved":
@@ -474,6 +677,7 @@ public static class BoardAutomationRules
             case "onDays":
                 var names = DayNames(condition.Days);
                 return $"it's {(names.Length > 0 ? names : "…")}";
+            case "weather": return WeatherWords(condition);
             default: return condition.Type;
         }
     }
@@ -493,6 +697,13 @@ public static class BoardAutomationRules
         var culture = context.Culture;
         switch (action.Type)
         {
+            case "createReminder":
+                return $"add the reminder {Q(action.Title)}"
+                       + (action.InDays is not null ? $", due {ReminderWhen(action, culture)}" : "")
+                       + (action.SkipIfExists ? " (unless it's still there)" : "");
+            case "createEvent":
+                var on = new AutomationAction { InDays = action.InDays ?? 0, Time = action.Time, FromWeatherDay = action.FromWeatherDay };
+                return $"put {Q(action.Title)} on the calendar {(string.IsNullOrEmpty(action.Time) ? "all day " : "")}{ReminderWhen(on, culture)}";
             case "createCard":
                 return $"create a card {Q(action.Title)} in {context.ColumnName(action.ColumnId)}"
                        + (action.InDays is not null ? $", due {DueWords(action.InDays, action.Time, culture)}" : "")
@@ -550,14 +761,14 @@ public static class BoardAutomationRules
     // ---- checks --------------------------------------------------------------------------------
 
     /// <summary>Whether the rule has a card on hand at action <paramref name="index"/>: a card rule
-    /// starts with one, a schedule only once a "create a card" step has run - and a "delete the
+    /// starts with one, a schedule or weather rule only once a "create a card" step has run - and a "delete the
     /// card" step takes it away again.</summary>
     public static bool CardAvailableBefore(BoardAutomation draft, int index)
     {
         var before = draft.Actions.Take(index).Select(action => action.Type).ToList();
         var lastCreate = before.LastIndexOf("createCard");
         var lastDelete = before.LastIndexOf("deleteCard");
-        if (draft.Trigger?.Type == AutomationTypes.Schedule) return lastCreate > lastDelete;
+        if (draft.StartsWithoutCard) return lastCreate > lastDelete;
         return lastDelete == -1 || lastCreate > lastDelete;
     }
 
@@ -566,14 +777,14 @@ public static class BoardAutomationRules
     {
         var action = draft.Actions[index];
         if (Block("actions", action.Type) is not { NeedsCard: true } || CardAvailableBefore(draft, index)) return null;
-        return draft.IsScheduled
-            ? "A schedule has no card of its own - put “Create a card” above this step."
+        return draft.StartsWithoutCard
+            ? "A schedule or weather rule has no card of its own - put “Create a card” above this step."
             : "The card was deleted by an earlier step.";
     }
 
     public static string? ConditionWarning(BoardAutomation draft, int index) =>
-        draft.IsScheduled && Block("conditions", draft.Conditions[index].Type) is { NeedsCard: true }
-            ? "A schedule has no card to check - this would never be true."
+        draft.StartsWithoutCard && Block("conditions", draft.Conditions[index].Type) is { NeedsCard: true }
+            ? "A schedule or weather rule has no card to check - this would never be true."
             : null;
 
     /// <summary>What the editor checks before sending; the server checks the rest.</summary>
@@ -581,6 +792,7 @@ public static class BoardAutomationRules
     {
         var errors = new List<string>();
         if (draft.Trigger is null) errors.Add("Drag a WHEN block in - what starts the rule?");
+        if (draft.IsPlanner && string.IsNullOrEmpty(draft.SpaceId)) errors.Add("Pick who the reminders and events are for.");
         if (draft.Actions.Count == 0) errors.Add("Drag at least one THEN block in - what should happen?");
         if (string.IsNullOrWhiteSpace(draft.Name)) errors.Add("Give the rule a name.");
         return errors;
@@ -612,6 +824,56 @@ public static class BoardAutomationRules
         var start = Math.Clamp(selectionStart, 0, text.Length);
         var end = Math.Clamp(start + Math.Max(0, selectionLength), start, text.Length);
         return (text[..start] + token + text[end..], start + token.Length);
+    }
+
+    // ---- who a reminders rule is for --------------------------------------------------------------
+
+    public const string AdminsSpaceId = "group:admins";
+
+    /// <summary>The spaces a reminders rule can be for; just Family when the server has sent none.</summary>
+    public static IReadOnlyList<OrganizerSpace> PlannerSpaces(IReadOnlyList<OrganizerSpace>? spaces) =>
+        spaces is { Count: > 0 } ? spaces : new[] { OrganizerSpace.Family };
+
+    /// <summary>Who a reminders rule is for, as the builder says it: "just me", "everyone", "the admins".</summary>
+    public static string SpaceWords(OrganizerSpace? space) => space switch
+    {
+        null => "…",
+        { Kind: OrganizerSpaceKind.Personal } => "just me",
+        { Kind: OrganizerSpaceKind.Family } => "everyone",
+        { Id: AdminsSpaceId } => "the admins",
+        _ => space.Name,
+    };
+
+    /// <summary>The same choice as the Reminders screen says it: "just me", "everyone", "admins".
+    /// Everyone and Admins reminders also show across the top of the wall kiosk when they're due.</summary>
+    public static string AudienceName(OrganizerSpace space) => space switch
+    {
+        { Kind: OrganizerSpaceKind.Personal } => "just me",
+        { Kind: OrganizerSpaceKind.Family } => "everyone",
+        { Id: AdminsSpaceId } => "admins",
+        _ => space.Name,
+    };
+
+    /// <summary>
+    /// The rule the editor works on: a copy of the one being edited, or of a recipe, or a blank one -
+    /// going back leaves the original as it was, and fields this app doesn't know ride along. A
+    /// board's rule has no space; a reminders rule (<paramref name="boardId"/> null) keeps its space
+    /// when it's one this person can see, else it goes to everyone.
+    /// </summary>
+    public static BoardAutomation Draft(BoardAutomation? editing, BoardAutomation? recipe, string? boardId, IReadOnlyList<OrganizerSpace>? spaces)
+    {
+        var source = editing ?? recipe;
+        var draft = source?.Clone() ?? new BoardAutomation();
+        draft.BoardId = boardId ?? "";
+        draft.SpaceId = boardId is null
+            ? (source?.SpaceId is { Length: > 0 } id && PlannerSpaces(spaces).Any(space => space.Id == id) ? id : OrganizerSpace.Family.Id)
+            : null;
+        if (editing is null)
+        {
+            draft.Id = null;
+            draft.Enabled = true;
+        }
+        return draft;
     }
 
     // ---- recipes -------------------------------------------------------------------------------
@@ -657,6 +919,46 @@ public static class BoardAutomationRules
                 new AutomationAction { Type = "moveCard", ColumnId = first, Position = "top" })),
         };
     }
+
+    /// <summary>The reminders-and-calendar recipes. The freeze one goes to the admins when this
+    /// server has that space, else to everyone.</summary>
+    public static List<AutomationRecipe> PlannerRecipes(IReadOnlyList<OrganizerSpace>? spaces, string timeZone)
+    {
+        const string everyone = "family";
+        var admins = PlannerSpaces(spaces).Any(space => space.Id == AdminsSpaceId) ? AdminsSpaceId : everyone;
+        AutomationTrigger On(string time, params int[] days) =>
+            new() { Type = AutomationTypes.Schedule, Schedule = new AutomationSchedule { Repeat = "daily", Time = time, Days = days.ToList(), TimeZone = timeZone } };
+        AutomationCondition Weather(string metric, string op, double value, int window) =>
+            new() { Type = "weather", Metric = metric, Op = op, Value = value, Window = window };
+        AutomationTrigger When(AutomationCondition test) => new() { Type = AutomationTypes.Weather, Weather = test };
+        BoardAutomation Rule(string name, string spaceId, AutomationTrigger trigger, AutomationCondition[] conditions, params AutomationAction[] actions) =>
+            new() { Name = name, BoardId = "", SpaceId = spaceId, Trigger = trigger, Conditions = conditions.ToList(), Actions = actions.ToList() };
+        AutomationAction Reminder(string title, int inDays, int priority, bool fromWeatherDay = false, string time = "") =>
+            new() { Type = "createReminder", Title = title, InDays = inDays, FromWeatherDay = fromWeatherDay, Time = time, SkipIfExists = true, Priority = priority };
+
+        return new List<AutomationRecipe>
+        {
+            new("Water the plants", "Saturdays - unless it's rained an inch this week", Rule("Water the plants (if it's been dry)", everyone,
+                On("08:00", 6), new[] { Weather("rainPast", "atMost", 1, 7) },
+                Reminder("Water the plants", 0, 0))),
+            new("Freeze coming", "check the pipes the day before it freezes", Rule("Freeze coming - check the pipes", admins,
+                When(Weather("lowNext", "atMost", 32, 7)), Array.Empty<AutomationCondition>(),
+                Reminder("Check the pipes - {weather} {weatherDay}", -1, 3, fromWeatherDay: true),
+                new AutomationAction { Type = "notify", Everyone = true, People = new(), Title = "Freeze coming", Text = "Down to {weather} {weatherDay} - drip the taps and cover the plants." })),
+            new("Rain tomorrow", "bring the cushions in", Rule("Rain on the way", everyone,
+                When(Weather("rainChanceNext", "atLeast", 70, 1)), Array.Empty<AutomationCondition>(),
+                Reminder("Bring the patio cushions in", 0, 1))),
+            new("Heat wave", "extra watering when it's 95° or hotter", Rule("Hot spell - water the garden", everyone,
+                When(Weather("highNext", "atLeast", 95, 3)), Array.Empty<AutomationCondition>(),
+                Reminder("Hot {weatherDay} ({weather}) - water the garden early", 0, 2, fromWeatherDay: true, time: "07:00"))),
+            new("Snow coming", "get the salt and shovel out", Rule("Snow on the way", everyone,
+                When(Weather("snowNext", "atLeast", 2, 3)), Array.Empty<AutomationCondition>(),
+                Reminder("Salt the steps - {weather} of snow {weatherDay}", -1, 2, fromWeatherDay: true))),
+            new("Bin day", "on the calendar every week", Rule("Bin day", everyone,
+                On("06:00", 0), Array.Empty<AutomationCondition>(),
+                new AutomationAction { Type = "createEvent", Title = "Bin day", InDays = 1, Time = "", SkipIfExists = true })),
+        };
+    }
 }
 
 /// <summary>Raised for any answer from the automations API that isn't a success; carries the
@@ -677,9 +979,16 @@ public sealed class BoardAutomationsApi(
 {
     private const string Root = "/api/organizer/automations";
 
-    public async Task<BoardAutomationList> ListAsync(string boardId)
+    public Task<BoardAutomationList> ListAsync(string boardId) =>
+        ListWhereAsync(new Dictionary<string, string> { ["boardId"] = boardId });
+
+    /// <summary>The reminders-and-calendar rules: the ones with no board, in spaces this person is in.</summary>
+    public Task<BoardAutomationList> ListPlannerAsync() =>
+        ListWhereAsync(new Dictionary<string, string> { ["planner"] = "true" });
+
+    private async Task<BoardAutomationList> ListWhereAsync(IReadOnlyDictionary<string, string> query)
     {
-        using var json = JsonDocument.Parse(await CallAsync("GET", Root, new Dictionary<string, string> { ["boardId"] = boardId }).ConfigureAwait(false));
+        using var json = JsonDocument.Parse(await CallAsync("GET", Root, query).ConfigureAwait(false));
         var root = json.RootElement;
         var rules = root.TryGetProperty("automations", out var list) && list.ValueKind == JsonValueKind.Array
             ? list.EnumerateArray().Select(BoardAutomationJson.Read<BoardAutomation>).OfType<BoardAutomation>().ToList()
@@ -716,7 +1025,7 @@ public sealed class BoardAutomationsApi(
 
     public Task DeleteAsync(string id) => CallAsync("DELETE", $"{Root}/{Uri.EscapeDataString(id)}");
 
-    /// <summary>Runs a scheduled rule now, to try it out.</summary>
+    /// <summary>Runs a scheduled or weather rule now, to try it out.</summary>
     public async Task<AutomationRun> RunNowAsync(string id)
     {
         var reply = await CallAsync("POST", $"{Root}/{Uri.EscapeDataString(id)}/run").ConfigureAwait(false);

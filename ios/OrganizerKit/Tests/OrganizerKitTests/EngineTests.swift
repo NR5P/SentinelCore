@@ -6,7 +6,7 @@ import XCTest
 // engine behaviours that don't depend on the real merge rules - those run against the real
 // server in LiveServerTests.
 final class ScriptedTransport: OrganizerTransport, @unchecked Sendable {
-    struct Request { let method: String; let path: String; let body: Data? }
+    struct Request { let method: String; let path: String; let body: Data?; var query: [URLQueryItem] = [] }
 
     private let lock = NSLock()
     private var _requests: [Request] = []
@@ -26,7 +26,7 @@ final class ScriptedTransport: OrganizerTransport, @unchecked Sendable {
     }
 
     func send(method: String, path: String, query: [URLQueryItem], body: Data?, contentType: String?, timeout: TimeInterval?) async throws -> OrganizerHTTPResponse {
-        let request = Request(method: method, path: path, body: body)
+        let request = Request(method: method, path: path, body: body, query: query)
         let handler = lock.withLock { () -> (Request) throws -> OrganizerHTTPResponse in
             _requests.append(request)
             return self.handler

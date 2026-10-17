@@ -215,7 +215,7 @@ final class BoardAutomationTests: XCTestCase {
 
         let rule = BoardAutomation(trigger: scheduled, conditions: [block(["type": "hasLabel"]), block(["type": "onDays"])],
                                    actions: [label, create, block(["type": "notify"])])
-        XCTAssertEqual(BoardAutomations.actionWarning(0, in: rule), "A schedule has no card of its own - put “Create a card” above this step.")
+        XCTAssertEqual(BoardAutomations.actionWarning(0, in: rule), "A schedule or weather rule has no card of its own - put “Create a card” above this step.")
         XCTAssertNil(BoardAutomations.actionWarning(1, in: rule))
         XCTAssertNil(BoardAutomations.actionWarning(2, in: rule))
         XCTAssertNotNil(BoardAutomations.conditionWarning(0, in: rule))
@@ -278,9 +278,9 @@ final class BoardAutomationTests: XCTestCase {
         XCTAssertEqual(BoardAutomations.make(.actions, "notify", context: withPeople).bool("everyone"), false)
         XCTAssertEqual(BoardAutomations.make(.actions, "assign", context: withPeople).string("username"), "morgan")
 
-        XCTAssertEqual(BoardAutomations.triggers.count, 7)
-        XCTAssertEqual(BoardAutomations.conditions.count, 5)
-        XCTAssertEqual(BoardAutomations.actions.count, 15)
+        XCTAssertEqual(BoardAutomations.triggers.count, 8)
+        XCTAssertEqual(BoardAutomations.conditions.count, 6)
+        XCTAssertEqual(BoardAutomations.actions.count, 17)
         // Every block has words of its own once made.
         for kind in BoardAutomations.triggers { XCTAssertNotNil(words.triggerWords(BoardAutomations.make(.trigger, kind.type, context: context)), kind.type) }
         for kind in BoardAutomations.conditions { XCTAssertNotNil(words.conditionWords(BoardAutomations.make(.conditions, kind.type, context: context)), kind.type) }
@@ -315,6 +315,123 @@ final class BoardAutomationTests: XCTestCase {
         XCTAssertEqual(BoardAutomations.messages(for: OrganizerError.offline), ["Can't reach the server."])
     }
 
+    // MARK: - weather and reminders
+
+    private func test(_ metric: String, _ op: String, _ value: Double, _ window: Int) -> AutomationBlock {
+        block(["type": "weather", "metric": .string(metric), "op": .string(op), "value": .number(value), "window": .from(window)])
+    }
+
+    func testWeatherWordsForEveryMetric() {
+        XCTAssertEqual(words.weatherWords(test("rainPast", "atMost", 1, 7)), "1 inch of rain or less has fallen in the last 7 days")
+        XCTAssertEqual(words.weatherWords(test("rainPast", "atLeast", 0.5, 1)), "0.5 inches of rain or more has fallen today")
+        XCTAssertEqual(words.weatherWords(test("rainNext", "atLeast", 0.5, 2)), "0.5 inches of rain or more is forecast in the next 2 days")
+        XCTAssertEqual(words.weatherWords(test("snowNext", "atMost", 2, 1)), "2 inches of snow or less is forecast in the next day")
+        XCTAssertEqual(words.weatherWords(test("lowNext", "atMost", 32, 7)), "it gets down to 32°F or colder in the next 7 days")
+        XCTAssertEqual(words.weatherWords(test("lowNext", "atLeast", 50, 3)), "it stays at 50°F or warmer in the next 3 days")
+        XCTAssertEqual(words.weatherWords(test("highNext", "atMost", 70, 3)), "it stays at 70°F or cooler in the next 3 days")
+        XCTAssertEqual(words.weatherWords(test("highNext", "atLeast", 95, 3)), "it gets up to 95°F or hotter in the next 3 days")
+        XCTAssertEqual(words.weatherWords(test("rainChanceNext", "atLeast", 60, 1)), "there's a 60% chance of rain or more in the next day")
+        XCTAssertEqual(words.weatherWords(test("rainChanceNext", "atMost", 20, 2)), "the chance of rain stays at 20% or less in the next 2 days")
+        XCTAssertEqual(words.weatherWords(test("tempNow", "atMost", 32, 1)), "it's 32°F or colder right now")
+        XCTAssertEqual(words.weatherWords(test("tempNow", "atLeast", -4.5, 1)), "it's -4.5°F or warmer right now")
+        XCTAssertEqual(words.weatherWords(test("hail", "atLeast", 1, 1)), "the weather…")
+
+        XCTAssertEqual(words.triggerWords(block(["type": "weather", "weather": .object(test("lowNext", "atMost", 32, 7).fields)])),
+                       "When it gets down to 32°F or colder in the next 7 days")
+        XCTAssertEqual(words.conditionWords(test("rainPast", "atMost", 1, 7)), "1 inch of rain or less has fallen in the last 7 days")
+    }
+
+    func testANewWeatherTestStartsFromItsOwnNumbers() {
+        let rain = BoardAutomations.weatherTest("rainPast")
+        XCTAssertEqual([rain.string("op"), rain.double("value").map(AutomationWording.number), rain.int("window").map(String.init)], ["atMost", "1", "7"])
+        let low = BoardAutomations.weatherTest("lowNext")
+        XCTAssertEqual([low.string("op"), low.double("value").map(AutomationWording.number), low.int("window").map(String.init)], ["atMost", "32", "7"])
+        XCTAssertEqual(BoardAutomations.weatherTest("nonsense").string("metric"), "lowNext")
+        XCTAssertEqual(BoardAutomations.windowLabel(1, metric: BoardAutomations.weatherMetric("rainPast")), "today")
+        XCTAssertEqual(BoardAutomations.windowLabel(7, metric: BoardAutomations.weatherMetric("rainPast")), "the last 7 days")
+        XCTAssertEqual(BoardAutomations.windowLabel(1, metric: BoardAutomations.weatherMetric("rainNext")), "the next day")
+        XCTAssertEqual(BoardAutomations.weatherMetrics.map(\.key), ["rainPast", "rainNext", "snowNext", "lowNext", "highNext", "rainChanceNext", "tempNow"])
+    }
+
+    func testReminderAndEventWords() {
+        XCTAssertEqual(words.actionWords(block(["type": "createReminder", "title": "Water", "inDays": 0, "time": "", "skipIfExists": true])),
+                       "add the reminder “Water”, due today (unless it's still there)")
+        XCTAssertEqual(words.actionWords(block(["type": "createReminder", "title": "Water", "inDays": nil, "skipIfExists": false])), "add the reminder “Water”")
+        XCTAssertEqual(words.actionWords(block(["type": "createReminder", "title": "Pipes", "inDays": -1, "fromWeatherDay": true, "time": "18:00"])),
+                       "add the reminder “Pipes”, due the day before the weather at 6:00 PM")
+        XCTAssertEqual(words.reminderWhen(block(["inDays": 0, "fromWeatherDay": true])), "on the day of the weather")
+        XCTAssertEqual(words.reminderWhen(block(["inDays": -2, "fromWeatherDay": true])), "2 days before the weather")
+        XCTAssertEqual(words.reminderWhen(block(["inDays": 1, "fromWeatherDay": true])), "1 days after the weather")
+        XCTAssertEqual(words.reminderWhen(block(["inDays": nil])), "")
+        XCTAssertEqual(words.actionWords(block(["type": "createEvent", "title": "Bin day", "inDays": 1, "time": ""])), "put “Bin day” on the calendar all day tomorrow")
+        XCTAssertEqual(words.actionWords(block(["type": "createEvent", "title": "Cover", "inDays": nil, "time": "17:30"])), "put “Cover” on the calendar today at 5:30 PM")
+    }
+
+    func testNewReminderCountsFromTheWeatherWhenTheWeatherStartsIt() {
+        var context = AutomationMakeContext(firstColumnId: "", lastColumnId: "", timeZone: "UTC", people: [])
+        XCTAssertEqual(BoardAutomations.make(.actions, "createReminder", context: context).bool("fromWeatherDay"), false)
+        context.weatherTrigger = true
+        let reminder = BoardAutomations.make(.actions, "createReminder", context: context)
+        XCTAssertEqual(reminder.bool("fromWeatherDay"), true)
+        XCTAssertEqual(reminder.int("inDays"), 0)
+        XCTAssertEqual(reminder.fields["alertMinutes"], .null)
+        XCTAssertEqual(BoardAutomations.make(.actions, "createEvent", context: context).int("durationMinutes"), 60)
+        let trigger = BoardAutomations.make(.trigger, "weather", context: context)
+        XCTAssertEqual(trigger.weather?.string("metric"), "lowNext")
+        XCTAssertEqual(BoardAutomations.make(.conditions, "weather", context: context).string("metric"), "rainPast")
+    }
+
+    func testPlannerPaletteAndChecks() {
+        XCTAssertEqual(BoardAutomations.palette(.trigger, hasPeople: true, planner: true).map(\.type), ["schedule", "weather"])
+        XCTAssertEqual(BoardAutomations.palette(.conditions, hasPeople: true, planner: true).map(\.type), ["onDays", "weather"])
+        XCTAssertEqual(BoardAutomations.palette(.actions, hasPeople: true, planner: true).map(\.type), ["createReminder", "createEvent", "notify", "email"])
+        XCTAssertTrue(BoardAutomations.palette(.trigger, hasPeople: false).contains { $0.type == "weather" })
+
+        var rule = BoardAutomation(fields: ["name": "Water", "boardId": ""], trigger: block(["type": "weather"]), actions: [block(["type": "createReminder"])])
+        XCTAssertEqual(BoardAutomations.problems(rule, planner: true), ["Pick who the reminders and events are for."])
+        rule.spaceId = "family"
+        XCTAssertEqual(BoardAutomations.problems(rule, planner: true), [])
+        XCTAssertTrue(rule.startsWithoutCard)
+        XCTAssertTrue(rule.hasWeatherTest)
+
+        let weatherRule = BoardAutomation(trigger: block(["type": "weather"]), conditions: [block(["type": "hasLabel"])], actions: [block(["type": "addLabel"])])
+        XCTAssertEqual(BoardAutomations.actionWarning(0, in: weatherRule), "A schedule or weather rule has no card of its own - put “Create a card” above this step.")
+        XCTAssertEqual(BoardAutomations.conditionWarning(0, in: weatherRule), "A schedule or weather rule has no card to check - this would never be true.")
+    }
+
+    func testPlannerDraftsAndSpaces() {
+        let me = OrganizerSpace(id: "personal:morgan", kind: .personal, name: "Morgan")
+        let admins = OrganizerSpace(id: "group:admins", kind: .group, name: "Admins")
+        let book = OrganizerSpace(id: "group:book", kind: .group, name: "Book club")
+        XCTAssertEqual([me, .family, admins, book].map(BoardAutomations.spaceWords), ["just me", "everyone", "the admins", "Book club"])
+        XCTAssertEqual([me, .family, admins, book].map(\.audienceName), ["just me", "everyone", "admins", "Book club"])
+        XCTAssertEqual(BoardAutomations.spaceWords(nil), "…")
+
+        let mine = BoardAutomation(fields: ["id": "r1", "name": "x", "boardId": "", "spaceId": "personal:morgan"])
+        XCTAssertEqual(BoardAutomation.plannerDraft(editing: mine, spaces: [me, .family]).spaceId, "personal:morgan")
+        XCTAssertEqual(BoardAutomation.plannerDraft(editing: mine, spaces: [.family]).spaceId, "family")
+        XCTAssertEqual(BoardAutomation.plannerDraft(editing: nil, spaces: []).spaceId, "family")
+
+        let tz = "America/Chicago"
+        let withAdmins = BoardAutomations.plannerRecipes(spaces: [me, .family, admins], timeZone: tz)
+        XCTAssertEqual(withAdmins.map(\.name), ["Water the plants", "Freeze coming", "Rain tomorrow", "Heat wave", "Snow coming", "Bin day"])
+        XCTAssertEqual(withAdmins[1].rule.spaceId, "group:admins")
+        XCTAssertEqual(BoardAutomations.plannerRecipes(spaces: [.family], timeZone: tz)[1].rule.spaceId, "family")
+        let draft = BoardAutomation.plannerDraft(editing: nil, recipe: withAdmins[1].rule, spaces: [me, .family, admins])
+        XCTAssertEqual(draft.boardId, "")
+        XCTAssertEqual(draft.spaceId, "group:admins")
+        XCTAssertEqual(withAdmins.map { words.sentence($0.rule) }, [
+            "Every Sat at 8:00 AM, if 1 inch of rain or less has fallen in the last 7 days, add the reminder “Water the plants”, due today (unless it's still there).",
+            "When it gets down to 32°F or colder in the next 7 days, add the reminder “Check the pipes - {weather} {weatherDay}”, due the day before the weather (unless it's still there), then notify everyone “Down to {weather} {weatherDay} - drip the taps and cover the plants.”.",
+            "When there's a 70% chance of rain or more in the next day, add the reminder “Bring the patio cushions in”, due today (unless it's still there).",
+            "When it gets up to 95°F or hotter in the next 3 days, add the reminder “Hot {weatherDay} ({weather}) - water the garden early”, due on the day of the weather at 7:00 AM (unless it's still there).",
+            "When 2 inches of snow or more is forecast in the next 3 days, add the reminder “Salt the steps - {weather} of snow {weatherDay}”, due the day before the weather (unless it's still there).",
+            "Every Sun at 6:00 AM, put “Bin day” on the calendar all day tomorrow.",
+        ])
+        for recipe in withAdmins { XCTAssertEqual(BoardAutomations.problems(recipe.rule, planner: true), [], recipe.name) }
+        XCTAssertEqual(BoardAutomations.tokens(planner: true).map(\.token), ["{date}", "{weekday}", "{month}", "{weather}", "{weatherDay}"])
+    }
+
     // MARK: - the REST calls
 
     @MainActor
@@ -344,6 +461,8 @@ final class BoardAutomationTests: XCTestCase {
         XCTAssertEqual(list.automations.map(\.name), ["Eggs"])
         XCTAssertFalse(list.pushReady)
         XCTAssertTrue(list.emailReady)
+        _ = try await engine.plannerAutomations()
+        XCTAssertEqual(transport.requests.last { $0.path == "/api/organizer/automations" }?.query, [URLQueryItem(name: "planner", value: "true")])
 
         do {
             try await engine.saveAutomation(BoardAutomation(fields: ["name": ""]), timeZone: "America/Chicago")

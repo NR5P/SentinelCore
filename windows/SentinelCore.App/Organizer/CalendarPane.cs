@@ -45,6 +45,11 @@ public sealed class CalendarPane : OrganizerPane
         _holidaysButton = Ui.Button("Holidays…", OpenHolidaySettings, tooltip: "Show holidays from other calendars - none are on until you choose");
         _holidaysButton.Margin = new Thickness(12, 0, 0, 0);
         nav.Children.Add(_holidaysButton);
+        // Rules that add events and reminders for you - like a freeze warning to check the pipes.
+        var automations = Ui.Button("⚡ Automations", OpenAutomations,
+            tooltip: "Rules that add events and reminders for you - like a freeze warning to check the pipes");
+        automations.Margin = new Thickness(8, 0, 0, 0);
+        nav.Children.Add(automations);
         DockPanel.SetDock(nav, Dock.Right);
         header.Children.Add(nav);
         header.Children.Add(_monthTitle);
@@ -76,6 +81,8 @@ public sealed class CalendarPane : OrganizerPane
             e.Handled = true;
         };
     }
+
+    private void OpenAutomations() => new BoardAutomationsWindow(Engine, null) { Owner = Window.GetWindow(this) }.ShowDialog();
 
     private void Move(int months)
     {

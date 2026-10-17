@@ -292,7 +292,7 @@ struct ReminderEditor: View {
                     Text("High").tag(3)
                 }
                 Toggle("Flagged", isOn: $flagged)
-                if parentId == nil && reminder?.parentId == nil { SpacePicker(spaceId: $spaceId) }
+                if parentId == nil && reminder?.parentId == nil { SpacePicker(spaceId: $spaceId, audience: true) }
             }
             if let saved, saved.parentId == nil {
                 Section("Steps") {

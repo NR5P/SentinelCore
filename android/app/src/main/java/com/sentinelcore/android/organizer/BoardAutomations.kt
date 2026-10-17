@@ -19,6 +19,10 @@ import org.json.JSONObject
 //
 // Rules are not Organizer items and never sync: they are plain REST, and need the server.
 //
+// The same builder, opened from Reminders or Calendar with no board, makes "planner" rules: they
+// add reminders and events to a space ("just me", "everyone", "admins"), on a schedule or when the
+// weather turns, and can be held back by the weather ("only if it hasn't rained an inch this week").
+//
 // Every block (the trigger, each condition, each action) is the server's loose bag of properties,
 // kept as a map rather than a class per block type - so a field or a whole block this phone
 // doesn't know about survives an edit and a save untouched.
@@ -47,6 +51,15 @@ data class RuleBlock(val fields: Map<String, Any?>) {
 
     fun withSchedule(schedule: RuleBlock): RuleBlock = with("schedule", schedule.fields)
 
+    // The weather test inside a weather trigger.
+    @Suppress("UNCHECKED_CAST")
+    val weather: RuleBlock get() = RuleBlock((fields["weather"] as? Map<String, Any?>) ?: emptyMap())
+
+    fun withWeather(weather: RuleBlock): RuleBlock = with("weather", weather.fields)
+
+    // A weather test's number: whole or not, as typed (JSON numbers come back as doubles).
+    fun number(key: String): Double? = (fields[key] as? Number)?.toDouble()
+
     fun toJson(): JSONObject = OrganizerJson.toJson(fields) as JSONObject
 
     companion object {
@@ -61,6 +74,8 @@ data class AutomationRule(
     val name: String = "",
     val enabled: Boolean = true,
     val boardId: String = "",
+    // A planner rule (no board) belongs to a space instead, and its reminders and events go there.
+    val spaceId: String? = null,
     val timeZone: String? = null,
     val trigger: RuleBlock? = null,
     val conditions: List<RuleBlock> = emptyList(),
@@ -68,6 +83,9 @@ data class AutomationRule(
     val extra: Map<String, Any?> = emptyMap(),
 ) {
     val isScheduled: Boolean get() = trigger?.type == "schedule"
+    val isPlanner: Boolean get() = boardId.isEmpty()
+    // What can be run by hand: a schedule or a weather rule - the others wait for a card.
+    val startsWithoutCard: Boolean get() = BoardAutomations.startsWithoutCard(trigger)
     val nextRunAt: Instant? get() = OrganizerJson.instant(extra["nextRunAt"] as? String)
     val lastRunAt: Instant? get() = OrganizerJson.instant(extra["lastRunAt"] as? String)
     val lastOk: Boolean? get() = extra["lastOk"] as? Boolean
@@ -79,6 +97,7 @@ data class AutomationRule(
         json.put("name", name)
         json.put("enabled", enabled)
         json.put("boardId", boardId)
+        if (spaceId != null) json.put("spaceId", spaceId) else json.remove("spaceId")
         json.put("timeZone", timeZone ?: JSONObject.NULL)
         json.put("trigger", trigger?.toJson() ?: JSONObject.NULL)
         json.put("conditions", JSONArray(conditions.map { it.toJson() }))
@@ -87,7 +106,7 @@ data class AutomationRule(
     }
 
     companion object {
-        private val known = setOf("id", "name", "enabled", "boardId", "timeZone", "trigger", "conditions", "actions")
+        private val known = setOf("id", "name", "enabled", "boardId", "spaceId", "timeZone", "trigger", "conditions", "actions")
 
         fun from(json: JSONObject): AutomationRule {
             fun blocks(name: String): List<RuleBlock> {
@@ -98,7 +117,8 @@ data class AutomationRule(
                 id = json.optString("id").takeIf { it.isNotEmpty() && !json.isNull("id") },
                 name = json.optString("name"),
                 enabled = json.optBoolean("enabled", true),
-                boardId = json.optString("boardId"),
+                boardId = if (json.isNull("boardId")) "" else json.optString("boardId"),
+                spaceId = if (json.isNull("spaceId")) null else json.optString("spaceId").takeIf { it.isNotEmpty() },
                 timeZone = if (json.isNull("timeZone")) null else json.optString("timeZone").takeIf { it.isNotEmpty() },
                 trigger = json.optJSONObject("trigger")?.let(RuleBlock::from),
                 conditions = blocks("conditions"),
@@ -120,7 +140,7 @@ data class AutomationRun(val automationId: String, val at: Instant?, val ok: Boo
     }
 }
 
-// A board's rules, and whether the send blocks can work on this server.
+// A board's rules (or the planner's), and whether the send blocks can work on this server.
 data class AutomationList(val rules: List<AutomationRule>, val timeZone: String?, val pushReady: Boolean, val emailReady: Boolean)
 
 // /api/organizer/automations. `send` is the engine's, so it shares the signed-in transport and
@@ -130,8 +150,10 @@ class BoardAutomationClient(
 ) {
     private fun path(id: String, tail: String = "") = "/api/organizer/automations/${URLEncoder.encode(id, "UTF-8")}$tail"
 
-    suspend fun list(boardId: String): AutomationList {
-        val json = JSONObject(send("GET", "/api/organizer/automations", mapOf("boardId" to boardId), null).text)
+    // One board's rules, or - with no board - the reminders-and-calendar ones.
+    suspend fun list(boardId: String?): AutomationList {
+        val query = if (boardId == null) mapOf("planner" to "true") else mapOf("boardId" to boardId)
+        val json = JSONObject(send("GET", "/api/organizer/automations", query, null).text)
         val array = json.optJSONArray("automations") ?: JSONArray()
         return AutomationList(
             rules = (0 until array.length()).map { AutomationRule.from(array.getJSONObject(it)) },
@@ -204,10 +226,118 @@ data class RuleContext(
 object BoardAutomations {
     const val OFFLINE = "Automations need the server - they can't be changed offline."
     const val DELETE_NOTE = "Cards it already made stay where they are."
+    const val PLANNER_DELETE_NOTE = "Reminders and events it already made stay where they are."
+    const val PLANNER_TITLE = "Reminders & Calendar"
+    const val PLANNER_INTRO = "Rules that add reminders and calendar events for you - on a schedule, or when the weather turns, " +
+        "and held back by the weather (no watering reminder after a wet week). They run on the server, so they happen even " +
+        "when every phone and computer is off. Reminders for everyone or the admins show on the wall kiosk when they're due."
+    const val BOARD_INTRO = "Rules that look after this board for you. They run on the server, so they happen even when every phone and computer is off."
+    const val NEEDS_SPACE = "Pick who the reminders and events are for."
+    const val WEATHER_TRIGGER_NOTE = "Checked every half hour. It goes off when this becomes true - once, not again until it's been untrue for a while."
+    const val ADMINS = "group:admins"
 
     val DAY_SHORT = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
     val TOKENS = listOf("{date}" to "today's date", "{weekday}" to "day of the week", "{month}" to "month",
         "{card}" to "the card's title", "{due}" to "the card's due date", "{board}" to "this board's name")
+    val PLANNER_TOKENS = listOf("{date}" to "today's date", "{weekday}" to "day of the week", "{month}" to "month")
+    val WEATHER_TOKENS = listOf("{weather}" to "what the weather test measured, like 28°F or 1.2 inches",
+        "{weatherDay}" to "the day it's about, like tonight or Tuesday night")
+
+    // The {words} offered: a board's, or the planner's (no card, no board), then the weather's.
+    fun tokens(planner: Boolean): List<Pair<String, String>> = (if (planner) PLANNER_TOKENS else TOKENS) + WEATHER_TOKENS
+
+    // A heads-up before a made reminder or event (alertMinutes); null is none.
+    val ALERTS = listOf(null to "no heads-up", 0 to "at the time", 15 to "15 minutes before", 60 to "1 hour before", 1440 to "1 day before")
+    // How far from the weather's day a made reminder or event lands.
+    val WEATHER_DAYS = listOf(-2 to "2 days before", -1 to "the day before", 0 to "on the day", 1 to "the day after")
+    val DURATIONS = listOf(15 to "15 minutes", 30 to "30 minutes", 60 to "1 hour", 90 to "1½ hours", 120 to "2 hours", 240 to "4 hours")
+    val PRIORITIES = listOf(0 to "none", 1 to "low", 2 to "medium", 3 to "high")
+    val WEATHER_OPS = listOf("atLeast" to "at least", "atMost" to "at most")
+
+    // What a weather test can look at: the words around the number, its unit, which way "a lot"
+    // goes, and the windows that make sense - with the numbers a new test of it starts from.
+    data class WeatherMetric(
+        val key: String,
+        val label: String,
+        val unit: String,
+        val step: Double,
+        val past: Boolean = false,
+        val now: Boolean = false,
+        val windows: List<Int>,
+        val op: String,
+        val value: Number,
+        val window: Int,
+    ) {
+        fun windowLabel(n: Int): String = if (past) (if (n == 1) "today" else "the last $n days") else (if (n == 1) "the next day" else "the next $n days")
+
+        val source: String get() = when {
+            past -> "Measured at the nearest airport weather station (Iowa State mesonet daily totals)."
+            now -> "From the nearest weather station, checked every half hour."
+            else -> "From the National Weather Service forecast for Settings → LOCATION."
+        }
+    }
+
+    private val FORECAST_DAYS = listOf(1, 2, 3, 5, 7)
+    val METRICS = listOf(
+        WeatherMetric("rainPast", "rain so far", "inches", 0.1, past = true, windows = listOf(1, 2, 3, 5, 7, 10, 14), op = "atMost", value = 1, window = 7),
+        WeatherMetric("rainNext", "rain forecast", "inches", 0.1, windows = FORECAST_DAYS, op = "atLeast", value = 0.5, window = 2),
+        WeatherMetric("snowNext", "snow forecast", "inches", 0.5, windows = FORECAST_DAYS, op = "atLeast", value = 2, window = 3),
+        WeatherMetric("lowNext", "lowest temperature", "°F", 1.0, windows = FORECAST_DAYS, op = "atMost", value = 32, window = 7),
+        WeatherMetric("highNext", "highest temperature", "°F", 1.0, windows = FORECAST_DAYS, op = "atLeast", value = 95, window = 3),
+        WeatherMetric("rainChanceNext", "chance of rain", "%", 5.0, windows = FORECAST_DAYS, op = "atLeast", value = 60, window = 1),
+        WeatherMetric("tempNow", "temperature right now", "°F", 1.0, now = true, windows = listOf(1), op = "atMost", value = 32, window = 1),
+    )
+
+    fun metric(key: String?): WeatherMetric? = METRICS.firstOrNull { it.key == key }
+
+    // A fresh weather test of a measure. Changing the measure starts from these too - 32°F isn't
+    // an amount of rain.
+    fun newWeatherTest(metric: String): RuleBlock {
+        val m = metric(metric) ?: metric("lowNext")!!
+        return RuleBlock("type" to "weather", "metric" to m.key, "op" to m.op, "value" to m.value, "window" to m.window)
+    }
+
+    // A weather test with another measure picked; anything else on the block is kept.
+    fun withMetric(test: RuleBlock, metric: String): RuleBlock {
+        val fresh = newWeatherTest(metric)
+        return listOf("metric", "op", "value", "window").fold(test) { block, key -> block.with(key, fresh.fields[key]) }
+    }
+
+    // Whether the rule has weather to count a day from: a weather WHEN or a weather ONLY IF.
+    fun weatherInRule(trigger: RuleBlock?, conditions: List<RuleBlock>): Boolean =
+        trigger?.type == "weather" || conditions.any { it.type == "weather" }
+
+    // Rules that start with no card of their own: a schedule, or the weather turning.
+    fun startsWithoutCard(trigger: RuleBlock?): Boolean = trigger?.type == "schedule" || trigger?.type == "weather"
+
+    // ---- who a planner rule is for -------------------------------------------------------------
+
+    // Said the way the Reminders tab says it, in the builder.
+    fun spaceWords(space: OrganizerSpace?): String = when {
+        space == null -> "…"
+        space.kind == OrganizerSpaceKind.PERSONAL -> "just me"
+        space.kind == OrganizerSpaceKind.FAMILY -> "everyone"
+        space.id == ADMINS -> "the admins"
+        else -> space.name
+    }
+
+    // The same, as the Reminders quick-add and editor's "for" picker says it.
+    fun audienceName(space: OrganizerSpace): String = when {
+        space.kind == OrganizerSpaceKind.PERSONAL -> "just me"
+        space.kind == OrganizerSpaceKind.FAMILY -> "everyone"
+        space.id == ADMINS -> "admins"
+        else -> space.name
+    }
+
+    fun plannerSpaces(spaces: List<OrganizerSpace>): List<OrganizerSpace> = spaces.ifEmpty { listOf(OrganizerSpace.FAMILY) }
+
+    // The rule the editor starts from - a new one, a recipe, or one being changed. A planner rule
+    // keeps its space if this person can see it, else it's for everyone; a board rule has none.
+    fun draft(source: AutomationRule, boardId: String?, spaces: List<OrganizerSpace>): AutomationRule {
+        if (boardId != null) return source.copy(boardId = boardId, spaceId = null)
+        val keep = source.spaceId?.takeIf { id -> plannerSpaces(spaces).any { it.id == id } }
+        return source.copy(boardId = "", spaceId = keep ?: OrganizerSpace.FAMILY.id)
+    }
     val DUE_OFFSETS = listOf(0 to "at the time it's due", 15 to "15 minutes before", 60 to "1 hour before", 180 to "3 hours before",
         1440 to "1 day before", 2880 to "2 days before", 10080 to "1 week before")
     val DUE_DAYS = listOf(0 to "today", 1 to "tomorrow", 2 to "in 2 days", 3 to "in 3 days", 7 to "in a week", 14 to "in 2 weeks", 30 to "in 30 days")
@@ -218,10 +348,12 @@ object BoardAutomations {
     // Fields a {token} can go into, per action type; the first is where a token goes when no
     // field has been touched yet.
     val TOKEN_FIELDS = mapOf("createCard" to listOf("title"), "addComment" to listOf("text"),
-        "notify" to listOf("text", "title"), "email" to listOf("text", "title"))
+        "notify" to listOf("text", "title"), "email" to listOf("text", "title"),
+        "createReminder" to listOf("title", "description"), "createEvent" to listOf("title", "description"))
 
     val TRIGGERS = listOf(
         RuleBlockKind(RuleZone.TRIGGER, "schedule", "⏰", "On a schedule", "every morning, every Monday, once…"),
+        RuleBlockKind(RuleZone.TRIGGER, "weather", "🌦", "When the weather turns", "a freeze, a heat wave, a wet day…"),
         RuleBlockKind(RuleZone.TRIGGER, "cardAdded", "＋", "When a card is added", "to a list, or anywhere on the board"),
         RuleBlockKind(RuleZone.TRIGGER, "cardMoved", "⇢", "When a card is moved", "into a particular list"),
         RuleBlockKind(RuleZone.TRIGGER, "cardCompleted", "✓", "When a card is marked done", "ticked off anywhere on the board"),
@@ -235,10 +367,13 @@ object BoardAutomations {
         RuleBlockKind(RuleZone.CONDITIONS, "hasLabel", "🏷", "Has a label", needsCard = true),
         RuleBlockKind(RuleZone.CONDITIONS, "lacksLabel", "⊘", "Doesn't have a label", needsCard = true),
         RuleBlockKind(RuleZone.CONDITIONS, "inColumn", "▤", "Is in a list", needsCard = true),
+        RuleBlockKind(RuleZone.CONDITIONS, "weather", "🌦", "The weather…", "it hasn't rained, it'll freeze…"),
         RuleBlockKind(RuleZone.CONDITIONS, "onDays", "📅", "Only on certain days"),
     )
 
     val ACTIONS = listOf(
+        RuleBlockKind(RuleZone.ACTIONS, "createReminder", "🔔", "Add a reminder", "to the Reminders list"),
+        RuleBlockKind(RuleZone.ACTIONS, "createEvent", "📆", "Put an event on the calendar", "all day, or at a time"),
         RuleBlockKind(RuleZone.ACTIONS, "createCard", "＋", "Create a card", "then the steps below act on it"),
         RuleBlockKind(RuleZone.ACTIONS, "moveCard", "⇢", "Move the card", needsCard = true),
         RuleBlockKind(RuleZone.ACTIONS, "addLabel", "🏷", "Add a label", needsCard = true),
@@ -264,17 +399,33 @@ object BoardAutomations {
 
     fun kind(zone: RuleZone, type: String): RuleBlockKind? = kinds(zone).firstOrNull { it.type == type }
 
-    // The palette: "Assign someone" only when there's someone to assign.
-    fun palette(zone: RuleZone, people: List<OrganizerPerson>): List<RuleBlockKind> =
-        kinds(zone).filter { !it.needsPeople || people.isNotEmpty() }
+    // What a planner rule can be built from, in this order: it has no cards to watch or change.
+    val PLANNER_TRIGGERS = listOf("schedule", "weather")
+    val PLANNER_CONDITIONS = listOf("onDays", "weather")
+    val PLANNER_ACTIONS = listOf("createReminder", "createEvent", "notify", "email")
 
-    // A fresh block of a type, as the dashboard's make() builds it.
-    fun make(zone: RuleZone, type: String, context: RuleContext): RuleBlock? {
+    // The palette: "Assign someone" only when there's someone to assign; the no-card blocks for a planner rule.
+    fun palette(zone: RuleZone, people: List<OrganizerPerson>, planner: Boolean = false): List<RuleBlockKind> {
+        if (planner) {
+            val types = when (zone) {
+                RuleZone.TRIGGER -> PLANNER_TRIGGERS
+                RuleZone.CONDITIONS -> PLANNER_CONDITIONS
+                RuleZone.ACTIONS -> PLANNER_ACTIONS
+            }
+            return types.mapNotNull { kind(zone, it) }
+        }
+        return kinds(zone).filter { !it.needsPeople || people.isNotEmpty() }
+    }
+
+    // A fresh block of a type, as the dashboard's make() builds it. `trigger` is the rule's WHEN:
+    // a reminder added to a weather rule counts from the weather's day.
+    fun make(zone: RuleZone, type: String, context: RuleContext, trigger: RuleBlock? = null): RuleBlock? {
         val first = context.firstColumnId
         val last = context.lastColumnId
         return when (zone) {
             RuleZone.TRIGGER -> when (type) {
                 "schedule" -> RuleBlock("type" to type, "schedule" to linkedMapOf("repeat" to "daily", "time" to "07:00", "days" to emptyList<Int>(), "timeZone" to context.timeZone))
+                "weather" -> RuleBlock("type" to type, "weather" to newWeatherTest("lowNext").fields)
                 "cardAdded" -> RuleBlock("type" to type, "columnId" to "")
                 "cardMoved" -> RuleBlock("type" to type, "columnId" to last)
                 "cardCompleted", "checklistCompleted" -> RuleBlock("type" to type)
@@ -286,9 +437,14 @@ object BoardAutomations {
                 "titleContains", "hasLabel", "lacksLabel" -> RuleBlock("type" to type, "text" to "")
                 "inColumn" -> RuleBlock("type" to type, "columnId" to first)
                 "onDays" -> RuleBlock("type" to type, "days" to listOf(1, 2, 3, 4, 5))
+                "weather" -> newWeatherTest("rainPast")
                 else -> null
             }
             RuleZone.ACTIONS -> when (type) {
+                "createReminder" -> RuleBlock("type" to type, "title" to "", "inDays" to 0, "time" to "", "skipIfExists" to true, "priority" to 0,
+                    "alertMinutes" to null, "fromWeatherDay" to (trigger?.type == "weather"))
+                "createEvent" -> RuleBlock("type" to type, "title" to "", "inDays" to 0, "time" to "", "durationMinutes" to 60, "skipIfExists" to true,
+                    "alertMinutes" to null, "fromWeatherDay" to false)
                 "createCard" -> RuleBlock("type" to type, "columnId" to first, "title" to "", "position" to "bottom", "skipIfExists" to true)
                 "moveCard" -> RuleBlock("type" to type, "columnId" to last, "position" to "top")
                 "addLabel" -> RuleBlock("type" to type, "name" to "", "color" to "")
@@ -351,12 +507,13 @@ object BoardAutomations {
     // ---- what the rule has to work with ------------------------------------------------------------
 
     // Whether there's a card for the step at `index` to act on: a card rule starts with one, a
-    // schedule only once a "create a card" step has run - and a "delete the card" step ends it.
+    // schedule or weather rule only once a "create a card" step has run - and a "delete the card"
+    // step ends it.
     fun cardAvailableBefore(trigger: RuleBlock?, actions: List<RuleBlock>, index: Int): Boolean {
         val before = actions.take(index).map { it.type }
         val lastCreate = before.lastIndexOf("createCard")
         val lastDelete = before.lastIndexOf("deleteCard")
-        if (trigger?.type == "schedule") return lastCreate > lastDelete
+        if (startsWithoutCard(trigger)) return lastCreate > lastDelete
         return lastDelete == -1 || lastCreate > lastDelete
     }
 
@@ -364,17 +521,19 @@ object BoardAutomations {
     fun actionWarning(trigger: RuleBlock?, actions: List<RuleBlock>, index: Int): String? {
         val kind = kind(RuleZone.ACTIONS, actions[index].type) ?: return null
         if (!kind.needsCard || cardAvailableBefore(trigger, actions, index)) return null
-        return if (trigger?.type == "schedule") "A schedule has no card of its own - put “Create a card” above this step."
+        return if (startsWithoutCard(trigger)) "A schedule or weather rule has no card of its own - put “Create a card” above this step."
         else "The card was deleted by an earlier step."
     }
 
     fun conditionWarning(trigger: RuleBlock?, condition: RuleBlock): String? =
-        if (trigger?.type == "schedule" && kind(RuleZone.CONDITIONS, condition.type)?.needsCard == true)
-            "A schedule has no card to check - this would never be true." else null
+        if (startsWithoutCard(trigger) && kind(RuleZone.CONDITIONS, condition.type)?.needsCard == true)
+            "A schedule or weather rule has no card to check - this would never be true." else null
 
-    // What the Save button checks before the server does.
-    fun localErrors(rule: AutomationRule): List<String> = buildList {
+    // What the Save button checks before the server does. `planner`: the builder was opened with
+    // no board (a board recipe has no boardId either until it's drafted).
+    fun localErrors(rule: AutomationRule, planner: Boolean = false): List<String> = buildList {
         if (rule.trigger == null) add("Add a WHEN block - what starts the rule?")
+        if (planner && rule.spaceId.isNullOrEmpty()) add(NEEDS_SPACE)
         if (rule.actions.isEmpty()) add("Add at least one THEN block - what should happen?")
         if (rule.name.isBlank()) add("Give the rule a name.")
     }
@@ -394,6 +553,45 @@ object BoardAutomations {
     // ---- recipes -----------------------------------------------------------------------------------
 
     data class Recipe(val name: String, val why: String, val rule: AutomationRule)
+
+    // The planner's recipes: reminders and events on a schedule or when the weather turns. The
+    // admins get the freeze one when there's an Admins space, else everyone does.
+    fun plannerRecipes(spaces: List<OrganizerSpace>, tz: String): List<Recipe> {
+        val everyone = OrganizerSpace.FAMILY.id
+        val admins = if (plannerSpaces(spaces).any { it.id == ADMINS }) ADMINS else everyone
+        fun on(time: String, days: List<Int>) =
+            RuleBlock("type" to "schedule", "schedule" to linkedMapOf("repeat" to "daily", "time" to time, "days" to days, "timeZone" to tz))
+        fun weather(metric: String, op: String, value: Number, window: Int) =
+            RuleBlock("type" to "weather", "metric" to metric, "op" to op, "value" to value, "window" to window)
+        fun turns(test: RuleBlock) = RuleBlock("type" to "weather", "weather" to test.fields)
+        fun reminder(title: String, inDays: Int, priority: Int, fromWeatherDay: Boolean = false, time: String = "") =
+            if (fromWeatherDay) RuleBlock("type" to "createReminder", "title" to title, "inDays" to inDays, "fromWeatherDay" to true, "time" to time, "skipIfExists" to true, "priority" to priority)
+            else RuleBlock("type" to "createReminder", "title" to title, "inDays" to inDays, "time" to time, "skipIfExists" to true, "priority" to priority)
+        fun rule(name: String, spaceId: String, trigger: RuleBlock, conditions: List<RuleBlock>, vararg actions: RuleBlock) =
+            AutomationRule(name = name, spaceId = spaceId, trigger = trigger, conditions = conditions, actions = actions.toList())
+        return listOf(
+            Recipe("Water the plants", "Saturdays - unless it's rained an inch this week",
+                rule("Water the plants (if it's been dry)", everyone, on("08:00", listOf(6)), listOf(weather("rainPast", "atMost", 1, 7)),
+                    reminder("Water the plants", 0, 0))),
+            Recipe("Freeze coming", "check the pipes the day before it freezes",
+                rule("Freeze coming - check the pipes", admins, turns(weather("lowNext", "atMost", 32, 7)), emptyList(),
+                    reminder("Check the pipes - {weather} {weatherDay}", -1, 3, fromWeatherDay = true),
+                    RuleBlock("type" to "notify", "everyone" to true, "people" to emptyList<String>(), "title" to "Freeze coming",
+                        "text" to "Down to {weather} {weatherDay} - drip the taps and cover the plants."))),
+            Recipe("Rain tomorrow", "bring the cushions in",
+                rule("Rain on the way", everyone, turns(weather("rainChanceNext", "atLeast", 70, 1)), emptyList(),
+                    reminder("Bring the patio cushions in", 0, 1))),
+            Recipe("Heat wave", "extra watering when it's 95° or hotter",
+                rule("Hot spell - water the garden", everyone, turns(weather("highNext", "atLeast", 95, 3)), emptyList(),
+                    reminder("Hot {weatherDay} ({weather}) - water the garden early", 0, 2, fromWeatherDay = true, time = "07:00"))),
+            Recipe("Snow coming", "get the salt and shovel out",
+                rule("Snow on the way", everyone, turns(weather("snowNext", "atLeast", 2, 3)), emptyList(),
+                    reminder("Salt the steps - {weather} of snow {weatherDay}", -1, 2, fromWeatherDay = true))),
+            Recipe("Bin day", "on the calendar every week",
+                rule("Bin day", everyone, on("06:00", listOf(0)), emptyList(),
+                    RuleBlock("type" to "createEvent", "title" to "Bin day", "inDays" to 1, "time" to "", "skipIfExists" to true))),
+        )
+    }
 
     fun recipes(context: RuleContext, words: AutomationWords): List<Recipe> {
         val first = context.firstColumnId
@@ -459,6 +657,48 @@ class AutomationWords(
 
     private fun q(text: String?) = "“${text?.ifEmpty { null } ?: "…"}”"
 
+    // A weather test read back: "it gets down to 32°F or colder in the next 7 days".
+    fun weatherWords(w: RuleBlock): String {
+        val m = BoardAutomations.metric(w.string("metric")) ?: BoardAutomations.metric("rainPast")!!
+        val n = w.int("window")?.takeIf { it != 0 } ?: 1
+        val span = when {
+            m.now -> ""
+            m.past -> if (n == 1) " today" else " in the last $n days"
+            else -> if (n == 1) " in the next day" else " in the next $n days"
+        }
+        val most = w.string("op") == "atMost"
+        val value = w.number("value") ?: 0.0
+        val v = jsNumber(value)
+        val inches = "inch${if (value == 1.0) "" else "es"}"
+        return when (w.string("metric")) {
+            "rainPast" -> "$v $inches of rain or ${if (most) "less" else "more"} has fallen$span"
+            "rainNext" -> "$v $inches of rain or ${if (most) "less" else "more"} is forecast$span"
+            "snowNext" -> "$v $inches of snow or ${if (most) "less" else "more"} is forecast$span"
+            "lowNext" -> if (most) "it gets down to $v°F or colder$span" else "it stays at $v°F or warmer$span"
+            "highNext" -> if (most) "it stays at $v°F or cooler$span" else "it gets up to $v°F or hotter$span"
+            "rainChanceNext" -> if (most) "the chance of rain stays at $v% or less$span" else "there's a $v% chance of rain or more$span"
+            "tempNow" -> "it's $v°F or ${if (most) "colder" else "warmer"} right now"
+            else -> "the weather…"
+        }
+    }
+
+    // When a made reminder or event is due: "tomorrow at 7:00 AM", or counted from the weather's
+    // day - "the day before the weather". Empty when it has no date.
+    fun reminderWhen(a: RuleBlock): String {
+        val inDays = a.int("inDays") ?: return ""
+        val time = a.string("time")
+        if (a.bool("fromWeatherDay")) {
+            val day = when {
+                inDays == 0 -> "on the day of the weather"
+                inDays == -1 -> "the day before the weather"
+                inDays < 0 -> "${-inDays} days before the weather"
+                else -> "$inDays days after the weather"
+            }
+            return if (!time.isNullOrEmpty()) "$day at ${time12(time)}" else day
+        }
+        return dueWords(inDays, time)
+    }
+
     private fun days(list: List<Int>) = list.sorted().mapNotNull { BoardAutomations.DAY_SHORT.getOrNull(it) }.joinToString(", ").ifEmpty { "…" }
 
     fun scheduleWords(s: RuleBlock): String {
@@ -493,6 +733,7 @@ class AutomationWords(
     // Null when this phone doesn't know the block's type.
     fun trigger(t: RuleBlock): String? = when (t.type) {
         "schedule" -> scheduleWords(t.schedule)
+        "weather" -> "When ${weatherWords(t.weather)}"
         "cardAdded" -> "When a card is added to ${listOrAny(t.string("columnId"))}"
         "cardMoved" -> "When a card is moved into ${listOrAny(t.string("columnId"))}"
         "cardCompleted" -> "When a card is marked done"
@@ -518,6 +759,7 @@ class AutomationWords(
         "lacksLabel" -> "it doesn't have the ${q(c.string("text"))} label"
         "inColumn" -> "it's in ${columnName(c.string("columnId"))}"
         "onDays" -> "it's ${days(c.ints("days"))}"
+        "weather" -> weatherWords(c)
         else -> null
     }
 
@@ -525,6 +767,11 @@ class AutomationWords(
         val inDays = a.int("inDays")
         val finished = if (a.bool("onlyCompleted")) "finished " else ""
         return when (a.type) {
+            "createReminder" -> "add the reminder ${q(a.string("title"))}" +
+                (if (inDays != null) ", due ${reminderWhen(a)}" else "") +
+                (if (a.bool("skipIfExists")) " (unless it's still there)" else "")
+            "createEvent" -> "put ${q(a.string("title"))} on the calendar ${if (a.string("time").isNullOrEmpty()) "all day " else ""}" +
+                reminderWhen(if (inDays == null) a.with("inDays", 0) else a)
             "createCard" -> "create a card ${q(a.string("title"))} in ${columnName(a.string("columnId"))}" +
                 (if (inDays != null) ", due ${dueWords(inDays, a.string("time"))}" else "") +
                 (if (a.bool("skipIfExists")) " (unless one is still there)" else "")
@@ -564,3 +811,7 @@ class AutomationWords(
         if (rule.trigger != null || rule.actions.isNotEmpty()) sentence(rule)
         else "add a WHEN block and a THEN block to the rule to get started."
 }
+
+// A number the way the dashboard prints it: 1 not 1.0, 0.5 stays 0.5.
+fun jsNumber(value: Double): String =
+    if (value == Math.floor(value) && !value.isInfinite() && kotlin.math.abs(value) < 1e15) value.toLong().toString() else value.toString()

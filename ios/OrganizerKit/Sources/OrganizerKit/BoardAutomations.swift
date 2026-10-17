@@ -44,6 +44,7 @@ public struct AutomationBlock: Codable, Hashable, Sendable, Identifiable {
     // Missing and null read the same: not set.
     public func string(_ key: String) -> String? { fields[key]?.string }
     public func int(_ key: String) -> Int? { fields[key]?.int }
+    public func double(_ key: String) -> Double? { fields[key]?.number }
     public func bool(_ key: String) -> Bool? { fields[key]?.bool }
     public func strings(_ key: String) -> [String] { fields[key]?.array?.compactMap(\.string) ?? [] }
     public func ints(_ key: String) -> [Int] { fields[key]?.array?.compactMap(\.int) ?? [] }
@@ -54,6 +55,12 @@ public struct AutomationBlock: Codable, Hashable, Sendable, Identifiable {
     public var schedule: AutomationBlock? {
         get { fields["schedule"]?.object.map(AutomationBlock.init) }
         set { fields["schedule"] = newValue.map { .object($0.fields) } ?? .null }
+    }
+
+    // A weather trigger's test, a condition of type "weather".
+    public var weather: AutomationBlock? {
+        get { fields["weather"]?.object.map(AutomationBlock.init) }
+        set { fields["weather"] = newValue.map { .object($0.fields) } ?? .null }
     }
 }
 
@@ -108,7 +115,22 @@ public struct BoardAutomation: Codable, Hashable, Sendable, Identifiable {
         set { fields["boardId"] = .string(newValue) }
     }
 
+    // A reminders-and-calendar rule has no board; it belongs to a space (just me, everyone,
+    // the admins), and the reminders and events it makes go there.
+    public var spaceId: String? {
+        get { fields["spaceId"]?.string }
+        set { fields["spaceId"] = .from(newValue) }
+    }
+
+    public var isPlanner: Bool { boardId.isEmpty }
+
     public var isScheduled: Bool { trigger?.type == "schedule" }
+
+    // A schedule or the weather turning: no card of its own, and "Run Now" makes sense.
+    public var startsWithoutCard: Bool { BoardAutomations.startsWithoutCard(trigger?.type) }
+
+    // Whether a weather test (WHEN or ONLY IF) says which day "the day of the weather" is.
+    public var hasWeatherTest: Bool { trigger?.type == "weather" || conditions.contains { $0.type == "weather" } }
 
     // Kept by the server; whatever a client sends for these is ignored.
     public var nextRunAt: Date? { fields["nextRunAt"]?.string.flatMap(OrganizerDates.parseTimestamp) }
@@ -126,6 +148,15 @@ public struct BoardAutomation: Codable, Hashable, Sendable, Identifiable {
         draft.fields["id"] = nil
         draft.enabled = true
         draft.boardId = boardId
+        return draft
+    }
+
+    // The same for a reminders-and-calendar rule: it keeps its space if this person can see it,
+    // or goes to everyone.
+    public static func plannerDraft(editing rule: BoardAutomation?, recipe: BoardAutomation? = nil, spaces: [OrganizerSpace]) -> BoardAutomation {
+        var draft = draft(editing: rule, recipe: recipe, boardId: "")
+        let ids = BoardAutomations.plannerSpaces(spaces).map(\.id)
+        draft.spaceId = draft.spaceId.flatMap { ids.contains($0) ? $0 : nil } ?? OrganizerSpace.family.id
         return draft
     }
 
@@ -172,6 +203,8 @@ public struct AutomationMakeContext: Sendable {
     public var lastColumnId: String
     public var timeZone: String
     public var people: [OrganizerPerson]
+    // A new reminder counts from the day of the weather when the weather starts the rule.
+    public var weatherTrigger = false
 
     public init(firstColumnId: String, lastColumnId: String, timeZone: String, people: [OrganizerPerson]) {
         self.firstColumnId = firstColumnId
@@ -194,6 +227,96 @@ public enum BoardAutomations {
         ("{date}", "today's date"), ("{weekday}", "day of the week"), ("{month}", "month"),
         ("{card}", "the card's title"), ("{due}", "the card's due date"), ("{board}", "this board's name"),
     ]
+    public static let plannerTokens: [(token: String, what: String)] = [
+        ("{date}", "today's date"), ("{weekday}", "day of the week"), ("{month}", "month"),
+    ]
+    public static let weatherTokens: [(token: String, what: String)] = [
+        ("{weather}", "what the weather test measured, like 28°F or 1.2 inches"),
+        ("{weatherDay}", "the day it's about, like tonight or Tuesday night"),
+    ]
+
+    // The words a builder offers: a board's, or the reminders ones, and the weather's either way.
+    public static func tokens(planner: Bool) -> [(token: String, what: String)] {
+        (planner ? plannerTokens : tokens) + weatherTokens
+    }
+
+    // What a weather test can look at: the words around the number, its unit, how far it can
+    // look, and the numbers a new test starts from. A port of the dashboard's METRICS.
+    public struct WeatherMetric: Sendable {
+        public let key: String
+        public let label: String
+        public let unit: String
+        public let step: Double
+        public var past = false
+        public var now = false
+        public let windows: [Int]
+        public let op: String
+        public let value: Double
+        public let window: Int
+    }
+
+    public static let weatherMetrics: [WeatherMetric] = [
+        .init(key: "rainPast", label: "rain so far", unit: "inches", step: 0.1, past: true, windows: [1, 2, 3, 5, 7, 10, 14], op: "atMost", value: 1, window: 7),
+        .init(key: "rainNext", label: "rain forecast", unit: "inches", step: 0.1, windows: [1, 2, 3, 5, 7], op: "atLeast", value: 0.5, window: 2),
+        .init(key: "snowNext", label: "snow forecast", unit: "inches", step: 0.5, windows: [1, 2, 3, 5, 7], op: "atLeast", value: 2, window: 3),
+        .init(key: "lowNext", label: "lowest temperature", unit: "°F", step: 1, windows: [1, 2, 3, 5, 7], op: "atMost", value: 32, window: 7),
+        .init(key: "highNext", label: "highest temperature", unit: "°F", step: 1, windows: [1, 2, 3, 5, 7], op: "atLeast", value: 95, window: 3),
+        .init(key: "rainChanceNext", label: "chance of rain", unit: "%", step: 5, windows: [1, 2, 3, 5, 7], op: "atLeast", value: 60, window: 1),
+        .init(key: "tempNow", label: "temperature right now", unit: "°F", step: 1, now: true, windows: [1], op: "atMost", value: 32, window: 1),
+    ]
+
+    public static func weatherMetric(_ key: String?) -> WeatherMetric {
+        weatherMetrics.first { $0.key == key } ?? weatherMetrics[0]
+    }
+
+    // A test of `metric` with that metric's own sensible numbers - 32°F isn't an amount of rain.
+    public static func weatherTest(_ metric: String) -> AutomationBlock {
+        let m = weatherMetrics.first { $0.key == metric } ?? weatherMetric("lowNext")
+        return AutomationBlock(["type": "weather", "metric": .string(m.key), "op": .string(m.op), "value": .number(m.value), "window": .from(m.window)])
+    }
+
+    public static func windowLabel(_ days: Int, metric m: WeatherMetric) -> String {
+        m.past ? (days == 1 ? "today" : "the last \(days) days") : (days == 1 ? "the next day" : "the next \(days) days")
+    }
+
+    public static func weatherSource(_ m: WeatherMetric) -> String {
+        m.past ? "Measured at the nearest airport weather station (Iowa State mesonet daily totals)."
+            : m.now ? "From the nearest weather station, checked every half hour."
+            : "From the National Weather Service forecast for Settings → LOCATION."
+    }
+
+    public static let weatherTriggerNote = "Checked every half hour. It goes off when this becomes true - once, not again until it's been untrue for a while."
+
+    public static let alerts: [(minutes: Int?, label: String)] = [
+        (nil, "no heads-up"), (0, "at the time"), (15, "15 minutes before"), (60, "1 hour before"), (1440, "1 day before"),
+    ]
+    public static let weatherDayOffsets: [(days: Int, label: String)] = [
+        (-2, "2 days before"), (-1, "the day before"), (0, "on the day"), (1, "the day after"),
+    ]
+    public static let eventDurations: [(minutes: Int, label: String)] = [
+        (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"), (90, "1½ hours"), (120, "2 hours"), (240, "4 hours"),
+    ]
+    public static let priorities: [(value: Int, label: String)] = [(0, "none"), (1, "low"), (2, "medium"), (3, "high")]
+
+    public static func startsWithoutCard(_ triggerType: String?) -> Bool { triggerType == "schedule" || triggerType == "weather" }
+
+    // Who a reminders rule is for, the way the Reminders tab says it.
+    public static func spaceWords(_ space: OrganizerSpace?) -> String {
+        guard let space else { return "…" }
+        if space.id == adminsSpaceId { return "the admins" }
+        return switch space.kind {
+        case .personal: "just me"
+        case .family: "everyone"
+        case .group: space.name
+        }
+    }
+
+    public static let adminsSpaceId = "group:admins"
+
+    // The spaces a reminders rule can be for; with spaces off there's only everyone.
+    public static func plannerSpaces(_ spaces: [OrganizerSpace]) -> [OrganizerSpace] {
+        spaces.isEmpty ? [.family] : spaces
+    }
     public static let dueOffsets: [(minutes: Int, label: String)] = [
         (0, "at the time it's due"), (15, "15 minutes before"), (60, "1 hour before"), (180, "3 hours before"),
         (1440, "1 day before"), (2880, "2 days before"), (10080, "1 week before"),
@@ -209,6 +332,7 @@ public enum BoardAutomations {
 
     public static let triggers: [AutomationBlockKind] = [
         .init(zone: .trigger, type: "schedule", label: "On a schedule", hint: "every morning, every Monday, once…", symbol: "alarm"),
+        .init(zone: .trigger, type: "weather", label: "When the weather turns", hint: "a freeze, a heat wave, a wet day…", symbol: "cloud.sun.rain"),
         .init(zone: .trigger, type: "cardAdded", label: "When a card is added", hint: "to a list, or anywhere on the board", symbol: "plus.rectangle"),
         .init(zone: .trigger, type: "cardMoved", label: "When a card is moved", hint: "into a particular list", symbol: "arrow.right.square"),
         .init(zone: .trigger, type: "cardCompleted", label: "When a card is marked done", hint: "ticked off anywhere on the board", symbol: "checkmark.circle"),
@@ -222,10 +346,13 @@ public enum BoardAutomations {
         .init(zone: .conditions, type: "hasLabel", label: "Has a label", hint: nil, symbol: "tag", needsCard: true),
         .init(zone: .conditions, type: "lacksLabel", label: "Doesn't have a label", hint: nil, symbol: "tag.slash", needsCard: true),
         .init(zone: .conditions, type: "inColumn", label: "Is in a list", hint: nil, symbol: "rectangle.split.3x1", needsCard: true),
+        .init(zone: .conditions, type: "weather", label: "The weather…", hint: "it hasn't rained, it'll freeze…", symbol: "cloud.sun.rain"),
         .init(zone: .conditions, type: "onDays", label: "Only on certain days", hint: nil, symbol: "calendar"),
     ]
 
     public static let actions: [AutomationBlockKind] = [
+        .init(zone: .actions, type: "createReminder", label: "Add a reminder", hint: "to the Reminders list", symbol: "bell"),
+        .init(zone: .actions, type: "createEvent", label: "Put an event on the calendar", hint: "all day, or at a time", symbol: "calendar.badge.plus"),
         .init(zone: .actions, type: "createCard", label: "Create a card", hint: "then the steps below act on it", symbol: "plus.rectangle"),
         .init(zone: .actions, type: "moveCard", label: "Move the card", hint: nil, symbol: "arrow.right.square", needsCard: true),
         .init(zone: .actions, type: "addLabel", label: "Add a label", hint: nil, symbol: "tag", needsCard: true),
@@ -255,14 +382,29 @@ public enum BoardAutomations {
         kinds(zone).first { $0.type == type }
     }
 
-    // The palette: "Assign someone" only when there is someone to assign.
-    public static func palette(_ zone: AutomationZone, hasPeople: Bool) -> [AutomationBlockKind] {
-        kinds(zone).filter { !$0.needsPeople || hasPeople }
+    // What a reminders-and-calendar rule can use: it has no cards to watch or change.
+    public static let plannerTypes: [AutomationZone: [String]] = [
+        .trigger: ["schedule", "weather"],
+        .conditions: ["onDays", "weather"],
+        .actions: ["createReminder", "createEvent", "notify", "email"],
+    ]
+
+    // The palette: "Assign someone" only when there is someone to assign; the no-card blocks
+    // for reminders, in the dashboard's order.
+    public static func palette(_ zone: AutomationZone, hasPeople: Bool, planner: Bool = false) -> [AutomationBlockKind] {
+        if planner { return (plannerTypes[zone] ?? []).compactMap { kind(zone, $0) } }
+        return kinds(zone).filter { !$0.needsPeople || hasPeople }
     }
 
     public static func make(_ zone: AutomationZone, _ type: String, context c: AutomationMakeContext) -> AutomationBlock {
         let fields: [String: JSONValue] = switch type {
         case "schedule": ["type": "schedule", "schedule": ["repeat": "daily", "time": "07:00", "days": [], "timeZone": .string(c.timeZone)]]
+        case "weather" where zone == .trigger: ["type": "weather", "weather": .object(weatherTest("lowNext").fields)]
+        case "weather": weatherTest("rainPast").fields
+        case "createReminder": ["type": "createReminder", "title": "", "inDays": 0, "time": "", "skipIfExists": true, "priority": 0,
+                                "alertMinutes": nil, "fromWeatherDay": .bool(c.weatherTrigger)]
+        case "createEvent": ["type": "createEvent", "title": "", "inDays": 0, "time": "", "durationMinutes": 60, "skipIfExists": true,
+                             "alertMinutes": nil, "fromWeatherDay": false]
         case "cardAdded": ["type": "cardAdded", "columnId": ""]
         case "cardMoved": ["type": "cardMoved", "columnId": .string(c.lastColumnId)]
         case "cardDue": ["type": "cardDue", "minutesBefore": 60, "columnId": ""]
@@ -339,7 +481,7 @@ public enum BoardAutomations {
         let before = actions.prefix(index).map(\.type)
         let lastCreate = before.lastIndex(of: "createCard") ?? -1
         let lastDelete = before.lastIndex(of: "deleteCard") ?? -1
-        if trigger?.type == "schedule" { return lastCreate > lastDelete }
+        if startsWithoutCard(trigger?.type) { return lastCreate > lastDelete }
         return lastDelete == -1 || lastCreate > lastDelete
     }
 
@@ -347,20 +489,21 @@ public enum BoardAutomations {
     public static func actionWarning(_ index: Int, in rule: BoardAutomation) -> String? {
         guard index < rule.actions.count, kind(.actions, rule.actions[index].type)?.needsCard == true,
               !cardAvailableBefore(index, trigger: rule.trigger, actions: rule.actions) else { return nil }
-        return rule.isScheduled
-            ? "A schedule has no card of its own - put “Create a card” above this step."
+        return rule.startsWithoutCard
+            ? "A schedule or weather rule has no card of its own - put “Create a card” above this step."
             : "The card was deleted by an earlier step."
     }
 
     public static func conditionWarning(_ index: Int, in rule: BoardAutomation) -> String? {
-        guard rule.isScheduled, index < rule.conditions.count, kind(.conditions, rule.conditions[index].type)?.needsCard == true else { return nil }
-        return "A schedule has no card to check - this would never be true."
+        guard rule.startsWithoutCard, index < rule.conditions.count, kind(.conditions, rule.conditions[index].type)?.needsCard == true else { return nil }
+        return "A schedule or weather rule has no card to check - this would never be true."
     }
 
     // The checks made before a rule goes to the server, which checks the rest.
-    public static func problems(_ rule: BoardAutomation) -> [String] {
+    public static func problems(_ rule: BoardAutomation, planner: Bool = false) -> [String] {
         var errors: [String] = []
         if rule.trigger == nil { errors.append("Add a WHEN block - what starts the rule?") }
+        if planner, rule.spaceId?.isEmpty != false { errors.append("Pick who the reminders and events are for.") }
         if rule.actions.isEmpty { errors.append("Add at least one THEN block - what should happen?") }
         if rule.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { errors.append("Give the rule a name.") }
         return errors
@@ -378,6 +521,45 @@ public enum BoardAutomations {
     public static let offlineMessage = "Automations need the server - they can't be changed offline."
 
     // MARK: recipes
+
+    // Reminders-and-calendar recipes, the dashboard's plannerRecipes(). The freeze one goes to
+    // the admins where there's an Admins space.
+    public static func plannerRecipes(spaces: [OrganizerSpace], timeZone tz: String) -> [AutomationRecipe] {
+        let everyone = OrganizerSpace.family.id
+        let admins = spaces.contains { $0.id == adminsSpaceId } ? adminsSpaceId : everyone
+        func on(_ time: String, _ days: [Int]) -> AutomationBlock {
+            AutomationBlock(["type": "schedule", "schedule": ["repeat": "daily", "time": .string(time), "days": .array(days.map { .number(Double($0)) }), "timeZone": .string(tz)]])
+        }
+        func weather(_ metric: String, _ op: String, _ value: Double, _ window: Int) -> [String: JSONValue] {
+            ["type": "weather", "metric": .string(metric), "op": .string(op), "value": .number(value), "window": .from(window)]
+        }
+        func when(_ test: [String: JSONValue]) -> AutomationBlock { AutomationBlock(["type": "weather", "weather": .object(test)]) }
+        func rule(_ name: String, _ space: String, _ trigger: AutomationBlock, _ conditions: [[String: JSONValue]], _ actions: [[String: JSONValue]]) -> BoardAutomation {
+            BoardAutomation(fields: ["name": .string(name), "spaceId": .string(space)], trigger: trigger,
+                            conditions: conditions.map(AutomationBlock.init), actions: actions.map(AutomationBlock.init))
+        }
+        return [
+            AutomationRecipe(name: "Water the plants", why: "Saturdays - unless it's rained an inch this week", rule: rule(
+                "Water the plants (if it's been dry)", everyone, on("08:00", [6]), [weather("rainPast", "atMost", 1, 7)],
+                [["type": "createReminder", "title": "Water the plants", "inDays": 0, "time": "", "skipIfExists": true, "priority": 0]])),
+            AutomationRecipe(name: "Freeze coming", why: "check the pipes the day before it freezes", rule: rule(
+                "Freeze coming - check the pipes", admins, when(weather("lowNext", "atMost", 32, 7)), [],
+                [["type": "createReminder", "title": "Check the pipes - {weather} {weatherDay}", "inDays": -1, "fromWeatherDay": true, "time": "", "skipIfExists": true, "priority": 3],
+                 ["type": "notify", "everyone": true, "people": [], "title": "Freeze coming", "text": "Down to {weather} {weatherDay} - drip the taps and cover the plants."]])),
+            AutomationRecipe(name: "Rain tomorrow", why: "bring the cushions in", rule: rule(
+                "Rain on the way", everyone, when(weather("rainChanceNext", "atLeast", 70, 1)), [],
+                [["type": "createReminder", "title": "Bring the patio cushions in", "inDays": 0, "time": "", "skipIfExists": true, "priority": 1]])),
+            AutomationRecipe(name: "Heat wave", why: "extra watering when it's 95° or hotter", rule: rule(
+                "Hot spell - water the garden", everyone, when(weather("highNext", "atLeast", 95, 3)), [],
+                [["type": "createReminder", "title": "Hot {weatherDay} ({weather}) - water the garden early", "inDays": 0, "fromWeatherDay": true, "time": "07:00", "skipIfExists": true, "priority": 2]])),
+            AutomationRecipe(name: "Snow coming", why: "get the salt and shovel out", rule: rule(
+                "Snow on the way", everyone, when(weather("snowNext", "atLeast", 2, 3)), [],
+                [["type": "createReminder", "title": "Salt the steps - {weather} of snow {weatherDay}", "inDays": -1, "fromWeatherDay": true, "time": "", "skipIfExists": true, "priority": 2]])),
+            AutomationRecipe(name: "Bin day", why: "on the calendar every week", rule: rule(
+                "Bin day", everyone, on("06:00", [0]), [],
+                [["type": "createEvent", "title": "Bin day", "inDays": 1, "time": "", "skipIfExists": true]])),
+        ]
+    }
 
     public static func recipes(firstColumnId first: String, lastColumnId last: String, lastColumnName: String, timeZone tz: String) -> [AutomationRecipe] {
         func schedule(_ time: String, _ days: [Int]) -> AutomationBlock {
@@ -413,6 +595,19 @@ public enum BoardAutomations {
                 "Urgent cards to the top", AutomationBlock(["type": "labelAdded", "label": "urgent"]),
                 [["type": "moveCard", "columnId": .string(first), "position": "top"]])),
         ]
+    }
+}
+
+extension OrganizerSpace {
+    // A space said as who it's for, the way the Reminders tab picks one: "just me", "everyone",
+    // "admins". Everyone and admins reminders also show on the wall kiosk when they're due.
+    public var audienceName: String {
+        if id == BoardAutomations.adminsSpaceId { return "admins" }
+        return switch kind {
+        case .personal: "just me"
+        case .family: "everyone"
+        case .group: name
+        }
     }
 }
 
@@ -467,6 +662,41 @@ public struct AutomationWording {
         plain(formatter("EEEMMMdjmm").string(from: date))
     }
 
+    // A number the way the dashboard prints it: 1, 0.5, 1.25.
+    public static func number(_ value: Double) -> String {
+        value.rounded() == value && abs(value) < 1e15 ? String(Int(value)) : String(value)
+    }
+
+    // "1 inch of rain or less has fallen in the last 7 days", "it gets down to 32°F or colder
+    // in the next 7 days" - the dashboard's weatherWords().
+    public func weatherWords(_ w: AutomationBlock) -> String {
+        let m = BoardAutomations.weatherMetric(w.string("metric"))
+        let n = w.int("window") ?? 1
+        let span = m.now ? "" : m.past ? (n == 1 ? " today" : " in the last \(n) days") : (n == 1 ? " in the next day" : " in the next \(n) days")
+        let most = w.string("op") == "atMost"
+        let value = w.double("value") ?? 0
+        let v = Self.number(value)
+        let inches = "\(v) inch\(value == 1 ? "" : "es")"
+        switch w.string("metric") {
+        case "rainPast": return "\(inches) of rain or \(most ? "less" : "more") has fallen\(span)"
+        case "rainNext": return "\(inches) of rain or \(most ? "less" : "more") is forecast\(span)"
+        case "snowNext": return "\(inches) of snow or \(most ? "less" : "more") is forecast\(span)"
+        case "lowNext": return most ? "it gets down to \(v)°F or colder\(span)" : "it stays at \(v)°F or warmer\(span)"
+        case "highNext": return most ? "it stays at \(v)°F or cooler\(span)" : "it gets up to \(v)°F or hotter\(span)"
+        case "rainChanceNext": return most ? "the chance of rain stays at \(v)% or less\(span)" : "there's a \(v)% chance of rain or more\(span)"
+        case "tempNow": return "it's \(v)°F or \(most ? "colder" : "warmer") right now"
+        default: return "the weather…"
+        }
+    }
+
+    // When a new reminder or event is due: like dueWords, or counted from the weather's day.
+    public func reminderWhen(_ a: AutomationBlock) -> String {
+        guard let n = a.int("inDays") else { return "" }
+        guard a.bool("fromWeatherDay") == true else { return dueWords(inDays: n, time: a.string("time")) }
+        let day = n == 0 ? "on the day of the weather" : n == -1 ? "the day before the weather" : n < 0 ? "\(-n) days before the weather" : "\(n) days after the weather"
+        return a.string("time")?.isEmpty == false ? "\(day) at \(time12(a.string("time")))" : day
+    }
+
     public func dueWords(inDays: Int?, time: String?) -> String {
         guard let n = inDays else { return "no due date" }
         let day = n == 0 ? "today" : n == 1 ? "tomorrow" : "in \(n) days"
@@ -511,6 +741,7 @@ public struct AutomationWording {
         let column = t.string("columnId") ?? ""
         switch t.type {
         case "schedule": return scheduleWords(t.schedule ?? AutomationBlock([:]))
+        case "weather": return "When \(weatherWords(t.weather ?? AutomationBlock([:])))"
         case "cardAdded": return "When a card is added to \(column.isEmpty ? "any list" : columnName(column))"
         case "cardMoved": return "When a card is moved into \(column.isEmpty ? "any list" : columnName(column))"
         case "cardCompleted": return "When a card is marked done"
@@ -540,12 +771,20 @@ public struct AutomationWording {
         case "lacksLabel": "it doesn't have the \(q(c.string("text"))) label"
         case "inColumn": "it's in \(columnName(c.string("columnId")))"
         case "onDays": "it's \(dayList(c.ints("days")))"
+        case "weather": weatherWords(c)
         default: nil
         }
     }
 
     public func actionWords(_ a: AutomationBlock) -> String? {
         switch a.type {
+        case "createReminder":
+            let due = a.int("inDays") != nil ? ", due \(reminderWhen(a))" : ""
+            return "add the reminder \(q(a.string("title")))\(due)\(a.bool("skipIfExists") == true ? " (unless it's still there)" : "")"
+        case "createEvent":
+            var when = a
+            if when.int("inDays") == nil { when.set("inDays", 0) }
+            return "put \(q(a.string("title"))) on the calendar \(a.string("time")?.isEmpty == false ? "" : "all day ")\(reminderWhen(when))"
         case "createCard":
             let due = a.int("inDays").map { ", due \(dueWords(inDays: $0, time: a.string("time")))" } ?? ""
             return "create a card \(q(a.string("title"))) in \(columnName(a.string("columnId")))\(due)\(a.bool("skipIfExists") == true ? " (unless one is still there)" : "")"
@@ -626,6 +865,14 @@ extension OrganizerEngine {
                                    pushReady: list.pushReady != false, emailReady: list.emailReady != false)
     }
 
+    // The reminders-and-calendar rules in every space this person is in.
+    public func plannerAutomations() async throws -> BoardAutomationList {
+        let response = try await send("GET", "/api/organizer/automations", query: [URLQueryItem(name: "planner", value: "true")])
+        let list = try JSONDecoder.organizer.decode(AutomationListResponse.self, from: response.data)
+        return BoardAutomationList(automations: list.automations ?? [], timeZone: list.timeZone,
+                                   pushReady: list.pushReady != false, emailReady: list.emailReady != false)
+    }
+
     // A new rule when it has no id; the saved rule comes back.
     @discardableResult
     public func saveAutomation(_ rule: BoardAutomation, timeZone: String = TimeZone.current.identifier) async throws -> BoardAutomation {
@@ -647,7 +894,7 @@ extension OrganizerEngine {
         _ = try await send("DELETE", Self.automationPath(id))
     }
 
-    // Schedule rules only. Syncs afterwards so a card it made shows straight away.
+    // Schedule and weather rules only. Syncs afterwards so a card it made shows straight away.
     public func runAutomation(id: String) async throws -> BoardAutomationRun {
         let response = try await send("POST", Self.automationPath(id, "/run"))
         let run = try JSONDecoder.organizer.decode(BoardAutomationRun.self, from: response.data)

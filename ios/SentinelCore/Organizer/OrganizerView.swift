@@ -140,6 +140,7 @@ struct OrganizerCalendarView: View {
     @State private var editingReminder: OrganizerItem?
     @State private var viewingHoliday: Holiday?
     @State private var showingHolidaySettings = false
+    @State private var showingAutomations = false
     @State private var archiveLoaded = false
 
     private var calendar: Calendar { .current }
@@ -210,6 +211,13 @@ struct OrganizerCalendarView: View {
                 .frame(minWidth: 460, minHeight: 560)
                 #endif
         }
+        .sheet(isPresented: $showingAutomations) {
+            BoardAutomationsView(board: nil)
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 720, minHeight: 560)
+                #endif
+        }
         .task(id: month) { await loadArchiveIfNeeded() }
     }
 
@@ -235,6 +243,13 @@ struct OrganizerCalendarView: View {
             }
             .accessibilityLabel("Holiday calendars")
             .help("Holiday calendars")
+            Button {
+                showingAutomations = true
+            } label: {
+                Label("Automations", systemImage: "bolt").labelStyle(.iconOnly)
+            }
+            .accessibilityLabel("Automations")
+            .help("Rules that add events and reminders for you - like a freeze warning to check the pipes")
             Button {
                 editing = .new(day: selectedDay)
             } label: {

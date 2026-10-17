@@ -146,15 +146,22 @@ class BoardAutomationsTest {
         // No trigger yet reads like a card rule.
         assertTrue(BoardAutomations.cardAvailableBefore(null, listOf(label), 0))
 
-        assertEquals("A schedule has no card of its own - put “Create a card” above this step.",
+        assertEquals("A schedule or weather rule has no card of its own - put “Create a card” above this step.",
             BoardAutomations.actionWarning(schedule, listOf(label), 0))
         assertEquals("The card was deleted by an earlier step.", BoardAutomations.actionWarning(moved, listOf(delete, label), 1))
         // Send steps and board-wide steps never need a card.
         assertNull(BoardAutomations.actionWarning(schedule, listOf(notify), 0))
         assertNull(BoardAutomations.actionWarning(schedule, listOf(block("type" to "deleteAllCards")), 0))
 
-        assertEquals("A schedule has no card to check - this would never be true.",
+        assertEquals("A schedule or weather rule has no card to check - this would never be true.",
             BoardAutomations.conditionWarning(schedule, block("type" to "hasLabel")))
+        // A weather rule has no card either.
+        val weather = block("type" to "weather", "weather" to BoardAutomations.newWeatherTest("lowNext").fields)
+        assertFalse(BoardAutomations.cardAvailableBefore(weather, listOf(label), 0))
+        assertTrue(BoardAutomations.cardAvailableBefore(weather, listOf(create, label), 1))
+        assertEquals("A schedule or weather rule has no card to check - this would never be true.",
+            BoardAutomations.conditionWarning(weather, block("type" to "inColumn")))
+        assertNull(BoardAutomations.actionWarning(weather, listOf(block("type" to "createReminder")), 0))
         assertNull(BoardAutomations.conditionWarning(schedule, block("type" to "onDays")))
         assertNull(BoardAutomations.conditionWarning(moved, block("type" to "hasLabel")))
     }
@@ -229,9 +236,9 @@ class BoardAutomationsTest {
                 assertEquals(kind.type, made?.type)
             }
         }
-        assertEquals(7, BoardAutomations.TRIGGERS.size)
-        assertEquals(5, BoardAutomations.CONDITIONS.size)
-        assertEquals(15, BoardAutomations.ACTIONS.size)
+        assertEquals(8, BoardAutomations.TRIGGERS.size)
+        assertEquals(6, BoardAutomations.CONDITIONS.size)
+        assertEquals(17, BoardAutomations.ACTIONS.size)
         assertEquals("done", BoardAutomations.make(RuleZone.TRIGGER, "cardMoved", context)!!.string("columnId"))
         assertEquals("ann", BoardAutomations.make(RuleZone.ACTIONS, "assign", context)!!.string("username"))
         // With nobody to choose, a notification goes to everyone; "Assign someone" isn't offered.
@@ -323,5 +330,209 @@ class BoardAutomationsTest {
         assertEquals(listOf("Give the rule a name.", "Pick a list for \"move the card\"."),
             BoardAutomationClient.errors(OrganizerException.Server(400, "Give the rule a name.\nPick a list for \"move the card\".")))
         assertEquals(listOf(BoardAutomations.OFFLINE), BoardAutomationClient.errors(OrganizerException.Offline()))
+    }
+
+    // ---- reminders-and-calendar ("planner") rules and the weather ------------------------------
+
+    private fun test(metric: String, op: String, value: Number, window: Int) =
+        block("type" to "weather", "metric" to metric, "op" to op, "value" to value, "window" to window)
+
+    @Test
+    fun weatherWordsForEveryMetric() {
+        assertEquals("1 inch of rain or less has fallen in the last 7 days", words.weatherWords(test("rainPast", "atMost", 1, 7)))
+        assertEquals("1 inch of rain or less has fallen in the last 7 days", words.weatherWords(test("rainPast", "atMost", 1.0, 7)))
+        assertEquals("0.5 inches of rain or more has fallen today", words.weatherWords(test("rainPast", "atLeast", 0.5, 1)))
+        assertEquals("0.5 inches of rain or more is forecast in the next 2 days", words.weatherWords(test("rainNext", "atLeast", 0.5, 2)))
+        assertEquals("1.2 inches of rain or less is forecast in the next day", words.weatherWords(test("rainNext", "atMost", 1.2, 1)))
+        assertEquals("2 inches of snow or more is forecast in the next 3 days", words.weatherWords(test("snowNext", "atLeast", 2.0, 3)))
+        assertEquals("it gets down to 32°F or colder in the next 7 days", words.weatherWords(test("lowNext", "atMost", 32, 7)))
+        assertEquals("it stays at 40°F or warmer in the next day", words.weatherWords(test("lowNext", "atLeast", 40, 1)))
+        assertEquals("it stays at 80°F or cooler in the next 5 days", words.weatherWords(test("highNext", "atMost", 80, 5)))
+        assertEquals("it gets up to 95°F or hotter in the next 3 days", words.weatherWords(test("highNext", "atLeast", 95.0, 3)))
+        assertEquals("the chance of rain stays at 20% or less in the next day", words.weatherWords(test("rainChanceNext", "atMost", 20, 1)))
+        assertEquals("there's a 60% chance of rain or more in the next day", words.weatherWords(test("rainChanceNext", "atLeast", 60, 1)))
+        assertEquals("it's 32°F or colder right now", words.weatherWords(test("tempNow", "atMost", 32, 1)))
+        assertEquals("it's -5°F or warmer right now", words.weatherWords(test("tempNow", "atLeast", -5, 1)))
+        assertEquals("the weather…", words.weatherWords(test("hail", "atLeast", 1, 1)))
+        // No number yet reads as 0; no window as one day.
+        assertEquals("0 inches of rain or more is forecast in the next day", words.weatherWords(block("type" to "weather", "metric" to "rainNext")))
+
+        assertEquals("When it gets down to 32°F or colder in the next 7 days",
+            words.trigger(block("type" to "weather", "weather" to test("lowNext", "atMost", 32, 7).fields)))
+        assertEquals("1 inch of rain or less has fallen in the last 7 days", words.condition(test("rainPast", "atMost", 1, 7)))
+        assertEquals("1", jsNumber(1.0))
+        assertEquals("0.5", jsNumber(0.5))
+        assertEquals("-3", jsNumber(-3.0))
+    }
+
+    @Test
+    fun reminderAndEventWords() {
+        fun reminder(vararg pairs: Pair<String, Any?>) = block("type" to "createReminder", *pairs)
+        assertEquals("", words.reminderWhen(reminder("inDays" to null)))
+        assertEquals("today", words.reminderWhen(reminder("inDays" to 0, "time" to "")))
+        assertEquals("tomorrow at 7:00 AM", words.reminderWhen(reminder("inDays" to 1, "time" to "07:00")))
+        assertEquals("on the day of the weather", words.reminderWhen(reminder("inDays" to 0, "fromWeatherDay" to true)))
+        assertEquals("the day before the weather", words.reminderWhen(reminder("inDays" to -1.0, "fromWeatherDay" to true)))
+        assertEquals("2 days before the weather at 6:00 PM", words.reminderWhen(reminder("inDays" to -2, "fromWeatherDay" to true, "time" to "18:00")))
+        assertEquals("1 days after the weather", words.reminderWhen(reminder("inDays" to 1, "fromWeatherDay" to true)))
+
+        assertEquals("add the reminder “Water the plants”, due today (unless it's still there)",
+            words.action(reminder("title" to "Water the plants", "inDays" to 0, "time" to "", "skipIfExists" to true)))
+        assertEquals("add the reminder “…”", words.action(reminder("title" to "", "inDays" to null)))
+        assertEquals("add the reminder “Check the pipes”, due the day before the weather",
+            words.action(reminder("title" to "Check the pipes", "inDays" to -1, "fromWeatherDay" to true)))
+        assertEquals("put “Bin day” on the calendar all day tomorrow",
+            words.action(block("type" to "createEvent", "title" to "Bin day", "inDays" to 1, "time" to "")))
+        assertEquals("put “Dentist” on the calendar in 3 days at 9:30 AM",
+            words.action(block("type" to "createEvent", "title" to "Dentist", "inDays" to 3, "time" to "09:30")))
+        // An event with no day yet is today.
+        assertEquals("put “…” on the calendar all day today", words.action(block("type" to "createEvent")))
+        assertEquals("put “Cover the plants” on the calendar all day on the day of the weather",
+            words.action(block("type" to "createEvent", "title" to "Cover the plants", "inDays" to 0, "fromWeatherDay" to true)))
+    }
+
+    @Test
+    fun weatherAndPlannerBlocks() {
+        val context = RuleContext(timeZone = "America/Chicago")
+        val weatherTrigger = BoardAutomations.make(RuleZone.TRIGGER, "weather", context)!!
+        assertEquals(mapOf("type" to "weather", "metric" to "lowNext", "op" to "atMost", "value" to 32, "window" to 7), weatherTrigger.weather.fields)
+        assertEquals(mapOf("type" to "weather", "metric" to "rainPast", "op" to "atMost", "value" to 1, "window" to 7),
+            BoardAutomations.make(RuleZone.CONDITIONS, "weather", context)!!.fields)
+        // A reminder added to a weather rule counts from the weather's day; on a schedule it doesn't.
+        assertTrue(BoardAutomations.make(RuleZone.ACTIONS, "createReminder", context, weatherTrigger)!!.bool("fromWeatherDay"))
+        val reminder = BoardAutomations.make(RuleZone.ACTIONS, "createReminder", context)!!
+        assertFalse(reminder.bool("fromWeatherDay"))
+        assertEquals(0, reminder.int("inDays"))
+        assertTrue(reminder.bool("skipIfExists"))
+        assertTrue(reminder.fields.containsKey("alertMinutes"))
+        val event = BoardAutomations.make(RuleZone.ACTIONS, "createEvent", context, weatherTrigger)!!
+        assertEquals(60, event.int("durationMinutes"))
+        assertFalse(event.bool("fromWeatherDay"))
+
+        // A new measure starts from its own numbers; the rest of the block stays.
+        val changed = BoardAutomations.withMetric(test("lowNext", "atMost", 28, 3).with("extra", "kept"), "rainChanceNext")
+        assertEquals("atLeast", changed.string("op"))
+        assertEquals(60, changed.int("value"))
+        assertEquals(1, changed.int("window"))
+        assertEquals("kept", changed.string("extra"))
+        val past = BoardAutomations.metric("rainPast")!!
+        assertEquals("today", past.windowLabel(1))
+        assertEquals("the last 14 days", past.windowLabel(14))
+        assertEquals("the next day", BoardAutomations.metric("snowNext")!!.windowLabel(1))
+        assertEquals("the next 5 days", BoardAutomations.metric("snowNext")!!.windowLabel(5))
+        assertTrue(BoardAutomations.metric("tempNow")!!.source.startsWith("From the nearest weather station"))
+        assertEquals(7, BoardAutomations.METRICS.size)
+
+        assertTrue(BoardAutomations.weatherInRule(weatherTrigger, emptyList()))
+        assertTrue(BoardAutomations.weatherInRule(null, listOf(test("rainPast", "atMost", 1, 7))))
+        assertFalse(BoardAutomations.weatherInRule(block("type" to "schedule"), listOf(block("type" to "onDays"))))
+        assertTrue(AutomationRule(trigger = weatherTrigger).startsWithoutCard)
+        assertFalse(AutomationRule(trigger = block("type" to "cardMoved")).startsWithoutCard)
+    }
+
+    @Test
+    fun plannerPalette() {
+        fun types(zone: RuleZone) = BoardAutomations.palette(zone, people, planner = true).map { it.type }
+        assertEquals(listOf("schedule", "weather"), types(RuleZone.TRIGGER))
+        assertEquals(listOf("onDays", "weather"), types(RuleZone.CONDITIONS))
+        assertEquals(listOf("createReminder", "createEvent", "notify", "email"), types(RuleZone.ACTIONS))
+        // A board offers the weather and the reminder/event blocks too.
+        val board = BoardAutomations.palette(RuleZone.ACTIONS, people).map { it.type }
+        assertTrue(board.containsAll(listOf("createReminder", "createEvent", "createCard")))
+        assertTrue(BoardAutomations.palette(RuleZone.TRIGGER, people).any { it.type == "weather" })
+        assertTrue(BoardAutomations.palette(RuleZone.CONDITIONS, people).any { it.type == "weather" })
+
+        assertEquals(listOf("{date}", "{weekday}", "{month}", "{weather}", "{weatherDay}"), BoardAutomations.tokens(planner = true).map { it.first })
+        assertEquals(8, BoardAutomations.tokens(planner = false).size)
+        assertEquals(listOf("title", "description"), BoardAutomations.TOKEN_FIELDS["createReminder"])
+        assertEquals(listOf("title", "description"), BoardAutomations.TOKEN_FIELDS["createEvent"])
+    }
+
+    private val me = OrganizerSpace("personal:ann", OrganizerSpaceKind.PERSONAL, "Ann")
+    private val admins = OrganizerSpace("group:admins", OrganizerSpaceKind.GROUP, "Admins")
+    private val garden = OrganizerSpace("group:garden", OrganizerSpaceKind.GROUP, "Garden club")
+
+    @Test
+    fun plannerDraftAndSpaces() {
+        val spaces = listOf(me, OrganizerSpace.FAMILY, admins)
+        // A planner rule keeps a space this person can see, else it's for everyone.
+        assertEquals("group:admins", BoardAutomations.draft(AutomationRule(spaceId = "group:admins"), null, spaces).spaceId)
+        assertEquals("family", BoardAutomations.draft(AutomationRule(spaceId = "group:gone"), null, spaces).spaceId)
+        assertEquals("family", BoardAutomations.draft(AutomationRule(), null, spaces).spaceId)
+        assertEquals("family", BoardAutomations.draft(AutomationRule(spaceId = "group:admins"), null, emptyList()).spaceId)
+        val planner = BoardAutomations.draft(AutomationRule(id = "r1", boardId = "stale", spaceId = "personal:ann"), null, spaces)
+        assertEquals("", planner.boardId)
+        assertEquals("r1", planner.id)
+        assertTrue(planner.isPlanner)
+        // A board rule has no space.
+        val board = BoardAutomations.draft(AutomationRule(spaceId = "family"), "b1", spaces)
+        assertEquals("b1", board.boardId)
+        assertNull(board.spaceId)
+        assertFalse(board.toJson().has("spaceId"))
+        assertEquals("personal:ann", planner.toJson(includeId = false).getString("spaceId"))
+        assertEquals("", planner.toJson().getString("boardId"))
+
+        assertEquals("just me", BoardAutomations.spaceWords(me))
+        assertEquals("everyone", BoardAutomations.spaceWords(OrganizerSpace.FAMILY))
+        assertEquals("the admins", BoardAutomations.spaceWords(admins))
+        assertEquals("Garden club", BoardAutomations.spaceWords(garden))
+        assertEquals("…", BoardAutomations.spaceWords(null))
+        assertEquals("admins", BoardAutomations.audienceName(admins))
+        assertEquals("just me", BoardAutomations.audienceName(me))
+        assertEquals(listOf(OrganizerSpace.FAMILY), BoardAutomations.plannerSpaces(emptyList()))
+    }
+
+    @Test
+    fun plannerProblems() {
+        val rule = AutomationRule(name = "Water", spaceId = "", trigger = block("type" to "schedule"), actions = listOf(block("type" to "createReminder")))
+        assertEquals(listOf(BoardAutomations.NEEDS_SPACE), BoardAutomations.localErrors(rule, planner = true))
+        assertTrue(BoardAutomations.localErrors(rule).isEmpty())
+        // After the WHEN one, before the THEN one.
+        assertEquals(listOf("Add a WHEN block - what starts the rule?", "Pick who the reminders and events are for.",
+            "Add at least one THEN block - what should happen?", "Give the rule a name."),
+            BoardAutomations.localErrors(AutomationRule(), planner = true))
+    }
+
+    @Test
+    fun plannerRecipes() {
+        val recipes = BoardAutomations.plannerRecipes(listOf(me, OrganizerSpace.FAMILY, admins), "America/Chicago")
+        assertEquals(listOf("Water the plants", "Freeze coming", "Rain tomorrow", "Heat wave", "Snow coming", "Bin day"), recipes.map { it.name })
+        for (recipe in recipes) assertTrue(recipe.name, BoardAutomations.localErrors(recipe.rule, planner = true).isEmpty())
+        assertEquals(listOf("family", "group:admins", "family", "family", "family", "family"), recipes.map { it.rule.spaceId })
+        // With no Admins space the freeze reminder is for everyone.
+        assertEquals("family", BoardAutomations.plannerRecipes(listOf(me, OrganizerSpace.FAMILY), "UTC")[1].rule.spaceId)
+
+        assertEquals("Every Sat at 8:00 AM, if 1 inch of rain or less has fallen in the last 7 days, add the reminder “Water the plants”, due today (unless it's still there).",
+            words.sentence(recipes[0].rule))
+        assertEquals("When it gets down to 32°F or colder in the next 7 days, add the reminder “Check the pipes - {weather} {weatherDay}”, due the day before the weather (unless it's still there), " +
+            "then notify everyone “Down to {weather} {weatherDay} - drip the taps and cover the plants.”.", words.sentence(recipes[1].rule))
+        assertEquals("When there's a 70% chance of rain or more in the next day, add the reminder “Bring the patio cushions in”, due today (unless it's still there).",
+            words.sentence(recipes[2].rule))
+        assertEquals("When it gets up to 95°F or hotter in the next 3 days, add the reminder “Hot {weatherDay} ({weather}) - water the garden early”, due on the day of the weather at 7:00 AM (unless it's still there).",
+            words.sentence(recipes[3].rule))
+        assertEquals("When 2 inches of snow or more is forecast in the next 3 days, add the reminder “Salt the steps - {weather} of snow {weatherDay}”, due the day before the weather (unless it's still there).",
+            words.sentence(recipes[4].rule))
+        assertEquals("Every Sun at 6:00 AM, put “Bin day” on the calendar all day tomorrow.", words.sentence(recipes[5].rule))
+        assertEquals("America/Chicago", recipes[5].rule.trigger!!.schedule.string("timeZone"))
+        assertEquals(3, recipes[1].rule.actions[0].int("priority"))
+    }
+
+    @Test
+    fun plannerListAndJson() = runTest {
+        val calls = mutableListOf<String>()
+        val client = BoardAutomationClient { method, path, query, _ ->
+            calls += "$method $path?" + query.entries.joinToString("&") { "${it.key}=${it.value}" }
+            OrganizerResponse(200, """{"automations":[{"id":"p1","name":"Water","boardId":"","spaceId":"family","trigger":{"type":"weather","weather":{"type":"weather","metric":"lowNext","op":"atMost","value":32.0,"window":7}},"conditions":[],"actions":[],"weatherHeld":false}]}""".toByteArray())
+        }
+        val list = client.list(null)
+        assertEquals("GET /api/organizer/automations?planner=true", calls.last())
+        val rule = list.rules.single()
+        assertTrue(rule.isPlanner)
+        assertEquals("family", rule.spaceId)
+        assertEquals("When it gets down to 32°F or colder in the next 7 days, do….", words.sentence(rule))
+        // The engine's weather bookkeeping rides along untouched.
+        assertEquals(false, rule.toJson().getBoolean("weatherHeld"))
+        client.list("b1")
+        assertEquals("GET /api/organizer/automations?boardId=b1", calls.last())
     }
 }

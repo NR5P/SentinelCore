@@ -42,11 +42,13 @@ extension OrganizerEngine {
 struct SpacePicker: View {
     @Environment(OrganizerEngine.self) private var engine
     @Binding var spaceId: String
+    // Reminders say it as who they're for: just me, everyone, admins.
+    var audience = false
 
     var body: some View {
-        Picker("Shared with", selection: $spaceId) {
+        Picker(audience ? "For" : "Shared with", selection: $spaceId) {
             ForEach(engine.visibleSpaces) { space in
-                Label(space.name, systemImage: icon(for: space)).tag(space.id)
+                Label(audience ? space.audienceName : space.name, systemImage: icon(for: space)).tag(space.id)
             }
         }
     }

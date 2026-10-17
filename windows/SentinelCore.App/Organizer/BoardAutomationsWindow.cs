@@ -16,6 +16,8 @@ namespace SentinelCore.App.Organizer;
 /// is only the editor - and, like the dashboard's, it needs the server: rules never sync.
 /// The wording and the rules of the builder live in the client library (BoardAutomations.cs), a
 /// port of the dashboard's organizer-automations.js.
+/// Opened with no board (from Reminders or Calendar) it builds reminders-and-calendar rules
+/// instead: no cards, a space they're for, and the schedule and weather blocks.
 /// </summary>
 internal sealed class BoardAutomationsWindow : Window
 {
@@ -23,7 +25,8 @@ internal sealed class BoardAutomationsWindow : Window
     private const string Offline = "Automations need the server - they can't be changed offline.";
 
     private readonly OrganizerEngine _engine;
-    private readonly OrganizerItem _board;
+    // Null when building reminders-and-calendar rules.
+    private readonly OrganizerItem? _board;
     private readonly DispatcherTimer _previewTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly TextBlock _notice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10), Visibility = Visibility.Collapsed };
 
@@ -48,7 +51,7 @@ internal sealed class BoardAutomationsWindow : Window
     private Point _dragStart;
     private string? _pressed;
 
-    public BoardAutomationsWindow(OrganizerEngine engine, OrganizerItem board)
+    public BoardAutomationsWindow(OrganizerEngine engine, OrganizerItem? board)
     {
         _engine = engine;
         _board = board;
@@ -87,27 +90,32 @@ internal sealed class BoardAutomationsWindow : Window
         };
     }
 
-    private string BoardTitle => _board.Title.Length == 0 ? "board" : _board.Title;
+    private bool Planner => _board is null;
+
+    private string BoardTitle => _board is null ? "Reminders & Calendar" : _board.Title.Length == 0 ? "board" : _board.Title;
+
+    private IReadOnlyList<OrganizerSpace> Spaces => BoardAutomationRules.PlannerSpaces(_engine.VisibleSpaces);
 
     // ---- the board's lists, labels and people ---------------------------------------------------
 
-    private List<OrganizerItem> Columns(string boardId) =>
-        _engine.Children(boardId, OrganizerKinds.Column).OrderBy(column => column.SortPosition).ToList();
+    private List<OrganizerItem> Columns(string? boardId) => boardId is null
+        ? new List<OrganizerItem>()
+        : _engine.Children(boardId, OrganizerKinds.Column).OrderBy(column => column.SortPosition).ToList();
 
     private List<OrganizerItem> OtherBoards() =>
-        _engine.Items(OrganizerKinds.Board).Where(board => board.Id != _board.Id && !board.Bool("archived"))
+        _engine.Items(OrganizerKinds.Board).Where(board => _board is null || (board.Id != _board.Id && !board.Bool("archived")))
             .OrderBy(board => board.SortPosition).ToList();
 
     private AutomationContext BuildContext() => new()
     {
         ColumnTitles = _engine.Items(OrganizerKinds.Column).GroupBy(column => column.Id).ToDictionary(group => group.Key, group => group.First().Title),
-        BoardColumnIds = Columns(_board.Id).Select(column => column.Id).ToList(),
+        BoardColumnIds = Columns(_board?.Id).Select(column => column.Id).ToList(),
         People = _people,
         Culture = CultureInfo.CurrentCulture,
         TimeZone = BoardAutomationRules.DeviceTimeZone(),
     };
 
-    private List<string> KnownLabels() => Columns(_board.Id)
+    private List<string> KnownLabels() => Columns(_board?.Id)
         .SelectMany(column => _engine.Children(column.Id, OrganizerKinds.Card))
         .SelectMany(card => card.List("labels").OfType<IReadOnlyDictionary<string, object?>>())
         .Select(label => label.GetValueOrDefault("name") as string)
@@ -135,7 +143,7 @@ internal sealed class BoardAutomationsWindow : Window
     {
         try
         {
-            var list = await _engine.Automations.ListAsync(_board.Id);
+            var list = _board is null ? await _engine.Automations.ListPlannerAsync() : await _engine.Automations.ListAsync(_board.Id);
             _rules = list.Automations.ToList();
             _pushReady = list.PushReady;
             _emailReady = list.EmailReady;
@@ -188,7 +196,9 @@ internal sealed class BoardAutomationsWindow : Window
         var page = new StackPanel { Margin = new Thickness(18, 16, 18, 16) };
         if (_notice.Parent is Panel old) old.Children.Remove(_notice);
         page.Children.Add(_notice);
-        var intro = Ui.Caption("Rules that look after this board for you. They run on the server, so they happen even when every phone and computer is off.");
+        var intro = Ui.Caption(Planner
+            ? "Rules that add reminders and calendar events for you - on a schedule, or when the weather turns, and held back by the weather (no watering reminder after a wet week). They run on the server, so they happen even when every phone and computer is off. Reminders for everyone or the admins show on the wall kiosk when they're due."
+            : "Rules that look after this board for you. They run on the server, so they happen even when every phone and computer is off.");
         intro.Margin = new Thickness(0, 0, 0, 12);
         page.Children.Add(intro);
 
@@ -200,7 +210,10 @@ internal sealed class BoardAutomationsWindow : Window
         or.VerticalAlignment = VerticalAlignment.Center;
         or.Margin = new Thickness(0, 0, 12, 8);
         start.Children.Add(or);
-        foreach (var recipe in BoardAutomationRules.Recipes(_board.Id, _context))
+        var recipes = _board is null
+            ? BoardAutomationRules.PlannerRecipes(Spaces, _context.TimeZone)
+            : BoardAutomationRules.Recipes(_board.Id, _context);
+        foreach (var recipe in recipes)
         {
             var content = new StackPanel { HorizontalAlignment = HorizontalAlignment.Left };
             content.Children.Add(new TextBlock { Text = recipe.Name, FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText });
@@ -230,7 +243,14 @@ internal sealed class BoardAutomationsWindow : Window
         grid.Children.Add(enabled);
 
         var body = new StackPanel();
-        body.Children.Add(new TextBlock { Text = rule.Name, FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText, TextWrapping = TextWrapping.Wrap });
+        var name = new TextBlock { FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText, TextWrapping = TextWrapping.Wrap };
+        name.Inlines.Add(new System.Windows.Documents.Run(rule.Name));
+        if (Planner)
+        {
+            var space = Spaces.FirstOrDefault(s => s.Id == rule.SpaceId);
+            name.Inlines.Add(new System.Windows.Documents.Run($" · for {BoardAutomationRules.SpaceWords(space)}") { Foreground = Palette.SecondaryText, FontWeight = FontWeights.Normal });
+        }
+        body.Children.Add(name);
         var sentence = Ui.Text(BoardAutomationRules.RuleSentence(rule, _context));
         sentence.Margin = new Thickness(0, 2, 0, 4);
         body.Children.Add(sentence);
@@ -262,7 +282,7 @@ internal sealed class BoardAutomationsWindow : Window
             button.Margin = new Thickness(6, 0, 0, 0);
             return button;
         }
-        if (rule.IsScheduled) actions.Children.Add(Small("Run now", () => _ = RunNowAsync(rule), tooltip: "Do it right now, to try it out"));
+        if (rule.StartsWithoutCard) actions.Children.Add(Small("Run now", () => _ = RunNowAsync(rule), tooltip: "Do it right now, to try it out - ONLY IF tests still apply"));
         actions.Children.Add(Small("Edit", () => ShowEditor(rule, null)));
         actions.Children.Add(Small("History", () => _ = ToggleHistoryAsync(rule, history)));
         actions.Children.Add(Small("Delete", () => _ = DeleteAsync(rule), "DangerButton"));
@@ -303,7 +323,7 @@ internal sealed class BoardAutomationsWindow : Window
         {
             var run = await _engine.Automations.RunNowAsync(rule.Id ?? "");
             Notice(string.IsNullOrEmpty(run.Message) ? "Done." : run.Message, run.Ok);
-            // The card it made is an ordinary card; fetch it now rather than at the next sync.
+            // The card, reminder or event it made is an ordinary item; fetch it now rather than at the next sync.
             _ = _engine.SyncAsync();
             await LoadAsync();
         }
@@ -315,7 +335,7 @@ internal sealed class BoardAutomationsWindow : Window
 
     private async Task DeleteAsync(BoardAutomation rule)
     {
-        if (!Ui.Confirm(this, $"Delete the rule \"{rule.Name}\"? Cards it already made stay where they are.")) return;
+        if (!Ui.Confirm(this, $"Delete the rule \"{rule.Name}\"? {(Planner ? "Reminders and events" : "Cards")} it already made stay where they are.")) return;
         try
         {
             await _engine.Automations.DeleteAsync(rule.Id ?? "");
@@ -368,13 +388,7 @@ internal sealed class BoardAutomationsWindow : Window
     {
         _context = BuildContext();
         // A copy: going back leaves the rule as it was. Fields this app doesn't know ride along.
-        _draft = (rule ?? recipe)?.Clone() ?? new BoardAutomation();
-        _draft.BoardId = _board.Id;
-        if (rule is null)
-        {
-            _draft.Id = null;
-            _draft.Enabled = true;
-        }
+        _draft = BoardAutomationRules.Draft(rule, recipe, _board?.Id, Spaces);
         _lastTokenBox = null;
         _errors.Children.Clear();
         _notice.Visibility = Visibility.Collapsed;
@@ -385,8 +399,9 @@ internal sealed class BoardAutomationsWindow : Window
         {
             if (_draft is not null) _draft.Name = _name.Text;
         };
-        var nameBox = Ui.WithPlaceholder(_name, "Name this rule, e.g. Eggs every morning");
+        var nameBox = Ui.WithPlaceholder(_name, Planner ? "Name this rule, e.g. Water the plants" : "Name this rule, e.g. Eggs every morning");
         nameBox.Margin = new Thickness(18, 14, 18, 10);
+        var forRow = Planner ? SpaceRow(_draft) : null;
 
         var palette = new ScrollViewer
         {
@@ -428,11 +443,26 @@ internal sealed class BoardAutomationsWindow : Window
         root.Children.Add(summaryBorder);
         DockPanel.SetDock(nameBox, Dock.Top);
         root.Children.Add(nameBox);
+        if (forRow is not null)
+        {
+            DockPanel.SetDock(forRow, Dock.Top);
+            root.Children.Add(forRow);
+        }
         root.Children.Add(builder);
         Content = root;
 
         RenderCanvas();
         Dispatcher.BeginInvoke(() => _name.Focus(), DispatcherPriority.Input);
+    }
+
+    /// <summary>Who a reminders rule's reminders and events go to.</summary>
+    private FrameworkElement SpaceRow(BoardAutomation draft)
+    {
+        var picker = Choice(Spaces.Select(space => (BoardAutomationRules.SpaceWords(space), space.Id)), draft.SpaceId ?? "", id => draft.SpaceId = id);
+        var row = Line("reminders and events go to", picker,
+            new TextBlock { Text = "- everyone and admins reminders show on the wall kiosk when due", Foreground = Palette.SecondaryText, FontSize = 11.5 });
+        row.Margin = new Thickness(18, 0, 18, 8);
+        return row;
     }
 
     private static Brush ZoneBrush(string zone) => zone switch
@@ -456,15 +486,15 @@ internal sealed class BoardAutomationsWindow : Window
             panel.Children.Add(heading);
             foreach (var block in blocks.Where(block => !block.NeedsPeople || _people.Count > 0)) panel.Children.Add(PaletteBlock(block));
         }
-        Group("When", "trigger", BoardAutomationRules.TriggerBlocks);
-        Group("Only if", "conditions", BoardAutomationRules.ConditionBlocks);
-        Group("Then", "actions", BoardAutomationRules.ActionBlocks);
+        Group("When", "trigger", BoardAutomationRules.Offered("trigger", Planner));
+        Group("Only if", "conditions", BoardAutomationRules.Offered("conditions", Planner));
+        Group("Then", "actions", BoardAutomationRules.Offered("actions", Planner));
 
         var tokensHeading = Ui.Heading("Words that fill themselves in");
         tokensHeading.Margin = new Thickness(0, 14, 0, 6);
         panel.Children.Add(tokensHeading);
         var tokens = new WrapPanel();
-        foreach (var (token, what) in BoardAutomationRules.Tokens)
+        foreach (var (token, what) in BoardAutomationRules.Tokens(Planner))
         {
             // Not focusable, so clicking one leaves the cursor in the box it's meant for.
             var chip = new Button
@@ -547,7 +577,7 @@ internal sealed class BoardAutomationsWindow : Window
         var box = _lastTokenBox is not null && _tokenBoxes.Contains(_lastTokenBox) ? _lastTokenBox : _tokenBoxes.FirstOrDefault();
         if (box is null)
         {
-            ShowErrors(new[] { "Add a card title or comment first, then drop the word into it." });
+            ShowErrors(new[] { Planner ? "Add a reminder or event title first, then drop the word into it." : "Add a card title or comment first, then drop the word into it." });
             return;
         }
         var (text, caret) = BoardAutomationRules.InsertToken(box.Text, box.SelectionStart, box.SelectionLength, token);
@@ -560,7 +590,7 @@ internal sealed class BoardAutomationsWindow : Window
 
     private void AddBlock(string zone, string type, int? at)
     {
-        if (_draft is null) return;
+        if (_draft is null || BoardAutomationRules.Offered(zone, Planner).All(block => block.Type != type)) return;
         string key;
         if (zone == "trigger")
         {
@@ -577,7 +607,7 @@ internal sealed class BoardAutomationsWindow : Window
         else
         {
             var index = Math.Clamp(at ?? _draft.Actions.Count, 0, _draft.Actions.Count);
-            _draft.Actions.Insert(index, BoardAutomationRules.MakeAction(type, _context));
+            _draft.Actions.Insert(index, BoardAutomationRules.MakeAction(type, _context, _draft));
             key = $"actions|{index}";
         }
         RenderCanvas();
@@ -955,7 +985,7 @@ internal sealed class BoardAutomationsWindow : Window
         var picker = new ComboBox { MinWidth = 170 };
         if (allowAny) picker.Items.Add(Ui.Option("any list", ""));
         else if (string.IsNullOrEmpty(selected)) picker.Items.Add(Ui.Option("pick a list", ""));
-        foreach (var column in Columns(_board.Id)) picker.Items.Add(Ui.Option(column.Title.Length == 0 ? "list" : column.Title, column.Id));
+        foreach (var column in Columns(_board?.Id)) picker.Items.Add(Ui.Option(column.Title.Length == 0 ? "list" : column.Title, column.Id));
         if (!allowAny)
         {
             foreach (var other in OtherBoards())
@@ -1106,6 +1136,64 @@ internal sealed class BoardAutomationsWindow : Window
         "at",
         TimeField(action.Time, time => action.Time = time, optional: true));
 
+    /// <summary>The blanks of a weather test: what's measured, over how long, at least or at most,
+    /// and the number - with where the number comes from underneath.</summary>
+    private StackPanel WeatherFields(AutomationCondition test)
+    {
+        var body = new StackPanel();
+        var metric = BoardAutomationRules.Metric(test.Metric) ?? BoardAutomationRules.Metric("rainPast")!;
+        // A new measure starts from its own sensible numbers, so picking one redraws the block.
+        var metrics = Choice(BoardAutomationRules.Metrics.Select(m => (m.Label, m.Key)), test.Metric ?? "",
+            key => BoardAutomationRules.ChangeMetric(test, key), structural: true);
+        var window = metric.Now ? null : Choice(metric.Windows.Select(n => (BoardAutomationRules.WindowLabel(metric, n), n)), test.Window ?? 0, n => test.Window = n);
+        var op = Choice(new[] { ("at least", "atLeast"), ("at most", "atMost") }, test.Op == "atMost" ? "atMost" : "atLeast", value => test.Op = value);
+        op.MinWidth = 90;
+        var number = new TextBox
+        {
+            Width = 70,
+            Text = test.Value is { } value ? value.ToString(CultureInfo.CurrentCulture) : "",
+            ToolTip = $"A number, in steps of {BoardAutomationRules.JsNumber(metric.Step)} {metric.Unit}",
+        };
+        var normal = number.BorderBrush;
+        number.TextChanged += (_, _) =>
+        {
+            var text = number.Text.Trim();
+            double? parsed = double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out var local) ? local
+                : double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var plain) ? plain
+                : null;
+            // Not a number is sent as none, for the server to say so.
+            number.BorderBrush = parsed is null ? Palette.Red : normal;
+            test.Value = parsed;
+            RefreshSentence();
+        };
+        body.Children.Add(Line("the", metrics, window is null ? null : "over", window, "is", op, number, metric.Unit));
+        body.Children.Add(Ui.Caption(BoardAutomationRules.WeatherSource(metric)));
+        return body;
+    }
+
+    /// <summary>When a new reminder or event is for: a day, counted from today or - in a rule with a
+    /// weather test - from the weather's day, and an optional time.</summary>
+    private WrapPanel WhenFields(AutomationAction action, string noun, Action? timeChanged = null)
+    {
+        var offsets = action.FromWeatherDay ? BoardAutomationRules.WeatherDayChoices : BoardAutomationRules.DueChoices;
+        var day = Choice(offsets.Select(o => (o.Label, o.Days)), action.InDays ?? 0, days => action.InDays = days);
+        var fromWeather = BoardAutomationRules.WeatherInRule(_draft)
+            ? Check("counted from the day of the weather", action.FromWeatherDay, on =>
+            {
+                action.FromWeatherDay = on;
+                action.InDays = on ? -1 : 0;
+            }, structural: true)
+            : null;
+        var time = TimeField(action.Time, value => action.Time = value, optional: true, timeChanged);
+        time.ToolTip = $"A time, for example 5:00 PM - leave it empty for {noun}";
+        return Line(day, fromWeather, "at", time);
+    }
+
+    private FrameworkElement AlertField(AutomationAction action) => Line("heads-up",
+        // -1 stands for "none" in the picker, which can't hold a null.
+        Choice(BoardAutomationRules.AlertChoices.Select(a => (a.Label, a.Minutes ?? -1)), action.AlertMinutes ?? -1,
+            minutes => action.AlertMinutes = minutes < 0 ? null : minutes));
+
     private UIElement? TriggerBody(AutomationTrigger trigger)
     {
         var body = new StackPanel();
@@ -1161,6 +1249,14 @@ internal sealed class BoardAutomationsWindow : Window
                 body.Children.Add(_next);
                 return body;
             }
+            case AutomationTypes.Weather:
+            {
+                body.Children.Add(WeatherFields(trigger.Weather ??= BoardAutomationRules.NewWeatherTest("lowNext")));
+                var note = Ui.Caption(BoardAutomationRules.WeatherTriggerNote);
+                note.Margin = new Thickness(0, 4, 0, 0);
+                body.Children.Add(note);
+                return body;
+            }
             case "cardAdded":
                 return Line("to", ColumnField(trigger.ColumnId, true, id => trigger.ColumnId = id));
             case "cardMoved":
@@ -1194,6 +1290,7 @@ internal sealed class BoardAutomationsWindow : Window
         "lacksLabel" => Line("the card does not have the label", LabelField(condition.Text, text => condition.Text = text, "label")),
         "inColumn" => Line("the card is in", ColumnField(condition.ColumnId, false, id => condition.ColumnId = id)),
         "onDays" => Line("today is", DaysPicker(condition.Days, days => condition.Days = days)),
+        "weather" => WeatherFields(condition),
         _ => null,
     };
 
@@ -1202,6 +1299,36 @@ internal sealed class BoardAutomationsWindow : Window
         var body = new StackPanel();
         switch (action.Type)
         {
+            case "createReminder":
+                body.Children.Add(Line("called", TextField(action.Title, text => action.Title = text, "e.g. water the plants", tokens: true)));
+                body.Children.Add(Line(
+                    Check("due", action.InDays is not null, on =>
+                    {
+                        action.InDays = on ? 0 : null;
+                        if (!on) action.Time = "";
+                    }, structural: true),
+                    action.InDays is not null ? WhenFields(action, "all day") : null,
+                    action.InDays is not null ? AlertField(action) : null));
+                body.Children.Add(Line("priority", Choice(BoardAutomationRules.PriorityChoices.Select(p => (p.Label, p.Priority)), action.Priority ?? 0, value => action.Priority = value)));
+                body.Children.Add(Line("notes", TextField(action.Description, text => action.Description = text, "optional", tokens: true)));
+                body.Children.Add(Line(Check("skip if an unfinished reminder with this title is already there", action.SkipIfExists, on => action.SkipIfExists = on)));
+                return body;
+            case "createEvent":
+            {
+                body.Children.Add(Line("called", TextField(action.Title, text => action.Title = text, "e.g. cover the plants", tokens: true)));
+                // How long only means something with a time; without one it's an all-day event.
+                var duration = Line("for", Choice(BoardAutomationRules.DurationChoices.Select(d => (d.Label, d.Minutes)), action.DurationMinutes ?? 60,
+                    minutes => action.DurationMinutes = minutes));
+                void ShowDuration() => duration.Visibility = string.IsNullOrEmpty(action.Time) ? Visibility.Collapsed : Visibility.Visible;
+                ShowDuration();
+                body.Children.Add(WhenFields(action, "an all-day event", ShowDuration));
+                body.Children.Add(duration);
+                body.Children.Add(AlertField(action));
+                body.Children.Add(Line("where", TextField(action.Location, text => action.Location = text, "optional")));
+                body.Children.Add(Line("notes", TextField(action.Description, text => action.Description = text, "optional", tokens: true)));
+                body.Children.Add(Line(Check("skip if an event with this title is already on that day", action.SkipIfExists, on => action.SkipIfExists = on)));
+                return body;
+            }
             case "createCard":
                 body.Children.Add(Line("called", TextField(action.Title, text => action.Title = text, "e.g. pick up eggs", tokens: true)));
                 body.Children.Add(Line(
@@ -1258,7 +1385,7 @@ internal sealed class BoardAutomationsWindow : Window
             case "notify":
                 if (!_pushReady) body.Children.Add(Warning("Push notifications aren't set up on this server yet (Settings → Push), so this won't reach anyone until they are."));
                 body.Children.Add(Line("to", PeoplePicker(action, allowEveryone: true)));
-                body.Children.Add(Line("title", TextField(action.Title, text => action.Title = text, "optional - the board's name if empty", tokens: true)));
+                body.Children.Add(Line("title", TextField(action.Title, text => action.Title = text, Planner ? "optional" : "optional - the board's name if empty", tokens: true)));
                 body.Children.Add(Line("message", TextField(action.Text, text => action.Text = text, "e.g. {card} is due {due}", tokens: true, width: 320)));
                 return body;
             case "email":

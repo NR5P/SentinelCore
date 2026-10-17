@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -68,6 +69,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -82,6 +84,8 @@ import com.sentinelcore.android.organizer.OrganizerEngine
 import com.sentinelcore.android.organizer.OrganizerItem
 import com.sentinelcore.android.organizer.OrganizerKinds
 import com.sentinelcore.android.organizer.OrganizerPerson
+import com.sentinelcore.android.organizer.OrganizerSpace
+import com.sentinelcore.android.organizer.jsNumber
 import com.sentinelcore.android.organizer.RuleBlock
 import com.sentinelcore.android.organizer.RuleBlockKind
 import com.sentinelcore.android.organizer.RuleContext
@@ -107,6 +111,9 @@ import kotlinx.coroutines.launch
 // menus and pickers. Blocks are added by tapping them in a palette under each part of the rule;
 // the THEN steps reorder with the arrows, or by holding the grip and dragging. The rules run on
 // the server and never sync, so all of this needs the server; the logic is BoardAutomations.kt.
+//
+// Opened with no board (from Reminders or Calendar) it's the planner: rules that add reminders and
+// events to a space, on a schedule or when the weather turns, built from the no-card blocks.
 
 private val SWATCHES = listOf("#39ff9c", "#4be7ff", "#ffb545", "#c792ea", "#ff7eb6", "#82aaff", "#f78c6c")
 
@@ -118,6 +125,8 @@ private class RuleEditorState(val base: AutomationRule) {
     private var nextKey = 0L
     fun newKey() = nextKey++
     var name by mutableStateOf(base.name)
+    // Who a planner rule's reminders and events are for. Null on a board rule.
+    var spaceId by mutableStateOf(base.spaceId)
     var trigger by mutableStateOf(base.trigger)
     var triggerKey by mutableStateOf(newKey())
     val conditions = mutableStateListOf<Placed>().apply { base.conditions.forEach { add(Placed(newKey(), it)) } }
@@ -127,17 +136,23 @@ private class RuleEditorState(val base: AutomationRule) {
     var errors by mutableStateOf<List<String>>(emptyList())
     var saving by mutableStateOf(false)
 
-    fun rule(): AutomationRule = base.copy(name = name, trigger = trigger, conditions = conditions.map { it.block }, actions = actions.map { it.block })
+    fun rule(): AutomationRule = base.copy(name = name, spaceId = spaceId, trigger = trigger, conditions = conditions.map { it.block }, actions = actions.map { it.block })
 }
 
-// Everything the editor looks things up in: the board's lists, the people, the words.
-private class BoardLookup(val engine: OrganizerEngine, val board: OrganizerItem, val people: List<OrganizerPerson>, val words: AutomationWords, val formatTime: (LocalTime) -> String) {
-    val columns: List<OrganizerItem> = engine.children(board.id, OrganizerKinds.COLUMN).sortedBy { it.sortPosition }
+// Everything the editor looks things up in: the board's lists, the people, the words. With no
+// board it's the planner's: no lists, and the spaces its reminders can go to.
+private class BoardLookup(val engine: OrganizerEngine, val board: OrganizerItem?, val people: List<OrganizerPerson>, val words: AutomationWords, val formatTime: (LocalTime) -> String) {
+    val planner: Boolean get() = board == null
+    val title: String = board?.title?.ifEmpty { "Board" } ?: BoardAutomations.PLANNER_TITLE
+    val spaces: List<OrganizerSpace> = BoardAutomations.plannerSpaces(engine.visibleSpaces)
+    val columns: List<OrganizerItem> = board?.let { engine.children(it.id, OrganizerKinds.COLUMN).sortedBy { c -> c.sortPosition } } ?: emptyList()
     val context = RuleContext(columns.firstOrNull()?.id ?: "", columns.lastOrNull()?.id ?: "", people, ZoneId.systemDefault().id)
+
+    fun spaceWords(id: String?): String = BoardAutomations.spaceWords(spaces.firstOrNull { it.id == id })
 
     // Other boards' lists, for "move it to another board".
     fun otherBoards(): List<Pair<OrganizerItem, List<OrganizerItem>>> =
-        engine.items(OrganizerKinds.BOARD).filter { it.id != board.id && !it.bool("archived") }.sortedBy { it.sortPosition }
+        engine.items(OrganizerKinds.BOARD).filter { it.id != board?.id && !it.bool("archived") }.sortedBy { it.sortPosition }
             .map { it to engine.children(it.id, OrganizerKinds.COLUMN).sortedBy { c -> c.sortPosition } }
             .filter { it.second.isNotEmpty() }
 
@@ -153,8 +168,9 @@ private class BoardLookup(val engine: OrganizerEngine, val board: OrganizerItem,
     }
 }
 
+// `board` null: the planner's rules (Reminders & Calendar) instead of one board's.
 @Composable
-fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem, onDismiss: () -> Unit) {
+fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem?, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val revision = rememberOrganizerRevision(engine)
@@ -165,7 +181,7 @@ fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem, onDism
 
     val is24 = android.text.format.DateFormat.is24HourFormat(context)
     val formatTime: (LocalTime) -> String = { it.format(DateTimeFormatter.ofPattern(if (is24) "H:mm" else "h:mm a", Locale.getDefault())) }
-    val lookup = remember(board.id, people, revision) {
+    val lookup = remember(board?.id, people, revision) {
         val words = AutomationWords(
             columnTitle = { id -> engine.item(id)?.takeIf { it.kind == OrganizerKinds.COLUMN }?.title },
             people = people,
@@ -177,7 +193,7 @@ fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem, onDism
 
     suspend fun reload() {
         try {
-            list = engine.automations.list(board.id)
+            list = engine.automations.list(board?.id)
             loadError = null
         } catch (error: CancellationException) {
             throw error
@@ -186,7 +202,7 @@ fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem, onDism
         }
     }
 
-    LaunchedEffect(board.id) {
+    LaunchedEffect(board?.id) {
         if (engine.status.value?.personalSpaces == true) people = runCatching { engine.people() }.getOrDefault(emptyList())
         reload()
     }
@@ -203,8 +219,8 @@ fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem, onDism
                     list = list,
                     loadError = loadError,
                     onClose = onDismiss,
-                    onNew = { rule -> editor = RuleEditorState(rule.copy(boardId = board.id)) },
-                    onEdit = { rule -> editor = RuleEditorState(rule) },
+                    onNew = { rule -> editor = RuleEditorState(BoardAutomations.draft(rule, board?.id, lookup.spaces)) },
+                    onEdit = { rule -> editor = RuleEditorState(BoardAutomations.draft(rule, board?.id, lookup.spaces)) },
                     onEnabled = { rule, enabled ->
                         scope.launch {
                             try {
@@ -222,7 +238,7 @@ fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem, onDism
                             try {
                                 val run = engine.automations.run(rule.id ?: return@launch)
                                 toast(run.message.ifEmpty { "Done." })
-                                // So the card it made shows now, not at the next sync.
+                                // So the card (or reminder) it made shows now, not at the next sync.
                                 runCatching { engine.sync() }
                                 reload()
                             } catch (error: CancellationException) {
@@ -255,7 +271,7 @@ fun BoardAutomationsDialog(engine: OrganizerEngine, board: OrganizerItem, onDism
                     onToast = ::toast,
                     onSave = {
                         val rule = editing.rule()
-                        val local = BoardAutomations.localErrors(rule)
+                        val local = BoardAutomations.localErrors(rule, lookup.planner)
                         if (local.isNotEmpty()) {
                             editing.errors = local
                         } else if (!editing.saving) {
@@ -298,7 +314,7 @@ private fun RuleList(
     onDelete: (AutomationRule) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        DetailHeader("Automations · ${lookup.board.title.ifEmpty { "Board" }}", onClose)
+        DetailHeader("Automations · ${lookup.title}", onClose)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when {
                 loadError != null -> {
@@ -310,12 +326,14 @@ private fun RuleList(
                     return@Column
                 }
             }
-            Text("Rules that look after this board for you. They run on the server, so they happen even when every phone and computer is off.",
+            Text(if (lookup.planner) BoardAutomations.PLANNER_INTRO else BoardAutomations.BOARD_INTRO,
                 color = SentinelTextDim, style = MaterialTheme.typography.bodySmall)
             Button(onClick = { onNew(AutomationRule()) }) { Text("+ Build a rule") }
             Text("or start from a recipe:", color = SentinelTextDim, style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                BoardAutomations.recipes(lookup.context, lookup.words).forEach { recipe ->
+                val recipes = if (lookup.planner) BoardAutomations.plannerRecipes(lookup.spaces, lookup.context.timeZone)
+                    else BoardAutomations.recipes(lookup.context, lookup.words)
+                recipes.forEach { recipe ->
                     Column(
                         Modifier.clip(RoundedCornerShape(10.dp)).border(1.dp, SentinelCyan.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
                             .clickable { onNew(recipe.rule) }.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -356,7 +374,10 @@ private fun RuleRow(
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(rule.name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).graphicsLayer { alpha = dim })
+                Row(Modifier.weight(1f).graphicsLayer { alpha = dim }, verticalAlignment = Alignment.CenterVertically) {
+                    Text(rule.name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f, fill = false))
+                    if (lookup.planner) Text(" · for ${lookup.spaceWords(rule.spaceId)}", color = SentinelTextDim, style = MaterialTheme.typography.bodySmall)
+                }
                 Switch(checked = rule.enabled, onCheckedChange = { onEnabled(rule, it) })
             }
             Text(lookup.words.sentence(rule), style = MaterialTheme.typography.bodySmall, modifier = Modifier.graphicsLayer { alpha = dim })
@@ -373,7 +394,8 @@ private fun RuleRow(
                 }
             }
             FlowRow {
-                if (rule.isScheduled) TextButton(onClick = { onRun(rule) }) { Text("Run now") }
+                // A weather rule runs its steps as if the weather had turned; ONLY IF tests still apply.
+                if (rule.startsWithoutCard) TextButton(onClick = { onRun(rule) }) { Text("Run now") }
                 TextButton(onClick = { onEdit(rule) }) { Text("Edit") }
                 TextButton(onClick = {
                     historyOpen = !historyOpen
@@ -410,7 +432,7 @@ private fun RuleRow(
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         title = { Text("Delete the rule \"${rule.name}\"?") },
-        text = { Text(BoardAutomations.DELETE_NOTE) },
+        text = { Text(if (lookup.planner) BoardAutomations.PLANNER_DELETE_NOTE else BoardAutomations.DELETE_NOTE) },
         confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete(rule) }) { Text("Delete", color = SentinelRed) } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
     )
@@ -433,7 +455,7 @@ private fun RuleEditor(
 
     fun addBlock(zone: RuleZone, type: String) {
         val kind = BoardAutomations.kind(zone, type) ?: return
-        val block = BoardAutomations.make(zone, type, lookup.context) ?: return
+        val block = BoardAutomations.make(zone, type, lookup.context, state.trigger) ?: return
         when (zone) {
             RuleZone.TRIGGER -> {
                 state.trigger = block
@@ -449,7 +471,7 @@ private fun RuleEditor(
         val target = state.tokenTarget?.takeIf { (key, _) -> state.actions.any { it.key == key } }
             ?: state.actions.firstOrNull { it.block.type in BoardAutomations.TOKEN_FIELDS }?.let { it.key to BoardAutomations.TOKEN_FIELDS.getValue(it.block.type).first() }
         if (target == null) {
-            onToast("Add a card title or comment first, then drop the word into it.")
+            onToast(if (lookup.planner) "Add a reminder, event or message first, then drop the word into it." else "Add a card title or comment first, then drop the word into it.")
             return
         }
         val index = state.actions.indexOfFirst { it.key == target.first }
@@ -459,12 +481,19 @@ private fun RuleEditor(
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        DetailHeader("${if (state.base.id != null) "Edit rule" else "New rule"} · ${lookup.board.title.ifEmpty { "Board" }}", onBack) {
+        DetailHeader("${if (state.base.id != null) "Edit rule" else "New rule"} · ${lookup.title}", onBack) {
             TextButton(onClick = onSave, enabled = !state.saving) { Text("Save") }
         }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(state.name, { state.name = it }, label = { Text("Name") }, placeholder = { Text("e.g. Eggs every morning") },
+            OutlinedTextField(state.name, { state.name = it }, label = { Text("Name") },
+                placeholder = { Text(if (lookup.planner) "e.g. Water the plants" else "e.g. Eggs every morning") },
                 singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (lookup.planner) {
+                ChoiceMenu("Reminders and events go to", lookup.spaceWords(state.spaceId), lookup.spaces.map { it.id to BoardAutomations.spaceWords(it) }) {
+                    state.spaceId = it
+                }
+                Hint("- everyone and admins reminders show on the wall kiosk when due")
+            }
 
             // WHEN
             SlotTitle("WHEN", SentinelAmber, null)
@@ -478,7 +507,7 @@ private fun RuleEditor(
                     }
                 }
             }
-            Palette(RuleZone.TRIGGER, if (trigger == null) "＋ Add a WHEN block" else "Change the WHEN block", lookup.people, startOpen = trigger == null) {
+            Palette(RuleZone.TRIGGER, if (trigger == null) "＋ Add a WHEN block" else "Change the WHEN block", lookup, startOpen = trigger == null) {
                 addBlock(RuleZone.TRIGGER, it)
             }
 
@@ -494,7 +523,7 @@ private fun RuleEditor(
                 }
             }
             if (state.conditions.isEmpty()) Placeholder("add ONLY IF blocks here to narrow it down")
-            Palette(RuleZone.CONDITIONS, if (state.conditions.isEmpty()) "＋ Add an ONLY IF block" else "＋ Add another to narrow it further", lookup.people, startOpen = false) {
+            Palette(RuleZone.CONDITIONS, if (state.conditions.isEmpty()) "＋ Add an ONLY IF block" else "＋ Add another to narrow it further", lookup, startOpen = false) {
                 addBlock(RuleZone.CONDITIONS, it)
             }
 
@@ -502,17 +531,18 @@ private fun RuleEditor(
             SlotTitle("THEN", SentinelGreen, "(in this order - hold ⋮⋮ and drag, or use the arrows)")
             ActionList(state, lookup, pushReady, emailReady)
             if (state.actions.isEmpty()) Placeholder("add THEN blocks here - what should happen?")
-            Palette(RuleZone.ACTIONS, if (state.actions.isEmpty()) "＋ Add a THEN block" else "＋ Add another step", lookup.people, startOpen = trigger != null && state.actions.isEmpty()) {
+            Palette(RuleZone.ACTIONS, if (state.actions.isEmpty()) "＋ Add a THEN block" else "＋ Add another step", lookup, startOpen = trigger != null && state.actions.isEmpty()) {
                 addBlock(RuleZone.ACTIONS, it)
             }
 
             // {tokens}
             Text("WORDS THAT FILL THEMSELVES IN", color = SentinelTextDim, style = MaterialTheme.typography.labelMedium)
-            Text("Tap one to add it to the card title or message you were last typing in: " +
-                BoardAutomations.TOKENS.joinToString(", ") { (token, what) -> "$token is $what" } + ".",
+            val tokens = BoardAutomations.tokens(lookup.planner)
+            Text("Tap one to add it to the ${if (lookup.planner) "title" else "card title"} or message you were last typing in: " +
+                tokens.joinToString(", ") { (token, what) -> "$token is $what" } + ".",
                 color = SentinelTextDim, style = MaterialTheme.typography.bodySmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                BoardAutomations.TOKENS.forEach { (token, _) ->
+                tokens.forEach { (token, _) ->
                     FilterChip(selected = false, onClick = { insertToken(token) }, label = { Text(token) })
                 }
             }
@@ -533,6 +563,7 @@ private fun RuleEditor(
 @Composable
 private fun ActionList(state: RuleEditorState, lookup: BoardLookup, pushReady: Boolean, emailReady: Boolean) {
     val blocks = state.actions.map { it.block }
+    val weatherInRule = BoardAutomations.weatherInRule(state.trigger, state.conditions.map { it.block })
     var dragging by remember { mutableStateOf<Long?>(null) }
     var offset by remember { mutableStateOf(0f) }
     val heights = remember { mutableStateMapOf<Long, Int>() }
@@ -575,7 +606,7 @@ private fun ActionList(state: RuleEditorState, lookup: BoardLookup, pushReady: B
                         onDown = if (index < state.actions.lastIndex) ({ state.actions.add(index + 1, state.actions.removeAt(index)) }) else null,
                         grip = grip,
                     ) {
-                        ActionFields(placed.block, lookup, pushReady, emailReady,
+                        ActionFields(placed.block, lookup, pushReady, emailReady, weatherInRule,
                             onTokenFocus = { field -> state.tokenTarget = placed.key to field }) {
                             val at = state.actions.indexOfFirst { p -> p.key == placed.key }
                             if (at >= 0) state.actions[at] = state.actions[at].copy(block = it)
@@ -603,12 +634,12 @@ private fun Placeholder(text: String) {
 
 // The blocks for one part of the rule; tap one to put it in.
 @Composable
-private fun Palette(zone: RuleZone, title: String, people: List<OrganizerPerson>, startOpen: Boolean, onAdd: (String) -> Unit) {
+private fun Palette(zone: RuleZone, title: String, lookup: BoardLookup, startOpen: Boolean, onAdd: (String) -> Unit) {
     var open by remember { mutableStateOf(startOpen) }
     TextButton(onClick = { open = !open }) { Text(if (open) "Hide the blocks" else title) }
     if (!open) return
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
-        BoardAutomations.palette(zone, people).forEach { kind ->
+        BoardAutomations.palette(zone, lookup.people, lookup.planner).forEach { kind ->
             Row(
                 Modifier.fillMaxWidth().clickable { onAdd(kind.type); open = false }.padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -700,6 +731,10 @@ private fun TriggerFields(t: RuleBlock, lookup: BoardLookup, onChange: (RuleBloc
             TimeRow("At", s.string("time")?.ifEmpty { null } ?: "07:00", lookup, allowNone = false) { onChange(t.withSchedule(s.with("time", it))) }
             SchedulePreview(s, lookup)
         }
+        "weather" -> {
+            WeatherFields(t.weather) { onChange(t.withWeather(it)) }
+            Hint(BoardAutomations.WEATHER_TRIGGER_NOTE)
+        }
         "cardAdded" -> ColumnPicker("To", t.string("columnId"), allowAny = true, lookup) { onChange(t.with("columnId", it)) }
         "cardMoved" -> ColumnPicker("Into", t.string("columnId"), allowAny = true, lookup) { onChange(t.with("columnId", it)) }
         "cardDue" -> {
@@ -745,14 +780,73 @@ private fun ConditionFields(c: RuleBlock, lookup: BoardLookup, onChange: (RuleBl
             Text("Today is", style = MaterialTheme.typography.bodySmall)
             DaysPicker(c.ints("days")) { onChange(c.with("days", it)) }
         }
+        "weather" -> WeatherFields(c, onChange)
     }
+}
+
+// The blanks of a weather test: what's measured, over how long, which way, and the number.
+@Composable
+private fun WeatherFields(w: RuleBlock, onChange: (RuleBlock) -> Unit) {
+    val m = BoardAutomations.metric(w.string("metric")) ?: BoardAutomations.METRICS.first()
+    ChoiceMenu("The", m.label, BoardAutomations.METRICS.map { it.key to it.label }) { onChange(BoardAutomations.withMetric(w, it)) }
+    if (!m.now) {
+        val window = w.int("window") ?: 1
+        ChoiceMenu("Over", m.windowLabel(window), m.windows.map { it to m.windowLabel(it) }) { onChange(w.with("window", it)) }
+    }
+    val op = if (w.string("op") == "atMost") "atMost" else "atLeast"
+    ChoiceMenu("Is", BoardAutomations.WEATHER_OPS.first { it.first == op }.second, BoardAutomations.WEATHER_OPS) { onChange(w.with("op", it)) }
+    // Kept as typed ("0." on the way to "0.5"); a new measure starts the box again from its own number.
+    var text by remember(m.key) { mutableStateOf(w.number("value")?.let(::jsNumber).orEmpty()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { typed ->
+            text = typed
+            onChange(w.with("value", typed.trim().replace(',', '.').toDoubleOrNull()))
+        },
+        label = { Text("Number") },
+        trailingIcon = { Text(m.unit, color = SentinelTextDim, modifier = Modifier.padding(end = 12.dp)) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        isError = text.isNotBlank() && text.trim().replace(',', '.').toDoubleOrNull() == null,
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Hint(m.source)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ActionFields(a: RuleBlock, lookup: BoardLookup, pushReady: Boolean, emailReady: Boolean, onTokenFocus: (String) -> Unit, onChange: (RuleBlock) -> Unit) {
+private fun ActionFields(a: RuleBlock, lookup: BoardLookup, pushReady: Boolean, emailReady: Boolean, weatherInRule: Boolean, onTokenFocus: (String) -> Unit, onChange: (RuleBlock) -> Unit) {
     val people = lookup.people
     when (a.type) {
+        "createReminder" -> {
+            BagText("Called", a.string("title"), "e.g. water the plants", onFocus = { onTokenFocus("title") }) { onChange(a.with("title", it)) }
+            val due = a.int("inDays") != null
+            CheckRow("Due", due) { on -> onChange(if (on) a.with("inDays", 0) else a.with("inDays", null).with("time", "")) }
+            if (due) {
+                WhenFields(a, lookup, weatherInRule, onChange)
+                AlertMenu(a, onChange)
+            }
+            ChoiceMenu("Priority", BoardAutomations.PRIORITIES.firstOrNull { it.first == (a.int("priority") ?: 0) }?.second ?: "none", BoardAutomations.PRIORITIES) {
+                onChange(a.with("priority", it))
+            }
+            BagText("Notes", a.string("description"), "optional", onFocus = { onTokenFocus("description") }) { onChange(a.with("description", it)) }
+            CheckRow("Skip if an unfinished reminder with this title is already there", a.bool("skipIfExists")) { onChange(a.with("skipIfExists", it)) }
+        }
+        "createEvent" -> {
+            BagText("Called", a.string("title"), "e.g. cover the plants", onFocus = { onTokenFocus("title") }) { onChange(a.with("title", it)) }
+            WhenFields(a, lookup, weatherInRule, onChange)
+            if (a.string("time").isNullOrEmpty()) Hint("No time makes it an all-day event.")
+            else {
+                val minutes = a.int("durationMinutes") ?: 60
+                ChoiceMenu("For", BoardAutomations.DURATIONS.firstOrNull { it.first == minutes }?.second ?: "$minutes minutes", BoardAutomations.DURATIONS) {
+                    onChange(a.with("durationMinutes", it))
+                }
+            }
+            AlertMenu(a, onChange)
+            BagText("Where", a.string("location"), "optional") { onChange(a.with("location", it)) }
+            BagText("Notes", a.string("description"), "optional", onFocus = { onTokenFocus("description") }) { onChange(a.with("description", it)) }
+            CheckRow("Skip if an event with this title is already on that day", a.bool("skipIfExists")) { onChange(a.with("skipIfExists", it)) }
+        }
         "createCard" -> {
             BagText("Called", a.string("title"), "e.g. pick up eggs", onFocus = { onTokenFocus("title") }) { onChange(a.with("title", it)) }
             ColumnPicker("In", a.string("columnId"), allowAny = false, lookup) { onChange(a.with("columnId", it)) }
@@ -953,6 +1047,31 @@ private fun DueFields(a: RuleBlock, lookup: BoardLookup, toggleLabel: String, on
         onChange(a.with("inDays", it))
     }
     TimeRow("At", a.string("time").orEmpty(), lookup, allowNone = true) { onChange(a.with("time", it)) }
+}
+
+// When a made reminder or event lands: days from today, or - in a rule with weather - from the
+// weather's day ("the day before" a freeze), and an optional time.
+@Composable
+private fun WhenFields(a: RuleBlock, lookup: BoardLookup, weatherInRule: Boolean, onChange: (RuleBlock) -> Unit) {
+    val inDays = a.int("inDays") ?: 0
+    val fromWeather = a.bool("fromWeatherDay")
+    val offsets = if (fromWeather) BoardAutomations.WEATHER_DAYS else BoardAutomations.DUE_DAYS
+    ChoiceMenu("When", offsets.firstOrNull { it.first == inDays }?.second ?: lookup.words.reminderWhen(a.with("time", "")), offsets) {
+        onChange(a.with("inDays", it))
+    }
+    if (weatherInRule) CheckRow("Counted from the day of the weather", fromWeather) { on ->
+        onChange(a.with("fromWeatherDay", on).with("inDays", if (on) -1 else 0))
+    }
+    TimeRow("At", a.string("time").orEmpty(), lookup, allowNone = true) { onChange(a.with("time", it)) }
+}
+
+// The heads-up a made reminder or event gives before it's due.
+@Composable
+private fun AlertMenu(a: RuleBlock, onChange: (RuleBlock) -> Unit) {
+    val minutes = a.int("alertMinutes")
+    ChoiceMenu("Heads-up", BoardAutomations.ALERTS.firstOrNull { it.first == minutes }?.second ?: "$minutes minutes before", BoardAutomations.ALERTS) {
+        onChange(a.with("alertMinutes", it))
+    }
 }
 
 // A list picker: this board's lists first, then - for the pickers that can't be "any list" -

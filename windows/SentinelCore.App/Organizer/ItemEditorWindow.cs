@@ -128,7 +128,9 @@ internal sealed class ItemEditorWindow : Window
         // Only a top-level thing chooses its space; a card is in its board's.
         if (_parentId is null)
         {
-            _space = Ui.SpacePicker(engine, existing?.SpaceId ?? spaceId ?? engine.DefaultSpaceId);
+            // A reminder says who it's for, as the Reminders screen does: everyone and admins
+            // reminders also show on the wall kiosk when they're due.
+            _space = Ui.SpacePicker(engine, existing?.SpaceId ?? spaceId ?? engine.DefaultSpaceId, audience: kind == OrganizerKinds.Reminder);
         }
 
         Content = Build();
@@ -188,7 +190,7 @@ internal sealed class ItemEditorWindow : Window
         }
 
         Row("Title", _title);
-        if (_space is not null) Row("Who can see it", _space);
+        if (_space is not null) Row(_kind == OrganizerKinds.Reminder ? "For" : "Who can see it", _space);
 
         switch (_kind)
         {

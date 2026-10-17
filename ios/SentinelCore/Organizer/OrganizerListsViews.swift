@@ -15,6 +15,9 @@ struct OrganizerRemindersView: View {
     @State private var spokenDraft: VoiceDraft?
     @State private var editingDraft: VoiceDraft?
     @State private var showCompleted = false
+    @State private var automating = false
+    // Who the quick-add reminder is for, kept while this screen is up.
+    @State private var newSpace: String?
     @FocusState private var addFocused: Bool
 
     var body: some View {
@@ -37,6 +40,21 @@ struct OrganizerRemindersView: View {
                         .buttonStyle(.borderless)
                         .font(.caption)
                 }
+                HStack {
+                    if engine.visibleSpaces.count > 1 {
+                        Picker("For", selection: Binding(get: { addSpace }, set: { newSpace = $0 })) {
+                            ForEach(engine.visibleSpaces) { space in Text(space.audienceName).tag(space.id) }
+                        }
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .help("Who it's for - everyone and admins reminders also show on the wall kiosk when due")
+                    }
+                    Spacer()
+                    Button("Automations", systemImage: "bolt") { automating = true }
+                        .buttonStyle(.borderless)
+                        .help("Rules that add reminders for you - every Saturday, or when the weather turns")
+                }
+                .font(.callout)
             }
             section("Overdue", groups.overdue, tint: SentinelTheme.red)
             section("Today", groups.today)
@@ -77,6 +95,13 @@ struct OrganizerRemindersView: View {
                 .environment(engine)
                 #if os(macOS)
                 .frame(minWidth: 440, minHeight: 360)
+                #endif
+        }
+        .sheet(isPresented: $automating) {
+            BoardAutomationsView(board: nil)
+                .environment(engine)
+                #if os(macOS)
+                .frame(minWidth: 720, minHeight: 560)
                 #endif
         }
         .sheet(item: $editingDraft) { draft in
@@ -147,9 +172,15 @@ struct OrganizerRemindersView: View {
     private func add() {
         let title = newTitle.trimmingCharacters(in: .whitespaces)
         guard !title.isEmpty else { return }
-        engine.create(.reminder, fields: ["title": .string(title), "completed": false], spaceId: spaceFilter ?? engine.defaultSpaceId)
+        engine.create(.reminder, fields: ["title": .string(title), "completed": false], spaceId: addSpace)
         newTitle = ""
         addFocused = true
+    }
+
+    // The quick-add's "for": what was picked, else the space being shown, else the usual one.
+    private var addSpace: String {
+        let ids = engine.visibleSpaces.map(\.id)
+        return [newSpace, spaceFilter].compactMap { $0 }.first { ids.contains($0) } ?? engine.defaultSpaceId
     }
 
     private struct Groups { var overdue: [OrganizerItem] = [], today: [OrganizerItem] = [], upcoming: [OrganizerItem] = [], someday: [OrganizerItem] = [], done: [OrganizerItem] = [] }

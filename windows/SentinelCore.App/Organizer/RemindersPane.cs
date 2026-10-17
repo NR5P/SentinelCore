@@ -19,6 +19,16 @@ public sealed class RemindersPane : OrganizerPane
     private readonly ListBox _filters = new() { Width = 190, Margin = new Thickness(0, 0, 16, 0) };
     private readonly StackPanel _list = new();
     private readonly TextBox _quickAdd = new() { FontSize = 14 };
+    // Who the quick-add reminder is for, when there's more than one space; the choice is kept
+    // while this screen is up.
+    private readonly ComboBox _for = new()
+    {
+        MinWidth = 110,
+        Margin = new Thickness(8, 0, 0, 0),
+        Visibility = Visibility.Collapsed,
+        ToolTip = "Who it's for - everyone and admins reminders also show on the wall kiosk when due",
+    };
+    private string? _forSpace;
     private readonly TextBlock _heading = new() { FontSize = 18, FontWeight = FontWeights.SemiBold, Foreground = Palette.PrimaryText, Margin = new Thickness(0, 0, 0, 10) };
     private Filter _filter = Filter.Today;
     private bool _building;
@@ -42,10 +52,21 @@ public sealed class RemindersPane : OrganizerPane
         DockPanel.SetDock(_heading, Dock.Top);
         right.Children.Add(_heading);
         var add = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var automations = Ui.Button("⚡ Automations", () => new BoardAutomationsWindow(Engine, null) { Owner = Window.GetWindow(this) }.ShowDialog(),
+            tooltip: "Rules that add reminders for you - every Saturday, or when the weather turns");
+        automations.Margin = new Thickness(8, 0, 0, 0);
+        DockPanel.SetDock(automations, Dock.Right);
+        add.Children.Add(automations);
         var more = Ui.Button("Details…", () => NewReminder(_quickAdd.Text.Trim()));
         more.Margin = new Thickness(8, 0, 0, 0);
         DockPanel.SetDock(more, Dock.Right);
         add.Children.Add(more);
+        DockPanel.SetDock(_for, Dock.Right);
+        add.Children.Add(_for);
+        _for.SelectionChanged += (_, _) =>
+        {
+            if (!_building && Ui.SelectedTag(_for) is { } space) _forSpace = space;
+        };
         add.Children.Add(_quickAdd);
         DockPanel.SetDock(add, Dock.Top);
         right.Children.Add(add);
@@ -95,9 +116,29 @@ public sealed class RemindersPane : OrganizerPane
             row.Count.Text = topLevel.Count(item => Matches(item, filter)).ToString();
             if (filter == _filter && _filters.SelectedItem != row.Entry) _filters.SelectedItem = row.Entry;
         }
+        BuildFor();
         _building = false;
         BuildList(topLevel);
     }
+
+    // The "for" picker: just me / everyone / admins, rebuilt only when the spaces change.
+    private void BuildFor()
+    {
+        var spaces = Engine.VisibleSpaces;
+        _for.Visibility = spaces.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        var wanted = spaces.Select(space => (BoardAutomationRules.AudienceName(space), space.Id)).ToList();
+        var listed = _for.Items.OfType<ComboBoxItem>().Select(item => ((string)item.Content, (string)item.Tag)).ToList();
+        if (!listed.SequenceEqual(wanted))
+        {
+            _for.Items.Clear();
+            foreach (var (label, id) in wanted) _for.Items.Add(Ui.Option(label, id));
+        }
+        var selected = _forSpace is not null && spaces.Any(space => space.Id == _forSpace) ? _forSpace : NewItemSpace;
+        if (Ui.SelectedTag(_for) != selected) Ui.Select(_for, selected);
+    }
+
+    // Where a new reminder goes: who the picker says, else the space being shown or this person's own.
+    private string QuickAddSpace => _for.Visibility == Visibility.Visible && Ui.SelectedTag(_for) is { } space ? space : NewItemSpace;
 
     private void BuildFilters()
     {
@@ -272,7 +313,7 @@ public sealed class RemindersPane : OrganizerPane
             fields["allDay"] = true;
         }
         if (_filter == Filter.Flagged) fields["flagged"] = true;
-        Engine.Create(OrganizerKinds.Reminder, fields, spaceId: NewItemSpace);
+        Engine.Create(OrganizerKinds.Reminder, fields, spaceId: QuickAddSpace);
     }
 
     private void NewReminder(string title)
@@ -283,7 +324,7 @@ public sealed class RemindersPane : OrganizerPane
             defaults["due"] = OrganizerDates.Ymd(OrganizerDates.StartOfDay(DateTime.Today, Ui.Zone));
             defaults["allDay"] = true;
         }
-        if (new ItemEditorWindow(Engine, OrganizerKinds.Reminder, null, defaults, NewItemSpace).ShowDialog() == true) _quickAdd.Text = "";
+        if (new ItemEditorWindow(Engine, OrganizerKinds.Reminder, null, defaults, QuickAddSpace).ShowDialog() == true) _quickAdd.Text = "";
     }
 
     private void AddStep(OrganizerItem parent)

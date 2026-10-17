@@ -109,6 +109,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sentinelcore.android.organizer.BoardAutomations
 import com.sentinelcore.android.organizer.NoteChecklist
 import com.sentinelcore.android.organizer.OrganizerDates
 import com.sentinelcore.android.organizer.OrganizerEngine
@@ -328,6 +329,7 @@ private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: Organ
     val holidayState by engine.holidays.collectAsStateWithLifecycle()
     var showingHolidaySettings by remember { mutableStateOf(false) }
     var viewingHoliday by remember { mutableStateOf<Holiday?>(null) }
+    var showingAutomations by remember { mutableStateOf(false) }
     val shown = YearMonth.parse(month)
     val selectedDay = LocalDate.parse(selected)
     val zone = ZoneId.systemDefault()
@@ -407,6 +409,8 @@ private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: Organ
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(selectedDay.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL)), color = SentinelCyan, modifier = Modifier.weight(1f))
+                    // Rules that add events and reminders for you - like a freeze warning to check the pipes.
+                    TextButton(onClick = { showingAutomations = true }) { Text("⚡ Automations") }
                     TextButton(onClick = { routes.openEvent(null, selectedDay, null) }) { Text("Add event") }
                 }
                 val dayEntries = byDay[selectedDay].orEmpty()
@@ -456,6 +460,7 @@ private fun CalendarPane(engine: OrganizerEngine, filter: String?, routes: Organ
     }
 
     if (showingHolidaySettings) HolidaySettingsDialog(engine, holidayState) { showingHolidaySettings = false }
+    if (showingAutomations) BoardAutomationsDialog(engine, null) { showingAutomations = false }
     viewingHoliday?.let { holiday ->
         AlertDialog(
             onDismissRequest = { viewingHoliday = null },
@@ -537,6 +542,12 @@ fun completeReminder(engine: OrganizerEngine, reminder: OrganizerItem, done: Boo
 private fun RemindersPane(engine: OrganizerEngine, filter: String?, routes: OrganizerRoutes) {
     var newTitle by remember { mutableStateOf("") }
     var showDone by rememberSaveable { mutableStateOf(false) }
+    // Who the quick-add reminder is for, kept while the screen is up. Everyone and admins
+    // reminders also show across the top of the wall kiosk when they're due.
+    var newSpace by rememberSaveable { mutableStateOf<String?>(null) }
+    var showingAutomations by remember { mutableStateOf(false) }
+    val spaces = engine.visibleSpaces
+    val forSpace = newSpace?.takeIf { engine.space(it) != null } ?: filter ?: engine.defaultSpaceId
     val now = java.time.ZonedDateTime.now()
     val reminders = engine.items(OrganizerKinds.REMINDER).filter { it.parentId == null && (filter == null || it.spaceId == filter) }
     fun due(item: OrganizerItem) = OrganizerDates.parse(item.string("due"), item.bool("allDay"))
@@ -571,11 +582,23 @@ private fun RemindersPane(engine: OrganizerEngine, filter: String?, routes: Orga
                 },
                 trailingIcon = {
                     TextButton(enabled = newTitle.isNotBlank(), onClick = {
-                        engine.create(OrganizerKinds.REMINDER, mapOf("title" to newTitle.trim(), "completed" to false), spaceId = filter ?: engine.defaultSpaceId)
+                        engine.create(OrganizerKinds.REMINDER, mapOf("title" to newTitle.trim(), "completed" to false), spaceId = forSpace)
                         newTitle = ""
                     }) { Text("Add") }
                 },
             )
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    if (spaces.size > 1) {
+                        ChoiceMenu("For", engine.space(forSpace)?.let(BoardAutomations::audienceName) ?: "everyone",
+                            spaces.map { it.id to BoardAutomations.audienceName(it) }) { newSpace = it }
+                    }
+                }
+                // Rules that add reminders for you - every Saturday, or when the weather turns.
+                TextButton(onClick = { showingAutomations = true }) { Text("⚡ Automations") }
+            }
         }
         groups.forEach { (title, list) ->
             if (list.isNotEmpty()) {
@@ -590,6 +613,7 @@ private fun RemindersPane(engine: OrganizerEngine, filter: String?, routes: Orga
         }
         item { Spacer(Modifier.height(72.dp)) }
     }
+    if (showingAutomations) BoardAutomationsDialog(engine, null) { showingAutomations = false }
 }
 
 @Composable

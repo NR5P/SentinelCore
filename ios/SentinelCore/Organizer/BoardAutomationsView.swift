@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 // fill in the blanks, and read the rule back as a plain sentence. The rules run on the server,
 // so a card scheduled for 7am appears with every device asleep; nothing here is kept offline.
 // The wording, recipes and checks live in OrganizerKit (BoardAutomations.swift) with tests.
+//
+// Opened with no board (from Reminders or Calendar) it builds reminders-and-calendar rules
+// instead: they add reminders and events to a space ("just me", "everyone", "the admins"), on a
+// schedule or when the weather turns, and can be held back by the weather.
 
 // MARK: - what the editor knows about the board
 
@@ -17,7 +21,8 @@ struct AutomationBoardContext {
         let columns: [OrganizerItem]
     }
 
-    let board: OrganizerItem
+    // nil when building reminders-and-calendar rules.
+    let board: OrganizerItem?
     let columns: [OrganizerItem]
     // Other boards' lists, for "move it to another board".
     let otherBoards: [OtherBoard]
@@ -27,16 +32,22 @@ struct AutomationBoardContext {
     let emailReady: Bool
     let wording: AutomationWording
     let makeContext: AutomationMakeContext
+    // Who a reminders rule can be for.
+    let spaces: [OrganizerSpace]
+
+    var planner: Bool { board == nil }
+
+    var title: String { board.map { $0.title.isEmpty ? "board" : $0.title } ?? "Reminders & Calendar" }
 
     @MainActor
-    init(engine: OrganizerEngine, board: OrganizerItem, people: [OrganizerPerson], pushReady: Bool, emailReady: Bool) {
+    init(engine: OrganizerEngine, board: OrganizerItem?, people: [OrganizerPerson], pushReady: Bool, emailReady: Bool) {
         func columnsOf(_ id: String) -> [OrganizerItem] {
             engine.children(of: id, kind: .column).sorted { $0.sortPosition < $1.sortPosition }
         }
         self.board = board
-        columns = columnsOf(board.id)
+        columns = board.map { columnsOf($0.id) } ?? []
         otherBoards = engine.items(.board)
-            .filter { $0.id != board.id && !$0.bool("archived") }
+            .filter { $0.id != board?.id && !$0.bool("archived") }
             .sorted { $0.sortPosition < $1.sortPosition }
             .map { OtherBoard(id: $0.id, title: $0.title.isEmpty ? "board" : $0.title, columns: columnsOf($0.id)) }
             .filter { !$0.columns.isEmpty }
@@ -56,6 +67,22 @@ struct AutomationBoardContext {
         wording = AutomationWording(columnTitle: { titles[$0] }, people: people)
         makeContext = AutomationMakeContext(firstColumnId: columns.first?.id ?? "", lastColumnId: columns.last?.id ?? "",
                                             timeZone: TimeZone.current.identifier, people: people)
+        spaces = BoardAutomations.plannerSpaces(engine.visibleSpaces)
+    }
+
+    func space(_ id: String?) -> OrganizerSpace? { spaces.first { $0.id == id } }
+
+    // A copy to edit, on this board or, for reminders, in a space this person is in.
+    func draft(editing rule: BoardAutomation?, recipe: BoardAutomation? = nil) -> BoardAutomation {
+        if let board { return BoardAutomation.draft(editing: rule, recipe: recipe, boardId: board.id) }
+        return BoardAutomation.plannerDraft(editing: rule, recipe: recipe, spaces: spaces)
+    }
+
+    var recipes: [AutomationRecipe] {
+        planner
+            ? BoardAutomations.plannerRecipes(spaces: spaces, timeZone: TimeZone.current.identifier)
+            : BoardAutomations.recipes(firstColumnId: makeContext.firstColumnId, lastColumnId: makeContext.lastColumnId,
+                                       lastColumnName: wording.columnName(makeContext.lastColumnId), timeZone: TimeZone.current.identifier)
     }
 
     func knows(column id: String) -> Bool {
@@ -95,7 +122,8 @@ extension AutomationZone {
 struct BoardAutomationsView: View {
     @Environment(OrganizerEngine.self) private var engine
     @Environment(\.dismiss) private var dismiss
-    let board: OrganizerItem
+    // nil for the reminders-and-calendar rules.
+    let board: OrganizerItem?
 
     @State private var rules: [BoardAutomation] = []
     @State private var loaded = false
@@ -153,7 +181,7 @@ struct BoardAutomationsView: View {
                             titleVisibility: .visible, presenting: deleting) { rule in
             Button("Delete Rule", role: .destructive) { Task { await remove(rule) } }
         } message: { _ in
-            Text("Cards it already made stay where they are.")
+            Text(board == nil ? "Reminders and events it already made stay where they are." : "Cards it already made stay where they are.")
         }
     }
 
@@ -172,25 +200,21 @@ struct BoardAutomationsView: View {
         } else {
             List {
                 Section {
-                    Text("Rules that look after \(board.title.isEmpty ? "this board" : "“\(board.title)”") for you. They run on the server, so they happen even when every phone and computer is off.")
-                        .foregroundStyle(.secondary)
+                    Text(intro).foregroundStyle(.secondary)
                     if let notice {
                         Label(notice.text, systemImage: notice.ok ? "checkmark.circle" : "exclamationmark.triangle")
                             .foregroundStyle(notice.ok ? SentinelTheme.green : SentinelTheme.red)
                     }
                 }
                 Section {
-                    Button("Build a Rule", systemImage: "plus") { draft = BoardAutomation.draft(editing: nil, boardId: board.id) }
+                    Button("Build a Rule", systemImage: "plus") { draft = context.draft(editing: nil) }
                 } header: {
                     Text("Start a rule")
                 }
                 Section {
-                    let recipes = BoardAutomations.recipes(
-                        firstColumnId: context.makeContext.firstColumnId, lastColumnId: context.makeContext.lastColumnId,
-                        lastColumnName: context.wording.columnName(context.makeContext.lastColumnId), timeZone: TimeZone.current.identifier)
-                    ForEach(recipes) { recipe in
+                    ForEach(context.recipes) { recipe in
                         Button {
-                            draft = BoardAutomation.draft(editing: nil, recipe: recipe.rule, boardId: board.id)
+                            draft = context.draft(editing: nil, recipe: recipe.rule)
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(recipe.name).bold()
@@ -219,6 +243,13 @@ struct BoardAutomationsView: View {
         }
     }
 
+    private var intro: String {
+        guard let board else {
+            return "Rules that add reminders and calendar events for you - on a schedule, or when the weather turns, and held back by the weather (no watering reminder after a wet week). They run on the server, so they happen even when every phone and computer is off. Reminders for everyone or the admins show on the wall kiosk when they're due."
+        }
+        return "Rules that look after \(board.title.isEmpty ? "this board" : "“\(board.title)”") for you. They run on the server, so they happen even when every phone and computer is off."
+    }
+
     private func row(_ rule: BoardAutomation, _ context: AutomationBoardContext) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
@@ -227,19 +258,23 @@ struct BoardAutomationsView: View {
                     .toggleStyle(.switch)
                     .help("on / off")
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(rule.name).font(.headline)
+                    if context.planner {
+                        (Text(rule.name).font(.headline) + Text(" · for \(BoardAutomations.spaceWords(context.space(rule.spaceId)))").foregroundStyle(.secondary))
+                    } else {
+                        Text(rule.name).font(.headline)
+                    }
                     Text(context.wording.sentence(rule)).font(.subheadline).foregroundStyle(.secondary)
                     status(rule, context)
                 }
                 Spacer(minLength: 0)
             }
             HStack(spacing: 14) {
-                if rule.isScheduled {
+                if rule.startsWithoutCard {
                     Button("Run Now", systemImage: "play") { Task { await runNow(rule) } }
                         .disabled(running.contains(rule.id))
-                        .help("Do it right now, to try it out")
+                        .help("Do it right now, to try it out - ONLY IF tests still apply")
                 }
-                Button("Edit", systemImage: "pencil") { draft = BoardAutomation.draft(editing: rule, boardId: board.id) }
+                Button("Edit", systemImage: "pencil") { draft = context.draft(editing: rule) }
                 Button("History", systemImage: "clock.arrow.circlepath") { Task { await toggleHistory(rule) } }
                 Spacer(minLength: 0)
                 Button("Delete", systemImage: "trash", role: .destructive) { deleting = rule }
@@ -296,7 +331,7 @@ struct BoardAutomationsView: View {
 
     private func load() async {
         do {
-            let list = try await engine.automations(boardId: board.id)
+            let list = if let board { try await engine.automations(boardId: board.id) } else { try await engine.plannerAutomations() }
             rules = list.automations
             pushReady = list.pushReady
             emailReady = list.emailReady
@@ -388,7 +423,8 @@ struct AutomationRuleEditor: View {
     @FocusState private var focus: AutomationTextTarget?
 
     // The fields a {token} can go into, as the dashboard marks them.
-    static let tokenFields: Set<String> = ["createCard.title", "addComment.text", "notify.title", "notify.text", "email.title", "email.text"]
+    static let tokenFields: Set<String> = ["createCard.title", "addComment.text", "notify.title", "notify.text", "email.title", "email.text",
+                                           "createReminder.title", "createReminder.description", "createEvent.title", "createEvent.description"]
 
     var body: some View {
         GeometryReader { geometry in
@@ -401,11 +437,12 @@ struct AutomationRuleEditor: View {
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        TextField("Name", text: $draft.name, prompt: Text("Name this rule, e.g. Eggs every morning"))
+                        TextField("Name", text: $draft.name, prompt: Text(context.planner ? "Name this rule, e.g. Water the plants" : "Name this rule, e.g. Eggs every morning"))
                             .labelsHidden()
                             .multilineTextAlignment(.leading)
                             .textFieldStyle(.roundedBorder)
                             .font(.title3)
+                        if context.planner { spacePicker }
                         if !wide { tokenStrip }
                         zone(.trigger)
                         zone(.conditions)
@@ -430,6 +467,22 @@ struct AutomationRuleEditor: View {
         .task(id: previewKey) { await preview() }
     }
 
+    // Who the reminders and events are for.
+    private var spacePicker: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text("Reminders and events go to").font(.callout).foregroundStyle(.secondary)
+                Picker("For", selection: Binding(get: { draft.spaceId ?? "" }, set: { draft.spaceId = $0 })) {
+                    ForEach(context.spaces) { space in Text(BoardAutomations.spaceWords(space)).tag(space.id) }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            Text("Everyone and admins reminders show on the wall kiosk when they're due.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: palette
 
     private var palette: some View {
@@ -439,7 +492,7 @@ struct AutomationRuleEditor: View {
                 ForEach(AutomationZone.allCases, id: \.self) { zone in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(zone.title).font(.caption.bold()).foregroundStyle(zone.color)
-                        ForEach(BoardAutomations.palette(zone, hasPeople: !context.people.isEmpty)) { kind in
+                        ForEach(BoardAutomations.palette(zone, hasPeople: !context.people.isEmpty, planner: context.planner)) { kind in
                             Button { add(zone, kind.type, at: nil) } label: { paletteTile(kind) }
                                 .buttonStyle(.plain)
                                 .draggable(RuleBlockDrag(zone: zone.rawValue, type: kind.type)) { paletteTile(kind).frame(width: 220) }
@@ -483,7 +536,7 @@ struct AutomationRuleEditor: View {
     private var tokenChips: some View {
         VStack(alignment: .leading, spacing: 4) {
             AutomationFlowLayout {
-                ForEach(BoardAutomations.tokens, id: \.token) { token in
+                ForEach(BoardAutomations.tokens(planner: context.planner), id: \.token) { token in
                     Button(token.token) { insert(token.token) }
                         .buttonStyle(.plain)
                         .font(.caption.monospaced())
@@ -513,7 +566,7 @@ struct AutomationRuleEditor: View {
                 }
                 Spacer()
                 Menu {
-                    ForEach(BoardAutomations.palette(zone, hasPeople: !context.people.isEmpty)) { kind in
+                    ForEach(BoardAutomations.palette(zone, hasPeople: !context.people.isEmpty, planner: context.planner)) { kind in
                         Button(kind.label, systemImage: kind.symbol) { add(zone, kind.type, at: nil) }
                     }
                 } label: {
@@ -602,7 +655,7 @@ struct AutomationRuleEditor: View {
                 Text("This block came from a newer version and is kept as it is.").font(.caption).foregroundStyle(.secondary)
             } else {
                 AutomationBlockFields(block: binding(zone, block.id), zone: zone, context: context, focus: $focus,
-                                      nextRuns: zone == .trigger ? nextRuns : nil, nextRunsBad: nextRunsBad)
+                                      nextRuns: zone == .trigger ? nextRuns : nil, nextRunsBad: nextRunsBad, weatherInRule: draft.hasWeatherTest)
             }
             if let warning {
                 Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(SentinelTheme.amber)
@@ -650,7 +703,9 @@ struct AutomationRuleEditor: View {
     }
 
     private func add(_ zone: AutomationZone, _ type: String, at index: Int?) {
-        let block = BoardAutomations.make(zone, type, context: context.makeContext)
+        var make = context.makeContext
+        make.weatherTrigger = draft.trigger?.type == "weather"
+        let block = BoardAutomations.make(zone, type, context: make)
         withAnimation(.snappy) {
             switch zone {
             case .trigger:
@@ -705,10 +760,12 @@ struct AutomationRuleEditor: View {
     // Adds a {token} to the end of the last title or message typed in - or the first one there is.
     private func insert(_ token: String) {
         let target = lastTextTarget.flatMap { takesTokens($0) ? $0 : nil } ?? draft.actions.lazy.compactMap { block in
-            ["title", "text"].map { AutomationTextTarget(block: block.id, key: $0) }.first(where: takesTokens)
+            ["title", "text", "description"].map { AutomationTextTarget(block: block.id, key: $0) }.first(where: takesTokens)
         }.first
         guard let target, let index = draft.actions.firstIndex(where: { $0.id == target.block }) else {
-            tokenHint = "Add a card title or comment first, then tap the word to put it in."
+            tokenHint = context.planner
+                ? "Add a reminder or event title first, then tap the word to put it in."
+                : "Add a card title or comment first, then tap the word to put it in."
             return
         }
         tokenHint = nil
@@ -744,7 +801,7 @@ struct AutomationRuleEditor: View {
 
     private func save() async {
         draft.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        errors = BoardAutomations.problems(draft)
+        errors = BoardAutomations.problems(draft, planner: context.planner)
         guard errors.isEmpty else { return }
         saving = true
         defer { saving = false }
@@ -768,6 +825,8 @@ private struct AutomationBlockFields: View {
     var focus: FocusState<AutomationTextTarget?>.Binding
     let nextRuns: String?
     let nextRunsBad: Bool
+    // Whether a weather test says which day "the day of the weather" is.
+    let weatherInRule: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -778,6 +837,9 @@ private struct AutomationBlockFields: View {
                 if let nextRuns {
                     Text(nextRuns).font(.caption).foregroundStyle(nextRunsBad ? SentinelTheme.red : SentinelTheme.cyan)
                 }
+            case "weather" where zone == .trigger:
+                AutomationWeatherFields(test: Binding(get: { block.weather ?? BoardAutomations.weatherTest("lowNext") }, set: { block.weather = $0 }))
+                Text(BoardAutomations.weatherTriggerNote).font(.caption).foregroundStyle(.secondary)
             case "cardAdded":
                 row("to") { columnPicker("columnId", allowAny: true) }
             case "cardMoved":
@@ -807,8 +869,49 @@ private struct AutomationBlockFields: View {
                 row("the card is in") { columnPicker("columnId", allowAny: false) }
             case "onDays":
                 row("today is") { dayChips("days") }
+            case "weather":
+                AutomationWeatherFields(test: $block)
 
             // THEN
+            case "createReminder":
+                row("called") { text("title", "e.g. water the plants") }
+                Toggle("Due", isOn: Binding(
+                    get: { block.int("inDays") != nil },
+                    set: { on in
+                        block.set("inDays", on ? 0 : .null)
+                        if !on { block.set("time", "") }
+                    }))
+                if block.int("inDays") != nil {
+                    whenFields
+                    alertPicker
+                }
+                row("priority") {
+                    Picker("Priority", selection: int("priority", 0)) {
+                        ForEach(BoardAutomations.priorities, id: \.value) { Text($0.label).tag($0.value) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                row("notes") { text("description", "optional") }
+                Toggle("Skip if an unfinished reminder with this title is already there", isOn: flag("skipIfExists", false))
+            case "createEvent":
+                row("called") { text("title", "e.g. cover the plants") }
+                whenFields
+                if block.string("time")?.isEmpty == false {
+                    row("for") {
+                        Picker("How long", selection: int("durationMinutes", 60)) {
+                            ForEach(BoardAutomations.eventDurations, id: \.minutes) { Text($0.label).tag($0.minutes) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                } else {
+                    Text("No time makes it an all-day event.").font(.caption).foregroundStyle(.secondary)
+                }
+                alertPicker
+                row("where") { text("location", "optional") }
+                row("notes") { text("description", "optional") }
+                Toggle("Skip if an event with this title is already on that day", isOn: flag("skipIfExists", false))
             case "createCard":
                 row("called") { text("title", "e.g. pick up eggs") }
                 row("in") { columnPicker("columnId", allowAny: false) }
@@ -1045,6 +1148,42 @@ private struct AutomationBlockFields: View {
             }))
     }
 
+    // When a new reminder or event lands: days from today, or from the day of the weather.
+    @ViewBuilder
+    private var whenFields: some View {
+        let fromWeather = block.bool("fromWeatherDay") == true
+        HStack(spacing: 10) {
+            Picker("Due", selection: int("inDays", 0)) {
+                if fromWeather {
+                    ForEach(BoardAutomations.weatherDayOffsets, id: \.days) { Text($0.label).tag($0.days) }
+                } else {
+                    ForEach(BoardAutomations.dueDays, id: \.days) { Text($0.label).tag($0.days) }
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            AutomationOptionalTime(time: str("time"))
+        }
+        if weatherInRule || fromWeather {
+            Toggle("Counted from the day of the weather", isOn: Binding(
+                get: { fromWeather },
+                set: { on in
+                    block.set("fromWeatherDay", .bool(on))
+                    block.set("inDays", on ? -1 : 0)
+                }))
+        }
+    }
+
+    private var alertPicker: some View {
+        row("heads-up") {
+            Picker("Heads-up", selection: Binding<Int?>(get: { block.int("alertMinutes") }, set: { block.set("alertMinutes", .from($0)) })) {
+                ForEach(BoardAutomations.alerts, id: \.label) { Text($0.label).tag($0.minutes) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+
     private var dueFields: some View {
         HStack(spacing: 10) {
             Picker("Due", selection: int("inDays", 1)) {
@@ -1053,6 +1192,61 @@ private struct AutomationBlockFields: View {
             .labelsHidden()
             .fixedSize()
             AutomationOptionalTime(time: str("time"))
+        }
+    }
+}
+
+// MARK: - weather
+
+// The blanks of a weather test: what to look at, over how long, at least / at most, the number.
+private struct AutomationWeatherFields: View {
+    @Binding var test: AutomationBlock
+
+    var body: some View {
+        let metric = BoardAutomations.weatherMetric(test.string("metric"))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("the").font(.callout).foregroundStyle(.secondary)
+                Picker("Weather", selection: Binding(
+                    get: { metric.key },
+                    // A new measure starts from its own numbers - 32°F isn't an amount of rain.
+                    set: { key in
+                        let fresh = BoardAutomations.weatherTest(key)
+                        for field in ["metric", "op", "value", "window"] { test.set(field, fresh.fields[field] ?? .null) }
+                    })) {
+                    ForEach(BoardAutomations.weatherMetrics, id: \.key) { Text($0.label).tag($0.key) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                if !metric.now {
+                    Text("over").font(.callout).foregroundStyle(.secondary)
+                    Picker("Over", selection: Binding(get: { test.int("window") ?? metric.window }, set: { test.set("window", .from($0)) })) {
+                        ForEach(metric.windows, id: \.self) { Text(BoardAutomations.windowLabel($0, metric: metric)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+            HStack(spacing: 8) {
+                Text("is").font(.callout).foregroundStyle(.secondary)
+                Picker("At least or at most", selection: Binding(get: { test.string("op") == "atMost" ? "atMost" : "atLeast" }, set: { test.set("op", .string($0)) })) {
+                    Text("at least").tag("atLeast")
+                    Text("at most").tag("atMost")
+                }
+                .labelsHidden()
+                .fixedSize()
+                TextField("Amount", value: Binding(get: { test.double("value") ?? 0 }, set: { test.set("value", .number($0)) }),
+                          format: .number.precision(.fractionLength(0...2)))
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .textFieldStyle(.roundedBorder)
+                    #if os(iOS)
+                    .keyboardType(.numbersAndPunctuation)
+                    #endif
+                    .frame(width: 80)
+                Text(metric.unit).font(.callout)
+            }
+            Text(BoardAutomations.weatherSource(metric)).font(.caption).foregroundStyle(.secondary)
         }
     }
 }

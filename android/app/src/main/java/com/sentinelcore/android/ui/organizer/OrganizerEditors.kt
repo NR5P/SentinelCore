@@ -65,6 +65,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import com.sentinelcore.android.organizer.BoardAutomations
 import com.sentinelcore.android.organizer.NoteChecklist
 import com.sentinelcore.android.organizer.OrganizerComments
 import com.sentinelcore.android.organizer.OrganizerDates
@@ -333,7 +334,9 @@ fun ReminderEditorScreen(engine: OrganizerEngine, itemId: String?, onDone: () ->
         }
         ChoiceMenu("Priority", listOf("None", "Low", "Medium", "High")[priority], listOf(0 to "None", 1 to "Low", 2 to "Medium", 3 to "High")) { priority = it }
         SwitchRow("Flagged", flagged) { flagged = it }
-        if (existing?.parentId == null) SpaceSelector(engine, spaceId) { spaceId = it }
+        // Who it's for: just me, everyone, admins - everyone and admins reminders also show on the wall kiosk when due.
+        if (existing?.parentId == null) ChoiceMenu("For", engine.space(spaceId)?.let(BoardAutomations::audienceName) ?: "everyone",
+            engine.visibleSpaces.map { it.id to BoardAutomations.audienceName(it) }) { spaceId = it }
 
         saved?.takeIf { it.parentId == null }?.let { item ->
             Text("Steps", color = SentinelCyan, style = MaterialTheme.typography.labelLarge)

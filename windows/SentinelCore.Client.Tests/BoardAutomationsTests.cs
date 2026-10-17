@@ -194,12 +194,12 @@ public sealed class BoardAutomationsTests
         Assert.True(BoardAutomationRules.CardAvailableBefore(scheduled, 2));
         Assert.True(BoardAutomationRules.CardAvailableBefore(scheduled, 3));
         Assert.False(BoardAutomationRules.CardAvailableBefore(scheduled, 4));
-        Assert.Equal("A schedule has no card of its own - put “Create a card” above this step.", BoardAutomationRules.ActionWarning(scheduled, 0));
+        Assert.Equal("A schedule or weather rule has no card of its own - put “Create a card” above this step.", BoardAutomationRules.ActionWarning(scheduled, 0));
         Assert.Null(BoardAutomationRules.ActionWarning(scheduled, 2));
         Assert.NotNull(BoardAutomationRules.ActionWarning(scheduled, 4));
         // Sending needs no card.
         Assert.Null(BoardAutomationRules.ActionWarning(scheduled, 5));
-        Assert.Equal("A schedule has no card to check - this would never be true.", BoardAutomationRules.ConditionWarning(scheduled, 0));
+        Assert.Equal("A schedule or weather rule has no card to check - this would never be true.", BoardAutomationRules.ConditionWarning(scheduled, 0));
         Assert.Null(BoardAutomationRules.ConditionWarning(scheduled, 1));
 
         var moved = new BoardAutomation
@@ -211,12 +211,25 @@ public sealed class BoardAutomationsTests
         Assert.True(BoardAutomationRules.CardAvailableBefore(moved, 1));
         Assert.False(BoardAutomationRules.CardAvailableBefore(moved, 2));
         Assert.Equal("The card was deleted by an earlier step.", BoardAutomationRules.ActionWarning(moved, 2));
+
+        // The weather turning is like a schedule: no card until one is made.
+        var weather = new BoardAutomation
+        {
+            Trigger = new AutomationTrigger { Type = "weather", Weather = BoardAutomationRules.NewWeatherTest("lowNext") },
+            Actions = { new AutomationAction { Type = "addLabel" }, new AutomationAction { Type = "createReminder" } },
+            Conditions = { new AutomationCondition { Type = "inColumn" } },
+        };
+        Assert.True(weather.StartsWithoutCard);
+        Assert.False(BoardAutomationRules.CardAvailableBefore(weather, 0));
+        Assert.NotNull(BoardAutomationRules.ActionWarning(weather, 0));
+        Assert.Null(BoardAutomationRules.ActionWarning(weather, 1));
+        Assert.NotNull(BoardAutomationRules.ConditionWarning(weather, 0));
     }
 
     [Fact]
     public void Save_checks_and_reordering()
     {
-        Assert.Equal(3, BoardAutomationRules.CheckBeforeSave(new BoardAutomation()).Count);
+        Assert.Equal(3, BoardAutomationRules.CheckBeforeSave(new BoardAutomation { BoardId = "b" }).Count);
         var actions = new List<AutomationAction> { new() { Type = "a" }, new() { Type = "b" }, new() { Type = "c" } };
         BoardAutomationRules.MoveAction(actions, 0, 3);
         Assert.Equal("bca", string.Concat(actions.Select(a => a.Type)));
@@ -225,6 +238,206 @@ public sealed class BoardAutomationsTests
         // Down one, as the ▼ button does it: an insertion point two further on.
         BoardAutomationRules.MoveAction(actions, 0, 2);
         Assert.Equal("bac", string.Concat(actions.Select(a => a.Type)));
+    }
+
+    [Fact]
+    public void Weather_tests_read_like_the_dashboard()
+    {
+        AutomationCondition W(string metric, string op, double? value, int? window) => new() { Type = "weather", Metric = metric, Op = op, Value = value, Window = window };
+        string Say(AutomationCondition test) => BoardAutomationRules.WeatherWords(test);
+
+        Assert.Equal("1 inch of rain or less has fallen in the last 7 days", Say(W("rainPast", "atMost", 1, 7)));
+        Assert.Equal("1.5 inches of rain or more has fallen today", Say(W("rainPast", "atLeast", 1.5, 1)));
+        Assert.Equal("0.5 inches of rain or more is forecast in the next 2 days", Say(W("rainNext", "atLeast", 0.5, 2)));
+        Assert.Equal("1 inch of rain or less is forecast in the next day", Say(W("rainNext", "atMost", 1.0, 1)));
+        Assert.Equal("2 inches of snow or more is forecast in the next 3 days", Say(W("snowNext", "atLeast", 2, 3)));
+        Assert.Equal("it gets down to 32°F or colder in the next 7 days", Say(W("lowNext", "atMost", 32, 7)));
+        Assert.Equal("it stays at 40°F or warmer in the next day", Say(W("lowNext", "atLeast", 40, 1)));
+        Assert.Equal("it stays at 80°F or cooler in the next 5 days", Say(W("highNext", "atMost", 80, 5)));
+        Assert.Equal("it gets up to 95°F or hotter in the next 3 days", Say(W("highNext", "atLeast", 95, 3)));
+        Assert.Equal("the chance of rain stays at 20% or less in the next day", Say(W("rainChanceNext", "atMost", 20, 1)));
+        Assert.Equal("there's a 60% chance of rain or more in the next day", Say(W("rainChanceNext", "atLeast", 60, 1)));
+        Assert.Equal("it's 32°F or colder right now", Say(W("tempNow", "atMost", 32, 1)));
+        Assert.Equal("it's -5.5°F or warmer right now", Say(W("tempNow", "atLeast", -5.5, 1)));
+        Assert.Equal("the weather…", Say(W("hail", "atLeast", 1, 1)));
+        // A missing number reads as 0, a missing window as 1 - as the dashboard's `?? 0` / `|| 1`.
+        Assert.Equal("0 inches of rain or more has fallen today", Say(W("rainPast", "atLeast", null, null)));
+
+        // JavaScript's numbers, whatever the culture: 1 not 1.0, and never 0,5.
+        var saved = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            Assert.Equal("0.5 inches of rain or more is forecast in the next 2 days", Say(W("rainNext", "atLeast", 0.5, 2)));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = saved;
+        }
+        Assert.Equal("0", BoardAutomationRules.JsNumber(-0.0));
+        Assert.Equal("0.1", BoardAutomationRules.JsNumber(0.1));
+        Assert.Equal("100", BoardAutomationRules.JsNumber(100.0));
+
+        Assert.Equal("When it gets down to 32°F or colder in the next 7 days", Words(new AutomationTrigger { Type = "weather", Weather = W("lowNext", "atMost", 32, 7) }));
+        Assert.Equal("When the weather…", Words(new AutomationTrigger { Type = "weather" }));
+        Assert.Equal("1 inch of rain or less has fallen in the last 7 days", Words(W("rainPast", "atMost", 1, 7)));
+
+        var past = BoardAutomationRules.Metric("rainPast")!;
+        var next = BoardAutomationRules.Metric("lowNext")!;
+        var now = BoardAutomationRules.Metric("tempNow")!;
+        Assert.Equal(("today", "the last 7 days"), (BoardAutomationRules.WindowLabel(past, 1), BoardAutomationRules.WindowLabel(past, 7)));
+        Assert.Equal(("the next day", "the next 3 days"), (BoardAutomationRules.WindowLabel(next, 1), BoardAutomationRules.WindowLabel(next, 3)));
+        Assert.StartsWith("Measured at the nearest airport", BoardAutomationRules.WeatherSource(past));
+        Assert.StartsWith("From the nearest weather station", BoardAutomationRules.WeatherSource(now));
+        Assert.StartsWith("From the National Weather Service", BoardAutomationRules.WeatherSource(next));
+        Assert.Equal(7, BoardAutomationRules.Metrics.Length);
+    }
+
+    [Fact]
+    public void Weather_blocks_start_from_their_metrics_numbers()
+    {
+        var trigger = BoardAutomationRules.MakeTrigger("weather", Context());
+        Assert.Equal(("weather", "weather", "lowNext", "atMost", 32.0, 7), (trigger.Type, trigger.Weather!.Type, trigger.Weather.Metric, trigger.Weather.Op, trigger.Weather.Value, trigger.Weather.Window));
+        var condition = BoardAutomationRules.MakeCondition("weather", Context());
+        Assert.Equal(("weather", "rainPast", "atMost", 1.0, 7), (condition.Type, condition.Metric, condition.Op, condition.Value, condition.Window));
+
+        // Another metric starts from its own numbers - 32°F isn't an amount of rain.
+        BoardAutomationRules.ChangeMetric(condition, "rainChanceNext");
+        Assert.Equal(("rainChanceNext", "atLeast", 60.0, 1), (condition.Metric, condition.Op, condition.Value, condition.Window));
+        BoardAutomationRules.ChangeMetric(condition, "snowNext");
+        Assert.Equal(("atLeast", 2.0, 3), (condition.Op, condition.Value, condition.Window));
+
+        var json = JsonNode.Parse(BoardAutomationJson.Write(trigger))!.AsObject();
+        Assert.Equal("lowNext", json["weather"]!["metric"]!.GetValue<string>());
+        Assert.Equal(32, json["weather"]!["value"]!.GetValue<double>());
+    }
+
+    [Fact]
+    public void Reminders_and_events_read_like_the_dashboard()
+    {
+        AutomationAction Reminder(int? inDays, string time = "", bool weather = false, bool skip = false) =>
+            new() { Type = "createReminder", Title = "water", InDays = inDays, Time = time, FromWeatherDay = weather, SkipIfExists = skip };
+
+        Assert.Equal("", BoardAutomationRules.ReminderWhen(Reminder(null), Us));
+        Assert.Equal("today", BoardAutomationRules.ReminderWhen(Reminder(0), Us));
+        Assert.Equal("tomorrow at 7:00 AM", BoardAutomationRules.ReminderWhen(Reminder(1, "07:00"), Us));
+        Assert.Equal("on the day of the weather", BoardAutomationRules.ReminderWhen(Reminder(0, weather: true), Us));
+        Assert.Equal("the day before the weather", BoardAutomationRules.ReminderWhen(Reminder(-1, weather: true), Us));
+        Assert.Equal("2 days before the weather at 6:00 PM", BoardAutomationRules.ReminderWhen(Reminder(-2, "18:00", weather: true), Us));
+        Assert.Equal("1 days after the weather", BoardAutomationRules.ReminderWhen(Reminder(1, weather: true), Us));
+
+        Assert.Equal("add the reminder “water”, due today (unless it's still there)", Words(Reminder(0, skip: true)));
+        Assert.Equal("add the reminder “water”", Words(Reminder(null)));
+        Assert.Equal("add the reminder “…”, due the day before the weather", Words(new AutomationAction { Type = "createReminder", InDays = -1, FromWeatherDay = true }));
+
+        Assert.Equal("put “Bin day” on the calendar all day tomorrow", Words(new AutomationAction { Type = "createEvent", Title = "Bin day", InDays = 1, Time = "" }));
+        Assert.Equal("put “Bin day” on the calendar all day today", Words(new AutomationAction { Type = "createEvent", Title = "Bin day" }));
+        Assert.Equal("put “Cover the plants” on the calendar the day before the weather at 5:00 PM",
+            Words(new AutomationAction { Type = "createEvent", Title = "Cover the plants", InDays = -1, Time = "17:00", FromWeatherDay = true }));
+
+        var context = Context();
+        var made = BoardAutomationRules.MakeAction("createReminder", context);
+        Assert.Equal((0, "", true, 0, (int?)null, false), (made.InDays, made.Time, made.SkipIfExists, made.Priority, made.AlertMinutes, made.FromWeatherDay));
+        var weatherRule = new BoardAutomation { Trigger = BoardAutomationRules.MakeTrigger("weather", context) };
+        Assert.True(BoardAutomationRules.MakeAction("createReminder", context, weatherRule).FromWeatherDay);
+        Assert.True(BoardAutomationRules.WeatherInRule(weatherRule));
+        // A weather test in ONLY IF lets a step count from it, but a new reminder still starts from today.
+        var heldBack = new BoardAutomation { Trigger = BoardAutomationRules.MakeTrigger("schedule", context), Conditions = { BoardAutomationRules.MakeCondition("weather", context) } };
+        Assert.True(BoardAutomationRules.WeatherInRule(heldBack));
+        Assert.False(BoardAutomationRules.MakeAction("createReminder", context, heldBack).FromWeatherDay);
+        Assert.False(BoardAutomationRules.WeatherInRule(new BoardAutomation { Trigger = BoardAutomationRules.MakeTrigger("schedule", context) }));
+        var evt = BoardAutomationRules.MakeAction("createEvent", context, weatherRule);
+        Assert.Equal((0, "", 60, true, false), (evt.InDays, evt.Time, evt.DurationMinutes, evt.SkipIfExists, evt.FromWeatherDay));
+    }
+
+    private static readonly OrganizerSpace Mine = new("personal:morgan", OrganizerSpaceKind.Personal, "Morgan");
+    private static readonly OrganizerSpace Admins = new("group:admins", OrganizerSpaceKind.Group, "Admins");
+    private static readonly OrganizerSpace Book = new("group:book", OrganizerSpaceKind.Group, "Book club");
+
+    [Fact]
+    public void Planner_palette_tokens_and_spaces()
+    {
+        Assert.Equal(new[] { "schedule", "weather" }, BoardAutomationRules.Offered("trigger", planner: true).Select(b => b.Type));
+        Assert.Equal(new[] { "onDays", "weather" }, BoardAutomationRules.Offered("conditions", planner: true).Select(b => b.Type));
+        Assert.Equal(new[] { "createReminder", "createEvent", "notify", "email" }, BoardAutomationRules.Offered("actions", planner: true).Select(b => b.Type));
+        // A board gets every block, the weather and reminder ones included.
+        Assert.Contains(BoardAutomationRules.Offered("trigger", planner: false), b => b.Type == "weather");
+        Assert.Contains(BoardAutomationRules.Offered("conditions", planner: false), b => b.Type == "weather");
+        Assert.Contains(BoardAutomationRules.Offered("actions", planner: false), b => b.Type == "createEvent");
+        Assert.Equal(BoardAutomationRules.ActionBlocks.Length, BoardAutomationRules.Offered("actions", planner: false).Count);
+
+        Assert.Equal(new[] { "{date}", "{weekday}", "{month}", "{weather}", "{weatherDay}" }, BoardAutomationRules.Tokens(planner: true).Select(t => t.Token));
+        Assert.Equal(8, BoardAutomationRules.Tokens(planner: false).Length);
+
+        Assert.Equal("just me", BoardAutomationRules.SpaceWords(Mine));
+        Assert.Equal("everyone", BoardAutomationRules.SpaceWords(OrganizerSpace.Family));
+        Assert.Equal("the admins", BoardAutomationRules.SpaceWords(Admins));
+        Assert.Equal("Book club", BoardAutomationRules.SpaceWords(Book));
+        Assert.Equal("…", BoardAutomationRules.SpaceWords(null));
+        Assert.Equal("admins", BoardAutomationRules.AudienceName(Admins));
+        Assert.Equal("just me", BoardAutomationRules.AudienceName(Mine));
+        Assert.Equal("family", Assert.Single(BoardAutomationRules.PlannerSpaces(Array.Empty<OrganizerSpace>())).Id);
+    }
+
+    [Fact]
+    public void Planner_drafts_land_in_a_space_this_person_can_see()
+    {
+        var spaces = new[] { OrganizerSpace.Family, Mine, Admins };
+        var mine = new BoardAutomation { Id = "r1", Name = "Mine", BoardId = "", SpaceId = "personal:morgan", Enabled = false };
+        var edited = BoardAutomationRules.Draft(mine, null, null, spaces);
+        Assert.Equal(("r1", "", "personal:morgan", false), (edited.Id, edited.BoardId, edited.SpaceId, edited.Enabled));
+        Assert.True(edited.IsPlanner);
+        Assert.NotSame(mine, edited);
+
+        // A space that's gone - or none at all - means everyone.
+        Assert.Equal("family", BoardAutomationRules.Draft(new BoardAutomation { SpaceId = "group:gone" }, null, null, spaces).SpaceId);
+        Assert.Equal("family", BoardAutomationRules.Draft(null, null, null, spaces).SpaceId);
+        Assert.Equal("family", BoardAutomationRules.Draft(null, new BoardAutomation { SpaceId = "group:admins" }, null, Array.Empty<OrganizerSpace>()).SpaceId);
+
+        // From a recipe it's a new rule; a board's rule never has a space.
+        var recipe = BoardAutomationRules.Draft(null, new BoardAutomation { Id = "x", Enabled = false, SpaceId = "group:admins" }, null, spaces);
+        Assert.Equal(((string?)null, true, "group:admins"), (recipe.Id, recipe.Enabled, recipe.SpaceId));
+        var board = BoardAutomationRules.Draft(null, new BoardAutomation { SpaceId = "family" }, "board-1", spaces);
+        Assert.Equal(("board-1", (string?)null), (board.BoardId, board.SpaceId));
+        Assert.False(board.IsPlanner);
+        Assert.False(JsonNode.Parse(BoardAutomationJson.Write(board))!.AsObject().ContainsKey("spaceId"));
+
+        var noSpace = new BoardAutomation { Name = "x", Trigger = new AutomationTrigger { Type = "schedule" }, Actions = { new AutomationAction { Type = "createReminder" } } };
+        Assert.Equal(new[] { "Pick who the reminders and events are for." }, BoardAutomationRules.CheckBeforeSave(noSpace));
+        var blank = BoardAutomationRules.CheckBeforeSave(new BoardAutomation());
+        Assert.Equal(new[] { "Drag a WHEN block in - what starts the rule?", "Pick who the reminders and events are for.",
+            "Drag at least one THEN block in - what should happen?", "Give the rule a name." }, blank);
+        Assert.Empty(BoardAutomationRules.CheckBeforeSave(new BoardAutomation { Name = "x", BoardId = "b", Trigger = new AutomationTrigger { Type = "cardCompleted" }, Actions = { new AutomationAction { Type = "complete" } } }));
+    }
+
+    [Fact]
+    public void Planner_recipes()
+    {
+        var context = Context(people: false);
+        var recipes = BoardAutomationRules.PlannerRecipes(new[] { OrganizerSpace.Family, Mine, Admins }, "America/Chicago");
+        Assert.Equal(new[] { "Water the plants", "Freeze coming", "Rain tomorrow", "Heat wave", "Snow coming", "Bin day" }, recipes.Select(r => r.Name));
+        Assert.All(recipes, recipe => Assert.True(recipe.Rule.IsPlanner));
+        Assert.Equal("group:admins", recipes[1].Rule.SpaceId);
+        Assert.All(recipes.Where((_, i) => i != 1), recipe => Assert.Equal("family", recipe.Rule.SpaceId));
+        // Without an Admins space the freeze reminder goes to everyone.
+        Assert.Equal("family", BoardAutomationRules.PlannerRecipes(new[] { OrganizerSpace.Family }, "UTC")[1].Rule.SpaceId);
+        Assert.All(recipes, recipe => Assert.Empty(BoardAutomationRules.CheckBeforeSave(BoardAutomationRules.Draft(null, recipe.Rule, null, new[] { OrganizerSpace.Family, Admins }))));
+
+        Assert.Equal("Every Sat at 8:00 AM, if 1 inch of rain or less has fallen in the last 7 days, add the reminder “Water the plants”, due today (unless it's still there).",
+            BoardAutomationRules.RuleSentence(recipes[0].Rule, context));
+        Assert.Equal("When it gets down to 32°F or colder in the next 7 days, add the reminder “Check the pipes - {weather} {weatherDay}”, due the day before the weather (unless it's still there), then notify everyone “Down to {weather} {weatherDay} - drip the taps and cover the plants.”.",
+            BoardAutomationRules.RuleSentence(recipes[1].Rule, context));
+        Assert.Equal("When it gets up to 95°F or hotter in the next 3 days, add the reminder “Hot {weatherDay} ({weather}) - water the garden early”, due on the day of the weather at 7:00 AM (unless it's still there).",
+            BoardAutomationRules.RuleSentence(recipes[3].Rule, context));
+        Assert.Equal("Every Sun at 6:00 AM, put “Bin day” on the calendar all day tomorrow.", BoardAutomationRules.RuleSentence(recipes[5].Rule, context));
+        Assert.Equal(3, recipes[1].Rule.Actions[0].Priority);
+        Assert.Equal("America/Chicago", recipes[0].Rule.Trigger!.Schedule!.TimeZone);
+
+        var json = JsonNode.Parse(BoardAutomationJson.Write(recipes[1].Rule))!.AsObject();
+        Assert.Equal(("", "group:admins"), (json["boardId"]!.GetValue<string>(), json["spaceId"]!.GetValue<string>()));
+        Assert.True(json["actions"]![0]!["fromWeatherDay"]!.GetValue<bool>());
+        Assert.Equal(-1, json["actions"]![0]!["inDays"]!.GetValue<int>());
+        Assert.False(json.ContainsKey("isPlanner"));
     }
 
     [Fact]
@@ -316,6 +529,13 @@ public sealed class BoardAutomationsTests
         Assert.False(list.PushReady);
         Assert.True(list.EmailReady);
         Assert.Equal(("GET", "/api/organizer/automations", "b1"), (requests[^1].Method, requests[^1].Path, requests[^1].Query!["boardId"]));
+
+        handler = (_, _) => Reply("""{"automations":[{"id":"p1","name":"Water","boardId":"","spaceId":"family","trigger":{"type":"weather","weather":{"type":"weather","metric":"lowNext","op":"atMost","value":28.5,"window":3}},"conditions":[],"actions":[]}]}""");
+        var planner = await api.ListPlannerAsync();
+        var rule = Assert.Single(planner.Automations);
+        Assert.Equal(("family", true, 28.5), (rule.SpaceId, rule.IsPlanner, rule.Trigger!.Weather!.Value));
+        Assert.Equal(("GET", "/api/organizer/automations", "true"), (requests[^1].Method, requests[^1].Path, requests[^1].Query!["planner"]));
+        Assert.False(requests[^1].Query!.ContainsKey("boardId"));
 
         handler = (_, _) => Reply("""{"id":"new","name":"Eggs","boardId":"b1"}""");
         var saved = await api.SaveAsync(new BoardAutomation { Name = "Eggs", BoardId = "b1", Trigger = new AutomationTrigger { Type = "cardCompleted" } }, "America/Chicago");

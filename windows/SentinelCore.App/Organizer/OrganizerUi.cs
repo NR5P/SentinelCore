@@ -121,13 +121,14 @@ internal static class Ui
         _ => spaceId,
     };
 
-    /// <summary>A picker of the spaces this person can put something in.</summary>
-    public static ComboBox SpacePicker(OrganizerEngine engine, string selected)
+    /// <summary>A picker of the spaces this person can put something in - named as who it's for
+    /// ("just me", "everyone", "admins") when <paramref name="audience"/>, as for a reminder.</summary>
+    public static ComboBox SpacePicker(OrganizerEngine engine, string selected, bool audience = false)
     {
         var picker = new ComboBox { MinWidth = 180 };
         foreach (var space in engine.VisibleSpaces)
         {
-            picker.Items.Add(new ComboBoxItem { Content = SpaceLabel(engine, space.Id), Tag = space.Id });
+            picker.Items.Add(new ComboBoxItem { Content = audience ? BoardAutomationRules.AudienceName(space) : SpaceLabel(engine, space.Id), Tag = space.Id });
         }
         picker.SelectedItem = picker.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == selected)
                               ?? picker.Items.OfType<ComboBoxItem>().FirstOrDefault();
