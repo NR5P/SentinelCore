@@ -1811,7 +1811,7 @@ window.GateWatchSettings = (function () {
     const header = document.createElement("div");
     header.className = "settings-section-header";
     header.innerHTML = `<span class="settings-section-title">APPLE HOMEKIT</span><span class="settings-section-caret">&#9656;</span>`;
-    header.dataset.tip = "Show your cameras and Device Hub devices in the Apple Home app, and get iPhone notifications when an alert fires. Scan the pairing code below with your iPhone. Live video isn't included - HomeKit only gets motion alerts.";
+    header.dataset.tip = "Show your cameras and Device Hub devices in the Apple Home app, and get iPhone notifications when an alert fires. Scan the pairing code below with your iPhone. Turn on 'live video in home' to watch the cameras in Home too.";
     header.addEventListener("click", () => {
       section.classList.toggle("open");
       window.GateWatchTooltips.schedule();
@@ -1819,7 +1819,7 @@ window.GateWatchSettings = (function () {
 
     const body = document.createElement("div");
     body.className = "settings-section-body";
-    body.appendChild(buildSectionIntro("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications - and, with 'include device hub' on, your MQTT lights, switches and gates as accessories you can control from Home. Live video isn't included - that needs Apple's paid HomeKit Secure Video licensing - but everything else works. Nothing is put on your network until you turn this on. A HomeKit sensor is silent until you turn on Allow Notifications for it in the Home app."));
+    body.appendChild(buildSectionIntro("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications - and, with 'include device hub' on, your MQTT lights, switches and gates as accessories you can control from Home. With 'live video in home' on, each camera also becomes a HomeKit camera you can watch live in Home. Nothing is put on your network until you turn this on. A HomeKit sensor is silent until you turn on Allow Notifications for it in the Home app."));
 
     const fields = [
       {
@@ -1829,6 +1829,10 @@ window.GateWatchSettings = (function () {
       {
         name: "includeDevices", label: "include device hub", type: "checkbox",
         tip: "Also put your Device Hub devices in Apple Home - lights, switches, outlets, fans, locks and gates become real HomeKit accessories you can control and use in Home automations. Needs MQTT and the Device Hub turned on."
+      },
+      {
+        name: "includeVideo", label: "live video in home", type: "checkbox",
+        tip: "Also put each camera in Apple Home as a real camera, with live video and snapshots in the Home app, Control Center and on the Apple TV. Each person watching costs this server one video encode while they watch. Viewing away from home needs a home hub (an Apple TV or HomePod)."
       },
       {
         name: "sidecarBaseUrl", label: "sidecar url", type: "text",
@@ -1994,6 +1998,7 @@ window.GateWatchSettings = (function () {
       const payload = {
         enabled: section.querySelector('[data-field="enabled"]').checked,
         includeDevices: section.querySelector('[data-field="includeDevices"]').checked,
+        includeVideo: section.querySelector('[data-field="includeVideo"]').checked,
         sidecarBaseUrl: section.querySelector('[data-field="sidecarBaseUrl"]').value,
         minimumConfidence: Number(confidenceInput.value),
         timeoutSeconds: data.timeoutSeconds || 10

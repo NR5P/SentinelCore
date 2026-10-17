@@ -521,6 +521,10 @@ public sealed class HomeKitOptions
     // same way it polls Enabled. It lives here so the setting is bound, validated and documented
     // alongside the rest of the HomeKit section rather than existing only as a loose JSON key.
     public bool IncludeDevices { get; init; }
+
+    // Also sidecar-only: each dashboard camera becomes a HomeKit camera with live video, streamed
+    // by the sidecar from go2rtc through the dashboard's /api/internal/homekit endpoints.
+    public bool IncludeVideo { get; init; }
 }
 
 public sealed class WebhookOptions

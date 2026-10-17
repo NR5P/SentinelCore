@@ -17,6 +17,9 @@
 //   * a Lightbulb/Switch/Lock/GarageDoorOpener per Device Hub device, when HomeKit:IncludeDevices
 //     is on. Those are read from the main app's own /api/devices over loopback and kept in sync
 //     by polling, so anything on the MQTT broker becomes controllable from Apple Home.
+//   * a Camera per dashboard camera, with live video and snapshots, when HomeKit:IncludeVideo is
+//     on. The cameras and go2rtc live in the dashboard (SentinelCore.Web), not the main app, so
+//     those come from its /api/internal/homekit endpoints - see camera-stream.js.
 //
 // HomeKit requires a stable accessory graph and stable UUIDs; publishing an empty bridge and
 // adding the first accessory at the same instant it fires can leave Apple Home with an
@@ -45,11 +48,13 @@ const {
   uuid,
 } = require("@homebridge/hap-nodejs");
 const QRCode = require("qrcode");
+const { CameraStreamer } = require("./camera-stream");
 
 const PERSIST_DIR = process.env.HOMEKIT_PERSIST_DIR || path.join(__dirname, "persist");
 const IDENTITY_FILE = path.join(PERSIST_DIR, "identity.json");
 const CAMERAS_FILE = path.join(PERSIST_DIR, "cameras.json");
 const DEVICES_FILE = path.join(PERSIST_DIR, "devices.json");
+const VIDEO_FILE = path.join(PERSIST_DIR, "video-cameras.json");
 
 // The main app's config is the single source of truth for whether HomeKit is on - the dashboard
 // writes it there, same as every other setting.
@@ -71,6 +76,17 @@ const FIRMWARE_REVISION = require("./package.json").version;
 const MAIN_APP_URL = (process.env.HOMEKIT_MAIN_APP_URL || "http://127.0.0.1:5080").replace(/\/+$/, "");
 const MAIN_APP_TIMEOUT_MS = 5_000;
 
+// Where the dashboard listens on plain HTTP. Its stream and snapshot endpoints only answer
+// loopback callers carrying the same Bridge:ApiKey.
+const WEB_APP_URL = (process.env.HOMEKIT_WEB_APP_URL || "http://127.0.0.1:3320").replace(/\/+$/, "");
+// A snapshot has to come back inside HAP's 15-second limit, and a stream registration can mean
+// go2rtc dialling the camera for the first time.
+const WEB_APP_TIMEOUT_MS = 10_000;
+
+// How often to reconcile the camera roster. Cameras are added and renamed far less often than
+// Device Hub state changes, so this is slow on purpose.
+const VIDEO_POLL_MS = Number(process.env.HOMEKIT_VIDEO_POLL_MS || 30_000);
+
 // How long a motion sensor stays "detected" before resetting. The true -> false transition is
 // what Apple Home turns into a push notification, so this has to actually flip back.
 const MOTION_RESET_MS = 10_000;
@@ -82,7 +98,7 @@ const MOMENTARY_RESET_MS = 3_000;
 
 // How often to re-read the enabled flag. Matches the dashboard's other "takes effect within a
 // few seconds, no restart needed" settings.
-const SETTINGS_POLL_MS = 10_000;
+const SETTINGS_POLL_MS = Number(process.env.HOMEKIT_SETTINGS_POLL_MS || 10_000);
 
 // How often to reconcile the Device Hub roster and push device state into HomeKit. The Device Hub
 // tab polls the same state endpoint at a similar rate, so this adds no new load pattern.
@@ -244,6 +260,39 @@ async function callMainApp(apiPath, { method = "GET", body } = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+async function callWebApp(apiPath, { method = "GET", body, binary = false } = {}) {
+  const apiKey = readMainSettings()?.Bridge?.ApiKey;
+  if (!apiKey) throw new Error("the main app's API key is not set in appsettings.json");
+
+  const headers = { "x-api-key": apiKey };
+  if (body !== undefined) headers["content-type"] = "application/json";
+
+  const response = await fetch(`${WEB_APP_URL}${apiPath}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(WEB_APP_TIMEOUT_MS),
+  });
+
+  if (!response.ok) throw new Error(`${method} ${apiPath} returned ${response.status}`);
+  if (binary) return Buffer.from(await response.arrayBuffer());
+  return response.json();
+}
+
+const videoApi = {
+  async streamUrl(id, quality) {
+    const result = await callWebApp(`/api/internal/homekit/cameras/${encodeURIComponent(id)}/stream`, {
+      method: "POST",
+      body: { quality },
+    });
+    if (typeof result?.url !== "string") throw new Error("the dashboard returned no stream address");
+    return result.url;
+  },
+  snapshot(id) {
+    return callWebApp(`/api/internal/homekit/cameras/${encodeURIComponent(id)}/snapshot.jpg`, { binary: true });
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Bridge
 // ---------------------------------------------------------------------------
@@ -279,6 +328,8 @@ const publishInfo = {
 const motionAccessories = new Map();
 // device id -> { accessory, service, id, name, kind, shape, momentary, supportsBrightness, ... }
 const deviceAccessories = new Map();
+// camera id -> { accessory, streamer, id, name, audio }
+const videoAccessories = new Map();
 let published = false;
 const startedAt = new Date().toISOString();
 let lastTriggerAt = null;
@@ -356,6 +407,21 @@ function triggerMotion(cameraName) {
     entry.service.updateCharacteristic(Characteristic.MotionDetected, false);
     entry.resetTimer = null;
   }, MOTION_RESET_MS);
+
+  // The camera with live video gets the same trip on its own motion sensor, which is what makes
+  // Home put a snapshot in the notification. Matched by name: alerts name a camera the way the
+  // dashboard does when it raised them itself.
+  for (const video of videoAccessories.values()) {
+    if (normalize(video.name) !== normalize(entry.name)) continue;
+    const service = video.streamer.motionService;
+    if (!service) continue;
+    service.updateCharacteristic(Characteristic.MotionDetected, true);
+    if (video.resetTimer) clearTimeout(video.resetTimer);
+    video.resetTimer = setTimeout(() => {
+      service.updateCharacteristic(Characteristic.MotionDetected, false);
+      video.resetTimer = null;
+    }, MOTION_RESET_MS);
+  }
 }
 
 function restoreMotionAccessories() {
@@ -718,16 +784,168 @@ async function syncDevices() {
 }
 
 // ---------------------------------------------------------------------------
+// Cameras with live video
+// ---------------------------------------------------------------------------
+
+function isVideoCamera(camera) {
+  return Boolean(camera)
+    && typeof camera.id === "string" && camera.id !== ""
+    && typeof camera.name === "string" && camera.name.trim() !== "";
+}
+
+function createVideoAccessory(camera) {
+  const name = camera.name.trim();
+  // A different namespace from the motion sensors' "sentinelcore:camera:" on purpose: the
+  // existing sensors keep their identity (and any automations built on them) when video is
+  // turned on, and this accessory is keyed by the dashboard's camera id so a rename keeps it.
+  const accessory = new Accessory(name, uuid.generate(`sentinelcore:video:${camera.id}`));
+  accessory.category = Categories.CAMERA;
+  applyAccessoryInformation(accessory, "Camera", serialFor("video", camera.id));
+
+  const streamer = new CameraStreamer({ id: camera.id, name, audio: camera.audio === true }, videoApi);
+  accessory.configureController(streamer.controller);
+  bridge.addBridgedAccessory(accessory);
+
+  const entry = { accessory, streamer, id: camera.id, name, audio: camera.audio === true, resetTimer: null };
+  videoAccessories.set(camera.id, entry);
+  console.log(`Added HomeKit camera "${name}" (serial ${serialOf(accessory)})`);
+  return entry;
+}
+
+function removeVideoAccessory(id) {
+  const entry = videoAccessories.get(id);
+  if (!entry) return;
+  entry.streamer.stopAll();
+  if (entry.resetTimer) clearTimeout(entry.resetTimer);
+  bridge.removeBridgedAccessory(entry.accessory);
+  videoAccessories.delete(id);
+  console.log(`Removed HomeKit camera "${entry.name}"`);
+}
+
+// Returns whether the persisted roster needs writing.
+function ensureVideoAccessory(camera) {
+  const existing = videoAccessories.get(camera.id);
+  if (!existing) {
+    createVideoAccessory(camera);
+    return true;
+  }
+  const name = camera.name.trim();
+  let changed = false;
+  if (existing.name !== name) {
+    existing.name = name;
+    existing.streamer.camera.name = name;
+    existing.accessory.displayName = name;
+    existing.accessory.getService(Service.AccessoryInformation)
+      .updateCharacteristic(Characteristic.Name, name);
+    changed = true;
+  }
+  const audio = camera.audio === true;
+  if (existing.audio !== audio) {
+    existing.audio = audio;
+    existing.streamer.camera.audio = audio;
+    changed = true;
+  }
+  return changed;
+}
+
+function persistVideoRoster() {
+  fs.mkdirSync(PERSIST_DIR, { recursive: true });
+  const roster = [...videoAccessories.values()].map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    audio: entry.audio,
+  }));
+  const tempPath = `${VIDEO_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(roster, null, 2), { mode: 0o600 });
+  fs.renameSync(tempPath, VIDEO_FILE);
+}
+
+// Restored before publish for the same reason the sensors and devices are.
+function restoreVideoAccessories() {
+  if (!includeVideo) return;
+
+  let roster;
+  try {
+    if (!fs.existsSync(VIDEO_FILE)) return;
+    roster = JSON.parse(fs.readFileSync(VIDEO_FILE, "utf8"));
+    if (!Array.isArray(roster)) throw new Error("expected a JSON array");
+  } catch (error) {
+    console.warn(`Could not load ${VIDEO_FILE}: ${error.message}`);
+    return;
+  }
+
+  for (const camera of roster) {
+    if (!isVideoCamera(camera) || videoAccessories.has(camera.id)) continue;
+    createVideoAccessory(camera);
+  }
+  if (videoAccessories.size > 0) {
+    console.log(`Restored ${videoAccessories.size} HomeKit camera(s) before publish.`);
+  }
+}
+
+let lastVideoError = null;
+
+async function syncVideo() {
+  if (!includeVideo) {
+    if (videoAccessories.size > 0) {
+      for (const id of [...videoAccessories.keys()]) removeVideoAccessory(id);
+      persistVideoRoster();
+    }
+    return;
+  }
+
+  let roster;
+  try {
+    roster = await callWebApp("/api/internal/homekit/cameras");
+  } catch (error) {
+    const message = error?.message || String(error);
+    if (message !== lastVideoError) {
+      console.warn(`Could not sync HomeKit cameras: ${message}`);
+      lastVideoError = message;
+    }
+    return;
+  }
+  if (lastVideoError !== null) {
+    console.log("HomeKit camera sync recovered.");
+    lastVideoError = null;
+  }
+
+  const wanted = (Array.isArray(roster) ? roster : []).filter(isVideoCamera);
+  const wantedIds = new Set(wanted.map((camera) => camera.id));
+
+  let changed = false;
+  for (const id of [...videoAccessories.keys()]) {
+    if (!wantedIds.has(id)) {
+      removeVideoAccessory(id);
+      changed = true;
+    }
+  }
+  for (const camera of wanted) {
+    if (ensureVideoAccessory(camera)) changed = true;
+  }
+  if (changed) persistVideoRoster();
+}
+
+async function pollVideo() {
+  try {
+    await syncVideo();
+  } catch (error) {
+    console.warn(`Could not sync HomeKit cameras: ${error.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Enabled flags - polled from the main app's config
 // ---------------------------------------------------------------------------
 
 let enabled = false;
 let includeDevices = false;
+let includeVideo = false;
 
 function readFlags() {
   const settings = readMainSettings();
   // Keep the current state on an unreadable config rather than flapping the bridge off.
-  if (!settings) return { enabled, includeDevices };
+  if (!settings) return { enabled, includeDevices, includeVideo };
 
   const homeKit = settings.HomeKit || {};
   const on = homeKit.Enabled === true;
@@ -737,6 +955,7 @@ function readFlags() {
     // itself is on. Turning HomeKit off has to take everything off the network, not leave the
     // lights behind.
     includeDevices: on && homeKit.IncludeDevices === true,
+    includeVideo: on && homeKit.IncludeVideo === true,
   };
 }
 
@@ -764,6 +983,10 @@ async function pollSettings() {
   try {
     const flags = readFlags();
     includeDevices = flags.includeDevices;
+    const videoChanged = flags.includeVideo !== includeVideo;
+    includeVideo = flags.includeVideo;
+    // Without this, turning video on or off would wait for the next slow roster poll.
+    if (videoChanged) pollVideo();
     await applyEnabledState(flags.enabled);
   } catch (error) {
     console.error("Failed to apply HomeKit enabled state:", error.message);
@@ -844,6 +1067,13 @@ const server = http.createServer(async (req, res) => {
       // Whatever stopped the last Device Hub sync, so the dashboard can say "the main app isn't
       // answering" rather than showing an empty list that looks like "you have no devices".
       deviceError: lastDeviceError,
+      includeVideo,
+      cameras: [...videoAccessories.values()].map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        viewers: entry.streamer.sessions.size,
+      })),
+      videoError: lastVideoError,
       hapPort: HAP_PORT,
       advertiser: ADVERTISER,
       startedAt,
@@ -905,13 +1135,16 @@ server.listen(CONTROL_PORT, "127.0.0.1", () => {
 // consistent accessory graph during pairing and after every sidecar restart. The flags are read
 // synchronously first because restoreDeviceAccessories() needs to know whether devices are in
 // play before the bridge goes on the network.
-includeDevices = readFlags().includeDevices;
+({ includeDevices, includeVideo } = readFlags());
 restoreMotionAccessories();
 restoreDeviceAccessories();
+restoreVideoAccessories();
 pollSettings();
 const pollTimer = setInterval(pollSettings, SETTINGS_POLL_MS);
 pollDevices();
 const deviceTimer = setInterval(pollDevices, DEVICE_POLL_MS);
+pollVideo();
+const videoTimer = setInterval(pollVideo, VIDEO_POLL_MS);
 
 // systemd sends SIGTERM on stop/restart; unpublishing cleanly means paired iPhones see the
 // bridge go away rather than treating it as unresponsive.
@@ -923,6 +1156,8 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     console.log(`Received ${signal}, shutting down.`);
     clearInterval(pollTimer);
     clearInterval(deviceTimer);
+    clearInterval(videoTimer);
+    for (const entry of videoAccessories.values()) entry.streamer.stopAll();
     server.close();
     if (published) await bridge.unpublish();
     process.exit(0);

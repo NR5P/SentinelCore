@@ -136,6 +136,19 @@ public sealed class Go2RtcManager : IDisposable
         await RegisterStreamAsync(camera, cancellationToken);
     }
 
+    // The loopback RTSP address of one rendition, registered first, for the HomeKit sidecar's
+    // ffmpeg (HomeKitVideoEndpoints). Same sharing argument as EnsureRecordableAsync: a Home
+    // viewer rides on whatever upstream connection go2rtc already holds for this camera.
+    public async Task<string> EnsureRtspSourceAsync(
+        Camera camera, StreamQuality quality, CancellationToken cancellationToken)
+    {
+        await EnsureStartedAsync(cancellationToken);
+        var effective = EffectiveQuality(camera, quality);
+        if (!camera.IsBrowserPublished)
+            await RegisterStreamAsync(camera, effective, cancellationToken);
+        return $"rtsp://127.0.0.1:{_rtspPort}/{StreamName(camera.Id, effective)}";
+    }
+
     // The whole signaling exchange for one viewer: make sure the sidecar is up and this camera
     // is registered with it, hand go2rtc the browser's SDP offer, return go2rtc's answer. The
     // answer contains go2rtc's ICE candidates (it gathers before responding), after which media

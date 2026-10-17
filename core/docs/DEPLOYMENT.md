@@ -679,6 +679,13 @@ Two ports are involved, and they're deliberately different in kind:
   iPhones connect to it directly (mDNS only advertises where to find it). See
   [section 14](#14-firewall).
 
+With **live video in home** turned on, video doesn't use either port: the sidecar's ffmpeg sends
+encrypted RTP (SRTP) over UDP straight to the viewing iPhone or home hub, which sends receiver
+reports back to a random high UDP port. A firewall that allows outbound UDP and established
+replies is enough. The sidecar reaches the dashboard's camera endpoints at
+`http://127.0.0.1:3320` (override with `HOMEKIT_WEB_APP_URL`) and needs `ffmpeg` on the PATH
+(override with `HOMEKIT_FFMPEG_PATH`).
+
 mDNS advertisement goes through the system `avahi-daemon` over D-Bus rather than the sidecar
 binding UDP 5353 itself, which avoids fighting avahi for the port. That's why the unit file has
 `After=avahi-daemon.service`. If avahi isn't running on your system, change `MDNSAdvertiser.AVAHI`

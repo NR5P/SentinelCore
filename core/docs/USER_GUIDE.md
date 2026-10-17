@@ -2621,11 +2621,9 @@ Off by default. When enabled, each camera appears in Apple's **Home** app as a m
 so your iPhone gets a native notification the moment an alert-worthy event happens — no
 Telegram account, no email, and no Home Assistant in between.
 
-**What you get, and what you don't.** This is alerts only. Live video *through* HomeKit isn't
-included: Apple gates camera streaming behind HomeKit Secure Video, which requires a paid MFi
-licence. Watching your cameras live still works exactly as it always has, in the dashboard's
-LIVE tab. Everything else about HomeKit — notifications, automations triggered by motion,
-seeing which camera fired — works normally.
+**What you get.** Motion alerts out of the box. Turn on **live video in home** (below) and
+every camera can also be watched live in Home, Control Center and on an Apple TV. Recording into
+iCloud (HomeKit Secure Video) isn't included; the dashboard keeps doing the recording.
 
 **Setting it up.**
 
@@ -2674,6 +2672,23 @@ Devices are off by default even when HomeKit is on, because turning them on chan
 an already-paired bridge. Turning HomeKit itself off takes the devices off the network too — they
 ride on the same pairing. If a device's MQTT availability topic goes quiet, its tile shows
 **No Response** rather than cheerfully reporting "off" for something that's unplugged.
+
+**Live video in Home.** Turn on **live video in home** in the same settings section and every
+camera on the CAMERAS tab becomes a real HomeKit camera under the Sentinel Core bridge, with a
+live view and a snapshot tile. No re-pairing is needed; the cameras simply appear. Opening one in
+Home starts an ffmpeg on this server that re-encodes the camera to the size Home asked for
+(small tiles come from the camera's low-res sub stream, full screen from the main stream) and
+stops as soon as you close it. Each person watching costs roughly one CPU core while they watch,
+and it reads through go2rtc, so it doesn't take another connection from the camera.
+
+When an alert fires for a camera whose name matches the camera's name on the CAMERAS tab, that
+camera's own motion sensor trips too, and Home puts a snapshot in the notification. The older
+motion-sensor tiles stay as they were, so automations built on them keep working; if you get two
+notifications for one event, turn notifications off on the old sensor tile.
+
+Watching from outside the house needs a **home hub**, an Apple TV or HomePod that is signed in to
+your home and shows as **Connected** under Home Settings → Home Hubs & Bridges. Audio is sent
+when the camera has audio turned on; two-way talk isn't supported.
 
 **What triggers a notification.** Only events that would also have alerted Email/Telegram —
 the same judgement described in

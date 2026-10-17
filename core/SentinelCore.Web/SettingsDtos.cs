@@ -533,6 +533,10 @@ public sealed class HomeKitSettingsDto
     // because it changes the shape of an already-paired bridge: turning it on adds an accessory
     // per Device Hub device to Apple Home, which is a pleasant surprise only if it was asked for.
     public bool IncludeDevices { get; set; }
+
+    // Also read by the sidecar only. Off by default for the same reason as IncludeDevices, and
+    // because every Home viewer costs an ffmpeg encode on this machine while it is watching.
+    public bool IncludeVideo { get; set; }
 }
 
 public sealed class MqttSettingsDto

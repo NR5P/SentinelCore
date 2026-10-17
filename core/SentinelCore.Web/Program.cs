@@ -751,6 +751,7 @@ app.MapNotificationTestProxyEndpoints();
 app.MapDeviceHubProxyEndpoints();
 app.MapAlarmEndpoints();
 app.MapHomeKitEndpoints();
+app.MapHomeKitVideoEndpoints();
 app.MapPushEndpoints();
 app.MapTimelineEndpoints();
 app.MapDocsEndpoints();

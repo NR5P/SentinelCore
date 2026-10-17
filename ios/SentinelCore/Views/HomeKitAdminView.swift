@@ -40,7 +40,7 @@ struct HomeKitAdminView: View {
             } header: {
                 Text("Status")
             } footer: {
-                Text("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications. Live video isn't included — that needs Apple's paid HomeKit Secure Video licensing. Nothing is put on your network until this is turned on.")
+                Text("Puts your cameras in Apple's Home app as motion sensors, so alert-worthy events become native iPhone notifications. Turn on live video in the dashboard's HomeKit settings to watch the cameras in Home too. Nothing is put on your network until this is turned on.")
             }
 
             // Only worth showing when there's something to pair with: an unpublished sidecar has

@@ -540,3 +540,120 @@ test("reports a Device Hub sync failure instead of showing an empty device list"
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// A stand-in for the dashboard's /api/internal/homekit endpoints.
+function startStubWebApp(cameras) {
+  const server = http.createServer((req, res) => {
+    if (req.headers["x-api-key"] !== "test-key") {
+      res.writeHead(401).end();
+      return;
+    }
+    if (req.url === "/api/internal/homekit/cameras") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(cameras));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port }));
+  });
+}
+
+test("publishes dashboard cameras with live video only while IncludeVideo is on", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sentinel-homekit-video-"));
+  const persistDir = path.join(root, "persist");
+  const settingsPath = path.join(root, "appsettings.json");
+
+  const cameras = [
+    { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Gate Camera", audio: true },
+    { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", name: "Chicken coop", audio: false },
+  ];
+  const web = await startStubWebApp(cameras);
+  const writeSettings = (includeVideo) => fs.writeFileSync(settingsPath, JSON.stringify({
+    HomeKit: { Enabled: true, IncludeVideo: includeVideo },
+    Bridge: { ApiKey: "test-key" },
+  }));
+  writeSettings(true);
+
+  const controlPort = await freePort();
+  const hapPort = await freePort();
+  const child = spawn(process.execPath, [path.join(__dirname, "index.js")], {
+    env: {
+      ...process.env,
+      HOMEKIT_MAIN_SETTINGS: settingsPath,
+      HOMEKIT_PERSIST_DIR: persistDir,
+      HOMEKIT_CONTROL_PORT: String(controlPort),
+      HOMEKIT_HAP_PORT: String(hapPort),
+      HOMEKIT_ADVERTISER: "ciao",
+      HOMEKIT_WEB_APP_URL: `http://127.0.0.1:${web.port}`,
+      HOMEKIT_VIDEO_POLL_MS: "200",
+      HOMEKIT_SETTINGS_POLL_MS: "200",
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { output += chunk.toString(); });
+
+  try {
+    await waitFor(async () => output, (o) => o.includes("Control API listening"), "the control API to start");
+    const readStatus = async () => JSON.parse((await request(controlPort, "GET", "/api/status")).body);
+
+    const status = await waitFor(readStatus, (s) => s.cameras.length === 2, "two video cameras");
+    assert.equal(status.includeVideo, true);
+    assert.deepEqual(status.cameras.map((c) => c.name).sort(), ["Chicken coop", "Gate Camera"]);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(persistDir, "video-cameras.json"), "utf8")).map((c) => c.id).sort(),
+      cameras.map((c) => c.id).sort());
+    const serials = [...output.matchAll(/Added HomeKit camera "[^"]+" \(serial ([^)\s]+)\)/g)].map((m) => m[1]);
+    assert.equal(new Set(serials).size, 2);
+    for (const serial of serials) assert.match(serial, /^VIDEO-[A-Z0-9-]+-[0-9A-F]{8}$/);
+
+    writeSettings(false);
+    await waitFor(readStatus, (s) => s.cameras.length === 0 && s.includeVideo === false, "the cameras to be removed");
+  } finally {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    web.server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("builds an SRTP ffmpeg command that matches what Home asked for", () => {
+  const { buildFfmpegArgs } = require("./camera-stream");
+  const { AudioStreamingCodecType, AudioStreamingSamplerate, H264Level, H264Profile } = require("@homebridge/hap-nodejs");
+  const session = {
+    address: "192.168.10.44",
+    videoPort: 50000, videoSsrc: 1234, videoKey: Buffer.alloc(16, 1), videoSalt: Buffer.alloc(14, 2),
+    audioPort: 50002, audioSsrc: 5678, audioKey: Buffer.alloc(16, 3), audioSalt: Buffer.alloc(14, 4),
+  };
+  const video = { width: 1280, height: 720, fps: 30, max_bit_rate: 299, pt: 99, mtu: 1378, profile: H264Profile.MAIN, level: H264Level.LEVEL3_1 };
+  const audio = { codec: AudioStreamingCodecType.OPUS, sample_rate: AudioStreamingSamplerate.KHZ_16, max_bit_rate: 24, pt: 110, packet_time: 20 };
+
+  const args = buildFfmpegArgs({ sourceUrl: "rtsp://127.0.0.1:18554/abc", session, video, audio, includeAudio: true });
+  const after = (flag, from = 0) => args[args.indexOf(flag, from) + 1];
+
+  assert.equal(after("-i"), "rtsp://127.0.0.1:18554/abc");
+  assert.equal(after("-codec:v"), "libx264");
+  assert.equal(after("-profile:v"), "main");
+  assert.equal(after("-level:v"), "3.1");
+  assert.equal(after("-b:v"), "299k");
+  assert.equal(after("-payload_type"), "99");
+  assert.equal(after("-ssrc"), "1234");
+  assert.equal(after("-srtp_out_params"), Buffer.concat([session.videoKey, session.videoSalt]).toString("base64"));
+  assert.ok(args.includes("srtp://192.168.10.44:50000?rtcpport=50000&pkt_size=1378"));
+  assert.match(after("-filter:v"), /scale=w=1280:h=720:force_original_aspect_ratio=decrease/);
+
+  const audioStart = args.indexOf("-codec:a");
+  assert.equal(args[audioStart + 1], "libopus");
+  assert.equal(after("-ar", audioStart), "16000");
+  assert.equal(after("-payload_type", audioStart), "110");
+  assert.ok(args.includes("srtp://192.168.10.44:50002?rtcpport=50002&pkt_size=188"));
+
+  // No audio output for a camera without audio, or for a codec we don't encode.
+  const silent = buildFfmpegArgs({ sourceUrl: "x", session, video, audio, includeAudio: false });
+  assert.equal(silent.includes("-codec:a"), false);
+  const aac = buildFfmpegArgs({ sourceUrl: "x", session, video, audio: { ...audio, codec: AudioStreamingCodecType.AAC_ELD }, includeAudio: true });
+  assert.equal(aac.includes("-codec:a"), false);
+});
