@@ -72,6 +72,9 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                 services.Remove(worker);
                 services.Remove(services.First(s => s.ImplementationType == typeof(MediaImportWorker)));
                 services.Remove(services.First(s => s.ImplementationType == typeof(MullvadAccountWorker)));
+                // Its startup scan lands 45 s in and prunes the library rows these tests seed
+                // without files on disk - on a loaded box a test can still be running by then.
+                services.Remove(services.First(s => s.ImplementationType == typeof(MediaScanWorker)));
                 if (_music is not null) services.AddSingleton<IMusicAudioSource>(_music);
             }));
 
