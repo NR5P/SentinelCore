@@ -1336,10 +1336,12 @@ window.SentinelMusic = (function () {
     }
     content.dataset.dlShape = shape;
     setContent(`<div class="au-dl-page">${vpnLine(data.status || (dl.status && dl.status.status))}
+      <div class="mi-section"></div>
       <div class="mv-dl-head"><h3 class="mv-section-title">Downloading</h3>
         <button type="button" class="mv-btn mv-btn-primary" data-act="dl-add">${ICON.plus}<span>add an album</span></button></div>
       ${active.length ? `<div class="mv-dl-list">${active.map(downloadRow).join("")}</div>` : `<div class="mv-empty"><div>Nothing downloading. Press <b>add an album</b> to find one.</div></div>`}
       ${recent.length ? `<h3 class="mv-section-title">Recent</h3><div class="mv-dl-list">${recent.map(downloadRow).join("")}</div>` : ""}</div>`);
+    if (window.MediaImport) window.MediaImport.mount("music", content.querySelector(".mi-section"));
   }
 
   async function downloadAction(act, id, button) {
@@ -1391,7 +1393,8 @@ window.SentinelMusic = (function () {
     return `${vpnOff}${noLib}
       <form class="mv-match-form" id="mu-add-form"><input class="field-input" id="mu-add-q" value="${h(add.q)}" placeholder="Artist and album, e.g. fleetwood mac rumours" autocomplete="off" autofocus>
         <button type="submit" class="mv-btn mv-btn-primary">${ICON.search}<span>find</span></button></form>
-      <div class="mv-match-results">${results}</div>`;
+      <div class="mv-match-results">${results}</div>
+      <div class="mi-add-link">Have a whole Spotify library or playlist? <button type="button" class="mv-link" data-mact="mu-import">Import a list</button></div>`;
   }
 
   async function lookup() {
@@ -1498,6 +1501,7 @@ window.SentinelMusic = (function () {
   U.onModalAction((act, target) => {
     switch (act) {
       case "mu-add-to": addTracksTo(target.dataset.id, target); return true;
+      case "mu-import": U.closeModal(); if (window.MediaImport) window.MediaImport.open("music"); return true;
       case "submit:mu-newpl-form": createWithTracks(el("mu-newpl-name").value.trim()); return true;
       case "submit:mu-pl-form": submitEditor(target); return true;
       case "mu-rule-add":

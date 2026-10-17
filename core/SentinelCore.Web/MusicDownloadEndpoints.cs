@@ -40,6 +40,8 @@ public static class MusicDownloadEndpoints
             return await next(invocation);
         });
 
+        enabled.MapImports(MediaImportList.KindMusic);
+
         enabled.MapGet("/lookup", async (string? q, MusicDownloadLookup lookup, IMusicAudioSource music, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(q)) return Results.BadRequest(new { error = "Type an album or an artist to search for." });

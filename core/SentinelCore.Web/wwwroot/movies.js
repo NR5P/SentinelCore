@@ -2122,12 +2122,14 @@ window.SentinelMovies = (function () {
     const active = data.active || [];
     const recent = data.recent || [];
     pane.innerHTML = `${vpnMarkup(data.status)}
+      <div class="mi-section"></div>
       <div class="mv-dl-head"><h3 class="mv-section-title">Downloading</h3>
         <button type="button" class="mv-btn mv-btn-primary" data-act="dl-add">${ICON.plus}<span>add a movie or show</span></button></div>
       ${active.length ? `<div class="mv-dl-list">${active.map(downloadRow).join("")}</div>`
         : `<div class="mv-empty"><div>Nothing downloading. Press <b>add</b> to find a movie or TV episodes.</div></div>`}
       ${recent.length ? `<h3 class="mv-section-title">Recent</h3><div class="mv-dl-list">${recent.map(downloadRow).join("")}</div>` : ""}`;
     wireImages(pane);
+    if (window.MediaImport) window.MediaImport.mount("movies", pane.querySelector(".mi-section"));
   }
 
   async function downloadAction(act, id, button) {
@@ -2218,7 +2220,8 @@ window.SentinelMovies = (function () {
         <button type="submit" class="mv-btn mv-btn-primary">${ICON.search}<span>find</span></button>
       </form>
       ${direct}
-      <div class="mv-match-results">${results}</div>`;
+      <div class="mv-match-results">${results}</div>
+      <div class="mi-add-link">Have a Letterboxd or IMDb watchlist? <button type="button" class="mv-link" data-mact="import-list">Import a list</button></div>`;
   }
 
   async function lookup(searchSitesIfNoTmdb = true) {
@@ -2718,6 +2721,7 @@ window.SentinelMovies = (function () {
       if (!target) return;
       switch (target.dataset.mact) {
         case "close": case "cancel": closeModal(); break;
+        case "import-list": closeModal(); if (window.MediaImport) window.MediaImport.open("movies"); break;
         case "match": applyMatch(target, target.dataset.tmdb); break;
         case "unlock": unlockMatch(target); break;
         case "folder": loadFolder(target.dataset.path); break;

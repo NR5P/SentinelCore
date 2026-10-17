@@ -577,6 +577,10 @@ public sealed class MediaDownloadManager(
         finally { _queueLock.Release(); }
     }
 
+    // For "Import a list": is this film already in the library?
+    public async Task<bool> HasMovieAsync(string title, int? year, CancellationToken cancellationToken) =>
+        await OwnedCopyAsync(new MediaDownloadSearchInput { Kind = MediaKinds.Movie, Title = title, Year = year }, cancellationToken) is not null;
+
     // The movie already in the library that a search is for: the same TMDB film, or - when either
     // side has no TMDB id - the same title and year.
     private async Task<MediaItem?> OwnedCopyAsync(MediaDownloadSearchInput wanted, CancellationToken cancellationToken)

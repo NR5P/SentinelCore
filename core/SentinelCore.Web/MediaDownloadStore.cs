@@ -30,6 +30,12 @@ public sealed class MediaDownloadStore : IDisposable
                 Data TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS IX_MediaDownloads_Created ON MediaDownloads (CreatedAt);
+
+            CREATE TABLE IF NOT EXISTS MediaImports (
+                Id TEXT PRIMARY KEY,
+                CreatedAt TEXT NOT NULL,
+                Data TEXT NOT NULL
+            );
             """;
         command.ExecuteNonQuery();
     }
@@ -91,6 +97,70 @@ public sealed class MediaDownloadStore : IDisposable
         {
             using var command = _connection.CreateCommand();
             command.CommandText = "DELETE FROM MediaDownloads WHERE Id = $id";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally { _lock.Release(); }
+    }
+
+    // MARK: - Imported lists ("Import a list" on Music and Movies)
+
+    public async Task<IReadOnlyList<MediaImportJob>> AllImportsAsync(CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT Data FROM MediaImports ORDER BY CreatedAt";
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var list = new List<MediaImportJob>();
+            while (await reader.ReadAsync(cancellationToken))
+                if (JsonSerializer.Deserialize<MediaImportJob>(reader.GetString(0), JsonOptions) is { } job) list.Add(job);
+            return list;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task<MediaImportJob?> GetImportAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT Data FROM MediaImports WHERE Id = $id";
+            command.Parameters.AddWithValue("$id", id.ToString("N"));
+            return await command.ExecuteScalarAsync(cancellationToken) is string json
+                ? JsonSerializer.Deserialize<MediaImportJob>(json, JsonOptions)
+                : null;
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task SaveImportAsync(MediaImportJob job, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO MediaImports (Id, CreatedAt, Data) VALUES ($id, $created, $data)
+                ON CONFLICT(Id) DO UPDATE SET Data = excluded.Data
+                """;
+            command.Parameters.AddWithValue("$id", job.Id.ToString("N"));
+            command.Parameters.AddWithValue("$created", job.CreatedAt.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$data", JsonSerializer.Serialize(job, JsonOptions));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally { _lock.Release(); }
+    }
+
+    public async Task DeleteImportAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "DELETE FROM MediaImports WHERE Id = $id";
             command.Parameters.AddWithValue("$id", id.ToString("N"));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }

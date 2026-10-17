@@ -47,6 +47,7 @@ public static class MediaDownloadEndpoints
         MapLookup(enabled);
         MapSearch(enabled);
         MapQueue(enabled);
+        enabled.MapImports(MediaImportList.KindMovies);
         MapSites(enabled.MapGroup("/sites").RequireAuthorization("AdminOnly"));
     }
 

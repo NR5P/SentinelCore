@@ -263,6 +263,8 @@ builder.Services.AddSingleton(sp => new MullvadAccountWatch(
     sp.GetRequiredService<ILogger<MullvadAccountWatch>>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<MediaDownloadManager>();
 builder.Services.AddHostedService<MediaDownloadWorker>();
+builder.Services.AddSingleton<MediaImportService>();
+builder.Services.AddHostedService<MediaImportWorker>();
 builder.Services.AddHostedService<MullvadAccountWorker>();
 // --- Music (Music*.cs, core/docs/MUSIC_AND_PODCASTS.md sections 2-4) ---
 // music.db beside media.db; covers taken out of files or fetched from the Cover Art Archive in

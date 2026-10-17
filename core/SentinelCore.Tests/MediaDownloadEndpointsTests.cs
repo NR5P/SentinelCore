@@ -70,6 +70,7 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
                 // The test drives the worker itself, one pass at a time.
                 var worker = services.First(s => s.ImplementationType == typeof(MediaDownloadWorker));
                 services.Remove(worker);
+                services.Remove(services.First(s => s.ImplementationType == typeof(MediaImportWorker)));
                 services.Remove(services.First(s => s.ImplementationType == typeof(MullvadAccountWorker)));
                 if (_music is not null) services.AddSingleton<IMusicAudioSource>(_music);
             }));
@@ -1150,6 +1151,152 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/music/downloads", Ct)).StatusCode);
     }
 
+    // MARK: - Import a list
+
+    private static async Task StepUntilSettledAsync(WebApplicationFactory<WebProgram> factory)
+    {
+        var imports = factory.Services.GetRequiredService<MediaImportService>();
+        for (var i = 0; i < 20; i++)
+        {
+            var rest = await imports.StepAsync(Ct);
+            if (rest >= TimeSpan.FromSeconds(30)) return;
+        }
+    }
+
+    [Fact]
+    public async Task MusicImport_GroupsSongsIntoAlbums_SkipsOwned_PicksTheBestRelease_AndMarksMissing()
+    {
+        var musicPath = Path.Combine(_root, "Music");
+        Directory.CreateDirectory(musicPath);
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "Music", musicPath)) { Lossless = 0.9 };
+        _music.Owned.Add("Stevie Nicks|Bella Donna");
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1", "Stockholm", null, "SE", "Mullvad");
+        _prowlarr.Releases =
+        [
+            Release("Fleetwood Mac - Discography 1968-2003 [FLAC]", 900, "magnet:?xt=urn:btih:disco", "disco"),
+            Release("Fleetwood Mac - Rumours (1977) [FLAC]", 40, "magnet:?xt=urn:btih:flac", "flac"),
+            Release("Fleetwood Mac - Rumours (1977) [MP3 320]", 300, "magnet:?xt=urn:btih:mp3", "mp3"),
+        ];
+        var csv = """
+            Track URI,Track Name,Artist Name(s),Album Name,Album Artist Name(s),Album Release Date,ISRC
+            spotify:track:1,Dreams - 2004 Remaster,Fleetwood Mac,Rumours (Super Deluxe),Fleetwood Mac,1977-02-04,X
+            spotify:track:2,Go Your Own Way,Fleetwood Mac,Rumours (Super Deluxe),Fleetwood Mac,1977-02-04,X
+            spotify:track:3,Edge of Seventeen,Stevie Nicks,Bella Donna,Stevie Nicks,1981,X
+            spotify:track:4,Some Song,Nobody Real,An Album Nobody Shares,Nobody Real,2020,X
+            """;
+
+        var preview = await JsonAsync(await client.PostAsJsonAsync("/api/music/downloads/import/preview",
+            new { files = new[] { new { name = "Liked_Songs.csv", text = csv } } }, Ct), HttpStatusCode.OK);
+        Assert.Equal("Exportify", Assert.Single(preview.GetProperty("sources").EnumerateArray()).GetString());
+        Assert.Equal(4, preview.GetProperty("tracks").GetInt32());
+        var albums = preview.GetProperty("albums").EnumerateArray().ToList();
+        Assert.Equal(3, albums.Count);
+        var rumours = albums.Single(a => a.GetProperty("title").GetString() == "Rumours");
+        Assert.Equal(2, rumours.GetProperty("trackCount").GetInt32());
+        Assert.Equal(1977, rumours.GetProperty("year").GetInt32());
+        Assert.True(albums.Single(a => a.GetProperty("title").GetString() == "Bella Donna").GetProperty("inLibrary").GetBoolean());
+
+        var job = await JsonAsync(await client.PostAsJsonAsync("/api/music/downloads/imports", new
+        {
+            name = "Liked Songs",
+            items = albums.Select(a => new { artist = a.GetProperty("artist").GetString(), title = a.GetProperty("title").GetString(), year = a.TryGetProperty("year", out var y) && y.ValueKind == JsonValueKind.Number ? y.GetInt32() : (int?)null, trackCount = a.GetProperty("trackCount").GetInt32() })
+        }, Ct), HttpStatusCode.Created);
+        var id = job.GetProperty("id").GetString();
+        Assert.Equal(3, job.GetProperty("counts").GetProperty("waiting").GetInt32());
+
+        await StepUntilSettledAsync(factory);
+
+        var done = await JsonAsync(await client.GetAsync($"/api/music/downloads/imports/{id}", Ct), HttpStatusCode.OK);
+        var items = done.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("title").GetString()!);
+        Assert.Equal("inLibrary", items["Bella Donna"].GetProperty("state").GetString());
+        Assert.Equal("notFound", items["An Album Nobody Shares"].GetProperty("state").GetString());
+        // Lossless library: the FLAC, never the discography however many share it.
+        Assert.Equal("queued", items["Rumours"].GetProperty("state").GetString());
+        Assert.Equal("Fleetwood Mac - Rumours (1977) [FLAC]", items["Rumours"].GetProperty("releaseTitle").GetString());
+        var queued = await JsonAsync(await client.GetAsync("/api/music/downloads", Ct), HttpStatusCode.OK);
+        var download = Assert.Single(queued.GetProperty("active").EnumerateArray());
+        Assert.Equal("Rumours", download.GetProperty("title").GetString());
+        Assert.Equal("Fleetwood Mac", download.GetProperty("artist").GetString());
+        Assert.True(done.GetProperty("finished").GetBoolean() is false);
+
+        // Retry puts the missing one back; a site that has it now gets it queued.
+        _prowlarr.Releases.Add(Release("Nobody Real - An Album Nobody Shares (2020) [MP3 320]", 5, "magnet:?xt=urn:btih:late", "late"));
+        var retried = await JsonAsync(await client.PostAsync($"/api/music/downloads/imports/{id}/retry", null, Ct), HttpStatusCode.OK);
+        Assert.Equal(1, retried.GetProperty("counts").GetProperty("waiting").GetInt32());
+        await StepUntilSettledAsync(factory);
+        var list = await JsonAsync(await client.GetAsync("/api/music/downloads/imports", Ct), HttpStatusCode.OK);
+        Assert.Equal(2, Assert.Single(list.GetProperty("imports").EnumerateArray()).GetProperty("counts").GetProperty("downloading").GetInt32());
+
+        // Deleting the list forgets it; the downloads carry on.
+        await JsonAsync(await client.DeleteAsync($"/api/music/downloads/imports/{id}", Ct), HttpStatusCode.NoContent);
+        Assert.Empty((await JsonAsync(await client.GetAsync("/api/music/downloads/imports", Ct), HttpStatusCode.OK)).GetProperty("imports").EnumerateArray());
+        Assert.Equal(2, (await JsonAsync(await client.GetAsync("/api/music/downloads", Ct), HttpStatusCode.OK)).GetProperty("active").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task MusicImport_WhenTheVpnWillNotStart_WaitsInsteadOfFailingEveryAlbum()
+    {
+        var musicPath = Path.Combine(_root, "Music");
+        Directory.CreateDirectory(musicPath);
+        _music = new FakeMusic(new AudioLibraryInfo(Guid.NewGuid(), "Music", musicPath));
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _stack.State = MediaDownloadServiceStates.NotInstalled;
+
+        var job = await JsonAsync(await client.PostAsJsonAsync("/api/music/downloads/imports", new
+        {
+            items = new[] { new { artist = "Fleetwood Mac", title = "Rumours" }, new { artist = "Fleetwood Mac", title = "Tusk" } }
+        }, Ct), HttpStatusCode.Created);
+        var rest = await factory.Services.GetRequiredService<MediaImportService>().StepAsync(Ct);
+        Assert.True(rest >= TimeSpan.FromMinutes(1));
+
+        var after = await JsonAsync(await client.GetAsync($"/api/music/downloads/imports/{job.GetProperty("id").GetString()}", Ct), HttpStatusCode.OK);
+        Assert.Equal(2, after.GetProperty("counts").GetProperty("waiting").GetInt32());
+        Assert.Contains("not installed", after.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task MovieImport_ReadsALetterboxdList_SkipsOwnedFilms_AndQueuesTheRest()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        var libraryId = await AddLibraryAsync(factory, MediaLibraryKinds.Movies, _moviesPath);
+        await factory.Services.GetRequiredService<IMediaStore>().UpsertItemsAsync([new MediaItem
+        {
+            Id = Guid.NewGuid(), LibraryId = libraryId, Kind = MediaKinds.Movie, Title = "Sintel", Year = 2010,
+            Path = Path.Combine(_moviesPath, "Sintel (2010)", "Sintel (2010).mkv"), AddedAt = DateTimeOffset.UtcNow
+        }], Ct);
+        _stack.Vpn = new MediaVpnStatus(MediaVpnStatus.Connected, "185.65.134.1", "Stockholm", null, "SE", "Mullvad");
+        _prowlarr.Releases = [Release("Big.Buck.Bunny.2008.1080p.BluRay.x264-GRP", 50, "magnet:?xt=urn:btih:aaaa", "aaaa")];
+        var csv = """
+            Date,Name,Year,Letterboxd URI
+            2026-01-01,Big Buck Bunny,2008,https://boxd.it/a
+            2026-01-02,Sintel,2010,https://boxd.it/b
+            """;
+
+        var preview = await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads/import/preview",
+            new { files = new[] { new { name = "watchlist.csv", text = csv } } }, Ct), HttpStatusCode.OK);
+        Assert.Equal("Letterboxd", Assert.Single(preview.GetProperty("sources").EnumerateArray()).GetString());
+        var movies = preview.GetProperty("movies").EnumerateArray().ToList();
+        Assert.True(movies.Single(m => m.GetProperty("title").GetString() == "Sintel").GetProperty("inLibrary").GetBoolean());
+
+        var job = await JsonAsync(await client.PostAsJsonAsync("/api/media/downloads/imports", new
+        {
+            name = "Watchlist",
+            items = movies.Select(m => new { title = m.GetProperty("title").GetString(), year = m.GetProperty("year").GetInt32() })
+        }, Ct), HttpStatusCode.Created);
+        await StepUntilSettledAsync(factory);
+
+        var done = await JsonAsync(await client.GetAsync($"/api/media/downloads/imports/{job.GetProperty("id").GetString()}", Ct), HttpStatusCode.OK);
+        var items = done.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("title").GetString()!);
+        Assert.Equal("inLibrary", items["Sintel"].GetProperty("state").GetString());
+        Assert.Equal("queued", items["Big Buck Bunny"].GetProperty("state").GetString());
+        // Music lists stay on Music.
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/music/downloads/imports/{job.GetProperty("id").GetString()}", Ct)).StatusCode);
+    }
+
     private sealed class FakeMusic(AudioLibraryInfo library) : IMusicAudioSource
     {
         public AudioLibraryInfo Library { get; } = library;
@@ -1163,7 +1310,8 @@ public sealed class MediaDownloadEndpointsTests : IDisposable
         public Task<object> StatsAsync(string userKey, DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken) => Task.FromResult<object>(new { });
         public Task<IReadOnlyList<AudioLibraryInfo>> LibrariesAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AudioLibraryInfo>>([Library]);
         public void RequestScan(Guid libraryId) => Scans.Add(libraryId);
-        public Task<bool> HasAlbumAsync(string artist, string album, CancellationToken cancellationToken) => Task.FromResult(false);
+        public readonly HashSet<string> Owned = new(StringComparer.OrdinalIgnoreCase);
+        public Task<bool> HasAlbumAsync(string artist, string album, CancellationToken cancellationToken) => Task.FromResult(Owned.Contains($"{artist}|{album}"));
         public Task<double> LosslessShareAsync(CancellationToken cancellationToken) => Task.FromResult(Lossless);
         public Task<MusicBackup> ExportAsync(CancellationToken cancellationToken) => Task.FromResult(new MusicBackup());
         public Task<int> RestoreAsync(MusicBackup backup, CancellationToken cancellationToken) => Task.FromResult(0);

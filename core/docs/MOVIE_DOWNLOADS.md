@@ -303,6 +303,63 @@ pause the library search uses; an answer for older text is dropped.
 The kind labels come from a small table in each app (`movie` -> Movie, `show` -> TV show); music
 gets a row and a button there when it can be downloaded.
 
+### Import a list (Music and Movies)
+
+Download everything on a list exported from another service. There is no one standard format,
+so the server recognises the common exports by their columns or keys:
+
+- **Music** (`/api/music/downloads/...`): Exportify CSV (exportify.net, the quickest way to get a
+  Spotify playlist or Liked Songs), Spotify's own "Download your data" JSON (`YourLibrary.json`,
+  `Playlist*.json`), TuneMyMusic / Soundiiz CSV, or any CSV with artist + album (+ track) columns.
+  Songs are grouped into the albums they come from (torrent sites share albums, not songs), the
+  album artist is used when the file has one, edition words are dropped from album titles
+  ("Rumours (Super Deluxe)" -> "Rumours"), and songs with no album are left out.
+- **Movies** (`/api/media/downloads/...`): Letterboxd CSV, IMDb list/ratings CSV, Trakt-style
+  JSON, or any CSV with a title (+ year) column. TV shows are left out (counted in `shows`); they
+  need seasons picked, so they go through "+ Add".
+
+Behind the same "downloads on and allowed" check as the rest of each tab's downloads.
+
+- `POST {base}/import/preview` with `{ "files": [ { "name": "Liked_Songs.csv", "text": "…" } ] }`
+  (the client reads the files as text; several at once is fine, 25 MB in total) →
+  ```json
+  { "kind": "music|movies", "sources": ["Exportify"], "tracks": 312, "noAlbum": 2, "shows": 0, "unreadable": 1,
+    "problems": ["notes.csv: no artist/album or title column. …"],
+    "albums": [ { "artist": "Fleetwood Mac", "title": "Rumours", "year": 1977, "trackCount": 4,
+                  "tracks": ["Dreams", "…"], "single": false, "inLibrary": false } ],
+    "movies": [ { "title": "The Matrix", "year": 1999, "imdbId": "tt0133093", "inLibrary": false } ] }
+  ```
+  Nothing is saved. `single` = a one-song release named after the song (rarely shared alone).
+- `POST {base}/imports` with `{ "name": "Liked Songs", "libraryId"?: "…", "items": [ { "artist"?, "title", "year"?, "trackCount"? } ] }`
+  → 201 `Import`. Duplicates are dropped; at most 5000 items.
+- `GET {base}/imports` → `{ "imports": [Import without items] }`, newest first. People see their own
+  lists; admins see everyone's.
+- `GET {base}/imports/{id}` → `Import`.
+- `POST {base}/imports/{id}/pause` with `{ "paused": true|false }` → `Import`.
+- `POST {base}/imports/{id}/retry` → `Import`: everything `notFound` or `failed` is searched again.
+- `DELETE {base}/imports/{id}/items/{itemId}` → `Import`: leaves one out (`canceled`).
+- `DELETE {base}/imports/{id}` → 204. Stops and forgets the list; downloads it already queued carry on.
+
+```json
+Import = { "id", "kind": "music|movies", "name", "requestedBy", "createdAt", "paused": false,
+           "message": "Waiting to try again: …"|null, "finished": false,
+           "counts": { "total", "waiting", "downloading", "done", "inLibrary", "notFound", "failed", "canceled" },
+           "items": [ { "id": "i1", "artist", "title", "year", "trackCount",
+                        "state": "waiting|searching|queued|downloading|seeding|importing|done|inLibrary|notFound|failed|canceled",
+                        "message", "progress": 0.42|null, "downloadId", "releaseTitle" } ] }
+```
+
+How the server works through it (`MediaImportService`, one item at a time, oldest list first):
+skip it if it is in the library by now (`inLibrary`); run the same search as "+ Add"; take the
+first result that matches with people sharing it (never a discography for music); queue it like a
+person pressing download (`RequestedBy` = whoever imported the list; movies never replace a copy).
+No usable result → `notFound`. If the search itself fails (VPN or services down), the item goes
+back to `waiting`, the list's `message` says why, and it tries again after
+`MediaDownloads:ImportRetrySeconds` (300) — so a dead VPN never marks a whole list failed. Each
+list keeps at most `MediaDownloads:ImportActiveDownloads` (3) of its downloads going at once; one
+with nobody sharing it stops holding a slot after an hour. Lists live in the `MediaImports` table
+of `media-downloads.db` (history, not in backups).
+
 ### Sites (admin)
 
 Prowlarr lives inside the VPN, so these start the services; if they are not up within ~25 s the
