@@ -169,6 +169,7 @@ public static class OrganizerEndpoints
 
         enabled.MapPut("/spaces/{id}", async (string id, OrganizerGroupRequest request, HttpContext context, IOrganizerStore store, IAccountStore accounts, CancellationToken ct) =>
         {
+            if (id == OrganizerSpaceIds.Admins) return AdminsSpaceIsAutomatic();
             var user = UserOf(context);
             var errors = await ValidateGroupAsync(user, request, accounts, ct);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
@@ -177,7 +178,8 @@ public static class OrganizerEndpoints
         });
 
         enabled.MapDelete("/spaces/{id}", async (string id, HttpContext context, IOrganizerStore store, CancellationToken ct) =>
-            await store.DeleteGroupAsync(UserOf(context), id, ct) ? Results.Ok(new { deleted = true }) : Results.NotFound());
+            id == OrganizerSpaceIds.Admins ? AdminsSpaceIsAutomatic()
+            : await store.DeleteGroupAsync(UserOf(context), id, ct) ? Results.Ok(new { deleted = true }) : Results.NotFound());
 
         // Upload. Anyone signed in may upload bytes - they're inert until an attachment item the
         // uploader is allowed to write points at them, and the orphan sweep collects the rest.
@@ -321,6 +323,9 @@ public static class OrganizerEndpoints
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) is { Length: > 0 } && context.User.Identity?.Name is { Length: > 0 } name
             ? new OrganizerUser(name.ToLowerInvariant(), null)
             : OrganizerUser.Shared;
+
+    private static IResult AdminsSpaceIsAutomatic() =>
+        Results.BadRequest(new { errors = new[] { "The Admins space always holds whoever is an admin - change that under Accounts." } });
 
     public static async Task<OrganizerSettingsDto> ReadOptionsAsync(AppSettingsFile settings, CancellationToken cancellationToken) =>
         await settings.GetSectionAsync<OrganizerSettingsDto>(OrganizerSettingsDto.SectionName, cancellationToken) ?? new OrganizerSettingsDto();

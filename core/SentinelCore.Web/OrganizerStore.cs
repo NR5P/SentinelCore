@@ -147,6 +147,9 @@ public static class OrganizerKinds
 public static class OrganizerSpaceIds
 {
     public const string Family = "family";
+    // A group the server keeps in step with the admin accounts (OrganizerAdminsSpaceWorker), so a
+    // reminder can be for the people who run the house. Nobody edits or deletes it by hand.
+    public const string Admins = "group:admins";
     public static string Personal(string username) => $"personal:{username.ToLowerInvariant()}";
     public static string NewGroup() => $"group:{Guid.NewGuid():N}";
 }
@@ -216,6 +219,10 @@ public interface IOrganizerStore
     Task<OrganizerSpace?> UpdateGroupAsync(OrganizerUser user, string spaceId, string name, IReadOnlyList<string> members, string? color, CancellationToken cancellationToken);
 
     Task<bool> DeleteGroupAsync(OrganizerUser user, string spaceId, CancellationToken cancellationToken);
+
+    // Makes the Admins group's members exactly these usernames, creating it the first time.
+    // An empty list (no accounts yet) leaves it alone. True when anything changed.
+    Task<bool> SyncAdminsSpaceAsync(IReadOnlyCollection<string> admins, CancellationToken cancellationToken);
 
     // The attachment item that makes a blob visible to this person, if any - used to authorize a
     // download and to know what to call the file.
@@ -378,7 +385,7 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
         try
         {
             var existing = LoadSpace(spaceId);
-            if (existing is not { Kind: OrganizerSpaceKind.Group } || !CanSee(user, existing)) return null;
+            if (existing is not { Kind: OrganizerSpaceKind.Group } || !CanSee(user, existing) || spaceId == OrganizerSpaceIds.Admins) return null;
 
             // Not re-adding the editor here, unlike create: taking yourself out of a group is how
             // you leave it.
@@ -399,6 +406,35 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
         }
     }
 
+    public async Task<bool> SyncAdminsSpaceAsync(IReadOnlyCollection<string> admins, CancellationToken cancellationToken)
+    {
+        var members = NormalizeMembers(admins, null);
+        if (members.Count == 0) return false;
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            var existing = LoadSpace(OrganizerSpaceIds.Admins, includeDeleted: true);
+            if (existing is null)
+            {
+                InsertSpace(new OrganizerSpace(OrganizerSpaceIds.Admins, OrganizerSpaceKind.Group, "Admins", members, "#ffb545", null));
+                BumpAndSignal();
+                return true;
+            }
+            if (existing.Members.SequenceEqual(members, StringComparer.Ordinal)) return false;
+            using var command = _connection.CreateCommand();
+            command.CommandText = "UPDATE Spaces SET Members = $members, Deleted = 0 WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", OrganizerSpaceIds.Admins);
+            command.Parameters.AddWithValue("$members", JsonSerializer.Serialize(members));
+            command.ExecuteNonQuery();
+            BumpAndSignal();
+            return true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     // Deleting a group deletes what was in it: every item becomes a tombstone, so a device that
     // was offline at the time doesn't later push it all back. The space row is kept, marked
     // deleted, so its id can never be reused for something else.
@@ -408,7 +444,7 @@ public sealed class SqliteOrganizerStore : IOrganizerStore, IDisposable
         try
         {
             var existing = LoadSpace(spaceId);
-            if (existing is not { Kind: OrganizerSpaceKind.Group } || !CanSee(user, existing)) return false;
+            if (existing is not { Kind: OrganizerSpaceKind.Group } || !CanSee(user, existing) || spaceId == OrganizerSpaceIds.Admins) return false;
 
             using var transaction = _connection.BeginTransaction();
             var now = _time.GetUtcNow();

@@ -300,6 +300,114 @@ public sealed class WeatherService(
 
     public static readonly TimeSpan DiscussionTtl = TimeSpan.FromMinutes(30);
 
+    // ---- For automations: "only if it hasn't rained an inch this week", "when a freeze shows up".
+
+    // The Iowa Environmental Mesonet (Iowa State University) keeps every airport weather station's
+    // daily totals - the NWS API itself only keeps a day or so of observations, nowhere near
+    // enough to say how much it rained this week. Free and keyless, like the storm cells on the
+    // radar map, which come from the same place.
+    public const string MesonetBaseUrl = "https://mesonet.agron.iastate.edu/api/1";
+    public static readonly TimeSpan RainHistoryTtl = TimeSpan.FromHours(1);
+    public const int RainHistoryDays = 14;
+
+    // Everything a weather rule can test, in one go: the forecast periods, the forecast grid's
+    // rain and snow, what the thermometer says now, and the last two weeks' rain. Null when there
+    // is no location or no NWS forecast for it. A part that couldn't be fetched is left empty,
+    // and the rule testing it says so rather than guessing.
+    public async Task<WeatherOutlook?> GetOutlookAsync(CancellationToken ct)
+    {
+        var (_, coordinate) = await ReadLocationAsync(ct);
+        if (coordinate is null) return null;
+
+        await _gate.WaitAsync(ct);
+        try
+        {
+            ForgetIfLocationChanged(coordinate);
+            var now = _clock.GetUtcNow();
+            var point = await CachedAsync("point", PointTtl, c => FetchPointAsync(coordinate, c), ct);
+            if (point.Value is not { Supported: true } info) return null;
+
+            var forecast = await CachedAsync("forecast", ForecastTtl, c => FetchForecastAsync(info.ForecastUrl, c), ct);
+            var current = await CachedAsync("current", ObservationTtl, c => FetchCurrentAsync(info.StationsUrl, c), ct);
+            GridSet? grid = null;
+            if (info.GridUrl is not null)
+                grid = (await CachedAsync("grid", ForecastTtl, c => FetchGridAsync(info.GridUrl, c), ct)).Value;
+
+            IReadOnlyList<WeatherHistoryDay>? past = null;
+            if (current.Value is { Station.Length: > 0 } observed)
+            {
+                var zone = OrganizerAutomationSchedule.ZoneNamed(info.TimeZone);
+                var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
+                var history = await CachedAsync($"rain:{observed.Station}:{today:yyyyMMdd}", RainHistoryTtl,
+                    c => FetchRainHistoryAsync(observed.Station, today, c), ct);
+                past = history.Value?.Days;
+            }
+
+            return new WeatherOutlook
+            {
+                FetchedAt = now,
+                TimeZone = info.TimeZone,
+                Periods = forecast.Value?.Periods ?? [],
+                Grid = grid,
+                TemperatureNowF = current.Value?.TemperatureF,
+                Station = current.Value?.Station,
+                Past = past,
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private sealed record RainHistory(List<WeatherHistoryDay> Days);
+
+    private async Task<RainHistory> FetchRainHistoryAsync(string station, DateOnly today, CancellationToken ct)
+    {
+        // The mesonet names airports without the K ("SDF", not "KSDF") and files them under a
+        // per-state network ("KY_ASOS") that only its station lookup knows.
+        var network = await CachedAsync($"iem-network:{station}", StationsTtl, c => FetchMesonetNetworkAsync(station, c), ct);
+        if (network.Value is not { } found) throw new WeatherUpstreamException(network.Problem ?? $"the mesonet doesn't know station {station}");
+
+        var from = today.AddDays(-RainHistoryDays);
+        var days = new List<WeatherHistoryDay>();
+        for (var month = new DateOnly(from.Year, from.Month, 1); month <= today; month = month.AddMonths(1))
+        {
+            using var document = await GetJsonAsync(
+                $"{MesonetBaseUrl}/daily.json?station={Uri.EscapeDataString(found.Id)}&network={Uri.EscapeDataString(found.Network)}&year={month.Year}&month={month.Month}", ct);
+            if (!document.RootElement.TryGetProperty("data", out var rows) || rows.ValueKind != JsonValueKind.Array) continue;
+            foreach (var row in rows.EnumerateArray())
+            {
+                if (!DateOnly.TryParseExact(Str(row, "date") ?? "", "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)) continue;
+                if (date < from || date > today) continue;
+                days.Add(new WeatherHistoryDay(date, Num(row, "precip"), Num(row, "snow"), Num(row, "min_tmpf"), Num(row, "max_tmpf")));
+            }
+        }
+        return new RainHistory(days);
+    }
+
+    private sealed record MesonetStation(string Id, string Network);
+
+    private async Task<MesonetStation> FetchMesonetNetworkAsync(string station, CancellationToken ct)
+    {
+        var candidates = station.Length == 4 && station.StartsWith('K') ? new[] { station[1..], station } : [station];
+        foreach (var id in candidates)
+        {
+            using var response = await SendAsync($"{MesonetBaseUrl}/station/{Uri.EscapeDataString(id)}.json", ct);
+            if (!response.IsSuccessStatusCode) continue;
+            using var document = await ReadJsonAsync(response, ct);
+            if (!document.RootElement.TryGetProperty("data", out var rows) || rows.ValueKind != JsonValueKind.Array) continue;
+            foreach (var row in rows.EnumerateArray())
+            {
+                // An airport is listed under its ASOS network and sometimes others too (a climate
+                // site, say); the ASOS one is the one with daily rain totals.
+                var network = Str(row, "network");
+                if (network is not null && network.EndsWith("_ASOS", StringComparison.Ordinal)) return new MesonetStation(id, network);
+            }
+        }
+        throw new WeatherUpstreamException($"the mesonet has no rain history for station {station}");
+    }
+
     private async Task<GridSet> FetchGridAsync(string url, CancellationToken ct)
     {
         using var document = await GetJsonAsync(url, ct);

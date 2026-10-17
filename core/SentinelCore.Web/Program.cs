@@ -391,11 +391,14 @@ builder.Services.AddHostedService<FamilyFilesWorker>();
 builder.Services.TryAddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IOrganizerAutomationStore>(new SqliteOrganizerAutomationStore(camerasRoot));
 builder.Services.AddSingleton<IOrganizerAutomationNotifier, OrganizerAutomationNotifier>();
+builder.Services.AddSingleton<IAutomationWeather>(sp => new WeatherServiceAutomationWeather(sp.GetRequiredService<WeatherService>()));
 builder.Services.AddSingleton(sp => new OrganizerAutomationEngine(
     sp.GetRequiredService<IOrganizerStore>(), sp.GetRequiredService<IOrganizerAutomationStore>(),
     sp.GetRequiredService<IOrganizerAutomationNotifier>(), sp.GetRequiredService<TimeProvider>(),
-    sp.GetRequiredService<OrganizerPushNudger>().Changed, sp.GetRequiredService<ILogger<OrganizerAutomationEngine>>()));
+    sp.GetRequiredService<OrganizerPushNudger>().Changed, sp.GetRequiredService<ILogger<OrganizerAutomationEngine>>(),
+    sp.GetRequiredService<IAutomationWeather>()));
 builder.Services.AddHostedService<OrganizerAutomationWorker>();
+builder.Services.AddHostedService<OrganizerAdminsSpaceWorker>();
 // WebRTC live view via a go2rtc sidecar - see Go2RtcManager. Generous timeout: the SDP exchange
 // includes go2rtc gathering its ICE candidates, and the first request may also be paying the
 // sidecar's startup wait.
@@ -740,6 +743,7 @@ app.MapScheduleProxyEndpoints();
 app.MapLocationLookupEndpoints();
 app.MapWeatherEndpoints();
 app.MapKioskEndpoints();
+app.MapKioskReminderEndpoints();
 app.MapOllamaModelEndpoints();
 app.MapCloudVisionModelEndpoints();
 app.MapNotificationTestProxyEndpoints();

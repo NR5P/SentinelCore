@@ -31,6 +31,14 @@ public sealed class OrganizerAutomationEngine
     // card is added, email everyone") meeting a pasted list of fifty cards sends twenty, not fifty.
     public const int MaxSendsPerRulePerHour = 20;
 
+    // How often a "when the weather turns" rule looks again. The forecast itself is only
+    // reissued a few times a day; the weather service caches it for half an hour.
+    public static readonly TimeSpan WeatherCheckEvery = TimeSpan.FromMinutes(30);
+
+    // After a weather rule fires it stays quiet this long even if the test flickers off and on -
+    // a forecast low wobbling between 31 and 33 is one freeze, not four reminders.
+    public static readonly TimeSpan WeatherQuietPeriod = TimeSpan.FromHours(12);
+
     public const string DeviceId = "automation";
     private const int PageSize = 1000;
     private static readonly string[] Palette = ["#39ff9c", "#4be7ff", "#ffb545", "#c792ea", "#ff7eb6", "#82aaff", "#f78c6c"];
@@ -39,6 +47,7 @@ public sealed class OrganizerAutomationEngine
     private readonly IOrganizerStore _store;
     private readonly IOrganizerAutomationStore _automations;
     private readonly IOrganizerAutomationNotifier _notifier;
+    private readonly IAutomationWeather? _weather;
     private readonly TimeProvider _time;
     private readonly Action _changed;
     private readonly ILogger _logger;
@@ -54,8 +63,9 @@ public sealed class OrganizerAutomationEngine
 
     public OrganizerAutomationEngine(
         IOrganizerStore store, IOrganizerAutomationStore automations, IOrganizerAutomationNotifier notifier,
-        TimeProvider time, Action changed, ILogger logger)
+        TimeProvider time, Action changed, ILogger logger, IAutomationWeather? weather = null)
     {
+        _weather = weather;
         _store = store;
         _automations = automations;
         _notifier = notifier;
@@ -76,7 +86,16 @@ public sealed class OrganizerAutomationEngine
         public DateTimeOffset Now { get; } = now;
         public string? TriggerTitle { get; } = card is null ? null : Text(card, "title");
         public string? BoardTitle { get; init; }
+        // Where the reminders and events this rule makes go: the rule's own space, or the board's.
+        public string? SpaceId { get; init; }
         public OrganizerItem? Card { get; set; } = card;
+        // The reminder or event the last step made, for a notification to open.
+        public string? MadeItemId { get; set; }
+        // The weather, fetched once per run when a step needs it, and what the last weather test
+        // measured - "{weather}" and "{weatherDay}" in a title quote it.
+        public WeatherOutlook? Outlook { get; set; }
+        public bool OutlookFetched { get; set; }
+        public WeatherMeasure? Measured { get; set; }
         public bool ChangedAnything { get; set; }
         // A step that didn't fully work but shouldn't stop the rest - a notification that
         // couldn't be delivered mustn't stop the card being moved.
@@ -199,6 +218,66 @@ public sealed class OrganizerAutomationEngine
         }
     }
 
+    // "When the weather turns": every half hour, each weather rule's test; it fires when the test
+    // starts holding (and once straight away if it already holds when the rule is saved).
+    public async Task RunWeatherRulesAsync(CancellationToken cancellationToken)
+    {
+        if (_weather is null) return;
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_initialized) return;
+            var now = _time.GetUtcNow();
+            WeatherOutlook? outlook = null;
+            var fetched = false;
+            foreach (var rule in await _automations.GetAllAsync(cancellationToken))
+            {
+                if (!rule.Enabled || rule.Trigger is not { Type: OrganizerAutomationTypes.Weather, Weather: { } test }) continue;
+                if (rule.WeatherCheckedAt is { } checkedAt && now - checkedAt < WeatherCheckEvery) continue;
+
+                if (!fetched)
+                {
+                    outlook = await FetchOutlookAsync(cancellationToken);
+                    fetched = true;
+                }
+                var zone = OrganizerAutomationSchedule.ZoneOf(rule);
+                var measure = WeatherRuleMetrics.Measure(outlook, test.Metric, WeatherRuleMetrics.WindowOf(test), now, zone);
+                rule.WeatherCheckedAt = now;
+                // Nothing to measure (the NWS is down): no change either way, try again later.
+                if (measure.Value is not null)
+                {
+                    var holds = WeatherRuleMetrics.Holds(test, measure);
+                    var quiet = rule.WeatherFiredAt is { } firedAt && now - firedAt < WeatherQuietPeriod;
+                    if (holds && rule.WeatherHeld != true && !quiet)
+                    {
+                        rule.WeatherFiredAt = now;
+                        await RunAndRecordAsync(rule, null, cancellationToken, save: false, outlook: outlook, measured: measure);
+                    }
+                    rule.WeatherHeld = holds;
+                }
+                await _automations.SaveAsync(rule, cancellationToken);
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<WeatherOutlook?> FetchOutlookAsync(CancellationToken cancellationToken)
+    {
+        if (_weather is null) return null;
+        try
+        {
+            return await _weather.GetOutlookAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogInformation(exception, "Automations couldn't get the weather");
+            return null;
+        }
+    }
+
     // "When a card is due": every card on the rule's board whose moment has come, once each.
     public async Task RunDueCardsAsync(CancellationToken cancellationToken)
     {
@@ -279,6 +358,10 @@ public sealed class OrganizerAutomationEngine
             rule.NextRunAt = rule.Enabled && rule.Trigger is { Type: OrganizerAutomationTypes.Schedule, Schedule: { } schedule }
                 ? OrganizerAutomationSchedule.Next(schedule, _time.GetUtcNow())
                 : null;
+            // An edited weather rule looks at the weather afresh on the next pass - and fires then
+            // if its test already holds, unless it fired very recently.
+            rule.WeatherHeld = null;
+            rule.WeatherCheckedAt = null;
             await _automations.SaveAsync(rule, cancellationToken);
         }
         finally
@@ -300,7 +383,8 @@ public sealed class OrganizerAutomationEngine
         }
     }
 
-    // "Run now", for trying a rule out. Only a scheduled rule can: a card rule needs a card.
+    // "Run now", for trying a rule out. Only a rule that starts without a card can: a schedule or
+    // the weather. Its ONLY IF tests still apply.
     public async Task<OrganizerAutomationRun?> RunNowAsync(string id, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
@@ -322,7 +406,8 @@ public sealed class OrganizerAutomationEngine
 
     private void Remember(OrganizerItem item)
     {
-        if (item.Kind is not (OrganizerKinds.Board or OrganizerKinds.Column or OrganizerKinds.Card)) return;
+        // Reminders and events only so "skip if it's already there" can look.
+        if (item.Kind is not (OrganizerKinds.Board or OrganizerKinds.Column or OrganizerKinds.Card or OrganizerKinds.Reminder or OrganizerKinds.Event)) return;
         if (item.Deleted) _items.Remove(item.Id);
         else _items[item.Id] = item;
     }
@@ -397,21 +482,37 @@ public sealed class OrganizerAutomationEngine
     // ---- running a rule -----------------------------------------------------------------------
 
     private async Task<OrganizerAutomationRun> RunAndRecordAsync(
-        OrganizerAutomation rule, OrganizerItem? card, CancellationToken cancellationToken, bool save = true)
+        OrganizerAutomation rule, OrganizerItem? card, CancellationToken cancellationToken, bool save = true,
+        WeatherOutlook? outlook = null, WeatherMeasure? measured = null)
     {
         var now = _time.GetUtcNow();
         var zone = OrganizerAutomationSchedule.ZoneOf(rule);
+        var board = rule.IsPlanner ? null : _items.GetValueOrDefault(rule.BoardId);
         var context = new RunContext(rule, rule.RunAs is { Length: > 0 } name ? new OrganizerUser(name, null) : OrganizerUser.Shared, zone, now, card)
         {
-            BoardTitle = _items.GetValueOrDefault(rule.BoardId) is { } board ? Text(board, "title") : null,
+            BoardTitle = board is null ? null : Text(board, "title"),
+            SpaceId = rule.IsPlanner ? rule.SpaceId : board?.SpaceId,
+            Outlook = outlook,
+            OutlookFetched = outlook is not null,
+            Measured = measured,
         };
 
         OrganizerAutomationRun run;
-        if (!rule.Conditions.All(condition => Holds(condition, context)))
+        foreach (var condition in rule.Conditions)
         {
-            // Not worth a log line each time - "only if it has the urgent label" would fill the
-            // history with every card that didn't.
-            return new OrganizerAutomationRun(rule.Id, now, true, "Conditions not met - nothing done.");
+            var (holds, why) = await HoldsAsync(condition, context, cancellationToken);
+            if (holds) continue;
+            // A schedule whose weather test said no is worth a line: "didn't remind me to water
+            // because it rained 1.2 inches" is the whole point. A card that didn't have the
+            // urgent label isn't - it would fill the history with every card that didn't.
+            if (why is null) return new OrganizerAutomationRun(rule.Id, now, true, "Conditions not met - nothing done.");
+            run = new OrganizerAutomationRun(rule.Id, now, true, why);
+            rule.LastRunAt = now;
+            rule.LastOk = true;
+            rule.LastResult = why;
+            await _automations.AddRunAsync(run, cancellationToken);
+            if (save) await _automations.SaveAsync(rule, cancellationToken);
+            return run;
         }
 
         var notes = new List<string>();
@@ -437,6 +538,34 @@ public sealed class OrganizerAutomationEngine
         await _automations.AddRunAsync(run, cancellationToken);
         if (save) await _automations.SaveAsync(rule, cancellationToken);
         return run;
+    }
+
+    // Whether a condition holds, and - for a weather test that didn't - why, in words.
+    private async Task<(bool Holds, string? Why)> HoldsAsync(BoardAutomationCondition condition, RunContext context, CancellationToken cancellationToken)
+    {
+        if (condition.Type != "weather") return (Holds(condition, context), null);
+        if (!context.OutlookFetched)
+        {
+            context.Outlook = await FetchOutlookAsync(cancellationToken);
+            context.OutlookFetched = true;
+        }
+        var measure = WeatherRuleMetrics.Measure(context.Outlook, condition.Metric, WeatherRuleMetrics.WindowOf(condition), context.Now, context.Zone);
+        if (measure.Value is null)
+            return (false, $"Did nothing - it needed {WeatherRuleMetrics.Describe(condition)}, but {measure.Problem ?? "the weather couldn't be checked"}.");
+        context.Measured = measure;
+        return WeatherRuleMetrics.Holds(condition, measure)
+            ? (true, null)
+            : (false, $"Did nothing - it needed {WeatherRuleMetrics.Describe(condition)}, and it's {measure.Words}{DayWords(measure, context, " (")}.");
+    }
+
+    private static string DayWords(WeatherMeasure? measure, RunContext context, string prefix = "")
+    {
+        if (measure?.Day is not { } date) return "";
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(context.Now, context.Zone).DateTime);
+        var words = date == today ? (measure.Night ? "tonight" : "today")
+            : date == today.AddDays(1) ? (measure.Night ? "tomorrow night" : "tomorrow")
+            : date.ToString("dddd", English) + (measure.Night ? " night" : "");
+        return prefix.Length == 0 ? words : $"{prefix}{words})";
     }
 
     private bool Holds(BoardAutomationCondition condition, RunContext context)
@@ -604,6 +733,75 @@ public sealed class OrganizerAutomationEngine
                 return cards.Count == 0 ? $"{Title(from)} was already empty." : $"Deleted {Count(cards.Count)} from {Title(from)}.";
             }
 
+            case "createReminder":
+            {
+                var space = SpaceOrFail(context);
+                var title = Render(action.Title, context).Trim();
+                if (title.Length == 0) title = "reminder";
+                if (action.SkipIfExists && _items.Values.FirstOrDefault(r => r.Kind == OrganizerKinds.Reminder && r.SpaceId == space && r.ParentId is null
+                        && !Bool(r, "completed") && string.Equals(Text(r, "title")?.Trim(), title, StringComparison.OrdinalIgnoreCase)) is { } existing)
+                {
+                    context.MadeItemId = existing.Id;
+                    return $"\"{title}\" was already on the reminders list, so no new one.";
+                }
+
+                var fields = new JsonObject { ["spaceId"] = space, ["title"] = title, ["completed"] = false };
+                if (Render(action.Description, context) is { Length: > 0 } notes) fields["notes"] = notes;
+                if (action.InDays is { } days)
+                {
+                    fields["due"] = Due(DueDay(action, days, context), action.Time, context);
+                    fields["allDay"] = !OrganizerAutomationSchedule.TryParseTime(action.Time, out _);
+                }
+                if (action.Priority is > 0 and <= 3) fields["priority"] = action.Priority.Value;
+                if (action.AlertMinutes is >= 0 && action.InDays is not null) fields["alerts"] = new JsonArray(action.AlertMinutes.Value);
+                var made = await ApplyAsync(context, Guid.NewGuid().ToString("N"), OrganizerKinds.Reminder, null, fields, cancellationToken);
+                context.MadeItemId = made.Id;
+                return fields["due"] is { } due ? $"Added the reminder \"{title}\", due {due}." : $"Added the reminder \"{title}\".";
+            }
+
+            case "createEvent":
+            {
+                var space = SpaceOrFail(context);
+                var title = Render(action.Title, context).Trim();
+                if (title.Length == 0) title = "event";
+                var day = DueDay(action, action.InDays ?? 0, context);
+                var timed = OrganizerAutomationSchedule.TryParseTime(action.Time, out var at);
+                if (action.SkipIfExists && _items.Values.FirstOrDefault(e => e.Kind == OrganizerKinds.Event && e.SpaceId == space
+                        && string.Equals(Text(e, "title")?.Trim(), title, StringComparison.OrdinalIgnoreCase)
+                        && StartDay(e, context.Zone) == day) is { } existing)
+                {
+                    context.MadeItemId = existing.Id;
+                    return $"\"{title}\" was already on the calendar that day, so no new one.";
+                }
+
+                var fields = new JsonObject
+                {
+                    ["spaceId"] = space,
+                    ["title"] = title,
+                    ["allDay"] = !timed,
+                    ["timeZone"] = context.Zone.Id,
+                };
+                if (timed)
+                {
+                    var start = OrganizerAutomationSchedule.ToUtc(day, at, context.Zone);
+                    var end = start + TimeSpan.FromMinutes(Math.Clamp(action.DurationMinutes ?? 60, 5, 60 * 24 * 7));
+                    fields["start"] = LocalIso(start, context.Zone);
+                    fields["end"] = LocalIso(end, context.Zone);
+                }
+                else
+                {
+                    // An all-day event ends the morning after, the way every client writes one.
+                    fields["start"] = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    fields["end"] = day.AddDays(1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                }
+                if (Render(action.Location, context) is { Length: > 0 } location) fields["location"] = location;
+                if (Render(action.Description, context) is { Length: > 0 } notes) fields["notes"] = notes;
+                if (action.AlertMinutes is >= 0) fields["alerts"] = new JsonArray(action.AlertMinutes.Value);
+                var made = await ApplyAsync(context, Guid.NewGuid().ToString("N"), OrganizerKinds.Event, null, fields, cancellationToken);
+                context.MadeItemId = made.Id;
+                return $"Put \"{title}\" on the calendar for {day.ToString("ddd MMM d", English)}{(timed ? " at " + DateTime.Today.Add(at).ToString("h:mm tt", English) : "")}.";
+            }
+
             case "notify":
             {
                 var body = Render(action.Text, context).Trim();
@@ -612,7 +810,8 @@ public sealed class OrganizerAutomationEngine
                 if (title.Length == 0) title = context.BoardTitle ?? "Organizer";
                 if (!TryCountSend(context)) return TooManySends(context);
                 var result = await _notifier.PushAsync(
-                    action.Everyone ? null : action.People ?? [], title, body, context.Card?.Id ?? context.Automation.BoardId, cancellationToken);
+                    action.Everyone ? null : action.People ?? [], title, body,
+                    context.Card?.Id ?? context.MadeItemId ?? (context.Automation.IsPlanner ? null : context.Automation.BoardId), cancellationToken);
                 context.Problem |= !result.Ok;
                 return result.Message;
             }
@@ -624,8 +823,10 @@ public sealed class OrganizerAutomationEngine
                 var subject = Render(action.Title, context).Trim();
                 if (subject.Length == 0) subject = $"{context.BoardTitle ?? "Organizer"}: {context.Automation.Name}";
                 if (!TryCountSend(context)) return TooManySends(context);
-                var footer = $"\n\n-- \nSent by the board automation \"{context.Automation.Name}\" on {context.BoardTitle ?? "a board"}. " +
-                    "Change or turn it off in the Organizer: open the board, then automations.";
+                var footer = context.Automation.IsPlanner
+                    ? $"\n\n-- \nSent by the automation \"{context.Automation.Name}\". Change or turn it off in the Organizer: Reminders or Calendar, then automations."
+                    : $"\n\n-- \nSent by the board automation \"{context.Automation.Name}\" on {context.BoardTitle ?? "a board"}. " +
+                      "Change or turn it off in the Organizer: open the board, then automations.";
                 var result = await _notifier.EmailAsync(action.People ?? [], action.Addresses ?? [], subject, body + footer, cancellationToken);
                 context.Problem |= !result.Ok;
                 return result.Message;
@@ -696,6 +897,36 @@ public sealed class OrganizerAutomationEngine
         return $"Didn't send - this rule has already sent {MaxSendsPerRulePerHour} notifications or emails in the last hour.";
     }
 
+    private static string SpaceOrFail(RunContext context) =>
+        context.SpaceId is { Length: > 0 } space
+            ? space
+            : throw new RuleFailure("This rule doesn't say whose reminders and calendar to use - edit it and pick who it's for.");
+
+    // The day a reminder is due or an event happens: today, or the day the weather test was about
+    // (the night of the freeze), moved by the step's "days" - "the day before the freeze" is -1.
+    private static DateOnly DueDay(BoardAutomationAction action, int days, RunContext context)
+    {
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(context.Now, context.Zone).DateTime);
+        var from = action.FromWeatherDay && context.Measured?.Day is { } weatherDay ? weatherDay : today;
+        var day = from.AddDays(days);
+        // Never in the past: "the day before a freeze that's tonight" is today.
+        return day < today ? today : day;
+    }
+
+    private static DateOnly? StartDay(OrganizerItem item, TimeZoneInfo zone)
+    {
+        var start = Text(item, "start");
+        if (start is null) return null;
+        if (start.Length == 10)
+            return DateOnly.TryParseExact(start, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? date : null;
+        return DateTimeOffset.TryParse(start, CultureInfo.InvariantCulture, DateTimeStyles.None, out var at)
+            ? DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(at, zone).DateTime)
+            : null;
+    }
+
+    private static string LocalIso(DateTimeOffset at, TimeZoneInfo zone) =>
+        TimeZoneInfo.ConvertTime(at, zone).ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture);
+
     private OrganizerItem ColumnOrFail(string? id) =>
         id is not null && _items.GetValueOrDefault(id) is { Kind: OrganizerKinds.Column } column
             ? column
@@ -752,9 +983,11 @@ public sealed class OrganizerAutomationEngine
         })]);
 
     // A due date `days` from today in the rule's time zone: a date alone, or with a time.
-    private static string Due(int days, string? time, RunContext context)
+    private static string Due(int days, string? time, RunContext context) =>
+        Due(DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(context.Now, context.Zone).DateTime).AddDays(days), time, context);
+
+    private static string Due(DateOnly today, string? time, RunContext context)
     {
-        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(context.Now, context.Zone).DateTime).AddDays(days);
         if (!OrganizerAutomationSchedule.TryParseTime(time, out var at))
             return today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var local = today.ToDateTime(TimeOnly.FromTimeSpan(at), DateTimeKind.Unspecified);
@@ -773,7 +1006,8 @@ public sealed class OrganizerAutomationEngine
         return due.Length == 10 ? local.ToString("MMM d", English) : local.ToString("MMM d 'at' h:mm tt", English);
     }
 
-    // Fills in {date}, {weekday}, {month}, {year}, {time}, {card}, {board} and {due} - the words
+    // Fills in {date}, {weekday}, {month}, {year}, {time}, {card}, {board}, {due}, {weather} (what
+    // the weather test measured: "28°F", "1.3 inches") and {weatherDay} (the day it's about) - the words
     // people can drop into a card title, comment or message, like "Groceries for {weekday}".
     private static string Render(string? template, RunContext context)
     {
@@ -787,7 +1021,9 @@ public sealed class OrganizerAutomationEngine
             .Replace("{time}", local.ToString("h:mm tt", English), StringComparison.OrdinalIgnoreCase)
             .Replace("{card}", context.TriggerTitle ?? "", StringComparison.OrdinalIgnoreCase)
             .Replace("{board}", context.BoardTitle ?? "", StringComparison.OrdinalIgnoreCase)
-            .Replace("{due}", DueWords(context), StringComparison.OrdinalIgnoreCase);
+            .Replace("{due}", DueWords(context), StringComparison.OrdinalIgnoreCase)
+            .Replace("{weatherDay}", DayWords(context.Measured, context), StringComparison.OrdinalIgnoreCase)
+            .Replace("{weather}", context.Measured?.Words ?? "", StringComparison.OrdinalIgnoreCase);
     }
 }
 
@@ -811,6 +1047,7 @@ public sealed class OrganizerAutomationWorker(
                     await engine.ProcessChangesAsync(stoppingToken);
                     await engine.RunDueSchedulesAsync(stoppingToken);
                     await engine.RunDueCardsAsync(stoppingToken);
+                    await engine.RunWeatherRulesAsync(stoppingToken);
                 }
 
                 var untilSchedule = await engine.TimeUntilNextScheduleAsync(stoppingToken);

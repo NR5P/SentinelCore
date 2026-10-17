@@ -3,14 +3,37 @@
 // back as a plain sentence. The rules run on the server (OrganizerAutomationEngine), so a card
 // scheduled for 7am appears on every device at 7 with all of them asleep. This file is only the
 // editor; the board itself stays in organizer.js.
+//
+// The same builder, opened from Reminders or Calendar (openPlanner), makes rules with no board:
+// they add reminders and events to a space ("just me", "everyone", "admins"), on a schedule or
+// when the weather turns, and can be held back by the weather ("only if it hasn't rained an inch
+// this week").
 window.SentinelBoardAutomations = (function () {
   const S = window.SentinelOrganizerSync;
   const BLOCK_TYPE = "application/x-sentinelcore-rule-block";
   const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const TOKENS = [["{date}", "today's date"], ["{weekday}", "day of the week"], ["{month}", "month"], ["{card}", "the card's title"], ["{due}", "the card's due date"], ["{board}", "this board's name"]];
+  const BOARD_TOKENS = [["{date}", "today's date"], ["{weekday}", "day of the week"], ["{month}", "month"], ["{card}", "the card's title"], ["{due}", "the card's due date"], ["{board}", "this board's name"]];
+  const PLANNER_TOKENS = [["{date}", "today's date"], ["{weekday}", "day of the week"], ["{month}", "month"]];
+  const WEATHER_TOKENS = [["{weather}", "what the weather test measured, like 28°F or 1.2 inches"], ["{weatherDay}", "the day it's about, like tonight or Tuesday night"]];
+  const PLANNER_TRIGGERS = ["schedule", "weather"];
+  const PLANNER_CONDITIONS = ["onDays", "weather"];
+  const PLANNER_ACTIONS = ["createReminder", "createEvent", "notify", "email"];
+  const ALERTS = [["", "no heads-up"], [0, "at the time"], [15, "15 minutes before"], [60, "1 hour before"], [1440, "1 day before"]];
+
+  // What a weather test can look at: the words around the number, its unit, which way "a lot"
+  // goes, and the windows that make sense.
+  const METRICS = {
+    rainPast: { label: "rain so far", unit: "inches", step: 0.1, past: true, windows: [1, 2, 3, 5, 7, 10, 14], make: { op: "atMost", value: 1, window: 7 } },
+    rainNext: { label: "rain forecast", unit: "inches", step: 0.1, windows: [1, 2, 3, 5, 7], make: { op: "atLeast", value: 0.5, window: 2 } },
+    snowNext: { label: "snow forecast", unit: "inches", step: 0.5, windows: [1, 2, 3, 5, 7], make: { op: "atLeast", value: 2, window: 3 } },
+    lowNext: { label: "lowest temperature", unit: "°F", step: 1, windows: [1, 2, 3, 5, 7], make: { op: "atMost", value: 32, window: 7 } },
+    highNext: { label: "highest temperature", unit: "°F", step: 1, windows: [1, 2, 3, 5, 7], make: { op: "atLeast", value: 95, window: 3 } },
+    rainChanceNext: { label: "chance of rain", unit: "%", step: 5, windows: [1, 2, 3, 5, 7], make: { op: "atLeast", value: 60, window: 1 } },
+    tempNow: { label: "temperature right now", unit: "°F", step: 1, now: true, windows: [1], make: { op: "atMost", value: 32, window: 1 } },
+  };
   const DUE_OFFSETS = [[0, "at the time it's due"], [15, "15 minutes before"], [60, "1 hour before"], [180, "3 hours before"], [1440, "1 day before"], [2880, "2 days before"], [10080, "1 week before"]];
 
-  let board = null;
+  let board = null;         // null when building reminders-and-calendar rules
   let rules = [];
   let draft = null;         // the rule being edited, in the server's shape
   let dragging = null;      // { zone, type } from the palette, or { zone: "actions", from: index } when reordering
@@ -45,7 +68,24 @@ window.SentinelBoardAutomations = (function () {
   const byPosition = (a, b) => (a.fields.position || 0) - (b.fields.position || 0);
 
   function columnsOf(boardId) {
+    if (!boardId) return [];
     return S.children(boardId).filter((c) => c.kind === "column").sort(byPosition);
+  }
+
+  const planner = () => !board;
+
+  // Who a reminders rule is for, said the way the Reminders tab says it.
+  function spaceWords(space) {
+    if (!space) return "…";
+    if (space.kind === "Personal") return "just me";
+    if (space.kind === "Family") return "everyone";
+    if (space.id === "group:admins") return "the admins";
+    return space.name;
+  }
+
+  function plannerSpaces() {
+    const list = S.spaces();
+    return list.length ? list : [{ id: "family", kind: "Family", name: "Family" }];
   }
 
   function columnName(id) {
@@ -55,8 +95,8 @@ window.SentinelBoardAutomations = (function () {
 
   // This board's lists first; other boards' lists underneath, for "move it to another board".
   function columnOptions(selected, allowAny) {
-    const here = columnsOf(board.id);
-    const others = S.all("board").filter((b) => b.id !== board.id && !b.fields.archived).sort(byPosition);
+    const here = columnsOf(board && board.id);
+    const others = S.all("board").filter((b) => !board || (b.id !== board.id && !b.fields.archived)).sort(byPosition);
     let html = allowAny ? `<option value=""${!selected ? " selected" : ""}>any list</option>` : (!selected ? '<option value="" selected disabled>pick a list</option>' : "");
     html += here.map((c) => `<option value="${escapeHtml(c.id)}"${c.id === selected ? " selected" : ""}>${escapeHtml(c.fields.title || "list")}</option>`).join("");
     if (!allowAny) {
@@ -72,7 +112,7 @@ window.SentinelBoardAutomations = (function () {
 
   function knownLabels() {
     const names = new Set();
-    for (const column of columnsOf(board.id)) {
+    for (const column of columnsOf(board && board.id)) {
       for (const card of S.children(column.id).filter((c) => c.kind === "card")) {
         for (const label of card.fields.labels || []) if (label && label.name) names.add(label.name);
       }
@@ -120,6 +160,41 @@ window.SentinelBoardAutomations = (function () {
     }
   }
 
+  function weatherWords(w) {
+    const m = METRICS[w.metric] || METRICS.rainPast;
+    const n = Number(w.window) || 1;
+    const span = m.now ? "" : m.past ? (n === 1 ? " today" : ` in the last ${n} days`) : (n === 1 ? " in the next day" : ` in the next ${n} days`);
+    const most = w.op === "atMost";
+    const v = w.value ?? 0;
+    switch (w.metric) {
+      case "rainPast": return `${v} inch${v === 1 ? "" : "es"} of rain or ${most ? "less" : "more"} has fallen${span}`;
+      case "rainNext": return `${v} inch${v === 1 ? "" : "es"} of rain or ${most ? "less" : "more"} is forecast${span}`;
+      case "snowNext": return `${v} inch${v === 1 ? "" : "es"} of snow or ${most ? "less" : "more"} is forecast${span}`;
+      case "lowNext": return most ? `it gets down to ${v}°F or colder${span}` : `it stays at ${v}°F or warmer${span}`;
+      case "highNext": return most ? `it stays at ${v}°F or cooler${span}` : `it gets up to ${v}°F or hotter${span}`;
+      case "rainChanceNext": return most ? `the chance of rain stays at ${v}% or less${span}` : `there's a ${v}% chance of rain or more${span}`;
+      case "tempNow": return `it's ${v}°F or ${most ? "colder" : "warmer"} right now`;
+      default: return "the weather…";
+    }
+  }
+
+  // The blanks of a weather test. `prefix` is where it lives in the block ("weather." in a WHEN).
+  function weatherFields(w, prefix) {
+    const m = METRICS[w.metric] || METRICS.rainPast;
+    const windows = m.windows.map((n) => `<option value="${n}"${Number(w.window) === n ? " selected" : ""}>${m.past ? (n === 1 ? "today" : `the last ${n} days`) : (n === 1 ? "the next day" : `the next ${n} days`)}</option>`).join("");
+    return `the <select class="field-input" data-f="${prefix}metric" data-weather-metric>${Object.entries(METRICS).map(([k, d]) =>
+        `<option value="${k}"${k === w.metric ? " selected" : ""}>${d.label}</option>`).join("")}</select>
+      ${m.now ? "" : `over <select class="field-input" data-f="${prefix}window" data-kind="int">${windows}</select>`}
+      is <select class="field-input" data-f="${prefix}op"><option value="atLeast"${w.op !== "atMost" ? " selected" : ""}>at least</option><option value="atMost"${w.op === "atMost" ? " selected" : ""}>at most</option></select>
+      <input type="number" class="field-input auto-number" data-f="${prefix}value" data-kind="num" step="${m.step}" value="${escapeHtml(w.value ?? "")}" /> ${escapeHtml(m.unit)}
+      <div class="auto-next">${m.past ? "Measured at the nearest airport weather station (Iowa State mesonet daily totals)." : m.now ? "From the nearest weather station, checked every half hour." : "From the National Weather Service forecast for Settings → LOCATION."}</div>`;
+  }
+
+  function newWeatherTest(metric) {
+    const m = METRICS[metric] || METRICS.lowNext;
+    return { type: "weather", metric, op: m.make.op, value: m.make.value, window: m.make.window };
+  }
+
   const TRIGGERS = {
     schedule: {
       icon: "⏰", label: "On a schedule", hint: "every morning, every Monday, once…",
@@ -147,6 +222,13 @@ window.SentinelBoardAutomations = (function () {
           <div class="auto-next" id="auto-next"></div>`;
       },
       words: (t) => scheduleWords(t.schedule),
+    },
+    weather: {
+      icon: "🌦", label: "When the weather turns", hint: "a freeze, a heat wave, a wet day…",
+      make: () => ({ type: "weather", weather: newWeatherTest("lowNext") }),
+      render: (t) => `${weatherFields(t.weather || {}, "weather.")}
+        <div class="auto-next">Checked every half hour. It goes off when this becomes true - once, not again until it's been untrue for a while.</div>`,
+      words: (t) => `When ${weatherWords(t.weather || {})}`,
     },
     cardAdded: {
       icon: "＋", label: "When a card is added", hint: "to a list, or anywhere on the board",
@@ -218,6 +300,12 @@ window.SentinelBoardAutomations = (function () {
       render: (c) => `the card is in <select class="field-input" data-f="columnId">${columnOptions(c.columnId)}</select>`,
       words: (c) => `it's in ${columnName(c.columnId)}`,
     },
+    weather: {
+      icon: "🌦", label: "The weather…", hint: "it hasn't rained, it'll freeze…",
+      make: () => newWeatherTest("rainPast"),
+      render: (c) => weatherFields(c, ""),
+      words: (c) => weatherWords(c),
+    },
     onDays: {
       icon: "📅", label: "Only on certain days",
       make: () => ({ type: "onDays", days: [1, 2, 3, 4, 5] }),
@@ -226,7 +314,65 @@ window.SentinelBoardAutomations = (function () {
     },
   };
 
+  function reminderWhen(a) {
+    if (a.inDays === null || a.inDays === undefined) return "";
+    if (a.fromWeatherDay) {
+      const n = Number(a.inDays);
+      const day = n === 0 ? "on the day of the weather" : n === -1 ? "the day before the weather" : n < 0 ? `${-n} days before the weather` : `${n} days after the weather`;
+      return a.time ? `${day} at ${time12(a.time)}` : day;
+    }
+    return dueWords(a.inDays, a.time);
+  }
+
+  function whenFields(a, noun) {
+    const offsets = a.fromWeatherDay
+      ? [[-2, "2 days before"], [-1, "the day before"], [0, "on the day"], [1, "the day after"]]
+      : [[0, "today"], [1, "tomorrow"], [2, "in 2 days"], [3, "in 3 days"], [7, "in a week"], [14, "in 2 weeks"], [30, "in 30 days"]];
+    return `<select class="field-input" data-f="inDays" data-kind="int">${offsets.map(([v, l]) =>
+        `<option value="${v}"${Number(a.inDays) === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+      ${weatherInRule() ? `<label class="org-check"><input type="checkbox" data-f="fromWeatherDay" data-kind="bool" data-rerender${a.fromWeatherDay ? " checked" : ""}> counted from the day of the weather</label>` : ""}
+      at <input type="time" class="field-input" data-f="time" value="${escapeHtml(a.time || "")}" title="leave empty for ${noun}" />`;
+  }
+
+  function weatherInRule() {
+    return !!draft && ((draft.trigger && draft.trigger.type === "weather") || draft.conditions.some((c) => c.type === "weather"));
+  }
+
+  function alertSelect(a) {
+    return `heads-up <select class="field-input" data-f="alertMinutes" data-kind="int">${ALERTS.map(([v, l]) =>
+      `<option value="${v}"${String(a.alertMinutes ?? "") === String(v) ? " selected" : ""}>${l}</option>`).join("")}</select>`;
+  }
+
   const ACTIONS = {
+    createReminder: {
+      icon: "🔔", label: "Add a reminder", hint: "to the Reminders list",
+      make: () => ({ type: "createReminder", title: "", inDays: 0, time: "", skipIfExists: true, priority: 0, alertMinutes: null, fromWeatherDay: weatherInRule() && draft.trigger && draft.trigger.type === "weather" }),
+      render: (a) => `called ${textInput("title", a.title, "e.g. water the plants", true)}
+        <div class="auto-more">
+          <label class="org-check"><input type="checkbox" data-toggle-due${a.inDays !== null && a.inDays !== undefined ? " checked" : ""}> due</label>
+          ${a.inDays !== null && a.inDays !== undefined ? whenFields(a, "all day") + " " + alertSelect(a) : ""}
+          <div class="auto-sub">priority <select class="field-input" data-f="priority" data-kind="int">${[[0, "none"], [1, "low"], [2, "medium"], [3, "high"]].map(([v, l]) =>
+            `<option value="${v}"${Number(a.priority || 0) === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+          <div class="auto-sub">notes ${textInput("description", a.description, "optional", true)}</div>
+          <label class="org-check"><input type="checkbox" data-f="skipIfExists" data-kind="bool"${a.skipIfExists ? " checked" : ""}> skip if an unfinished reminder with this title is already there</label>
+        </div>`,
+      words: (a) => `add the reminder ${q(a.title)}${a.inDays !== null && a.inDays !== undefined ? `, due ${reminderWhen(a)}` : ""}${a.skipIfExists ? " (unless it's still there)" : ""}`,
+    },
+    createEvent: {
+      icon: "📆", label: "Put an event on the calendar", hint: "all day, or at a time",
+      make: () => ({ type: "createEvent", title: "", inDays: 0, time: "", durationMinutes: 60, skipIfExists: true, alertMinutes: null, fromWeatherDay: false }),
+      render: (a) => `called ${textInput("title", a.title, "e.g. cover the plants", true)}
+        <div class="auto-more">
+          ${whenFields(a, "an all-day event")}
+          ${a.time ? `for <select class="field-input" data-f="durationMinutes" data-kind="int">${[[15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [90, "1½ hours"], [120, "2 hours"], [240, "4 hours"]].map(([v, l]) =>
+            `<option value="${v}"${Number(a.durationMinutes || 60) === v ? " selected" : ""}>${l}</option>`).join("")}</select>` : ""}
+          ${alertSelect(a)}
+          <div class="auto-sub">where ${textInput("location", a.location, "optional", true)}</div>
+          <div class="auto-sub">notes ${textInput("description", a.description, "optional", true)}</div>
+          <label class="org-check"><input type="checkbox" data-f="skipIfExists" data-kind="bool"${a.skipIfExists ? " checked" : ""}> skip if an event with this title is already on that day</label>
+        </div>`,
+      words: (a) => `put ${q(a.title)} on the calendar ${a.time ? "" : "all day "}${reminderWhen({ ...a, inDays: a.inDays ?? 0 })}`,
+    },
     createCard: {
       icon: "＋", label: "Create a card", hint: "then the steps below act on it",
       make: () => ({ type: "createCard", columnId: firstColumnId(), title: "", position: "bottom", skipIfExists: true }),
@@ -341,9 +487,17 @@ window.SentinelBoardAutomations = (function () {
   };
 
   const ZONES = { trigger: TRIGGERS, conditions: CONDITIONS, actions: ACTIONS };
+  const PLANNER_ZONES = { trigger: PLANNER_TRIGGERS, conditions: PLANNER_CONDITIONS, actions: PLANNER_ACTIONS };
 
-  function firstColumnId() { const c = columnsOf(board.id); return c.length ? c[0].id : ""; }
-  function lastColumnId() { const c = columnsOf(board.id); return c.length ? c[c.length - 1].id : ""; }
+  // The blocks this builder offers: all of them on a board, the no-card ones for reminders.
+  function offered(zoneName) {
+    const all = ZONES[zoneName];
+    if (!planner()) return all;
+    return Object.fromEntries(PLANNER_ZONES[zoneName].map((type) => [type, all[type]]));
+  }
+
+  function firstColumnId() { const c = columnsOf(board && board.id); return c.length ? c[0].id : ""; }
+  function lastColumnId() { const c = columnsOf(board && board.id); return c.length ? c[c.length - 1].id : ""; }
 
   function textInput(field, value, placeholder, tokens, kind) {
     return `<input class="field-input auto-text${tokens ? " auto-takes-tokens" : ""}" data-f="${field}"${kind ? ` data-kind="${kind}"` : ""} value="${escapeHtml(value || "")}" placeholder="${escapeHtml(placeholder || "")}" />`;
@@ -395,7 +549,50 @@ window.SentinelBoardAutomations = (function () {
 
   // ---- recipes -------------------------------------------------------------------------------
 
+  function plannerRecipes() {
+    const tz = zone();
+    const everyone = "family";
+    const admins = plannerSpaces().some((sp) => sp.id === "group:admins") ? "group:admins" : everyone;
+    const on = (time, days) => ({ type: "schedule", schedule: { repeat: "daily", time, days, timeZone: tz } });
+    const weather = (metric, op, value, window) => ({ type: "weather", metric, op, value, window });
+    return [
+      {
+        name: "Water the plants", why: "Saturdays - unless it's rained an inch this week",
+        rule: { name: "Water the plants (if it's been dry)", spaceId: everyone, trigger: on("08:00", [6]),
+          conditions: [weather("rainPast", "atMost", 1, 7)],
+          actions: [{ type: "createReminder", title: "Water the plants", inDays: 0, time: "", skipIfExists: true, priority: 0 }] }
+      },
+      {
+        name: "Freeze coming", why: "check the pipes the day before it freezes",
+        rule: { name: "Freeze coming - check the pipes", spaceId: admins, trigger: { type: "weather", weather: weather("lowNext", "atMost", 32, 7) }, conditions: [],
+          actions: [{ type: "createReminder", title: "Check the pipes - {weather} {weatherDay}", inDays: -1, fromWeatherDay: true, time: "", skipIfExists: true, priority: 3 },
+            { type: "notify", everyone: true, people: [], title: "Freeze coming", text: "Down to {weather} {weatherDay} - drip the taps and cover the plants." }] }
+      },
+      {
+        name: "Rain tomorrow", why: "bring the cushions in",
+        rule: { name: "Rain on the way", spaceId: everyone, trigger: { type: "weather", weather: weather("rainChanceNext", "atLeast", 70, 1) }, conditions: [],
+          actions: [{ type: "createReminder", title: "Bring the patio cushions in", inDays: 0, time: "", skipIfExists: true, priority: 1 }] }
+      },
+      {
+        name: "Heat wave", why: "extra watering when it's 95° or hotter",
+        rule: { name: "Hot spell - water the garden", spaceId: everyone, trigger: { type: "weather", weather: weather("highNext", "atLeast", 95, 3) }, conditions: [],
+          actions: [{ type: "createReminder", title: "Hot {weatherDay} ({weather}) - water the garden early", inDays: 0, fromWeatherDay: true, time: "07:00", skipIfExists: true, priority: 2 }] }
+      },
+      {
+        name: "Snow coming", why: "get the salt and shovel out",
+        rule: { name: "Snow on the way", spaceId: everyone, trigger: { type: "weather", weather: weather("snowNext", "atLeast", 2, 3) }, conditions: [],
+          actions: [{ type: "createReminder", title: "Salt the steps - {weather} of snow {weatherDay}", inDays: -1, fromWeatherDay: true, time: "", skipIfExists: true, priority: 2 }] }
+      },
+      {
+        name: "Bin day", why: "on the calendar every week",
+        rule: { name: "Bin day", spaceId: everyone, trigger: on("06:00", [0]), conditions: [],
+          actions: [{ type: "createEvent", title: "Bin day", inDays: 1, time: "", skipIfExists: true }] }
+      },
+    ];
+  }
+
   function recipes() {
+    if (planner()) return plannerRecipes();
     const first = firstColumnId();
     const last = lastColumnId();
     const tz = zone();
@@ -448,7 +645,7 @@ window.SentinelBoardAutomations = (function () {
   function panel() { return el("org-auto-panel"); }
 
   async function open(boardItem) {
-    board = boardItem;
+    board = boardItem || null;
     el("org-auto-modal").classList.remove("hidden");
     panel().innerHTML = '<div class="org-empty">loading…</div>';
     if (S.status() && S.status().personalSpaces) {
@@ -471,7 +668,7 @@ window.SentinelBoardAutomations = (function () {
 
   async function load() {
     try {
-      const response = await fetch(`/api/organizer/automations?boardId=${encodeURIComponent(board.id)}`);
+      const response = await fetch(planner() ? "/api/organizer/automations?planner=true" : `/api/organizer/automations?boardId=${encodeURIComponent(board.id)}`);
       if (!response.ok) throw new Error();
       const data = await response.json();
       rules = data.automations || [];
@@ -499,8 +696,10 @@ window.SentinelBoardAutomations = (function () {
 
   function renderList() {
     panel().innerHTML = `
-      <div class="zone-editor-header"><span>AUTOMATIONS · ${escapeHtml(board.fields.title || "board")}</span><button class="org-x" data-auto-close aria-label="close">&times;</button></div>
-      <p class="auto-intro">Rules that look after this board for you. They run on the server, so they happen even when every phone and computer is off.</p>
+      <div class="zone-editor-header"><span>AUTOMATIONS · ${escapeHtml(title())}</span><button class="org-x" data-auto-close aria-label="close">&times;</button></div>
+      <p class="auto-intro">${planner()
+        ? "Rules that add reminders and calendar events for you - on a schedule, or when the weather turns, and held back by the weather (no watering reminder after a wet week). They run on the server, so they happen even when every phone and computer is off. Reminders for everyone or the admins show on the wall kiosk when they're due."
+        : "Rules that look after this board for you. They run on the server, so they happen even when every phone and computer is off."}</p>
       <div class="auto-recipes">
         <button class="btn" id="auto-new">+ build a rule</button>
         <span class="auto-recipes-label">or start from a recipe:</span>
@@ -526,15 +725,20 @@ window.SentinelBoardAutomations = (function () {
     }
   }
 
+  function title() {
+    return planner() ? "REMINDERS & CALENDAR" : (board.fields.title || "board");
+  }
+
   function ruleRow(rule) {
     const scheduled = rule.trigger.type === "schedule";
+    const runnable = scheduled || rule.trigger.type === "weather";
     const status = rule.lastRunAt
       ? `<span class="${rule.lastOk ? "auto-ok" : "auto-bad"}">${rule.lastOk ? "✓" : "!"} ${escapeHtml(formatWhen(rule.lastRunAt))}: ${escapeHtml(rule.lastResult || "")}</span>`
       : '<span class="auto-dim">hasn\'t run yet</span>';
     return `<div class="auto-rule${rule.enabled ? "" : " auto-off"}" data-rule="${escapeHtml(rule.id)}">
       <label class="auto-switch" title="on / off"><input type="checkbox" data-enabled${rule.enabled ? " checked" : ""}><span></span></label>
       <div class="auto-rule-body">
-        <div class="auto-rule-name">${escapeHtml(rule.name)}</div>
+        <div class="auto-rule-name">${escapeHtml(rule.name)}${planner() ? ` <span class="auto-dim">· for ${escapeHtml(spaceWords(plannerSpaces().find((sp) => sp.id === rule.spaceId)))}</span>` : ""}</div>
         <div class="auto-rule-sentence">${escapeHtml(ruleSentence(rule))}</div>
         <div class="auto-rule-status">
           ${scheduled && rule.enabled && rule.nextRunAt ? `<span>next: ${escapeHtml(formatWhen(rule.nextRunAt))}</span>` : ""}
@@ -543,7 +747,7 @@ window.SentinelBoardAutomations = (function () {
         <div class="auto-history hidden"></div>
       </div>
       <div class="auto-rule-actions">
-        ${scheduled ? '<button class="btn btn-small" data-run title="do it right now, to try it out">run now</button>' : ""}
+        ${runnable ? '<button class="btn btn-small" data-run title="do it right now, to try it out - ONLY IF tests still apply">run now</button>' : ""}
         <button class="btn btn-small" data-edit>edit</button>
         <button class="btn btn-small" data-history>history</button>
         <button class="btn btn-small org-danger" data-delete>delete</button>
@@ -588,7 +792,7 @@ window.SentinelBoardAutomations = (function () {
   }
 
   async function remove(rule) {
-    if (!confirm(`Delete the rule "${rule.name}"? Cards it already made stay where they are.`)) return;
+    if (!confirm(`Delete the rule "${rule.name}"? ${planner() ? "Reminders and events" : "Cards"} it already made stay where they are.`)) return;
     try {
       await send("DELETE", `/api/organizer/automations/${encodeURIComponent(rule.id)}`);
       await load();
@@ -620,24 +824,28 @@ window.SentinelBoardAutomations = (function () {
       id: rule ? rule.id : null,
       name: source.name || "",
       enabled: rule ? rule.enabled : true,
-      boardId: board.id,
+      boardId: board ? board.id : "",
+      spaceId: planner() ? (source.spaceId && plannerSpaces().some((sp) => sp.id === source.spaceId) ? source.spaceId : "family") : null,
       trigger: source.trigger,
       conditions: source.conditions || [],
       actions: source.actions || []
     }));
     panel().innerHTML = `
-      <div class="zone-editor-header"><span>${rule ? "EDIT RULE" : "NEW RULE"} · ${escapeHtml(board.fields.title || "board")}</span><button class="org-x" data-auto-close aria-label="close">&times;</button></div>
-      <input class="field-input org-title-input" id="auto-name" placeholder="name this rule, e.g. Eggs every morning" value="${escapeHtml(draft.name)}" />
+      <div class="zone-editor-header"><span>${rule ? "EDIT RULE" : "NEW RULE"} · ${escapeHtml(title())}</span><button class="org-x" data-auto-close aria-label="close">&times;</button></div>
+      <input class="field-input org-title-input" id="auto-name" placeholder="${planner() ? "name this rule, e.g. Water the plants" : "name this rule, e.g. Eggs every morning"}" value="${escapeHtml(draft.name)}" />
+      ${planner() ? `<div class="auto-for">reminders and events go to <select class="field-input" id="auto-space">${plannerSpaces().map((sp) =>
+        `<option value="${escapeHtml(sp.id)}"${sp.id === draft.spaceId ? " selected" : ""}>${escapeHtml(spaceWords(sp))}</option>`).join("")}</select>
+        <span class="auto-dim">- everyone and admins reminders show on the wall kiosk when due</span></div>` : ""}
       <datalist id="auto-labels">${knownLabels().map((l) => `<option value="${escapeHtml(l)}">`).join("")}</datalist>
       <div class="auto-builder">
         <aside class="auto-palette" aria-label="blocks">
           <p class="auto-dim">Drag a block into the rule, or click it.</p>
-          ${paletteGroup("trigger", "WHEN", TRIGGERS)}
-          ${paletteGroup("conditions", "ONLY IF", CONDITIONS)}
-          ${paletteGroup("actions", "THEN", ACTIONS)}
+          ${paletteGroup("trigger", "WHEN", offered("trigger"))}
+          ${paletteGroup("conditions", "ONLY IF", offered("conditions"))}
+          ${paletteGroup("actions", "THEN", offered("actions"))}
           <div class="auto-palette-group">
             <div class="auto-palette-title">WORDS THAT FILL THEMSELVES IN</div>
-            <div class="auto-tokens">${TOKENS.map(([token, what]) => `<span class="auto-token" draggable="true" data-token="${token}" title="${what} - drag into a title or comment, or click">${token}</span>`).join("")}</div>
+            <div class="auto-tokens">${[...(planner() ? PLANNER_TOKENS : BOARD_TOKENS), ...WEATHER_TOKENS].map(([token, what]) => `<span class="auto-token" draggable="true" data-token="${token}" title="${what} - drag into a title or comment, or click">${token}</span>`).join("")}</div>
           </div>
         </aside>
         <section class="auto-canvas" id="auto-canvas"></section>
@@ -653,6 +861,7 @@ window.SentinelBoardAutomations = (function () {
     el("auto-cancel").addEventListener("click", renderList);
     el("auto-save").addEventListener("click", save);
     el("auto-name").addEventListener("input", (event) => { draft.name = event.target.value; });
+    if (el("auto-space")) el("auto-space").addEventListener("change", (event) => { draft.spaceId = event.target.value; renderSentence(); });
     bindPalette();
     renderCanvas();
   }
@@ -712,13 +921,13 @@ window.SentinelBoardAutomations = (function () {
     const before = draft.actions.slice(0, index).map((a) => a.type);
     const lastCreate = before.lastIndexOf("createCard");
     const lastDelete = before.lastIndexOf("deleteCard");
-    if (draft.trigger && draft.trigger.type === "schedule") return lastCreate > lastDelete;
+    if (draft.trigger && (draft.trigger.type === "schedule" || draft.trigger.type === "weather")) return lastCreate > lastDelete;
     return lastDelete === -1 || lastCreate > lastDelete;
   }
 
   function renderCanvas() {
     const canvas = el("auto-canvas");
-    const scheduled = draft.trigger && draft.trigger.type === "schedule";
+    const scheduled = draft.trigger && (draft.trigger.type === "schedule" || draft.trigger.type === "weather");
     const trigger = draft.trigger && TRIGGERS[draft.trigger.type];
 
     canvas.innerHTML = `
@@ -750,7 +959,7 @@ window.SentinelBoardAutomations = (function () {
         const node = canvas.querySelector(`[data-placed="actions"][data-index="${index}"]`);
         if (node) {
           node.classList.add("auto-warn");
-          node.insertAdjacentHTML("beforeend", `<div class="auto-warn-text">${scheduled ? "A schedule has no card of its own - put “Create a card” above this step." : "The card was deleted by an earlier step."}</div>`);
+          node.insertAdjacentHTML("beforeend", `<div class="auto-warn-text">${scheduled ? "A schedule or weather rule has no card of its own - put “Create a card” above this step." : "The card was deleted by an earlier step."}</div>`);
         }
       }
     });
@@ -759,7 +968,7 @@ window.SentinelBoardAutomations = (function () {
         const node = canvas.querySelector(`[data-placed="conditions"][data-index="${i}"]`);
         if (node) {
           node.classList.add("auto-warn");
-          node.insertAdjacentHTML("beforeend", '<div class="auto-warn-text">A schedule has no card to check - this would never be true.</div>');
+          node.insertAdjacentHTML("beforeend", '<div class="auto-warn-text">A schedule or weather rule has no card to check - this would never be true.</div>');
         }
       }
     }
@@ -802,6 +1011,7 @@ window.SentinelBoardAutomations = (function () {
       case "bool": return input.checked;
       case "boolselect": return input.value === "true";
       case "int": return input.value === "" ? null : Number(input.value);
+      case "num": return input.value === "" ? null : Number(input.value);
       case "csv": return input.value.split(",").map((s) => s.trim()).filter(Boolean);
       case "lines": return input.value.split("\n").map((s) => s.trim()).filter(Boolean);
       default: return input.value;
@@ -819,10 +1029,25 @@ window.SentinelBoardAutomations = (function () {
       for (const input of node.querySelectorAll("[data-f]")) {
         const structural = input.tagName === "SELECT" || input.type === "checkbox";
         input.addEventListener(structural ? "change" : "input", () => {
+          if (input.hasAttribute("data-weather-metric")) {
+            // A new measure starts from its own sensible numbers - 32°F isn't an amount of rain.
+            const path = input.dataset.f.replace(/metric$/, "");
+            const fresh = newWeatherTest(input.value);
+            for (const key of ["metric", "op", "value", "window"]) setPath(block, path + key, fresh[key]);
+            renderCanvas();
+            return;
+          }
           setPath(block, input.dataset.f, readInput(input));
           renderSentence();
           if (input.dataset.f.startsWith("schedule.")) queuePreview();
+          // Fields whose choice changes what else is shown.
+          if (input.hasAttribute("data-rerender")) {
+            if (input.dataset.f === "fromWeatherDay") block.inDays = input.checked ? -1 : 0;
+            renderCanvas();
+          }
+          if (input.dataset.f === "time" && block.type === "createEvent" && Boolean(input.value) !== Boolean(input.dataset.had)) renderCanvas();
         });
+        if (input.dataset.f === "time") input.dataset.had = input.value ? "1" : "";
         if (input.classList.contains("auto-takes-tokens")) input.addEventListener("focus", () => { lastTextInput = input; });
       }
 
@@ -882,7 +1107,7 @@ window.SentinelBoardAutomations = (function () {
       const dueToggle = node.querySelector("[data-toggle-due]");
       if (dueToggle) {
         dueToggle.addEventListener("change", () => {
-          block.inDays = dueToggle.checked ? 1 : null;
+          block.inDays = dueToggle.checked ? (block.type === "createReminder" ? 0 : 1) : null;
           if (!dueToggle.checked) block.time = "";
           renderCanvas();
         });
@@ -961,7 +1186,7 @@ window.SentinelBoardAutomations = (function () {
   }
 
   function addBlock(zoneName, type, at) {
-    const def = ZONES[zoneName][type];
+    const def = offered(zoneName)[type];
     if (!def) return;
     const block = def.make();
     if (zoneName === "trigger") {
@@ -1019,6 +1244,7 @@ window.SentinelBoardAutomations = (function () {
     draft.name = el("auto-name").value.trim();
     const errors = [];
     if (!draft.trigger) errors.push("Drag a WHEN block in - what starts the rule?");
+    if (planner() && !draft.spaceId) errors.push("Pick who the reminders and events are for.");
     if (!draft.actions.length) errors.push("Drag at least one THEN block in - what should happen?");
     if (!draft.name) errors.push("Give the rule a name.");
     if (errors.length) { showErrors(errors); return; }
@@ -1047,5 +1273,5 @@ window.SentinelBoardAutomations = (function () {
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !modal.classList.contains("hidden") && !draft) close(); });
   });
 
-  return { open };
+  return { open, openPlanner: () => open(null) };
 })();

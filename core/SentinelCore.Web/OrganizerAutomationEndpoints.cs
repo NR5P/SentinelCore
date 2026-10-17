@@ -4,8 +4,9 @@ using System.Globalization;
 namespace SentinelCore.Web;
 
 // /api/organizer/automations - board automations, see OrganizerAutomations.cs. Anyone who can
-// see a board can see and edit its rules, the same as the board itself. A rule runs as whoever
-// saved it last, and every list it names has to be one that person can see.
+// see a board can see and edit its rules, the same as the board itself. A reminders-and-calendar
+// rule (no board) belongs to a space instead: anyone in that space can see and edit it. A rule
+// runs as whoever saved it last, and every list it names has to be one that person can see.
 public static class OrganizerAutomationEndpoints
 {
     private const int MaxActions = 20;
@@ -14,12 +15,16 @@ public static class OrganizerAutomationEndpoints
 
     public static void MapOrganizerAutomationEndpoints(this RouteGroupBuilder organizer)
     {
-        organizer.MapGet("/automations", async (string? boardId, HttpContext context, IOrganizerStore store,
+        // ?boardId= for one board's rules, ?planner=true for the reminders-and-calendar ones.
+        organizer.MapGet("/automations", async (string? boardId, bool? planner, HttpContext context, IOrganizerStore store,
             IOrganizerAutomationStore automations, IOrganizerAutomationNotifier notifier, CancellationToken ct) =>
         {
-            var boards = await VisibleIdsAsync(store, OrganizerEndpoints.UserOf(context), OrganizerKinds.Board, ct);
+            var user = OrganizerEndpoints.UserOf(context);
+            var boards = await VisibleIdsAsync(store, user, OrganizerKinds.Board, ct);
+            var spaces = await VisibleSpaceIdsAsync(store, user, ct);
             var list = (await automations.GetAllAsync(ct))
-                .Where(rule => boards.Contains(rule.BoardId) && (boardId is null || rule.BoardId == boardId));
+                .Where(rule => CanSee(rule, boards, spaces))
+                .Where(rule => planner == true ? rule.IsPlanner : boardId is null || rule.BoardId == boardId);
             // Whether the send blocks can work here, so the editor can say so before anyone relies on one.
             var channels = await notifier.ChannelsAsync(ct);
             return Results.Ok(new { automations = list, timeZone = TimeZoneInfo.Local.Id, pushReady = channels.PushReady, emailReady = channels.EmailReady });
@@ -62,6 +67,7 @@ public static class OrganizerAutomationEndpoints
             rule.LastOk = existing.LastOk;
             rule.LastResult = existing.LastResult;
             rule.RunCount = existing.RunCount;
+            rule.WeatherFiredAt = existing.WeatherFiredAt;
             await engine.SaveAsync(rule, ct);
             return Results.Ok(rule);
         });
@@ -78,8 +84,8 @@ public static class OrganizerAutomationEndpoints
             IOrganizerAutomationStore automations, OrganizerAutomationEngine engine, CancellationToken ct) =>
         {
             if (await FindVisibleAsync(id, OrganizerEndpoints.UserOf(context), store, automations, ct) is not { } rule) return Results.NotFound();
-            if (rule.Trigger.Type != OrganizerAutomationTypes.Schedule)
-                return Results.BadRequest(new { errors = new[] { "Only a scheduled rule can be run by hand - the others wait for a card to do something." } });
+            if (!OrganizerAutomationTypes.StartsWithoutCard(rule.Trigger.Type))
+                return Results.BadRequest(new { errors = new[] { "Only a scheduled or weather rule can be run by hand - the others wait for a card to do something." } });
             var run = await engine.RunNowAsync(id, ct);
             return run is null
                 ? Results.Json(new { errors = new[] { "The automation engine is still starting - try again in a moment." } }, statusCode: StatusCodes.Status503ServiceUnavailable)
@@ -112,11 +118,17 @@ public static class OrganizerAutomationEndpoints
     private static async Task<HashSet<string>> VisibleIdsAsync(IOrganizerStore store, OrganizerUser user, string kind, CancellationToken ct) =>
         (await store.GetItemsAsync(user, kind, null, ct)).Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
 
+    private static async Task<HashSet<string>> VisibleSpaceIdsAsync(IOrganizerStore store, OrganizerUser user, CancellationToken ct) =>
+        (await store.GetVisibleSpacesAsync(user, ct)).Select(space => space.Id).ToHashSet(StringComparer.Ordinal);
+
+    private static bool CanSee(OrganizerAutomation rule, HashSet<string> boards, HashSet<string> spaces) =>
+        rule.IsPlanner ? rule.SpaceId is not null && spaces.Contains(rule.SpaceId) : boards.Contains(rule.BoardId);
+
     private static async Task<OrganizerAutomation?> FindVisibleAsync(
         string id, OrganizerUser user, IOrganizerStore store, IOrganizerAutomationStore automations, CancellationToken ct)
     {
         if (await automations.GetAsync(id, ct) is not { } rule) return null;
-        return (await VisibleIdsAsync(store, user, OrganizerKinds.Board, ct)).Contains(rule.BoardId) ? rule : null;
+        return CanSee(rule, await VisibleIdsAsync(store, user, OrganizerKinds.Board, ct), await VisibleSpaceIdsAsync(store, user, ct)) ? rule : null;
     }
 
     // What a client sent, minus the fields only the server may set.
@@ -124,7 +136,8 @@ public static class OrganizerAutomationEndpoints
     {
         Name = request.Name.Trim(),
         Enabled = request.Enabled,
-        BoardId = request.BoardId,
+        BoardId = request.BoardId ?? "",
+        SpaceId = string.IsNullOrEmpty(request.BoardId) ? request.SpaceId : null,
         TimeZone = request.TimeZone,
         Trigger = request.Trigger,
         Conditions = request.Conditions,
@@ -144,8 +157,18 @@ public static class OrganizerAutomationEndpoints
         if (string.IsNullOrWhiteSpace(rule.Name)) errors.Add("Give the rule a name.");
         else if (rule.Name.Trim().Length > 80) errors.Add("Rule names can be at most 80 characters.");
 
-        var boards = await store.GetItemsAsync(user, OrganizerKinds.Board, null, ct);
-        if (!boards.Any(board => board.Id == rule.BoardId)) errors.Add("That board doesn't exist, or you can't see it.");
+        var planner = rule.IsPlanner;
+        if (planner)
+        {
+            var spaces = await VisibleSpaceIdsAsync(store, user, ct);
+            if (string.IsNullOrEmpty(rule.SpaceId)) errors.Add("Pick who the reminders and events are for.");
+            else if (!spaces.Contains(rule.SpaceId)) errors.Add("That space doesn't exist, or you aren't in it.");
+        }
+        else
+        {
+            var boards = await store.GetItemsAsync(user, OrganizerKinds.Board, null, ct);
+            if (!boards.Any(board => board.Id == rule.BoardId)) errors.Add("That board doesn't exist, or you can't see it.");
+        }
 
         // Lists on any board this person can see - a rule may move a card to another board.
         var columns = (await store.GetItemsAsync(user, OrganizerKinds.Column, null, ct)).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
@@ -168,13 +191,18 @@ public static class OrganizerAutomationEndpoints
         }
 
         var trigger = rule.Trigger;
-        if (!OrganizerAutomationTypes.Triggers.Contains(trigger.Type))
+        if (!(planner ? OrganizerAutomationTypes.PlannerTriggers : OrganizerAutomationTypes.Triggers).Contains(trigger.Type))
         {
-            errors.Add("Pick what starts the rule.");
+            errors.Add(planner ? "A reminders rule starts on a schedule or when the weather turns." : "Pick what starts the rule.");
         }
         else if (trigger.Type == OrganizerAutomationTypes.Schedule)
         {
             ValidateSchedule(trigger.Schedule, errors);
+        }
+        else if (trigger.Type == OrganizerAutomationTypes.Weather)
+        {
+            if (trigger.Weather is null) errors.Add("Say what weather starts the rule.");
+            else ValidateWeather(trigger.Weather, errors);
         }
         else if (trigger.Type == OrganizerAutomationTypes.CardDue && trigger.MinutesBefore is < 0 or > 60 * 24 * 14)
         {
@@ -192,6 +220,8 @@ public static class OrganizerAutomationEndpoints
         foreach (var condition in rule.Conditions)
         {
             if (!OrganizerAutomationTypes.Conditions.Contains(condition.Type)) errors.Add($"\"{condition.Type}\" isn't a condition this server knows.");
+            else if (planner && OrganizerAutomationTypes.CardConditions.Contains(condition.Type)) errors.Add("A reminders rule has no card to check.");
+            else if (condition.Type == "weather") ValidateWeather(condition, errors);
             else if (condition.Type == "inColumn") RequireColumn(condition.ColumnId, "is in list");
             else if (condition.Type == "onDays" && condition.Days is { } days && days.Any(d => d is < 0 or > 6)) errors.Add("Days of the week go from 0 (Sunday) to 6.");
             else if (condition.Type is "titleContains" or "hasLabel" or "lacksLabel" && string.IsNullOrWhiteSpace(condition.Text))
@@ -202,9 +232,14 @@ public static class OrganizerAutomationEndpoints
         if (rule.Actions.Count == 0) errors.Add("Add at least one thing for the rule to do.");
         if (rule.Actions.Count > MaxActions) errors.Add($"A rule can do at most {MaxActions} things.");
         // A scheduled rule has no card of its own; card steps only make sense after it makes one.
-        var haveCard = trigger.Type != OrganizerAutomationTypes.Schedule;
+        var haveCard = !OrganizerAutomationTypes.StartsWithoutCard(trigger.Type);
         foreach (var action in rule.Actions)
         {
+            if (planner && !OrganizerAutomationTypes.PlannerActions.Contains(action.Type))
+            {
+                errors.Add("A reminders rule can add reminders and events, and send notifications and emails.");
+                continue;
+            }
             var isBoard = OrganizerAutomationTypes.BoardActions.Contains(action.Type);
             if (!isBoard && !OrganizerAutomationTypes.IsCardAction(action.Type))
             {
@@ -246,6 +281,15 @@ public static class OrganizerAutomationEndpoints
                 case "deleteCard":
                     haveCard = false;
                     break;
+                case "createReminder" or "createEvent":
+                    if (string.IsNullOrWhiteSpace(action.Title)) errors.Add(action.Type == "createEvent" ? "The new event needs a title." : "The new reminder needs a title.");
+                    if (action.Priority is < 0 or > 3) errors.Add("Priority goes from 0 (none) to 3 (high).");
+                    if (action.AlertMinutes is < 0 or > 60 * 24 * 14) errors.Add("A heads-up can be at most two weeks before.");
+                    if (action.DurationMinutes is < 5 or > 60 * 24 * 7) errors.Add("An event can last from 5 minutes to a week.");
+                    if (action.FromWeatherDay && !rule.Conditions.Any(c => c.Type == "weather") && trigger.Type != OrganizerAutomationTypes.Weather)
+                        errors.Add("\"The day of the weather\" needs a weather test in WHEN or ONLY IF to say which day.");
+                    CheckText(action.Location, "where");
+                    break;
                 case "notify":
                     if (string.IsNullOrWhiteSpace(action.Text)) errors.Add("The notification has no message.");
                     if (action.Everyone) break;
@@ -278,6 +322,18 @@ public static class OrganizerAutomationEndpoints
         }
 
         return errors;
+    }
+
+    private static void ValidateWeather(BoardAutomationCondition test, List<string> errors)
+    {
+        if (!WeatherRuleMetrics.All.Contains(test.Metric ?? "")) errors.Add("Pick what weather to look at.");
+        if (!WeatherRuleMetrics.Ops.Contains(test.Op ?? "")) errors.Add("Pick \"at least\" or \"at most\" for the weather test.");
+        if (test.Value is not { } value || double.IsNaN(value) || value is < -100 or > 1000) errors.Add("The weather test needs a number.");
+        var most = test.Metric == WeatherRuleMetrics.RainPast ? WeatherRuleMetrics.MaxPastDays : WeatherRuleMetrics.MaxForecastDays;
+        if (test.Window is < 1 || test.Window > most)
+            errors.Add(test.Metric == WeatherRuleMetrics.RainPast
+                ? $"Rain so far can look back 1 to {most} days."
+                : $"The forecast goes {most} days ahead at most.");
     }
 
     private static void ValidateSchedule(BoardAutomationSchedule? schedule, List<string> errors)

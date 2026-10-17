@@ -15,6 +15,8 @@ window.SentinelOrganizer = (function () {
 
   let pane = "calendar";
   let spaceFilter = "all";
+  // Who the quick-add reminder is for, kept while the list re-renders.
+  let remNewSpace = null;
   let monthCursor = firstOfMonth(new Date());
   let selectedDay = ymd(new Date());
   let selectedNoteId = null;
@@ -250,6 +252,19 @@ window.SentinelOrganizer = (function () {
 
   function spaceOptions(selected) {
     return spaces().map((s) => `<option value="${escapeHtml(s.id)}"${s.id === selected ? " selected" : ""}>${escapeHtml(s.name)}</option>`).join("");
+  }
+
+  // The same choice said as who it's for: "just me", "everyone", "admins". Everyone and Admins
+  // reminders also show across the top of the wall kiosk when they're due.
+  function audienceName(space) {
+    if (space.kind === "Personal") return "just me";
+    if (space.kind === "Family") return "everyone";
+    if (space.id === "group:admins") return "admins";
+    return space.name;
+  }
+
+  function audienceOptions(selected) {
+    return spaces().map((s) => `<option value="${escapeHtml(s.id)}"${s.id === selected ? " selected" : ""}>${escapeHtml(audienceName(s))}</option>`).join("");
   }
 
   function byPosition(a, b) {
@@ -500,6 +515,7 @@ window.SentinelOrganizer = (function () {
         <button class="btn btn-small" id="org-cal-today">today</button>
         <span class="org-spacer"></span>
         <button class="btn btn-small" id="org-cal-holidays" title="Show holidays from other calendars">holidays${S.holidaySets().length ? ` (${S.holidaySets().length})` : ""}</button>
+        <button class="btn btn-small" id="org-cal-auto" title="rules that add events and reminders for you - like a freeze warning to check the pipes">&#9889; automations</button>
         <button class="btn" id="org-cal-add">+ event</button>
       </div>
       <div class="org-cal-grid">
@@ -516,6 +532,7 @@ window.SentinelOrganizer = (function () {
 
     el("org-cal-prev").addEventListener("click", () => { monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1); renderCalendar(); });
     el("org-cal-next").addEventListener("click", () => { monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1); renderCalendar(); });
+    el("org-cal-auto").addEventListener("click", () => window.SentinelBoardAutomations.openPlanner());
     el("org-cal-today").addEventListener("click", () => { monthCursor = firstOfMonth(new Date()); selectedDay = ymd(new Date()); renderCalendar(); });
     el("org-cal-add").addEventListener("click", () => openEventEditor(null, { day: selectedDay }));
     el("org-cal-holidays").addEventListener("click", openHolidaySettings);
@@ -956,8 +973,10 @@ window.SentinelOrganizer = (function () {
         <input class="field-input" id="rem-new-title" placeholder="add a reminder and press enter" />
         <input type="date" class="field-input" id="rem-new-date" title="due date (optional)" />
         <input type="time" class="field-input org-time" id="rem-new-time" title="time (optional)" />
+        ${spaces().length > 1 ? `<select class="field-input org-rem-for" id="rem-new-space" title="who it's for - everyone and admins reminders also show on the wall kiosk when due">${audienceOptions(remNewSpace || defaultSpace())}</select>` : ""}
         <button class="btn" id="rem-new-add">add</button>
         ${voiceAvailable() ? `<button class="btn org-voice" id="rem-new-voice" type="button" title="say a reminder, like &quot;walk the dog tomorrow at 1&quot;" aria-label="say a reminder">${MIC_ICON}</button>` : ""}
+        <button class="btn btn-small" id="rem-automations" type="button" title="rules that add reminders for you - every Saturday, or when the weather turns">&#9889; automations</button>
       </div>
       ${section("OVERDUE", groups.overdue, "org-rem-overdue")}
       ${section("TODAY", groups.today)}
@@ -977,11 +996,13 @@ window.SentinelOrganizer = (function () {
         fields.allDay = !time;
         fields.due = time ? isoLocal(new Date(`${date}T${time}`)) : date;
       }
-      S.create("reminder", fields, { spaceId: defaultSpace() });
+      S.create("reminder", fields, { spaceId: el("rem-new-space") ? el("rem-new-space").value : defaultSpace() });
       el("rem-new-title").value = "";
       el("rem-new-title").focus();
     };
     el("rem-new-add").addEventListener("click", add);
+    if (el("rem-new-space")) el("rem-new-space").addEventListener("change", () => { remNewSpace = el("rem-new-space").value; });
+    el("rem-automations").addEventListener("click", () => window.SentinelBoardAutomations.openPlanner());
     el("rem-new-title").addEventListener("keydown", (event) => { if (event.key === "Enter") add(); });
     if (el("rem-new-voice")) el("rem-new-voice").addEventListener("click", () => listenForReminder(el("rem-new-voice")));
     if (el("rem-toggle-done")) el("rem-toggle-done").addEventListener("click", () => { showCompleted = !showCompleted; renderReminders(); });
@@ -1125,7 +1146,7 @@ window.SentinelOrganizer = (function () {
         <div class="org-form-row">
           <label>alert</label>
           <select class="field-input" id="rem-alert">${ALERT_CHOICES.map(([v, t]) => `<option value="${v ?? ""}"${(alert ?? null) === v ? " selected" : ""}>${t}</option>`).join("")}</select>
-          ${parentId || (reminder && reminder.parentId) ? "" : `<label class="org-inline-label">in</label><select class="field-input" id="rem-space">${spaceOptions(isNew ? defaultSpace() : reminder.spaceId)}</select>`}
+          ${parentId || (reminder && reminder.parentId) ? "" : `<label class="org-inline-label">for</label><select class="field-input" id="rem-space">${audienceOptions(isNew ? defaultSpace() : reminder.spaceId)}</select>`}
         </div>
         <label class="org-check"><input type="checkbox" id="rem-flagged"${f.flagged ? " checked" : ""}> flagged</label>
         <textarea class="field-textarea" id="rem-notes" rows="3" placeholder="notes">${escapeHtml(f.notes || "")}</textarea>

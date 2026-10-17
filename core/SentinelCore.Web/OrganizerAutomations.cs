@@ -20,7 +20,11 @@ public sealed class OrganizerAutomation
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public bool Enabled { get; set; } = true;
+    // The board the rule looks after. Empty for a reminders-and-calendar rule, which instead
+    // belongs to SpaceId: it is seen and edited by everyone in that space, and the reminders and
+    // events it makes go there.
     public string BoardId { get; set; } = "";
+    public string? SpaceId { get; set; }
     public BoardAutomationTrigger Trigger { get; set; } = new();
     public List<BoardAutomationCondition> Conditions { get; set; } = [];
     public List<BoardAutomationAction> Actions { get; set; } = [];
@@ -43,11 +47,21 @@ public sealed class OrganizerAutomation
     public bool? LastOk { get; set; }
     public string? LastResult { get; set; }
     public int RunCount { get; set; }
+
+    // "When the weather turns": whether the trigger's weather test held the last time it was
+    // checked, and when the rule last fired for it. It fires when the test starts holding, not
+    // every half hour while it holds.
+    public bool? WeatherHeld { get; set; }
+    public DateTimeOffset? WeatherCheckedAt { get; set; }
+    public DateTimeOffset? WeatherFiredAt { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsPlanner => string.IsNullOrEmpty(BoardId);
 }
 
 public sealed class BoardAutomationTrigger
 {
-    // schedule | cardAdded | cardMoved | cardCompleted | checklistCompleted | labelAdded | cardDue
+    // schedule | weather | cardAdded | cardMoved | cardCompleted | checklistCompleted | labelAdded | cardDue
     public string Type { get; set; } = OrganizerAutomationTypes.Schedule;
     // cardAdded/cardMoved: only cards landing in this column. cardDue: only cards in it.
     // Null = any column on the board.
@@ -58,6 +72,9 @@ public sealed class BoardAutomationTrigger
     // labelAdded: only this label (null = any).
     public string? Label { get; set; }
     public BoardAutomationSchedule? Schedule { get; set; }
+    // weather: the test that starts the rule when it becomes true ("a freeze shows up in the
+    // next 7 days"). A condition of type "weather".
+    public BoardAutomationCondition? Weather { get; set; }
 }
 
 public sealed class BoardAutomationSchedule
@@ -80,11 +97,17 @@ public sealed class BoardAutomationSchedule
 
 public sealed class BoardAutomationCondition
 {
-    // titleContains | hasLabel | lacksLabel | inColumn | onDays
+    // titleContains | hasLabel | lacksLabel | inColumn | onDays | weather
     public string Type { get; set; } = "";
     public string? Text { get; set; }
     public string? ColumnId { get; set; }
     public List<int>? Days { get; set; }
+    // weather: what is measured (see WeatherRuleMetrics), "atLeast" or "below", the number, and
+    // how many days back (rainPast) or ahead (the forecasts) to look.
+    public string? Metric { get; set; }
+    public string? Op { get; set; }
+    public double? Value { get; set; }
+    public int? Window { get; set; }
 }
 
 public sealed class BoardAutomationAction
@@ -116,6 +139,16 @@ public sealed class BoardAutomationAction
     public bool Everyone { get; set; }
     // email: addresses that aren't anyone's account.
     public List<string>? Addresses { get; set; }
+    // createReminder: 0 none .. 3 high. createReminder / createEvent: a heads-up this many
+    // minutes before (the devices schedule it, like any reminder's alert).
+    public int? Priority { get; set; }
+    public int? AlertMinutes { get; set; }
+    // createEvent: where, and how long (no time on the action = an all-day event).
+    public string? Location { get; set; }
+    public int? DurationMinutes { get; set; }
+    // createReminder / createEvent: count InDays from the day the weather test was about (the
+    // night of the freeze) rather than from today.
+    public bool FromWeatherDay { get; set; }
 }
 
 public sealed record OrganizerAutomationRun(string AutomationId, DateTimeOffset At, bool Ok, string Message);
@@ -129,17 +162,25 @@ public static class OrganizerAutomationTypes
     public const string ChecklistCompleted = "checklistCompleted";
     public const string LabelAdded = "labelAdded";
     public const string CardDue = "cardDue";
+    public const string Weather = "weather";
 
-    public static readonly string[] Triggers = [Schedule, CardAdded, CardMoved, CardCompleted, ChecklistCompleted, LabelAdded, CardDue];
-    public static readonly string[] Conditions = ["titleContains", "hasLabel", "lacksLabel", "inColumn", "onDays"];
+    public static readonly string[] Triggers = [Schedule, Weather, CardAdded, CardMoved, CardCompleted, ChecklistCompleted, LabelAdded, CardDue];
+    // What a reminders-and-calendar rule can start from: it has no cards to watch.
+    public static readonly string[] PlannerTriggers = [Schedule, Weather];
+    public static readonly string[] Conditions = ["titleContains", "hasLabel", "lacksLabel", "inColumn", "onDays", "weather"];
+    public static readonly string[] CardConditions = ["titleContains", "hasLabel", "lacksLabel", "inColumn"];
     // Send steps work with or without a card: "every Sunday, text everyone 'bins out'" has none.
-    public static readonly string[] BoardActions = ["createCard", "moveAllCards", "deleteAllCards", "notify", "email"];
+    public static readonly string[] BoardActions = ["createCard", "moveAllCards", "deleteAllCards", "notify", "email", "createReminder", "createEvent"];
+    public static readonly string[] PlannerActions = ["createReminder", "createEvent", "notify", "email"];
     public static readonly string[] SendActions = ["notify", "email"];
     public static readonly string[] CardActions =
         ["moveCard", "addLabel", "removeLabel", "setDue", "complete", "addChecklist", "resetChecklist", "addComment", "assign", "deleteCard"];
     public static readonly string[] Repeats = ["once", "daily", "monthly", "hourly"];
 
     public static bool IsCardAction(string type) => CardActions.Contains(type);
+
+    // Rules that start with no card of their own: a schedule, or the weather turning.
+    public static bool StartsWithoutCard(string type) => type is Schedule or Weather;
 }
 
 // When a schedule next fires. Worked out in the schedule's own time zone, so "7:00" stays 7:00
